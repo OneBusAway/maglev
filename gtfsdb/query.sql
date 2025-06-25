@@ -423,3 +423,28 @@ FROM
     JOIN agencies a ON routes.agency_id = a.id
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'));
+
+-- name: GetBlockDetails :many
+
+SELECT
+    t.service_id,
+    t.id as trip_id,
+    t.route_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.pickup_type,
+    st.drop_off_type,
+    s.lat,
+    s.lon
+FROM
+    trips t
+        JOIN
+    stop_times st ON t.id = st.trip_id
+        JOIN
+    stops s ON st.stop_id = s.id
+WHERE
+    t.block_id = ?
+ORDER BY
+    t.id, st.stop_sequence
