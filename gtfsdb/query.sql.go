@@ -751,6 +751,81 @@ func (q *Queries) GetAllTripsForRoute(ctx context.Context, routeID string) ([]Tr
 	return items, nil
 }
 
+const getBlockDetails = `-- name: GetBlockDetails :many
+
+SELECT
+    t.service_id,
+    t.id as trip_id,
+    t.route_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.pickup_type,
+    st.drop_off_type,
+    s.lat,
+    s.lon
+FROM
+    trips t
+        JOIN
+    stop_times st ON t.id = st.trip_id
+        JOIN
+    stops s ON st.stop_id = s.id
+WHERE
+    t.block_id = ?
+ORDER BY
+    t.id, st.stop_sequence
+`
+
+type GetBlockDetailsRow struct {
+	ServiceID     string
+	TripID        string
+	RouteID       string
+	ArrivalTime   int64
+	DepartureTime int64
+	StopID        string
+	StopSequence  int64
+	PickupType    sql.NullInt64
+	DropOffType   sql.NullInt64
+	Lat           float64
+	Lon           float64
+}
+
+func (q *Queries) GetBlockDetails(ctx context.Context, blockID sql.NullString) ([]GetBlockDetailsRow, error) {
+	rows, err := q.query(ctx, q.getBlockDetailsStmt, getBlockDetails, blockID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetBlockDetailsRow
+	for rows.Next() {
+		var i GetBlockDetailsRow
+		if err := rows.Scan(
+			&i.ServiceID,
+			&i.TripID,
+			&i.RouteID,
+			&i.ArrivalTime,
+			&i.DepartureTime,
+			&i.StopID,
+			&i.StopSequence,
+			&i.PickupType,
+			&i.DropOffType,
+			&i.Lat,
+			&i.Lon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getImportMetadata = `-- name: GetImportMetadata :one
 SELECT
     id, file_hash, import_time, file_source
