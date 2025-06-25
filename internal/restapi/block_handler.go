@@ -11,12 +11,11 @@ import (
 )
 
 func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
-
 	ctx := context.Background()
 	id := utils.ExtractIDFromParams(r)
 	agencyID, blockID, err := utils.ExtractAgencyIDAndCodeID(id)
 
-	if blockID == "" {
+	if err != nil || blockID == "" {
 		http.Error(w, "null", http.StatusBadRequest)
 		return
 	}
