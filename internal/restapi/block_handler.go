@@ -160,7 +160,11 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		return models.ReferencesModel{}, err
 	}
 
-	routesArr, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsArr)
+	routesArr, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsArr)
+
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
 	routeSet := make(map[string]struct{})
 	var routes []interface{}
 	for _, route := range routesArr {
