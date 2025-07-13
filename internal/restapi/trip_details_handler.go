@@ -139,7 +139,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
 		Frequency:    nil,
-		SituationIDs: situationIDs,
+		SituationIDs: api.GetSituationIDsForTrip(tripID),
 	}
 
 	if status != nil {
