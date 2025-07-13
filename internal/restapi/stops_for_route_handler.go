@@ -8,8 +8,6 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -24,7 +22,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	currentLocation, _ := time.LoadLocation(currentAgency.Timezone)
 	timeParam := r.URL.Query().Get("time")
 
-	formattedDate, fieldErrors, success := parseTimeParameter(timeParam, currentLocation)
+	formattedDate, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
 	if !success {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -66,52 +64,6 @@ func (api *RestAPI) handleCommonErrors(w http.ResponseWriter, r *http.Request, a
 	}
 
 	return currentAgency
-}
-
-func parseTimeParameter(timeParam string, currentLocation *time.Location) (string, map[string][]string, bool) {
-	if timeParam == "" {
-		// No time parameter, use current date
-		return time.Now().In(currentLocation).Format("20060102"), nil, true
-	}
-
-	var parsedTime time.Time
-	validFormat := false
-
-	// Check if it's epoch timestamp
-	if epochTime, err := strconv.ParseInt(timeParam, 10, 64); err == nil {
-		// Convert epoch to time
-		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
-		validFormat = true
-	} else if strings.Contains(timeParam, "-") {
-		// Assume YYYY-MM-DD format
-		parsedTime, err = time.Parse("2006-01-02", timeParam)
-		if err == nil {
-			validFormat = true
-		}
-	}
-
-	if !validFormat {
-		// Invalid format
-		fieldErrors := map[string][]string{
-			"time": {"Invalid field value for field \"time\"."},
-		}
-		return "", fieldErrors, false
-	}
-
-	// Set time to midnight for accurate comparison
-	currentTime := time.Now().In(currentLocation)
-	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	parsedTimeMidnight := time.Date(parsedTime.Year(), parsedTime.Month(), parsedTime.Day(), 0, 0, 0, 0, currentLocation)
-
-	if parsedTimeMidnight.After(todayMidnight) {
-		fieldErrors := map[string][]string{
-			"time": {"Invalid field value for field \"time\"."},
-		}
-		return "", fieldErrors, false
-	}
-
-	// Valid date, use it
-	return parsedTime.Format("20060102"), nil, true
 }
 
 func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string) (models.RouteEntry, []models.Stop, error) {

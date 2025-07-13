@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jamespfennell/gtfs"
 )
@@ -79,4 +80,54 @@ func ParseFloatParam(params url.Values, key string, fieldErrors map[string][]str
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
 	}
 	return f, fieldErrors
+}
+
+// ParseTimeParameter parses a time parameter from the URL query.
+// It supports both epoch timestamps (in milliseconds) and date strings in the format "YYYY-MM-DD".
+// If the time parameter is empty, it defaults to the current date in "YYYYMMDD" format.
+// It returns the formatted date string, any field errors encountered, and a boolean indicating if the parsing was successful.
+func ParseTimeParameter(timeParam string, currentLocation *time.Location) (string, map[string][]string, bool) {
+	if timeParam == "" {
+		// No time parameter, use current date
+		return time.Now().In(currentLocation).Format("20060102"), nil, true
+	}
+
+	var parsedTime time.Time
+	validFormat := false
+
+	// Check if it's epoch timestamp
+	if epochTime, err := strconv.ParseInt(timeParam, 10, 64); err == nil {
+		// Convert epoch to time
+		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
+		validFormat = true
+	} else if strings.Contains(timeParam, "-") {
+		// Assume YYYY-MM-DD format
+		parsedTime, err = time.Parse("2006-01-02", timeParam)
+		if err == nil {
+			validFormat = true
+		}
+	}
+
+	if !validFormat {
+		// Invalid format
+		fieldErrors := map[string][]string{
+			"time": {"Invalid field value for field \"time\"."},
+		}
+		return "", fieldErrors, false
+	}
+
+	// Set time to midnight for accurate comparison
+	currentTime := time.Now().In(currentLocation)
+	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
+	parsedTimeMidnight := time.Date(parsedTime.Year(), parsedTime.Month(), parsedTime.Day(), 0, 0, 0, 0, currentLocation)
+
+	if parsedTimeMidnight.After(todayMidnight) {
+		fieldErrors := map[string][]string{
+			"time": {"Invalid field value for field \"time\"."},
+		}
+		return "", fieldErrors, false
+	}
+
+	// Valid date, use it
+	return parsedTime.Format("20060102"), nil, true
 }
