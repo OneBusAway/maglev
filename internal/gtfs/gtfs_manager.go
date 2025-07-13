@@ -225,6 +225,9 @@ func (manager *Manager) GetStopsForLocation(ctx context.Context, lat, lon float6
 		distance := utils.Haversine(lat, lon, *gtfsStop.Latitude, *gtfsStop.Longitude)
 		if distance <= radius {
 			candidates = append(candidates, stopWithDistance{gtfsStop, distance})
+		} else if radius == -1 {
+			// No radius specified; include all stops within the given latSpan and lonSpan
+			candidates = append(candidates, stopWithDistance{gtfsStop, distance})
 		}
 	}
 
