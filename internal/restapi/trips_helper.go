@@ -440,3 +440,14 @@ func (api *RestAPI) calculateScheduleDeviationFromTripUpdates(
 
 	return int(bestDeviation)
 }
+
+func (api *RestAPI) GetSituationIDsForTrip(tripID string) []string {
+	alerts := api.GtfsManager.GetAlertsForTrip(tripID)
+	situationIDs := make([]string, 0, len(alerts))
+	for _, alert := range alerts {
+		if alert.ID != "" {
+			situationIDs = append(situationIDs, alert.ID)
+		}
+	}
+	return situationIDs
+}
