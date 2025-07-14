@@ -22,7 +22,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	currentLocation, _ := time.LoadLocation(currentAgency.Timezone)
 	timeParam := r.URL.Query().Get("time")
 
-	formattedDate, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
+	formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
 	if !success {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
