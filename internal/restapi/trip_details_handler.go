@@ -108,7 +108,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	var status *models.TripStatusForTripDetails
 
 	if params.IncludeTrip || params.IncludeSchedule {
-		nextTripID, previousTripID, err = api.GetNextAndPreviousTripIDs(ctx, &trip, tripID, agencyID, serviceDate)
+		nextTripID, previousTripID, _, err = api.GetNextAndPreviousTripIDs(ctx, &trip, tripID, agencyID, serviceDate)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -139,7 +139,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
 		Frequency:    nil,
-		SituationIDs: situationIDs,
+		SituationIDs: api.GetSituationIDsForTrip(tripID),
 	}
 
 	if status != nil {
