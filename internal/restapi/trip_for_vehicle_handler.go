@@ -64,7 +64,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	api.GtfsManager.PrintAllVehicles()
+	// api.GtfsManager.PrintAllVehicles()
 
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
 
