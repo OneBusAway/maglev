@@ -11,8 +11,8 @@ type VehicleStatus struct {
 }
 
 type Location struct {
-	Lat float32 `json:"lat"`
-	Lon float32 `json:"lon"`
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
 }
 
 type TripStatus struct {
