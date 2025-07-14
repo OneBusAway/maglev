@@ -177,6 +177,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listRoutesStmt, err = db.PrepareContext(ctx, listRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRoutes: %w", err)
 	}
+	if q.listTripsStmt, err = db.PrepareContext(ctx, listTrips); err != nil {
+		return nil, fmt.Errorf("error preparing query ListTrips: %w", err)
+	}
 	if q.upsertImportMetadataStmt, err = db.PrepareContext(ctx, upsertImportMetadata); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertImportMetadata: %w", err)
 	}
@@ -440,6 +443,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listRoutesStmt: %w", cerr)
 		}
 	}
+	if q.listTripsStmt != nil {
+		if cerr := q.listTripsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listTripsStmt: %w", cerr)
+		}
+	}
 	if q.upsertImportMetadataStmt != nil {
 		if cerr := q.upsertImportMetadataStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertImportMetadataStmt: %w", cerr)
@@ -535,6 +543,7 @@ type Queries struct {
 	getTripsForRouteInActiveServiceIDsStmt    *sql.Stmt
 	listAgenciesStmt                          *sql.Stmt
 	listRoutesStmt                            *sql.Stmt
+	listTripsStmt                             *sql.Stmt
 	upsertImportMetadataStmt                  *sql.Stmt
 }
 
@@ -593,6 +602,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsForRouteInActiveServiceIDsStmt:    q.getTripsForRouteInActiveServiceIDsStmt,
 		listAgenciesStmt:                          q.listAgenciesStmt,
 		listRoutesStmt:                            q.listRoutesStmt,
+		listTripsStmt:                             q.listTripsStmt,
 		upsertImportMetadataStmt:                  q.upsertImportMetadataStmt,
 	}
 }
