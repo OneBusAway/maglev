@@ -273,6 +273,38 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	return nil
 }
 
+func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) {
+
+	fmt.Println("GetVehicleByID called with ID:", vehicleID)
+
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	for _, v := range manager.realTimeVehicles {
+		fmt.Println("Checking vehicle:", v.ID.ID, "against", vehicleID)
+		if v.ID.ID == vehicleID {
+			fmt.Println("Found vehicle:", v.ID.ID)
+			return &v, nil
+		}
+	}
+
+	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
+}
+
+// TODO: Remove this after debugging
+func (manager *Manager) PrintAllVehicles() {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	fmt.Println("All real-time vehicles:")
+	for i, v := range manager.realTimeVehicles {
+		fmt.Printf("[%d] VehicleID: %s, Label: %s, TripID: %s\n", i, v.ID.ID)
+		if v.Trip != nil {
+			fmt.Printf("    TripID: %s, RouteID: %s\n", v.Trip.ID.ID, v.Trip.ID.RouteID)
+		}
+	}
+}
+
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
