@@ -82,14 +82,11 @@ func ParseFloatParam(params url.Values, key string, fieldErrors map[string][]str
 	return f, fieldErrors
 }
 
-// ParseTimeParameter parses a time parameter from the URL query.
-// It supports both epoch timestamps (in milliseconds) and date strings in the format "YYYY-MM-DD".
-// If the time parameter is empty, it defaults to the current date in "YYYYMMDD" format.
-// It returns the formatted date string, any field errors encountered, and a boolean indicating if the parsing was successful.
-func ParseTimeParameter(timeParam string, currentLocation *time.Location) (string, map[string][]string, bool) {
+func ParseTimeParameter(timeParam string, currentLocation *time.Location) (string, time.Time, map[string][]string, bool) {
 	if timeParam == "" {
 		// No time parameter, use current date
-		return time.Now().In(currentLocation).Format("20060102"), nil, true
+		now := time.Now().In(currentLocation)
+		return now.Format("20060102"), now, nil, true
 	}
 
 	var parsedTime time.Time
@@ -113,7 +110,7 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		fieldErrors := map[string][]string{
 			"time": {"Invalid field value for field \"time\"."},
 		}
-		return "", fieldErrors, false
+		return "", time.Time{}, fieldErrors, false
 	}
 
 	// Set time to midnight for accurate comparison
@@ -125,9 +122,9 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		fieldErrors := map[string][]string{
 			"time": {"Invalid field value for field \"time\"."},
 		}
-		return "", fieldErrors, false
+		return "", time.Time{}, fieldErrors, false
 	}
 
 	// Valid date, use it
-	return parsedTime.Format("20060102"), nil, true
+	return parsedTime.Format("20060102"), parsedTime, nil, true
 }
