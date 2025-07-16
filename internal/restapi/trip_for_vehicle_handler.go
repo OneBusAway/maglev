@@ -59,12 +59,11 @@ func (api *RestAPI) parseTripForVehicleParams(r *http.Request) TripForVehiclePar
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
 	queryParamID := utils.ExtractIDFromParams(r)
 	agencyID, vehicleID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
+
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-
-	// api.GtfsManager.PrintAllVehicles()
 
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
 
@@ -88,24 +87,47 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var serviceDate int64
-	if params.ServiceDate != nil {
-		serviceDate = params.ServiceDate.Unix() * 1000
+	loc, _ := time.LoadLocation(agency.Timezone)
+
+	var currentTime time.Time
+	if params.Time != nil {
+		currentTime = params.Time.In(loc)
 	} else {
-		loc, _ := time.LoadLocation(agency.Timezone)
-		now := time.Now().In(loc)
-		sd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-		serviceDate = sd.Unix() * 1000
+		currentTime = time.Now().In(loc)
 	}
+
+	var serviceDate time.Time
+	if params.ServiceDate != nil {
+		serviceDate = *params.ServiceDate
+	} else {
+		serviceDate = currentTime.Truncate(24 * time.Hour)
+	}
+	serviceDateMillis := serviceDate.Unix() * 1000
 
 	var status *models.TripStatusForTripDetails
 	if params.IncludeStatus {
-		status, _ = api.BuildTripStatus(ctx, agencyID, tripID, time.Unix(serviceDate/1000, 0), time.Now())
+		status, _ = api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	}
+
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		fmt.Println("GetTrip error:", err)
+		return
+	}
+
+	var nextTripID, previousTripID string
+	if params.IncludeTrip || params.IncludeSchedule {
+		nextTripID, previousTripID, err = api.GetNextAndPreviousTripIDs(ctx, &trip, tripID, agencyID, serviceDate)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	var schedule *models.Schedule
 	if params.IncludeSchedule {
-		schedule, _ = api.BuildTripSchedule(ctx, agencyID, tripID, "", "", time.Local)
+		schedule, _ = api.BuildTripSchedule(ctx, agencyID, tripID, nextTripID, previousTripID, time.Local)
 	}
 
 	situationIDs := []string{}
@@ -121,7 +143,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	entry := &models.TripDetails{
 		TripID:       tripID,
-		ServiceDate:  serviceDate,
+		ServiceDate:  serviceDateMillis,
 		Frequency:    nil,
 		Status:       status,
 		Schedule:     schedule,
@@ -194,6 +216,17 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	references.Agencies = append(references.Agencies, agencyModel)
 
+	tripRef := models.NewTripReference(
+		utils.FormCombinedID(agencyID, trip.ID),
+		utils.FormCombinedID(agencyID, trip.RouteID),
+		utils.FormCombinedID(agencyID, trip.ServiceID),
+		trip.TripHeadsign.String,
+		trip.TripShortName.String,
+		trip.DirectionID.Int64,
+		utils.FormCombinedID(agencyID, trip.BlockID.String),
+		utils.FormCombinedID(agencyID, trip.ShapeID.String),
+	)
+	references.Trips = append(references.Trips, tripRef)
 	response := models.NewEntryResponse(entry, references)
 	api.sendResponse(w, r, response)
 
