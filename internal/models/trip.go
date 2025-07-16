@@ -23,3 +23,19 @@ func NewTripResponse(trip *Trip, timeZone string, peakOffPeak int) *TripResponse
 		Trip: trip,
 	}
 }
+
+func NewTripReference(id, routeID, serviceID, headSign, shortName string, directionID int64, blockID, shapeID string) *Trip {
+	return &Trip{
+		BlockID:        blockID,
+		DirectionID:    directionID,
+		ID:             id,
+		PeakOffPeak:    0,
+		RouteID:        routeID,
+		RouteShortName: shortName,
+		ServiceID:      serviceID,
+		ShapeID:        shapeID,
+		TimeZone:       "",
+		TripHeadsign:   headSign,
+		TripShortName:  shortName,
+	}
+}
