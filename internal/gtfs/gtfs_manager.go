@@ -273,6 +273,20 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	return nil
 }
 
+func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) {
+
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	for _, v := range manager.realTimeVehicles {
+		if v.ID.ID == vehicleID {
+			return &v, nil
+		}
+	}
+
+	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
+}
+
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()

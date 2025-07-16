@@ -40,8 +40,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		// Set location if available
 		if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 			vehicleStatus.Location = &models.Location{
-				Lat: *vehicle.Position.Latitude,
-				Lon: *vehicle.Position.Longitude,
+				Lat: float64(*vehicle.Position.Latitude),
+				Lon: float64(*vehicle.Position.Longitude),
 			}
 		}
 
@@ -79,8 +79,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			// Add position information to trip status
 			if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 				tripStatus.Position = models.Location{
-					Lat: *vehicle.Position.Latitude,
-					Lon: *vehicle.Position.Longitude,
+					Lat: float64(*vehicle.Position.Latitude),
+					Lon: float64(*vehicle.Position.Longitude),
 				}
 			}
 
