@@ -2,7 +2,7 @@ package restapi
 
 import (
 	"context"
-	"github.com/jamespfennell/gtfs"
+	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
