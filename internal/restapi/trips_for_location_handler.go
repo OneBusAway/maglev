@@ -36,7 +36,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	tripAgencyResolver := NewTripAgencyResolver(allRoutes, allTrips)
 
 	result := api.buildTripsForLocationEntries(ctx, activeTrips, bbox, tripAgencyResolver, includeSchedule, currentLocation, todayMidnight, serviceDate, w, r)
-	references := api.BuildReference(ctx, includeTrip, allRoutes, allTrips, result)
+	references := api.BuildReference(ctx, includeTrip, allRoutes, allTrips, stops, result)
 	response := models.NewListResponseWithRange(result, references, len(result) == 0)
 	api.sendResponse(w, r, response)
 }
@@ -235,16 +235,46 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 	}
 	return stopTimesList
 }
-func (api *RestAPI) BuildReference(ctx context.Context, includeTrip bool, allRoutes []gtfsdb.Route, allTrips []gtfsdb.Trip, trips []models.TripsForLocationListEntry) models.ReferencesModel {
+func (api *RestAPI) BuildReference(ctx context.Context, includeTrip bool, allRoutes []gtfsdb.Route, allTrips []gtfsdb.Trip, stops []*gtfs.Stop, trips []models.TripsForLocationListEntry) models.ReferencesModel {
 	// Collect present trip IDs
 	presentTrips := make(map[string]models.Trip, len(trips))
+	presentRoutes := make(map[string]models.Route)
 	for _, trip := range trips {
 		_, tripID, _ := utils.ExtractAgencyIDAndCodeID(trip.TripId)
 		presentTrips[tripID] = models.Trip{}
 	}
+	stopList := make([]models.Stop, 0, len(stops))
+	for _, stop := range stops {
+		if stop.Latitude == nil || stop.Longitude == nil {
+			continue
+		}
+		routeIds, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(ctx, stop.Id)
+		if err != nil {
+			continue
+		}
+
+		routeIdsString := make([]string, len(routeIds))
+		for i, id := range routeIds {
+			presentRoutes[id.(string)] = models.Route{}
+			routeIdsString[i] = id.(string)
+		}
+
+		stopList = append(stopList, models.Stop{
+			Code:               stop.Code,
+			Direction:          "NA", // TODO add direction
+			ID:                 stop.Id,
+			Lat:                *stop.Latitude,
+			Lon:                *stop.Longitude,
+			LocationType:       0,
+			Name:               stop.Name,
+			Parent:             "",
+			RouteIDs:           routeIdsString,
+			StaticRouteIDs:     routeIdsString,
+			WheelchairBoarding: utils.MapWheelchairBoarding(stop.WheelchairBoarding),
+		})
+	}
 
 	// Collect present routes and fill presentTrips with details
-	presentRoutes := make(map[string]models.Route)
 	for _, trip := range allTrips {
 		if _, exists := presentTrips[trip.ID]; exists {
 			presentTrips[trip.ID] = models.Trip{
@@ -338,7 +368,7 @@ func (api *RestAPI) BuildReference(ctx context.Context, includeTrip bool, allRou
 		Routes:     routes,
 		Situations: []interface{}{},
 		StopTimes:  []interface{}{},
-		Stops:      []models.Stop{},
+		Stops:      stopList,
 		Trips:      tripsRefList,
 	}
 }
