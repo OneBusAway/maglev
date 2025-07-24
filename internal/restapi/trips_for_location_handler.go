@@ -15,6 +15,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, err := api.parseAndValidateRequest(w, r)
 	if err != nil {
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 
@@ -65,14 +66,14 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	}
 	if !success || len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
-		return
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, err
 	}
 	locationErrors := utils.ValidateLocationParams(lat, lon, 0, latSpan, lonSpan)
 	if len(locationErrors) > 0 {
 		api.validationErrorResponse(w, r, locationErrors)
-		return
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, err
 	}
-	return
+	return lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil
 }
 
 func extractStopIDs(stops []*gtfs.Stop) []string {
