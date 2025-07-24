@@ -32,6 +32,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	allRoutes, allTrips, err := api.getAllRoutesAndTrips(ctx, w, r)
 	if err != nil {
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 	tripAgencyResolver := NewTripAgencyResolver(allRoutes, allTrips)
