@@ -174,20 +174,27 @@ func (api *RestAPI) buildScheduleForTrip(
 	w http.ResponseWriter,
 	r *http.Request,
 ) *models.TripsForLocationSchedule {
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
+	shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
 	var shapePoints []gtfs.ShapePoint
-	if err == nil && len(shapeRows) > 1 {
+	if len(shapeRows) > 1 {
 		shapePoints = make([]gtfs.ShapePoint, len(shapeRows))
 		for i, sp := range shapeRows {
 			shapePoints[i] = gtfs.ShapePoint{Latitude: sp.Lat, Longitude: sp.Lon}
 		}
 	}
+
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return nil
+	}
+
 	nextTripID, previousTripID, stopTimes, err := api.GetNextAndPreviousTripIDs(ctx, &trip, tripID, agencyID, serviceDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return nil
 	}
+
 	stopTimesList := buildStopTimesList(api, ctx, stopTimes, shapePoints, agencyID)
 	return &models.TripsForLocationSchedule{
 		Frequency:      nil,
