@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -60,12 +61,11 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	if ctx.Err() != nil {
 		api.serverErrorResponse(w, r, ctx.Err())
-		err = ctx.Err()
-		return
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, ctx.Err()
 	}
 	if !success || len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
-		err = ctx.Err()
+		err = fmt.Errorf("validation errors")
 		return
 	}
 	locationErrors := utils.ValidateLocationParams(lat, lon, 0, latSpan, lonSpan)
