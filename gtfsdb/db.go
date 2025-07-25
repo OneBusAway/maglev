@@ -114,6 +114,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getRouteIDsForStopsStmt, err = db.PrepareContext(ctx, getRouteIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRouteIDsForStops: %w", err)
 	}
+	if q.getRoutesByIDsStmt, err = db.PrepareContext(ctx, getRoutesByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetRoutesByIDs: %w", err)
+	}
 	if q.getRoutesForStopStmt, err = db.PrepareContext(ctx, getRoutesForStop); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRoutesForStop: %w", err)
 	}
@@ -332,6 +335,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getRouteIDsForStopsStmt: %w", cerr)
 		}
 	}
+	if q.getRoutesByIDsStmt != nil {
+		if cerr := q.getRoutesByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getRoutesByIDsStmt: %w", cerr)
+		}
+	}
 	if q.getRoutesForStopStmt != nil {
 		if cerr := q.getRoutesForStopStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getRoutesForStopStmt: %w", cerr)
@@ -506,6 +514,7 @@ type Queries struct {
 	getRouteIDsForAgencyStmt                  *sql.Stmt
 	getRouteIDsForStopStmt                    *sql.Stmt
 	getRouteIDsForStopsStmt                   *sql.Stmt
+	getRoutesByIDsStmt                        *sql.Stmt
 	getRoutesForStopStmt                      *sql.Stmt
 	getRoutesForStopsStmt                     *sql.Stmt
 	getScheduleForStopStmt                    *sql.Stmt
@@ -563,6 +572,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getRouteIDsForAgencyStmt:                  q.getRouteIDsForAgencyStmt,
 		getRouteIDsForStopStmt:                    q.getRouteIDsForStopStmt,
 		getRouteIDsForStopsStmt:                   q.getRouteIDsForStopsStmt,
+		getRoutesByIDsStmt:                        q.getRoutesByIDsStmt,
 		getRoutesForStopStmt:                      q.getRoutesForStopStmt,
 		getRoutesForStopsStmt:                     q.getRoutesForStopsStmt,
 		getScheduleForStopStmt:                    q.getScheduleForStopStmt,

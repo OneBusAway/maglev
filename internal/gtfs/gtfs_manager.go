@@ -261,12 +261,36 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 	return vehicles
 }
 
+// This function retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block for that trip.
+// Note we depend on getting the vehicle that may not match the trip ID exactly, but is part of the same block.
 func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil || !requestedTrip.BlockID.Valid {
+		fmt.Printf("Could not get block ID for trip %s: %v\n", tripID, err)
+		return nil
+	}
+
+	requestedBlockID := requestedTrip.BlockID.String
+
+	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	if err != nil {
+		fmt.Printf("Could not get trips for block %s: %v\n", requestedBlockID, err)
+		return nil
+	}
+
+	blockTripIDs := make(map[string]bool)
+	for _, trip := range blockTrips {
+		blockTripIDs[trip.ID] = true
+	}
+
 	for _, v := range manager.realTimeVehicles {
-		if v.Trip != nil && v.Trip.ID.ID == tripID {
+		if v.Trip != nil && v.Trip.ID.ID != "" && blockTripIDs[v.Trip.ID.ID] {
 			return &v
 		}
 	}

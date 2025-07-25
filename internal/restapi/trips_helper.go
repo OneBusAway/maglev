@@ -116,20 +116,40 @@ func (api *RestAPI) BuildTripStatus(
 	return status, nil
 }
 
-func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID, tripID, nextTripID, previousTripID string, loc *time.Location) (*models.Schedule, error) {
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+	var shapePoints []gtfs.ShapePoint
+	if err == nil && len(shapeRows) > 0 {
+		shapePoints = make([]gtfs.ShapePoint, len(shapeRows))
+		for i, sp := range shapeRows {
+			shapePoints[i] = gtfs.ShapePoint{
+				Latitude:  sp.Lat,
+				Longitude: sp.Lon,
+			}
+		}
+	}
+
+	var nextTripID, previousTripID string
+	nextTripID, previousTripID, err = api.GetNextAndPreviousTripIDs(ctx, trip, agencyID, serviceDate)
 	if err != nil {
 		return nil, err
 	}
 
 	stopTimesVals := make([]models.StopTime, len(stopTimes))
 	for i, st := range stopTimes {
+		distanceAlongTrip := api.calculatePreciseDistanceAlongTrip(ctx, st.StopID, shapePoints)
+
 		stopTimesVals[i] = models.StopTime{
 			ArrivalTime:         int(st.ArrivalTime),
 			DepartureTime:       int(st.DepartureTime),
 			StopID:              utils.FormCombinedID(agencyID, st.StopID),
 			StopHeadsign:        st.StopHeadsign.String,
-			DistanceAlongTrip:   st.ShapeDistTraveled.Float64,
+			DistanceAlongTrip:   distanceAlongTrip,
 			HistoricalOccupancy: "",
 		}
 	}
@@ -143,7 +163,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID, tripID, nex
 	}, nil
 }
 
-func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, tripID string, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, err error) {
+func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, err error) {
 	if !trip.BlockID.Valid {
 		return "", "", nil
 	}
@@ -161,58 +181,59 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		TripID    string
 		StartTime int
 		EndTime   int
-		IsActive  bool
 	}
 
 	tripsWithDetails := []TripWithDetails{}
 
 	for _, blockTrip := range blockTrips {
-		isActive, err := api.GtfsManager.IsServiceActiveOnDate(ctx, blockTrip.ServiceID, serviceDate)
-		if err != nil || isActive == 0 {
-			continue
-		}
-
 		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, blockTrip.ID)
 		if err != nil || len(stopTimes) == 0 {
 			continue
 		}
 
-		startTime := int(^uint(0) >> 1) // max int value
-		endTime := 0
+		var startTime, endTime int
 
 		for _, st := range stopTimes {
-			if st.DepartureTime > 0 && int(st.DepartureTime) < startTime {
+			if st.DepartureTime > 0 {
 				startTime = int(st.DepartureTime)
-			}
-
-			if st.ArrivalTime > 0 && int(st.ArrivalTime) > endTime {
-				endTime = int(st.ArrivalTime)
+				break
 			}
 		}
 
-		if startTime != int(^uint(0)>>1) && endTime > 0 {
+		// Find the last stop time with a valid arrival time
+		for i := len(stopTimes) - 1; i >= 0; i-- {
+			if stopTimes[i].ArrivalTime > 0 {
+				endTime = int(stopTimes[i].ArrivalTime)
+				break
+			}
+		}
+
+		if startTime > 0 && endTime > 0 {
+			// Only include trips that match the service ID of the original trip
+			if trip.ServiceID != blockTrip.ServiceID {
+				continue
+			}
+
 			tripsWithDetails = append(tripsWithDetails, TripWithDetails{
 				TripID:    blockTrip.ID,
 				StartTime: startTime,
 				EndTime:   endTime,
-				IsActive:  isActive > 0,
 			})
 		}
 	}
 
+	// Sort trips chronologically by start time, then by trip ID for stability
+	// This ensures consistent ordering when trips have the same start time
 	sort.Slice(tripsWithDetails, func(i, j int) bool {
-		if tripsWithDetails[i].IsActive && !tripsWithDetails[j].IsActive {
-			return true
-		}
-		if !tripsWithDetails[i].IsActive && tripsWithDetails[j].IsActive {
-			return false
+		if tripsWithDetails[i].StartTime == tripsWithDetails[j].StartTime {
+			return tripsWithDetails[i].TripID < tripsWithDetails[j].TripID
 		}
 		return tripsWithDetails[i].StartTime < tripsWithDetails[j].StartTime
 	})
 
 	currentIndex := -1
 	for i, t := range tripsWithDetails {
-		if t.TripID == tripID {
+		if t.TripID == trip.ID {
 			currentIndex = i
 			break
 		}
@@ -439,4 +460,85 @@ func (api *RestAPI) calculateScheduleDeviationFromTripUpdates(
 	}
 
 	return int(bestDeviation)
+}
+
+func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopID string, shapePoints []gtfs.ShapePoint) float64 {
+	if len(shapePoints) == 0 {
+		return 0.0
+	}
+
+	// Get stop coordinates
+	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
+	if err != nil {
+		return 0.0
+	}
+
+	stopLat, stopLon := stop.Lat, stop.Lon
+
+	// Find the closest point on the shape to this stop
+	var minDistance float64 = math.MaxFloat64
+	var closestSegmentIndex int
+	var projectionRatio float64
+
+	for i := 0; i < len(shapePoints)-1; i++ {
+		// Calculate distance from stop to this line segment
+		distance, ratio := distanceToLineSegment(
+			stopLat, stopLon,
+			shapePoints[i].Latitude, shapePoints[i].Longitude,
+			shapePoints[i+1].Latitude, shapePoints[i+1].Longitude,
+		)
+
+		if distance < minDistance {
+			minDistance = distance
+			closestSegmentIndex = i
+			projectionRatio = ratio
+		}
+	}
+
+	// Calculate cumulative distance up to the closest segment
+	var cumulativeDistance float64
+	for i := 1; i <= closestSegmentIndex; i++ {
+		cumulativeDistance += utils.Haversine(
+			shapePoints[i-1].Latitude, shapePoints[i-1].Longitude,
+			shapePoints[i].Latitude, shapePoints[i].Longitude,
+		)
+	}
+
+	// Add the projection distance within the closest segment
+	if closestSegmentIndex < len(shapePoints)-1 {
+		segmentDistance := utils.Haversine(
+			shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
+			shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
+		)
+		cumulativeDistance += segmentDistance * projectionRatio
+	}
+
+	return cumulativeDistance
+}
+
+// Helper function to calculate distance from point to line segment
+func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio float64) {
+	dx := x2 - x1
+	dy := y2 - y1
+
+	if dx == 0 && dy == 0 {
+		// Line segment is a point
+		return utils.Haversine(px, py, x1, y1), 0
+	}
+
+	// Calculate the parameter t for the projection of point onto the line
+	t := ((px-x1)*dx + (py-y1)*dy) / (dx*dx + dy*dy)
+
+	// Clamp t to [0, 1] to stay within the line segment
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+
+	// Find the closest point on the line segment
+	closestX := x1 + t*dx
+	closestY := y1 + t*dy
+
+	return utils.Haversine(px, py, closestX, closestY), t
 }

@@ -1023,6 +1023,62 @@ func (q *Queries) GetRouteIDsForStops(ctx context.Context, stopIds []string) ([]
 	return items, nil
 }
 
+const getRoutesByIDs = `-- name: GetRoutesByIDs :many
+SELECT
+    id, agency_id, short_name, long_name, "desc", type, url, color, text_color, continuous_pickup, continuous_drop_off
+FROM
+    routes
+WHERE
+    id IN (/*SLICE:route_ids*/?)
+ORDER BY
+    id
+`
+
+func (q *Queries) GetRoutesByIDs(ctx context.Context, routeIds []string) ([]Route, error) {
+	query := getRoutesByIDs
+	var queryParams []interface{}
+	if len(routeIds) > 0 {
+		for _, v := range routeIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:route_ids*/?", strings.Repeat(",?", len(routeIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:route_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Route
+	for rows.Next() {
+		var i Route
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgencyID,
+			&i.ShortName,
+			&i.LongName,
+			&i.Desc,
+			&i.Type,
+			&i.Url,
+			&i.Color,
+			&i.TextColor,
+			&i.ContinuousPickup,
+			&i.ContinuousDropOff,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRoutesForStop = `-- name: GetRoutesForStop :many
 SELECT DISTINCT
     routes.id, routes.agency_id, routes.short_name, routes.long_name, routes."desc", routes.type, routes.url, routes.color, routes.text_color, routes.continuous_pickup, routes.continuous_drop_off

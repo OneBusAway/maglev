@@ -68,11 +68,6 @@ func (api *RestAPI) BuildVehicleStatus(
 
 	if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, vehicle.Trip.ID.ID)
-
-		if vehicle.Trip.ID.ID != tripID {
-			status.Status = "DEVIATED"
-			status.Phase = "deviated"
-		}
 	} else {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	}

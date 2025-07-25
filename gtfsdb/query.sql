@@ -529,3 +529,13 @@ WHERE
     id IN (sqlc.slice('stop_ids'))
 ORDER BY
     id;
+
+-- name: GetRoutesByIDs :many
+SELECT
+    *
+FROM
+    routes
+WHERE
+    id IN (sqlc.slice('route_ids'))
+ORDER BY
+    id;
