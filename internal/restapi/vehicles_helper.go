@@ -30,8 +30,8 @@ func (api *RestAPI) BuildVehicleStatus(
 
 	if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 		position := models.Location{
-			Lat: *vehicle.Position.Latitude,
-			Lon: *vehicle.Position.Longitude,
+			Lat: float64(*vehicle.Position.Latitude),
+			Lon: float64(*vehicle.Position.Longitude),
 		}
 		status.Position = position
 		status.LastKnownLocation = position
