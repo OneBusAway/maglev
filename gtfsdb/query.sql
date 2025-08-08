@@ -591,3 +591,28 @@ SELECT
     *
 FROM
     trips;
+    t.id, st.stop_sequence;
+
+-- name: GetArrivalsAndDeparturesForStop :many
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_sequence,
+    st.stop_headsign,
+    t.service_id,
+    t.route_id,
+    t.trip_headsign,
+    t.block_id,
+    r.id as route_id,
+    r.agency_id,
+    r.short_name as route_short_name,
+    r.long_name as route_long_name
+FROM
+    stop_times st
+    JOIN trips t ON st.trip_id = t.id
+    JOIN routes r ON t.route_id = r.id
+WHERE
+    st.stop_id = ?
+ORDER BY
+    st.arrival_time LIMIT 50
