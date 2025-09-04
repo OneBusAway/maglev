@@ -39,3 +39,11 @@ func NewTripReference(id, routeID, serviceID, headSign, shortName string, direct
 		TripShortName:  shortName,
 	}
 }
+
+type TripsSchedule struct {
+	Frequency      *int64     `json:"frequency"`
+	NextTripId     string     `json:"nextTripId"`
+	PreviousTripId string     `json:"previousTripId"`
+	StopTimes      []StopTime `json:"stopTimes"`
+	TimeZone       string     `json:"timeZone"`
+}
