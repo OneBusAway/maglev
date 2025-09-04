@@ -564,14 +564,6 @@ WHERE
 ORDER BY
     t.id, st.stop_sequence;
 
--- name: GetStopTimesByStopIDs :many
-SELECT
-    *
-FROM
-    stop_times
-WHERE
-    stop_id IN (sqlc.slice('stop_ids'));
-
 -- name: ListTrips :many
 SELECT
     *
@@ -586,8 +578,8 @@ FROM
 WHERE
     stop_id IN (sqlc.slice('stop_ids'));
 
--- name: ListTrips :many
-SELECT
-    *
-FROM
-    trips;
+
+-- name: GetTripsByServiceID :many
+SELECT *
+FROM trips
+WHERE service_id IN (sqlc.slice('service_ids'));

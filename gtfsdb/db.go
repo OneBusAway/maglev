@@ -174,6 +174,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getTripsByBlockIDOrderedStmt, err = db.PrepareContext(ctx, getTripsByBlockIDOrdered); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsByBlockIDOrdered: %w", err)
 	}
+	if q.getTripsByServiceIDStmt, err = db.PrepareContext(ctx, getTripsByServiceID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTripsByServiceID: %w", err)
+	}
 	if q.getTripsForRouteInActiveServiceIDsStmt, err = db.PrepareContext(ctx, getTripsForRouteInActiveServiceIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsForRouteInActiveServiceIDs: %w", err)
 	}
@@ -444,6 +447,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getTripsByBlockIDOrderedStmt: %w", cerr)
 		}
 	}
+	if q.getTripsByServiceIDStmt != nil {
+		if cerr := q.getTripsByServiceIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTripsByServiceIDStmt: %w", cerr)
+		}
+	}
 	if q.getTripsForRouteInActiveServiceIDsStmt != nil {
 		if cerr := q.getTripsForRouteInActiveServiceIDsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getTripsForRouteInActiveServiceIDsStmt: %w", cerr)
@@ -558,6 +566,7 @@ type Queries struct {
 	getTripStmt                               *sql.Stmt
 	getTripsByBlockIDStmt                     *sql.Stmt
 	getTripsByBlockIDOrderedStmt              *sql.Stmt
+	getTripsByServiceIDStmt                   *sql.Stmt
 	getTripsForRouteInActiveServiceIDsStmt    *sql.Stmt
 	listAgenciesStmt                          *sql.Stmt
 	listRoutesStmt                            *sql.Stmt
@@ -619,6 +628,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripStmt:                               q.getTripStmt,
 		getTripsByBlockIDStmt:                     q.getTripsByBlockIDStmt,
 		getTripsByBlockIDOrderedStmt:              q.getTripsByBlockIDOrderedStmt,
+		getTripsByServiceIDStmt:                   q.getTripsByServiceIDStmt,
 		getTripsForRouteInActiveServiceIDsStmt:    q.getTripsForRouteInActiveServiceIDsStmt,
 		listAgenciesStmt:                          q.listAgenciesStmt,
 		listRoutesStmt:                            q.listRoutesStmt,
