@@ -166,6 +166,8 @@ func (manager *Manager) updateGTFSRealtime(ctx context.Context, config Config) {
 
 	if tripData != nil && tripErr == nil {
 		manager.realTimeTrips = tripData.Trips
+		rebuildRealTimeTripLookup(manager)
+
 	}
 	if vehicleData != nil && vehicleErr == nil {
 		manager.realTimeVehicles = vehicleData.Vehicles
@@ -173,6 +175,19 @@ func (manager *Manager) updateGTFSRealtime(ctx context.Context, config Config) {
 
 	if alertData != nil && alertErr == nil {
 		manager.realTimeAlerts = alertData.Alerts
+	}
+}
+
+func rebuildRealTimeTripLookup(manager *Manager) {
+	if manager.realTimeTripLookup == nil {
+		manager.realTimeTripLookup = make(map[string]int)
+	} else {
+		for k := range manager.realTimeTripLookup {
+			delete(manager.realTimeTripLookup, k)
+		}
+	}
+	for i, trip := range manager.realTimeTrips {
+		manager.realTimeTripLookup[trip.ID.ID] = i
 	}
 }
 
