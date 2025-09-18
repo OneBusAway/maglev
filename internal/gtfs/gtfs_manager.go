@@ -333,6 +333,13 @@ func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	return updates
 }
 
+func (manager *Manager) GetVehicleLastUpdateTime(vehicle *gtfs.Vehicle) int64 {
+	if vehicle == nil || vehicle.Timestamp == nil {
+		return 0
+	}
+	return vehicle.Timestamp.UnixMilli()
+}
+
 func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
