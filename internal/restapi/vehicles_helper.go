@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -40,9 +39,7 @@ func (api *RestAPI) BuildVehicleStatus(
 	}
 
 	if vehicle.Timestamp != nil {
-		timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-		status.LastLocationUpdateTime = timestampMs
-		status.LastUpdateTime = timestampMs
+		status.LastUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 	}
 
 	if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
@@ -74,4 +71,13 @@ func (api *RestAPI) BuildVehicleStatus(
 	status.Predicted = true
 
 	status.Scheduled = false
+
+}
+
+func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
+	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
+		return ""
+	}
+
+	return vehicle.Trip.ID.ID
 }
