@@ -42,6 +42,7 @@ func (api *RestAPI) BuildTripStatus(
 	}
 
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status)
+	activeTripID := GetVehicleActiveTripID(vehicle)
 
 	if vehicle != nil && vehicle.OccupancyPercentage != nil {
 		status.OccupancyCapacity = int(*vehicle.OccupancyPercentage)
@@ -71,7 +72,7 @@ func (api *RestAPI) BuildTripStatus(
 		}
 	}
 
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, activeTripID)
 	if err == nil {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
@@ -96,7 +97,7 @@ func (api *RestAPI) BuildTripStatus(
 
 		if vehicle != nil && vehicle.Position != nil {
 			closestStopID, closestOffset = findClosestStop(api, ctx, vehicle.Position, stopTimesPtrs)
-			nextStopID, nextOffset = findNextStop(api, ctx, vehicle.Position, stopTimesPtrs, shapePoints)
+			nextStopID, nextOffset = findNextStop(api, stopTimesPtrs, vehicle)
 		} else {
 			currentTimeSeconds := int64(currentTime.Hour()*3600 + currentTime.Minute()*60 + currentTime.Second())
 			closestStopID, closestOffset = findClosestStopByTime(currentTimeSeconds, stopTimesPtrs)
@@ -172,7 +173,6 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 	if err != nil {
 		return "", "", nil, err
 	}
-
 	if len(blockTrips) == 0 {
 		return "", "", nil, nil
 	}
@@ -263,48 +263,25 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 
 func findNextStop(
 	api *RestAPI,
-	ctx context.Context,
-	pos *gtfs.Position,
 	stopTimes []*gtfsdb.StopTime,
-	shapePoints []gtfs.ShapePoint,
+	vehicle *gtfs.Vehicle,
 ) (stopID string, offset int) {
-	if pos == nil || pos.Latitude == nil || pos.Longitude == nil {
+
+	if vehicle == nil || vehicle.CurrentStopSequence == nil {
 		return "", 0
 	}
 
-	currentDistance := getDistanceAlongShape(float64(*pos.Latitude), float64(*pos.Longitude), shapePoints)
+	vehicleCurrentStopSequence := vehicle.CurrentStopSequence
 
-	var minDiff float64 = math.MaxFloat64
-
-	stopIDs := make([]string, len(stopTimes))
 	for i, st := range stopTimes {
-		stopIDs[i] = st.StopID
-	}
-
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-	if err != nil {
-		return "", 0
-	}
-
-	stopMap := make(map[string]gtfsdb.Stop)
-	for _, stop := range stops {
-		stopMap[stop.ID] = stop
-	}
-
-	for _, st := range stopTimes {
-		stop, exists := stopMap[st.StopID]
-		if !exists {
-			continue
-		}
-
-		stopDist := getDistanceAlongShape(stop.Lat, stop.Lon, shapePoints)
-		if stopDist > currentDistance && stopDist-currentDistance < minDiff {
-			minDiff = stopDist - currentDistance
-			stopID = stop.ID
-			offset = int(st.StopSequence)
+		if uint32(st.StopSequence) == *vehicleCurrentStopSequence {
+			if i+1 < len(stopTimes) {
+				return stopTimes[i+1].StopID, 0
+			}
 		}
 	}
-	return
+
+	return "", 0
 }
 
 func findClosestStop(api *RestAPI, ctx context.Context, pos *gtfs.Position, stopTimes []*gtfsdb.StopTime) (stopID string, offset int) {
