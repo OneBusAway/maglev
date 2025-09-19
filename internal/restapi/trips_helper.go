@@ -275,8 +275,9 @@ func findNextStop(
 
 	for i, st := range stopTimes {
 		if uint32(st.StopSequence) == *vehicleCurrentStopSequence {
-			if i+1 < len(stopTimes) {
-				return stopTimes[i+1].StopID, 0
+			if len(stopTimes) > 0 {
+				nextIdx := (i + 1) % len(stopTimes)
+				return stopTimes[nextIdx].StopID, 0
 			}
 		}
 	}
