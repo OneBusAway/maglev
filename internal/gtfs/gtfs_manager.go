@@ -21,21 +21,23 @@ const NoRadiusLimit = -1
 
 // Manager manages the GTFS data and provides methods to access it
 type Manager struct {
-	gtfsSource         string
-	gtfsData           *gtfs.Static
-	GtfsDB             *gtfsdb.Client
-	lastUpdated        time.Time
-	isLocalFile        bool
-	realTimeTrips      []gtfs.Trip
-	realTimeVehicles   []gtfs.Vehicle
-	realTimeMutex      sync.RWMutex
-	realTimeAlerts     []gtfs.Alert
-	realTimeTripLookup map[string]int
-	staticMutex        sync.RWMutex // Protects gtfsData and lastUpdated
-	config             Config
-	shutdownChan       chan struct{}
-	wg                 sync.WaitGroup
-	shutdownOnce       sync.Once
+	gtfsSource                     string
+	gtfsData                       *gtfs.Static
+	GtfsDB                         *gtfsdb.Client
+	lastUpdated                    time.Time
+	isLocalFile                    bool
+	realTimeTrips                  []gtfs.Trip
+	realTimeVehicles               []gtfs.Vehicle
+	realTimeMutex                  sync.RWMutex
+	realTimeAlerts                 []gtfs.Alert
+	realTimeTripLookup             map[string]int
+	realTimeVehicleLookupByTrip    map[string]int
+	realTimeVehicleLookupByVehicle map[string]int
+	staticMutex                    sync.RWMutex // Protects gtfsData and lastUpdated
+	config                         Config
+	shutdownChan                   chan struct{}
+	wg                             sync.WaitGroup
+	shutdownOnce                   sync.Once
 }
 
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
@@ -49,11 +51,13 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		gtfsSource:         config.GtfsURL,
-		isLocalFile:        isLocalFile,
-		config:             config,
-		shutdownChan:       make(chan struct{}),
-		realTimeTripLookup: make(map[string]int),
+		gtfsSource:                     config.GtfsURL,
+		isLocalFile:                    isLocalFile,
+		config:                         config,
+		shutdownChan:                   make(chan struct{}),
+		realTimeTripLookup:             make(map[string]int),
+		realTimeVehicleLookupByTrip:    make(map[string]int),
+		realTimeVehicleLookupByVehicle: make(map[string]int),
 	}
 	manager.setStaticGTFS(staticData)
 
@@ -275,6 +279,10 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
+	if idx, ok := manager.realTimeVehicleLookupByTrip[tripID]; ok {
+		return &manager.realTimeVehicles[idx]
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -284,24 +292,18 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 		return nil
 	}
 
-	requestedBlockID := requestedTrip.BlockID.String
-
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get trips for block %s: %v\n", requestedBlockID, err)
+		fmt.Fprintf(os.Stderr, "Could not get trips for block %s: %v\n", requestedTrip.BlockID.String, err)
 		return nil
 	}
 
-	blockTripIDs := make(map[string]bool)
 	for _, trip := range blockTrips {
-		blockTripIDs[trip.ID] = true
-	}
-
-	for _, v := range manager.realTimeVehicles {
-		if v.Trip != nil && v.Trip.ID.ID != "" && blockTripIDs[v.Trip.ID.ID] {
-			return &v
+		if idx, ok := manager.realTimeVehicleLookupByTrip[trip.ID]; ok {
+			return &manager.realTimeVehicles[idx]
 		}
 	}
+
 	return nil
 }
 
@@ -310,10 +312,8 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
-	for _, v := range manager.realTimeVehicles {
-		if v.ID.ID == vehicleID {
-			return &v, nil
-		}
+	if index, exists := manager.realTimeVehicleLookupByVehicle[vehicleID]; exists {
+		return &manager.realTimeVehicles[index], nil
 	}
 
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
