@@ -10,8 +10,9 @@ import (
 // and middleware. At the moment this only contains a copy of the Config struct and a
 // logger, but it will grow to include a lot more as our build progresses.
 type Application struct {
-	Config      appconf.Config
-	GtfsConfig  gtfs.Config
-	Logger      *slog.Logger
-	GtfsManager *gtfs.Manager
+	Config              appconf.Config
+	GtfsConfig          gtfs.Config
+	Logger              *slog.Logger
+	GtfsManager         *gtfs.Manager
+	DirectionCalculator *gtfs.DirectionCalculator
 }

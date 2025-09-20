@@ -156,7 +156,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 
 		stopsList = append(stopsList, models.Stop{
 			Code:               stop.Code.String,
-			Direction:          "Direction", // TODO calculate stop direction
+			Direction:          api.calculateStopDirection(ctx, stop.ID),
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
@@ -314,4 +314,17 @@ func formatStopIDs(agencyID string, stops map[string]bool) []string {
 		stopIDs = append(stopIDs, stopID)
 	}
 	return stopIDs
+}
+
+func (api *RestAPI) calculateStopDirection(ctx context.Context, stopID string) string {
+	if api.DirectionCalculator == nil {
+		return models.UnknownValue // Fallback for tests
+	}
+
+	direction := api.DirectionCalculator.CalculateStopDirection(ctx, stopID)
+	if direction == "" {
+		return models.UnknownValue // Default when calculation fails
+	}
+
+	return direction
 }

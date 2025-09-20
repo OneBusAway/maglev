@@ -12,6 +12,12 @@ run: build
     	-realtime-auth-header-value=$(REALTIME_AUTH_HEADER_VALUE) \
     	-service-alerts-url=https://webservices.umoiq.com/api/gtfs-rt/v1/service-alerts/unitrans
 
+# Development target using local test data (no API key needed)
+run-dev: build
+	bin/maglev \
+		-data-path=./gtfs.db \
+		-gtfs-url=./testdata/raba.zip
+
 build:
 	go build -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 

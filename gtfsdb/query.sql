@@ -605,3 +605,29 @@ ORDER BY
 SELECT *
 FROM trips
 WHERE service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetShapePointsForTrip :many
+SELECT DISTINCT shapes.lat, shapes.lon, shapes.shape_pt_sequence
+FROM shapes
+JOIN trips ON trips.shape_id = shapes.shape_id
+WHERE trips.id = ?
+ORDER BY shapes.shape_pt_sequence;
+
+-- name: GetNextStopInTrip :one
+SELECT stops.lat, stops.lon, stops.id
+FROM stop_times
+JOIN stops ON stops.id = stop_times.stop_id
+WHERE stop_times.trip_id = ?
+  AND stop_times.stop_sequence > ?
+ORDER BY stop_times.stop_sequence ASC
+LIMIT 1;
+
+-- name: GetStopsWithTripContext :many
+SELECT
+    s.id, s.lat, s.lon, s.name, s.code,
+    st.trip_id, st.stop_sequence,
+    t.shape_id
+FROM stops s
+JOIN stop_times st ON s.id = st.stop_id
+JOIN trips t ON st.trip_id = t.id
+WHERE s.id = ?;

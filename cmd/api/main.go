@@ -57,11 +57,17 @@ func main() {
 		logger.Error("failed to initialize GTFS manager", "error", err)
 	}
 
+	var directionCalculator *gtfs.DirectionCalculator
+	if gtfsManager != nil {
+		directionCalculator = gtfs.NewDirectionCalculator(gtfsManager.GtfsDB.Queries)
+	}
+
 	coreApp := &app.Application{
-		Config:      cfg,
-		GtfsConfig:  gtfsCfg,
-		Logger:      logger,
-		GtfsManager: gtfsManager,
+		Config:              cfg,
+		GtfsConfig:          gtfsCfg,
+		Logger:              logger,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: directionCalculator,
 	}
 
 	api := restapi.NewRestAPI(coreApp)

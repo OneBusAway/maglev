@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/internal/models"
 )
 
 // ExtractCodeID extracts the `code_id` from a string in the format `{agency_id}_{code_id}`.
@@ -53,7 +54,7 @@ func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	case gtfs.WheelchairBoarding_NotPossible:
 		return "NOT_ACCESSIBLE"
 	default:
-		return "UNKNOWN"
+		return models.UnknownValue
 	}
 }
 

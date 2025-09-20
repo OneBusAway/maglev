@@ -9,11 +9,11 @@ import (
 
 func TestStopCreation(t *testing.T) {
 	code := "22005"
-	direction := "Direction"
+	direction := UnknownValue
 	id := "unitrans_22005"
 	name := "2nd St & B St (EB)"
 	parent := ""
-	wheelchairBoarding := "UNKNOWN"
+	wheelchairBoarding := UnknownValue
 	lat := 38.542661
 	lon := -121.743914
 	locationType := 0
@@ -38,11 +38,11 @@ func TestStopCreation(t *testing.T) {
 func TestStopJSON(t *testing.T) {
 	stop := Stop{
 		Code:               "22005",
-		Direction:          "Direction",
+		Direction:          UnknownValue,
 		ID:                 "unitrans_22005",
 		Name:               "2nd St & B St (EB)",
 		Parent:             "",
-		WheelchairBoarding: "UNKNOWN",
+		WheelchairBoarding: UnknownValue,
 		Lat:                38.542661,
 		Lon:                -121.743914,
 		LocationType:       0,
@@ -87,9 +87,9 @@ func TestStopWithEmptyValues(t *testing.T) {
 }
 
 func TestStopsResponseJSON(t *testing.T) {
-	stop1 := NewStop("22005", "Direction", "unitrans_22005", "2nd St & B St (EB)", "", "UNKNOWN",
+	stop1 := NewStop("22005", UnknownValue, "unitrans_22005", "2nd St & B St (EB)", "", UnknownValue,
 		38.542661, -121.743914, 0, []string{"unitrans_FMS"}, []string{"unitrans_FMS"})
-	stop2 := NewStop("22002", "Direction", "unitrans_22002", "1st St & C St / Downtown (EB)", "", "UNKNOWN",
+	stop2 := NewStop("22002", UnknownValue, "unitrans_22002", "1st St & C St / Downtown (EB)", "", UnknownValue,
 		38.541523, -121.742543, 0, []string{"unitrans_M", "unitrans_W"}, []string{"unitrans_M", "unitrans_W"})
 
 	response := StopsResponse{

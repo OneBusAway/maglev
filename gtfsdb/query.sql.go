@@ -1000,6 +1000,34 @@ func (q *Queries) GetImportMetadata(ctx context.Context) (ImportMetadatum, error
 	return i, err
 }
 
+const getNextStopInTrip = `-- name: GetNextStopInTrip :one
+SELECT stops.lat, stops.lon, stops.id
+FROM stop_times
+JOIN stops ON stops.id = stop_times.stop_id
+WHERE stop_times.trip_id = ?
+  AND stop_times.stop_sequence > ?
+ORDER BY stop_times.stop_sequence ASC
+LIMIT 1
+`
+
+type GetNextStopInTripParams struct {
+	TripID       string
+	StopSequence int64
+}
+
+type GetNextStopInTripRow struct {
+	Lat float64
+	Lon float64
+	ID  string
+}
+
+func (q *Queries) GetNextStopInTrip(ctx context.Context, arg GetNextStopInTripParams) (GetNextStopInTripRow, error) {
+	row := q.queryRow(ctx, q.getNextStopInTripStmt, getNextStopInTrip, arg.TripID, arg.StopSequence)
+	var i GetNextStopInTripRow
+	err := row.Scan(&i.Lat, &i.Lon, &i.ID)
+	return i, err
+}
+
 const getOrderedStopIDsForTrip = `-- name: GetOrderedStopIDsForTrip :many
 SELECT stop_id
 FROM stop_times
@@ -1501,6 +1529,43 @@ func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shap
 	return items, nil
 }
 
+const getShapePointsForTrip = `-- name: GetShapePointsForTrip :many
+SELECT DISTINCT shapes.lat, shapes.lon, shapes.shape_pt_sequence
+FROM shapes
+JOIN trips ON trips.shape_id = shapes.shape_id
+WHERE trips.id = ?
+ORDER BY shapes.shape_pt_sequence
+`
+
+type GetShapePointsForTripRow struct {
+	Lat             float64
+	Lon             float64
+	ShapePtSequence int64
+}
+
+func (q *Queries) GetShapePointsForTrip(ctx context.Context, id string) ([]GetShapePointsForTripRow, error) {
+	rows, err := q.query(ctx, q.getShapePointsForTripStmt, getShapePointsForTrip, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetShapePointsForTripRow
+	for rows.Next() {
+		var i GetShapePointsForTripRow
+		if err := rows.Scan(&i.Lat, &i.Lon, &i.ShapePtSequence); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getShapesGroupedByTripHeadSign = `-- name: GetShapesGroupedByTripHeadSign :many
 SELECT DISTINCT s.lat, s.lon, s.shape_pt_sequence
 FROM shapes s
@@ -1862,6 +1927,60 @@ func (q *Queries) GetStopsForRoute(ctx context.Context, id string) ([]Stop, erro
 			&i.Timezone,
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStopsWithTripContext = `-- name: GetStopsWithTripContext :many
+SELECT
+    s.id, s.lat, s.lon, s.name, s.code,
+    st.trip_id, st.stop_sequence,
+    t.shape_id
+FROM stops s
+JOIN stop_times st ON s.id = st.stop_id
+JOIN trips t ON st.trip_id = t.id
+WHERE s.id = ?
+`
+
+type GetStopsWithTripContextRow struct {
+	ID           string
+	Lat          float64
+	Lon          float64
+	Name         sql.NullString
+	Code         sql.NullString
+	TripID       string
+	StopSequence int64
+	ShapeID      sql.NullString
+}
+
+func (q *Queries) GetStopsWithTripContext(ctx context.Context, id string) ([]GetStopsWithTripContextRow, error) {
+	rows, err := q.query(ctx, q.getStopsWithTripContextStmt, getStopsWithTripContext, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopsWithTripContextRow
+	for rows.Next() {
+		var i GetStopsWithTripContextRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Lat,
+			&i.Lon,
+			&i.Name,
+			&i.Code,
+			&i.TripID,
+			&i.StopSequence,
+			&i.ShapeID,
 		); err != nil {
 			return nil, err
 		}

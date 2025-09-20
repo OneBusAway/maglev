@@ -134,7 +134,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		results = append(results, models.NewStop(
 			stop.Id,
-			"Direction",
+			models.UnknownValue,
 			utils.FormCombinedID(agency.ID, stop.Id),
 			stop.Name,
 			"",

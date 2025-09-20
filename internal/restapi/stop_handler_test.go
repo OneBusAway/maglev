@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -50,7 +51,7 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, stopID, entry["id"])
 	assert.Equal(t, stops[0].Name, entry["name"])
 	assert.Equal(t, stops[0].Code, entry["code"])
-	assert.Equal(t, "UNKNOWN", entry["wheelchairBoarding"])
+	assert.Equal(t, models.UnknownValue, entry["wheelchairBoarding"])
 	assert.Equal(t, *stops[0].Latitude, entry["lat"])
 	assert.Equal(t, *stops[0].Longitude, entry["lon"])
 
