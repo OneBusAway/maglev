@@ -43,6 +43,8 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 			},
 		},
 	})
+
+	m.realTimeVehicleLookupByVehicle[vehicleID] = len(m.realTimeVehicles) - 1
 }
 
 func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
