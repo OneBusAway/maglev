@@ -279,10 +279,6 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
-	if idx, ok := manager.realTimeVehicleLookupByTrip[tripID]; ok {
-		return &manager.realTimeVehicles[idx]
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -292,18 +288,24 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 		return nil
 	}
 
+	requestedBlockID := requestedTrip.BlockID.String
+
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get trips for block %s: %v\n", requestedTrip.BlockID.String, err)
+		fmt.Fprintf(os.Stderr, "Could not get trips for block %s: %v\n", requestedBlockID, err)
 		return nil
 	}
 
+	blockTripIDs := make(map[string]bool)
 	for _, trip := range blockTrips {
-		if idx, ok := manager.realTimeVehicleLookupByTrip[trip.ID]; ok {
-			return &manager.realTimeVehicles[idx]
-		}
+		blockTripIDs[trip.ID] = true
 	}
 
+	for _, v := range manager.realTimeVehicles {
+		if v.Trip != nil && v.Trip.ID.ID != "" && blockTripIDs[v.Trip.ID.ID] {
+			return &v
+		}
+	}
 	return nil
 }
 
@@ -319,7 +321,6 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
 }
 
-// TODO, remove this and use GetTripUpdateByID
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
