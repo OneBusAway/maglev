@@ -81,3 +81,11 @@ func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
 
 	return vehicle.Trip.ID.ID
 }
+
+func getCurrentVehicleStopSequence(vehicle *gtfs.Vehicle) *int {
+	if vehicle == nil || vehicle.CurrentStopSequence == nil {
+		return nil
+	}
+	val := int(*vehicle.CurrentStopSequence)
+	return &val
+}
