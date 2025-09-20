@@ -276,6 +276,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
 
+	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
+
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(agencyID, route.ID),
 		route.ShortName.String,
@@ -289,7 +291,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		scheduledDepartureTimeMs,
 		predictedArrivalTime,
 		predictedDepartureTime,
-		getLastUpdateTime(vehicle),
+		lastUpdateTime,
 		predicted,
 		true,                               // arrivalEnabled
 		true,                               // departureEnabled
@@ -505,6 +507,7 @@ func (api *RestAPI) getPredictedTimes(
 	return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli()
 }
 
+// TODO: Distance sometimes outputs negative values even when the vehicle has not passed the stop.
 func (api *RestAPI) getRemainingDistanceToStop(ctx context.Context, tripID string, stopID string, vehicle *gtfs.Vehicle) *float64 {
 	if vehicle == nil || vehicle.Position == nil || vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
 		return nil
@@ -546,20 +549,4 @@ func getNumberOfStopsAway(targetStopSequence int, vehicle *gtfs.Vehicle) *int {
 
 	numberOfStopsAway := targetStopSequence - *currentVehicleStopSequence - 1
 	return &numberOfStopsAway
-}
-
-func getCurrentVehicleStopSequence(vehicle *gtfs.Vehicle) *int {
-	if vehicle == nil || vehicle.CurrentStopSequence == nil {
-		return nil
-	}
-
-	val := int(*vehicle.CurrentStopSequence)
-	return &val
-}
-
-func getLastUpdateTime(vehicle *gtfs.Vehicle) int64 {
-	if vehicle == nil || vehicle.Timestamp == nil {
-		return 0
-	}
-	return vehicle.Timestamp.UnixMilli()
 }
