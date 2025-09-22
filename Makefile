@@ -2,7 +2,7 @@
 
 include .env
 
-run: build
+run: generate build
 	bin/maglev \
 		-data-path=./gtfs.db \
     	-gtfs-url=https://unitrans.ucdavis.edu/media/gtfs/Unitrans_GTFS.zip \
@@ -37,7 +37,7 @@ check-golangci-lint:
 lint: check-golangci-lint
 	golangci-lint run
 
-test:
+test: generate
 	go test ./...
 
 models:
@@ -45,3 +45,6 @@ models:
 
 watch:
 	air
+
+generate:
+	go generate internal/restapi/config.go
