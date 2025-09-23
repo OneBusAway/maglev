@@ -6,3 +6,4 @@ __debug_bin*
 *.db-journal
 api
 gtfsdb/tmp/main
+internal/restapi/git/git_properties.txt
