@@ -21,4 +21,4 @@ echo # adds a new line
 git diff --exit-code > /dev/null
 echo $? #get git.dirty
 git config --get remote.origin.url #gets git.remote.origin.url
-echo "N/A" #Needs Tags
+echo "N/A" | tr '\n' ' ' #Needs Tags

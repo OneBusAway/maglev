@@ -1,11 +1,24 @@
 package restapi
 
 import (
+	_ "embed"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"testing"
 	"time"
+	"os"
+	"strings"
 )
+//go:embed git/git_properties.txt
+var git_Properties string
+func TestConfigDataGeneration(t *testing.T) {
+	_, err := os.Stat("git/git_properties.txt")
+	assert.True(t, err==nil, "Something is wrong with git/git_properties.txt file")
+	
+	lines := strings.Split(git_Properties, "\n") //splits each property
+	assert.Equal(t, 20, len(lines), "git_properties.txt should have 20 lines")
+	
+}
 
 func TestConfigRequiresValidApiKey(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/config.json?key=invalid")
@@ -41,9 +54,12 @@ func TestConfig(t *testing.T) {
 	// Check that entry exists
 	entry, ok := responseData["entry"].(map[string]interface{})
 	assert.True(t, ok, "could not find entry in response data")
-
+	GitProperties, ok := entry["gitProperties"].(map[string]interface{})
+	assert.True(t, ok, "could not find gitProperties in response data")
 	
-	
+	dirty,ok := GitProperties["git.dirty"].(string)
+	assert.True(t, ok, "could not find git.dirty in gitProperties")
+	assert.True(t, dirty=="true" || dirty=="false", "git.dirty should be true or false string")
 	
 	_, ok = entry["id"].(string)
 	assert.True(t, ok, "could not find id in entry")
