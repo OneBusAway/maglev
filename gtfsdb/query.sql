@@ -631,3 +631,20 @@ FROM stops s
 JOIN stop_times st ON s.id = st.stop_id
 JOIN trips t ON st.trip_id = t.id
 WHERE s.id = ?;
+
+-- name: GetStopTimesForStopInWindow :many
+SELECT
+    st.*,
+    t.route_id,
+    t.service_id,
+    t.trip_headsign,
+    t.block_id
+FROM stop_times st
+         JOIN trips t ON st.trip_id = t.id
+WHERE st.stop_id = @stop_id
+  AND (
+    (st.arrival_time BETWEEN @window_start_nanos AND @window_end_nanos)
+        OR
+    (st.departure_time BETWEEN @window_start_nanos AND @window_end_nanos)
+    )
+ORDER BY st.arrival_time;
