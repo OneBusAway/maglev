@@ -370,17 +370,12 @@ func convertToNanosSinceMidnight(t time.Time) int64 {
 }
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
 	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false)
-	nearbyStopIDs := make([]string, len(nearbyStops))
-	found := false
+	var nearbyStopIDs []string
 	for _, s := range nearbyStops {
 		if s.Id != stopID {
 			nearbyStopIDs = []string{utils.FormCombinedID(agencyID, s.Id)}
-			found = true
 			break
 		}
-	}
-	if !found {
-		nearbyStopIDs = []string{}
 	}
 	return nearbyStopIDs
 }
