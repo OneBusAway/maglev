@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -280,7 +281,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			"",                                        // predictedOccupancy
 			"",                                        // historicalOccupancy
 			tripStatus,                                // tripStatus
-			[]string{},                                // situationIDs
+			api.GetSituationIDsForTrip(st.TripID),     // situationIDs
 		)
 
 		arrivals = append(arrivals, *arrival)
@@ -357,7 +358,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		references.Routes = append(references.Routes, routeRef)
 	}
 
-	response := models.NewArrivalsAndDepartureResponse(arrivals, references, []string{}, []string{}, stopID)
+	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, agencyID)
+	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, []string{}, stopID)
 	api.sendResponse(w, r, response)
 }
 
@@ -365,4 +367,20 @@ func convertToNanosSinceMidnight(t time.Time) int64 {
 	midnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	duration := t.Sub(midnight)
 	return duration.Nanoseconds()
+}
+func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
+	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false)
+	nearbyStopIDs := make([]string, len(nearbyStops))
+	found := false
+	for _, s := range nearbyStops {
+		if s.Id != stopID {
+			nearbyStopIDs = []string{utils.FormCombinedID(agencyID, s.Id)}
+			found = true
+			break
+		}
+	}
+	if !found {
+		nearbyStopIDs = []string{}
+	}
+	return nearbyStopIDs
 }
