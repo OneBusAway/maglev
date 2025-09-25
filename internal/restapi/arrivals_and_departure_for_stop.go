@@ -164,7 +164,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		routeIDSet[route.ID] = &route
 		tripIDSet[trip.ID] = &trip
 
-		loc, _ := time.LoadLocation(agency.Timezone)
 		serviceDateMillis := currentTime.UnixMilli()
 
 		serviceMidnight := time.Date(
