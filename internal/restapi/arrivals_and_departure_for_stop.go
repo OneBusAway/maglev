@@ -108,37 +108,19 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	// Filter stop times to only include active trips
-	var stopTimes []struct {
-		TripID        string
-		ArrivalTime   int64
-		DepartureTime int64
-		StopSequence  int64
-		RouteID       string
-		ServiceID     string
-		TripHeadsign  string
-		BlockID       string
-	}
+	var stopTimes []gtfsdb.GetStopTimesForStopInWindowRow
 
 	for _, st := range allStopTimes {
 		if activeTripIDs[st.TripID] {
-			stopTimes = append(stopTimes, struct {
-				TripID        string
-				ArrivalTime   int64
-				DepartureTime int64
-				StopSequence  int64
-				RouteID       string
-				ServiceID     string
-				TripHeadsign  string
-				BlockID       string
-			}{
+			stopTimes = append(stopTimes, gtfsdb.GetStopTimesForStopInWindowRow{
 				TripID:        st.TripID,
 				ArrivalTime:   st.ArrivalTime,
 				DepartureTime: st.DepartureTime,
 				StopSequence:  st.StopSequence,
 				RouteID:       st.RouteID,
 				ServiceID:     st.ServiceID,
-				TripHeadsign:  st.TripHeadsign.String,
-				BlockID:       st.BlockID.String,
+				TripHeadsign:  st.TripHeadsign,
+				BlockID:       st.BlockID,
 			})
 		}
 	}
@@ -255,11 +237,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 					}
 				}
 
-				// TODO: Calculate actual distance and stops away based on vehicle position
-				if vehicle.Position != nil {
-					distanceFromStop = 0
-					numberOfStopsAway = 0
-				}
 			}
 		}
 
@@ -281,7 +258,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			route.ShortName.String,                    // routeShortName
 			route.LongName.String,                     // routeLongName
 			utils.FormCombinedID(agencyID, st.TripID), // tripID
-			st.TripHeadsign,                           // tripHeadsign
+			st.TripHeadsign.String,                    // tripHeadsign
 			stopID,                                    // stopID
 			vehicleID,                                 // vehicleID
 			serviceDateMillis,                         // serviceDate
