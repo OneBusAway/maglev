@@ -21,20 +21,23 @@ const NoRadiusLimit = -1
 
 // Manager manages the GTFS data and provides methods to access it
 type Manager struct {
-	gtfsSource       string
-	gtfsData         *gtfs.Static
-	GtfsDB           *gtfsdb.Client
-	lastUpdated      time.Time
-	isLocalFile      bool
-	realTimeTrips    []gtfs.Trip
-	realTimeVehicles []gtfs.Vehicle
-	realTimeMutex    sync.RWMutex
-	realTimeAlerts   []gtfs.Alert
-	staticMutex      sync.RWMutex // Protects gtfsData and lastUpdated
-	config           Config
-	shutdownChan     chan struct{}
-	wg               sync.WaitGroup
-	shutdownOnce     sync.Once
+	gtfsSource                     string
+	gtfsData                       *gtfs.Static
+	GtfsDB                         *gtfsdb.Client
+	lastUpdated                    time.Time
+	isLocalFile                    bool
+	realTimeTrips                  []gtfs.Trip
+	realTimeVehicles               []gtfs.Vehicle
+	realTimeMutex                  sync.RWMutex
+	realTimeAlerts                 []gtfs.Alert
+	realTimeTripLookup             map[string]int
+	realTimeVehicleLookupByTrip    map[string]int
+	realTimeVehicleLookupByVehicle map[string]int
+	staticMutex                    sync.RWMutex // Protects gtfsData and lastUpdated
+	config                         Config
+	shutdownChan                   chan struct{}
+	wg                             sync.WaitGroup
+	shutdownOnce                   sync.Once
 }
 
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
@@ -48,10 +51,13 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		gtfsSource:   config.GtfsURL,
-		isLocalFile:  isLocalFile,
-		config:       config,
-		shutdownChan: make(chan struct{}),
+		gtfsSource:                     config.GtfsURL,
+		isLocalFile:                    isLocalFile,
+		config:                         config,
+		shutdownChan:                   make(chan struct{}),
+		realTimeTripLookup:             make(map[string]int),
+		realTimeVehicleLookupByTrip:    make(map[string]int),
+		realTimeVehicleLookupByVehicle: make(map[string]int),
 	}
 	manager.setStaticGTFS(staticData)
 
@@ -308,10 +314,8 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
-	for _, v := range manager.realTimeVehicles {
-		if v.ID.ID == vehicleID {
-			return &v, nil
-		}
+	if index, exists := manager.realTimeVehicleLookupByVehicle[vehicleID]; exists {
+		return &manager.realTimeVehicles[index], nil
 	}
 
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
@@ -328,6 +332,22 @@ func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 		}
 	}
 	return updates
+}
+
+func (manager *Manager) GetVehicleLastUpdateTime(vehicle *gtfs.Vehicle) int64 {
+	if vehicle == nil || vehicle.Timestamp == nil {
+		return 0
+	}
+	return vehicle.Timestamp.UnixMilli()
+}
+
+func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+	if index, exists := manager.realTimeTripLookup[tripID]; exists {
+		return &manager.realTimeTrips[index], nil
+	}
+	return nil, fmt.Errorf("trip with ID %s not found", tripID)
 }
 
 func (manager *Manager) PrintStatistics() {

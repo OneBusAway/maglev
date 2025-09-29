@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -237,27 +238,45 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	status, _ := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
-	// TODO: Currently we set the predicted time to the scheduled time, this is not accurate
 	if status != nil {
 		tripStatus = status
+
 		predictedArrivalTime = scheduledArrivalTimeMs
 		predictedDepartureTime = scheduledDepartureTimeMs
 
-		if vehicle != nil && vehicle.Position != nil {
-			// TODO: Calculate actual distance and stops away
-			distanceFromStop = 0
-			numberOfStopsAway = 0
-		}
-	}
+		predictedArrival, predictedDeparture := api.getPredictedTimes(tripID, stopCode, scheduledArrivalTime, scheduledDepartureTime)
 
-	if !predicted {
-		predictedArrivalTime = 0
-		predictedDepartureTime = 0
+		if predictedArrival != 0 && predictedDeparture != 0 {
+			predictedArrivalTime = predictedArrival
+			predictedDepartureTime = predictedDeparture
+			predicted = true
+		} else {
+			predicted = false
+		}
+
+		if vehicle != nil && vehicle.Position != nil {
+			// Calculate remaining distance along the trip shape to this stop
+			if d := api.getRemainingDistanceToStop(ctx, tripID, stopCode, vehicle); d != nil {
+				distanceFromStop = *d
+			} else {
+				distanceFromStop = 0
+			}
+			numberOfStopsAwayPtr := getNumberOfStopsAway(int(targetStopTime.StopSequence), vehicle)
+
+			if numberOfStopsAwayPtr != nil {
+				numberOfStopsAway = *numberOfStopsAwayPtr
+			} else {
+				numberOfStopsAway = -1
+			}
+
+		}
 	}
 
 	totalStopsInTrip := len(stopTimes)
 
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+
+	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(agencyID, route.ID),
@@ -272,7 +291,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		scheduledDepartureTimeMs,
 		predictedArrivalTime,
 		predictedDepartureTime,
-		currentTime.UnixMilli(),
+		lastUpdateTime,
 		predicted,
 		true,                               // arrivalEnabled
 		true,                               // departureEnabled
@@ -422,4 +441,112 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	response := models.NewEntryResponse(arrival, references)
 	api.sendResponse(w, r, response)
+}
+
+func (api *RestAPI) getPredictedTimes(
+	tripID string,
+	stopCode string,
+	scheduledArrivalTime, scheduledDepartureTime time.Time,
+) (predictedArrivalTime, predictedDepartureTime int64) {
+
+	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
+	if realTimeTrip == nil || len(realTimeTrip.StopTimeUpdates) == 0 {
+		return 0, 0
+	}
+
+	var arrivalOffset, departureOffset *int64
+
+	for _, stu := range realTimeTrip.StopTimeUpdates {
+		if stu.StopID != nil && *stu.StopID == stopCode {
+
+			if stu.Arrival != nil && stu.Arrival.Time != nil {
+				offset := stu.Arrival.Time.Sub(scheduledArrivalTime).Nanoseconds()
+				arrivalOffset = &offset
+			}
+			if stu.Departure != nil && stu.Departure.Time != nil {
+				offset := stu.Departure.Time.Sub(scheduledDepartureTime).Nanoseconds()
+				departureOffset = &offset
+			}
+			break
+		}
+	}
+
+	if arrivalOffset == nil && departureOffset == nil {
+		return 0, 0
+	}
+
+	// Rule 1: arrival == departure → copy whichever delay exists to both
+	if scheduledArrivalTime.Equal(scheduledDepartureTime) {
+		var offset int64
+		if arrivalOffset != nil {
+			offset = *arrivalOffset
+		} else {
+			offset = *departureOffset
+		}
+
+		predictedArrival := scheduledArrivalTime.Add(time.Duration(offset))
+		predictedDeparture := scheduledDepartureTime.Add(time.Duration(offset))
+		return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli()
+	}
+
+	// Rule 2: arrival < departure
+	var predictedArrival, predictedDeparture time.Time
+
+	if arrivalOffset != nil {
+		predictedArrival = scheduledArrivalTime.Add(time.Duration(*arrivalOffset))
+	} else {
+		predictedArrival = scheduledArrivalTime
+	}
+
+	if departureOffset != nil {
+		predictedDeparture = scheduledDepartureTime.Add(time.Duration(*departureOffset))
+	} else {
+		predictedDeparture = scheduledDepartureTime
+	}
+
+	return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli()
+}
+
+// TODO: Distance sometimes outputs negative values even when the vehicle has not passed the stop.
+func (api *RestAPI) getRemainingDistanceToStop(ctx context.Context, tripID string, stopID string, vehicle *gtfs.Vehicle) *float64 {
+	if vehicle == nil || vehicle.Position == nil || vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
+		return nil
+	}
+
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
+	if err != nil || len(shapeRows) < 2 {
+		stop, e := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
+		if e != nil {
+			return nil
+		}
+		d := utils.Haversine(float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude), stop.Lat, stop.Lon)
+		return &d
+	}
+
+	shapePoints := make([]gtfs.ShapePoint, len(shapeRows))
+	for i, sp := range shapeRows {
+		shapePoints[i] = gtfs.ShapePoint{Latitude: sp.Lat, Longitude: sp.Lon}
+	}
+
+	vehicleAlong := getDistanceAlongShape(float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude), shapePoints)
+
+	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
+	if err != nil {
+		return nil
+	}
+	stopAlong := getDistanceAlongShape(stop.Lat, stop.Lon, shapePoints)
+
+	remaining := stopAlong - vehicleAlong
+
+	return &remaining
+}
+
+func getNumberOfStopsAway(targetStopSequence int, vehicle *gtfs.Vehicle) *int {
+	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
+	if currentVehicleStopSequence == nil {
+		return nil
+	}
+
+	numberOfStopsAway := targetStopSequence - *currentVehicleStopSequence - 1
+	return &numberOfStopsAway
 }
