@@ -42,6 +42,19 @@ func NewEntryResponse(entry interface{}, references ReferencesModel) ResponseMod
 	}
 	return NewOKResponse(data)
 }
+func NewArrivalsAndDepartureResponse(arrivalsAndDepartures interface{}, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string) ResponseModel {
+	entryData := map[string]interface{}{
+		"arrivalsAndDepartures": arrivalsAndDepartures,
+		"nearbyStopIds":         nearbyStopIds,
+		"situationIds":          situationIds,
+		"stopId":                stopId,
+	}
+	data := map[string]interface{}{
+		"entry":      entryData,
+		"references": references,
+	}
+	return NewOKResponse(data)
+}
 
 // NewResponse Helper function to create a standard response
 func NewResponse(code int, data interface{}, text string) ResponseModel {

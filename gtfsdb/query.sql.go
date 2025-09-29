@@ -1791,6 +1791,85 @@ func (q *Queries) GetStopTimesByStopIDs(ctx context.Context, stopIds []string) (
 	return items, nil
 }
 
+const getStopTimesForStopInWindow = `-- name: GetStopTimesForStopInWindow :many
+SELECT
+    st.trip_id, st.arrival_time, st.departure_time, st.stop_id, st.stop_sequence, st.stop_headsign, st.pickup_type, st.drop_off_type, st.shape_dist_traveled, st.timepoint,
+    t.route_id,
+    t.service_id,
+    t.trip_headsign,
+    t.block_id
+FROM stop_times st
+         JOIN trips t ON st.trip_id = t.id
+WHERE st.stop_id = ?1
+  AND (
+    (st.arrival_time BETWEEN ?2 AND ?3)
+        OR
+    (st.departure_time BETWEEN ?2 AND ?3)
+    )
+ORDER BY st.arrival_time
+`
+
+type GetStopTimesForStopInWindowParams struct {
+	StopID           string
+	WindowStartNanos int64
+	WindowEndNanos   int64
+}
+
+type GetStopTimesForStopInWindowRow struct {
+	TripID            string
+	ArrivalTime       int64
+	DepartureTime     int64
+	StopID            string
+	StopSequence      int64
+	StopHeadsign      sql.NullString
+	PickupType        sql.NullInt64
+	DropOffType       sql.NullInt64
+	ShapeDistTraveled sql.NullFloat64
+	Timepoint         sql.NullInt64
+	RouteID           string
+	ServiceID         string
+	TripHeadsign      sql.NullString
+	BlockID           sql.NullString
+}
+
+func (q *Queries) GetStopTimesForStopInWindow(ctx context.Context, arg GetStopTimesForStopInWindowParams) ([]GetStopTimesForStopInWindowRow, error) {
+	rows, err := q.query(ctx, q.getStopTimesForStopInWindowStmt, getStopTimesForStopInWindow, arg.StopID, arg.WindowStartNanos, arg.WindowEndNanos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopTimesForStopInWindowRow
+	for rows.Next() {
+		var i GetStopTimesForStopInWindowRow
+		if err := rows.Scan(
+			&i.TripID,
+			&i.ArrivalTime,
+			&i.DepartureTime,
+			&i.StopID,
+			&i.StopSequence,
+			&i.StopHeadsign,
+			&i.PickupType,
+			&i.DropOffType,
+			&i.ShapeDistTraveled,
+			&i.Timepoint,
+			&i.RouteID,
+			&i.ServiceID,
+			&i.TripHeadsign,
+			&i.BlockID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStopTimesForTrip = `-- name: GetStopTimesForTrip :many
 SELECT
     trip_id, arrival_time, departure_time, stop_id, stop_sequence, stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
