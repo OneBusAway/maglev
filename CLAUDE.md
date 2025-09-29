@@ -2,18 +2,44 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Getting Started
+
+**Prerequisites**:
+- Go 1.24.2 or later
+- Copy `.env.example` to `.env` and configure required values (needed for `make run`)
+
+**Verify installation**: `http://localhost:4000/api/where/current-time.json?key=test`
+
 ## Development Commands
 
 All commands are managed through the Makefile:
 
-- `make run` - Build and run the server with test API key
+- `make run` - Build and run the server with Unitrans real-time data (requires `.env` with API keys)
+- `make run-dev` - Build and run with local RABA test data (no API keys needed)
 - `make build` - Build the application binary to bin/maglev
 - `make test` - Run all tests
 - `make lint` - Run golangci-lint (requires installation: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
 - `make coverage` - Generate test coverage report with HTML output
 - `make models` - Regenerate sqlc models from SQL queries
-- `make watch` - Run with Air for live reloading during development
+- `make watch` - Run with Air for live reloading during development (automatically rebuilds and restarts on code changes)
 - `make clean` - Clean build artifacts
+
+## Debugging
+
+Use Delve for debugging:
+
+```bash
+# Install Delve
+go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Build the app
+make build
+
+# Start the debugger
+dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./bin/maglev
+```
+
+Then connect from GoLand IDE or other Delve-compatible debugger.
 
 ## Important: Requirements to make a commit
 
