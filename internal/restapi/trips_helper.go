@@ -290,7 +290,7 @@ func findClosestStop(api *RestAPI, ctx context.Context, pos *gtfs.Position, stop
 		return "", 0
 	}
 
-	var minDist float64 = math.MaxFloat64
+	var minDist = math.MaxFloat64
 
 	stopIDs := make([]string, len(stopTimes))
 	for i, st := range stopTimes {
@@ -511,7 +511,7 @@ func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopI
 	stopLat, stopLon := stop.Lat, stop.Lon
 
 	// Find the closest point on the shape to this stop
-	var minDistance float64 = math.Inf(1)
+	var minDistance = math.Inf(1)
 	var closestSegmentIndex int
 	var projectionRatio float64
 

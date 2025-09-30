@@ -62,14 +62,15 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 	resp, err := http.Get(server.URL + "/api/where/arrival-and-departure-for-stop/" + stopID +
 		".json?key=TEST&tripId=" + tripID + "&serviceDate=" + fmt.Sprintf("%d", serviceDate))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var model models.ResponseModel
 	err = json.NewDecoder(resp.Body).Decode(&model)
 	require.NoError(t, err)
 
 	// The response might be 404 if the trip doesn't serve this stop, which is acceptable
-	if resp.StatusCode == http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
@@ -111,10 +112,10 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 		stops_ref, ok := references["stops"].([]interface{})
 		assert.True(t, ok)
 		assert.NotEmpty(t, stops_ref)
-	} else if resp.StatusCode == http.StatusNotFound {
+	case http.StatusNotFound:
 		// This is acceptable if the trip doesn't serve this stop
 		assert.Equal(t, http.StatusNotFound, model.Code)
-	} else {
+	default:
 		t.Fatalf("Unexpected status code: %d", resp.StatusCode)
 	}
 }
@@ -166,7 +167,8 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 			"&serviceDate="+fmt.Sprintf("%d", serviceDate)+"&time="+strconv.FormatInt(timeMs, 10))
 
 	// The response might be 404 if the trip doesn't serve this stop, which is acceptable
-	if resp.StatusCode == http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
 		assert.Equal(t, http.StatusOK, model.Code)
 
 		data, ok := model.Data.(map[string]interface{})
@@ -178,7 +180,7 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 		// The response should be successful
 		assert.Equal(t, stopID, entry["stopId"])
 		assert.Equal(t, tripID, entry["tripId"])
-	} else if resp.StatusCode == http.StatusNotFound {
+	case http.StatusNotFound:
 		// This is acceptable if the trip doesn't serve this stop
 		assert.Equal(t, http.StatusNotFound, model.Code)
 	}
@@ -201,7 +203,7 @@ func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 	resp, err := http.Get(server.URL + "/api/where/arrival-and-departure-for-stop/" + stopID +
 		".json?key=TEST&serviceDate=" + fmt.Sprintf("%d", serviceDate))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
@@ -234,7 +236,7 @@ func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
 	resp, err := http.Get(server.URL + "/api/where/arrival-and-departure-for-stop/" + stopID +
 		".json?key=TEST&tripId=" + tripID)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
