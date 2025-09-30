@@ -63,10 +63,11 @@ OR REPLACE INTO stops (
     location_type,
     timezone,
     wheelchair_boarding,
-    platform_code
+    platform_code,
+    direction
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: CreateCalendar :one
 INSERT
@@ -87,9 +88,9 @@ VALUES
 
 -- name: CreateShape :one
 INSERT
-OR REPLACE INTO shapes (shape_id, lat, lon, shape_pt_sequence)
+OR REPLACE INTO shapes (shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled)
 VALUES
-    (?, ?, ?, ?) RETURNING *;
+    (?, ?, ?, ?, ?) RETURNING *;
 
 -- name: CreateStopTime :one
 INSERT
@@ -102,10 +103,11 @@ OR REPLACE INTO stop_times (
     stop_headsign,
     pickup_type,
     drop_off_type,
+    shape_dist_traveled,
     timepoint
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: CreateTrip :one
 INSERT
@@ -220,6 +222,14 @@ FROM
     stops
 WHERE
     id = ?;
+
+-- name: ListStops :many
+SELECT
+    *
+FROM
+    stops
+ORDER BY
+    id;
 
 -- name: GetRoutesForStop :many
 SELECT DISTINCT
@@ -487,7 +497,8 @@ SELECT
     s.shape_id,
     s.lat,
     s.lon,
-    s.shape_pt_sequence
+    s.shape_pt_sequence,
+    s.shape_dist_traveled
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -648,3 +659,32 @@ WHERE st.stop_id = @stop_id
     (st.departure_time BETWEEN @window_start_nanos AND @window_end_nanos)
     )
 ORDER BY st.arrival_time;
+
+-- name: UpdateStopDirection :exec
+UPDATE stops
+SET direction = ?
+WHERE id = ?;
+
+-- name: GetStopsWithShapeContext :many
+SELECT
+    s.id, s.lat, s.lon, s.name, s.code, s.direction,
+    st.trip_id, st.stop_sequence, st.shape_dist_traveled,
+    t.shape_id
+FROM stops s
+JOIN stop_times st ON s.id = st.stop_id
+JOIN trips t ON st.trip_id = t.id
+WHERE s.id = ?
+  AND st.shape_dist_traveled IS NOT NULL;
+
+-- name: GetShapePointWindow :many
+SELECT lat, lon, shape_pt_sequence, shape_dist_traveled
+FROM shapes
+WHERE shape_id = ?
+  AND shape_pt_sequence BETWEEN ? AND ?
+ORDER BY shape_pt_sequence;
+
+-- name: GetShapePointsWithDistance :many
+SELECT lat, lon, shape_pt_sequence, shape_dist_traveled
+FROM shapes
+WHERE shape_id = ?
+ORDER BY shape_pt_sequence;
