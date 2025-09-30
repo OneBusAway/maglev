@@ -21,13 +21,20 @@ func NewDirectionCalculator(queries *gtfsdb.Queries) *DirectionCalculator {
 }
 
 // CalculateStopDirection determines the compass direction for a stop
+// First checks the database for precomputed direction, falls back to calculation if needed
 func (dc *DirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string) string {
-	// Strategy 1: Try shape-based calculation
+	// Strategy 1: Check database for precomputed direction (O(1) lookup)
+	stop, err := dc.queries.GetStop(ctx, stopID)
+	if err == nil && stop.Direction.Valid && stop.Direction.String != "" {
+		return stop.Direction.String
+	}
+
+	// Strategy 2: Try shape-based calculation
 	if direction := dc.calculateFromShape(ctx, stopID); direction != unknownDirection {
 		return direction
 	}
 
-	// Strategy 2: Fallback to stop-to-stop calculation
+	// Strategy 3: Fallback to stop-to-stop calculation
 	if direction := dc.calculateFromNextStop(ctx, stopID); direction != unknownDirection {
 		return direction
 	}

@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,14 +23,47 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// Shared test database setup
+var (
+	testGtfsManager *gtfs.Manager
+	testDbSetupOnce sync.Once
+	testDbPath      = filepath.Join("../../testdata", "raba-test.db")
+)
+
+// TestMain handles setup and cleanup for all tests in this package
+func TestMain(m *testing.M) {
+	// Clean up any leftover test database from interrupted/failed previous runs
+	_ = os.Remove(testDbPath)
+
+	// Run all tests
+	code := m.Run()
+
+	// Clean up test database after all tests complete
+	_ = os.Remove(testDbPath)
+
+	os.Exit(code)
+}
+
 // createTestApi creates a new restAPI instance with a GTFS manager initialized for use in tests.
+// The GTFS database is created once and reused across all tests for performance.
 func createTestApi(t *testing.T) *RestAPI {
+	// Initialize the shared GTFS manager only once
+	testDbSetupOnce.Do(func() {
+		gtfsConfig := gtfs.Config{
+			GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
+			GTFSDataPath: testDbPath,
+		}
+		var err error
+		testGtfsManager, err = gtfs.InitGTFSManager(gtfsConfig)
+		if err != nil {
+			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
+		}
+	})
+
 	gtfsConfig := gtfs.Config{
 		GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
-		GTFSDataPath: ":memory:",
+		GTFSDataPath: testDbPath,
 	}
-	gtfsManager, err := gtfs.InitGTFSManager(gtfsConfig)
-	require.NoError(t, err)
 
 	app := &app.Application{
 		Config: appconf.Config{
@@ -37,7 +72,7 @@ func createTestApi(t *testing.T) *RestAPI {
 			RateLimit: 5, // Low rate limit for testing
 		},
 		GtfsConfig:  gtfsConfig,
-		GtfsManager: gtfsManager,
+		GtfsManager: testGtfsManager,
 	}
 
 	api := NewRestAPI(app)
@@ -170,7 +205,6 @@ func TestCompressionMiddleware(t *testing.T) {
 func TestCompressionMiddlewareIntegration(t *testing.T) {
 	// Create a test API instance
 	api := createTestApi(t)
-	defer api.GtfsManager.Shutdown()
 
 	t.Run("API responses are compressed when requested", func(t *testing.T) {
 		// Use the standard test setup approach

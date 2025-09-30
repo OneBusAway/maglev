@@ -272,16 +272,17 @@ func (q *Queries) CreateRoute(ctx context.Context, arg CreateRouteParams) (Route
 
 const createShape = `-- name: CreateShape :one
 INSERT
-OR REPLACE INTO shapes (shape_id, lat, lon, shape_pt_sequence)
+OR REPLACE INTO shapes (shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled)
 VALUES
-    (?, ?, ?, ?) RETURNING id, shape_id, lat, lon, shape_pt_sequence
+    (?, ?, ?, ?, ?) RETURNING id, shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
 `
 
 type CreateShapeParams struct {
-	ShapeID         string
-	Lat             float64
-	Lon             float64
-	ShapePtSequence int64
+	ShapeID           string
+	Lat               float64
+	Lon               float64
+	ShapePtSequence   int64
+	ShapeDistTraveled sql.NullFloat64
 }
 
 func (q *Queries) CreateShape(ctx context.Context, arg CreateShapeParams) (Shape, error) {
@@ -290,6 +291,7 @@ func (q *Queries) CreateShape(ctx context.Context, arg CreateShapeParams) (Shape
 		arg.Lat,
 		arg.Lon,
 		arg.ShapePtSequence,
+		arg.ShapeDistTraveled,
 	)
 	var i Shape
 	err := row.Scan(
@@ -298,6 +300,7 @@ func (q *Queries) CreateShape(ctx context.Context, arg CreateShapeParams) (Shape
 		&i.Lat,
 		&i.Lon,
 		&i.ShapePtSequence,
+		&i.ShapeDistTraveled,
 	)
 	return i, err
 }
@@ -316,10 +319,11 @@ OR REPLACE INTO stops (
     location_type,
     timezone,
     wheelchair_boarding,
-    platform_code
+    platform_code,
+    direction
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
 `
 
 type CreateStopParams struct {
@@ -335,6 +339,7 @@ type CreateStopParams struct {
 	Timezone           sql.NullString
 	WheelchairBoarding sql.NullInt64
 	PlatformCode       sql.NullString
+	Direction          sql.NullString
 }
 
 func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, error) {
@@ -351,6 +356,7 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		arg.Timezone,
 		arg.WheelchairBoarding,
 		arg.PlatformCode,
+		arg.Direction,
 	)
 	var i Stop
 	err := row.Scan(
@@ -366,6 +372,7 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		&i.Timezone,
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
+		&i.Direction,
 	)
 	return i, err
 }
@@ -381,22 +388,24 @@ OR REPLACE INTO stop_times (
     stop_headsign,
     pickup_type,
     drop_off_type,
+    shape_dist_traveled,
     timepoint
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING trip_id, arrival_time, departure_time, stop_id, stop_sequence, stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING trip_id, arrival_time, departure_time, stop_id, stop_sequence, stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
 `
 
 type CreateStopTimeParams struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopID        string
-	StopSequence  int64
-	StopHeadsign  sql.NullString
-	PickupType    sql.NullInt64
-	DropOffType   sql.NullInt64
-	Timepoint     sql.NullInt64
+	TripID            string
+	ArrivalTime       int64
+	DepartureTime     int64
+	StopID            string
+	StopSequence      int64
+	StopHeadsign      sql.NullString
+	PickupType        sql.NullInt64
+	DropOffType       sql.NullInt64
+	ShapeDistTraveled sql.NullFloat64
+	Timepoint         sql.NullInt64
 }
 
 func (q *Queries) CreateStopTime(ctx context.Context, arg CreateStopTimeParams) (StopTime, error) {
@@ -409,6 +418,7 @@ func (q *Queries) CreateStopTime(ctx context.Context, arg CreateStopTimeParams) 
 		arg.StopHeadsign,
 		arg.PickupType,
 		arg.DropOffType,
+		arg.ShapeDistTraveled,
 		arg.Timepoint,
 	)
 	var i StopTime
@@ -677,7 +687,7 @@ func (q *Queries) GetAgencyForStop(ctx context.Context, stopID string) (Agency, 
 
 const getAllShapes = `-- name: GetAllShapes :many
 SELECT
-    id, shape_id, lat, lon, shape_pt_sequence
+    id, shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
 FROM
     shapes
 `
@@ -697,6 +707,7 @@ func (q *Queries) GetAllShapes(ctx context.Context) ([]Shape, error) {
 			&i.Lat,
 			&i.Lon,
 			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
 		); err != nil {
 			return nil, err
 		}
@@ -1448,7 +1459,7 @@ func (q *Queries) GetScheduleForStop(ctx context.Context, stopID string) ([]GetS
 
 const getShapeByID = `-- name: GetShapeByID :many
 SELECT
-    id, shape_id, lat, lon, shape_pt_sequence
+    id, shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
 FROM
     shapes
 WHERE
@@ -1470,6 +1481,50 @@ func (q *Queries) GetShapeByID(ctx context.Context, shapeID string) ([]Shape, er
 			&i.Lat,
 			&i.Lon,
 			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getShapePointWindow = `-- name: GetShapePointWindow :many
+SELECT lat, lon, shape_pt_sequence, shape_dist_traveled
+FROM shapes
+WHERE shape_id = ?
+  AND shape_pt_sequence BETWEEN ? AND ?
+ORDER BY shape_pt_sequence
+`
+
+type GetShapePointWindowRow struct {
+	Lat               float64
+	Lon               float64
+	ShapePtSequence   int64
+	ShapeDistTraveled sql.NullFloat64
+}
+
+func (q *Queries) GetShapePointWindow(ctx context.Context, shapeID string) ([]GetShapePointWindowRow, error) {
+	rows, err := q.query(ctx, q.getShapePointWindowStmt, getShapePointWindow, shapeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetShapePointWindowRow
+	for rows.Next() {
+		var i GetShapePointWindowRow
+		if err := rows.Scan(
+			&i.Lat,
+			&i.Lon,
+			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
 		); err != nil {
 			return nil, err
 		}
@@ -1490,7 +1545,8 @@ SELECT
     s.shape_id,
     s.lat,
     s.lon,
-    s.shape_pt_sequence
+    s.shape_pt_sequence,
+    s.shape_dist_traveled
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -1515,6 +1571,7 @@ func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shap
 			&i.Lat,
 			&i.Lon,
 			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
 		); err != nil {
 			return nil, err
 		}
@@ -1553,6 +1610,48 @@ func (q *Queries) GetShapePointsForTrip(ctx context.Context, id string) ([]GetSh
 	for rows.Next() {
 		var i GetShapePointsForTripRow
 		if err := rows.Scan(&i.Lat, &i.Lon, &i.ShapePtSequence); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getShapePointsWithDistance = `-- name: GetShapePointsWithDistance :many
+SELECT lat, lon, shape_pt_sequence, shape_dist_traveled
+FROM shapes
+WHERE shape_id = ?
+ORDER BY shape_pt_sequence
+`
+
+type GetShapePointsWithDistanceRow struct {
+	Lat               float64
+	Lon               float64
+	ShapePtSequence   int64
+	ShapeDistTraveled sql.NullFloat64
+}
+
+func (q *Queries) GetShapePointsWithDistance(ctx context.Context, shapeID string) ([]GetShapePointsWithDistanceRow, error) {
+	rows, err := q.query(ctx, q.getShapePointsWithDistanceStmt, getShapePointsWithDistance, shapeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetShapePointsWithDistanceRow
+	for rows.Next() {
+		var i GetShapePointsWithDistanceRow
+		if err := rows.Scan(
+			&i.Lat,
+			&i.Lon,
+			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1616,7 +1715,7 @@ func (q *Queries) GetShapesGroupedByTripHeadSign(ctx context.Context, arg GetSha
 
 const getStop = `-- name: GetStop :one
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
 FROM
     stops
 WHERE
@@ -1639,6 +1738,7 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 		&i.Timezone,
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
+		&i.Direction,
 	)
 	return i, err
 }
@@ -1917,7 +2017,7 @@ func (q *Queries) GetStopTimesForTrip(ctx context.Context, tripID string) ([]Sto
 
 const getStopsByIDs = `-- name: GetStopsByIDs :many
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
 FROM
     stops
 WHERE
@@ -1958,6 +2058,7 @@ func (q *Queries) GetStopsByIDs(ctx context.Context, stopIds []string) ([]Stop, 
 			&i.Timezone,
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
+			&i.Direction,
 		); err != nil {
 			return nil, err
 		}
@@ -1974,7 +2075,7 @@ func (q *Queries) GetStopsByIDs(ctx context.Context, stopIds []string) ([]Stop, 
 
 const getStopsForRoute = `-- name: GetStopsForRoute :many
 SELECT DISTINCT
-    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code
+    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction
 FROM
     stop_times
     JOIN trips ON stop_times.trip_id = trips.id
@@ -2006,6 +2107,65 @@ func (q *Queries) GetStopsForRoute(ctx context.Context, id string) ([]Stop, erro
 			&i.Timezone,
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
+			&i.Direction,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStopsWithShapeContext = `-- name: GetStopsWithShapeContext :many
+SELECT
+    s.id, s.lat, s.lon, s.name, s.code, s.direction,
+    st.trip_id, st.stop_sequence, st.shape_dist_traveled,
+    t.shape_id
+FROM stops s
+JOIN stop_times st ON s.id = st.stop_id
+JOIN trips t ON st.trip_id = t.id
+WHERE s.id = ?
+`
+
+type GetStopsWithShapeContextRow struct {
+	ID                string
+	Lat               float64
+	Lon               float64
+	Name              sql.NullString
+	Code              sql.NullString
+	Direction         sql.NullString
+	TripID            string
+	StopSequence      int64
+	ShapeDistTraveled sql.NullFloat64
+	ShapeID           sql.NullString
+}
+
+func (q *Queries) GetStopsWithShapeContext(ctx context.Context, id string) ([]GetStopsWithShapeContextRow, error) {
+	rows, err := q.query(ctx, q.getStopsWithShapeContextStmt, getStopsWithShapeContext, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopsWithShapeContextRow
+	for rows.Next() {
+		var i GetStopsWithShapeContextRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Lat,
+			&i.Lon,
+			&i.Name,
+			&i.Code,
+			&i.Direction,
+			&i.TripID,
+			&i.StopSequence,
+			&i.ShapeDistTraveled,
+			&i.ShapeID,
 		); err != nil {
 			return nil, err
 		}
@@ -2076,7 +2236,7 @@ func (q *Queries) GetStopsWithTripContext(ctx context.Context, id string) ([]Get
 
 const getStopsWithinBounds = `-- name: GetStopsWithinBounds :many
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
 FROM
     stops
 WHERE
@@ -2118,6 +2278,7 @@ func (q *Queries) GetStopsWithinBounds(ctx context.Context, arg GetStopsWithinBo
 			&i.Timezone,
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
+			&i.Direction,
 		); err != nil {
 			return nil, err
 		}
@@ -2468,6 +2629,52 @@ func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
 	return items, nil
 }
 
+const listStops = `-- name: ListStops :many
+SELECT
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+FROM
+    stops
+ORDER BY
+    id
+`
+
+func (q *Queries) ListStops(ctx context.Context) ([]Stop, error) {
+	rows, err := q.query(ctx, q.listStopsStmt, listStops)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Stop
+	for rows.Next() {
+		var i Stop
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.Desc,
+			&i.Lat,
+			&i.Lon,
+			&i.ZoneID,
+			&i.Url,
+			&i.LocationType,
+			&i.Timezone,
+			&i.WheelchairBoarding,
+			&i.PlatformCode,
+			&i.Direction,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTrips = `-- name: ListTrips :many
 SELECT
     id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed
@@ -2507,6 +2714,22 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateStopDirection = `-- name: UpdateStopDirection :exec
+UPDATE stops
+SET direction = ?
+WHERE id = ?
+`
+
+type UpdateStopDirectionParams struct {
+	Direction sql.NullString
+	ID        string
+}
+
+func (q *Queries) UpdateStopDirection(ctx context.Context, arg UpdateStopDirectionParams) error {
+	_, err := q.exec(ctx, q.updateStopDirectionStmt, updateStopDirection, arg.Direction, arg.ID)
+	return err
 }
 
 const upsertImportMetadata = `-- name: UpsertImportMetadata :one

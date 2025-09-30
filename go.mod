@@ -5,7 +5,6 @@ go 1.24.2
 require (
 	github.com/OneBusAway/go-gtfs v1.1.0
 	github.com/davecgh/go-spew v1.1.1
-	github.com/jamespfennell/gtfs v0.1.24
 	github.com/klauspost/compress v1.18.0
 	github.com/stretchr/testify v1.10.0
 	github.com/twpayne/go-polyline v1.1.1

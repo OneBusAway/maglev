@@ -53,7 +53,7 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var model models.ResponseModel
 	err = json.NewDecoder(resp.Body).Decode(&model)
@@ -115,7 +115,7 @@ func TestTripForVehicleHandlerWithInvalidVehicleID(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var model models.ResponseModel
 	err = json.NewDecoder(resp.Body).Decode(&model)
@@ -141,7 +141,7 @@ func TestTripForVehicleHandlerWithServiceDate(t *testing.T) {
 	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
 		".json?key=TEST&serviceDate=" + strconv.FormatInt(serviceDateMs, 10))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var model models.ResponseModel
 	err = json.NewDecoder(resp.Body).Decode(&model)
@@ -170,7 +170,7 @@ func TestTripForVehicleHandlerWithIncludeStatusFalse(t *testing.T) {
 	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
 		".json?key=TEST&includeStatus=false")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var model models.ResponseModel
 	err = json.NewDecoder(resp.Body).Decode(&model)
@@ -204,7 +204,7 @@ func TestTripForVehicleHandlerWithTimeParameter(t *testing.T) {
 	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
 		".json?key=TEST&time=" + strconv.FormatInt(timeMs, 10))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var model models.ResponseModel
 	err = json.NewDecoder(resp.Body).Decode(&model)
@@ -233,7 +233,7 @@ func TestTripForVehicleHandlerWithAllParametersFalse(t *testing.T) {
 	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
 		".json?key=TEST&includeTrip=false&includeSchedule=false&includeStatus=false")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var model models.ResponseModel
 	err = json.NewDecoder(resp.Body).Decode(&model)

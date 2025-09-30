@@ -6,3 +6,5 @@ __debug_bin*
 *.db-journal
 api
 gtfsdb/tmp/main
+.claude
+.idea

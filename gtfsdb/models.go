@@ -60,11 +60,12 @@ type Route struct {
 }
 
 type Shape struct {
-	ID              int64
-	ShapeID         string
-	Lat             float64
-	Lon             float64
-	ShapePtSequence int64
+	ID                int64
+	ShapeID           string
+	Lat               float64
+	Lon               float64
+	ShapePtSequence   int64
+	ShapeDistTraveled sql.NullFloat64
 }
 
 type Stop struct {
@@ -80,6 +81,7 @@ type Stop struct {
 	Timezone           sql.NullString
 	WheelchairBoarding sql.NullInt64
 	PlatformCode       sql.NullString
+	Direction          sql.NullString
 }
 
 type StopTime struct {

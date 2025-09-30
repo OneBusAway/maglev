@@ -44,7 +44,8 @@ CREATE TABLE
         location_type INTEGER DEFAULT 0,
         timezone TEXT,
         wheelchair_boarding INTEGER DEFAULT 0,
-        platform_code TEXT
+        platform_code TEXT,
+        direction TEXT
     );
 
 -- migrate
@@ -139,7 +140,8 @@ CREATE TABLE
         shape_id TEXT NOT NULL,
         lat REAL NOT NULL,
         lon REAL NOT NULL,
-        shape_pt_sequence INTEGER NOT NULL
+        shape_pt_sequence INTEGER NOT NULL,
+        shape_dist_traveled REAL
     );
 
 -- migrate

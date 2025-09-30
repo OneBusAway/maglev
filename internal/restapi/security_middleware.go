@@ -27,8 +27,13 @@ func securityHeaders(next http.Handler) http.Handler {
 		// Control referrer information
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
-		// Content Security Policy - restrictive but allows API responses
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none';")
+		// Content Security Policy - restrictive but allows API responses and web UI
+		csp := "default-src 'none'; frame-ancestors 'none';"
+		// Allow inline styles and images from same origin for web UI pages
+		if r.URL.Path == "/" || r.URL.Path == "/debug/" {
+			csp = "default-src 'self'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none';"
+		}
+		w.Header().Set("Content-Security-Policy", csp)
 
 		// CORS headers for API access
 		origin := r.Header.Get("Origin")

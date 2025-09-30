@@ -184,6 +184,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			Timezone:           toNullString(s.Timezone),
 			WheelchairBoarding: toNullInt64(int64(s.WheelchairBoarding)),
 			PlatformCode:       toNullString(s.PlatformCode),
+			Direction:          sql.NullString{}, // Will be computed later
 		}
 
 		allStopParams = append(allStopParams, params)
@@ -237,16 +238,22 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	var allStopTimeParams []CreateStopTimeParams
 	for _, t := range staticData.Trips {
 		for _, st := range t.StopTimes {
+			var shapeDistTraveled float64
+			if st.ShapeDistanceTraveled != nil {
+				shapeDistTraveled = *st.ShapeDistanceTraveled
+			}
+
 			params := CreateStopTimeParams{
-				TripID:        t.ID,
-				ArrivalTime:   int64(st.ArrivalTime),
-				DepartureTime: int64(st.DepartureTime),
-				StopID:        st.Stop.Id,
-				StopSequence:  int64(st.StopSequence),
-				StopHeadsign:  toNullString(st.Headsign),
-				PickupType:    toNullInt64(int64(st.PickupType)),
-				DropOffType:   toNullInt64(int64(st.DropOffType)),
-				Timepoint:     toNullInt64(boolToInt(st.ExactTimes)),
+				TripID:            t.ID,
+				ArrivalTime:       int64(st.ArrivalTime),
+				DepartureTime:     int64(st.DepartureTime),
+				StopID:            st.Stop.Id,
+				StopSequence:      int64(st.StopSequence),
+				StopHeadsign:      toNullString(st.Headsign),
+				PickupType:        toNullInt64(int64(st.PickupType)),
+				DropOffType:       toNullInt64(int64(st.DropOffType)),
+				ShapeDistTraveled: toNullFloat64(shapeDistTraveled),
+				Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
 			}
 
 			allStopTimeParams = append(allStopTimeParams, params)
@@ -260,11 +267,17 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	var allShapeParams []CreateShapeParams
 	for _, s := range staticData.Shapes {
 		for idx, pt := range s.Points {
+			var distance float64
+			if pt.Distance != nil {
+				distance = *pt.Distance
+			}
+
 			params := CreateShapeParams{
-				ShapeID:         s.ID,
-				Lat:             pt.Latitude,
-				Lon:             pt.Longitude,
-				ShapePtSequence: int64(idx),
+				ShapeID:           s.ID,
+				Lat:               pt.Latitude,
+				Lon:               pt.Longitude,
+				ShapePtSequence:   int64(idx),
+				ShapeDistTraveled: toNullFloat64(distance),
 			}
 			allShapeParams = append(allShapeParams, params)
 		}
@@ -382,6 +395,16 @@ func toNullInt64(i int64) sql.NullInt64 {
 		}
 	}
 	return sql.NullInt64{}
+}
+
+func toNullFloat64(f float64) sql.NullFloat64 {
+	if f != 0 {
+		return sql.NullFloat64{
+			Float64: f,
+			Valid:   true,
+		}
+	}
+	return sql.NullFloat64{}
 }
 
 // toNullString converts a string to sql.NullString
