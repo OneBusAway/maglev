@@ -106,9 +106,17 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	type shapeKey struct {
 		shapeID      string
 		distTraveled float64
+		useGeo       bool // true when using geographic matching instead of distance
 	}
 	orientationCache := make(map[shapeKey]float64)
 	var orientations []float64
+
+	// Get stop coordinates (same for all trips)
+	var stopLat, stopLon float64
+	if len(stopTrips) > 0 {
+		stopLat = stopTrips[0].Lat
+		stopLon = stopTrips[0].Lon
+	}
 
 	for _, stopTrip := range stopTrips {
 		if !stopTrip.ShapeID.Valid {
@@ -116,21 +124,25 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 		}
 
 		shapeID := stopTrip.ShapeID.String
-		distTraveled := stopTrip.ShapeDistTraveled.Float64
+		distTraveled := -1.0 // Use -1 to signal geographic matching
+		useGeo := false
+
+		// Prefer shape_dist_traveled if available
+		if stopTrip.ShapeDistTraveled.Valid {
+			distTraveled = stopTrip.ShapeDistTraveled.Float64
+		} else {
+			useGeo = true
+		}
 
 		// Check cache first
-		key := shapeKey{shapeID, distTraveled}
+		key := shapeKey{shapeID, distTraveled, useGeo}
 		if cachedOrientation, found := orientationCache[key]; found {
 			orientations = append(orientations, cachedOrientation)
 			continue
 		}
 
 		// Calculate orientation at this stop location using shape point window
-		// Use shape_dist_traveled for precise matching if available
-		if !stopTrip.ShapeDistTraveled.Valid {
-			continue
-		}
-		orientation, err := adc.calculateOrientationAtStop(ctx, shapeID, stopTrip.ShapeDistTraveled.Float64)
+		orientation, err := adc.calculateOrientationAtStop(ctx, shapeID, distTraveled, stopLat, stopLon)
 		if err != nil {
 			continue
 		}
@@ -201,27 +213,43 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 }
 
 // calculateOrientationAtStop calculates the orientation at a stop using a window of shape points
-func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.Context, shapeID string, distTraveled float64) (float64, error) {
+// If distTraveled is < 0, it uses stopLat/stopLon for geographic matching (when shape_dist_traveled is unavailable)
+func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.Context, shapeID string, distTraveled float64, stopLat, stopLon float64) (float64, error) {
 	// Get all shape points for this shape using shape_id directly
 	shapePoints, err := adc.queries.GetShapePointsWithDistance(ctx, shapeID)
 	if err != nil || len(shapePoints) < 2 {
 		return 0, err
 	}
 
-	// Find the closest shape point using shape_dist_traveled
 	closestIdx := 0
 	minDiff := math.MaxFloat64
-	for i, point := range shapePoints {
-		if point.ShapeDistTraveled.Valid {
-			diff := math.Abs(point.ShapeDistTraveled.Float64 - distTraveled)
-			if diff < minDiff {
-				minDiff = diff
+
+	// Use shape_dist_traveled if available (distTraveled >= 0)
+	if distTraveled >= 0 {
+		// Find the closest shape point using shape_dist_traveled
+		for i, point := range shapePoints {
+			if point.ShapeDistTraveled.Valid {
+				diff := math.Abs(point.ShapeDistTraveled.Float64 - distTraveled)
+				if diff < minDiff {
+					minDiff = diff
+					closestIdx = i
+				}
+			}
+		}
+	}
+
+	// Fall back to geographic matching when shape_dist_traveled is not available
+	if minDiff == math.MaxFloat64 && stopLat != 0 && stopLon != 0 {
+		for i, point := range shapePoints {
+			distance := utils.Haversine(stopLat, stopLon, point.Lat, point.Lon)
+			if distance < minDiff {
+				minDiff = distance
 				closestIdx = i
 			}
 		}
 	}
 
-	// If no valid shape_dist_traveled found, fall back to first point
+	// If still no match found, fall back to first point
 	if minDiff == math.MaxFloat64 {
 		closestIdx = 0
 	}

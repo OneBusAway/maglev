@@ -55,6 +55,23 @@ func TestStopsForAgencyEndToEnd(t *testing.T) {
 	assert.NotNil(t, firstStop["staticRouteIds"])
 	assert.NotNil(t, firstStop["wheelchairBoarding"])
 
+	// Verify that at least some stops have valid compass directions (not all "UNKNOWN")
+	// Not all stops will have directions (e.g., terminal stops, stops without shape data)
+	validDirections := []string{"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+	stopsWithDirections := 0
+	for _, stop := range list {
+		stopMap := stop.(map[string]interface{})
+		direction := stopMap["direction"].(string)
+		for _, validDir := range validDirections {
+			if direction == validDir {
+				stopsWithDirections++
+				break
+			}
+		}
+	}
+	assert.Greater(t, stopsWithDirections, len(list)/2,
+		"Expected more than half of stops to have valid directions, got %d out of %d", stopsWithDirections, len(list))
+
 	// Verify stop ID has agency prefix
 	stopID := firstStop["id"].(string)
 	assert.True(t, strings.HasPrefix(stopID, agencyID+"_"),

@@ -25,9 +25,9 @@ import (
 
 // Shared test database setup
 var (
-	testGtfsManager  *gtfs.Manager
-	testDbSetupOnce  sync.Once
-	testDbPath       = filepath.Join("../../testdata", "raba-test.db")
+	testGtfsManager *gtfs.Manager
+	testDbSetupOnce sync.Once
+	testDbPath      = filepath.Join("../../testdata", "raba-test.db")
 )
 
 // TestMain handles setup and cleanup for all tests in this package

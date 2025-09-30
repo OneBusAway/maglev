@@ -673,8 +673,7 @@ SELECT
 FROM stops s
 JOIN stop_times st ON s.id = st.stop_id
 JOIN trips t ON st.trip_id = t.id
-WHERE s.id = ?
-  AND st.shape_dist_traveled IS NOT NULL;
+WHERE s.id = ?;
 
 -- name: GetShapePointWindow :many
 SELECT lat, lon, shape_pt_sequence, shape_dist_traveled
