@@ -177,7 +177,6 @@ func TestRequestLoggingIntegration(t *testing.T) {
 
 		// Create test API
 		api := createTestApi(t)
-		defer api.GtfsManager.Shutdown()
 
 		// Create handler chain with request logging
 		handler := createHandlerWithRequestLogging(api, logger)
@@ -205,7 +204,6 @@ func TestRequestLoggingIntegration(t *testing.T) {
 		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
 
 		api := createTestApi(t)
-		defer api.GtfsManager.Shutdown()
 
 		handler := createHandlerWithRequestLogging(api, logger)
 
