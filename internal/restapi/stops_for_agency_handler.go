@@ -95,11 +95,14 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			routeIdsString[i] = utils.FormCombinedID(agencyID, id.(string))
 		}
 
-		// Skip direction calculation for stops-for-agency endpoint to avoid performance issues
-		// Direction calculation requires multiple DB queries per stop which is too slow for bulk operations
+		direction := models.UnknownValue
+		if stop.Direction.Valid && stop.Direction.String != "" {
+			direction = stop.Direction.String
+		}
+
 		stopsList = append(stopsList, models.Stop{
 			Code:               stop.Code.String,
-			Direction:          models.UnknownValue,
+			Direction:          direction,
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
