@@ -56,10 +56,12 @@ This is a Go 1.24.2+ application that provides a REST API for OneBusAway transit
 ### Core Components
 
 - **Application Layer** (`internal/app/`): Central dependency injection container holding config, logger, and GTFS manager
-- **REST API Layer** (`internal/rest_api/`): HTTP handlers for the OneBusAway API endpoints
+- **REST API Layer** (`internal/restapi/`): HTTP handlers for the OneBusAway API endpoints
+- **Web UI Layer** (`internal/webui/`): HTTP handlers for the web interface and landing page
 - **GTFS Manager** (`internal/gtfs/`): Manages both static GTFS data and real-time feeds (trip updates, vehicle positions)
 - **Database Layer** (`gtfsdb/`): SQLite database with sqlc-generated Go code for type-safe SQL operations
 - **Models** (`internal/models/`): Business logic and data structures for agencies, routes, stops, trips, vehicles
+- **Utilities** (`internal/utils/`, `internal/appconf/`, `internal/logging/`): Helper functions, configuration management, and logging
 
 ### Data Flow
 
@@ -162,7 +164,7 @@ Map GTFS-RT CurrentStatus enum to OneBusAway strings:
 
 ### API Route Registration
 
-Check `internal/rest_api/routes.go` first - many endpoints are already registered but may need implementation updates. Route patterns follow: `/api/where/{endpoint}/{id}` with API key validation.
+Check `internal/restapi/routes.go` first - many endpoints are already registered but may need implementation updates. Route patterns follow: `/api/where/{endpoint}/{id}` with API key validation.
 
 ## Testing Real-Time Data
 
@@ -264,14 +266,14 @@ arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
 - Ensure JSON tags match production API field names exactly
 
 ### 4. Handler Implementation
-- Follow existing handler patterns in `internal/rest_api/`
+- Follow existing handler patterns in `internal/restapi/`
 - Use `utils.ExtractIDFromParams()` and `utils.ExtractAgencyIDAndCodeID()` for ID parsing
 - Build reference maps to deduplicate agencies, routes, etc.
 - Convert reference maps to slices for final response
 - Use `models.NewEntryResponse()` or `models.NewListResponse()` for response structure
 
 ### 5. Route Registration
-- Add route to `internal/rest_api/routes.go` with `validateAPIKey` wrapper
+- Add route to `internal/restapi/routes.go` with `validateAPIKey` wrapper
 - Follow pattern: `/api/where/{endpoint}/{id}` for single resource endpoints
 
 ### 6. Testing Strategy
