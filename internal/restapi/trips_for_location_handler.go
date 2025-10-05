@@ -82,10 +82,10 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	return lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil
 }
 
-func extractStopIDs(stops []*gtfs.Stop) []string {
+func extractStopIDs(stops []gtfsdb.Stop) []string {
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
-		stopIDs[i] = stop.Id
+		stopIDs[i] = stop.ID
 	}
 	return stopIDs
 }
@@ -231,7 +231,7 @@ type ReferenceParams struct {
 	IncludeTrip bool
 	AllRoutes   []gtfsdb.Route
 	AllTrips    []gtfsdb.Trip
-	Stops       []*gtfs.Stop
+	Stops       []gtfsdb.Stop
 	Trips       []models.TripsForLocationListEntry
 }
 
@@ -297,14 +297,10 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 	}
 }
 
-func (rb *referenceBuilder) buildStopList(stops []*gtfs.Stop) {
+func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 	rb.stopList = make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
-		if stop.Latitude == nil || stop.Longitude == nil {
-			continue
-		}
-
-		routeIds, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(rb.ctx, stop.Id)
+		routeIds, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(rb.ctx, stop.ID)
 		if err != nil {
 			continue
 		}
@@ -324,19 +320,24 @@ func (rb *referenceBuilder) processRouteIds(routeIds []interface{}) []string {
 	return routeIdsString
 }
 
-func (rb *referenceBuilder) createStop(stop *gtfs.Stop, routeIds []string) models.Stop {
+func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) models.Stop {
+	direction := models.UnknownValue
+	if stop.Direction.Valid && stop.Direction.String != "" {
+		direction = stop.Direction.String
+	}
+
 	return models.Stop{
-		Code:               stop.Code,
-		Direction:          "NA", // TODO add direction to GTFS Stop
-		ID:                 stop.Id,
-		Lat:                *stop.Latitude,
-		Lon:                *stop.Longitude,
+		Code:               stop.Code.String,
+		Direction:          direction,
+		ID:                 stop.ID,
+		Lat:                stop.Lat,
+		Lon:                stop.Lon,
 		LocationType:       0,
-		Name:               stop.Name,
+		Name:               stop.Name.String,
 		Parent:             "",
 		RouteIDs:           routeIds,
 		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(stop.WheelchairBoarding),
+		WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
 	}
 }
 

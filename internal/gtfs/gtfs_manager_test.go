@@ -123,12 +123,12 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 
 			// Verify stops are actually within the radius
 			for _, stop := range stops {
-				assert.NotNil(t, stop.Latitude)
-				assert.NotNil(t, stop.Longitude)
-
+				// Lat and Lon are float64, not pointers - no nil check needed
 				// Calculate distance to verify it's within radius
 				// This would use the utils.Haversine function
 				// but for now we'll just verify coordinates exist
+				assert.NotZero(t, stop.Lat)
+				assert.NotZero(t, stop.Lon)
 			}
 
 			// The key test is that this should use the spatial index

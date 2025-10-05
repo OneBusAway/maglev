@@ -145,7 +145,7 @@ func (manager *Manager) RoutesForAgencyID(agencyID string) []*gtfs.Route {
 }
 
 type stopWithDistance struct {
-	stop     *gtfs.Stop
+	stop     gtfsdb.Stop
 	distance float64
 }
 
@@ -155,7 +155,7 @@ func (manager *Manager) GetStopsForLocation(
 	query string,
 	maxCount int,
 	isForRoutes bool,
-) []*gtfs.Stop {
+) []gtfsdb.Stop {
 	const epsilon = 1e-6
 
 	if radius == 0 {
@@ -194,7 +194,7 @@ func (manager *Manager) GetStopsForLocation(
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		return []*gtfs.Stop{}
+		return []gtfsdb.Stop{}
 	}
 
 	// Use spatial index query for initial filtering
@@ -206,43 +206,28 @@ func (manager *Manager) GetStopsForLocation(
 	})
 	if err != nil {
 		// TODO: add logging.
-		return []*gtfs.Stop{}
+		return []gtfsdb.Stop{}
 	}
 
 	// Process results from database query
 	for _, dbStop := range dbStops {
-		// Find corresponding stop in memory
-		var gtfsStop *gtfs.Stop
-		manager.staticMutex.RLock()
-		for i := range manager.gtfsData.Stops {
-			if manager.gtfsData.Stops[i].Id == dbStop.ID {
-				gtfsStop = &manager.gtfsData.Stops[i]
-				break
-			}
-		}
-		manager.staticMutex.RUnlock()
-
-		if gtfsStop == nil || gtfsStop.Latitude == nil || gtfsStop.Longitude == nil {
-			continue
-		}
-
 		if query != "" && !isForRoutes {
-			if gtfsStop.Code == query {
-				distance := utils.Haversine(lat, lon, *gtfsStop.Latitude, *gtfsStop.Longitude)
+			if dbStop.Code.Valid && dbStop.Code.String == query {
+				distance := utils.Haversine(lat, lon, dbStop.Lat, dbStop.Lon)
 				if distance <= radius {
-					return []*gtfs.Stop{gtfsStop}
+					return []gtfsdb.Stop{dbStop}
 				}
 			}
 			continue
 		}
 
 		// Calculate precise distance for final filtering
-		distance := utils.Haversine(lat, lon, *gtfsStop.Latitude, *gtfsStop.Longitude)
+		distance := utils.Haversine(lat, lon, dbStop.Lat, dbStop.Lon)
 		if distance <= radius {
-			candidates = append(candidates, stopWithDistance{gtfsStop, distance})
+			candidates = append(candidates, stopWithDistance{dbStop, distance})
 		} else if radius == NoRadiusLimit {
 			// No radius specified; include all stops within the given latSpan and lonSpan
-			candidates = append(candidates, stopWithDistance{gtfsStop, distance})
+			candidates = append(candidates, stopWithDistance{dbStop, distance})
 		}
 	}
 
@@ -252,7 +237,7 @@ func (manager *Manager) GetStopsForLocation(
 	})
 
 	// Limit to maxCount
-	var stops []*gtfs.Stop
+	var stops []gtfsdb.Stop
 	for i := 0; i < len(candidates) && i < maxCount; i++ {
 		stops = append(stops, candidates[i].stop)
 	}

@@ -65,7 +65,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	// Extract stop IDs for batch query
 	stopIDs := make([]string, 0, len(stops))
 	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.Id)
+		stopIDs = append(stopIDs, stop.ID)
 	}
 
 	if len(stopIDs) == 0 {

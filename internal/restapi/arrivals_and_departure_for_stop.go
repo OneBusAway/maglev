@@ -371,8 +371,8 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false)
 	var nearbyStopIDs []string
 	for _, s := range nearbyStops {
-		if s.Id != stopID {
-			nearbyStopIDs = []string{utils.FormCombinedID(agencyID, s.Id)}
+		if s.ID != stopID {
+			nearbyStopIDs = []string{utils.FormCombinedID(agencyID, s.ID)}
 			break
 		}
 	}
