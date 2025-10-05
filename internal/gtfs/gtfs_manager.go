@@ -264,8 +264,9 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 	return vehicles
 }
 
-// This function retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block for that trip.
-// Note we depend on getting the vehicle that may not match the trip ID exactly, but is part of the same block.
+// GetVehicleForTrip retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block
+// for that trip. Note we depend on getting the vehicle that may not match the trip ID exactly,
+// but is part of the same block.
 func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
