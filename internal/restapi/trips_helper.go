@@ -141,9 +141,33 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, err
 	}
 
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+
+	// Batch-fetch all stop coordinates at once
+	stopIDs := make([]string, len(stopTimes))
+	for i, st := range stopTimes {
+		stopIDs[i] = st.StopID
+	}
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a map for quick stop coordinate lookup
+	stopCoords := make(map[string]struct{ lat, lon float64 })
+	for _, stop := range stops {
+		stopCoords[stop.ID] = struct{ lat, lon float64 }{lat: stop.Lat, lon: stop.Lon}
+	}
+
 	stopTimesVals := make([]models.StopTime, len(stopTimes))
 	for i, st := range stopTimes {
-		distanceAlongTrip := api.calculatePreciseDistanceAlongTrip(ctx, st.StopID, shapePoints)
+		var distanceAlongTrip float64
+		if coords, exists := stopCoords[st.StopID]; exists && len(shapePoints) > 0 {
+			distanceAlongTrip = api.calculatePreciseDistanceAlongTripWithCoords(
+				coords.lat, coords.lon, shapePoints, cumulativeDistances,
+			)
+		}
 
 		stopTimesVals[i] = models.StopTime{
 			ArrivalTime:         int(st.ArrivalTime),
@@ -497,18 +521,22 @@ func (api *RestAPI) calculateScheduleDeviationFromTripUpdates(
 	return int(bestDeviation)
 }
 
-func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopID string, shapePoints []gtfs.ShapePoint) float64 {
-	if len(shapePoints) == 0 {
+// calculatePreciseDistanceAlongTripWithCoords calculates the distance along a trip's shape to a stop
+// This optimized version accepts pre-calculated cumulative distances and stop coordinates
+func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
+	stopLat, stopLon float64,
+	shapePoints []gtfs.ShapePoint,
+	cumulativeDistances []float64,
+) float64 {
+	// Validate inputs
+	if len(shapePoints) < 2 {
 		return 0.0
 	}
 
-	// Get stop coordinates
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil {
+	// Validate that cumulative distances array matches shape points
+	if len(cumulativeDistances) != len(shapePoints) {
 		return 0.0
 	}
-
-	stopLat, stopLon := stop.Lat, stop.Lon
 
 	// Find the closest point on the shape to this stop
 	var minDistance = math.Inf(1)
@@ -530,14 +558,9 @@ func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopI
 		}
 	}
 
-	// Calculate cumulative distance up to the closest segment
-	var cumulativeDistance float64
-	for i := 1; i <= closestSegmentIndex; i++ {
-		cumulativeDistance += utils.Haversine(
-			shapePoints[i-1].Latitude, shapePoints[i-1].Longitude,
-			shapePoints[i].Latitude, shapePoints[i].Longitude,
-		)
-	}
+	// Get cumulative distance to the start of the closest segment
+	// cumulativeDistances[i] represents the total distance from start to point i
+	cumulativeDistance := cumulativeDistances[closestSegmentIndex]
 
 	// Add the projection distance within the closest segment
 	if closestSegmentIndex < len(shapePoints)-1 {
@@ -549,6 +572,46 @@ func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopI
 	}
 
 	return cumulativeDistance
+}
+
+// calculatePreciseDistanceAlongTrip is the legacy version that fetches stop coordinates from the database
+// Deprecated: Use calculatePreciseDistanceAlongTripWithCoords with batch-fetched coordinates instead
+func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopID string, shapePoints []gtfs.ShapePoint) float64 {
+	if len(shapePoints) == 0 {
+		return 0.0
+	}
+
+	// Get stop coordinates
+	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
+	if err != nil {
+		return 0.0
+	}
+
+	// Pre-calculate cumulative distances (this is inefficient for multiple stops)
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+
+	return api.calculatePreciseDistanceAlongTripWithCoords(stop.Lat, stop.Lon, shapePoints, cumulativeDistances)
+}
+
+// preCalculateCumulativeDistances pre-calculates cumulative distances along shape points
+// Returns an array where cumulativeDistances[i] is the cumulative distance up to (but not including) segment i
+func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
+	if len(shapePoints) <= 1 {
+		return []float64{0}
+	}
+
+	cumulativeDistances := make([]float64, len(shapePoints))
+	cumulativeDistances[0] = 0
+
+	for i := 1; i < len(shapePoints); i++ {
+		segmentDistance := utils.Haversine(
+			shapePoints[i-1].Latitude, shapePoints[i-1].Longitude,
+			shapePoints[i].Latitude, shapePoints[i].Longitude,
+		)
+		cumulativeDistances[i] = cumulativeDistances[i-1] + segmentDistance
+	}
+
+	return cumulativeDistances
 }
 
 // Helper function to calculate distance from point to line segment

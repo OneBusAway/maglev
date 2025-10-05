@@ -212,9 +212,39 @@ func (api *RestAPI) buildScheduleForTrip(
 }
 
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+
+	// Batch-fetch all stop coordinates at once
+	stopIDs := make([]string, len(stopTimes))
+	for i, st := range stopTimes {
+		stopIDs[i] = st.StopID
+	}
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+
+	// Create a map for quick stop coordinate lookup
+	stopCoords := make(map[string]struct{ lat, lon float64 })
+	if err != nil {
+		// Log the error but continue - distances will be 0 for all stops
+		api.Logger.Warn("Failed to batch-fetch stop coordinates for distance calculation",
+			"error", err,
+			"agency_id", agencyID,
+			"stop_count", len(stopIDs))
+	} else {
+		for _, stop := range stops {
+			stopCoords[stop.ID] = struct{ lat, lon float64 }{lat: stop.Lat, lon: stop.Lon}
+		}
+	}
+
 	stopTimesList := make([]models.StopTime, 0, len(stopTimes))
 	for _, stopTime := range stopTimes {
-		distanceAlongTrip := api.calculatePreciseDistanceAlongTrip(ctx, stopTime.StopID, shapePoints)
+		var distanceAlongTrip float64
+		if coords, exists := stopCoords[stopTime.StopID]; exists && len(shapePoints) > 0 {
+			distanceAlongTrip = api.calculatePreciseDistanceAlongTripWithCoords(
+				coords.lat, coords.lon, shapePoints, cumulativeDistances,
+			)
+		}
+
 		stopTimesList = append(stopTimesList, models.StopTime{
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 			ArrivalTime:         int(stopTime.ArrivalTime),
