@@ -149,7 +149,13 @@ type stopWithDistance struct {
 	distance float64
 }
 
-func (manager *Manager) GetStopsForLocation(ctx context.Context, lat, lon float64, radius float64, latSpan, lonSpan float64, query string, maxCount int, isForRoutes bool) []*gtfs.Stop {
+func (manager *Manager) GetStopsForLocation(
+	ctx context.Context,
+	lat, lon, radius, latSpan, lonSpan float64,
+	query string,
+	maxCount int,
+	isForRoutes bool,
+) []*gtfs.Stop {
 	const epsilon = 1e-6
 
 	if radius == 0 {

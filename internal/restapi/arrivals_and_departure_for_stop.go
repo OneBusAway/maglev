@@ -237,7 +237,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 						}
 					}
 				}
-
 			}
 		}
 
