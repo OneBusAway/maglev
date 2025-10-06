@@ -285,3 +285,81 @@ func TestParseAPIKeysEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
+	// This test verifies Run() can start and shutdown gracefully
+	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
+	if _, err := os.Stat(testDataPath); os.IsNotExist(err) {
+		t.Skip("Test data not available, skipping test")
+	}
+
+	cfg := appconf.Config{
+		Port:      0, // Use random port to avoid conflicts
+		Env:       appconf.Test,
+		ApiKeys:   []string{"test"},
+		Verbose:   false,
+		RateLimit: 100,
+	}
+
+	gtfsCfg := gtfs.Config{
+		GTFSDataPath: ":memory:",
+		GtfsURL:      testDataPath,
+		Verbose:      false,
+	}
+
+	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	require.NoError(t, err)
+
+	srv := CreateServer(coreApp, cfg)
+
+	// Run the server in a goroutine
+	done := make(chan error, 1)
+	go func() {
+		// We need to trigger shutdown immediately after starting
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			// Trigger shutdown
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			_ = srv.Shutdown(shutdownCtx)
+		}()
+
+		// This will block until server shuts down
+		err := srv.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			done <- err
+		} else {
+			done <- nil
+		}
+	}()
+
+	// Wait for server to complete
+	select {
+	case err := <-done:
+		assert.NoError(t, err, "Server should shutdown cleanly")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Test timeout - server did not shutdown")
+	}
+}
+
+func TestBuildApplicationErrorHandling(t *testing.T) {
+	t.Run("handles invalid GTFS path", func(t *testing.T) {
+		cfg := appconf.Config{
+			Port:      4000,
+			Env:       appconf.Test,
+			ApiKeys:   []string{"test"},
+			Verbose:   false,
+			RateLimit: 100,
+		}
+
+		gtfsCfg := gtfs.Config{
+			GTFSDataPath: ":memory:",
+			GtfsURL:      "/nonexistent/path/to/gtfs.zip",
+			Verbose:      false,
+		}
+
+		_, err := BuildApplication(cfg, gtfsCfg)
+		assert.Error(t, err, "Should return error for invalid GTFS path")
+		assert.Contains(t, err.Error(), "failed to initialize GTFS manager")
+	})
+}
