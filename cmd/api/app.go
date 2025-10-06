@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maglev.onebusaway.org/internal/app"
@@ -139,4 +140,57 @@ func Run(srv *http.Server, gtfsManager *gtfs.Manager, logger *slog.Logger) error
 
 	logger.Info("server exited")
 	return nil
+}
+
+// dumpConfigJSON converts current configuration to JSON and prints it to stdout
+func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
+	// Convert environment enum to string
+	envStr := "development"
+	switch cfg.Env {
+	case appconf.Development:
+		envStr = "development"
+	case appconf.Test:
+		envStr = "test"
+	case appconf.Production:
+		envStr = "production"
+	}
+
+	// Build JSON config structure
+	jsonConfig := map[string]interface{}{
+		"port":       cfg.Port,
+		"env":        envStr,
+		"api-keys":   cfg.ApiKeys,
+		"rate-limit": cfg.RateLimit,
+		"gtfs-url":   gtfsCfg.GtfsURL,
+		"data-path":  gtfsCfg.GTFSDataPath,
+	}
+
+	// Add GTFS-RT feed if configured
+	feeds := []map[string]string{}
+	if gtfsCfg.TripUpdatesURL != "" || gtfsCfg.VehiclePositionsURL != "" {
+		// Mask sensitive auth header value
+		authHeaderValue := gtfsCfg.RealTimeAuthHeaderValue
+		if authHeaderValue != "" {
+			authHeaderValue = "***REDACTED***"
+		}
+
+		feed := map[string]string{
+			"trip-updates-url":           gtfsCfg.TripUpdatesURL,
+			"vehicle-positions-url":      gtfsCfg.VehiclePositionsURL,
+			"service-alerts-url":         gtfsCfg.ServiceAlertsURL,
+			"realtime-auth-header-name":  gtfsCfg.RealTimeAuthHeaderKey,
+			"realtime-auth-header-value": authHeaderValue,
+		}
+		feeds = append(feeds, feed)
+	}
+	jsonConfig["gtfs-rt-feeds"] = feeds
+
+	// Marshal to JSON with indentation
+	output, err := json.MarshalIndent(jsonConfig, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error marshaling config to JSON: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(string(output))
 }

@@ -1,0 +1,18 @@
+{
+  "$schema": "../config.schema.json",
+  "port": 8080,
+  "env": "production",
+  "api-keys": ["key1", "key2", "key3"],
+  "rate-limit": 50,
+  "gtfs-url": "https://example.com/gtfs.zip",
+  "gtfs-rt-feeds": [
+    {
+      "trip-updates-url": "https://api.example.com/trip-updates.pb",
+      "vehicle-positions-url": "https://api.example.com/vehicle-positions.pb",
+      "service-alerts-url": "https://api.example.com/service-alerts.pb",
+      "realtime-auth-header-name": "Authorization",
+      "realtime-auth-header-value": "Bearer token123"
+    }
+  ],
+  "data-path": "/data/gtfs.db"
+}

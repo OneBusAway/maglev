@@ -13,8 +13,12 @@ func main() {
 	var gtfsCfg gtfs.Config
 	var apiKeysFlag string
 	var envFlag string
+	var configFile string
+	var dumpConfig bool
 
 	// Parse command-line flags
+	flag.StringVar(&configFile, "f", "", "Path to JSON configuration file (mutually exclusive with other flags)")
+	flag.BoolVar(&dumpConfig, "dump-config", false, "Dump current configuration as JSON and exit")
 	flag.IntVar(&cfg.Port, "port", 4000, "API server port")
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
 	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
@@ -28,15 +32,64 @@ func main() {
 	flag.StringVar(&gtfsCfg.GTFSDataPath, "data-path", "./gtfs.db", "Path to the SQLite database containing GTFS data")
 	flag.Parse()
 
-	// Set verbosity flags
-	gtfsCfg.Verbose = true
-	cfg.Verbose = true
+	// Enforce mutual exclusivity between -f and other flags (except --dump-config)
+	if configFile != "" && flag.NFlag() > 1 {
+		// Allow -f with --dump-config as a special case
+		if flag.NFlag() != 2 || !dumpConfig {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+			logger.Error("the -f flag is mutually exclusive with other configuration flags (except --dump-config)")
+			flag.Usage()
+			os.Exit(1)
+		}
+	}
 
-	// Parse API keys
-	cfg.ApiKeys = ParseAPIKeys(apiKeysFlag)
+	// Check for config file
+	if configFile != "" {
+		// Load configuration from JSON file
+		jsonConfig, err := appconf.LoadFromFile(configFile)
+		if err != nil {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+			logger.Error("failed to load config file", "error", err)
+			os.Exit(1)
+		}
 
-	// Convert environment flag to enum
-	cfg.Env = appconf.EnvFlagToEnvironment(envFlag)
+		// Convert to app config
+		cfg = jsonConfig.ToAppConfig()
+
+		// Convert to GTFS config
+		gtfsCfgData := jsonConfig.ToGtfsConfigData()
+		gtfsCfg = gtfs.Config{
+			GtfsURL:                 gtfsCfgData.GtfsURL,
+			TripUpdatesURL:          gtfsCfgData.TripUpdatesURL,
+			VehiclePositionsURL:     gtfsCfgData.VehiclePositionsURL,
+			ServiceAlertsURL:        gtfsCfgData.ServiceAlertsURL,
+			RealTimeAuthHeaderKey:   gtfsCfgData.RealTimeAuthHeaderKey,
+			RealTimeAuthHeaderValue: gtfsCfgData.RealTimeAuthHeaderValue,
+			GTFSDataPath:            gtfsCfgData.GTFSDataPath,
+			Env:                     gtfsCfgData.Env,
+			Verbose:                 gtfsCfgData.Verbose,
+		}
+	} else {
+		// Use command-line flags for configuration
+		// Set verbosity flags
+		gtfsCfg.Verbose = true
+		cfg.Verbose = true
+
+		// Parse API keys
+		cfg.ApiKeys = ParseAPIKeys(apiKeysFlag)
+
+		// Convert environment flag to enum
+		cfg.Env = appconf.EnvFlagToEnvironment(envFlag)
+
+		// Set GTFS config environment
+		gtfsCfg.Env = cfg.Env
+	}
+
+	// Handle dump-config flag
+	if dumpConfig {
+		dumpConfigJSON(cfg, gtfsCfg)
+		os.Exit(0)
+	}
 
 	// Build application with dependencies
 	coreApp, err := BuildApplication(cfg, gtfsCfg)
