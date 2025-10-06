@@ -125,3 +125,66 @@ func TestRoutesForLocationHandlerValidatesRadius(t *testing.T) {
 	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=invalid")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
+func TestRoutesForLocationHandlerNoStopsFound(t *testing.T) {
+	// Use coordinates far from any stops to trigger the empty stopIDs case
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lat=0.0&lon=0.0&radius=100")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	// Verify empty list
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.Empty(t, list)
+
+	// Verify limitExceeded is false
+	limitExceeded, ok := data["limitExceeded"].(bool)
+	require.True(t, ok)
+	assert.False(t, limitExceeded)
+
+	// Verify outOfRange is true (no stops found in the location)
+	outOfRange, ok := data["outOfRange"].(bool)
+	require.True(t, ok)
+	assert.True(t, outOfRange)
+
+	// Verify references structure
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+
+	// All reference arrays should be empty or null
+	// Agencies can be nil (null in JSON) or empty array
+	agencies := refs["agencies"]
+	if agencies != nil {
+		agenciesList, ok := agencies.([]interface{})
+		require.True(t, ok)
+		assert.Empty(t, agenciesList)
+	}
+
+	routes, ok := refs["routes"].([]interface{})
+	require.True(t, ok)
+	assert.Empty(t, routes)
+
+	situations, ok := refs["situations"].([]interface{})
+	require.True(t, ok)
+	assert.Empty(t, situations)
+
+	stopTimes, ok := refs["stopTimes"].([]interface{})
+	require.True(t, ok)
+	assert.Empty(t, stopTimes)
+
+	stops := refs["stops"]
+	if stops != nil {
+		stopsList, ok := stops.([]interface{})
+		require.True(t, ok)
+		assert.Empty(t, stopsList)
+	}
+
+	trips, ok := refs["trips"].([]interface{})
+	require.True(t, ok)
+	assert.Empty(t, trips)
+}
