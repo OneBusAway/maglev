@@ -4,7 +4,7 @@ __debug_bin*
 .env
 *.db
 *.db-journal
-api
+/api
 gtfsdb/tmp/main
 .claude
 .idea
