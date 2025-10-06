@@ -249,7 +249,7 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 			ArrivalTime:         int(stopTime.ArrivalTime),
 			DepartureTime:       int(stopTime.DepartureTime),
-			StopHeadsign:        stopTime.StopHeadsign.String,
+			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 			DistanceAlongTrip:   distanceAlongTrip,
 			HistoricalOccupancy: "",
 		})
@@ -357,17 +357,17 @@ func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) mode
 	}
 
 	return models.Stop{
-		Code:               stop.Code.String,
+		Code:               utils.NullStringOrEmpty(stop.Code),
 		Direction:          direction,
 		ID:                 stop.ID,
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		LocationType:       0,
-		Name:               stop.Name.String,
+		Name:               utils.NullStringOrEmpty(stop.Name),
 		Parent:             "",
 		RouteIDs:           routeIds,
 		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
+		WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 	}
 }
 

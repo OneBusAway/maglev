@@ -6,8 +6,6 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
-
-	"github.com/OneBusAway/go-gtfs"
 )
 
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
@@ -138,12 +136,12 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		results = append(results, models.NewStop(
-			stop.Code.String,
+			utils.NullStringOrEmpty(stop.Code),
 			direction,
 			utils.FormCombinedID(agency.ID, stop.ID),
-			stop.Name.String,
+			utils.NullStringOrEmpty(stop.Name),
 			"",
-			utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
+			utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			stop.Lat,
 			stop.Lon,
 			0,
