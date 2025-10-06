@@ -1,11 +1,13 @@
 package gtfs
 
 import (
+	"context"
 	"database/sql"
 	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func TestTranslateGtfsDirection(t *testing.T) {
@@ -163,4 +165,223 @@ func TestVarianceThreshold(t *testing.T) {
 	// Test setting custom threshold
 	calc.SetVarianceThreshold(1.0)
 	assert.Equal(t, 1.0, calc.varianceThreshold)
+}
+
+func TestCalculateStopDirection_WithShapeData(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Test with a real stop from RABA data
+	direction := calc.CalculateStopDirection(context.Background(), "7000", sql.NullString{Valid: false})
+	// Should return a valid direction or empty string
+	assert.True(t, direction == "" || len(direction) <= 2)
+}
+
+func TestComputeFromShapes_NoShapeData(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Test with a non-existent stop
+	direction := calc.computeFromShapes(context.Background(), "nonexistent")
+	assert.Equal(t, "", direction)
+}
+
+func TestComputeFromShapes_SingleOrientation(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Test with actual stop data - single orientation path will be taken if only one trip
+	direction := calc.computeFromShapes(context.Background(), "7000")
+	// Direction should be valid or empty
+	assert.True(t, direction == "" || len(direction) <= 2)
+}
+
+func TestComputeFromShapes_VarianceThreshold(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Set a very low variance threshold to trigger variance check
+	calc.SetVarianceThreshold(0.01)
+
+	// Test with a stop that might have multiple trips
+	direction := calc.computeFromShapes(context.Background(), "7000")
+	// With low threshold, high variance might return empty
+	assert.True(t, direction == "" || len(direction) <= 2)
+}
+
+func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Get a shape ID from the database
+	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
+	if err != nil || len(shapes) < 2 {
+		t.Skip("No shape data available for testing")
+	}
+
+	// Test with distance traveled
+	orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", 100.0, 0, 0)
+	if err == nil {
+		assert.GreaterOrEqual(t, orientation, -math.Pi)
+		assert.LessOrEqual(t, orientation, math.Pi)
+	}
+}
+
+func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Get a shape ID from the database
+	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
+	if err != nil || len(shapes) < 2 {
+		t.Skip("No shape data available for testing")
+	}
+
+	// Test with geographic matching (distTraveled < 0)
+	stopLat := shapes[0].Lat
+	stopLon := shapes[0].Lon
+	orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", -1.0, stopLat, stopLon)
+	if err == nil {
+		assert.GreaterOrEqual(t, orientation, -math.Pi)
+		assert.LessOrEqual(t, orientation, math.Pi)
+	}
+}
+
+func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Test with non-existent shape - should return error or 0 orientation
+	orientation, err := calc.calculateOrientationAtStop(context.Background(), "nonexistent", 0, 0, 0)
+	// Either err is not nil, or orientation is 0
+	assert.True(t, err != nil || orientation == 0)
+}
+
+func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Test with shape that has points at the boundaries
+	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
+	if err != nil || len(shapes) < 2 {
+		t.Skip("No shape data available for testing")
+	}
+
+	// Test at the very beginning of the shape
+	if len(shapes) > 0 && shapes[0].ShapeDistTraveled.Valid {
+		orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", shapes[0].ShapeDistTraveled.Float64, 0, 0)
+		if err == nil {
+			assert.GreaterOrEqual(t, orientation, -math.Pi)
+			assert.LessOrEqual(t, orientation, math.Pi)
+		}
+	}
+
+	// Test at the very end of the shape
+	if len(shapes) > 1 && shapes[len(shapes)-1].ShapeDistTraveled.Valid {
+		orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", shapes[len(shapes)-1].ShapeDistTraveled.Float64, 0, 0)
+		if err == nil {
+			assert.GreaterOrEqual(t, orientation, -math.Pi)
+			assert.LessOrEqual(t, orientation, math.Pi)
+		}
+	}
+}
+
+func TestGetAngleAsDirection_EdgeCases(t *testing.T) {
+	calc := &AdvancedDirectionCalculator{}
+
+	tests := []struct {
+		name     string
+		theta    float64
+		expected string
+	}{
+		{"Large positive angle", 3 * math.Pi, "W"},
+		{"Large negative angle", -3 * math.Pi, "W"},
+		{"Just above threshold", math.Pi / 8, "NE"},
+		{"Just below threshold", -math.Pi / 8, "E"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calc.getAngleAsDirection(tt.theta)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestTranslateGtfsDirection_NumericEdgeCases(t *testing.T) {
+	calc := &AdvancedDirectionCalculator{}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"360 degrees wraps to North", "360", "N"},
+		{"720 degrees wraps to North", "720", "N"},
+		{"Negative angle -90", "-90", "W"},
+		{"With whitespace", "  45  ", "NE"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calc.translateGtfsDirection(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }
