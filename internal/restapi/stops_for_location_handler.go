@@ -6,8 +6,6 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
-
-	"github.com/OneBusAway/go-gtfs"
 )
 
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
@@ -59,10 +57,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Extract stop IDs for batch queries
 	stopIDs := make([]string, 0, len(stops))
-	stopMap := make(map[string]*gtfs.Stop)
+	stopMap := make(map[string]gtfsdb.Stop)
 	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.Id)
-		stopMap[stop.Id] = stop
+		stopIDs = append(stopIDs, stop.ID)
+		stopMap[stop.ID] = stop
 	}
 
 	if len(stopIDs) == 0 {
@@ -132,15 +130,20 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
+		direction := models.UnknownValue
+		if stop.Direction.Valid && stop.Direction.String != "" {
+			direction = stop.Direction.String
+		}
+
 		results = append(results, models.NewStop(
-			stop.Id,
-			models.UnknownValue,
-			utils.FormCombinedID(agency.ID, stop.Id),
-			stop.Name,
+			utils.NullStringOrEmpty(stop.Code),
+			direction,
+			utils.FormCombinedID(agency.ID, stop.ID),
+			utils.NullStringOrEmpty(stop.Name),
 			"",
-			utils.MapWheelchairBoarding(stop.WheelchairBoarding),
-			*stop.Latitude,
-			*stop.Longitude,
+			utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			stop.Lat,
+			stop.Lon,
 			0,
 			rids,
 			rids,

@@ -82,10 +82,10 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	return lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil
 }
 
-func extractStopIDs(stops []*gtfs.Stop) []string {
+func extractStopIDs(stops []gtfsdb.Stop) []string {
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
-		stopIDs[i] = stop.Id
+		stopIDs[i] = stop.ID
 	}
 	return stopIDs
 }
@@ -212,14 +212,44 @@ func (api *RestAPI) buildScheduleForTrip(
 }
 
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+
+	// Batch-fetch all stop coordinates at once
+	stopIDs := make([]string, len(stopTimes))
+	for i, st := range stopTimes {
+		stopIDs[i] = st.StopID
+	}
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+
+	// Create a map for quick stop coordinate lookup
+	stopCoords := make(map[string]struct{ lat, lon float64 })
+	if err != nil {
+		// Log the error but continue - distances will be 0 for all stops
+		api.Logger.Warn("Failed to batch-fetch stop coordinates for distance calculation",
+			"error", err,
+			"agency_id", agencyID,
+			"stop_count", len(stopIDs))
+	} else {
+		for _, stop := range stops {
+			stopCoords[stop.ID] = struct{ lat, lon float64 }{lat: stop.Lat, lon: stop.Lon}
+		}
+	}
+
 	stopTimesList := make([]models.StopTime, 0, len(stopTimes))
 	for _, stopTime := range stopTimes {
-		distanceAlongTrip := api.calculatePreciseDistanceAlongTrip(ctx, stopTime.StopID, shapePoints)
+		var distanceAlongTrip float64
+		if coords, exists := stopCoords[stopTime.StopID]; exists && len(shapePoints) > 0 {
+			distanceAlongTrip = api.calculatePreciseDistanceAlongTripWithCoords(
+				coords.lat, coords.lon, shapePoints, cumulativeDistances,
+			)
+		}
+
 		stopTimesList = append(stopTimesList, models.StopTime{
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 			ArrivalTime:         int(stopTime.ArrivalTime),
 			DepartureTime:       int(stopTime.DepartureTime),
-			StopHeadsign:        stopTime.StopHeadsign.String,
+			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 			DistanceAlongTrip:   distanceAlongTrip,
 			HistoricalOccupancy: "",
 		})
@@ -231,7 +261,7 @@ type ReferenceParams struct {
 	IncludeTrip bool
 	AllRoutes   []gtfsdb.Route
 	AllTrips    []gtfsdb.Trip
-	Stops       []*gtfs.Stop
+	Stops       []gtfsdb.Stop
 	Trips       []models.TripsForLocationListEntry
 }
 
@@ -297,14 +327,10 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 	}
 }
 
-func (rb *referenceBuilder) buildStopList(stops []*gtfs.Stop) {
+func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 	rb.stopList = make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
-		if stop.Latitude == nil || stop.Longitude == nil {
-			continue
-		}
-
-		routeIds, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(rb.ctx, stop.Id)
+		routeIds, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(rb.ctx, stop.ID)
 		if err != nil {
 			continue
 		}
@@ -324,19 +350,24 @@ func (rb *referenceBuilder) processRouteIds(routeIds []interface{}) []string {
 	return routeIdsString
 }
 
-func (rb *referenceBuilder) createStop(stop *gtfs.Stop, routeIds []string) models.Stop {
+func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) models.Stop {
+	direction := models.UnknownValue
+	if stop.Direction.Valid && stop.Direction.String != "" {
+		direction = stop.Direction.String
+	}
+
 	return models.Stop{
-		Code:               stop.Code,
-		Direction:          "NA", // TODO add direction to GTFS Stop
-		ID:                 stop.Id,
-		Lat:                *stop.Latitude,
-		Lon:                *stop.Longitude,
+		Code:               utils.NullStringOrEmpty(stop.Code),
+		Direction:          direction,
+		ID:                 stop.ID,
+		Lat:                stop.Lat,
+		Lon:                stop.Lon,
 		LocationType:       0,
-		Name:               stop.Name,
+		Name:               utils.NullStringOrEmpty(stop.Name),
 		Parent:             "",
 		RouteIDs:           routeIds,
 		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(stop.WheelchairBoarding),
+		WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -87,4 +88,45 @@ func TestInvalidStopID(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
 	assert.Equal(t, "resource not found", model.Text)
+}
+
+func TestStopHandlerVerifiesReferences(t *testing.T) {
+	api := createTestApi(t)
+
+	agencies := api.GtfsManager.GetAgencies()
+	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
+
+	stops := api.GtfsManager.GetStops()
+	assert.NotEmpty(t, stops, "Test data should contain at least one stop")
+
+	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+stopID+".json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	references, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+
+	// Verify routes are included
+	routes, ok := references["routes"].([]interface{})
+	assert.True(t, ok, "Routes should be in references")
+	if len(routes) > 0 {
+		route, ok := routes[0].(map[string]interface{})
+		assert.True(t, ok)
+		assert.NotEmpty(t, route["id"], "Route should have an ID")
+		assert.NotEmpty(t, route["shortName"], "Route should have a short name")
+	}
+
+	// Verify agencies are included
+	agenciesRef, ok := references["agencies"].([]interface{})
+	assert.True(t, ok, "Agencies should be in references")
+	if len(agenciesRef) > 0 {
+		agency, ok := agenciesRef[0].(map[string]interface{})
+		assert.True(t, ok)
+		assert.NotEmpty(t, agency["id"], "Agency should have an ID")
+		assert.NotEmpty(t, agency["name"], "Agency should have a name")
+	}
 }

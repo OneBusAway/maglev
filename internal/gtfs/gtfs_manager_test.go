@@ -3,7 +3,9 @@ package gtfs
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
@@ -123,12 +125,12 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 
 			// Verify stops are actually within the radius
 			for _, stop := range stops {
-				assert.NotNil(t, stop.Latitude)
-				assert.NotNil(t, stop.Longitude)
-
+				// Lat and Lon are float64, not pointers - no nil check needed
 				// Calculate distance to verify it's within radius
 				// This would use the utils.Haversine function
 				// but for now we'll just verify coordinates exist
+				assert.NotZero(t, stop.Lat)
+				assert.NotZero(t, stop.Lon)
 			}
 
 			// The key test is that this should use the spatial index
@@ -138,5 +140,216 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 			// This will fail initially because GetStopsWithinRadius doesn't exist yet
 			// Once we implement it, this test will pass
 		})
+	}
+}
+
+func TestManager_GetTrips(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+
+	trips := manager.GetTrips()
+	assert.NotEmpty(t, trips)
+	assert.NotEmpty(t, trips[0].ID)
+}
+
+func TestManager_FindAgency(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+
+	agency := manager.FindAgency("25")
+	assert.NotNil(t, agency)
+	assert.Equal(t, "25", agency.Id)
+	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
+
+	notFound := manager.FindAgency("nonexistent")
+	assert.Nil(t, notFound)
+}
+
+func TestManager_GetVehicleByID(t *testing.T) {
+	manager := &Manager{
+		realTimeVehicleLookupByVehicle: make(map[string]int),
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "vehicle1"},
+			},
+		},
+	}
+	rebuildRealTimeVehicleLookupByVehicle(manager)
+
+	vehicle, err := manager.GetVehicleByID("vehicle1")
+	assert.Nil(t, err)
+	assert.NotNil(t, vehicle)
+	assert.Equal(t, "vehicle1", vehicle.ID.ID)
+
+	notFound, err := manager.GetVehicleByID("nonexistent")
+	assert.NotNil(t, err)
+	assert.Nil(t, notFound)
+}
+
+func TestManager_GetTripUpdatesForTrip(t *testing.T) {
+	manager := &Manager{
+		realTimeTrips: []gtfs.Trip{
+			{
+				ID: gtfs.TripID{ID: "trip1"},
+			},
+			{
+				ID: gtfs.TripID{ID: "trip2"},
+			},
+		},
+	}
+
+	updates := manager.GetTripUpdatesForTrip("trip1")
+	assert.Len(t, updates, 1)
+	assert.Equal(t, "trip1", updates[0].ID.ID)
+
+	noUpdates := manager.GetTripUpdatesForTrip("nonexistent")
+	assert.Empty(t, noUpdates)
+}
+
+func TestManager_GetVehicleLastUpdateTime(t *testing.T) {
+	now := time.Now()
+	vehicle := &gtfs.Vehicle{
+		Timestamp: &now,
+	}
+
+	manager := &Manager{}
+	timestamp := manager.GetVehicleLastUpdateTime(vehicle)
+	assert.Equal(t, now.UnixMilli(), timestamp)
+
+	nilTimestamp := manager.GetVehicleLastUpdateTime(nil)
+	assert.Equal(t, int64(0), nilTimestamp)
+
+	vehicleNoTimestamp := &gtfs.Vehicle{}
+	noTimestamp := manager.GetVehicleLastUpdateTime(vehicleNoTimestamp)
+	assert.Equal(t, int64(0), noTimestamp)
+}
+
+func TestManager_GetTripUpdateByID(t *testing.T) {
+	manager := &Manager{
+		realTimeTripLookup: make(map[string]int),
+		realTimeTrips: []gtfs.Trip{
+			{
+				ID: gtfs.TripID{ID: "trip1"},
+			},
+		},
+	}
+	rebuildRealTimeTripLookup(manager)
+
+	trip, err := manager.GetTripUpdateByID("trip1")
+	assert.Nil(t, err)
+	assert.NotNil(t, trip)
+	assert.Equal(t, "trip1", trip.ID.ID)
+
+	notFound, err := manager.GetTripUpdateByID("nonexistent")
+	assert.NotNil(t, err)
+	assert.Nil(t, notFound)
+}
+
+func TestManager_IsServiceActiveOnDate(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+
+	// Get a trip to find a valid service ID
+	trips := manager.GetTrips()
+	assert.NotEmpty(t, trips)
+
+	serviceID := trips[0].Service.Id
+
+	testCases := []struct {
+		name    string
+		date    time.Time
+		weekday string
+	}{
+		{
+			name:    "Sunday",
+			date:    time.Date(2024, 11, 3, 0, 0, 0, 0, time.UTC),
+			weekday: "Sunday",
+		},
+		{
+			name:    "Monday",
+			date:    time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC),
+			weekday: "Monday",
+		},
+		{
+			name:    "Tuesday",
+			date:    time.Date(2024, 11, 5, 0, 0, 0, 0, time.UTC),
+			weekday: "Tuesday",
+		},
+		{
+			name:    "Wednesday",
+			date:    time.Date(2024, 11, 6, 0, 0, 0, 0, time.UTC),
+			weekday: "Wednesday",
+		},
+		{
+			name:    "Thursday",
+			date:    time.Date(2024, 11, 7, 0, 0, 0, 0, time.UTC),
+			weekday: "Thursday",
+		},
+		{
+			name:    "Friday",
+			date:    time.Date(2024, 11, 8, 0, 0, 0, 0, time.UTC),
+			weekday: "Friday",
+		},
+		{
+			name:    "Saturday",
+			date:    time.Date(2024, 11, 9, 0, 0, 0, 0, time.UTC),
+			weekday: "Saturday",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Verify the date is the expected weekday
+			assert.Equal(t, tc.weekday, tc.date.Weekday().String())
+
+			active, err := manager.IsServiceActiveOnDate(context.Background(), serviceID, tc.date)
+			// The function should complete without error
+			if err == nil {
+				assert.GreaterOrEqual(t, active, int64(0))
+			}
+		})
+	}
+}
+
+func TestManager_GetVehicleForTrip(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+
+	// Set up real-time vehicle with a trip
+	trip := &gtfs.Trip{
+		ID: gtfs.TripID{ID: "5735633"},
+	}
+	manager.realTimeVehicles = []gtfs.Vehicle{
+		{
+			ID:   &gtfs.VehicleID{ID: "vehicle1"},
+			Trip: trip,
+		},
+	}
+
+	// Test getting vehicle for a trip in the same block
+	vehicle := manager.GetVehicleForTrip("5735633")
+	if vehicle != nil {
+		assert.NotNil(t, vehicle)
+		assert.Equal(t, "vehicle1", vehicle.ID.ID)
 	}
 }

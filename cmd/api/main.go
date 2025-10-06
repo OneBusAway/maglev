@@ -1,22 +1,11 @@
 package main
 
 import (
-	"context"
 	"flag"
-	"fmt"
 	"log/slog"
-	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/logging"
-	"maglev.onebusaway.org/internal/restapi"
-	"maglev.onebusaway.org/internal/webui"
-	"net/http"
 	"os"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
 )
 
 func main() {
@@ -25,6 +14,7 @@ func main() {
 	var apiKeysFlag string
 	var envFlag string
 
+	// Parse command-line flags
 	flag.IntVar(&cfg.Port, "port", 4000, "API server port")
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
 	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
@@ -38,97 +28,30 @@ func main() {
 	flag.StringVar(&gtfsCfg.GTFSDataPath, "data-path", "./gtfs.db", "Path to the SQLite database containing GTFS data")
 	flag.Parse()
 
+	// Set verbosity flags
 	gtfsCfg.Verbose = true
 	cfg.Verbose = true
 
-	if apiKeysFlag != "" {
-		cfg.ApiKeys = strings.Split(apiKeysFlag, ",")
-		for i := range cfg.ApiKeys {
-			cfg.ApiKeys[i] = strings.TrimSpace(cfg.ApiKeys[i])
-		}
-	}
+	// Parse API keys
+	cfg.ApiKeys = ParseAPIKeys(apiKeysFlag)
 
+	// Convert environment flag to enum
 	cfg.Env = appconf.EnvFlagToEnvironment(envFlag)
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
-	gtfsManager, err := gtfs.InitGTFSManager(gtfsCfg)
+	// Build application with dependencies
+	coreApp, err := BuildApplication(cfg, gtfsCfg)
 	if err != nil {
-		logger.Error("failed to initialize GTFS manager", "error", err)
+		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+		logger.Error("failed to build application", "error", err)
+		os.Exit(1)
 	}
 
-	var directionCalculator *gtfs.DirectionCalculator
-	if gtfsManager != nil {
-		directionCalculator = gtfs.NewDirectionCalculator(gtfsManager.GtfsDB.Queries)
+	// Create HTTP server
+	srv := CreateServer(coreApp, cfg)
+
+	// Run server with graceful shutdown
+	if err := Run(srv, coreApp.GtfsManager, coreApp.Logger); err != nil {
+		coreApp.Logger.Error("server error", "error", err)
+		os.Exit(1)
 	}
-
-	coreApp := &app.Application{
-		Config:              cfg,
-		GtfsConfig:          gtfsCfg,
-		Logger:              logger,
-		GtfsManager:         gtfsManager,
-		DirectionCalculator: directionCalculator,
-	}
-
-	api := restapi.NewRestAPI(coreApp)
-
-	webUI := &webui.WebUI{
-		Application: coreApp,
-	}
-
-	mux := http.NewServeMux()
-
-	api.SetRoutes(mux)
-	webUI.SetWebUIRoutes(mux)
-
-	// Wrap with security middleware
-	secureHandler := api.WithSecurityHeaders(mux)
-
-	// Add request logging middleware (outermost)
-	requestLogger := logging.NewStructuredLogger(os.Stdout, slog.LevelInfo)
-	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(requestLogger)
-	handler := requestLogMiddleware(secureHandler)
-
-	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      handler,
-		IdleTimeout:  time.Minute,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelError),
-	}
-
-	logger.Info("starting server", "addr", srv.Addr, "env", cfg.Env)
-
-	// Set up signal handling for graceful shutdown
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// Start server in a goroutine
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server failed to start", "error", err)
-			os.Exit(1)
-		}
-	}()
-
-	// Wait for shutdown signal
-	<-ctx.Done()
-	logger.Info("shutting down server...")
-
-	// Create shutdown context with timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Shutdown server
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("server forced to shutdown", "error", err)
-	}
-
-	// Shutdown GTFS manager
-	if gtfsManager != nil {
-		gtfsManager.Shutdown()
-	}
-
-	logger.Info("server exited")
 }
