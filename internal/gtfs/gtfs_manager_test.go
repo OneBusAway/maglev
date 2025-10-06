@@ -270,12 +270,59 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 
 	serviceID := trips[0].Service.Id
 
-	// Test with a date that should be within service period
-	testDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC) // Monday
-	active, err := manager.IsServiceActiveOnDate(context.Background(), serviceID, testDate)
-	// The function should complete without error
-	if err == nil {
-		assert.GreaterOrEqual(t, active, int64(0))
+	testCases := []struct {
+		name    string
+		date    time.Time
+		weekday string
+	}{
+		{
+			name:    "Sunday",
+			date:    time.Date(2024, 11, 3, 0, 0, 0, 0, time.UTC),
+			weekday: "Sunday",
+		},
+		{
+			name:    "Monday",
+			date:    time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC),
+			weekday: "Monday",
+		},
+		{
+			name:    "Tuesday",
+			date:    time.Date(2024, 11, 5, 0, 0, 0, 0, time.UTC),
+			weekday: "Tuesday",
+		},
+		{
+			name:    "Wednesday",
+			date:    time.Date(2024, 11, 6, 0, 0, 0, 0, time.UTC),
+			weekday: "Wednesday",
+		},
+		{
+			name:    "Thursday",
+			date:    time.Date(2024, 11, 7, 0, 0, 0, 0, time.UTC),
+			weekday: "Thursday",
+		},
+		{
+			name:    "Friday",
+			date:    time.Date(2024, 11, 8, 0, 0, 0, 0, time.UTC),
+			weekday: "Friday",
+		},
+		{
+			name:    "Saturday",
+			date:    time.Date(2024, 11, 9, 0, 0, 0, 0, time.UTC),
+			weekday: "Saturday",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Verify the date is the expected weekday
+			assert.Equal(t, tc.weekday, tc.date.Weekday().String())
+
+			active, err := manager.IsServiceActiveOnDate(context.Background(), serviceID, tc.date)
+			// The function should complete without error
+			if err == nil {
+				assert.GreaterOrEqual(t, active, int64(0))
+			}
+		})
 	}
 }
 
