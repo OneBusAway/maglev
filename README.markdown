@@ -7,7 +7,7 @@ A complete rewrite of the OneBusAway (OBA) REST API server in Golang.
 ## Getting Started
 
 1. Install Go 1.24.2 or later.
-2. Copy `.env.example` to `.env` and fill in the required values.
+2. Copy `config.example.json` to `config.json` and fill in the required values.
 3. Run `make run` to build start the server.
 4. Open your browser and navigate to `http://localhost:4000/api/where/current-time.json?key=test` to verify the server works.
 

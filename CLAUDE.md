@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Prerequisites**:
 - Go 1.24.2 or later
-- Copy `.env.example` to `.env` and configure required values (needed for `make run`)
+- Copy `config.example.json` to `config.json` and configure required values (needed for `make run`)
 
 **Verify installation**: `http://localhost:4000/api/where/current-time.json?key=test`
 
@@ -15,7 +15,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 All commands are managed through the Makefile:
 
 - `make run` - Build and run the server with Unitrans real-time data (requires `.env` with API keys)
-- `make run-dev` - Build and run with local RABA test data (no API keys needed)
 - `make build` - Build the application binary to bin/maglev
 - `make test` - Run all tests
 - `make lint` - Run golangci-lint (requires installation: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
