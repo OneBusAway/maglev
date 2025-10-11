@@ -47,7 +47,11 @@ Example `config.json`:
   "env": "production",
   "api-keys": ["key1", "key2", "key3"],
   "rate-limit": 50,
-  "gtfs-url": "https://example.com/gtfs.zip",
+  "gtfs-static-feed": {
+    "url": "https://example.com/gtfs.zip",
+    "auth-header-name": "Authorization",
+    "auth-header-value": "Bearer token456"
+  },
   "gtfs-rt-feeds": [
     {
       "trip-updates-url": "https://api.example.com/trip-updates.pb",
@@ -92,7 +96,7 @@ To enable IDE validation, add `$schema` to your config file:
 | `env` | string | "development" | Environment (development, test, production) |
 | `api-keys` | array | ["test"] | API keys for authentication |
 | `rate-limit` | integer | 100 | Requests per second per API key |
-| `gtfs-url` | string | (Sound Transit) | URL for static GTFS zip file |
+| `gtfs-static-feed` | object | (Sound Transit) | Static GTFS feed configuration with URL and optional auth headers |
 | `gtfs-rt-feeds` | array | (Sound Transit) | GTFS-RT feed configurations |
 | `data-path` | string | "./gtfs.db" | Path to SQLite database |
 

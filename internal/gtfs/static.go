@@ -14,7 +14,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-func rawGtfsData(source string, isLocalFile bool) ([]byte, error) {
+func rawGtfsData(source string, isLocalFile bool, authHeaderKey, authHeaderValue string) ([]byte, error) {
 	var b []byte
 	var err error
 
@@ -24,7 +24,18 @@ func rawGtfsData(source string, isLocalFile bool) ([]byte, error) {
 			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
 		}
 	} else {
-		resp, err := http.Get(source)
+		req, err := http.NewRequest("GET", source, nil)
+		if err != nil {
+			return nil, fmt.Errorf("error creating GTFS request: %w", err)
+		}
+
+		// Add auth header if provided
+		if authHeaderKey != "" && authHeaderValue != "" {
+			req.Header.Set(authHeaderKey, authHeaderValue)
+		}
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("error downloading GTFS data: %w", err)
 		}
@@ -52,7 +63,7 @@ func buildGtfsDB(config Config, isLocalFile bool) (*gtfsdb.Client, error) {
 	if isLocalFile {
 		err = client.ImportFromFile(ctx, config.GtfsURL)
 	} else {
-		err = client.DownloadAndStore(ctx, config.GtfsURL)
+		err = client.DownloadAndStore(ctx, config.GtfsURL, config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
 	}
 
 	if err != nil {
@@ -71,8 +82,8 @@ func buildGtfsDB(config Config, isLocalFile bool) (*gtfsdb.Client, error) {
 }
 
 // loadGTFSData loads and parses GTFS data from either a URL or a local file
-func loadGTFSData(source string, isLocalFile bool) (*gtfs.Static, error) {
-	b, err := rawGtfsData(source, isLocalFile)
+func loadGTFSData(source string, isLocalFile bool, authHeaderKey, authHeaderValue string) (*gtfs.Static, error) {
+	b, err := rawGtfsData(source, isLocalFile, authHeaderKey, authHeaderValue)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
@@ -111,7 +122,7 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 			_, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 
 			// Download and parse the GTFS feed
-			staticData, err := loadGTFSData(manager.gtfsSource, false)
+			staticData, err := loadGTFSData(manager.gtfsSource, false, manager.config.StaticAuthHeaderKey, manager.config.StaticAuthHeaderValue)
 			cancel() // Always cancel the context when done
 
 			if err != nil {

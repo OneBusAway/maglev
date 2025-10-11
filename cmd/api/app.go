@@ -155,14 +155,27 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		envStr = "production"
 	}
 
+	// Build gtfs-static-feed object
+	staticAuthValue := gtfsCfg.StaticAuthHeaderValue
+	if staticAuthValue != "" {
+		staticAuthValue = "***REDACTED***"
+	}
+	staticFeed := map[string]string{
+		"url": gtfsCfg.GtfsURL,
+	}
+	if gtfsCfg.StaticAuthHeaderKey != "" {
+		staticFeed["auth-header-name"] = gtfsCfg.StaticAuthHeaderKey
+		staticFeed["auth-header-value"] = staticAuthValue
+	}
+
 	// Build JSON config structure
 	jsonConfig := map[string]interface{}{
-		"port":       cfg.Port,
-		"env":        envStr,
-		"api-keys":   cfg.ApiKeys,
-		"rate-limit": cfg.RateLimit,
-		"gtfs-url":   gtfsCfg.GtfsURL,
-		"data-path":  gtfsCfg.GTFSDataPath,
+		"port":             cfg.Port,
+		"env":              envStr,
+		"api-keys":         cfg.ApiKeys,
+		"rate-limit":       cfg.RateLimit,
+		"gtfs-static-feed": staticFeed,
+		"data-path":        gtfsCfg.GTFSDataPath,
 	}
 
 	// Add GTFS-RT feed if configured

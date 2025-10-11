@@ -4,7 +4,11 @@
   "env": "production",
   "api-keys": ["key1", "key2", "key3"],
   "rate-limit": 50,
-  "gtfs-url": "https://example.com/gtfs.zip",
+  "gtfs-static-feed": {
+    "url": "https://example.com/gtfs.zip",
+    "auth-header-name": "Authorization",
+    "auth-header-value": "Bearer token456"
+  },
   "gtfs-rt-feeds": [
     {
       "trip-updates-url": "https://api.example.com/trip-updates.pb",

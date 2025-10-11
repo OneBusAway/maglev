@@ -4,7 +4,9 @@
   "env": "development",
   "api-keys": ["test"],
   "rate-limit": 100,
-  "gtfs-url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
+  "gtfs-static-feed": {
+    "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+  },
   "gtfs-rt-feeds": [
     {
       "trip-updates-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone",

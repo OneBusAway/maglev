@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+// GtfsStaticFeed represents the static GTFS feed configuration
+type GtfsStaticFeed struct {
+	URL             string `json:"url"`
+	AuthHeaderName  string `json:"auth-header-name"`
+	AuthHeaderValue string `json:"auth-header-value"`
+}
+
 // GtfsRtFeed represents a single GTFS-RT feed configuration
 type GtfsRtFeed struct {
 	TripUpdatesURL          string `json:"trip-updates-url"`
@@ -20,13 +27,13 @@ type GtfsRtFeed struct {
 
 // JSONConfig represents the JSON configuration file structure
 type JSONConfig struct {
-	Port        int          `json:"port"`
-	Env         string       `json:"env"`
-	ApiKeys     []string     `json:"api-keys"`
-	RateLimit   int          `json:"rate-limit"`
-	GtfsURL     string       `json:"gtfs-url"`
-	GtfsRtFeeds []GtfsRtFeed `json:"gtfs-rt-feeds"`
-	DataPath    string       `json:"data-path"`
+	Port           int            `json:"port"`
+	Env            string         `json:"env"`
+	ApiKeys        []string       `json:"api-keys"`
+	RateLimit      int            `json:"rate-limit"`
+	GtfsStaticFeed GtfsStaticFeed `json:"gtfs-static-feed"`
+	GtfsRtFeeds    []GtfsRtFeed   `json:"gtfs-rt-feeds"`
+	DataPath       string         `json:"data-path"`
 }
 
 // setDefaults applies default values to the JSON config if fields are missing or zero
@@ -43,8 +50,8 @@ func (j *JSONConfig) setDefaults() {
 	if j.RateLimit == 0 {
 		j.RateLimit = 100
 	}
-	if j.GtfsURL == "" {
-		j.GtfsURL = "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+	if j.GtfsStaticFeed.URL == "" {
+		j.GtfsStaticFeed.URL = "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
 	}
 	if len(j.GtfsRtFeeds) == 0 {
 		j.GtfsRtFeeds = []GtfsRtFeed{
@@ -99,21 +106,27 @@ func (j *JSONConfig) validate() error {
 		return err
 	}
 
-	// Validate GtfsURL to prevent file:// URLs and other security issues
-	if j.GtfsURL != "" {
+	// Validate that both auth header fields are provided together or neither
+	if (j.GtfsStaticFeed.AuthHeaderName != "" && j.GtfsStaticFeed.AuthHeaderValue == "") ||
+		(j.GtfsStaticFeed.AuthHeaderName == "" && j.GtfsStaticFeed.AuthHeaderValue != "") {
+		return fmt.Errorf("both auth-header-name and auth-header-value must be provided together for gtfs-static-feed")
+	}
+
+	// Validate GtfsStaticFeed.URL to prevent file:// URLs and other security issues
+	if j.GtfsStaticFeed.URL != "" {
 		// Block file:// URLs (case-insensitive)
-		if strings.HasPrefix(strings.ToLower(j.GtfsURL), "file://") {
-			return fmt.Errorf("file:// URLs are not allowed for gtfs-url for security reasons")
+		if strings.HasPrefix(strings.ToLower(j.GtfsStaticFeed.URL), "file://") {
+			return fmt.Errorf("file:// URLs are not allowed for gtfs-static-feed.url for security reasons")
 		}
 
 		// For HTTP(S) URLs, no path checks needed
-		if strings.HasPrefix(j.GtfsURL, "http://") ||
-			strings.HasPrefix(j.GtfsURL, "https://") {
+		if strings.HasPrefix(j.GtfsStaticFeed.URL, "http://") ||
+			strings.HasPrefix(j.GtfsStaticFeed.URL, "https://") {
 			return nil
 		}
 
 		// For file paths, validate for path traversal
-		if err := validatePath(j.GtfsURL, "gtfs-url"); err != nil {
+		if err := validatePath(j.GtfsStaticFeed.URL, "gtfs-static-feed.url"); err != nil {
 			return err
 		}
 	}
@@ -164,6 +177,8 @@ func (j *JSONConfig) ToAppConfig() Config {
 // This avoids import cycles
 type GtfsConfigData struct {
 	GtfsURL                 string
+	StaticAuthHeaderKey     string
+	StaticAuthHeaderValue   string
 	TripUpdatesURL          string
 	VehiclePositionsURL     string
 	ServiceAlertsURL        string
@@ -178,10 +193,12 @@ type GtfsConfigData struct {
 // For now, only uses the first GTFS-RT feed
 func (j *JSONConfig) ToGtfsConfigData() GtfsConfigData {
 	cfg := GtfsConfigData{
-		GtfsURL:      j.GtfsURL,
-		GTFSDataPath: j.DataPath,
-		Env:          EnvFlagToEnvironment(j.Env),
-		Verbose:      true, // Always set to true like in main.go
+		GtfsURL:               j.GtfsStaticFeed.URL,
+		StaticAuthHeaderKey:   j.GtfsStaticFeed.AuthHeaderName,
+		StaticAuthHeaderValue: j.GtfsStaticFeed.AuthHeaderValue,
+		GTFSDataPath:          j.DataPath,
+		Env:                   EnvFlagToEnvironment(j.Env),
+		Verbose:               true, // Always set to true like in main.go
 	}
 
 	// Use first GTFS-RT feed if available

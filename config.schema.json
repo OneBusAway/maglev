@@ -35,10 +35,28 @@
       "default": 100,
       "minimum": 1
     },
-    "gtfs-url": {
-      "type": "string",
-      "description": "URL for a static GTFS zip file (http/https URLs or local file paths)",
-      "default": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+    "gtfs-static-feed": {
+      "type": "object",
+      "description": "Configuration for the static GTFS feed",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL for a static GTFS zip file (http/https URLs or local file paths)"
+        },
+        "auth-header-name": {
+          "type": "string",
+          "description": "Optional header name for static GTFS feed authentication"
+        },
+        "auth-header-value": {
+          "type": "string",
+          "description": "Optional header value for static GTFS feed authentication"
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false,
+      "default": {
+        "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+      }
     },
     "gtfs-rt-feeds": {
       "type": "array",
@@ -95,7 +113,11 @@
       "env": "production",
       "api-keys": ["key1", "key2", "key3"],
       "rate-limit": 50,
-      "gtfs-url": "https://example.com/gtfs.zip",
+      "gtfs-static-feed": {
+        "url": "https://example.com/gtfs.zip",
+        "auth-header-name": "Authorization",
+        "auth-header-value": "Bearer token456"
+      },
       "gtfs-rt-feeds": [
         {
           "trip-updates-url": "https://api.example.com/trip-updates.pb",

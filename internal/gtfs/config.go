@@ -6,6 +6,8 @@ import (
 
 type Config struct {
 	GtfsURL                 string
+	StaticAuthHeaderKey     string
+	StaticAuthHeaderValue   string
 	TripUpdatesURL          string
 	VehiclePositionsURL     string
 	ServiceAlertsURL        string

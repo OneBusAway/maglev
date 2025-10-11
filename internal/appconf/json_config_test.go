@@ -18,7 +18,7 @@ func TestLoadFromFile_ValidConfig(t *testing.T) {
 	// Verify defaults were applied
 	assert.Equal(t, []string{"test"}, config.ApiKeys)
 	assert.Equal(t, 100, config.RateLimit)
-	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsURL)
+	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "./gtfs.db", config.DataPath)
 	assert.Len(t, config.GtfsRtFeeds, 1)
 }
@@ -33,7 +33,9 @@ func TestLoadFromFile_FullConfig(t *testing.T) {
 	assert.Equal(t, "production", config.Env)
 	assert.Equal(t, []string{"key1", "key2", "key3"}, config.ApiKeys)
 	assert.Equal(t, 50, config.RateLimit)
-	assert.Equal(t, "https://example.com/gtfs.zip", config.GtfsURL)
+	assert.Equal(t, "https://example.com/gtfs.zip", config.GtfsStaticFeed.URL)
+	assert.Equal(t, "Authorization", config.GtfsStaticFeed.AuthHeaderName)
+	assert.Equal(t, "Bearer token456", config.GtfsStaticFeed.AuthHeaderValue)
 	assert.Equal(t, "/data/gtfs.db", config.DataPath)
 
 	// Verify GTFS-RT feed
@@ -196,9 +198,13 @@ func TestToAppConfig_EnvironmentConversion(t *testing.T) {
 
 func TestToGtfsConfigData_NoFeeds(t *testing.T) {
 	jsonConfig := &JSONConfig{
-		Port:        4000,
-		Env:         "development",
-		GtfsURL:     "https://example.com/gtfs.zip",
+		Port: 4000,
+		Env:  "development",
+		GtfsStaticFeed: GtfsStaticFeed{
+			URL:             "https://example.com/gtfs.zip",
+			AuthHeaderName:  "X-API-Key",
+			AuthHeaderValue: "secret123",
+		},
 		GtfsRtFeeds: []GtfsRtFeed{},
 		DataPath:    "/data/gtfs.db",
 	}
@@ -206,6 +212,8 @@ func TestToGtfsConfigData_NoFeeds(t *testing.T) {
 	gtfsConfig := jsonConfig.ToGtfsConfigData()
 
 	assert.Equal(t, "https://example.com/gtfs.zip", gtfsConfig.GtfsURL)
+	assert.Equal(t, "X-API-Key", gtfsConfig.StaticAuthHeaderKey)
+	assert.Equal(t, "secret123", gtfsConfig.StaticAuthHeaderValue)
 	assert.Equal(t, "/data/gtfs.db", gtfsConfig.GTFSDataPath)
 	assert.Equal(t, Development, gtfsConfig.Env)
 	assert.True(t, gtfsConfig.Verbose)
@@ -220,9 +228,11 @@ func TestToGtfsConfigData_NoFeeds(t *testing.T) {
 
 func TestToGtfsConfigData_WithFirstFeed(t *testing.T) {
 	jsonConfig := &JSONConfig{
-		Port:    4000,
-		Env:     "production",
-		GtfsURL: "https://example.com/gtfs.zip",
+		Port: 4000,
+		Env:  "production",
+		GtfsStaticFeed: GtfsStaticFeed{
+			URL: "https://example.com/gtfs.zip",
+		},
 		GtfsRtFeeds: []GtfsRtFeed{
 			{
 				TripUpdatesURL:          "https://api.example.com/trip-updates.pb",
@@ -258,7 +268,7 @@ func TestSetDefaults(t *testing.T) {
 	assert.Equal(t, "development", config.Env)
 	assert.Equal(t, []string{"test"}, config.ApiKeys)
 	assert.Equal(t, 100, config.RateLimit)
-	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsURL)
+	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "./gtfs.db", config.DataPath)
 	assert.Len(t, config.GtfsRtFeeds, 1)
 	assert.Equal(t, "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone", config.GtfsRtFeeds[0].TripUpdatesURL)
@@ -278,7 +288,7 @@ func TestSetDefaults_PartialConfig(t *testing.T) {
 	// Missing values should get defaults
 	assert.Equal(t, "development", config.Env)
 	assert.Equal(t, 100, config.RateLimit)
-	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsURL)
+	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 }
 
 func TestValidate_PathTraversalDataPath(t *testing.T) {
@@ -334,7 +344,9 @@ func TestValidate_FileURLNotAllowed(t *testing.T) {
 				Env:       "development",
 				ApiKeys:   []string{"test"},
 				RateLimit: 100,
-				GtfsURL:   tt.gtfsURL,
+				GtfsStaticFeed: GtfsStaticFeed{
+					URL: tt.gtfsURL,
+				},
 			}
 			err := config.validate()
 			assert.Error(t, err)
@@ -367,12 +379,14 @@ func TestValidate_PathTraversalGtfsURL(t *testing.T) {
 				Env:       "development",
 				ApiKeys:   []string{"test"},
 				RateLimit: 100,
-				GtfsURL:   tt.gtfsURL,
+				GtfsStaticFeed: GtfsStaticFeed{
+					URL: tt.gtfsURL,
+				},
 			}
 			err := config.validate()
 			if tt.shouldErr {
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "gtfs-url")
+				assert.Contains(t, err.Error(), "gtfs-static-feed")
 			} else {
 				assert.NoError(t, err)
 			}
@@ -398,14 +412,54 @@ func TestValidate_ValidAbsolutePaths(t *testing.T) {
 				Env:       "development",
 				ApiKeys:   []string{"test"},
 				RateLimit: 100,
-				GtfsURL:   tt.gtfsURL,
-				DataPath:  "./gtfs.db",
+				GtfsStaticFeed: GtfsStaticFeed{
+					URL: tt.gtfsURL,
+				},
+				DataPath: "./gtfs.db",
 			}
 			err := config.validate()
 			if tt.valid {
 				assert.NoError(t, err)
 			} else {
 				assert.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestValidate_PartialAuthHeaders(t *testing.T) {
+	tests := []struct {
+		name        string
+		authName    string
+		authValue   string
+		shouldError bool
+	}{
+		{"both provided", "Authorization", "Bearer token", false},
+		{"both empty", "", "", false},
+		{"only name provided", "Authorization", "", true},
+		{"only value provided", "", "Bearer token", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &JSONConfig{
+				Port:      4000,
+				Env:       "development",
+				ApiKeys:   []string{"test"},
+				RateLimit: 100,
+				GtfsStaticFeed: GtfsStaticFeed{
+					URL:             "https://example.com/gtfs.zip",
+					AuthHeaderName:  tt.authName,
+					AuthHeaderValue: tt.authValue,
+				},
+				DataPath: "./gtfs.db",
+			}
+			err := config.validate()
+			if tt.shouldError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "both auth-header-name and auth-header-value must be provided together")
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}

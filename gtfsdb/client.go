@@ -43,11 +43,23 @@ func (c *Client) Close() error {
 }
 
 // DownloadAndStore downloads GTFS data from the given URL and stores it in the database
-func (c *Client) DownloadAndStore(ctx context.Context, url string) error {
-	resp, err := http.Get(url)
+func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authHeaderValue string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
+
+	// Add auth header if provided
+	if authHeaderKey != "" && authHeaderValue != "" {
+		req.Header.Set(authHeaderKey, authHeaderValue)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {

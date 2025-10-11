@@ -24,6 +24,8 @@ func main() {
 	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
 	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second per API key for rate limiting")
 	flag.StringVar(&gtfsCfg.GtfsURL, "gtfs-url", "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", "URL for a static GTFS zip file")
+	flag.StringVar(&gtfsCfg.StaticAuthHeaderKey, "gtfs-static-auth-header-name", "", "Optional header name for static GTFS feed auth")
+	flag.StringVar(&gtfsCfg.StaticAuthHeaderValue, "gtfs-static-auth-header-value", "", "Optional header value for static GTFS feed auth")
 	flag.StringVar(&gtfsCfg.TripUpdatesURL, "trip-updates-url", "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone", "URL for a GTFS-RT trip updates feed")
 	flag.StringVar(&gtfsCfg.VehiclePositionsURL, "vehicle-positions-url", "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency/40.pb?key=org.onebusaway.iphone", "URL for a GTFS-RT vehicle positions feed")
 	flag.StringVar(&gtfsCfg.RealTimeAuthHeaderKey, "realtime-auth-header-name", "", "Optional header name for GTFS-RT auth")
@@ -60,6 +62,8 @@ func main() {
 		gtfsCfgData := jsonConfig.ToGtfsConfigData()
 		gtfsCfg = gtfs.Config{
 			GtfsURL:                 gtfsCfgData.GtfsURL,
+			StaticAuthHeaderKey:     gtfsCfgData.StaticAuthHeaderKey,
+			StaticAuthHeaderValue:   gtfsCfgData.StaticAuthHeaderValue,
 			TripUpdatesURL:          gtfsCfgData.TripUpdatesURL,
 			VehiclePositionsURL:     gtfsCfgData.VehiclePositionsURL,
 			ServiceAlertsURL:        gtfsCfgData.ServiceAlertsURL,
