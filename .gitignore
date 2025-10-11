@@ -9,3 +9,4 @@ gtfsdb/tmp/main
 .claude
 .idea
 config.json
+configs/*.json
