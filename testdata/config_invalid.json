@@ -1,0 +1,6 @@
+{
+  "port": 99999,
+  "env": "invalid-env",
+  "api-keys": [],
+  "rate-limit": -5
+}

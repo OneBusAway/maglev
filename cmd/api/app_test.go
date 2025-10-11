@@ -363,3 +363,132 @@ func TestBuildApplicationErrorHandling(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to initialize GTFS manager")
 	})
 }
+
+func TestConfigFileLoading(t *testing.T) {
+	t.Run("loads valid config file", func(t *testing.T) {
+		jsonConfig, err := appconf.LoadFromFile("../../testdata/config_valid.json")
+		require.NoError(t, err)
+		require.NotNil(t, jsonConfig)
+
+		// Convert to configs
+		appCfg := jsonConfig.ToAppConfig()
+		gtfsCfgData := jsonConfig.ToGtfsConfigData()
+
+		// Verify app config
+		assert.Equal(t, 3000, appCfg.Port)
+		assert.Equal(t, appconf.Development, appCfg.Env)
+		assert.Equal(t, []string{"test"}, appCfg.ApiKeys)
+		assert.Equal(t, 100, appCfg.RateLimit)
+		assert.True(t, appCfg.Verbose)
+
+		// Verify GTFS config
+		assert.Equal(t, appconf.Development, gtfsCfgData.Env)
+		assert.True(t, gtfsCfgData.Verbose)
+	})
+
+	t.Run("loads full config file with GTFS-RT feed", func(t *testing.T) {
+		jsonConfig, err := appconf.LoadFromFile("../../testdata/config_full.json")
+		require.NoError(t, err)
+		require.NotNil(t, jsonConfig)
+
+		// Convert to configs
+		appCfg := jsonConfig.ToAppConfig()
+		gtfsCfgData := jsonConfig.ToGtfsConfigData()
+
+		// Verify app config
+		assert.Equal(t, 8080, appCfg.Port)
+		assert.Equal(t, appconf.Production, appCfg.Env)
+		assert.Equal(t, []string{"key1", "key2", "key3"}, appCfg.ApiKeys)
+		assert.Equal(t, 50, appCfg.RateLimit)
+
+		// Verify GTFS config with first feed only
+		assert.Equal(t, "https://example.com/gtfs.zip", gtfsCfgData.GtfsURL)
+		assert.Equal(t, "/data/gtfs.db", gtfsCfgData.GTFSDataPath)
+		assert.Equal(t, "https://api.example.com/trip-updates.pb", gtfsCfgData.TripUpdatesURL)
+		assert.Equal(t, "https://api.example.com/vehicle-positions.pb", gtfsCfgData.VehiclePositionsURL)
+		assert.Equal(t, "https://api.example.com/service-alerts.pb", gtfsCfgData.ServiceAlertsURL)
+		assert.Equal(t, "Authorization", gtfsCfgData.RealTimeAuthHeaderKey)
+		assert.Equal(t, "Bearer token123", gtfsCfgData.RealTimeAuthHeaderValue)
+	})
+
+	t.Run("fails on invalid config file", func(t *testing.T) {
+		jsonConfig, err := appconf.LoadFromFile("../../testdata/config_invalid.json")
+		assert.Error(t, err)
+		assert.Nil(t, jsonConfig)
+		assert.Contains(t, err.Error(), "invalid configuration")
+	})
+
+	t.Run("fails on malformed JSON", func(t *testing.T) {
+		jsonConfig, err := appconf.LoadFromFile("../../testdata/config_malformed.json")
+		assert.Error(t, err)
+		assert.Nil(t, jsonConfig)
+		assert.Contains(t, err.Error(), "failed to parse JSON config")
+	})
+
+	t.Run("fails on nonexistent file", func(t *testing.T) {
+		jsonConfig, err := appconf.LoadFromFile("../../testdata/nonexistent.json")
+		assert.Error(t, err)
+		assert.Nil(t, jsonConfig)
+		assert.Contains(t, err.Error(), "failed to stat config file")
+	})
+}
+
+func TestBuildApplicationWithConfigFile(t *testing.T) {
+	t.Run("builds app from valid config file", func(t *testing.T) {
+		// Skip if test data not available
+		testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
+		if _, err := os.Stat(testDataPath); os.IsNotExist(err) {
+			t.Skip("Test data not available, skipping test")
+		}
+
+		// Convert to absolute path to avoid path traversal validation issues
+		absTestDataPath, err := filepath.Abs(testDataPath)
+		require.NoError(t, err)
+
+		// Create a test config file that uses the test data
+		testConfigPath := filepath.Join("..", "..", "testdata", "config_test_build.json")
+		testConfigContent := `{
+  "port": 5000,
+  "env": "test",
+  "api-keys": ["test-key"],
+  "rate-limit": 50,
+  "gtfs-url": "` + absTestDataPath + `",
+  "data-path": ":memory:"
+}`
+		err = os.WriteFile(testConfigPath, []byte(testConfigContent), 0644)
+		require.NoError(t, err)
+		defer func() {
+			_ = os.Remove(testConfigPath)
+		}()
+
+		// Load config from file
+		jsonConfig, err := appconf.LoadFromFile(testConfigPath)
+		require.NoError(t, err)
+
+		// Convert to app and GTFS configs
+		cfg := jsonConfig.ToAppConfig()
+		gtfsCfgData := jsonConfig.ToGtfsConfigData()
+		gtfsCfg := gtfs.Config{
+			GtfsURL:                 gtfsCfgData.GtfsURL,
+			TripUpdatesURL:          gtfsCfgData.TripUpdatesURL,
+			VehiclePositionsURL:     gtfsCfgData.VehiclePositionsURL,
+			ServiceAlertsURL:        gtfsCfgData.ServiceAlertsURL,
+			RealTimeAuthHeaderKey:   gtfsCfgData.RealTimeAuthHeaderKey,
+			RealTimeAuthHeaderValue: gtfsCfgData.RealTimeAuthHeaderValue,
+			GTFSDataPath:            gtfsCfgData.GTFSDataPath,
+			Env:                     gtfsCfgData.Env,
+			Verbose:                 gtfsCfgData.Verbose,
+		}
+
+		// Build application
+		coreApp, err := BuildApplication(cfg, gtfsCfg)
+		require.NoError(t, err)
+		assert.NotNil(t, coreApp)
+		assert.NotNil(t, coreApp.Logger)
+		assert.NotNil(t, coreApp.GtfsManager)
+		assert.Equal(t, 5000, coreApp.Config.Port)
+		assert.Equal(t, appconf.Test, coreApp.Config.Env)
+		assert.Equal(t, []string{"test-key"}, coreApp.Config.ApiKeys)
+		assert.Equal(t, 50, coreApp.Config.RateLimit)
+	})
+}

@@ -1,0 +1,5 @@
+{
+  "$schema": "../config.schema.json",
+  "port": 3000,
+  "env": "development"
+}

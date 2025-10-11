@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://onebusaway.org/schemas/maglev-config.json",
+  "title": "Maglev Configuration",
+  "description": "Configuration schema for the Maglev OneBusAway server",
+  "type": "object",
+  "properties": {
+    "port": {
+      "type": "integer",
+      "description": "API server port",
+      "default": 4000,
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "env": {
+      "type": "string",
+      "description": "Environment (development|test|production)",
+      "enum": ["development", "test", "production"],
+      "default": "development"
+    },
+    "api-keys": {
+      "type": "array",
+      "description": "API keys for authentication",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": ["test"],
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "rate-limit": {
+      "type": "integer",
+      "description": "Requests per second per API key for rate limiting",
+      "default": 100,
+      "minimum": 1
+    },
+    "gtfs-static-feed": {
+      "type": "object",
+      "description": "Configuration for the static GTFS feed",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL for a static GTFS zip file (http/https URLs or local file paths)"
+        },
+        "auth-header-name": {
+          "type": "string",
+          "description": "Optional header name for static GTFS feed authentication"
+        },
+        "auth-header-value": {
+          "type": "string",
+          "description": "Optional header value for static GTFS feed authentication"
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false,
+      "default": {
+        "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+      }
+    },
+    "gtfs-rt-feeds": {
+      "type": "array",
+      "description": "Array of GTFS-RT feed configurations",
+      "items": {
+        "type": "object",
+        "properties": {
+          "trip-updates-url": {
+            "type": "string",
+            "description": "URL for a GTFS-RT trip updates feed",
+            "format": "uri"
+          },
+          "vehicle-positions-url": {
+            "type": "string",
+            "description": "URL for a GTFS-RT vehicle positions feed",
+            "format": "uri"
+          },
+          "service-alerts-url": {
+            "type": "string",
+            "description": "URL for a GTFS-RT service alerts feed",
+            "format": "uri"
+          },
+          "realtime-auth-header-name": {
+            "type": "string",
+            "description": "Optional header name for GTFS-RT auth"
+          },
+          "realtime-auth-header-value": {
+            "type": "string",
+            "description": "Optional header value for GTFS-RT auth"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": [
+        {
+          "trip-updates-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone",
+          "vehicle-positions-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency/40.pb?key=org.onebusaway.iphone",
+          "service-alerts-url": "",
+          "realtime-auth-header-name": "",
+          "realtime-auth-header-value": ""
+        }
+      ]
+    },
+    "data-path": {
+      "type": "string",
+      "description": "Path to the SQLite database containing GTFS data (cannot contain '..' for security)",
+      "default": "./gtfs.db"
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "port": 8080,
+      "env": "production",
+      "api-keys": ["key1", "key2", "key3"],
+      "rate-limit": 50,
+      "gtfs-static-feed": {
+        "url": "https://example.com/gtfs.zip",
+        "auth-header-name": "Authorization",
+        "auth-header-value": "Bearer token456"
+      },
+      "gtfs-rt-feeds": [
+        {
+          "trip-updates-url": "https://api.example.com/trip-updates.pb",
+          "vehicle-positions-url": "https://api.example.com/vehicle-positions.pb",
+          "service-alerts-url": "https://api.example.com/service-alerts.pb",
+          "realtime-auth-header-name": "Authorization",
+          "realtime-auth-header-value": "Bearer token123"
+        }
+      ],
+      "data-path": "/data/gtfs.db"
+    },
+    {
+      "port": 3000,
+      "env": "development"
+    }
+  ]
+}

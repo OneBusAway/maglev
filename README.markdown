@@ -7,9 +7,98 @@ A complete rewrite of the OneBusAway (OBA) REST API server in Golang.
 ## Getting Started
 
 1. Install Go 1.24.2 or later.
-2. Copy `.env.example` to `.env` and fill in the required values.
+2. Copy `config.example.json` to `config.json` and fill in the required values.
 3. Run `make run` to build start the server.
 4. Open your browser and navigate to `http://localhost:4000/api/where/current-time.json?key=test` to verify the server works.
+
+## Configuration
+
+Maglev supports two ways to configure the server: command-line flags or a JSON configuration file.
+
+### Command-line Flags (Default)
+
+Run the server with command-line flags:
+
+```bash
+./bin/maglev -port 8080 -env production -api-keys "key1,key2" -rate-limit 50
+```
+
+### JSON Configuration File
+
+Alternatively, use a JSON configuration file with the `-f` flag:
+
+```bash
+./bin/maglev -f config.json
+```
+
+An example configuration file is provided as `config.example.json`. You can copy and modify it:
+
+```bash
+cp config.example.json config.json
+# Edit config.json with your settings
+./bin/maglev -f config.json
+```
+
+Example `config.json`:
+
+```json
+{
+  "port": 8080,
+  "env": "production",
+  "api-keys": ["key1", "key2", "key3"],
+  "rate-limit": 50,
+  "gtfs-static-feed": {
+    "url": "https://example.com/gtfs.zip",
+    "auth-header-name": "Authorization",
+    "auth-header-value": "Bearer token456"
+  },
+  "gtfs-rt-feeds": [
+    {
+      "trip-updates-url": "https://api.example.com/trip-updates.pb",
+      "vehicle-positions-url": "https://api.example.com/vehicle-positions.pb",
+      "service-alerts-url": "https://api.example.com/service-alerts.pb",
+      "realtime-auth-header-name": "Authorization",
+      "realtime-auth-header-value": "Bearer token123"
+    }
+  ],
+  "data-path": "/data/gtfs.db"
+}
+```
+
+**Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will error if you try to use both.
+
+**Dump Current Configuration:**
+```bash
+./bin/maglev --dump-config > my-config.json
+# or with other flags
+./bin/maglev -port 8080 -env production --dump-config > config.json
+```
+
+**JSON Schema & IDE Integration:**
+
+A JSON schema file is provided at `config.schema.json` for IDE autocomplete and validation.
+
+To enable IDE validation, add `$schema` to your config file:
+```json
+{
+  "$schema": "./config.schema.json",
+  "port": 4000,
+  "env": "development",
+  ...
+}
+```
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `port` | integer | 4000 | API server port |
+| `env` | string | "development" | Environment (development, test, production) |
+| `api-keys` | array | ["test"] | API keys for authentication |
+| `rate-limit` | integer | 100 | Requests per second per API key |
+| `gtfs-static-feed` | object | (Sound Transit) | Static GTFS feed configuration with URL and optional auth headers |
+| `gtfs-rt-feeds` | array | (Sound Transit) | GTFS-RT feed configurations |
+| `data-path` | string | "./gtfs.db" | Path to SQLite database |
 
 ## Basic Commands
 
