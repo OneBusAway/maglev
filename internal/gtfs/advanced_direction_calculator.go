@@ -21,6 +21,7 @@ const (
 type AdvancedDirectionCalculator struct {
 	queries           *gtfsdb.Queries
 	varianceThreshold float64
+	shapeCache        map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
@@ -34,6 +35,13 @@ func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionC
 // SetVarianceThreshold sets the standard deviation threshold for direction variance checking
 func (adc *AdvancedDirectionCalculator) SetVarianceThreshold(threshold float64) {
 	adc.varianceThreshold = threshold
+}
+
+// SetShapeCache sets a pre-loaded cache of shape data to avoid database queries during bulk operations.
+// This significantly improves performance when calculating directions for many stops.
+// IMPORTANT: This method is NOT thread-safe and must be called before any concurrent direction calculations.
+func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) {
+	adc.shapeCache = cache
 }
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
@@ -215,10 +223,22 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 // calculateOrientationAtStop calculates the orientation at a stop using a window of shape points
 // If distTraveled is < 0, it uses stopLat/stopLon for geographic matching (when shape_dist_traveled is unavailable)
 func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.Context, shapeID string, distTraveled float64, stopLat, stopLon float64) (float64, error) {
-	// Get all shape points for this shape using shape_id directly
-	shapePoints, err := adc.queries.GetShapePointsWithDistance(ctx, shapeID)
-	if err != nil || len(shapePoints) < 2 {
-		return 0, err
+	var shapePoints []gtfsdb.GetShapePointsWithDistanceRow
+	var err error
+
+	// Try cache first if available
+	if adc.shapeCache != nil {
+		var found bool
+		shapePoints, found = adc.shapeCache[shapeID]
+		if !found || len(shapePoints) < 2 {
+			return 0, sql.ErrNoRows
+		}
+	} else {
+		// Fall back to database query if no cache
+		shapePoints, err = adc.queries.GetShapePointsWithDistance(ctx, shapeID)
+		if err != nil || len(shapePoints) < 2 {
+			return 0, err
+		}
 	}
 
 	closestIdx := 0

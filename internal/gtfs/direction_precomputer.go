@@ -61,6 +61,19 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 		return nil
 	}
 
+	// ===== PHASE 0: PRE-LOAD SHAPE DATA INTO CACHE =====
+	logging.LogOperation(dp.logger, "loading_shape_cache_started")
+	shapeCache, err := dp.loadShapeCache(ctx)
+	if err != nil {
+		logging.LogError(dp.logger, "Failed to load shape cache", err)
+		// Don't fail precomputation if cache loading fails - will fall back to DB queries
+	} else {
+		logging.LogOperation(dp.logger, "shape_cache_loaded",
+			slog.Int("shape_count", len(shapeCache)))
+		// Set the cache on the calculator for use during precomputation
+		dp.calculator.SetShapeCache(shapeCache)
+	}
+
 	// ===== PHASE 1: PARALLEL DIRECTION CALCULATION (read-only) =====
 	numWorkers := runtime.NumCPU()
 	stopsChan := make(chan gtfsdb.Stop, numWorkers)
@@ -227,6 +240,33 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 		slog.Int("errors", errorCount))
 
 	return nil
+}
+
+// loadShapeCache loads all shape data from the database and organizes it by shape_id
+// for efficient lookup during direction precomputation
+func (dp *DirectionPrecomputer) loadShapeCache(ctx context.Context) (map[string][]gtfsdb.GetShapePointsWithDistanceRow, error) {
+	// Get all shape points from the database
+	allShapes, err := dp.queries.GetAllShapes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch all shapes: %w", err)
+	}
+
+	// Organize shapes by shape_id for O(1) lookup
+	shapeCache := make(map[string][]gtfsdb.GetShapePointsWithDistanceRow)
+
+	for _, shape := range allShapes {
+		// Convert Shape to GetShapePointsWithDistanceRow (excludes ShapeID as it's the map key)
+		shapePoint := gtfsdb.GetShapePointsWithDistanceRow{
+			Lat:               shape.Lat,
+			Lon:               shape.Lon,
+			ShapePtSequence:   shape.ShapePtSequence,
+			ShapeDistTraveled: shape.ShapeDistTraveled,
+		}
+
+		shapeCache[shape.ShapeID] = append(shapeCache[shape.ShapeID], shapePoint)
+	}
+
+	return shapeCache, nil
 }
 
 // PrecomputeDirectionsAsync runs direction precomputation in a background goroutine
