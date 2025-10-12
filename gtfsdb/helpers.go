@@ -65,11 +65,9 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 		c.importRuntime = endTime.Sub(startTime)
 
-		if c.config.verbose {
-			logging.LogOperation(logger, "gtfs_data_import_completed",
-				slog.Duration("duration", c.importRuntime),
-				slog.String("source", source))
-		}
+		logging.LogOperation(logger, "gtfs_data_import_completed",
+			slog.Duration("duration", c.importRuntime),
+			slog.String("source", source))
 	}()
 
 	// Calculate hash of the GTFS data
@@ -83,18 +81,14 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	if err == nil {
 		// We have existing metadata, check if hash matches
 		if existingMetadata.FileHash == hashStr && existingMetadata.FileSource == source {
-			if c.config.verbose {
-				logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
-					slog.String("hash", hashStr[:8]))
-			}
+			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
+				slog.String("hash", hashStr[:8]))
 			return nil
 		}
 		// Hash differs, we need to clear existing data and reimport
-		if c.config.verbose {
-			logging.LogOperation(logger, "gtfs_data_changed_reimporting",
-				slog.String("old_hash", existingMetadata.FileHash[:8]),
-				slog.String("new_hash", hashStr[:8]))
-		}
+		logging.LogOperation(logger, "gtfs_data_changed_reimporting",
+			slog.String("old_hash", existingMetadata.FileHash[:8]),
+			slog.String("new_hash", hashStr[:8]))
 		err = c.clearAllGTFSData(ctx)
 		if err != nil {
 			return fmt.Errorf("error clearing existing GTFS data: %w", err)
@@ -112,17 +106,21 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return err
 	}
 
-	if c.config.verbose {
-		fmt.Printf("retrieved static data (warnings: %d)\n", len(staticData.Warnings))
-		fmt.Print("========\n\n")
+	fmt.Printf("retrieved static data (warnings: %d)\n", len(staticData.Warnings))
+	fmt.Print("========\n\n")
 
-		staticCounts = c.staticDataCounts(staticData)
-		for k, v := range staticCounts {
-			fmt.Printf("%s: %d\n", k, v)
-		}
-
-		fmt.Print("========\n\n")
+	staticCounts = c.staticDataCounts(staticData)
+	for k, v := range staticCounts {
+		fmt.Printf("%s: %d\n", k, v)
 	}
+
+	fmt.Print("========\n\n")
+
+	logging.LogOperation(logger, "starting_database_import")
+
+	logging.LogOperation(logger, "inserting_agencies_and_routes",
+		slog.Int("agencies", len(staticData.Agencies)),
+		slog.Int("routes", len(staticData.Routes)))
 
 	for _, a := range staticData.Agencies {
 		params := CreateAgencyParams{
@@ -194,6 +192,12 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return fmt.Errorf("unable to create stops: %w", err)
 	}
 
+	logging.LogOperation(logger, "agencies_and_routes_inserted",
+		slog.Int("agencies", len(staticData.Agencies)),
+		slog.Int("routes", len(staticData.Routes)))
+	logging.LogOperation(logger, "inserting_calendar",
+		slog.Int("count", len(staticData.Services)))
+
 	for _, s := range staticData.Services {
 		params := CreateCalendarParams{
 			ID:        s.Id,
@@ -213,6 +217,9 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			return fmt.Errorf("unable to create calendar: %w", err)
 		}
 	}
+
+	logging.LogOperation(logger, "calendar_inserted",
+		slog.Int("count", len(staticData.Services)))
 
 	var allTripParams []CreateTripParams
 	for _, t := range staticData.Trips {
@@ -293,23 +300,19 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return fmt.Errorf("unable to create shapes: %w", err)
 	}
 
-	if c.config.verbose {
-		counts, err := c.TableCounts()
-		if err != nil {
-			logging.LogError(logger, "Error getting table counts", err)
-			return fmt.Errorf("failed to get table counts: %w", err)
-		}
-		for k, v := range counts {
-			fmt.Printf("%s: %d (Static matches? %v)\n", k, v, v == staticCounts[k])
-		}
+	counts, err := c.TableCounts()
+	if err != nil {
+		logging.LogError(logger, "Error getting table counts", err)
+		return fmt.Errorf("failed to get table counts: %w", err)
+	}
+	for k, v := range counts {
+		fmt.Printf("%s: %d (Static matches? %v)\n", k, v, v == staticCounts[k])
 	}
 
-	// Update import metadata to record successful import
-	if c.config.verbose {
-		logging.LogOperation(logger, "updating_import_metadata",
-			slog.String("hash", hashStr[:8]),
-			slog.String("source", source))
-	}
+	logging.LogOperation(logger, "updating_import_metadata",
+		slog.String("hash", hashStr[:8]),
+		slog.String("source", source))
+
 	_, err = c.Queries.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   hashStr,
 		ImportTime: time.Now().Unix(),
@@ -319,9 +322,8 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		logging.LogError(logger, "Error updating import metadata", err)
 		return fmt.Errorf("error updating import metadata: %w", err)
 	}
-	if c.config.verbose {
-		logging.LogOperation(logger, "import_metadata_updated_successfully")
-	}
+
+	logging.LogOperation(logger, "import_metadata_updated_successfully")
 
 	var allCalendarDateParams []CreateCalendarDateParams
 
@@ -433,6 +435,9 @@ func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams) 
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
 
+	logging.LogOperation(logger, "inserting_stops",
+		slog.Int("count", len(stops)))
+
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -446,13 +451,24 @@ func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams) 
 			return err
 		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "stops_inserted",
+		slog.Int("count", len(stops)))
+
+	return nil
 }
 
 func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams) error {
 	db := c.DB
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+
+	logging.LogOperation(logger, "inserting_trips",
+		slog.Int("count", len(trips)))
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -467,13 +483,24 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams) 
 			return err
 		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "trips_inserted",
+		slog.Int("count", len(trips)))
+
+	return nil
 }
 
 func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStopTimeParams) error {
 	db := c.DB
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+
+	logging.LogOperation(logger, "inserting_stop_times",
+		slog.Int("count", len(stopTimes)))
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -482,19 +509,37 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_stop_times")
 
 	qtx := queries.WithTx(tx)
-	for _, params := range stopTimes {
+	for i, params := range stopTimes {
 		_, err := qtx.CreateStopTime(ctx, params)
 		if err != nil {
 			return err
 		}
+
+		// Log progress every 100k records
+		if (i+1)%100000 == 0 {
+			logging.LogOperation(logger, "stop_times_progress",
+				slog.Int("inserted", i+1),
+				slog.Int("total", len(stopTimes)))
+		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "stop_times_inserted",
+		slog.Int("count", len(stopTimes)))
+
+	return nil
 }
 
 func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParams) error {
 	db := c.DB
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+
+	logging.LogOperation(logger, "inserting_shapes",
+		slog.Int("count", len(shapes)))
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -503,13 +548,28 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_shapes")
 
 	qtx := queries.WithTx(tx)
-	for _, params := range shapes {
+	for i, params := range shapes {
 		_, err := qtx.CreateShape(ctx, params)
 		if err != nil {
 			return err
 		}
+
+		// Log progress every 50k records
+		if (i+1)%50000 == 0 {
+			logging.LogOperation(logger, "shapes_progress",
+				slog.Int("inserted", i+1),
+				slog.Int("total", len(shapes)))
+		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "shapes_inserted",
+		slog.Int("count", len(shapes)))
+
+	return nil
 }
 
 func (c *Client) buldInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams) error {
