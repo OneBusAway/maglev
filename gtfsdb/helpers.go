@@ -8,7 +8,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -500,6 +503,14 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams) 
 	return nil
 }
 
+// preparedStopTimeBatch holds a prepared SQL statement with its arguments
+type preparedStopTimeBatch struct {
+	query string
+	args  []interface{}
+	index int // Original index for ordering
+	end   int // End position for progress logging
+}
+
 func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStopTimeParams) error {
 	db := c.DB
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
@@ -507,64 +518,143 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 	logging.LogOperation(logger, "inserting_stop_times",
 		slog.Int("count", len(stopTimes)))
 
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_stop_times")
-
-	// Use multi-row INSERT for better performance
-	// Batch size is configurable (default 1000) to balance SQL statement size with insert efficiency
+	// ===== PIPELINE: PARALLEL PREPARATION + SEQUENTIAL EXECUTION =====
 	batchSize := c.config.GetBulkInsertBatchSize()
 	const baseQuery = `INSERT INTO stop_times (
 		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
 		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
 	) VALUES `
 
-	for i := 0; i < len(stopTimes); i += batchSize {
-		end := i + batchSize
-		if end > len(stopTimes) {
-			end = len(stopTimes)
-		}
-		batch := stopTimes[i:end]
+	// Calculate number of batches
+	numBatches := (len(stopTimes) + batchSize - 1) / batchSize
 
-		// Build multi-row INSERT query
-		// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
-		// into the query string to prevent SQL injection attacks.
-		var query strings.Builder
-		query.WriteString(baseQuery)
-		args := make([]interface{}, 0, len(batch)*10)
+	// Start database transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_stop_times")
 
-		for j, params := range batch {
-			if j > 0 {
-				query.WriteString(", ")
+	// Create channels for pipeline
+	numWorkers := runtime.NumCPU()
+	batchChan := make(chan int, numWorkers)
+	resultsChan := make(chan preparedStopTimeBatch, numWorkers*4) // Larger buffer for pipeline
+
+	// Start worker pool for parallel preparation
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for batchIndex := range batchChan {
+				// Check context for cancellation
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				// Calculate batch boundaries
+				start := batchIndex * batchSize
+				end := start + batchSize
+				if end > len(stopTimes) {
+					end = len(stopTimes)
+				}
+				batch := stopTimes[start:end]
+
+				// Build multi-row INSERT query
+				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
+				// into the query string to prevent SQL injection attacks.
+				var query strings.Builder
+				query.WriteString(baseQuery)
+				args := make([]interface{}, 0, len(batch)*10)
+
+				for j, params := range batch {
+					if j > 0 {
+						query.WriteString(", ")
+					}
+					query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+
+					args = append(args,
+						params.TripID,
+						params.ArrivalTime,
+						params.DepartureTime,
+						params.StopID,
+						params.StopSequence,
+						params.StopHeadsign,
+						params.PickupType,
+						params.DropOffType,
+						params.ShapeDistTraveled,
+						params.Timepoint,
+					)
+				}
+
+				// Send prepared batch to results channel
+				resultsChan <- preparedStopTimeBatch{
+					query: query.String(),
+					args:  args,
+					index: batchIndex,
+					end:   end,
+				}
 			}
-			query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		}()
+	}
 
-			args = append(args,
-				params.TripID,
-				params.ArrivalTime,
-				params.DepartureTime,
-				params.StopID,
-				params.StopSequence,
-				params.StopHeadsign,
-				params.PickupType,
-				params.DropOffType,
-				params.ShapeDistTraveled,
-				params.Timepoint,
-			)
+	// Feed batch indices to workers
+	go func() {
+		for i := 0; i < numBatches; i++ {
+			batchChan <- i
+		}
+		close(batchChan)
+	}()
+
+	// Close results channel when all workers are done
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Execute batches as they're prepared (overlapping preparation and execution)
+	// Collect batches and sort them to maintain insertion order
+	preparedBatches := make([]preparedStopTimeBatch, 0, numBatches)
+	for batch := range resultsChan {
+		preparedBatches = append(preparedBatches, batch)
+	}
+
+	// Check if context was canceled during preparation
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Sort batches by index to maintain insertion order
+	sort.Slice(preparedBatches, func(i, j int) bool {
+		return preparedBatches[i].index < preparedBatches[j].index
+	})
+
+	logging.LogOperation(
+		logger,
+		"stop_times_progress",
+		slog.Int("inserted", 0),
+		slog.Int("total", len(stopTimes)),
+	)
+
+	// Execute sorted batches
+	for _, batch := range preparedBatches {
+		// Check context before executing
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
 		// Execute the batch insert
-		_, err := tx.ExecContext(ctx, query.String(), args...)
+		_, err := tx.ExecContext(ctx, batch.query, batch.args...)
 		if err != nil {
 			return fmt.Errorf("failed to insert stop_times batch: %w", err)
 		}
 
 		// Log progress every 100k records
-		if (end)%100000 == 0 || end == len(stopTimes) {
+		if (batch.end)%100000 == 0 || batch.end == len(stopTimes) {
 			logging.LogOperation(logger, "stop_times_progress",
-				slog.Int("inserted", end),
+				slog.Int("inserted", batch.end),
 				slog.Int("total", len(stopTimes)))
 		}
 	}
@@ -579,6 +669,14 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 	return nil
 }
 
+// preparedShapeBatch holds a prepared SQL statement with its arguments
+type preparedShapeBatch struct {
+	query string
+	args  []interface{}
+	index int // Original index for ordering
+	end   int // End position for progress logging
+}
+
 func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParams) error {
 	db := c.DB
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
@@ -586,58 +684,142 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	logging.LogOperation(logger, "inserting_shapes",
 		slog.Int("count", len(shapes)))
 
+	// ===== PHASE 1: PARALLEL STATEMENT PREPARATION =====
+	batchSize := c.config.GetBulkInsertBatchSize()
+	const baseQuery = `INSERT INTO shapes (
+		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
+	) VALUES `
+
+	// Calculate number of batches
+	numBatches := (len(shapes) + batchSize - 1) / batchSize
+
+	// Create worker pool for parallel statement preparation
+	numWorkers := runtime.NumCPU()
+	batchChan := make(chan int, numWorkers)
+	resultsChan := make(chan preparedShapeBatch, numWorkers*2)
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for batchIndex := range batchChan {
+				// Check context for cancellation
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				// Calculate batch boundaries
+				start := batchIndex * batchSize
+				end := start + batchSize
+				if end > len(shapes) {
+					end = len(shapes)
+				}
+				batch := shapes[start:end]
+
+				// Build multi-row INSERT query
+				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
+				// into the query string to prevent SQL injection attacks.
+				var query strings.Builder
+				query.WriteString(baseQuery)
+				args := make([]interface{}, 0, len(batch)*5)
+
+				for j, params := range batch {
+					if j > 0 {
+						query.WriteString(", ")
+					}
+					query.WriteString("(?, ?, ?, ?, ?)")
+
+					args = append(args,
+						params.ShapeID,
+						params.Lat,
+						params.Lon,
+						params.ShapePtSequence,
+						params.ShapeDistTraveled,
+					)
+				}
+
+				// Send prepared batch to results channel
+				resultsChan <- preparedShapeBatch{
+					query: query.String(),
+					args:  args,
+					index: batchIndex,
+					end:   end,
+				}
+			}
+		}()
+	}
+
+	// Feed batch indices to workers
+	go func() {
+		for i := 0; i < numBatches; i++ {
+			batchChan <- i
+		}
+		close(batchChan)
+	}()
+
+	// ===== PHASE 2: COLLECT PREPARED BATCHES =====
+	// Close results channel when all workers are done
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect prepared batches as they arrive with progress logging
+	preparedBatches := make([]preparedShapeBatch, 0, numBatches)
+	lastLoggedCount := 0
+	for batch := range resultsChan {
+		preparedBatches = append(preparedBatches, batch)
+
+		// Log preparation progress every 50 batches (150k records with batch size 3000)
+		if len(preparedBatches)-lastLoggedCount >= 50 {
+			logging.LogOperation(logger, "shapes_preparation_progress",
+				slog.Int("batches_prepared", len(preparedBatches)),
+				slog.Int("total_batches", numBatches))
+			lastLoggedCount = len(preparedBatches)
+		}
+	}
+
+	logging.LogOperation(logger, "shapes_preparation_complete",
+		slog.Int("batches_prepared", len(preparedBatches)),
+		slog.Int("total_batches", numBatches))
+
+	// Check if context was canceled during preparation
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Sort batches by index to maintain insertion order
+	sort.Slice(preparedBatches, func(i, j int) bool {
+		return preparedBatches[i].index < preparedBatches[j].index
+	})
+
+	// ===== PHASE 3: SEQUENTIAL DATABASE EXECUTION =====
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_shapes")
 
-	// Use multi-row INSERT for better performance
-	// Batch size is configurable (default 1000) to balance SQL statement size with insert efficiency
-	batchSize := c.config.GetBulkInsertBatchSize()
-	const baseQuery = `INSERT INTO shapes (
-		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
-	) VALUES `
-
-	for i := 0; i < len(shapes); i += batchSize {
-		end := i + batchSize
-		if end > len(shapes) {
-			end = len(shapes)
-		}
-		batch := shapes[i:end]
-
-		// Build multi-row INSERT query
-		// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
-		// into the query string to prevent SQL injection attacks.
-		var query strings.Builder
-		query.WriteString(baseQuery)
-		args := make([]interface{}, 0, len(batch)*5)
-
-		for j, params := range batch {
-			if j > 0 {
-				query.WriteString(", ")
-			}
-			query.WriteString("(?, ?, ?, ?, ?)")
-
-			args = append(args,
-				params.ShapeID,
-				params.Lat,
-				params.Lon,
-				params.ShapePtSequence,
-				params.ShapeDistTraveled,
-			)
+	for _, batch := range preparedBatches {
+		// Check context before executing
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
 		// Execute the batch insert
-		_, err := tx.ExecContext(ctx, query.String(), args...)
+		_, err := tx.ExecContext(ctx, batch.query, batch.args...)
 		if err != nil {
 			return fmt.Errorf("failed to insert shapes batch: %w", err)
 		}
 
 		// Log progress every 50k records
-		if (end)%50000 == 0 || end == len(shapes) {
+		if (batch.end)%50000 == 0 || batch.end == len(shapes) {
 			logging.LogOperation(logger, "shapes_progress",
-				slog.Int("inserted", end),
+				slog.Int("inserted", batch.end),
 				slog.Int("total", len(shapes)))
 		}
 	}
