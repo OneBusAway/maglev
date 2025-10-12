@@ -216,6 +216,12 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	var allTripParams []CreateTripParams
 	for _, t := range staticData.Trips {
+		// Handle optional shape - shapes.txt is optional in GTFS spec
+		var shapeID string
+		if t.Shape != nil {
+			shapeID = t.Shape.ID
+		}
+
 		params := CreateTripParams{
 			ID:                   t.ID,
 			RouteID:              t.Route.Id,
@@ -224,7 +230,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			TripShortName:        toNullString(t.ShortName),
 			DirectionID:          toNullInt64(int64(t.DirectionId)),
 			BlockID:              toNullString(t.BlockID),
-			ShapeID:              toNullString(t.Shape.ID),
+			ShapeID:              toNullString(shapeID),
 			WheelchairAccessible: toNullInt64(int64(t.WheelchairAccessible)),
 			BikesAllowed:         toNullInt64(int64(t.BikesAllowed)),
 		}
