@@ -242,26 +242,56 @@ func (m *Merger) mergeServices(result *gtfs.Static, feed *Feed, strategy Strateg
 // Helper functions for duplicate detection
 
 func (m *Merger) findDuplicateAgency(result *gtfs.Static, agency *gtfs.Agency, strategy Strategy) *gtfs.Agency {
-	if strategy != IDENTITY {
+	if strategy == IDENTITY {
+		for i := range result.Agencies {
+			if result.Agencies[i].Id == agency.Id {
+				return &result.Agencies[i]
+			}
+		}
 		return nil
-	}
+	} else if strategy == FUZZY {
+		scorer, ok := m.scorers["agency"]
+		if !ok {
+			return nil // No scorer registered
+		}
 
-	for i := range result.Agencies {
-		if result.Agencies[i].Id == agency.Id {
-			return &result.Agencies[i]
+		// Convert to []interface{} for generic matching
+		candidates := make([]interface{}, len(result.Agencies))
+		for i := range result.Agencies {
+			candidates[i] = &result.Agencies[i]
+		}
+
+		match := m.findBestMatch(agency, candidates, scorer, m.opts.Threshold)
+		if match != nil {
+			return &result.Agencies[match.IndexB]
 		}
 	}
 	return nil
 }
 
 func (m *Merger) findDuplicateStop(result *gtfs.Static, stop *gtfs.Stop, strategy Strategy) *gtfs.Stop {
-	if strategy != IDENTITY {
+	if strategy == IDENTITY {
+		for i := range result.Stops {
+			if result.Stops[i].Id == stop.Id {
+				return &result.Stops[i]
+			}
+		}
 		return nil
-	}
+	} else if strategy == FUZZY {
+		scorer, ok := m.scorers["stop"]
+		if !ok {
+			return nil // No scorer registered
+		}
 
-	for i := range result.Stops {
-		if result.Stops[i].Id == stop.Id {
-			return &result.Stops[i]
+		// Convert to []interface{} for generic matching
+		candidates := make([]interface{}, len(result.Stops))
+		for i := range result.Stops {
+			candidates[i] = &result.Stops[i]
+		}
+
+		match := m.findBestMatch(stop, candidates, scorer, m.opts.Threshold)
+		if match != nil {
+			return &result.Stops[match.IndexB]
 		}
 	}
 	return nil

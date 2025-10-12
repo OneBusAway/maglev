@@ -6,6 +6,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/merge/pkg/merge/scorers"
 )
 
 func TestMerge_SingleFeed(t *testing.T) {
@@ -256,4 +257,128 @@ type StopNameScorer struct{}
 
 func (s *StopNameScorer) Score(a, b interface{}) float64 {
 	return 1.0
+}
+
+func TestMerge_FuzzyStrategy_Stops(t *testing.T) {
+	// Feed1: stop id="stop1", name="Main St", close location
+	// Feed2: stop id="different-id", name="Main St", very close location (~10m away)
+	// With FUZZY strategy, should detect as duplicate despite different IDs
+
+	lat1, lon1 := 40.7589, -73.9851
+	lat2, lon2 := 40.7590, -73.9851 // ~11m away
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{
+				{Id: "stop1", Name: "Main St", Latitude: &lat1, Longitude: &lon1},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{
+				{Id: "different-id", Name: "Main St", Latitude: &lat2, Longitude: &lon2},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = FUZZY
+	opts.Threshold = 0.5
+
+	merger := NewMerger(opts)
+	merger.RegisterScorer("stop", scorers.NewCompositeStopScorer())
+
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+
+	require.NoError(t, err)
+	// Should have 1 stop (duplicate detected via fuzzy matching)
+	assert.Equal(t, 1, len(result.Merged.Stops))
+	// Should have 1 duplicate recorded
+	assert.Equal(t, 1, result.DuplicatesA)
+	assert.Equal(t, FUZZY, result.Strategy)
+}
+
+func TestMerge_FuzzyStrategy_NoMatch(t *testing.T) {
+	// Stops with different names and far apart - should not match
+
+	lat1, lon1 := 40.7589, -73.9851
+	lat2, lon2 := 41.0, -74.0 // Far away
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{
+				{Id: "stop1", Name: "Main St", Latitude: &lat1, Longitude: &lon1},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{
+				{Id: "stop2", Name: "Oak Ave", Latitude: &lat2, Longitude: &lon2},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = FUZZY
+	opts.Threshold = 0.5
+
+	merger := NewMerger(opts)
+	merger.RegisterScorer("stop", scorers.NewCompositeStopScorer())
+
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+
+	require.NoError(t, err)
+	// Should have 2 stops (no match)
+	assert.Equal(t, 2, len(result.Merged.Stops))
+	// No duplicates found
+	assert.Equal(t, 0, result.DuplicatesA)
+}
+
+func TestMerge_FuzzyStrategy_NoScorer(t *testing.T) {
+	// Test behavior when FUZZY used but no scorer registered
+	lat1, lon1 := 40.7589, -73.9851
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{
+				{Id: "stop1", Name: "Main St", Latitude: &lat1, Longitude: &lon1},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{
+				{Id: "stop2", Name: "Main St", Latitude: &lat1, Longitude: &lon1},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = FUZZY
+	// Don't register a scorer
+
+	merger := NewMerger(opts)
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+
+	require.NoError(t, err)
+	// Without scorer, FUZZY strategy can't find duplicates, should keep both
+	assert.Equal(t, 2, len(result.Merged.Stops))
+	assert.Equal(t, 0, result.DuplicatesA)
 }
