@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,9 +26,9 @@ func TestDatabaseConnectionPoolSettings(t *testing.T) {
 	db := client.DB
 	require.NotNil(t, db, "Database should be initialized")
 
-	// Test MaxOpenConns setting
+	// Test MaxOpenConns setting - should be 1 for :memory: databases
 	stats := db.Stats()
-	assert.Equal(t, 25, stats.MaxOpenConnections, "MaxOpenConns should be set to 25")
+	assert.Equal(t, 1, stats.MaxOpenConnections, "MaxOpenConns should be set to 1 for :memory: databases")
 
 	// Test that MaxIdleConns is configured (should be 5)
 	// Note: Go's sql.DBStats doesn't expose MaxIdleConns directly,
@@ -38,7 +37,8 @@ func TestDatabaseConnectionPoolSettings(t *testing.T) {
 }
 
 func TestConnectionPoolBehavior(t *testing.T) {
-	// Test connection pool behavior under load
+	// Test connection pool behavior - note that :memory: databases use only 1 connection
+	// so concurrent queries will be serialized
 	config := Config{
 		DBPath:  ":memory:",
 		Env:     appconf.Test,
@@ -51,26 +51,15 @@ func TestConnectionPoolBehavior(t *testing.T) {
 
 	db := client.DB
 
-	// Test that we can make concurrent connections
+	// Test that we can make sequential queries since :memory: uses 1 connection
 	ctx := context.Background()
 
-	// Make multiple concurrent queries to test connection pooling
-	done := make(chan bool, 10)
+	// Make sequential queries to test that the single connection works
 	for i := 0; i < 10; i++ {
-		go func() {
-			defer func() { done <- true }()
-			_, err := db.QueryContext(ctx, "SELECT 1")
-			assert.NoError(t, err, "Concurrent query should succeed")
-		}()
-	}
-
-	// Wait for all goroutines to complete
-	for i := 0; i < 10; i++ {
-		select {
-		case <-done:
-			// Success
-		case <-time.After(5 * time.Second):
-			t.Fatal("Concurrent queries timed out")
+		rows, err := db.QueryContext(ctx, "SELECT 1")
+		assert.NoError(t, err, "Query should succeed")
+		if rows != nil {
+			rows.Close()
 		}
 	}
 
@@ -78,6 +67,7 @@ func TestConnectionPoolBehavior(t *testing.T) {
 	stats := db.Stats()
 	assert.True(t, stats.OpenConnections >= 0, "Should have open connections")
 	assert.True(t, stats.InUse >= 0, "Should track connections in use")
+	assert.Equal(t, 1, stats.MaxOpenConnections, "Should have 1 max connection for :memory: database")
 }
 
 func TestConnectionLifetime(t *testing.T) {
@@ -112,17 +102,18 @@ func TestConnectionLifetime(t *testing.T) {
 }
 
 func TestConnectionPoolConfiguration(t *testing.T) {
-	// Test the specific configuration values
+	// Test the specific configuration values for in-memory databases
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err, "Should open database")
 	defer func() { _ = db.Close() }()
 
-	// Apply connection pool settings (this tests the actual implementation)
-	configureConnectionPool(db)
+	// Apply connection pool settings for in-memory database
+	config := Config{DBPath: ":memory:", Env: appconf.Test}
+	configureConnectionPool(db, config)
 
-	// Verify settings through behavior
+	// Verify settings through behavior - in-memory databases should use 1 connection
 	stats := db.Stats()
-	assert.Equal(t, 25, stats.MaxOpenConnections, "MaxOpenConns should be 25")
+	assert.Equal(t, 1, stats.MaxOpenConnections, "MaxOpenConns should be 1 for :memory: databases")
 
 	// Test that we can ping the database
 	ctx := context.Background()

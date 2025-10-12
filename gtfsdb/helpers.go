@@ -43,7 +43,7 @@ func createDB(config Config) (*sql.DB, error) {
 	}
 
 	// Configure connection pool settings
-	configureConnectionPool(db)
+	configureConnectionPool(db, config)
 
 	return db, nil
 }
@@ -675,16 +675,10 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 		name        string
 		description string
 	}{
-		// Write-Ahead Logging provides better concurrency and is generally faster
-		{"PRAGMA journal_mode=WAL", "Enable Write-Ahead Logging mode"},
-		// NORMAL synchronous mode balances safety and performance
-		{"PRAGMA synchronous=NORMAL", "Set synchronous mode to NORMAL"},
 		// Increase cache size to 64MB (negative value means KB)
 		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
 		// Store temp tables and indices in memory for faster operations
 		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
-		// Use memory-mapped I/O for better performance with large databases
-		{"PRAGMA mmap_size=30000000000", "Enable 30GB memory-mapped I/O"},
 	}
 
 	logger := slog.Default().With(slog.String("component", "sqlite_performance"))
@@ -706,12 +700,19 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func configureConnectionPool(db *sql.DB) {
-	// Set maximum number of open connections to 25
-	db.SetMaxOpenConns(25)
+func configureConnectionPool(db *sql.DB, config Config) {
+	// For :memory: databases, use only 1 connection since each connection
+	// gets its own separate in-memory database
+	if config.DBPath == ":memory:" {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+	} else {
+		// Set maximum number of open connections to 25
+		db.SetMaxOpenConns(25)
 
-	// Set maximum number of idle connections to 5
-	db.SetMaxIdleConns(5)
+		// Set maximum number of idle connections to 5
+		db.SetMaxIdleConns(5)
+	}
 
 	// Set maximum lifetime of connections to 5 minutes
 	db.SetConnMaxLifetime(5 * time.Minute)
