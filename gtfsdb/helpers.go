@@ -30,7 +30,13 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, err
 	}
 
+	// Configure SQLite performance settings immediately after opening
 	ctx := context.Background()
+	err = configureSQLitePerformance(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("error configuring SQLite performance: %w", err)
+	}
+
 	err = performDatabaseMigration(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("error performing database migration: %w", err)
@@ -662,7 +668,44 @@ func (c *Client) buldInsertCalendarDates(ctx context.Context, calendarDates []Cr
 	return tx.Commit()
 }
 
-// configureConnectionPool applies connection pool settings to the database
+// configureSQLitePerformance applies PRAGMA settings to optimize SQLite performance
+// for bulk GTFS data imports and queries.
+func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
+	pragmas := []struct {
+		name        string
+		description string
+	}{
+		// Write-Ahead Logging provides better concurrency and is generally faster
+		{"PRAGMA journal_mode=WAL", "Enable Write-Ahead Logging mode"},
+		// NORMAL synchronous mode balances safety and performance
+		{"PRAGMA synchronous=NORMAL", "Set synchronous mode to NORMAL"},
+		// Increase cache size to 64MB (negative value means KB)
+		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
+		// Store temp tables and indices in memory for faster operations
+		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
+		// Use memory-mapped I/O for better performance with large databases
+		{"PRAGMA mmap_size=30000000000", "Enable 30GB memory-mapped I/O"},
+	}
+
+	logger := slog.Default().With(slog.String("component", "sqlite_performance"))
+
+	for _, pragma := range pragmas {
+		_, err := db.ExecContext(ctx, pragma.name)
+		if err != nil {
+			logging.LogError(logger, fmt.Sprintf("Failed to set %s", pragma.description), err)
+			return fmt.Errorf("failed to execute %s: %w", pragma.name, err)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+
+	logging.LogOperation(logger, "sqlite_performance_settings_applied",
+		slog.Int("pragma_count", len(pragmas)))
+
+	return nil
+}
+
 func configureConnectionPool(db *sql.DB) {
 	// Set maximum number of open connections to 25
 	db.SetMaxOpenConns(25)
