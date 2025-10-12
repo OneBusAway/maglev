@@ -6,10 +6,10 @@ require (
 	github.com/OneBusAway/go-gtfs v1.1.0
 	github.com/davecgh/go-spew v1.1.1
 	github.com/klauspost/compress v1.18.0
+	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/stretchr/testify v1.10.0
 	github.com/twpayne/go-polyline v1.1.1
 	golang.org/x/time v0.12.0
-	modernc.org/sqlite v1.38.0
 )
 
 require (
@@ -63,6 +63,7 @@ require (
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.37.0 // indirect
 )
 
 tool github.com/sqlc-dev/sqlc/cmd/sqlc
