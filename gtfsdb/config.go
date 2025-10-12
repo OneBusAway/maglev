@@ -4,9 +4,10 @@ import "maglev.onebusaway.org/internal/appconf"
 
 const (
 	// DefaultBulkInsertBatchSize is the default batch size for multi-row INSERTs.
-	// SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999, so we use 1000 records
-	// with 10 fields per record = ~10,000 variables per batch.
-	DefaultBulkInsertBatchSize = 1000
+	// SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 32766 (with SQLITE_ENABLE_COLUMN_METADATA).
+	// We use 3000 records with 10 fields per record = 30,000 variables per batch,
+	// which is well under the limit and provides good performance.
+	DefaultBulkInsertBatchSize = 3000
 )
 
 // Config holds configuration options for the Client
