@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
@@ -22,6 +23,7 @@ type AdvancedDirectionCalculator struct {
 	queries           *gtfsdb.Queries
 	varianceThreshold float64
 	shapeCache        map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
+	initialized       atomic.Bool                                       // Tracks whether concurrent operations have started
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
@@ -32,20 +34,32 @@ func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionC
 	}
 }
 
-// SetVarianceThreshold sets the standard deviation threshold for direction variance checking
+// SetVarianceThreshold sets the standard deviation threshold for direction variance checking.
+// IMPORTANT: This must be called before any concurrent operations begin.
+// Panics if called after CalculateStopDirection has been invoked.
 func (adc *AdvancedDirectionCalculator) SetVarianceThreshold(threshold float64) {
+	if adc.initialized.Load() {
+		panic("SetVarianceThreshold called after concurrent operations have started")
+	}
 	adc.varianceThreshold = threshold
 }
 
 // SetShapeCache sets a pre-loaded cache of shape data to avoid database queries during bulk operations.
 // This significantly improves performance when calculating directions for many stops.
-// IMPORTANT: This method is NOT thread-safe and must be called before any concurrent direction calculations.
+// IMPORTANT: This must be called before any concurrent operations begin.
+// Panics if called after CalculateStopDirection has been invoked.
 func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) {
+	if adc.initialized.Load() {
+		panic("SetShapeCache called after concurrent operations have started")
+	}
 	adc.shapeCache = cache
 }
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
 func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection sql.NullString) string {
+	// Mark as initialized on first use to prevent configuration changes during concurrent operations
+	adc.initialized.Store(true)
+
 	// Step 1: Try to use GTFS direction field if provided
 	if gtfsDirection.Valid && gtfsDirection.String != "" {
 		if direction := adc.translateGtfsDirection(gtfsDirection.String); direction != "" {
