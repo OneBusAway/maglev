@@ -59,7 +59,7 @@ func TestConnectionPoolBehavior(t *testing.T) {
 		rows, err := db.QueryContext(ctx, "SELECT 1")
 		assert.NoError(t, err, "Query should succeed")
 		if rows != nil {
-			rows.Close()
+			_ = rows.Close()
 		}
 	}
 
