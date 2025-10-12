@@ -708,6 +708,7 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 // configureConnectionPool sets up appropriate connection pool settings for SQLite.
 //
 // IMPORTANT LIMITATIONS:
+//
 //   - :memory: databases: MaxOpenConns=1 to ensure data consistency. This SERIALIZES
 //     all database access, which can become a bottleneck under high concurrency. Each
 //     connection to a :memory: database creates a separate database instance, so we
