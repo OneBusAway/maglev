@@ -5,11 +5,19 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"runtime"
+	"sync"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 )
+
+// stopDirectionResult holds the result of a direction calculation for a single stop
+type stopDirectionResult struct {
+	stopID    string
+	direction string
+}
 
 // DirectionPrecomputer handles batch computation of stop directions
 type DirectionPrecomputer struct {
@@ -29,12 +37,14 @@ func NewDirectionPrecomputer(queries *gtfsdb.Queries, db *sql.DB) *DirectionPrec
 	}
 }
 
-// SetVarianceThreshold sets the variance threshold for the calculator
+// SetVarianceThreshold sets the variance threshold for the calculator.
+// IMPORTANT: This method is NOT thread-safe and must be called before
+// PrecomputeAllDirections, never concurrently with it.
 func (dp *DirectionPrecomputer) SetVarianceThreshold(threshold float64) {
 	dp.calculator.SetVarianceThreshold(threshold)
 }
 
-// PrecomputeAllDirections computes and stores directions for all stops
+// PrecomputeAllDirections computes and stores directions for all stops using parallel processing
 func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) error {
 	startTime := time.Now()
 
@@ -51,59 +61,161 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 		return nil
 	}
 
-	// Begin transaction for batch updates
-	tx, err := dp.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+	// ===== PHASE 1: PARALLEL DIRECTION CALCULATION (read-only) =====
+	numWorkers := runtime.NumCPU()
+	stopsChan := make(chan gtfsdb.Stop, numWorkers)
+	// Use smaller buffer to avoid excessive memory usage
+	resultsChan := make(chan stopDirectionResult, numWorkers*10)
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for stop := range stopsChan {
+				// Check context for cancellation and send result before exiting
+				// to prevent deadlock in result collection
+				select {
+				case <-ctx.Done():
+					// Send empty result to maintain proper count
+					resultsChan <- stopDirectionResult{
+						stopID:    stop.ID,
+						direction: "",
+					}
+					// Drain remaining stops from channel to allow other workers to continue
+					for range stopsChan {
+						// Discard remaining work
+					}
+					return
+				default:
+					// Calculate direction (read-only operation)
+					direction := dp.calculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
+
+					// Send result to collection channel
+					resultsChan <- stopDirectionResult{
+						stopID:    stop.ID,
+						direction: direction,
+					}
+				}
+			}
+		}()
 	}
-	defer logging.SafeRollbackWithLogging(tx, dp.logger, "direction_precomputation")
 
-	// Use transaction-bound queries
-	qtx := dp.queries.WithTx(tx)
+	// Feed stops to workers
+	go func() {
+		for _, stop := range stops {
+			stopsChan <- stop
+		}
+		close(stopsChan)
+	}()
 
+	// Wait for all workers to complete and close results channel
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// ===== PHASE 2: COLLECT RESULTS (single-threaded, no races) =====
+	results := make([]stopDirectionResult, 0, len(stops))
+	processed := 0
+
+	for result := range resultsChan {
+		results = append(results, result)
+		processed++
+
+		// Log progress every 100 stops
+		if processed%100 == 0 {
+			logging.LogOperation(dp.logger, "precomputation_progress",
+				slog.Int("processed", processed),
+				slog.Int("total", len(stops)))
+		}
+	}
+
+	// Check if context was canceled during calculation
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// ===== PHASE 3: BATCH DATABASE WRITES (sequential, avoids lock contention) =====
+	batchSize := 500
 	successCount := 0
 	skippedCount := 0
 	errorCount := 0
 
-	for i, stop := range stops {
-		// Check context for cancellation
+	// Helper function to process a single batch with proper transaction cleanup
+	processBatch := func(batch []stopDirectionResult, batchEnd int) (int, error) {
+		// Begin transaction for this batch
+		tx, err := dp.db.BeginTx(ctx, nil)
+		if err != nil {
+			return 0, fmt.Errorf("failed to begin transaction for batch: %w", err)
+		}
+
+		// Setup deferred rollback (will be no-op after successful commit)
+		committed := false
+		defer func() {
+			if !committed {
+				logging.SafeRollbackWithLogging(tx, dp.logger, "direction_precomputation_batch")
+			}
+		}()
+
+		// Use transaction-bound queries
+		qtx := dp.queries.WithTx(tx)
+
+		// Write batch
+		batchSuccess := 0
+		for _, result := range batch {
+			if result.direction != "" {
+				err := qtx.UpdateStopDirection(ctx, gtfsdb.UpdateStopDirectionParams{
+					Direction: sql.NullString{String: result.direction, Valid: true},
+					ID:        result.stopID,
+				})
+				if err != nil {
+					logging.LogError(dp.logger, fmt.Sprintf("Failed to update direction for stop %s", result.stopID), err)
+					errorCount++
+					continue
+				}
+				batchSuccess++
+			} else {
+				skippedCount++
+			}
+		}
+
+		// Commit batch transaction
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("failed to commit batch transaction: %w", err)
+		}
+		committed = true
+
+		// Log batch completion
+		logging.LogOperation(dp.logger, "precomputation_batch_written",
+			slog.Int("batch_end", batchEnd),
+			slog.Int("total", len(stops)),
+			slog.Int("batch_successful", batchSuccess))
+
+		return batchSuccess, nil
+	}
+
+	for i := 0; i < len(results); i += batchSize {
+		// Check context before starting new batch
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		// Calculate direction
-		direction := dp.calculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
+		// Calculate batch boundaries
+		end := i + batchSize
+		if end > len(results) {
+			end = len(results)
+		}
+		batch := results[i:end]
 
-		// Update database if direction was calculated
-		if direction != "" {
-			err := qtx.UpdateStopDirection(ctx, gtfsdb.UpdateStopDirectionParams{
-				Direction: sql.NullString{String: direction, Valid: true},
-				ID:        stop.ID,
-			})
-			if err != nil {
-				logging.LogError(dp.logger, fmt.Sprintf("Failed to update direction for stop %s", stop.ID), err)
-				errorCount++
-				continue
-			}
-			successCount++
-		} else {
-			skippedCount++
+		// Process batch
+		batchSuccess, err := processBatch(batch, end)
+		if err != nil {
+			return err
 		}
 
-		// Log progress every 100 stops
-		if (i+1)%100 == 0 {
-			logging.LogOperation(dp.logger, "precomputation_progress",
-				slog.Int("processed", i+1),
-				slog.Int("total", len(stops)),
-				slog.Int("successful", successCount),
-				slog.Int("skipped", skippedCount),
-				slog.Int("errors", errorCount))
-		}
-	}
-
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		successCount += batchSuccess
 	}
 
 	duration := time.Since(startTime)
