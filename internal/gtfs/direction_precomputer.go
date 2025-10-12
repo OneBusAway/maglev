@@ -151,8 +151,8 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 		results = append(results, result)
 		processed++
 
-		// Log progress every 100 stops
-		if processed%100 == 0 {
+		// Log progress every 1000 stops
+		if processed%1000 == 0 {
 			logging.LogOperation(dp.logger, "precomputation_progress",
 				slog.Int("processed", processed),
 				slog.Int("total", len(stops)))
