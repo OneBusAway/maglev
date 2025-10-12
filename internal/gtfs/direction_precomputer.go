@@ -68,8 +68,22 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 		logging.LogError(dp.logger, "Failed to load shape cache", err)
 		// Don't fail precomputation if cache loading fails - will fall back to DB queries
 	} else {
+		// Calculate total points across all shapes
+		totalPoints := 0
+		for _, points := range shapeCache {
+			totalPoints += len(points)
+		}
+
+		// Estimate memory usage (approximate):
+		// Each GetShapePointsWithDistanceRow: 2 float64 (lat/lon) + 1 int64 (sequence) + 1 sql.NullFloat64 (dist)
+		// = 16 + 16 + 8 + 24 = 64 bytes per point (conservative estimate)
+		// Plus map overhead and slice headers
+		estimatedMemoryMB := float64(totalPoints*64) / (1024 * 1024)
+
 		logging.LogOperation(dp.logger, "shape_cache_loaded",
-			slog.Int("shape_count", len(shapeCache)))
+			slog.Int("shape_count", len(shapeCache)),
+			slog.Int("total_points", totalPoints),
+			slog.Float64("estimated_memory_mb", estimatedMemoryMB))
 		// Set the cache on the calculator for use during precomputation
 		dp.calculator.SetShapeCache(shapeCache)
 	}
