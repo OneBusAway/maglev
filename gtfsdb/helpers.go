@@ -357,7 +357,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	// Insert calendar dates into the database
 	if len(allCalendarDateParams) > 0 {
-		err = c.buldInsertCalendarDates(ctx, allCalendarDateParams)
+		err = c.bulkInsertCalendarDates(ctx, allCalendarDateParams)
 		if err != nil {
 			logging.LogError(logger, "Unable to create calendar dates", err)
 			return fmt.Errorf("unable to create calendar dates: %w", err)
@@ -514,8 +514,8 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_stop_times")
 
 	// Use multi-row INSERT for better performance
-	// Batch size of 1000 balances SQL statement size with insert efficiency
-	const batchSize = 1000
+	// Batch size is configurable (default 1000) to balance SQL statement size with insert efficiency
+	batchSize := c.config.GetBulkInsertBatchSize()
 	const baseQuery = `INSERT INTO stop_times (
 		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
 		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
@@ -529,6 +529,8 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 		batch := stopTimes[i:end]
 
 		// Build multi-row INSERT query
+		// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
+		// into the query string to prevent SQL injection attacks.
 		var query strings.Builder
 		query.WriteString(baseQuery)
 		args := make([]interface{}, 0, len(batch)*10)
@@ -591,7 +593,8 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_shapes")
 
 	// Use multi-row INSERT for better performance
-	const batchSize = 1000
+	// Batch size is configurable (default 1000) to balance SQL statement size with insert efficiency
+	batchSize := c.config.GetBulkInsertBatchSize()
 	const baseQuery = `INSERT INTO shapes (
 		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
 	) VALUES `
@@ -604,6 +607,8 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 		batch := shapes[i:end]
 
 		// Build multi-row INSERT query
+		// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
+		// into the query string to prevent SQL injection attacks.
 		var query strings.Builder
 		query.WriteString(baseQuery)
 		args := make([]interface{}, 0, len(batch)*5)
@@ -647,7 +652,7 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	return nil
 }
 
-func (c *Client) buldInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams) error {
+func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams) error {
 	db := c.DB
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
@@ -700,6 +705,19 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// configureConnectionPool sets up appropriate connection pool settings for SQLite.
+//
+// IMPORTANT LIMITATIONS:
+//   - :memory: databases: MaxOpenConns=1 to ensure data consistency. This SERIALIZES
+//     all database access, which can become a bottleneck under high concurrency. Each
+//     connection to a :memory: database creates a separate database instance, so we
+//     must limit to 1 connection to maintain data integrity.
+//
+//   - File databases: MaxOpenConns=25 to allow concurrent access. SQLite with WAL mode
+//     supports concurrent readers and a single writer.
+//
+// For production deployments with high concurrency requirements, consider using a
+// file-based database instead of :memory: to take advantage of concurrent connections.
 func configureConnectionPool(db *sql.DB, config Config) {
 	// For :memory: databases, use only 1 connection since each connection
 	// gets its own separate in-memory database
