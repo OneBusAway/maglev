@@ -2,18 +2,42 @@ package gtfsdb
 
 import "maglev.onebusaway.org/internal/appconf"
 
+const (
+	// DefaultBulkInsertBatchSize is the default batch size for multi-row INSERTs.
+	// SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 32766 (with SQLITE_ENABLE_COLUMN_METADATA).
+	// We use 3000 records with 10 fields per record = 30,000 variables per batch,
+	// which is well under the limit and provides good performance.
+	DefaultBulkInsertBatchSize = 3000
+)
+
 // Config holds configuration options for the Client
 type Config struct {
 	// Database configuration
 	DBPath  string              // Path to SQLite database file
-	verbose bool                // Verbose logging
 	Env     appconf.Environment // Environment name: development, test, production.
+	verbose bool                // Enable verbose logging
+
+	// Performance tuning
+	// BulkInsertBatchSize controls how many records are inserted per multi-row INSERT statement.
+	// Default is 1000. Larger values can improve performance but may hit SQLite's
+	// SQLITE_MAX_VARIABLE_NUMBER limit (default 999).
+	// Set to 0 to use the default value.
+	BulkInsertBatchSize int
 }
 
 func NewConfig(dbPath string, env appconf.Environment, verbose bool) Config {
 	return Config{
-		DBPath:  dbPath,
-		Env:     env,
-		verbose: verbose,
+		DBPath:              dbPath,
+		Env:                 env,
+		verbose:             verbose,
+		BulkInsertBatchSize: DefaultBulkInsertBatchSize,
 	}
+}
+
+// GetBulkInsertBatchSize returns the configured batch size, or the default if not set
+func (c Config) GetBulkInsertBatchSize() int {
+	if c.BulkInsertBatchSize <= 0 {
+		return DefaultBulkInsertBatchSize
+	}
+	return c.BulkInsertBatchSize
 }

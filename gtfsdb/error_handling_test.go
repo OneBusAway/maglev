@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
-	_ "modernc.org/sqlite" // Pure Go SQLite driver
 )
 
 func TestNewClient_InvalidConfigHandling(t *testing.T) {

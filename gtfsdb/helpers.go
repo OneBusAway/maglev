@@ -8,10 +8,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
 )
@@ -25,19 +29,25 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("test database must use in-memory storage, got path: %s", config.DBPath)
 	}
 
-	db, err := sql.Open("sqlite", config.DBPath)
+	db, err := sql.Open("sqlite3", config.DBPath)
 	if err != nil {
 		return nil, err
 	}
 
+	// Configure SQLite performance settings immediately after opening
 	ctx := context.Background()
+	err = configureSQLitePerformance(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("error configuring SQLite performance: %w", err)
+	}
+
 	err = performDatabaseMigration(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("error performing database migration: %w", err)
 	}
 
 	// Configure connection pool settings
-	configureConnectionPool(db)
+	configureConnectionPool(db, config)
 
 	return db, nil
 }
@@ -65,11 +75,9 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 		c.importRuntime = endTime.Sub(startTime)
 
-		if c.config.verbose {
-			logging.LogOperation(logger, "gtfs_data_import_completed",
-				slog.Duration("duration", c.importRuntime),
-				slog.String("source", source))
-		}
+		logging.LogOperation(logger, "gtfs_data_import_completed",
+			slog.Duration("duration", c.importRuntime),
+			slog.String("source", source))
 	}()
 
 	// Calculate hash of the GTFS data
@@ -83,18 +91,14 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	if err == nil {
 		// We have existing metadata, check if hash matches
 		if existingMetadata.FileHash == hashStr && existingMetadata.FileSource == source {
-			if c.config.verbose {
-				logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
-					slog.String("hash", hashStr[:8]))
-			}
+			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
+				slog.String("hash", hashStr[:8]))
 			return nil
 		}
 		// Hash differs, we need to clear existing data and reimport
-		if c.config.verbose {
-			logging.LogOperation(logger, "gtfs_data_changed_reimporting",
-				slog.String("old_hash", existingMetadata.FileHash[:8]),
-				slog.String("new_hash", hashStr[:8]))
-		}
+		logging.LogOperation(logger, "gtfs_data_changed_reimporting",
+			slog.String("old_hash", existingMetadata.FileHash[:8]),
+			slog.String("new_hash", hashStr[:8]))
 		err = c.clearAllGTFSData(ctx)
 		if err != nil {
 			return fmt.Errorf("error clearing existing GTFS data: %w", err)
@@ -112,17 +116,21 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return err
 	}
 
-	if c.config.verbose {
-		fmt.Printf("retrieved static data (warnings: %d)\n", len(staticData.Warnings))
-		fmt.Print("========\n\n")
+	fmt.Printf("retrieved static data (warnings: %d)\n", len(staticData.Warnings))
+	fmt.Print("========\n\n")
 
-		staticCounts = c.staticDataCounts(staticData)
-		for k, v := range staticCounts {
-			fmt.Printf("%s: %d\n", k, v)
-		}
-
-		fmt.Print("========\n\n")
+	staticCounts = c.staticDataCounts(staticData)
+	for k, v := range staticCounts {
+		fmt.Printf("%s: %d\n", k, v)
 	}
+
+	fmt.Print("========\n\n")
+
+	logging.LogOperation(logger, "starting_database_import")
+
+	logging.LogOperation(logger, "inserting_agencies_and_routes",
+		slog.Int("agencies", len(staticData.Agencies)),
+		slog.Int("routes", len(staticData.Routes)))
 
 	for _, a := range staticData.Agencies {
 		params := CreateAgencyParams{
@@ -194,6 +202,12 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return fmt.Errorf("unable to create stops: %w", err)
 	}
 
+	logging.LogOperation(logger, "agencies_and_routes_inserted",
+		slog.Int("agencies", len(staticData.Agencies)),
+		slog.Int("routes", len(staticData.Routes)))
+	logging.LogOperation(logger, "inserting_calendar",
+		slog.Int("count", len(staticData.Services)))
+
 	for _, s := range staticData.Services {
 		params := CreateCalendarParams{
 			ID:        s.Id,
@@ -214,8 +228,17 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		}
 	}
 
+	logging.LogOperation(logger, "calendar_inserted",
+		slog.Int("count", len(staticData.Services)))
+
 	var allTripParams []CreateTripParams
 	for _, t := range staticData.Trips {
+		// Handle optional shape - shapes.txt is optional in GTFS spec
+		var shapeID string
+		if t.Shape != nil {
+			shapeID = t.Shape.ID
+		}
+
 		params := CreateTripParams{
 			ID:                   t.ID,
 			RouteID:              t.Route.Id,
@@ -224,7 +247,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			TripShortName:        toNullString(t.ShortName),
 			DirectionID:          toNullInt64(int64(t.DirectionId)),
 			BlockID:              toNullString(t.BlockID),
-			ShapeID:              toNullString(t.Shape.ID),
+			ShapeID:              toNullString(shapeID),
 			WheelchairAccessible: toNullInt64(int64(t.WheelchairAccessible)),
 			BikesAllowed:         toNullInt64(int64(t.BikesAllowed)),
 		}
@@ -287,23 +310,19 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return fmt.Errorf("unable to create shapes: %w", err)
 	}
 
-	if c.config.verbose {
-		counts, err := c.TableCounts()
-		if err != nil {
-			logging.LogError(logger, "Error getting table counts", err)
-			return fmt.Errorf("failed to get table counts: %w", err)
-		}
-		for k, v := range counts {
-			fmt.Printf("%s: %d (Static matches? %v)\n", k, v, v == staticCounts[k])
-		}
+	counts, err := c.TableCounts()
+	if err != nil {
+		logging.LogError(logger, "Error getting table counts", err)
+		return fmt.Errorf("failed to get table counts: %w", err)
+	}
+	for k, v := range counts {
+		fmt.Printf("%s: %d (Static matches? %v)\n", k, v, v == staticCounts[k])
 	}
 
-	// Update import metadata to record successful import
-	if c.config.verbose {
-		logging.LogOperation(logger, "updating_import_metadata",
-			slog.String("hash", hashStr[:8]),
-			slog.String("source", source))
-	}
+	logging.LogOperation(logger, "updating_import_metadata",
+		slog.String("hash", hashStr[:8]),
+		slog.String("source", source))
+
 	_, err = c.Queries.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   hashStr,
 		ImportTime: time.Now().Unix(),
@@ -313,9 +332,8 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		logging.LogError(logger, "Error updating import metadata", err)
 		return fmt.Errorf("error updating import metadata: %w", err)
 	}
-	if c.config.verbose {
-		logging.LogOperation(logger, "import_metadata_updated_successfully")
-	}
+
+	logging.LogOperation(logger, "import_metadata_updated_successfully")
 
 	var allCalendarDateParams []CreateCalendarDateParams
 
@@ -343,7 +361,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	// Insert calendar dates into the database
 	if len(allCalendarDateParams) > 0 {
-		err = c.buldInsertCalendarDates(ctx, allCalendarDateParams)
+		err = c.bulkInsertCalendarDates(ctx, allCalendarDateParams)
 		if err != nil {
 			logging.LogError(logger, "Unable to create calendar dates", err)
 			return fmt.Errorf("unable to create calendar dates: %w", err)
@@ -427,6 +445,9 @@ func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams) 
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
 
+	logging.LogOperation(logger, "inserting_stops",
+		slog.Int("count", len(stops)))
+
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -440,13 +461,24 @@ func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams) 
 			return err
 		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "stops_inserted",
+		slog.Int("count", len(stops)))
+
+	return nil
 }
 
 func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams) error {
 	db := c.DB
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+
+	logging.LogOperation(logger, "inserting_trips",
+		slog.Int("count", len(trips)))
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -461,52 +493,349 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams) 
 			return err
 		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "trips_inserted",
+		slog.Int("count", len(trips)))
+
+	return nil
+}
+
+// preparedStopTimeBatch holds a prepared SQL statement with its arguments
+type preparedStopTimeBatch struct {
+	query string
+	args  []interface{}
+	index int // Original index for ordering
+	end   int // End position for progress logging
 }
 
 func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStopTimeParams) error {
 	db := c.DB
-	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
 
+	logging.LogOperation(logger, "inserting_stop_times",
+		slog.Int("count", len(stopTimes)))
+
+	// ===== PIPELINE: PARALLEL PREPARATION + SEQUENTIAL EXECUTION =====
+	batchSize := c.config.GetBulkInsertBatchSize()
+	const baseQuery = `INSERT INTO stop_times (
+		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
+		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
+	) VALUES `
+
+	// Calculate number of batches
+	numBatches := (len(stopTimes) + batchSize - 1) / batchSize
+
+	// Start database transaction
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_stop_times")
 
-	qtx := queries.WithTx(tx)
-	for _, params := range stopTimes {
-		_, err := qtx.CreateStopTime(ctx, params)
+	// Create channels for pipeline
+	numWorkers := runtime.NumCPU()
+	batchChan := make(chan int, numWorkers)
+	resultsChan := make(chan preparedStopTimeBatch, numWorkers*4) // Larger buffer for pipeline
+
+	// Start worker pool for parallel preparation
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for batchIndex := range batchChan {
+				// Check context for cancellation
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				// Calculate batch boundaries
+				start := batchIndex * batchSize
+				end := start + batchSize
+				if end > len(stopTimes) {
+					end = len(stopTimes)
+				}
+				batch := stopTimes[start:end]
+
+				// Build multi-row INSERT query
+				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
+				// into the query string to prevent SQL injection attacks.
+				var query strings.Builder
+				query.WriteString(baseQuery)
+				args := make([]interface{}, 0, len(batch)*10)
+
+				for j, params := range batch {
+					if j > 0 {
+						query.WriteString(", ")
+					}
+					query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+
+					args = append(args,
+						params.TripID,
+						params.ArrivalTime,
+						params.DepartureTime,
+						params.StopID,
+						params.StopSequence,
+						params.StopHeadsign,
+						params.PickupType,
+						params.DropOffType,
+						params.ShapeDistTraveled,
+						params.Timepoint,
+					)
+				}
+
+				// Send prepared batch to results channel
+				resultsChan <- preparedStopTimeBatch{
+					query: query.String(),
+					args:  args,
+					index: batchIndex,
+					end:   end,
+				}
+			}
+		}()
+	}
+
+	// Feed batch indices to workers
+	go func() {
+		for i := 0; i < numBatches; i++ {
+			batchChan <- i
+		}
+		close(batchChan)
+	}()
+
+	// Close results channel when all workers are done
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Execute batches as they're prepared (overlapping preparation and execution)
+	// Collect batches and sort them to maintain insertion order
+	preparedBatches := make([]preparedStopTimeBatch, 0, numBatches)
+	for batch := range resultsChan {
+		preparedBatches = append(preparedBatches, batch)
+	}
+
+	// Check if context was canceled during preparation
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Sort batches by index to maintain insertion order
+	sort.Slice(preparedBatches, func(i, j int) bool {
+		return preparedBatches[i].index < preparedBatches[j].index
+	})
+
+	logging.LogOperation(
+		logger,
+		"stop_times_progress",
+		slog.Int("inserted", 0),
+		slog.Int("total", len(stopTimes)),
+	)
+
+	// Execute sorted batches
+	for _, batch := range preparedBatches {
+		// Check context before executing
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Execute the batch insert
+		_, err := tx.ExecContext(ctx, batch.query, batch.args...)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to insert stop_times batch: %w", err)
+		}
+
+		// Log progress every 100k records
+		if (batch.end)%100000 == 0 || batch.end == len(stopTimes) {
+			logging.LogOperation(logger, "stop_times_progress",
+				slog.Int("inserted", batch.end),
+				slog.Int("total", len(stopTimes)))
 		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "stop_times_inserted",
+		slog.Int("count", len(stopTimes)))
+
+	return nil
+}
+
+// preparedShapeBatch holds a prepared SQL statement with its arguments
+type preparedShapeBatch struct {
+	query string
+	args  []interface{}
+	index int // Original index for ordering
+	end   int // End position for progress logging
 }
 
 func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParams) error {
 	db := c.DB
-	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
 
+	logging.LogOperation(logger, "inserting_shapes",
+		slog.Int("count", len(shapes)))
+
+	// ===== PHASE 1: PARALLEL STATEMENT PREPARATION =====
+	batchSize := c.config.GetBulkInsertBatchSize()
+	const baseQuery = `INSERT INTO shapes (
+		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
+	) VALUES `
+
+	// Calculate number of batches
+	numBatches := (len(shapes) + batchSize - 1) / batchSize
+
+	// Create worker pool for parallel statement preparation
+	numWorkers := runtime.NumCPU()
+	batchChan := make(chan int, numWorkers)
+	resultsChan := make(chan preparedShapeBatch, numWorkers*2)
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for batchIndex := range batchChan {
+				// Check context for cancellation
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				// Calculate batch boundaries
+				start := batchIndex * batchSize
+				end := start + batchSize
+				if end > len(shapes) {
+					end = len(shapes)
+				}
+				batch := shapes[start:end]
+
+				// Build multi-row INSERT query
+				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
+				// into the query string to prevent SQL injection attacks.
+				var query strings.Builder
+				query.WriteString(baseQuery)
+				args := make([]interface{}, 0, len(batch)*5)
+
+				for j, params := range batch {
+					if j > 0 {
+						query.WriteString(", ")
+					}
+					query.WriteString("(?, ?, ?, ?, ?)")
+
+					args = append(args,
+						params.ShapeID,
+						params.Lat,
+						params.Lon,
+						params.ShapePtSequence,
+						params.ShapeDistTraveled,
+					)
+				}
+
+				// Send prepared batch to results channel
+				resultsChan <- preparedShapeBatch{
+					query: query.String(),
+					args:  args,
+					index: batchIndex,
+					end:   end,
+				}
+			}
+		}()
+	}
+
+	// Feed batch indices to workers
+	go func() {
+		for i := 0; i < numBatches; i++ {
+			batchChan <- i
+		}
+		close(batchChan)
+	}()
+
+	// ===== PHASE 2: COLLECT PREPARED BATCHES =====
+	// Close results channel when all workers are done
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect prepared batches as they arrive with progress logging
+	preparedBatches := make([]preparedShapeBatch, 0, numBatches)
+	lastLoggedCount := 0
+	for batch := range resultsChan {
+		preparedBatches = append(preparedBatches, batch)
+
+		// Log preparation progress every 50 batches (150k records with batch size 3000)
+		if len(preparedBatches)-lastLoggedCount >= 50 {
+			logging.LogOperation(logger, "shapes_preparation_progress",
+				slog.Int("batches_prepared", len(preparedBatches)),
+				slog.Int("total_batches", numBatches))
+			lastLoggedCount = len(preparedBatches)
+		}
+	}
+
+	logging.LogOperation(logger, "shapes_preparation_complete",
+		slog.Int("batches_prepared", len(preparedBatches)),
+		slog.Int("total_batches", numBatches))
+
+	// Check if context was canceled during preparation
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Sort batches by index to maintain insertion order
+	sort.Slice(preparedBatches, func(i, j int) bool {
+		return preparedBatches[i].index < preparedBatches[j].index
+	})
+
+	// ===== PHASE 3: SEQUENTIAL DATABASE EXECUTION =====
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_shapes")
 
-	qtx := queries.WithTx(tx)
-	for _, params := range shapes {
-		_, err := qtx.CreateShape(ctx, params)
+	for _, batch := range preparedBatches {
+		// Check context before executing
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Execute the batch insert
+		_, err := tx.ExecContext(ctx, batch.query, batch.args...)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to insert shapes batch: %w", err)
+		}
+
+		// Log progress every 50k records
+		if (batch.end)%50000 == 0 || batch.end == len(shapes) {
+			logging.LogOperation(logger, "shapes_progress",
+				slog.Int("inserted", batch.end),
+				slog.Int("total", len(shapes)))
 		}
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "shapes_inserted",
+		slog.Int("count", len(shapes)))
+
+	return nil
 }
 
-func (c *Client) buldInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams) error {
+func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams) error {
 	db := c.DB
 	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
@@ -527,13 +856,65 @@ func (c *Client) buldInsertCalendarDates(ctx context.Context, calendarDates []Cr
 	return tx.Commit()
 }
 
-// configureConnectionPool applies connection pool settings to the database
-func configureConnectionPool(db *sql.DB) {
-	// Set maximum number of open connections to 25
-	db.SetMaxOpenConns(25)
+// configureSQLitePerformance applies PRAGMA settings to optimize SQLite performance
+// for bulk GTFS data imports and queries.
+func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
+	pragmas := []struct {
+		name        string
+		description string
+	}{
+		// Increase cache size to 64MB (negative value means KB)
+		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
+		// Store temp tables and indices in memory for faster operations
+		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
+	}
 
-	// Set maximum number of idle connections to 5
-	db.SetMaxIdleConns(5)
+	logger := slog.Default().With(slog.String("component", "sqlite_performance"))
+
+	for _, pragma := range pragmas {
+		_, err := db.ExecContext(ctx, pragma.name)
+		if err != nil {
+			logging.LogError(logger, fmt.Sprintf("Failed to set %s", pragma.description), err)
+			return fmt.Errorf("failed to execute %s: %w", pragma.name, err)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+
+	logging.LogOperation(logger, "sqlite_performance_settings_applied",
+		slog.Int("pragma_count", len(pragmas)))
+
+	return nil
+}
+
+// configureConnectionPool sets up appropriate connection pool settings for SQLite.
+//
+// IMPORTANT LIMITATIONS:
+//
+//   - :memory: databases: MaxOpenConns=1 to ensure data consistency. This SERIALIZES
+//     all database access, which can become a bottleneck under high concurrency. Each
+//     connection to a :memory: database creates a separate database instance, so we
+//     must limit to 1 connection to maintain data integrity.
+//
+//   - File databases: MaxOpenConns=25 to allow concurrent access. SQLite with WAL mode
+//     supports concurrent readers and a single writer.
+//
+// For production deployments with high concurrency requirements, consider using a
+// file-based database instead of :memory: to take advantage of concurrent connections.
+func configureConnectionPool(db *sql.DB, config Config) {
+	// For :memory: databases, use only 1 connection since each connection
+	// gets its own separate in-memory database
+	if config.DBPath == ":memory:" {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+	} else {
+		// Set maximum number of open connections to 25
+		db.SetMaxOpenConns(25)
+
+		// Set maximum number of idle connections to 5
+		db.SetMaxIdleConns(5)
+	}
 
 	// Set maximum lifetime of connections to 5 minutes
 	db.SetConnMaxLifetime(5 * time.Minute)

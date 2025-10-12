@@ -14,7 +14,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
-	_ "modernc.org/sqlite" // Pure Go SQLite driver
+	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 )
 
 const NoRadiusLimit = -1

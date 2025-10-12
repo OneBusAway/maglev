@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
@@ -21,6 +22,8 @@ const (
 type AdvancedDirectionCalculator struct {
 	queries           *gtfsdb.Queries
 	varianceThreshold float64
+	shapeCache        map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
+	initialized       atomic.Bool                                       // Tracks whether concurrent operations have started
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
@@ -31,13 +34,32 @@ func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionC
 	}
 }
 
-// SetVarianceThreshold sets the standard deviation threshold for direction variance checking
+// SetVarianceThreshold sets the standard deviation threshold for direction variance checking.
+// IMPORTANT: This must be called before any concurrent operations begin.
+// Panics if called after CalculateStopDirection has been invoked.
 func (adc *AdvancedDirectionCalculator) SetVarianceThreshold(threshold float64) {
+	if adc.initialized.Load() {
+		panic("SetVarianceThreshold called after concurrent operations have started")
+	}
 	adc.varianceThreshold = threshold
+}
+
+// SetShapeCache sets a pre-loaded cache of shape data to avoid database queries during bulk operations.
+// This significantly improves performance when calculating directions for many stops.
+// IMPORTANT: This must be called before any concurrent operations begin.
+// Panics if called after CalculateStopDirection has been invoked.
+func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) {
+	if adc.initialized.Load() {
+		panic("SetShapeCache called after concurrent operations have started")
+	}
+	adc.shapeCache = cache
 }
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
 func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection sql.NullString) string {
+	// Mark as initialized on first use to prevent configuration changes during concurrent operations
+	adc.initialized.Store(true)
+
 	// Step 1: Try to use GTFS direction field if provided
 	if gtfsDirection.Valid && gtfsDirection.String != "" {
 		if direction := adc.translateGtfsDirection(gtfsDirection.String); direction != "" {
@@ -215,10 +237,22 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 // calculateOrientationAtStop calculates the orientation at a stop using a window of shape points
 // If distTraveled is < 0, it uses stopLat/stopLon for geographic matching (when shape_dist_traveled is unavailable)
 func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.Context, shapeID string, distTraveled float64, stopLat, stopLon float64) (float64, error) {
-	// Get all shape points for this shape using shape_id directly
-	shapePoints, err := adc.queries.GetShapePointsWithDistance(ctx, shapeID)
-	if err != nil || len(shapePoints) < 2 {
-		return 0, err
+	var shapePoints []gtfsdb.GetShapePointsWithDistanceRow
+	var err error
+
+	// Try cache first if available
+	if adc.shapeCache != nil {
+		var found bool
+		shapePoints, found = adc.shapeCache[shapeID]
+		if !found || len(shapePoints) < 2 {
+			return 0, sql.ErrNoRows
+		}
+	} else {
+		// Fall back to database query if no cache
+		shapePoints, err = adc.queries.GetShapePointsWithDistance(ctx, shapeID)
+		if err != nil || len(shapePoints) < 2 {
+			return 0, err
+		}
 	}
 
 	closestIdx := 0
