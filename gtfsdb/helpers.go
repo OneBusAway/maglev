@@ -496,7 +496,6 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams) 
 
 func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStopTimeParams) error {
 	db := c.DB
-	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
 
 	logging.LogOperation(logger, "inserting_stop_times",
@@ -508,17 +507,56 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 	}
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_stop_times")
 
-	qtx := queries.WithTx(tx)
-	for i, params := range stopTimes {
-		_, err := qtx.CreateStopTime(ctx, params)
+	// Use multi-row INSERT for better performance
+	// Batch size of 1000 balances SQL statement size with insert efficiency
+	const batchSize = 1000
+	const baseQuery = `INSERT INTO stop_times (
+		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
+		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
+	) VALUES `
+
+	for i := 0; i < len(stopTimes); i += batchSize {
+		end := i + batchSize
+		if end > len(stopTimes) {
+			end = len(stopTimes)
+		}
+		batch := stopTimes[i:end]
+
+		// Build multi-row INSERT query
+		var query strings.Builder
+		query.WriteString(baseQuery)
+		args := make([]interface{}, 0, len(batch)*10)
+
+		for j, params := range batch {
+			if j > 0 {
+				query.WriteString(", ")
+			}
+			query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+
+			args = append(args,
+				params.TripID,
+				params.ArrivalTime,
+				params.DepartureTime,
+				params.StopID,
+				params.StopSequence,
+				params.StopHeadsign,
+				params.PickupType,
+				params.DropOffType,
+				params.ShapeDistTraveled,
+				params.Timepoint,
+			)
+		}
+
+		// Execute the batch insert
+		_, err := tx.ExecContext(ctx, query.String(), args...)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to insert stop_times batch: %w", err)
 		}
 
 		// Log progress every 100k records
-		if (i+1)%100000 == 0 {
+		if (end)%100000 == 0 || end == len(stopTimes) {
 			logging.LogOperation(logger, "stop_times_progress",
-				slog.Int("inserted", i+1),
+				slog.Int("inserted", end),
 				slog.Int("total", len(stopTimes)))
 		}
 	}
@@ -535,7 +573,6 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 
 func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParams) error {
 	db := c.DB
-	queries := c.Queries
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
 
 	logging.LogOperation(logger, "inserting_shapes",
@@ -547,17 +584,49 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	}
 	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_shapes")
 
-	qtx := queries.WithTx(tx)
-	for i, params := range shapes {
-		_, err := qtx.CreateShape(ctx, params)
+	// Use multi-row INSERT for better performance
+	const batchSize = 1000
+	const baseQuery = `INSERT INTO shapes (
+		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
+	) VALUES `
+
+	for i := 0; i < len(shapes); i += batchSize {
+		end := i + batchSize
+		if end > len(shapes) {
+			end = len(shapes)
+		}
+		batch := shapes[i:end]
+
+		// Build multi-row INSERT query
+		var query strings.Builder
+		query.WriteString(baseQuery)
+		args := make([]interface{}, 0, len(batch)*5)
+
+		for j, params := range batch {
+			if j > 0 {
+				query.WriteString(", ")
+			}
+			query.WriteString("(?, ?, ?, ?, ?)")
+
+			args = append(args,
+				params.ShapeID,
+				params.Lat,
+				params.Lon,
+				params.ShapePtSequence,
+				params.ShapeDistTraveled,
+			)
+		}
+
+		// Execute the batch insert
+		_, err := tx.ExecContext(ctx, query.String(), args...)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to insert shapes batch: %w", err)
 		}
 
 		// Log progress every 50k records
-		if (i+1)%50000 == 0 {
+		if (end)%50000 == 0 || end == len(shapes) {
 			logging.LogOperation(logger, "shapes_progress",
-				slog.Int("inserted", i+1),
+				slog.Int("inserted", end),
 				slog.Int("total", len(shapes)))
 		}
 	}
