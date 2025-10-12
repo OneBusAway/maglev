@@ -140,10 +140,23 @@ func (ru *ReferenceUpdater) UpdateAgencyReferences(feed *gtfs.Static) {
 	}
 }
 
+// UpdateShapeReferences updates all shape references in the feed
+func (ru *ReferenceUpdater) UpdateShapeReferences(feed *gtfs.Static) {
+	// Update trip shape references
+	for i := range feed.Trips {
+		if feed.Trips[i].Shape != nil {
+			if newID, ok := ru.refMap.GetReplacement("shape", feed.Trips[i].Shape.ID); ok {
+				feed.Trips[i].Shape.ID = newID
+			}
+		}
+	}
+}
+
 // UpdateAllReferences updates all entity references in the feed
 func (ru *ReferenceUpdater) UpdateAllReferences(feed *gtfs.Static) {
 	ru.UpdateAgencyReferences(feed)
 	ru.UpdateStopReferences(feed)
 	ru.UpdateRouteReferences(feed)
 	ru.UpdateServiceReferences(feed)
+	ru.UpdateShapeReferences(feed)
 }

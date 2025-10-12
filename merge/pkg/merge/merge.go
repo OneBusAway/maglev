@@ -131,23 +131,27 @@ func (m *Merger) mergeFeed(result *gtfs.Static, feed *Feed, strategy Strategy) e
 		return fmt.Errorf("merging routes: %w", err)
 	}
 
-	// 4. Update all references in the feed BEFORE merging child entities
-	// This ensures trips reference the correct (merged/renamed) stops, routes, etc.
+	// 4. Merge shapes (before trips, since trips reference shapes)
+	if err := m.mergeShapes(result, feed); err != nil {
+		return fmt.Errorf("merging shapes: %w", err)
+	}
+
+	// 5. Update all references in the feed BEFORE merging child entities
+	// This ensures trips reference the correct (merged/renamed) stops, routes, shapes, etc.
 	updater := NewReferenceUpdater(m.refMap)
 	updater.UpdateAllReferences(feed.Data)
 
-	// 5. Merge trips (now with updated references)
+	// 6. Merge trips (now with updated references)
 	if err := m.mergeTrips(result, feed, strategy); err != nil {
 		return fmt.Errorf("merging trips: %w", err)
 	}
 
-	// 6. Merge services
+	// 7. Merge services
 	if err := m.mergeServices(result, feed, strategy); err != nil {
 		return fmt.Errorf("merging services: %w", err)
 	}
 
-	// 7. Merge other entities
-	result.Shapes = append(result.Shapes, feed.Data.Shapes...)
+	// 8. Merge other entities
 	result.Transfers = append(result.Transfers, feed.Data.Transfers...)
 
 	return nil
@@ -252,6 +256,24 @@ func (m *Merger) mergeServices(result *gtfs.Static, feed *Feed, strategy Strateg
 	return nil
 }
 
+// mergeShapes merges shapes from feed into result, handling ID collisions
+func (m *Merger) mergeShapes(result *gtfs.Static, feed *Feed) error {
+	for _, shape := range feed.Data.Shapes {
+		// Check for ID collision
+		if m.hasShapeID(result, shape.ID) {
+			// Rename to avoid collision
+			oldID := shape.ID
+			shape.ID = m.renameID(shape.ID, feed.Index)
+			m.ctx.RecordRenaming()
+			// Record reference replacement so trips get updated
+			m.refMap.RecordReplacement("shape", oldID, shape.ID)
+		}
+		result.Shapes = append(result.Shapes, shape)
+		m.ctx.MarkEntitySource(shape.ID, feed.Index)
+	}
+	return nil
+}
+
 // Helper functions for duplicate detection
 
 func (m *Merger) findDuplicateAgency(result *gtfs.Static, agency *gtfs.Agency, strategy Strategy) *gtfs.Agency {
@@ -342,6 +364,15 @@ func (m *Merger) hasRouteID(result *gtfs.Static, id string) bool {
 func (m *Merger) hasTripID(result *gtfs.Static, id string) bool {
 	for _, trip := range result.Trips {
 		if trip.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Merger) hasShapeID(result *gtfs.Static, id string) bool {
+	for _, shape := range result.Shapes {
+		if shape.ID == id {
 			return true
 		}
 	}

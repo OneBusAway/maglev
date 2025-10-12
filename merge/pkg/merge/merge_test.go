@@ -519,3 +519,88 @@ func TestMerge_ReferenceUpdating_IDCollision(t *testing.T) {
 	assert.Equal(t, "route1", result.Merged.Trips[trip2Idx].Route.Id,
 		"trip2 should reference route1")
 }
+
+// TestMerge_ReferenceUpdating_ShapeIDCollision tests that shape references are updated when shape IDs collide
+func TestMerge_ReferenceUpdating_ShapeIDCollision(t *testing.T) {
+	// Create two feeds with shapes that have the same ID but are different shapes
+	shape1Feed1 := gtfs.Shape{ID: "shape1"}
+	shape1Feed2 := gtfs.Shape{ID: "shape1"}
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Routes:   []gtfs.Route{{Id: "route1", ShortName: "R1"}},
+			Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop 1"}},
+			Shapes:   []gtfs.Shape{shape1Feed1},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID:    "trip1",
+					Route: &gtfs.Route{Id: "route1"},
+					Shape: &shape1Feed1,
+				},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Routes:   []gtfs.Route{{Id: "route1", ShortName: "R1"}},
+			Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop 1"}},
+			Shapes:   []gtfs.Shape{shape1Feed2},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID:    "trip2",
+					Route: &gtfs.Route{Id: "route1"},
+					Shape: &shape1Feed2,
+				},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	// Merge with IDENTITY strategy
+	merger := NewMerger(DefaultOptions())
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+	require.NoError(t, err)
+
+	// Verify we have 2 shapes (one original, one renamed)
+	assert.Equal(t, 2, len(result.Merged.Shapes))
+
+	// Find the renamed shape - feed1's shape should be renamed since feed2 is processed first
+	var renamedShape gtfs.Shape
+	for _, shape := range result.Merged.Shapes {
+		if shape.ID != "shape1" {
+			renamedShape = shape
+			break
+		}
+	}
+	assert.NotEmpty(t, renamedShape.ID, "Should have a renamed shape")
+	assert.Contains(t, renamedShape.ID, "shape1", "Renamed shape should contain original ID")
+
+	// Find which trip is which
+	var trip1, trip2 *gtfs.ScheduledTrip
+	for i := range result.Merged.Trips {
+		if result.Merged.Trips[i].ID == "trip1" {
+			trip1 = &result.Merged.Trips[i]
+		} else if result.Merged.Trips[i].ID == "trip2" {
+			trip2 = &result.Merged.Trips[i]
+		}
+	}
+
+	require.NotNil(t, trip1, "trip1 should exist")
+	require.NotNil(t, trip2, "trip2 should exist")
+
+	// Verify trip1 (from feed1) references the renamed shape
+	require.NotNil(t, trip1.Shape, "trip1 should have a shape reference")
+	assert.Equal(t, renamedShape.ID, trip1.Shape.ID,
+		"trip1 should reference the renamed shape")
+
+	// Verify trip2 (from feed2) references the original shape
+	require.NotNil(t, trip2.Shape, "trip2 should have a shape reference")
+	assert.Equal(t, "shape1", trip2.Shape.ID,
+		"trip2 should reference shape1")
+}
