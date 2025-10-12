@@ -10,6 +10,7 @@ type Merger struct {
 	opts    Options
 	ctx     *Context
 	scorers map[string]DuplicateScorer
+	refMap  *ReferenceMap
 }
 
 // NewMerger creates a new Merger with the given options
@@ -18,6 +19,7 @@ func NewMerger(opts Options) *Merger {
 		opts:    opts,
 		ctx:     NewContext(),
 		scorers: make(map[string]DuplicateScorer),
+		refMap:  NewReferenceMap(),
 	}
 }
 
@@ -129,17 +131,22 @@ func (m *Merger) mergeFeed(result *gtfs.Static, feed *Feed, strategy Strategy) e
 		return fmt.Errorf("merging routes: %w", err)
 	}
 
-	// 4. Merge trips
+	// 4. Update all references in the feed BEFORE merging child entities
+	// This ensures trips reference the correct (merged/renamed) stops, routes, etc.
+	updater := NewReferenceUpdater(m.refMap)
+	updater.UpdateAllReferences(feed.Data)
+
+	// 5. Merge trips (now with updated references)
 	if err := m.mergeTrips(result, feed, strategy); err != nil {
 		return fmt.Errorf("merging trips: %w", err)
 	}
 
-	// 5. Merge services
+	// 6. Merge services
 	if err := m.mergeServices(result, feed, strategy); err != nil {
 		return fmt.Errorf("merging services: %w", err)
 	}
 
-	// 6. Merge other entities
+	// 7. Merge other entities
 	result.Shapes = append(result.Shapes, feed.Data.Shapes...)
 	result.Transfers = append(result.Transfers, feed.Data.Transfers...)
 
@@ -155,15 +162,17 @@ func (m *Merger) mergeAgencies(result *gtfs.Static, feed *Feed, strategy Strateg
 		if duplicate != nil {
 			// Mark as duplicate, don't add
 			m.ctx.RecordDuplicate()
-			// TODO: Update references from agency.Id to duplicate.Id
+			// Record reference replacement
+			m.refMap.RecordReplacement("agency", agency.Id, duplicate.Id)
 		} else {
 			// Check for ID collision
 			if m.hasAgencyID(result, agency.Id) {
 				// Rename to avoid collision
-				_ = agency.Id // oldID for future reference updates
+				oldID := agency.Id
 				agency.Id = m.renameID(agency.Id, feed.Index)
 				m.ctx.RecordRenaming()
-				// TODO: Update all references from oldID to new ID
+				// Record reference replacement
+				m.refMap.RecordReplacement("agency", oldID, agency.Id)
 			}
 			result.Agencies = append(result.Agencies, agency)
 			m.ctx.MarkEntitySource(agency.Id, feed.Index)
@@ -181,15 +190,17 @@ func (m *Merger) mergeStops(result *gtfs.Static, feed *Feed, strategy Strategy) 
 		if duplicate != nil {
 			// Mark as duplicate, don't add
 			m.ctx.RecordDuplicate()
-			// TODO: Update references from stop.Id to duplicate.Id
+			// Record reference replacement
+			m.refMap.RecordReplacement("stop", stop.Id, duplicate.Id)
 		} else {
 			// Check for ID collision
 			if m.hasStopID(result, stop.Id) {
 				// Rename to avoid collision
-				_ = stop.Id // oldID for future reference updates
+				oldID := stop.Id
 				stop.Id = m.renameID(stop.Id, feed.Index)
 				m.ctx.RecordRenaming()
-				// TODO: Update all references from oldID to new ID
+				// Record reference replacement
+				m.refMap.RecordReplacement("stop", oldID, stop.Id)
 			}
 			result.Stops = append(result.Stops, stop)
 			m.ctx.MarkEntitySource(stop.Id, feed.Index)
@@ -204,10 +215,11 @@ func (m *Merger) mergeRoutes(result *gtfs.Static, feed *Feed, strategy Strategy)
 		// Check for ID collision
 		if m.hasRouteID(result, route.Id) {
 			// Rename to avoid collision
-			_ = route.Id // oldID for future reference updates
+			oldID := route.Id
 			route.Id = m.renameID(route.Id, feed.Index)
 			m.ctx.RecordRenaming()
-			// TODO: Update all references from oldID to new ID
+			// Record reference replacement
+			m.refMap.RecordReplacement("route", oldID, route.Id)
 		}
 		result.Routes = append(result.Routes, route)
 		m.ctx.MarkEntitySource(route.Id, feed.Index)
@@ -221,10 +233,11 @@ func (m *Merger) mergeTrips(result *gtfs.Static, feed *Feed, strategy Strategy) 
 		// Check for ID collision
 		if m.hasTripID(result, trip.ID) {
 			// Rename to avoid collision
-			_ = trip.ID // oldID for future reference updates
+			oldID := trip.ID
 			trip.ID = m.renameID(trip.ID, feed.Index)
 			m.ctx.RecordRenaming()
-			// TODO: Update all references from oldID to new ID
+			// Record reference replacement
+			m.refMap.RecordReplacement("trip", oldID, trip.ID)
 		}
 		result.Trips = append(result.Trips, trip)
 		m.ctx.MarkEntitySource(trip.ID, feed.Index)

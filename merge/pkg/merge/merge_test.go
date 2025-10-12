@@ -382,3 +382,140 @@ func TestMerge_FuzzyStrategy_NoScorer(t *testing.T) {
 	assert.Equal(t, 2, len(result.Merged.Stops))
 	assert.Equal(t, 0, result.DuplicatesA)
 }
+
+func TestMerge_ReferenceUpdating_FuzzyDuplicate(t *testing.T) {
+	// End-to-end test: FUZZY merge with reference updating
+	lat1, lon1 := 40.7589, -73.9851
+	lat2, lon2 := lat1+0.00001, lon1 // ~1m away
+
+	stop1 := &gtfs.Stop{Id: "stop1", Name: "Main St", Latitude: &lat1, Longitude: &lon1}
+	stop2 := &gtfs.Stop{Id: "stopX", Name: "Main St", Latitude: &lat2, Longitude: &lon2}
+	route1 := &gtfs.Route{Id: "route1", ShortName: "1"}
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Stops:  []gtfs.Stop{{Id: "stop1", Name: "Main St", Latitude: &lat1, Longitude: &lon1}},
+			Routes: []gtfs.Route{{Id: "route1", ShortName: "1"}},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID:    "trip1",
+					Route: route1,
+					StopTimes: []gtfs.ScheduledStopTime{
+						{Stop: stop1},
+					},
+				},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{{Id: "stopX", Name: "Main St", Latitude: &lat2, Longitude: &lon2}},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID: "trip2",
+					StopTimes: []gtfs.ScheduledStopTime{
+						{Stop: stop2},
+					},
+				},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = FUZZY
+	opts.Threshold = 0.5
+
+	merger := NewMerger(opts)
+	merger.RegisterScorer("stop", scorers.NewCompositeStopScorer())
+
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+	require.NoError(t, err)
+
+	// Should have 1 stop (duplicate detected)
+	assert.Equal(t, 1, len(result.Merged.Stops))
+
+	// CRITICAL: All stop references should point to the merged stop (stopX from feed2)
+	// trip1 should reference stopX (was stop1, got updated)
+	assert.Equal(t, "stopX", result.Merged.Trips[0].StopTimes[0].Stop.Id,
+		"trip1 should reference the merged stop stopX")
+
+	// trip2 already references stopX, should still be correct
+	assert.Equal(t, "stopX", result.Merged.Trips[1].StopTimes[0].Stop.Id,
+		"trip2 should still reference stopX")
+}
+
+func TestMerge_ReferenceUpdating_IDCollision(t *testing.T) {
+	// End-to-end test: ID collision with reference updating
+	route1 := &gtfs.Route{Id: "route1", ShortName: "A"}
+	route1B := &gtfs.Route{Id: "route1", ShortName: "B"}
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Routes: []gtfs.Route{{Id: "route1", ShortName: "A"}},
+			Trips: []gtfs.ScheduledTrip{
+				{ID: "trip1", Route: route1},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Routes: []gtfs.Route{{Id: "route1", ShortName: "B"}}, // Different route, same ID
+			Trips: []gtfs.ScheduledTrip{
+				{ID: "trip2", Route: route1B},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = NONE // No duplicate detection
+
+	merger := NewMerger(opts)
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+	require.NoError(t, err)
+
+	// Should have 2 routes (one renamed)
+	assert.Equal(t, 2, len(result.Merged.Routes))
+
+	// Find the renamed route (feed1's route gets renamed because feed2 is added first)
+	var renamedRoute *gtfs.Route
+	for i := range result.Merged.Routes {
+		if result.Merged.Routes[i].Id[:2] == "a-" {
+			renamedRoute = &result.Merged.Routes[i]
+			break
+		}
+	}
+	require.NotNil(t, renamedRoute, "Should have renamed one route with 'a-' prefix")
+
+	// CRITICAL: Feeds are processed newest-first, so:
+	// - feed2 added first with route1 (kept as-is)
+	// - feed1 merged second, route1 collides → renamed to a-route1
+	// Therefore:
+	// - trip1 (from feed1) should reference a-route1 (the renamed route)
+	// - trip2 (from feed2) should reference route1 (the original)
+
+	// Find which trip is which
+	var trip1Idx, trip2Idx int
+	for i := range result.Merged.Trips {
+		if result.Merged.Trips[i].ID == "trip1" {
+			trip1Idx = i
+		} else if result.Merged.Trips[i].ID == "trip2" {
+			trip2Idx = i
+		}
+	}
+
+	assert.Equal(t, renamedRoute.Id, result.Merged.Trips[trip1Idx].Route.Id,
+		"trip1 should reference the renamed route")
+
+	assert.Equal(t, "route1", result.Merged.Trips[trip2Idx].Route.Id,
+		"trip2 should reference route1")
+}
