@@ -234,17 +234,27 @@ func (m *Merger) mergeRoutes(result *gtfs.Static, feed *Feed, strategy Strategy)
 // mergeTrips merges trips from feed into result
 func (m *Merger) mergeTrips(result *gtfs.Static, feed *Feed, strategy Strategy) error {
 	for _, trip := range feed.Data.Trips {
-		// Check for ID collision
-		if m.hasTripID(result, trip.ID) {
-			// Rename to avoid collision
-			oldID := trip.ID
-			trip.ID = m.renameID(trip.ID, feed.Index)
-			m.ctx.RecordRenaming()
+		// Check if this trip is a duplicate
+		duplicate := m.findDuplicateTrip(result, &trip, strategy)
+
+		if duplicate != nil {
+			// Mark as duplicate, don't add
+			m.ctx.RecordDuplicate()
 			// Record reference replacement
-			m.refMap.RecordReplacement("trip", oldID, trip.ID)
+			m.refMap.RecordReplacement("trip", trip.ID, duplicate.ID)
+		} else {
+			// Check for ID collision
+			if m.hasTripID(result, trip.ID) {
+				// Rename to avoid collision
+				oldID := trip.ID
+				trip.ID = m.renameID(trip.ID, feed.Index)
+				m.ctx.RecordRenaming()
+				// Record reference replacement
+				m.refMap.RecordReplacement("trip", oldID, trip.ID)
+			}
+			result.Trips = append(result.Trips, trip)
+			m.ctx.MarkEntitySource(trip.ID, feed.Index)
 		}
-		result.Trips = append(result.Trips, trip)
-		m.ctx.MarkEntitySource(trip.ID, feed.Index)
 	}
 	return nil
 }
@@ -327,6 +337,39 @@ func (m *Merger) findDuplicateStop(result *gtfs.Static, stop *gtfs.Stop, strateg
 		match := m.findBestMatch(stop, candidates, scorer, m.opts.Threshold)
 		if match != nil {
 			return &result.Stops[match.IndexB]
+		}
+	}
+	return nil
+}
+
+func (m *Merger) findDuplicateTrip(result *gtfs.Static, trip *gtfs.ScheduledTrip, strategy Strategy) *gtfs.ScheduledTrip {
+	// Trips without routes can't be meaningfully compared for duplicates
+	if trip.Route == nil {
+		return nil
+	}
+
+	if strategy == IDENTITY {
+		for i := range result.Trips {
+			if result.Trips[i].ID == trip.ID && result.Trips[i].Route != nil && result.Trips[i].Route.Id == trip.Route.Id {
+				return &result.Trips[i]
+			}
+		}
+		return nil
+	} else if strategy == FUZZY {
+		scorer, ok := m.scorers["trip"]
+		if !ok {
+			return nil // No scorer registered
+		}
+
+		// Convert to []interface{} for generic matching
+		candidates := make([]interface{}, len(result.Trips))
+		for i := range result.Trips {
+			candidates[i] = &result.Trips[i]
+		}
+
+		match := m.findBestMatch(trip, candidates, scorer, m.opts.Threshold)
+		if match != nil {
+			return &result.Trips[match.IndexB]
 		}
 	}
 	return nil

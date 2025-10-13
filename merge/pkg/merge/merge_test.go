@@ -616,23 +616,253 @@ func TestTripScorer_Registration(t *testing.T) {
 	// Verify scorer works correctly
 	route1 := &gtfs.Route{Id: "route1"}
 	stop1 := &gtfs.Stop{Id: "stop1"}
-	
+
 	trip1 := &gtfs.ScheduledTrip{
 		ID:          "trip1",
 		Route:       route1,
 		DirectionId: 0,
 		StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
 	}
-	
+
 	trip2 := &gtfs.ScheduledTrip{
 		ID:          "trip2",
 		Route:       route1,
 		DirectionId: 0,
 		StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
 	}
-	
+
 	score := merger.scorers["trip"].Score(trip1, trip2)
 
 	// Identical trips should score very high
 	assert.Greater(t, score, 0.9, "Identical trips should score > 0.9")
+}
+
+// TestFindDuplicateTrip_Identity tests IDENTITY strategy for trip duplicate detection
+func TestFindDuplicateTrip_Identity(t *testing.T) {
+	route1 := &gtfs.Route{Id: "route1"}
+	stop1 := &gtfs.Stop{Id: "stop1"}
+
+	result := &gtfs.Static{
+		Trips: []gtfs.ScheduledTrip{
+			{
+				ID:          "trip1",
+				Route:       route1,
+				DirectionId: 0,
+				StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+			},
+		},
+	}
+
+	// Same ID = duplicate
+	tripSameID := &gtfs.ScheduledTrip{
+		ID:          "trip1",
+		Route:       route1,
+		DirectionId: 0,
+		StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+	}
+
+	// Different ID = not duplicate
+	tripDifferentID := &gtfs.ScheduledTrip{
+		ID:          "trip2",
+		Route:       route1,
+		DirectionId: 0,
+		StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+	}
+
+	merger := NewMerger(DefaultOptions())
+
+	duplicate := merger.findDuplicateTrip(result, tripSameID, IDENTITY)
+	assert.NotNil(t, duplicate, "Same trip ID should be found as duplicate")
+	assert.Equal(t, "trip1", duplicate.ID, "Should return the existing trip")
+
+	notDuplicate := merger.findDuplicateTrip(result, tripDifferentID, IDENTITY)
+	assert.Nil(t, notDuplicate, "Different trip ID should not be duplicate")
+}
+
+// TestFindDuplicateTrip_Fuzzy tests FUZZY strategy for trip duplicate detection
+func TestFindDuplicateTrip_Fuzzy(t *testing.T) {
+	route1 := &gtfs.Route{Id: "route1"}
+	stop1 := &gtfs.Stop{Id: "stop1"}
+	stop2 := &gtfs.Stop{Id: "stop2"}
+
+	result := &gtfs.Static{
+		Trips: []gtfs.ScheduledTrip{
+			{
+				ID:          "trip1",
+				Route:       route1,
+				DirectionId: 0,
+				StopTimes: []gtfs.ScheduledStopTime{
+					{Stop: stop1},
+					{Stop: stop2},
+				},
+			},
+		},
+	}
+
+	// Different ID but identical properties = duplicate with FUZZY
+	tripSimilar := &gtfs.ScheduledTrip{
+		ID:          "tripX", // Different ID
+		Route:       route1,  // Same route
+		DirectionId: 0,       // Same direction
+		StopTimes: []gtfs.ScheduledStopTime{
+			{Stop: stop1}, // Same stops
+			{Stop: stop2},
+		},
+	}
+
+	opts := DefaultOptions()
+	opts.Threshold = 0.9
+	merger := NewMerger(opts)
+	merger.RegisterScorer("trip", &scorers.TripScorer{})
+
+	duplicate := merger.findDuplicateTrip(result, tripSimilar, FUZZY)
+	assert.NotNil(t, duplicate, "Identical trip with different ID should be found as duplicate with FUZZY")
+	assert.Equal(t, "trip1", duplicate.ID, "Should return the existing trip")
+}
+
+// TestFindDuplicateTrip_Fuzzy_NoScorer tests FUZZY without scorer registered
+func TestFindDuplicateTrip_Fuzzy_NoScorer(t *testing.T) {
+	route1 := &gtfs.Route{Id: "route1"}
+	stop1 := &gtfs.Stop{Id: "stop1"}
+
+	result := &gtfs.Static{
+		Trips: []gtfs.ScheduledTrip{
+			{
+				ID:          "trip1",
+				Route:       route1,
+				DirectionId: 0,
+				StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+			},
+		},
+	}
+
+	trip := &gtfs.ScheduledTrip{
+		ID:          "trip2",
+		Route:       route1,
+		DirectionId: 0,
+		StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+	}
+
+	merger := NewMerger(DefaultOptions())
+	// No scorer registered
+
+	duplicate := merger.findDuplicateTrip(result, trip, FUZZY)
+	assert.Nil(t, duplicate, "Should return nil when no scorer is registered")
+}
+
+// TestMerge_TripDuplicates_Identity tests trip duplicate detection during merge with IDENTITY strategy
+func TestMerge_TripDuplicates_Identity(t *testing.T) {
+	route1 := &gtfs.Route{Id: "route1", ShortName: "R1"}
+	stop1 := &gtfs.Stop{Id: "stop1"}
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Routes:   []gtfs.Route{*route1},
+			Stops:    []gtfs.Stop{*stop1},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID:          "trip1",
+					Route:       route1,
+					DirectionId: 0,
+					StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+				},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Routes:   []gtfs.Route{*route1},
+			Stops:    []gtfs.Stop{*stop1},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID:          "trip1", // Same ID = duplicate
+					Route:       route1,
+					DirectionId: 0,
+					StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+				},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = IDENTITY
+	merger := NewMerger(opts)
+
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+	require.NoError(t, err)
+
+	// Should detect trip as duplicate
+	assert.Equal(t, 1, len(result.Merged.Trips), "Duplicate trip should not be added")
+	// DuplicatesA counts ALL duplicates: 1 agency + 1 stop + 1 trip = 3
+	assert.Equal(t, 3, result.DuplicatesA, "Feed1 should have 3 duplicates (agency, stop, trip)")
+}
+
+// TestMerge_TripDuplicates_Fuzzy tests trip duplicate detection during merge with FUZZY strategy
+func TestMerge_TripDuplicates_Fuzzy(t *testing.T) {
+	route1 := &gtfs.Route{Id: "route1", ShortName: "R1"}
+	stop1 := &gtfs.Stop{Id: "stop1"}
+	stop2 := &gtfs.Stop{Id: "stop2"}
+
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Routes:   []gtfs.Route{*route1},
+			Stops:    []gtfs.Stop{*stop1, *stop2},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID:          "trip1",
+					Route:       route1,
+					DirectionId: 0,
+					StopTimes: []gtfs.ScheduledStopTime{
+						{Stop: stop1},
+						{Stop: stop2},
+					},
+				},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Routes:   []gtfs.Route{*route1},
+			Stops:    []gtfs.Stop{*stop1, *stop2},
+			Trips: []gtfs.ScheduledTrip{
+				{
+					ID:          "tripX", // Different ID but identical trip
+					Route:       route1,
+					DirectionId: 0,
+					StopTimes: []gtfs.ScheduledStopTime{
+						{Stop: stop1},
+						{Stop: stop2},
+					},
+				},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = FUZZY
+	opts.Threshold = 0.9
+	merger := NewMerger(opts)
+	merger.RegisterScorer("trip", &scorers.TripScorer{})
+
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+	require.NoError(t, err)
+
+	// Should detect trip as duplicate with FUZZY
+	assert.Equal(t, 1, len(result.Merged.Trips), "Duplicate trip should not be added with FUZZY")
+	// DuplicatesA counts ALL duplicates: 1 agency + 1 stop (not scored) + 1 trip = at least 1 trip duplicate
+	assert.GreaterOrEqual(t, result.DuplicatesA, 1, "Should have at least 1 duplicate")
 }
