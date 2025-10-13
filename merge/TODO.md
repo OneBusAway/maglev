@@ -77,8 +77,13 @@ This pattern ensures high quality, tested, reviewed code at every step.
 - Route scorer (agency + route names)
 - Trip scorer (route + stop sequence + direction)
 - Service scorer (day pattern + date range overlap)
-- Reference updating system (agencies, stops, routes, services, shapes, trips)
-- Comprehensive test suite (84%+ coverage, 40+ tests)
+- **Agency scorer** (name, timezone, URL, phone, email, language, fareUrl) - 883d5c7
+- **Transfer scorer** (from/to stops, type, min_transfer_time) - 5a26089
+- Reference updating system (agencies, stops, routes, services, shapes, trips, stop times)
+- **Stop times trip reference updating** (fixed critical timing issue) - abaac96
+- **Calendar dates merging** (AddedDates/RemovedDates preservation) - a92fc39
+- **Transfers merging** (IDENTITY/FUZZY duplicate detection) - 465d556
+- Comprehensive test suite (85%+ coverage, 50+ tests)
 - Parallel fuzzy matching (multi-core, race-tested)
 
 ---
@@ -111,37 +116,38 @@ This pattern ensures high quality, tested, reviewed code at every step.
   - Status: Deferred until library dependency is upgraded
 
 ### 2. Remaining Entity Types - Merging Logic
-**Status**: Not Started
+**Status**: Mostly Complete (3/5 done, 1 blocked)
 **Priority**: High
 **Estimated Time**: 6-8 hours
 
-- [ ] **Stop Times Merging** (2 hours)
+- [x] **Stop Times Merging** ✅ COMPLETE (abaac96)
   - Leaf entity, depends on stops and trips
   - No duplicate detection needed (referenced by trips)
-  - Update stop and trip references
-  - Tests: Integration tests for reference updates
+  - Update stop and trip references via UpdateTripReferences()
+  - Tests: TestUpdateTripReferences_UpdatesStopTimeTripReferences
 
-- [ ] **Calendar Dates Merging** (1 hour)
+- [x] **Calendar Dates Merging** ✅ COMPLETE (a92fc39)
   - Exception dates for services
-  - Duplicate detection: service_id + date + exception_type
-  - Update service references
-  - Tests: Duplicate detection, reference updates
+  - Merges AddedDates and RemovedDates from duplicate services
+  - Deduplicates and sorts dates chronologically
+  - Tests: 3 test functions covering merging and conflicts
+  - Note: Calendar dates are embedded in Service struct, not separate entities
 
-- [ ] **Transfers Merging** (1.5 hours)
+- [x] **Transfers Merging** ✅ COMPLETE (465d556)
   - Duplicate detection with TransferScorer
-  - Update from_stop and to_stop references
-  - Tests: IDENTITY, FUZZY, reference updates
+  - Update from_stop and to_stop references (already handled by UpdateStopReferences)
+  - Tests: IDENTITY, FUZZY duplicate detection
+  - Note: Transfers don't have IDs, identified by from_stop + to_stop
 
 - [ ] **Frequencies Merging** (1.5 hours)
   - Duplicate detection: trip_id + start_time + end_time
   - Update trip references
   - Tests: Duplicate detection, reference updates
 
-- [ ] **Fare Rules Merging** (2 hours)
-  - Duplicate detection with FareScorer
-  - Update route references
-  - Complex: origin_id, destination_id, contains_id references
-  - Tests: Comprehensive due to complexity
+- [ ] **Fare Rules Merging** ❌ BLOCKED
+  - **Cannot implement**: go-gtfs v1.1.0 lacks fare support (FareAttribute, FareRule)
+  - Requires: go-gtfs library upgrade
+  - Status: Deferred until library dependency is upgraded
 
 ### 3. Reference Updating - Additional Entities
 **Status**: Partially Complete
