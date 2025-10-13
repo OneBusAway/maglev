@@ -1082,3 +1082,146 @@ func TestMerge_TripDuplicates_Fuzzy(t *testing.T) {
 	// DuplicatesA counts ALL duplicates: 1 agency + 1 stop (not scored) + 1 trip = at least 1 trip duplicate
 	assert.GreaterOrEqual(t, result.DuplicatesA, 1, "Should have at least 1 duplicate")
 }
+
+func TestMerge_ServiceDuplicates_MergesCalendarDates(t *testing.T) {
+	// Test that calendar exception dates are merged from duplicate services
+	date1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	date2 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+	date3 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
+
+	feedA := &Feed{
+		Index: 0,
+		Data: &gtfs.Static{
+			Services: []gtfs.Service{
+				{
+					Id:         "service1",
+					Monday:     true,
+					StartDate:  date1,
+					EndDate:    date3,
+					AddedDates: []time.Time{date1}, // Feed A has date1 added
+				},
+			},
+		},
+	}
+
+	feedB := &Feed{
+		Index: 1,
+		Data: &gtfs.Static{
+			Services: []gtfs.Service{
+				{
+					Id:         "service1", // Same ID - should be detected as duplicate
+					Monday:     true,
+					StartDate:  date1,
+					EndDate:    date3,
+					AddedDates: []time.Time{date2}, // Feed B has date2 added
+				},
+			},
+		},
+	}
+
+	merger := NewMerger(DefaultOptions())
+	merger.RegisterScorer("service", &scorers.ServiceScorer{})
+
+	result, err := merger.Merge([]*Feed{feedB, feedA})
+	require.NoError(t, err)
+
+	// Should have one service (duplicate detected)
+	assert.Equal(t, 1, len(result.Merged.Services), "Should have 1 service after merging duplicates")
+
+	// Should have BOTH calendar dates merged
+	service := result.Merged.Services[0]
+	assert.Equal(t, 2, len(service.AddedDates), "Should merge AddedDates from both services")
+
+	// Check both dates are present
+	dateMap := make(map[time.Time]bool)
+	for _, d := range service.AddedDates {
+		dateMap[d] = true
+	}
+	assert.True(t, dateMap[date1], "Should have date1 from feed A")
+	assert.True(t, dateMap[date2], "Should have date2 from feed B")
+}
+
+func TestMerge_ServiceDuplicates_MergesRemovedDates(t *testing.T) {
+	// Test that removed dates are also merged
+	date1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	date2 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	feedA := &Feed{
+		Index: 0,
+		Data: &gtfs.Static{
+			Services: []gtfs.Service{
+				{
+					Id:           "service1",
+					Monday:       true,
+					RemovedDates: []time.Time{date1},
+				},
+			},
+		},
+	}
+
+	feedB := &Feed{
+		Index: 1,
+		Data: &gtfs.Static{
+			Services: []gtfs.Service{
+				{
+					Id:           "service1",
+					Monday:       true,
+					RemovedDates: []time.Time{date2},
+				},
+			},
+		},
+	}
+
+	merger := NewMerger(DefaultOptions())
+	merger.RegisterScorer("service", &scorers.ServiceScorer{})
+
+	result, err := merger.Merge([]*Feed{feedB, feedA})
+	require.NoError(t, err)
+
+	service := result.Merged.Services[0]
+	assert.Equal(t, 2, len(service.RemovedDates), "Should merge RemovedDates from both services")
+}
+
+func TestMerge_ServiceDuplicates_ConflictingCalendarDates(t *testing.T) {
+	// Test behavior when same date is Added in one service, Removed in another
+	// Current behavior: both are kept (documenting existing behavior)
+	conflictDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	feedA := &Feed{
+		Index: 0,
+		Data: &gtfs.Static{
+			Services: []gtfs.Service{
+				{
+					Id:         "service1",
+					Monday:     true,
+					AddedDates: []time.Time{conflictDate}, // Added in feed A
+				},
+			},
+		},
+	}
+
+	feedB := &Feed{
+		Index: 1,
+		Data: &gtfs.Static{
+			Services: []gtfs.Service{
+				{
+					Id:           "service1",
+					Monday:       true,
+					RemovedDates: []time.Time{conflictDate}, // Removed in feed B
+				},
+			},
+		},
+	}
+
+	merger := NewMerger(DefaultOptions())
+	merger.RegisterScorer("service", &scorers.ServiceScorer{})
+
+	result, err := merger.Merge([]*Feed{feedB, feedA})
+	require.NoError(t, err)
+
+	service := result.Merged.Services[0]
+	// Current behavior: both Added and Removed lists contain the date
+	// This is acceptable - the GTFS consumer will need to handle conflicts
+	assert.Contains(t, service.AddedDates, conflictDate, "Should have conflicting date in AddedDates")
+	assert.Contains(t, service.RemovedDates, conflictDate, "Should have conflicting date in RemovedDates")
+}

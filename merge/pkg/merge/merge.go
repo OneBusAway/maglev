@@ -2,6 +2,9 @@ package merge
 
 import (
 	"fmt"
+	"sort"
+	"time"
+
 	"github.com/OneBusAway/go-gtfs"
 )
 
@@ -270,6 +273,10 @@ func (m *Merger) mergeServices(result *gtfs.Static, feed *Feed, strategy Strateg
 		duplicate := m.findDuplicateService(result, &service, strategy)
 
 		if duplicate != nil {
+			// Merge calendar exception dates from duplicate service
+			duplicate.AddedDates = mergeUniqueDates(duplicate.AddedDates, service.AddedDates)
+			duplicate.RemovedDates = mergeUniqueDates(duplicate.RemovedDates, service.RemovedDates)
+
 			// Mark as duplicate, don't add
 			m.ctx.RecordDuplicate()
 			// Record reference replacement
@@ -495,4 +502,35 @@ func (m *Merger) renameID(id string, feedIndex int) string {
 	// For now, fall back to CONTEXT
 	prefix := string(rune('a' + feedIndex))
 	return prefix + "-" + id
+}
+
+// mergeUniqueDates combines two date slices, removing duplicates.
+// Returns dates sorted chronologically for deterministic output.
+// Note: If a date appears in AddedDates in one service and RemovedDates in another,
+// both are kept. GTFS consumers should handle this conflict by applying RemovedDates after AddedDates.
+func mergeUniqueDates(dates1, dates2 []time.Time) []time.Time {
+	dateMap := make(map[time.Time]bool)
+
+	// Add all dates from first slice
+	for _, d := range dates1 {
+		dateMap[d] = true
+	}
+
+	// Add all dates from second slice
+	for _, d := range dates2 {
+		dateMap[d] = true
+	}
+
+	// Convert map back to slice
+	result := make([]time.Time, 0, len(dateMap))
+	for d := range dateMap {
+		result = append(result, d)
+	}
+
+	// Sort chronologically for deterministic output
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Before(result[j])
+	})
+
+	return result
 }
