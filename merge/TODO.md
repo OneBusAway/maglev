@@ -84,6 +84,10 @@ This pattern ensures high quality, tested, reviewed code at every step.
 - **Calendar dates merging** (AddedDates/RemovedDates preservation) - a92fc39
 - **Transfers merging** (IDENTITY/FUZZY duplicate detection) - 465d556
 - **Frequencies merging** (time window deduplication, embedded in trips) - cbb8448
+- **CLI tool** (command-line interface compatible with Java onebusaway-gtfs-merge-cli) - 4f10d10
+  - Flag parsing, input handling, merge orchestration
+  - Statistics reporting, error handling
+  - Note: Output writer not implemented (creates placeholders only)
 - Comprehensive test suite (85%+ coverage, 60+ tests)
 - Parallel fuzzy matching (multi-core, race-tested)
 
@@ -186,58 +190,111 @@ This pattern ensures high quality, tested, reviewed code at every step.
 ## Medium Priority - Tooling
 
 ### 4. CLI Tool Implementation
-**Status**: Not Started
+**Status**: Partially Complete (Core functionality done, output writer needed)
 **Priority**: Medium
 **Estimated Time**: 6-8 hours
 
-- [ ] **Basic CLI Structure** (2 hours)
-  - Create `cmd/gtfs-merge/main.go`
-  - Argument parsing with flags package or cobra
-  - Help text and usage documentation
+- [x] **Basic CLI Structure** ✅ COMPLETE (4f10d10)
+  - Created `cmd/gtfs-merge/main.go`
+  - Flag parsing with standard library
+  - Comprehensive help text and usage documentation
   - Version information
 
-- [ ] **Input/Output Handling** (3 hours)
-  - Read multiple GTFS .zip files
-  - Parse and load feeds with go-gtfs
-  - Write merged feed to output .zip
+- [x] **Input Handling** ✅ COMPLETE (4f10d10)
+  - Reads multiple GTFS .zip files
+  - Parses feeds with go-gtfs ParseStatic
   - Error handling and validation
+  - File existence checking
 
-- [ ] **Configuration** (1 hour)
-  - Strategy selection (--strategy flag)
-  - Threshold configuration (--threshold flag)
-  - Rename mode selection (--rename-mode flag)
-  - Scorer registration based on config
+- [x] **Configuration** ✅ COMPLETE (4f10d10)
+  - Strategy selection (--duplicateDetection flag)
+  - All scorers registered automatically
+  - Compatible with Java onebusaway-gtfs-merge-cli interface
 
-- [ ] **Progress Reporting** (1.5 hours)
+- [x] **Statistics Reporting** ✅ COMPLETE (4f10d10)
+  - Reports duplicates, renamings, entity counts
+  - Error on duplicates flag (--errorOnDroppedDuplicates)
+  - Log dropped duplicates flag (--logDroppedDuplicates)
+
+- [ ] **Output Writing** ❌ CRITICAL GAP
+  - Currently creates placeholder files only
+  - Needs CSV serialization for all GTFS entities
+  - See "GTFS Writer" task below
+
+- [ ] **Advanced Configuration** (Not implemented)
+  - Per-file configuration (--file flag)
+  - Threshold configuration (--threshold flag, currently hardcoded to 0.7)
+  - Rename mode selection (uses default)
+
+- [ ] **Progress Reporting** (Not implemented)
   - Progress bar for large feeds
-  - Statistics reporting (duplicates, renamings)
   - Verbose mode for debugging
   - Log file output option
 
-- [ ] **CLI Tests** (0.5 hours)
+- [ ] **CLI Tests** (Not implemented)
   - Integration tests with sample feeds
   - Error handling tests
   - Output validation
 
-### 5. Feed Reading/Writing Utilities
+**Implemented Flags:**
+- `--duplicateDetection=identity|fuzzy|none` (default: identity)
+- `--renameDuplicates`
+- `--logDroppedDuplicates`
+- `--errorOnDroppedDuplicates`
+- `--version`
+
+**Compatible Command Syntax:**
+```bash
+gtfs-merge input1.zip input2.zip output.zip
+gtfs-merge --duplicateDetection=fuzzy input1.zip input2.zip output.zip
+```
+
+### 5. GTFS Writer (CRITICAL for CLI)
+**Status**: Not Started
+**Priority**: High (blocking CLI production use)
+**Estimated Time**: 4-6 hours
+
+- [ ] **CSV Serialization** (3 hours)
+  - Serialize all GTFS entity types to CSV format
+  - Required files: agency.txt, stops.txt, routes.txt, trips.txt, stop_times.txt, calendar.txt, calendar_dates.txt
+  - Optional files: shapes.txt, transfers.txt, frequencies.txt, fare_attributes.txt, fare_rules.txt
+  - Handle required and optional fields per GTFS spec
+  - Proper CSV escaping (quotes, commas, newlines)
+  - Write correct headers for each file
+
+- [ ] **Embedded Entity Handling** (1 hour)
+  - StopTimes embedded in Trips
+  - Frequencies embedded in Trips
+  - Calendar dates embedded in Services
+  - Flatten for CSV output
+
+- [ ] **Zip File Writing** (0.5 hours)
+  - Create .zip archive
+  - Write all CSV files to zip
+  - Proper file compression
+
+- [ ] **Field Mapping** (1 hour)
+  - Map go-gtfs structs to GTFS CSV columns
+  - Handle nil/optional fields
+  - Format types correctly (durations, dates, enums)
+
+- [ ] **Tests** (0.5 hours)
+  - Roundtrip read/write validation
+  - Verify GTFS spec compliance
+  - Test with real-world feeds
+
+**Note**: Once complete, update CLI writeGTFSFeed() to use this implementation.
+
+### 6. Feed Validation Utilities
 **Status**: Not Started
 **Priority**: Medium
-**Estimated Time**: 4-5 hours
+**Estimated Time**: 2-3 hours
 
-- [ ] **GTFS Reader** (2 hours)
-  - Read .zip files
-  - Parse CSV files
-  - Use go-gtfs library
-  - Error handling for malformed feeds
-  - Tests: Read various feed formats
+- [ ] **GTFS Reader** (1 hour)
+  - Already handled by go-gtfs ParseStatic
+  - Add convenience wrappers if needed
 
-- [ ] **GTFS Writer** (2 hours)
-  - Write merged feed to .zip
-  - Generate valid CSV files
-  - Preserve optional fields
-  - Tests: Roundtrip read/write validation
-
-- [ ] **Feed Validation** (1 hour)
+- [ ] **Feed Validation** (1-2 hours)
   - Basic GTFS validation
   - Required fields check
   - Referential integrity check
