@@ -83,7 +83,8 @@ This pattern ensures high quality, tested, reviewed code at every step.
 - **Stop times trip reference updating** (fixed critical timing issue) - abaac96
 - **Calendar dates merging** (AddedDates/RemovedDates preservation) - a92fc39
 - **Transfers merging** (IDENTITY/FUZZY duplicate detection) - 465d556
-- Comprehensive test suite (85%+ coverage, 50+ tests)
+- **Frequencies merging** (time window deduplication, embedded in trips) - cbb8448
+- Comprehensive test suite (85%+ coverage, 60+ tests)
 - Parallel fuzzy matching (multi-core, race-tested)
 
 ---
@@ -116,7 +117,7 @@ This pattern ensures high quality, tested, reviewed code at every step.
   - Status: Deferred until library dependency is upgraded
 
 ### 2. Remaining Entity Types - Merging Logic
-**Status**: Mostly Complete (3/5 done, 1 blocked)
+**Status**: Complete (4/5 done, 1 blocked)
 **Priority**: High
 **Estimated Time**: 6-8 hours
 
@@ -139,10 +140,13 @@ This pattern ensures high quality, tested, reviewed code at every step.
   - Tests: IDENTITY, FUZZY duplicate detection
   - Note: Transfers don't have IDs, identified by from_stop + to_stop
 
-- [ ] **Frequencies Merging** (1.5 hours)
-  - Duplicate detection: trip_id + start_time + end_time
-  - Update trip references
-  - Tests: Duplicate detection, reference updates
+- [x] **Frequencies Merging** ✅ COMPLETE (cbb8448)
+  - Duplicate detection by start_time + end_time (time window)
+  - Frequencies merged when trips are duplicates
+  - Deduplicates within same trip, preserves unique time windows
+  - Tests: 3 test functions with 11 subtests covering duplicate detection, merging, edge cases
+  - Note: Frequencies are embedded in ScheduledTrip.Frequencies[], no separate references needed
+  - Bonus: Fixed transfer duplicate detection bug (existing.To.Id comparison)
 
 - [ ] **Fare Rules Merging** ❌ BLOCKED
   - **Cannot implement**: go-gtfs v1.1.0 lacks fare support (FareAttribute, FareRule)
@@ -150,7 +154,7 @@ This pattern ensures high quality, tested, reviewed code at every step.
   - Status: Deferred until library dependency is upgraded
 
 ### 3. Reference Updating - Additional Entities
-**Status**: Partially Complete
+**Status**: Complete (Core entities)
 **Priority**: High
 **Estimated Time**: 2-3 hours
 
@@ -160,9 +164,10 @@ This pattern ensures high quality, tested, reviewed code at every step.
 - [x] ~~Update service references~~ ✅
 - [x] ~~Update shape references~~ ✅
 - [x] ~~Update trip references~~ ✅
-- [ ] **Update frequency references** (30 min)
-  - Update Frequency.Trip references
-  - Tests: Add to references_test.go
+- [x] **Update frequency references** ✅ NOT NEEDED (cbb8448)
+  - Frequencies are embedded in ScheduledTrip.Frequencies[] with no Trip references
+  - Automatically updated when trips are merged (part of trip struct)
+  - No separate reference updating required
 
 - [ ] **Update fare references** (1 hour)
   - Update FareRule references (route, origin, destination, contains)
