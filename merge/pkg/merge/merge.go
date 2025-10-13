@@ -146,6 +146,10 @@ func (m *Merger) mergeFeed(result *gtfs.Static, feed *Feed, strategy Strategy) e
 		return fmt.Errorf("merging trips: %w", err)
 	}
 
+	// 6b. Update trip references AFTER trips are merged
+	// This ensures StopTime.Trip references are updated with complete trip replacement information
+	updater.UpdateTripReferences(feed.Data)
+
 	// 7. Merge services
 	if err := m.mergeServices(result, feed, strategy); err != nil {
 		return fmt.Errorf("merging services: %w", err)

@@ -183,3 +183,33 @@ func TestUpdateStopReferences_NilReferences(t *testing.T) {
 	// Verify nothing broke
 	assert.Equal(t, "stop1", feed.Stops[0].Id)
 }
+
+func TestUpdateTripReferences_UpdatesStopTimeTripReferences(t *testing.T) {
+	// Test that StopTime.Trip references are updated when trips are renamed
+	refMap := NewReferenceMap()
+	refMap.RecordReplacement("trip", "trip1", "a-trip1")
+
+	updater := NewReferenceUpdater(refMap)
+
+	trip := gtfs.ScheduledTrip{
+		ID: "a-trip1",
+		StopTimes: []gtfs.ScheduledStopTime{
+			{
+				Trip: &gtfs.ScheduledTrip{ID: "trip1"}, // Old trip reference
+			},
+			{
+				Trip: &gtfs.ScheduledTrip{ID: "trip1"}, // Old trip reference
+			},
+		},
+	}
+
+	feed := &gtfs.Static{
+		Trips: []gtfs.ScheduledTrip{trip},
+	}
+
+	updater.UpdateTripReferences(feed)
+
+	// Verify trip references in stop times were updated
+	assert.Equal(t, "a-trip1", feed.Trips[0].StopTimes[0].Trip.ID, "First stop time trip reference should be updated")
+	assert.Equal(t, "a-trip1", feed.Trips[0].StopTimes[1].Trip.ID, "Second stop time trip reference should be updated")
+}

@@ -152,7 +152,34 @@ func (ru *ReferenceUpdater) UpdateShapeReferences(feed *gtfs.Static) {
 	}
 }
 
+// UpdateTripReferences updates all trip references in the feed
+// This must be called AFTER trips are merged to ensure all trip replacements are recorded
+func (ru *ReferenceUpdater) UpdateTripReferences(feed *gtfs.Static) {
+	// Update trip references in stop times
+	for tripIdx := range feed.Trips {
+		for stIdx := range feed.Trips[tripIdx].StopTimes {
+			trip := feed.Trips[tripIdx].StopTimes[stIdx].Trip
+			if trip != nil {
+				if newID, ok := ru.refMap.GetReplacement("trip", trip.ID); ok {
+					feed.Trips[tripIdx].StopTimes[stIdx].Trip.ID = newID
+				}
+			}
+		}
+	}
+
+	// TODO: Update frequency trip references when Frequency merging is implemented
+	// See TODO.md section 3 - "Update frequency references"
+	// for i := range feed.Frequencies {
+	//     if feed.Frequencies[i].Trip != nil {
+	//         if newID, ok := ru.refMap.GetReplacement("trip", feed.Frequencies[i].Trip.ID); ok {
+	//             feed.Frequencies[i].Trip.ID = newID
+	//         }
+	//     }
+	// }
+}
+
 // UpdateAllReferences updates all entity references in the feed
+// Note: Trip references must be updated separately AFTER trips are merged
 func (ru *ReferenceUpdater) UpdateAllReferences(feed *gtfs.Static) {
 	ru.UpdateAgencyReferences(feed)
 	ru.UpdateStopReferences(feed)
