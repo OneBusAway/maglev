@@ -2,6 +2,7 @@ package merge
 
 import (
 	"testing"
+	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
@@ -677,6 +678,221 @@ func TestFindDuplicateTrip_Identity(t *testing.T) {
 
 	notDuplicate := merger.findDuplicateTrip(result, tripDifferentID, IDENTITY)
 	assert.Nil(t, notDuplicate, "Different trip ID should not be duplicate")
+}
+
+// TestFindDuplicateService_Identity tests IDENTITY strategy for service duplicate detection
+func TestFindDuplicateService_Identity(t *testing.T) {
+	result := &gtfs.Static{
+		Services: []gtfs.Service{
+			{
+				Id:        "weekday",
+				Monday:    true,
+				Tuesday:   true,
+				Wednesday: true,
+				Thursday:  true,
+				Friday:    true,
+				Saturday:  false,
+				Sunday:    false,
+			},
+		},
+	}
+
+	// Same ID = duplicate
+	serviceSameID := &gtfs.Service{
+		Id:        "weekday",
+		Monday:    true,
+		Tuesday:   true,
+		Wednesday: true,
+		Thursday:  true,
+		Friday:    true,
+		Saturday:  false,
+		Sunday:    false,
+	}
+
+	// Different ID = not duplicate
+	serviceDifferentID := &gtfs.Service{
+		Id:        "weekend",
+		Monday:    false,
+		Tuesday:   false,
+		Wednesday: false,
+		Thursday:  false,
+		Friday:    false,
+		Saturday:  true,
+		Sunday:    true,
+	}
+
+	merger := NewMerger(DefaultOptions())
+
+	duplicate := merger.findDuplicateService(result, serviceSameID, IDENTITY)
+	assert.NotNil(t, duplicate, "Same service ID should be found as duplicate")
+	assert.Equal(t, "weekday", duplicate.Id, "Should return the existing service")
+
+	notDuplicate := merger.findDuplicateService(result, serviceDifferentID, IDENTITY)
+	assert.Nil(t, notDuplicate, "Different service ID should not be duplicate")
+}
+
+// TestMerge_ServiceDuplicates_Identity tests service duplicate detection with IDENTITY strategy
+func TestMerge_ServiceDuplicates_Identity(t *testing.T) {
+	// Two feeds with services that have same ID = duplicate with IDENTITY
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Services: []gtfs.Service{
+				{
+					Id:        "weekday",
+					Monday:    true,
+					Tuesday:   true,
+					Wednesday: true,
+					Thursday:  true,
+					Friday:    true,
+					Saturday:  false,
+					Sunday:    false,
+					StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+					EndDate:   time.Date(2024, 6, 30, 0, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Services: []gtfs.Service{
+				{
+					Id:        "weekday",
+					Monday:    true,
+					Tuesday:   true,
+					Wednesday: true,
+					Thursday:  true,
+					Friday:    true,
+					Saturday:  false,
+					Sunday:    false,
+					StartDate: time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC),
+					EndDate:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	merger := NewMerger(DefaultOptions())
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+	require.NoError(t, err)
+
+	// Should have 1 service (duplicate not added)
+	assert.Equal(t, 1, len(result.Merged.Services), "Should have 1 service with IDENTITY")
+
+	// Should have 2 duplicates (agency + service)
+	assert.Equal(t, 2, result.DuplicatesA, "Should have 2 duplicates (agency + service)")
+}
+
+// TestMerge_ServiceDuplicates_Fuzzy tests service duplicate detection with FUZZY strategy
+func TestMerge_ServiceDuplicates_Fuzzy(t *testing.T) {
+	// Two feeds with services that have different IDs but identical patterns
+	feed1 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Services: []gtfs.Service{
+				{
+					Id:        "weekday-h1",
+					Monday:    true,
+					Tuesday:   true,
+					Wednesday: true,
+					Thursday:  true,
+					Friday:    true,
+					Saturday:  false,
+					Sunday:    false,
+					StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+					EndDate:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+		Index:  0,
+		Source: "feed1.zip",
+	}
+
+	feed2 := &Feed{
+		Data: &gtfs.Static{
+			Agencies: []gtfs.Agency{{Id: "agency1", Name: "Agency 1"}},
+			Services: []gtfs.Service{
+				{
+					Id:        "weekday-h2", // Different ID
+					Monday:    true,         // But identical pattern
+					Tuesday:   true,
+					Wednesday: true,
+					Thursday:  true,
+					Friday:    true,
+					Saturday:  false,
+					Sunday:    false,
+					StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+					EndDate:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+		Index:  1,
+		Source: "feed2.zip",
+	}
+
+	opts := DefaultOptions()
+	opts.Strategy = FUZZY
+	opts.Threshold = 0.9
+	merger := NewMerger(opts)
+	merger.RegisterScorer("service", &scorers.ServiceScorer{})
+
+	result, err := merger.Merge([]*Feed{feed1, feed2})
+	require.NoError(t, err)
+
+	// Should have 1 service (duplicate not added with FUZZY)
+	assert.Equal(t, 1, len(result.Merged.Services), "Should have 1 service with FUZZY")
+
+	// Should have at least 1 duplicate (service, agencies processed with IDENTITY)
+	assert.GreaterOrEqual(t, result.DuplicatesA, 1, "Should have at least 1 duplicate (service)")
+}
+
+// TestFindDuplicateService_Fuzzy tests FUZZY strategy for service duplicate detection
+func TestFindDuplicateService_Fuzzy(t *testing.T) {
+	result := &gtfs.Static{
+		Services: []gtfs.Service{
+			{
+				Id:        "weekday1",
+				Monday:    true,
+				Tuesday:   true,
+				Wednesday: true,
+				Thursday:  true,
+				Friday:    true,
+				Saturday:  false,
+				Sunday:    false,
+				StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+				EndDate:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	// Different ID but identical properties = duplicate with FUZZY
+	serviceSimilar := &gtfs.Service{
+		Id:        "weekdayX", // Different ID
+		Monday:    true,
+		Tuesday:   true,
+		Wednesday: true,
+		Thursday:  true,
+		Friday:    true,
+		Saturday:  false,
+		Sunday:    false,
+		StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+	}
+
+	opts := DefaultOptions()
+	opts.Threshold = 0.9
+	merger := NewMerger(opts)
+	merger.RegisterScorer("service", &scorers.ServiceScorer{})
+
+	duplicate := merger.findDuplicateService(result, serviceSimilar, FUZZY)
+	assert.NotNil(t, duplicate, "Identical service with different ID should be found as duplicate with FUZZY")
+	assert.Equal(t, "weekday1", duplicate.Id, "Should return the existing service")
 }
 
 // TestFindDuplicateTrip_Fuzzy tests FUZZY strategy for trip duplicate detection

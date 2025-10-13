@@ -261,8 +261,29 @@ func (m *Merger) mergeTrips(result *gtfs.Static, feed *Feed, strategy Strategy) 
 
 // mergeServices merges services from feed into result
 func (m *Merger) mergeServices(result *gtfs.Static, feed *Feed, strategy Strategy) error {
-	// Services are keyed by ID
-	result.Services = append(result.Services, feed.Data.Services...)
+	for _, service := range feed.Data.Services {
+		// Check if this service is a duplicate
+		duplicate := m.findDuplicateService(result, &service, strategy)
+
+		if duplicate != nil {
+			// Mark as duplicate, don't add
+			m.ctx.RecordDuplicate()
+			// Record reference replacement
+			m.refMap.RecordReplacement("service", service.Id, duplicate.Id)
+		} else {
+			// Check for ID collision
+			if m.hasServiceID(result, service.Id) {
+				// Rename to avoid collision
+				oldID := service.Id
+				service.Id = m.renameID(service.Id, feed.Index)
+				m.ctx.RecordRenaming()
+				// Record reference replacement
+				m.refMap.RecordReplacement("service", oldID, service.Id)
+			}
+			result.Services = append(result.Services, service)
+			m.ctx.MarkEntitySource(service.Id, feed.Index)
+		}
+	}
 	return nil
 }
 
@@ -375,6 +396,34 @@ func (m *Merger) findDuplicateTrip(result *gtfs.Static, trip *gtfs.ScheduledTrip
 	return nil
 }
 
+func (m *Merger) findDuplicateService(result *gtfs.Static, service *gtfs.Service, strategy Strategy) *gtfs.Service {
+	if strategy == IDENTITY {
+		for i := range result.Services {
+			if result.Services[i].Id == service.Id {
+				return &result.Services[i]
+			}
+		}
+		return nil
+	} else if strategy == FUZZY {
+		scorer, ok := m.scorers["service"]
+		if !ok {
+			return nil // No scorer registered
+		}
+
+		// Convert to []interface{} for generic matching
+		candidates := make([]interface{}, len(result.Services))
+		for i := range result.Services {
+			candidates[i] = &result.Services[i]
+		}
+
+		match := m.findBestMatch(service, candidates, scorer, m.opts.Threshold)
+		if match != nil {
+			return &result.Services[match.IndexB]
+		}
+	}
+	return nil
+}
+
 // Helper functions for ID collision detection
 
 func (m *Merger) hasAgencyID(result *gtfs.Static, id string) bool {
@@ -416,6 +465,15 @@ func (m *Merger) hasTripID(result *gtfs.Static, id string) bool {
 func (m *Merger) hasShapeID(result *gtfs.Static, id string) bool {
 	for _, shape := range result.Shapes {
 		if shape.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Merger) hasServiceID(result *gtfs.Static, id string) bool {
+	for _, service := range result.Services {
+		if service.Id == id {
 			return true
 		}
 	}
