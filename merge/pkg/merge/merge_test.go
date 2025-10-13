@@ -1310,3 +1310,360 @@ func TestMerge_TransferDuplicates_Fuzzy(t *testing.T) {
 	assert.Equal(t, 1, len(result.Merged.Transfers), "Should have 1 transfer after FUZZY duplicate detection")
 	assert.Greater(t, result.DuplicatesA, 0, "Should report at least 1 duplicate")
 }
+
+// TestFindDuplicateFrequency_IdentityStrategy tests frequency duplicate detection with IDENTITY strategy
+func TestFindDuplicateFrequency_IdentityStrategy(t *testing.T) {
+	t.Run("SameTripAndTimes", func(t *testing.T) {
+		existing := []gtfs.Frequency{
+			{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute},
+		}
+
+		newFreq := gtfs.Frequency{
+			StartTime: 6 * time.Hour,
+			EndTime:   9 * time.Hour,
+			Headway:   15 * time.Minute, // Different headway but same times
+		}
+
+		merger := NewMerger(DefaultOptions())
+		result := merger.findDuplicateFrequency(existing, &newFreq, IDENTITY)
+
+		assert.NotNil(t, result, "Should find duplicate with same trip and times")
+	})
+
+	t.Run("DifferentStartTime", func(t *testing.T) {
+		existing := []gtfs.Frequency{
+			{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute},
+		}
+
+		newFreq := gtfs.Frequency{
+			StartTime: 7 * time.Hour, // Different start time
+			EndTime:   9 * time.Hour,
+			Headway:   10 * time.Minute,
+		}
+
+		merger := NewMerger(DefaultOptions())
+		result := merger.findDuplicateFrequency(existing, &newFreq, IDENTITY)
+
+		assert.Nil(t, result, "Should not find duplicate with different start time")
+	})
+
+	t.Run("DifferentEndTime", func(t *testing.T) {
+		existing := []gtfs.Frequency{
+			{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute},
+		}
+
+		newFreq := gtfs.Frequency{
+			StartTime: 6 * time.Hour,
+			EndTime:   10 * time.Hour, // Different end time
+			Headway:   10 * time.Minute,
+		}
+
+		merger := NewMerger(DefaultOptions())
+		result := merger.findDuplicateFrequency(existing, &newFreq, IDENTITY)
+
+		assert.Nil(t, result, "Should not find duplicate with different end time")
+	})
+
+	t.Run("EmptyExisting", func(t *testing.T) {
+		existing := []gtfs.Frequency{}
+
+		newFreq := gtfs.Frequency{
+			StartTime: 6 * time.Hour,
+			EndTime:   9 * time.Hour,
+			Headway:   10 * time.Minute,
+		}
+
+		merger := NewMerger(DefaultOptions())
+		result := merger.findDuplicateFrequency(existing, &newFreq, IDENTITY)
+
+		assert.Nil(t, result, "Should return nil when no existing frequencies")
+	})
+}
+
+// TestMergeFrequencies_DuplicateTrips tests that frequencies are merged when trips are duplicates
+func TestMergeFrequencies_DuplicateTrips(t *testing.T) {
+	lat, lon := 40.0, -74.0
+
+	t.Run("MergeFrequenciesFromBothFeeds", func(t *testing.T) {
+		agency := &gtfs.Agency{Id: "agency1", Name: "Agency"}
+		route := &gtfs.Route{Id: "route1", Agency: agency}
+		service := &gtfs.Service{Id: "service1"}
+
+		feedA := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1",
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute},
+						},
+					},
+				},
+			},
+			Index:  0,
+			Source: "a.zip",
+		}
+
+		feedB := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1", // Same trip ID
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 9 * time.Hour, EndTime: 12 * time.Hour, Headway: 15 * time.Minute}, // Different time window
+						},
+					},
+				},
+			},
+			Index:  1,
+			Source: "b.zip",
+		}
+
+		merger := NewMerger(Options{Strategy: IDENTITY})
+		result, err := merger.Merge([]*Feed{feedA, feedB})
+		require.NoError(t, err)
+
+		// Should have 1 trip (duplicate)
+		assert.Equal(t, 1, len(result.Merged.Trips))
+
+		// Trip should have both frequencies (6-9 and 9-12)
+		assert.Equal(t, 2, len(result.Merged.Trips[0].Frequencies), "Should preserve frequencies from both feeds")
+	})
+
+	t.Run("DeduplicateFrequenciesWithinSameTrip", func(t *testing.T) {
+		agency := &gtfs.Agency{Id: "agency1", Name: "Agency"}
+		route := &gtfs.Route{Id: "route1", Agency: agency}
+		service := &gtfs.Service{Id: "service1"}
+
+		feedA := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1",
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute},
+						},
+					},
+				},
+			},
+			Index:  0,
+			Source: "a.zip",
+		}
+
+		feedB := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1",
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 15 * time.Minute}, // Same time window, different headway
+						},
+					},
+				},
+			},
+			Index:  1,
+			Source: "b.zip",
+		}
+
+		merger := NewMerger(Options{Strategy: IDENTITY})
+		result, err := merger.Merge([]*Feed{feedA, feedB})
+		require.NoError(t, err)
+
+		// Should have 1 trip
+		assert.Equal(t, 1, len(result.Merged.Trips))
+
+		// Should have only 1 frequency (deduplicated by time window)
+		assert.Equal(t, 1, len(result.Merged.Trips[0].Frequencies), "Should deduplicate frequencies with same time window")
+	})
+}
+
+// TestMergeFrequencies_EdgeCases tests edge cases for frequency merging
+func TestMergeFrequencies_EdgeCases(t *testing.T) {
+	lat, lon := 40.0, -74.0
+
+	t.Run("NilFrequencies", func(t *testing.T) {
+		agency := &gtfs.Agency{Id: "agency1", Name: "Agency"}
+		route := &gtfs.Route{Id: "route1", Agency: agency}
+		service := &gtfs.Service{Id: "service1"}
+
+		feedA := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:          "trip1",
+						Route:       route,
+						Service:     service,
+						Frequencies: nil, // Nil frequencies
+					},
+				},
+			},
+			Index:  0,
+			Source: "a.zip",
+		}
+
+		feedB := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1",
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute},
+						},
+					},
+				},
+			},
+			Index:  1,
+			Source: "b.zip",
+		}
+
+		merger := NewMerger(Options{Strategy: IDENTITY})
+		result, err := merger.Merge([]*Feed{feedA, feedB})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, len(result.Merged.Trips))
+		assert.Equal(t, 1, len(result.Merged.Trips[0].Frequencies), "Should handle nil frequencies gracefully")
+	})
+
+	t.Run("EmptyFrequencies", func(t *testing.T) {
+		agency := &gtfs.Agency{Id: "agency1", Name: "Agency"}
+		route := &gtfs.Route{Id: "route1", Agency: agency}
+		service := &gtfs.Service{Id: "service1"}
+
+		feedA := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:          "trip1",
+						Route:       route,
+						Service:     service,
+						Frequencies: []gtfs.Frequency{}, // Empty array
+					},
+				},
+			},
+			Index:  0,
+			Source: "a.zip",
+		}
+
+		feedB := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1",
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute},
+						},
+					},
+				},
+			},
+			Index:  1,
+			Source: "b.zip",
+		}
+
+		merger := NewMerger(Options{Strategy: IDENTITY})
+		result, err := merger.Merge([]*Feed{feedA, feedB})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, len(result.Merged.Trips))
+		assert.Equal(t, 1, len(result.Merged.Trips[0].Frequencies), "Should handle empty frequencies array")
+	})
+
+	t.Run("DifferentExactTimes", func(t *testing.T) {
+		agency := &gtfs.Agency{Id: "agency1", Name: "Agency"}
+		route := &gtfs.Route{Id: "route1", Agency: agency}
+		service := &gtfs.Service{Id: "service1"}
+
+		feedA := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1",
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute, ExactTimes: gtfs.FrequencyBased},
+						},
+					},
+				},
+			},
+			Index:  0,
+			Source: "a.zip",
+		}
+
+		feedB := &Feed{
+			Data: &gtfs.Static{
+				Agencies: []gtfs.Agency{*agency},
+				Stops:    []gtfs.Stop{{Id: "stop1", Name: "Stop", Latitude: &lat, Longitude: &lon}},
+				Routes:   []gtfs.Route{*route},
+				Services: []gtfs.Service{*service},
+				Trips: []gtfs.ScheduledTrip{
+					{
+						ID:      "trip1",
+						Route:   route,
+						Service: service,
+						Frequencies: []gtfs.Frequency{
+							{StartTime: 6 * time.Hour, EndTime: 9 * time.Hour, Headway: 10 * time.Minute, ExactTimes: gtfs.ScheduleBased},
+						},
+					},
+				},
+			},
+			Index:  1,
+			Source: "b.zip",
+		}
+
+		merger := NewMerger(Options{Strategy: IDENTITY})
+		result, err := merger.Merge([]*Feed{feedA, feedB})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, len(result.Merged.Trips))
+		// Should still deduplicate based on time window, even if ExactTimes differs
+		assert.Equal(t, 1, len(result.Merged.Trips[0].Frequencies), "Should deduplicate by time window regardless of ExactTimes")
+	})
+}

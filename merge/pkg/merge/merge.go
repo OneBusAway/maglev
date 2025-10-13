@@ -247,6 +247,15 @@ func (m *Merger) mergeTrips(result *gtfs.Static, feed *Feed, strategy Strategy) 
 		duplicate := m.findDuplicateTrip(result, &trip, strategy)
 
 		if duplicate != nil {
+			// Merge frequencies from duplicate trip
+			for _, freq := range trip.Frequencies {
+				// Check if this frequency is already present
+				if m.findDuplicateFrequency(duplicate.Frequencies, &freq, strategy) == nil {
+					// Not a duplicate frequency, add it
+					duplicate.Frequencies = append(duplicate.Frequencies, freq)
+				}
+			}
+
 			// Mark as duplicate, don't add
 			m.ctx.RecordDuplicate()
 			// Record reference replacement
@@ -592,5 +601,21 @@ func (m *Merger) findDuplicateTransfer(result *gtfs.Static, transfer *gtfs.Trans
 		}
 	}
 
+	return nil
+}
+
+// findDuplicateFrequency checks if a frequency already exists in a trip's frequency list
+// Frequencies are identified by start_time + end_time (headway and exact_times can differ)
+func (m *Merger) findDuplicateFrequency(existing []gtfs.Frequency, freq *gtfs.Frequency, strategy Strategy) *gtfs.Frequency {
+	if strategy == IDENTITY {
+		// For IDENTITY: match if start_time and end_time are the same
+		for i := range existing {
+			if existing[i].StartTime == freq.StartTime &&
+				existing[i].EndTime == freq.EndTime {
+				return &existing[i]
+			}
+		}
+	}
+	// FUZZY strategy not implemented for frequencies yet
 	return nil
 }

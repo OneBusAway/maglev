@@ -167,15 +167,8 @@ func (ru *ReferenceUpdater) UpdateTripReferences(feed *gtfs.Static) {
 		}
 	}
 
-	// TODO: Update frequency trip references when Frequency merging is implemented
-	// See TODO.md section 3 - "Update frequency references"
-	// for i := range feed.Frequencies {
-	//     if feed.Frequencies[i].Trip != nil {
-	//         if newID, ok := ru.refMap.GetReplacement("trip", feed.Frequencies[i].Trip.ID); ok {
-	//             feed.Frequencies[i].Trip.ID = newID
-	//         }
-	//     }
-	// }
+	// Note: Frequencies are embedded in ScheduledTrip.Frequencies[] and have no Trip references.
+	// They are automatically updated when trips are merged since they're part of the trip struct.
 }
 
 // UpdateAllReferences updates all entity references in the feed
