@@ -604,3 +604,35 @@ func TestMerge_ReferenceUpdating_ShapeIDCollision(t *testing.T) {
 	assert.Equal(t, "shape1", trip2.Shape.ID,
 		"trip2 should reference shape1")
 }
+
+// TestTripScorer_Registration tests that trip scorer can be registered and works correctly
+func TestTripScorer_Registration(t *testing.T) {
+	merger := NewMerger(DefaultOptions())
+	merger.RegisterScorer("trip", &scorers.TripScorer{})
+
+	// Verify scorer was registered
+	assert.NotNil(t, merger.scorers["trip"])
+
+	// Verify scorer works correctly
+	route1 := &gtfs.Route{Id: "route1"}
+	stop1 := &gtfs.Stop{Id: "stop1"}
+	
+	trip1 := &gtfs.ScheduledTrip{
+		ID:          "trip1",
+		Route:       route1,
+		DirectionId: 0,
+		StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+	}
+	
+	trip2 := &gtfs.ScheduledTrip{
+		ID:          "trip2",
+		Route:       route1,
+		DirectionId: 0,
+		StopTimes:   []gtfs.ScheduledStopTime{{Stop: stop1}},
+	}
+	
+	score := merger.scorers["trip"].Score(trip1, trip2)
+
+	// Identical trips should score very high
+	assert.Greater(t, score, 0.9, "Identical trips should score > 0.9")
+}
