@@ -1225,3 +1225,88 @@ func TestMerge_ServiceDuplicates_ConflictingCalendarDates(t *testing.T) {
 	assert.Contains(t, service.AddedDates, conflictDate, "Should have conflicting date in AddedDates")
 	assert.Contains(t, service.RemovedDates, conflictDate, "Should have conflicting date in RemovedDates")
 }
+
+func TestMerge_TransferDuplicates_Identity(t *testing.T) {
+	stopA := gtfs.Stop{Id: "stop_a"}
+	stopB := gtfs.Stop{Id: "stop_b"}
+
+	feedA := &Feed{
+		Index: 0,
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{stopA, stopB},
+			Transfers: []gtfs.Transfer{
+				{
+					From: &stopA,
+					To:   &stopB,
+					Type: gtfs.TransferType_Timed,
+				},
+			},
+		},
+	}
+
+	feedB := &Feed{
+		Index: 1,
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{stopA, stopB},
+			Transfers: []gtfs.Transfer{
+				{
+					From: &stopA, // Same from/to stops = duplicate
+					To:   &stopB,
+					Type: gtfs.TransferType_Timed,
+				},
+			},
+		},
+	}
+
+	merger := NewMerger(Options{Strategy: IDENTITY})
+	result, err := merger.Merge([]*Feed{feedA, feedB}) // feedA first, then feedB
+	require.NoError(t, err)
+
+	// Should detect duplicate and keep only one transfer
+	assert.Equal(t, 1, len(result.Merged.Transfers), "Should have 1 transfer after duplicate detection")
+	// feedB is processed second, so duplicates are in DuplicatesA (first older feed processed)
+	assert.Greater(t, result.DuplicatesA, 0, "Should report at least 1 duplicate")
+}
+
+func TestMerge_TransferDuplicates_Fuzzy(t *testing.T) {
+	stopA := gtfs.Stop{Id: "stop_a"}
+	stopB := gtfs.Stop{Id: "stop_b"}
+
+	feedA := &Feed{
+		Index: 0,
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{stopA, stopB},
+			Transfers: []gtfs.Transfer{
+				{
+					From: &stopA,
+					To:   &stopB,
+					Type: gtfs.TransferType_Timed,
+				},
+			},
+		},
+	}
+
+	feedB := &Feed{
+		Index: 1,
+		Data: &gtfs.Static{
+			Stops: []gtfs.Stop{stopA, stopB},
+			Transfers: []gtfs.Transfer{
+				{
+					From: &stopA, // Same from/to stops
+					To:   &stopB,
+					Type: gtfs.TransferType_Timed, // Same type
+				},
+			},
+		},
+	}
+
+	merger := NewMerger(Options{Strategy: FUZZY, Threshold: 0.5})
+	merger.RegisterScorer("transfer", &scorers.TransferScorer{})
+
+	result, err := merger.Merge([]*Feed{feedA, feedB})
+	require.NoError(t, err)
+
+	// Should detect duplicate via TransferScorer and keep only one transfer
+	assert.Equal(t, 1, len(result.Merged.Transfers), "Should have 1 transfer after FUZZY duplicate detection")
+	assert.Greater(t, result.DuplicatesA, 0, "Should report at least 1 duplicate")
+}

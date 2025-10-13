@@ -158,8 +158,10 @@ func (m *Merger) mergeFeed(result *gtfs.Static, feed *Feed, strategy Strategy) e
 		return fmt.Errorf("merging services: %w", err)
 	}
 
-	// 8. Merge other entities
-	result.Transfers = append(result.Transfers, feed.Data.Transfers...)
+	// 8. Merge transfers (with duplicate detection)
+	if err := m.mergeTransfers(result, feed, strategy); err != nil {
+		return fmt.Errorf("merging transfers: %w", err)
+	}
 
 	return nil
 }
@@ -533,4 +535,62 @@ func mergeUniqueDates(dates1, dates2 []time.Time) []time.Time {
 	})
 
 	return result
+}
+
+// mergeTransfers merges transfers from feed into result
+func (m *Merger) mergeTransfers(result *gtfs.Static, feed *Feed, strategy Strategy) error {
+	for _, transfer := range feed.Data.Transfers {
+		// Validate required fields (transfers must have from and to stops)
+		if transfer.From == nil || transfer.To == nil {
+			continue // Skip invalid transfer
+		}
+
+		// Check if this transfer is a duplicate
+		duplicate := m.findDuplicateTransfer(result, &transfer, strategy)
+
+		if duplicate == nil {
+			// Not a duplicate, add it
+			result.Transfers = append(result.Transfers, transfer)
+			// Note: Transfers don't have IDs, so no entity source tracking
+		} else {
+			// Mark as duplicate, don't add
+			m.ctx.RecordDuplicate()
+		}
+	}
+	return nil
+}
+
+// findDuplicateTransfer finds a duplicate transfer in the result
+func (m *Merger) findDuplicateTransfer(result *gtfs.Static, transfer *gtfs.Transfer, strategy Strategy) *gtfs.Transfer {
+	if strategy == IDENTITY {
+		// For IDENTITY: match if From and To stop IDs are the same
+		for i := range result.Transfers {
+			existing := &result.Transfers[i]
+			if existing.From != nil && existing.To != nil &&
+				transfer.From != nil && transfer.To != nil &&
+				existing.From.Id == transfer.From.Id &&
+				existing.To.Id == transfer.To.Id {
+				return existing
+			}
+		}
+	} else if strategy == FUZZY {
+		// Use TransferScorer if registered
+		scorer := m.scorers["transfer"]
+		if scorer == nil {
+			return nil
+		}
+
+		// Convert to interface{} slices for findBestMatch
+		existingInterfaces := make([]interface{}, len(result.Transfers))
+		for i := range result.Transfers {
+			existingInterfaces[i] = &result.Transfers[i]
+		}
+
+		match := m.findBestMatch(transfer, existingInterfaces, scorer, m.opts.Threshold)
+		if match != nil {
+			return &result.Transfers[match.IndexB]
+		}
+	}
+
+	return nil
 }
