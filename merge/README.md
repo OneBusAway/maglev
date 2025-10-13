@@ -70,20 +70,46 @@ func main() {
 
 ### As a CLI Tool
 
+**⚠️ Note: CLI output writing is not yet implemented. The tool performs merges successfully but cannot write the result to a valid GTFS zip file. See [TODO.md](TODO.md) for details.**
+
 ```bash
 # Build the CLI
-cd cmd/gtfs-merge
-go build
+go build -o bin/gtfs-merge ./cmd/gtfs-merge
 
-# Merge two feeds with auto-detection
-./gtfs-merge --input feed1.zip --input feed2.zip --output merged.zip
+# Merge two feeds (identity strategy)
+./bin/gtfs-merge feed1.zip feed2.zip merged.zip
 
-# Force identity strategy
-./gtfs-merge --input feed1.zip --input feed2.zip --output merged.zip --strategy identity
+# Use fuzzy matching
+./bin/gtfs-merge --duplicateDetection=fuzzy feed1.zip feed2.zip merged.zip
 
-# Use fuzzy matching with custom threshold
-./gtfs-merge --input feed1.zip --input feed2.zip --output merged.zip --strategy fuzzy --threshold 0.6
+# Rename duplicates and log dropped items
+./bin/gtfs-merge --renameDuplicates --logDroppedDuplicates feed1.zip feed2.zip merged.zip
+
+# Error on duplicates
+./bin/gtfs-merge --errorOnDroppedDuplicates feed1.zip feed2.zip merged.zip
+
+# Show version
+./bin/gtfs-merge --version
+
+# Show help
+./bin/gtfs-merge --help
 ```
+
+#### CLI Compatibility
+
+This CLI is designed to be compatible with the Java [onebusaway-gtfs-merge-cli](https://github.com/OneBusAway/onebusaway-gtfs-modules/blob/main/docs/onebusaway-gtfs-merge-cli.md) tool.
+
+**Implemented flags:**
+- `--duplicateDetection=identity|fuzzy|none` - Duplicate detection strategy
+- `--renameDuplicates` - Rename duplicate service IDs
+- `--logDroppedDuplicates` - Log dropped duplicates
+- `--errorOnDroppedDuplicates` - Stop on duplicates
+- `--version` - Show version
+
+**Not yet implemented:**
+- `--file=<filename>` - Per-file configuration (see TODO.md)
+- `--threshold=<float>` - Fuzzy matching threshold (currently hardcoded to 0.7)
+- GTFS CSV output writing (critical - see TODO.md)
 
 ## Architecture
 
