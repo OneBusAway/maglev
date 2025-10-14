@@ -1,9 +1,12 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -41,8 +44,10 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	var date int64
+	var targetDate string
+	var weekday string
+
 	if dateParam != "" {
-		// Parse YYYY-MM-DD format
 		parsedDate, err := time.Parse("2006-01-02", dateParam)
 		if err != nil {
 			fieldErrors := map[string][]string{
@@ -52,8 +57,13 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		date = parsedDate.UnixMilli()
+		targetDate = parsedDate.Format("20060102")
+		weekday = strings.ToLower(parsedDate.Weekday().String())
 	} else {
-		date = time.Now().UnixMilli()
+		now := time.Now()
+		date = now.UnixMilli()
+		targetDate = now.Format("20060102")
+		weekday = strings.ToLower(now.Weekday().String())
 	}
 
 	// Verify stop exists
@@ -63,9 +73,39 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get schedule data for the stop
-	scheduleRows, err := api.GtfsManager.GtfsDB.Queries.GetScheduleForStop(ctx, stopID)
+	routesForStop, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, stopID)
 	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
+	routeIDs := make([]string, 0, len(routesForStop))
+	for _, rt := range routesForStop {
+		routeIDs = append(routeIDs, rt.ID)
+	}
+
+	if len(routeIDs) == 0 {
+		api.sendResponse(w, r, models.NewEntryResponse(
+			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), date, nil),
+			models.NewEmptyReferences(),
+		))
+		return
+	}
+
+	params := gtfsdb.GetScheduleForStopOnDateParams{
+		StopID:     stopID,
+		TargetDate: targetDate,
+		Weekday:    weekday,
+		RouteIds:   routeIDs,
+	}
+	fmt.Println(targetDate)
+	fmt.Println(weekday)
+	fmt.Println(routeIDs)
+	fmt.Println(params)
+	scheduleRows, err := api.GtfsManager.GtfsDB.Queries.GetScheduleForStopOnDate(ctx, params)
+
+	if err != nil {
+		fmt.Println(err)
 		api.serverErrorResponse(w, r, err)
 		return
 	}
@@ -73,14 +113,18 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Build references maps
 	agencyRefs := make(map[string]models.AgencyReference)
 	routeRefs := make(map[string]models.Route)
+	tripIDsSet := make(map[string]bool)
 
 	// Group schedule data by route
 	routeScheduleMap := make(map[string][]models.ScheduleStopTime)
-	routeHeadsignMap := make(map[string]string)
+	// Track headsign counts to pick the most common one
+	routeHeadsignCounts := make(map[string]map[string]int)
 
 	for _, row := range scheduleRows {
 		combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
 		combinedTripID := utils.FormCombinedID(agencyID, row.TripID)
+
+		tripIDsSet[row.TripID] = true
 
 		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in milliseconds
 		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
@@ -100,9 +144,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		routeScheduleMap[combinedRouteID] = append(routeScheduleMap[combinedRouteID], stopTime)
 
-		// Store the trip headsign for this route
 		if row.TripHeadsign.Valid && row.TripHeadsign.String != "" {
-			routeHeadsignMap[combinedRouteID] = row.TripHeadsign.String
+			if routeHeadsignCounts[combinedRouteID] == nil {
+				routeHeadsignCounts[combinedRouteID] = make(map[string]int)
+			}
+			routeHeadsignCounts[combinedRouteID][row.TripHeadsign.String]++
 		}
 
 		// Add route to references if not already present
@@ -146,10 +192,34 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	tripIDs := make([]string, 0, len(tripIDsSet))
+	for tripID := range tripIDsSet {
+		tripIDs = append(tripIDs, tripID)
+	}
+
+	var trips []gtfsdb.Trip
+	if len(tripIDs) > 0 {
+		trips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+		}
+	}
+
 	// Build the route schedules
 	var routeSchedules []models.StopRouteSchedule
 	for routeID, stopTimes := range routeScheduleMap {
-		tripHeadsign := routeHeadsignMap[routeID]
+		// Select the most common headsign for this route
+		tripHeadsign := ""
+		maxCount := 0
+		if headsigns, exists := routeHeadsignCounts[routeID]; exists {
+			for headsign, count := range headsigns {
+				if count > maxCount {
+					maxCount = count
+					tripHeadsign = headsign
+				}
+			}
+		}
+
 		directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes)
 		routeSchedule := models.NewStopRouteSchedule(routeID, []models.StopRouteDirectionSchedule{directionSchedule})
 		routeSchedules = append(routeSchedules, routeSchedule)
@@ -166,6 +236,21 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 	for _, routeRef := range routeRefs {
 		references.Routes = append(references.Routes, routeRef)
+	}
+
+	for _, trip := range trips {
+		combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
+		tripRef := models.NewTripReference(
+			combinedTripID,
+			trip.RouteID,
+			trip.ServiceID,
+			trip.TripHeadsign.String,
+			trip.TripShortName.String,
+			trip.DirectionID.Int64,
+			utils.FormCombinedID(agencyID, trip.BlockID.String),
+			utils.FormCombinedID(agencyID, trip.ShapeID.String),
+		)
+		references.Trips = append(references.Trips, tripRef)
 	}
 
 	// Create and send response
