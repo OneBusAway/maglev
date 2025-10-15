@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -98,14 +97,9 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		Weekday:    weekday,
 		RouteIds:   routeIDs,
 	}
-	fmt.Println(targetDate)
-	fmt.Println(weekday)
-	fmt.Println(routeIDs)
-	fmt.Println(params)
 	scheduleRows, err := api.GtfsManager.GtfsDB.Queries.GetScheduleForStopOnDate(ctx, params)
 
 	if err != nil {
-		fmt.Println(err)
 		api.serverErrorResponse(w, r, err)
 		return
 	}
@@ -202,6 +196,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		trips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
+			return
 		}
 	}
 
