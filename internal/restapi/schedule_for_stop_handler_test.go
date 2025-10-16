@@ -87,3 +87,188 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 		assert.NotNil(t, entry["date"])
 	})
 }
+
+func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
+	api := createTestApi(t)
+
+	// Get valid stop for testing
+	agencies := api.GtfsManager.GetAgencies()
+	stops := api.GtfsManager.GetStops()
+	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+
+	tests := []struct {
+		name           string
+		date           string
+		expectedStatus int
+		validateResult func(t *testing.T, entry map[string]interface{})
+	}{
+		{
+			name:           "Thursday date - query executes successfully",
+			date:           "2025-06-12",
+			expectedStatus: http.StatusOK,
+			validateResult: func(t *testing.T, entry map[string]interface{}) {
+				assert.Equal(t, stopID, entry["stopId"])
+				assert.NotNil(t, entry["date"])
+				_, exists := entry["stopRouteSchedules"]
+				assert.True(t, exists, "stopRouteSchedules field should exist")
+			},
+		},
+		{
+			name:           "Monday date - query executes successfully",
+			date:           "2025-06-09",
+			expectedStatus: http.StatusOK,
+			validateResult: func(t *testing.T, entry map[string]interface{}) {
+				assert.Equal(t, stopID, entry["stopId"])
+				_, exists := entry["stopRouteSchedules"]
+				assert.True(t, exists, "stopRouteSchedules field should exist")
+			},
+		},
+		{
+			name:           "Sunday date - query executes successfully",
+			date:           "2025-06-08",
+			expectedStatus: http.StatusOK,
+			validateResult: func(t *testing.T, entry map[string]interface{}) {
+				assert.Equal(t, stopID, entry["stopId"])
+				_, exists := entry["stopRouteSchedules"]
+				assert.True(t, exists, "stopRouteSchedules field should exist")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=" + tt.date
+			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, model.Code)
+
+			if tt.expectedStatus == http.StatusOK {
+				data, ok := model.Data.(map[string]interface{})
+				assert.True(t, ok)
+				entry, ok := data["entry"].(map[string]interface{})
+				assert.True(t, ok)
+
+				tt.validateResult(t, entry)
+			}
+		})
+	}
+}
+
+func TestScheduleForStopHandlerTripReferences(t *testing.T) {
+	api := createTestApi(t)
+
+	agencies := api.GtfsManager.GetAgencies()
+	stops := api.GtfsManager.GetStops()
+	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+
+	t.Run("Response structure is correct", func(t *testing.T) {
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
+		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		data, ok := model.Data.(map[string]interface{})
+		assert.True(t, ok, "Data should be a map")
+
+		_, ok = data["references"].(map[string]interface{})
+		assert.True(t, ok, "References should exist")
+
+		entry, ok := data["entry"].(map[string]interface{})
+		assert.True(t, ok, "Entry should exist")
+
+		assert.Contains(t, entry, "stopId", "Entry should have stopId")
+		assert.Contains(t, entry, "date", "Entry should have date")
+
+	})
+}
+
+func TestScheduleForStopHandlerInvalidDateFormat(t *testing.T) {
+	api := createTestApi(t)
+
+	agencies := api.GtfsManager.GetAgencies()
+	stops := api.GtfsManager.GetStops()
+	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+
+	tests := []struct {
+		name           string
+		date           string
+		expectedStatus int
+	}{
+		{
+			name:           "Invalid date format - wrong separator",
+			date:           "2025/06/12",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Invalid date format - incomplete",
+			date:           "2025-06",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Invalid date - not a real date",
+			date:           "2025-13-45",
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=" + tt.date
+			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			if model.Code != 0 {
+				assert.Equal(t, tt.expectedStatus, model.Code)
+			}
+		})
+	}
+}
+
+func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
+	api := createTestApi(t)
+
+	agencies := api.GtfsManager.GetAgencies()
+	stops := api.GtfsManager.GetStops()
+	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+
+	t.Run("Handler executes successfully", func(t *testing.T) {
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
+		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		data, ok := model.Data.(map[string]interface{})
+		assert.True(t, ok)
+
+		entry, ok := data["entry"].(map[string]interface{})
+		assert.True(t, ok)
+
+		assert.Contains(t, entry, "stopId")
+		assert.Contains(t, entry, "date")
+
+	})
+}
+
+func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
+	api := createTestApi(t)
+
+	agencies := api.GtfsManager.GetAgencies()
+	stops := api.GtfsManager.GetStops()
+
+	t.Run("Stop with no routes returns empty schedule", func(t *testing.T) {
+		stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
+		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		data, ok := model.Data.(map[string]interface{})
+		assert.True(t, ok)
+
+		entry, ok := data["entry"].(map[string]interface{})
+		assert.True(t, ok)
+
+		assert.NotNil(t, entry["stopRouteSchedules"])
+	})
+}
