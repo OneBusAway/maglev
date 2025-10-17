@@ -356,6 +356,58 @@ WHERE
 ORDER BY
     r.id, st.arrival_time;
 
+-- name: GetScheduleForStopOnDate :many
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_headsign,
+    t.service_id,
+    t.route_id,
+    t.trip_headsign,
+    r.id as route_id,
+    r.agency_id
+FROM
+    stop_times st
+    JOIN trips t ON st.trip_id = t.id
+    JOIN routes r ON t.route_id = r.id
+    LEFT JOIN (
+        SELECT c.id AS service_id
+        FROM calendar c
+        WHERE c.start_date <= @target_date
+          AND c.end_date >= @target_date
+          AND (
+            (@weekday = 'sunday' AND c.sunday = 1) OR
+            (@weekday = 'monday' AND c.monday = 1) OR
+            (@weekday = 'tuesday' AND c.tuesday = 1) OR
+            (@weekday = 'wednesday' AND c.wednesday = 1) OR
+            (@weekday = 'thursday' AND c.thursday = 1) OR
+            (@weekday = 'friday' AND c.friday = 1) OR
+            (@weekday = 'saturday' AND c.saturday = 1)
+          )
+    ) base ON t.service_id = base.service_id
+    LEFT JOIN (
+        SELECT cd.service_id
+        FROM calendar_dates cd
+        WHERE cd.date = @target_date AND cd.exception_type = 2
+    ) removed ON t.service_id = removed.service_id
+    LEFT JOIN (
+        SELECT cd.service_id
+        FROM calendar_dates cd
+        WHERE cd.date = @target_date AND cd.exception_type = 1
+    ) added ON t.service_id = added.service_id
+WHERE
+    st.stop_id = @stop_id
+    AND (
+        (base.service_id IS NOT NULL AND removed.service_id IS NULL)
+        OR 
+        added.service_id IS NOT NULL
+    )
+    AND r.id IN (sqlc.slice('route_ids'))
+ORDER BY
+    r.id, st.arrival_time;
+
+
 -- name: GetImportMetadata :one
 SELECT
     *
@@ -548,6 +600,16 @@ FROM
     routes
 WHERE
     id IN (sqlc.slice('route_ids'))
+ORDER BY
+    id;
+
+-- name: GetTripsByIDs :many
+SELECT
+    *
+FROM
+    trips
+WHERE
+    id IN (sqlc.slice('trip_ids'))
 ORDER BY
     id;
 
