@@ -500,29 +500,43 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 const getActiveServiceIDsForDate = `-- name: GetActiveServiceIDsForDate :many
 WITH formatted_date AS (
     SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
+),
+base_services AS (
+    SELECT c.id AS service_id
+    FROM calendar c, formatted_date fd
+    WHERE c.start_date <= ?1
+      AND c.end_date >= ?1
+      AND (
+        (fd.weekday = '0' AND c.sunday = 1) OR
+        (fd.weekday = '1' AND c.monday = 1) OR
+        (fd.weekday = '2' AND c.tuesday = 1) OR
+        (fd.weekday = '3' AND c.wednesday = 1) OR
+        (fd.weekday = '4' AND c.thursday = 1) OR
+        (fd.weekday = '5' AND c.friday = 1) OR
+        (fd.weekday = '6' AND c.saturday = 1)
+      )
+),
+removed_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 2
+),
+added_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 1
 )
-SELECT DISTINCT c.id AS service_id
-FROM calendar c, formatted_date fd
-WHERE c.start_date <= ?1
-  AND c.end_date >= ?1
-  AND (
-    (fd.weekday = '0' AND c.sunday = 1) OR
-    (fd.weekday = '1' AND c.monday = 1) OR
-    (fd.weekday = '2' AND c.tuesday = 1) OR
-    (fd.weekday = '3' AND c.wednesday = 1) OR
-    (fd.weekday = '4' AND c.thursday = 1) OR
-    (fd.weekday = '5' AND c.friday = 1) OR
-    (fd.weekday = '6' AND c.saturday = 1)
-    )
-UNION
 SELECT DISTINCT service_id
-FROM calendar_dates
-WHERE date = ?1
-  AND exception_type = 1
+FROM base_services
+WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+UNION
+SELECT DISTINCT service_id FROM added_services
 `
 
-func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, targetDate interface{}) ([]string, error) {
-	rows, err := q.query(ctx, q.getActiveServiceIDsForDateStmt, getActiveServiceIDsForDate, targetDate)
+func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interface{}) ([]string, error) {
+	rows, err := q.query(ctx, q.getActiveServiceIDsForDateStmt, getActiveServiceIDsForDate, substr)
 	if err != nil {
 		return nil, err
 	}
@@ -1501,7 +1515,7 @@ WHERE
     st.stop_id = ?3
     AND (
         (base.service_id IS NOT NULL AND removed.service_id IS NULL)
-        OR 
+        OR
         added.service_id IS NOT NULL
     )
     AND r.id IN (/*SLICE:route_ids*/?)

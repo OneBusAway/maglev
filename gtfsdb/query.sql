@@ -302,26 +302,41 @@ ORDER BY s.shape_pt_sequence;
 
 -- name: GetActiveServiceIDsForDate :many
 WITH formatted_date AS (
-    SELECT STRFTIME('%w', SUBSTR(@target_date, 1, 4) || '-' || SUBSTR(@target_date, 5, 2) || '-' || SUBSTR(@target_date, 7, 2)) AS weekday
+    SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
+),
+base_services AS (
+    SELECT c.id AS service_id
+    FROM calendar c, formatted_date fd
+    WHERE c.start_date <= ?1
+      AND c.end_date >= ?1
+      AND (
+        (fd.weekday = '0' AND c.sunday = 1) OR
+        (fd.weekday = '1' AND c.monday = 1) OR
+        (fd.weekday = '2' AND c.tuesday = 1) OR
+        (fd.weekday = '3' AND c.wednesday = 1) OR
+        (fd.weekday = '4' AND c.thursday = 1) OR
+        (fd.weekday = '5' AND c.friday = 1) OR
+        (fd.weekday = '6' AND c.saturday = 1)
+      )
+),
+removed_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 2
+),
+added_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 1
 )
-SELECT DISTINCT c.id AS service_id
-FROM calendar c, formatted_date fd
-WHERE c.start_date <= @target_date
-  AND c.end_date >= @target_date
-  AND (
-    (fd.weekday = '0' AND c.sunday = 1) OR
-    (fd.weekday = '1' AND c.monday = 1) OR
-    (fd.weekday = '2' AND c.tuesday = 1) OR
-    (fd.weekday = '3' AND c.wednesday = 1) OR
-    (fd.weekday = '4' AND c.thursday = 1) OR
-    (fd.weekday = '5' AND c.friday = 1) OR
-    (fd.weekday = '6' AND c.saturday = 1)
-    )
-UNION
 SELECT DISTINCT service_id
-FROM calendar_dates
-WHERE date = @target_date
-  AND exception_type = 1;
+FROM base_services
+WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+UNION
+SELECT DISTINCT service_id FROM added_services;
+
 
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
@@ -400,7 +415,7 @@ WHERE
     st.stop_id = @stop_id
     AND (
         (base.service_id IS NOT NULL AND removed.service_id IS NULL)
-        OR 
+        OR
         added.service_id IS NOT NULL
     )
     AND r.id IN (sqlc.slice('route_ids'))
