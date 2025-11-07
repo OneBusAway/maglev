@@ -1501,7 +1501,7 @@ WHERE
     st.stop_id = ?3
     AND (
         (base.service_id IS NOT NULL AND removed.service_id IS NULL)
-        OR 
+        OR
         added.service_id IS NOT NULL
     )
     AND r.id IN (/*SLICE:route_ids*/?)
@@ -1860,15 +1860,63 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 	return i, err
 }
 
+const getStopForAgency = `-- name: GetStopForAgency :one
+SELECT DISTINCT
+    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction
+FROM
+    stops
+    JOIN stop_times ON stops.id = stop_times.stop_id
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    stops.id = ?
+    AND routes.agency_id = ?
+`
+
+type GetStopForAgencyParams struct {
+	ID       string
+	AgencyID string
+}
+
+// Return the stop only if it is served by any route that belongs to the specified agency.
+// We join stop_times -> trips -> routes and filter by routes.agency_id to enforce agency ownership.
+func (q *Queries) GetStopForAgency(ctx context.Context, arg GetStopForAgencyParams) (Stop, error) {
+	row := q.queryRow(ctx, q.getStopForAgencyStmt, getStopForAgency, arg.ID, arg.AgencyID)
+	var i Stop
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.Name,
+		&i.Desc,
+		&i.Lat,
+		&i.Lon,
+		&i.ZoneID,
+		&i.Url,
+		&i.LocationType,
+		&i.Timezone,
+		&i.WheelchairBoarding,
+		&i.PlatformCode,
+		&i.Direction,
+	)
+	return i, err
+}
+
 const getStopIDsForAgency = `-- name: GetStopIDsForAgency :many
-SELECT
+SELECT DISTINCT
     s.id
 FROM
     stops s
+    JOIN stop_times st ON s.id = st.stop_id
+    JOIN trips t ON st.trip_id = t.id
+    JOIN routes r ON t.route_id = r.id
+WHERE
+    r.agency_id = ?
 `
 
-func (q *Queries) GetStopIDsForAgency(ctx context.Context) ([]string, error) {
-	rows, err := q.query(ctx, q.getStopIDsForAgencyStmt, getStopIDsForAgency)
+// Return stop IDs that are served by routes belonging to the specified agency.
+// We join stop_times -> trips -> routes and filter on routes.agency_id.
+func (q *Queries) GetStopIDsForAgency(ctx context.Context, agencyID string) ([]string, error) {
+	rows, err := q.query(ctx, q.getStopIDsForAgencyStmt, getStopIDsForAgency, agencyID)
 	if err != nil {
 		return nil, err
 	}
