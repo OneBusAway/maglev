@@ -1913,8 +1913,6 @@ WHERE
     r.agency_id = ?
 `
 
-// Return stop IDs that are served by routes belonging to the specified agency.
-// We join stop_times -> trips -> routes and filter on routes.agency_id.
 func (q *Queries) GetStopIDsForAgency(ctx context.Context, agencyID string) ([]string, error) {
 	rows, err := q.query(ctx, q.getStopIDsForAgencyStmt, getStopIDsForAgency, agencyID)
 	if err != nil {
