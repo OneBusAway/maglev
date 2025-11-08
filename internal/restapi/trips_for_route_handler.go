@@ -50,9 +50,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	const runningLateWindow = 30 * time.Minute  // Vehicles running up to 30 min late
-	const runningEarlyWindow = 10 * time.Minute // Vehicles running up to 10 min early
-
 	// Calculate nanoseconds since midnight of the service day
 	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
 	nanosSinceMidnight := currentTime.Sub(serviceDayMidnight).Nanoseconds()
@@ -60,13 +57,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		nanosSinceMidnight = 0
 	}
 	currentNanosSinceMidnight := nanosSinceMidnight
-
-	startTime := currentNanosSinceMidnight - runningLateWindow.Nanoseconds()
-
-	// Ensure start time doesn't go negative (handle times before midnight)
-	if startTime < 0 {
-		startTime = 0
-	}
 
 	indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
 		RouteID:    routeID,
@@ -187,7 +177,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		tripID := activeEntry.TripID
 		agencyID := tripAgencyResolver.GetAgencyNameByTripID(tripID)
 
-		vehicle, _ := vehiclesByTripID[tripID]
+		vehicle := vehiclesByTripID[tripID]
 
 		var schedule *models.TripsSchedule
 		var status *models.TripStatusForTripDetails
