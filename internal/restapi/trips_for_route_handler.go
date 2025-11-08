@@ -3,12 +3,14 @@ package restapi
 import (
 	"context"
 	"database/sql"
-	"github.com/OneBusAway/go-gtfs"
-	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 	"net/http"
 	"time"
+
+	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +50,25 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	routeTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsForRouteInActiveServiceIDs(ctx, gtfsdb.GetTripsForRouteInActiveServiceIDsParams{
+	const runningLateWindow = 30 * time.Minute  // Vehicles running up to 30 min late
+	const runningEarlyWindow = 10 * time.Minute // Vehicles running up to 10 min early
+
+	// Calculate nanoseconds since midnight of the service day
+	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
+	nanosSinceMidnight := currentTime.Sub(serviceDayMidnight).Nanoseconds()
+	if nanosSinceMidnight < 0 {
+		nanosSinceMidnight = 0
+	}
+	currentNanosSinceMidnight := nanosSinceMidnight
+
+	startTime := currentNanosSinceMidnight - runningLateWindow.Nanoseconds()
+
+	// Ensure start time doesn't go negative (handle times before midnight)
+	if startTime < 0 {
+		startTime = 0
+	}
+
+	indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
 		RouteID:    routeID,
 		ServiceIds: serviceIDs,
 	})
@@ -57,45 +77,99 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	blockIDs := make(map[string]struct{})
-	for _, trip := range routeTrips {
-		if trip.BlockID.String != "" {
-			blockIDs[trip.BlockID.String] = struct{}{}
-		}
+	layoverIndices := api.GtfsManager.GetBlockLayoverIndicesForRoute(routeID)
+
+	timeRangeStart := currentNanosSinceMidnight - (10 * 60 * 1_000_000_000) // 10 min early
+	timeRangeEnd := currentNanosSinceMidnight + (30 * 60 * 1_000_000_000)   // 30 min late
+
+	layoverBlocks := gtfsInternal.GetBlocksInTimeRange(layoverIndices, timeRangeStart, timeRangeEnd)
+
+	if len(indexIDs) == 0 && len(layoverBlocks) == 0 {
+		references := buildTripReferences(api, w, r, ctx, includeSchedule, []gtfsdb.Route{}, []gtfsdb.Trip{}, nil, []models.TripsForRouteListEntry{})
+		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false)
+		api.sendResponse(w, r, response)
+		return
 	}
 
-	var allRelatedTrips []gtfsdb.GetTripsByBlockIDRow
-	for blockID := range blockIDs {
-		relatedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, sql.NullString{String: blockID, Valid: true})
+	allLinkedBlocks := make(map[string]bool)
+
+	if len(indexIDs) > 0 {
+		blocksFromIndices, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
+			IndexIds:   indexIDs,
+			ServiceIds: serviceIDs,
+		})
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
-		for _, trip := range relatedTrips {
-			if trip.RouteID != routeID {
-				allRelatedTrips = append(allRelatedTrips, trip)
+
+		for _, b := range blocksFromIndices {
+			if b.Valid {
+				allLinkedBlocks[b.String] = true
 			}
 		}
 	}
-	activeTrips := make(map[string]gtfs.Vehicle)
+
+	for _, blockID := range layoverBlocks {
+		allLinkedBlocks[blockID] = true
+	}
+
 	realTimeVehicles := api.GtfsManager.GetRealTimeVehicles()
+	vehiclesByTripID := make(map[string]gtfs.Vehicle)
 
 	for _, vehicle := range realTimeVehicles {
 		if vehicle.Position == nil || vehicle.Trip == nil {
 			continue
 		}
+		vehicleTripID := vehicle.Trip.ID.ID
+		vehiclesByTripID[vehicleTripID] = vehicle
+	}
 
-		isOnRequestedRoute := vehicle.Trip.ID.RouteID == routeID
-		isLinkedTrip := false
-		for _, trip := range allRelatedTrips {
-			if trip.ID == vehicle.Trip.ID.ID {
-				isLinkedTrip = true
-				break
+	type ActiveTripEntry struct {
+		TripID     string
+		HasVehicle bool
+	}
+	var activeTrips []ActiveTripEntry
+
+	for blockID := range allLinkedBlocks {
+		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
+
+		activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
+			BlockID:     blockIDNullStr,
+			ServiceIds:  serviceIDs,
+			CurrentTime: currentNanosSinceMidnight,
+		})
+		if err != nil {
+			continue
+		}
+
+		tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
+			BlockID:    blockIDNullStr,
+			ServiceIds: serviceIDs,
+		})
+
+		vehiclesInBlock := 0
+		if err == nil {
+			for _, tripInBlock := range tripsInBlock {
+				if _, hasVehicle := vehiclesByTripID[tripInBlock]; hasVehicle {
+					vehiclesInBlock++
+				}
 			}
 		}
 
-		if isOnRequestedRoute || isLinkedTrip {
-			activeTrips[vehicle.Trip.ID.ID] = vehicle
+		if vehiclesInBlock > 0 {
+			for i := 0; i < vehiclesInBlock; i++ {
+				activeTrips = append(activeTrips, ActiveTripEntry{
+					TripID:     activeTrip,
+					HasVehicle: true,
+				})
+			}
+
+		} else {
+			activeTrips = append(activeTrips, ActiveTripEntry{
+				TripID:     activeTrip,
+				HasVehicle: false,
+			})
 		}
 	}
 
@@ -107,7 +181,41 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	tripAgencyResolver := NewTripAgencyResolver(allRoutes, allTrips)
-	result := api.buildTripsForRouteEntries(ctx, activeTrips, tripAgencyResolver, includeSchedule, includeStatus, currentLocation, currentTime, todayMidnight, w, r)
+
+	var result []models.TripsForRouteListEntry
+	for _, activeEntry := range activeTrips {
+		tripID := activeEntry.TripID
+		agencyID := tripAgencyResolver.GetAgencyNameByTripID(tripID)
+
+		vehicle, _ := vehiclesByTripID[tripID]
+
+		var schedule *models.TripsSchedule
+		var status *models.TripStatusForTripDetails
+
+		if includeSchedule {
+			schedule = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation, w, r)
+			if schedule == nil {
+				continue
+			}
+		}
+
+		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
+		if includeStatus {
+			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+		}
+
+		entry := models.TripsForRouteListEntry{
+			Frequency:    nil,
+			Schedule:     schedule,
+			Status:       status,
+			ServiceDate:  todayMidnight.UnixMilli(),
+			SituationIds: api.GetSituationIDsForTrip(tripID),
+			TripId:       utils.FormCombinedID(agencyID, tripID),
+		}
+		result = append(result, entry)
+
+		_ = vehicle
+	}
 
 	if result == nil {
 		result = []models.TripsForRouteListEntry{}
@@ -118,57 +226,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	api.sendResponse(w, r, response)
 }
 
-func (api *RestAPI) buildTripsForRouteEntries(
-	ctx context.Context,
-	activeTrips map[string]gtfs.Vehicle,
-	tripAgencyResolver *TripAgencyResolver,
-	includeSchedule bool,
-	includeStatus bool,
-	currentLocation *time.Location,
-	currentTime time.Time,
-	todayMidnight time.Time,
-	w http.ResponseWriter,
-	r *http.Request,
-) []models.TripsForRouteListEntry {
-	var result []models.TripsForRouteListEntry
-	for _, vehicle := range activeTrips {
-		pos := vehicle.Position
-		if pos == nil {
-			continue
-		}
-
-		tripID := vehicle.Trip.ID.ID
-		agencyID := tripAgencyResolver.GetAgencyNameByTripID(tripID)
-		var schedule *models.TripsSchedule
-		var status *models.TripStatusForTripDetails
-		if includeSchedule {
-			schedule = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation, w, r)
-			if schedule == nil {
-				continue
-			}
-		}
-
-		if includeStatus {
-			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
-
-			if status == nil {
-				continue
-			}
-		}
-		entry := models.TripsForRouteListEntry{
-			Frequency:    nil,
-			Schedule:     schedule,
-			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(tripID),
-			TripId:       utils.FormCombinedID(agencyID, tripID),
-		}
-		result = append(result, entry)
-	}
-	return result
-}
 func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http.ResponseWriter, r *http.Request, ctx context.Context, includeTrip bool, allRoutes []gtfsdb.Route, allTrips []gtfsdb.Trip, stops []*gtfs.Stop, trips []T) models.ReferencesModel {
-	// Collect present trip IDs
 	presentTrips := make(map[string]models.Trip, len(trips))
 	presentRoutes := make(map[string]models.Route)
 	for _, trip := range trips {
@@ -193,7 +251,7 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 
 		stopList = append(stopList, models.Stop{
 			Code:               stop.Code,
-			Direction:          "NA", // TODO add direction
+			Direction:          "",
 			ID:                 stop.Id,
 			Lat:                *stop.Latitude,
 			Lon:                *stop.Longitude,

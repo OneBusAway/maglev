@@ -150,11 +150,12 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.gtfsData = staticData
 	manager.lastUpdated = time.Now()
 
-	// perform post-processing here!
+	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
 
 	if manager.config.Verbose {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogOperation(logger, "gtfs_data_updated_successfully",
-			slog.String("source", manager.gtfsSource))
+			slog.String("source", manager.gtfsSource),
+			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)))
 	}
 }
