@@ -67,6 +67,7 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/where/routes-for-location.json", rateLimitAndValidateAPIKey(api, api.routesForLocationHandler))
 	mux.Handle("GET /api/where/stops-for-route/{id}", rateLimitAndValidateAPIKey(api, api.stopsForRouteHandler))
 	mux.Handle("GET /api/where/schedule-for-stop/{id}", rateLimitAndValidateAPIKey(api, api.scheduleForStopHandler))
+	mux.Handle("GET /api/where/schedule-for-route/{id}", rateLimitAndValidateAPIKey(api, api.scheduleForRouteHandler))
 	mux.Handle("GET /api/where/trip-details/{id}", rateLimitAndValidateAPIKey(api, api.tripDetailsHandler))
 	mux.Handle("GET /api/where/block/{id}", rateLimitAndValidateAPIKey(api, api.blockHandler))
 	mux.Handle("GET /api/where/trip-for-vehicle/{id}", rateLimitAndValidateAPIKey(api, api.tripForVehicleHandler))
