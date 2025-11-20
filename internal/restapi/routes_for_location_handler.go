@@ -3,6 +3,7 @@ package restapi
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -56,7 +57,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, 50, true)
+	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, 50, true, nil, time.Time{})
 
 	var results = []models.Route{}
 	routeIDs := map[string]bool{}

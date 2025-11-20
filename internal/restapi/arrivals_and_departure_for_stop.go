@@ -2,12 +2,13 @@ package restapi
 
 import (
 	"context"
-	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 	"net/http"
 	"strconv"
 	"time"
+
+	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r *http.Request) {
@@ -368,7 +369,7 @@ func convertToNanosSinceMidnight(t time.Time) int64 {
 	return duration.Nanoseconds()
 }
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
-	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false)
+	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, time.Now())
 	var nearbyStopIDs []string
 	for _, s := range nearbyStops {
 		if s.ID != stopID {

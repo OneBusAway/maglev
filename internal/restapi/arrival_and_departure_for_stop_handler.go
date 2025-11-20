@@ -519,8 +519,8 @@ func (api *RestAPI) getRemainingDistanceToStop(ctx context.Context, tripID strin
 		if e != nil {
 			return nil
 		}
-		d := utils.Haversine(float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude), stop.Lat, stop.Lon)
-		return &d
+		distance := utils.Distance(float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude), stop.Lat, stop.Lon)
+		return &distance
 	}
 
 	shapePoints := make([]gtfs.ShapePoint, len(shapeRows))
