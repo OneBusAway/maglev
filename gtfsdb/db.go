@@ -159,6 +159,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStopStmt, err = db.PrepareContext(ctx, getStop); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStop: %w", err)
 	}
+	if q.getStopForAgencyStmt, err = db.PrepareContext(ctx, getStopForAgency); err != nil {
+		return nil, fmt.Errorf("error preparing query GetStopForAgency: %w", err)
+	}
 	if q.getStopIDsForAgencyStmt, err = db.PrepareContext(ctx, getStopIDsForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopIDsForAgency: %w", err)
 	}
@@ -458,6 +461,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStopStmt: %w", cerr)
 		}
 	}
+	if q.getStopForAgencyStmt != nil {
+		if cerr := q.getStopForAgencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getStopForAgencyStmt: %w", cerr)
+		}
+	}
 	if q.getStopIDsForAgencyStmt != nil {
 		if cerr := q.getStopIDsForAgencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopIDsForAgencyStmt: %w", cerr)
@@ -657,6 +665,7 @@ type Queries struct {
 	getShapePointsWithDistanceStmt            *sql.Stmt
 	getShapesGroupedByTripHeadSignStmt        *sql.Stmt
 	getStopStmt                               *sql.Stmt
+	getStopForAgencyStmt                      *sql.Stmt
 	getStopIDsForAgencyStmt                   *sql.Stmt
 	getStopIDsForRouteStmt                    *sql.Stmt
 	getStopIDsForTripStmt                     *sql.Stmt
@@ -731,6 +740,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getShapePointsWithDistanceStmt:            q.getShapePointsWithDistanceStmt,
 		getShapesGroupedByTripHeadSignStmt:        q.getShapesGroupedByTripHeadSignStmt,
 		getStopStmt:                               q.getStopStmt,
+		getStopForAgencyStmt:                      q.getStopForAgencyStmt,
 		getStopIDsForAgencyStmt:                   q.getStopIDsForAgencyStmt,
 		getStopIDsForRouteStmt:                    q.getStopIDsForRouteStmt,
 		getStopIDsForTripStmt:                     q.getStopIDsForTripStmt,

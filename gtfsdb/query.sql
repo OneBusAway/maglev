@@ -194,10 +194,15 @@ LIMIT
     1;
 
 -- name: GetStopIDsForAgency :many
-SELECT
+SELECT DISTINCT
     s.id
 FROM
-    stops s;
+    stops s
+    JOIN stop_times st ON s.id = st.stop_id
+    JOIN trips t ON st.trip_id = t.id
+    JOIN routes r ON t.route_id = r.id
+WHERE
+    r.agency_id = ?;
 
 -- name: GetTrip :one
 SELECT
@@ -222,6 +227,20 @@ FROM
     stops
 WHERE
     id = ?;
+
+-- name: GetStopForAgency :one
+-- Return the stop only if it is served by any route that belongs to the specified agency.
+-- We join stop_times -> trips -> routes and filter by routes.agency_id to enforce agency ownership.
+SELECT DISTINCT
+    stops.*
+FROM
+    stops
+    JOIN stop_times ON stops.id = stop_times.stop_id
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    stops.id = ?
+    AND routes.agency_id = ?;
 
 -- name: ListStops :many
 SELECT
@@ -400,7 +419,7 @@ WHERE
     st.stop_id = @stop_id
     AND (
         (base.service_id IS NOT NULL AND removed.service_id IS NULL)
-        OR 
+        OR
         added.service_id IS NOT NULL
     )
     AND r.id IN (sqlc.slice('route_ids'))
