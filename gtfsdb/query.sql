@@ -260,14 +260,10 @@ FROM
 WHERE
     stop_times.stop_id = ?;
 
--- name: GetStopsWithinBounds :many
-SELECT
-    *
-FROM
-    stops
-WHERE
-    lat >= ? AND lat <= ?
-    AND lon >= ? AND lon <= ?;
+-- name: GetActiveStops :many
+SELECT DISTINCT s.*
+FROM stops s
+INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetAllShapes :many
 SELECT
@@ -509,6 +505,14 @@ FROM
     JOIN agencies a ON routes.agency_id = a.id
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'));
+
+-- name: GetStopsWithActiveServiceOnDate :many
+-- Returns stop IDs that have at least one trip with active service on the given date
+SELECT DISTINCT st.stop_id
+FROM stop_times st
+JOIN trips t ON st.trip_id = t.id
+WHERE st.stop_id IN (sqlc.slice('stop_ids'))
+  AND t.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetStopTimesForTrip :many
 SELECT
