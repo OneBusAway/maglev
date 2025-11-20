@@ -8,6 +8,7 @@ require (
 	github.com/klauspost/compress v1.18.0
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/stretchr/testify v1.10.0
+	github.com/tidwall/rtree v1.10.0
 	github.com/twpayne/go-polyline v1.1.1
 	golang.org/x/time v0.12.0
 )
@@ -43,6 +44,7 @@ require (
 	github.com/sqlc-dev/sqlc v1.29.0 // indirect
 	github.com/stoewer/go-strcase v1.2.0 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
+	github.com/tidwall/geoindex v1.7.0 // indirect
 	github.com/wasilibs/go-pgquery v0.0.0-20250409022910-10ac41983c07 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
