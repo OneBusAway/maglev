@@ -26,6 +26,7 @@ func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 
 	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
 	assert.NotEmpty(t, list)
 
 	stop, ok := list[0].(map[string]interface{})
@@ -96,7 +97,9 @@ func TestStopsForLocationLatSpanAndLonSpan(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&latSpan=0.045&lonSpan=0.059")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
 	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
 	assert.NotEmpty(t, list)
 	stop, ok := list[0].(map[string]interface{})
 	require.True(t, ok)
