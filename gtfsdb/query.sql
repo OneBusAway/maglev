@@ -888,7 +888,7 @@ WHERE t.block_id = :block_id
     AND t.service_id IN (sqlc.slice('service_ids'))
     AND st_first.departure_time <= :current_time
     AND st_last.arrival_time >= :current_time
-ORDER BY st_first.departure_time DESC
+ORDER BY st_first.departure_time ASC
 LIMIT 1;
 
 -- name: GetTripsInBlock :many

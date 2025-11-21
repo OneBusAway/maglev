@@ -723,7 +723,7 @@ WHERE t.block_id = ?1
     AND t.service_id IN (/*SLICE:service_ids*/?)
     AND st_first.departure_time <= ?3
     AND st_last.arrival_time >= ?3
-ORDER BY st_first.departure_time DESC
+ORDER BY st_first.departure_time ASC
 LIMIT 1
 `
 
