@@ -97,9 +97,9 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 					LayoverEnd:    layoverEnd,
 				}
 
-				// Group layover trips by (serviceID, layoverStopID) - GLOBAL grouping
+				// Group layover trips by layoverStopID ONLY - GLOBAL grouping across all services
 				globalKey := indexKey{
-					serviceID:     key.serviceID,
+					serviceID:     "", // Don't group by service - group all services together
 					layoverStopID: layoverStopID,
 				}
 
@@ -107,7 +107,7 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 				existingIndex, exists := globalIndices[globalKey]
 				if !exists {
 					existingIndex = &BlockLayoverIndex{
-						ServiceIDs:    []string{key.serviceID},
+						ServiceIDs:    []string{}, // Will be populated below
 						LayoverStopID: layoverStopID,
 						Trips:         []BlockLayoverTrip{},
 						StartTimes:    []int64{},
@@ -122,8 +122,16 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 				existingIndex.StartTimes = append(existingIndex.StartTimes, layoverTrip.LayoverStart)
 				existingIndex.EndTimes = append(existingIndex.EndTimes, layoverTrip.LayoverEnd)
 
+				// Track service IDs
+				if !contains(existingIndex.ServiceIDs, key.serviceID) {
+					existingIndex.ServiceIDs = append(existingIndex.ServiceIDs, key.serviceID)
+				}
+
 				if !contains(existingIndex.RouteIDs, layoverTrip.RouteID) {
 					existingIndex.RouteIDs = append(existingIndex.RouteIDs, layoverTrip.RouteID)
+				}
+				if !contains(existingIndex.RouteIDs, currentTrip.Route.Id) {
+					existingIndex.RouteIDs = append(existingIndex.RouteIDs, currentTrip.Route.Id)
 				}
 				if !contains(existingIndex.BlockIDs, layoverTrip.BlockID) {
 					existingIndex.BlockIDs = append(existingIndex.BlockIDs, layoverTrip.BlockID)

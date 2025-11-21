@@ -721,8 +721,8 @@ JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
 )
 WHERE t.block_id = ?1
     AND t.service_id IN (/*SLICE:service_ids*/?)
-    AND st_first.departure_time <= ?3 + 60000000000
-    AND st_last.arrival_time + 60000000000 > ?3
+    AND st_first.departure_time <= ?3
+    AND st_last.arrival_time >= ?3
 ORDER BY st_first.departure_time DESC
 LIMIT 1
 `
@@ -730,7 +730,7 @@ LIMIT 1
 type GetActiveTripInBlockAtTimeParams struct {
 	BlockID     sql.NullString
 	ServiceIds  []string
-	CurrentTime interface{}
+	CurrentTime int64
 }
 
 // Find the currently active trip in a specific block at the given time

@@ -886,8 +886,8 @@ JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
 )
 WHERE t.block_id = :block_id
     AND t.service_id IN (sqlc.slice('service_ids'))
-    AND st_first.departure_time <= :current_time + 60000000000
-    AND st_last.arrival_time + 60000000000 > :current_time
+    AND st_first.departure_time <= :current_time
+    AND st_last.arrival_time >= :current_time
 ORDER BY st_first.departure_time DESC
 LIMIT 1;
 

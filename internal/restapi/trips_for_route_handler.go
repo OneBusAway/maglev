@@ -69,8 +69,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	layoverIndices := api.GtfsManager.GetBlockLayoverIndicesForRoute(routeID)
 
-	timeRangeStart := currentNanosSinceMidnight - (10 * 60 * 1_000_000_000) // 10 min early
-	timeRangeEnd := currentNanosSinceMidnight + (30 * 60 * 1_000_000_000)   // 30 min late
+	timeRangeStart := currentNanosSinceMidnight - (30 * 60 * 1_000_000_000) // 30 min late (look back)
+	timeRangeEnd := currentNanosSinceMidnight + (10 * 60 * 1_000_000_000)   // 10 min early (look forward)
 
 	layoverBlocks := gtfsInternal.GetBlocksInTimeRange(layoverIndices, timeRangeStart, timeRangeEnd)
 
