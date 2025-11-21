@@ -181,6 +181,29 @@ CREATE TABLE
     );
 
 -- migrate
+CREATE TABLE
+    IF NOT EXISTS block_trip_index (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        index_key TEXT NOT NULL UNIQUE, -- Hash or canonical key: service_ids + stop_sequence
+        service_ids TEXT NOT NULL, -- Comma-separated sorted service IDs
+        stop_sequence_key TEXT NOT NULL, -- Canonical ordered stop sequence (e.g., "stop1|stop2|stop3")
+        created_at INTEGER NOT NULL
+    );
+
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS block_trip_entry (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_trip_index_id INTEGER NOT NULL,
+        trip_id TEXT NOT NULL,
+        block_id TEXT,
+        service_id TEXT NOT NULL,
+        block_trip_sequence INTEGER NOT NULL, -- Order of trip within the block
+        FOREIGN KEY (block_trip_index_id) REFERENCES block_trip_index (id),
+        FOREIGN KEY (trip_id) REFERENCES trips (id)
+    );
+
+-- migrate
 CREATE INDEX IF NOT EXISTS idx_routes_agency_id ON routes (agency_id);
 
 -- migrate
@@ -200,3 +223,18 @@ CREATE INDEX IF NOT EXISTS idx_stop_times_stop_id_trip_id ON stop_times (stop_id
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_calendar_dates_service_id ON calendar_dates (service_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_block_trip_index_service_ids ON block_trip_index (service_ids);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_block_trip_entry_index_id ON block_trip_entry (block_trip_index_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_block_trip_entry_trip_id ON block_trip_entry (trip_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_block_trip_entry_service_id ON block_trip_entry (service_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_trips_block_id ON trips (block_id);
