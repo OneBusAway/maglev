@@ -14,13 +14,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 All commands are managed through the Makefile:
 
-- `make run` - Build and run the server with Unitrans real-time data (requires `.env` with API keys)
-- `make build` - Build the application binary to bin/maglev
+- `make run` - Build and run the server with config from `config.json`
+- `make build` - Build the application binary to `bin/maglev`
 - `make test` - Run all tests
-- `make lint` - Run golangci-lint (requires installation: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
+- `make lint` - Run golangci-lint (requires: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
 - `make coverage` - Generate test coverage report with HTML output
 - `make models` - Regenerate sqlc models from SQL queries
-- `make watch` - Run with Air for live reloading during development (automatically rebuilds and restarts on code changes)
+- `make watch` - Run with Air for live reloading during development
+- `make fmt` - Format all Go code with `go fmt`
 - `make clean` - Clean build artifacts
 
 ## Debugging
@@ -52,6 +53,24 @@ Before committing any code, you must always run all of these steps, and have the
 
 This is a Go 1.24.2+ application that provides a REST API for OneBusAway transit data. The architecture follows a layered design:
 
+### File Structure
+
+```
+maglev/
+├── cmd/api/              # Application entry point
+├── internal/
+│   ├── app/              # Application container (dependency injection)
+│   ├── appconf/          # Configuration management
+│   ├── gtfs/             # GTFS data management (static + real-time)
+│   ├── logging/          # Structured logging and error handling
+│   ├── models/           # Business models and API response structures
+│   ├── restapi/          # HTTP handlers and middleware
+│   ├── utils/            # Helper functions (geometry, ID parsing, validation)
+│   └── webui/            # Web interface handlers
+├── gtfsdb/               # SQLite database layer (sqlc-generated)
+└── testdata/             # Test fixtures (RABA GTFS data, protobuf files)
+```
+
 ### Core Components
 
 - **Application Layer** (`internal/app/`): Central dependency injection container holding config, logger, and GTFS manager
@@ -75,7 +94,99 @@ This is a Go 1.24.2+ application that provides a REST API for OneBusAway transit
 - All HTTP handlers embed `*app.Application` for access to shared dependencies
 - Database operations use sqlc for compile-time query validation
 - Real-time data is managed with read-write mutexes for concurrent access
-- Configuration is handled through command-line flags with defaults
+- Configuration is handled through JSON config file or command-line flags
+
+## Implemented API Endpoints
+
+All endpoints are registered in `internal/restapi/routes.go`:
+
+| Endpoint | Handler | Description |
+|----------|---------|-------------|
+| `/api/where/current-time.json` | `current_time_handler.go` | Server time |
+| `/api/where/agencies-with-coverage.json` | `agencies_with_coverage_handler.go` | All agencies with coverage areas |
+| `/api/where/agency/{id}` | `agency_handler.go` | Single agency details |
+| `/api/where/routes-for-agency/{id}` | `routes_for_agency_handler.go` | Routes for an agency |
+| `/api/where/route-ids-for-agency/{id}` | `route_ids_for_agency_handler.go` | Route IDs only |
+| `/api/where/stops-for-agency/{id}` | `stops_for_agency_handler.go` | Stops for an agency |
+| `/api/where/stop-ids-for-agency/{id}` | `stop-ids-for-agency_handler.go` | Stop IDs only |
+| `/api/where/stop/{id}` | `stop_handler.go` | Single stop details |
+| `/api/where/stops-for-location.json` | `stops_for_location_handler.go` | Stops near coordinates |
+| `/api/where/stops-for-route/{id}` | `stops_for_route_handler.go` | Stops on a route |
+| `/api/where/routes-for-location.json` | `routes_for_location_handler.go` | Routes near coordinates |
+| `/api/where/trip/{id}` | `trip_handler.go` | Single trip details |
+| `/api/where/trip-details/{id}` | `trip_details_handler.go` | Extended trip info with status |
+| `/api/where/trips-for-route/{id}` | `trips_for_route_handler.go` | Trips on a route |
+| `/api/where/trips-for-location.json` | `trips_for_location_handler.go` | Active trips near coordinates |
+| `/api/where/trip-for-vehicle/{id}` | `trip_for_vehicle_handler.go` | Trip for a vehicle |
+| `/api/where/vehicles-for-agency/{id}` | `vehicles_for_agency_handler.go` | Real-time vehicles |
+| `/api/where/block/{id}` | `block_handler.go` | Block configuration |
+| `/api/where/shape/{id}` | `shapes_handler.go` | Polyline shape data |
+| `/api/where/schedule-for-stop/{id}` | `schedule_for_stop_handler.go` | Stop schedule |
+| `/api/where/schedule-for-route/{id}` | `schedule_for_route_handler.go` | Route schedule |
+| `/api/where/arrival-and-departure-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | Single arrival |
+| `/api/where/arrivals-and-departures-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | All arrivals |
+| `/api/where/report-problem-with-trip/{id}` | `report_problem_with_trip_handler.go` | Report trip issue |
+| `/api/where/report-problem-with-stop/{id}` | `report_problem_with_stop_handler.go` | Report stop issue |
+
+## Middleware Components
+
+Located in `internal/restapi/`:
+
+| Middleware | File | Description |
+|------------|------|-------------|
+| **Compression** | `compression_middleware.go` | Gzip compression using `klauspost/compress/gzhttp`. Default: 1KB min size, level 6 |
+| **Rate Limiting** | `rate_limit_middleware.go` | Per-API-key rate limiting with `golang.org/x/time/rate`. Auto-cleanup of idle limiters |
+| **Request Logging** | `request_logging_middleware.go` | HTTP request/response logging |
+| **Security** | `security_middleware.go` | Security headers and protections |
+
+Middleware chain (innermost to outermost): `handler → compression → rate limiting → API key validation`
+
+## Helper Modules
+
+### ID Utilities (`internal/utils/api.go`)
+
+OneBusAway uses combined IDs in the format `{agency_id}_{code_id}`:
+
+```go
+// Extract parts from combined ID
+agencyID, codeID, err := utils.ExtractAgencyIDAndCodeID("25_1234")
+// agencyID = "25", codeID = "1234"
+
+// Extract just one part
+agencyID, _ := utils.ExtractAgencyID("25_1234")
+codeID, _ := utils.ExtractCodeID("25_1234")
+
+// Form combined ID
+combinedID := utils.FormCombinedID("25", "1234") // "25_1234"
+
+// Extract ID from HTTP request path (removes .json extension)
+id := utils.ExtractIDFromParams(r) // "25_1234.json" → "25_1234"
+```
+
+### Geometry (`internal/utils/geometry.go`)
+
+```go
+// Calculate distance in meters between two coordinates
+distance := utils.Haversine(lat1, lon1, lat2, lon2)
+```
+
+### Parameter Parsing (`internal/utils/api.go`)
+
+```go
+// Parse float parameters with validation
+lat, fieldErrors := utils.ParseFloatParam(r.URL.Query(), "lat", nil)
+
+// Parse time parameter (epoch ms or YYYY-MM-DD)
+dateStr, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, location)
+```
+
+### Vehicle Status (`internal/restapi/vehicles_helper.go`)
+
+```go
+// Convert GTFS-RT status to OneBusAway format
+status, phase := GetVehicleStatusAndPhase(vehicle)
+// Returns: ("IN_TRANSIT_TO", "in_progress"), ("STOPPED_AT", "stopped"), etc.
+```
 
 ## Database Management
 
@@ -88,24 +199,78 @@ The project uses SQLite with sqlc for type-safe database access:
 
 After modifying SQL queries or schema, run `make models` to regenerate the Go code.
 
-## Testing
+### Key Database Queries
 
-- Run single test: `go test ./path/to/package -run TestName`
-- Run tests with verbose output: `go test -v ./...`
-- Generate coverage: `make coverage` (opens HTML report in browser)
+**Single Entity Lookups:**
+- `GetAgency`, `GetRoute`, `GetStop`, `GetTrip` - Fetch by ID
 
-Test files follow Go conventions with `_test.go` suffix and are co-located with the code they test.
+**Agency-scoped Queries:**
+- `GetRouteIDsForAgency`, `GetStopIDsForAgency` - IDs for an agency
+- `GetStopForAgency` - Stop verified to belong to agency
+
+**Location-based:**
+- `GetStopsWithinBounds` - Spatial query for stops in bounding box
+
+**Route/Trip Relations:**
+- `GetStopIDsForRoute`, `GetStopIDsForTrip` - Stop IDs on route/trip
+- `GetRoutesForStop`, `GetRouteIDsForStop` - Routes serving a stop
+- `GetAllTripsForRoute`, `GetTripsForRouteInActiveServiceIDs` - Trips on route
+- `GetStopsForRoute` - All stops on a route
+
+**Schedule Data:**
+- `GetScheduleForStop`, `GetScheduleForStopOnDate` - Stop schedules
+- `GetStopTimesForTrip`, `GetStopTimesForStopInWindow` - Stop times
+- `GetArrivalsAndDeparturesForStop` - Arrivals/departures
+
+**Block Operations:**
+- `GetTripsByBlockID`, `GetBlockDetails` - Block trip sequences
+- `GetTripsByBlockIDOrdered` - Trips ordered by departure time
+
+**Shape Data:**
+- `GetShapeByID`, `GetShapePointsForTrip` - Route polylines
+- `GetShapesGroupedByTripHeadSign` - Shapes by direction
+
+**Service Calendar:**
+- `GetActiveServiceIDsForDate` - Active services for a date
+- `GetCalendarByServiceID`, `GetCalendarDateExceptionsForServiceID` - Service patterns
+
+**Batch Queries (N+1 prevention):**
+- `GetRoutesForStops`, `GetAgenciesForStops` - Batch lookups
+- `GetStopsByIDs`, `GetRoutesByIDs`, `GetTripsByIDs` - Batch by IDs
+
+## In-Memory Data Structures
+
+The GTFS Manager (`internal/gtfs/gtfs_manager.go`) maintains:
+
+**Static Data** (from `manager.gtfsData`):
+- `Agencies` - Transit agency information
+- `Routes` - All routes
+- `Stops` - All stops
+- `Trips` - Scheduled trips
+- Accessed via: `GetAgencies()`, `GetTrips()`, `GetStops()`, `GetStaticData()`
+
+**Real-Time Data** (protected by `realTimeMutex`):
+- `realTimeTrips` - GTFS-RT trip updates
+- `realTimeVehicles` - GTFS-RT vehicle positions
+- `realTimeAlerts` - Service alerts
+- `realTimeTripLookup` - Map of trip ID → index for O(1) lookup
+- `realTimeVehicleLookupByTrip` - Map of trip ID → vehicle index
+- `realTimeVehicleLookupByVehicle` - Map of vehicle ID → vehicle index
+
+**Direction Calculator** (shape-based direction inference):
+- `DirectionCalculator` - Precomputed stop directions from shape geometry
 
 ## Data Access Patterns
 
 ### GTFS Manager vs Database Access
 
-The GTFS Manager provides two types of data access:
-
 **In-Memory Data** (from `manager.gtfsData`):
 - `FindAgency(id)` - Direct agency lookup
 - `RoutesForAgencyID(id)` - Routes for an agency
 - `VehiclesForAgencyID(id)` - Real-time vehicle data
+- `GetVehicleForTrip(tripID)` - Vehicle for a trip (checks block)
+- `GetVehicleByID(vehicleID)` - Vehicle by ID
+- `GetTripUpdateByID(tripID)` - Real-time trip update
 - Access via: `api.GtfsManager.FindAgency()`, etc.
 
 **Database Queries** (via sqlc):
@@ -127,13 +292,70 @@ if route.ShortName.Valid {
 
 Common nullable fields: `ShortName`, `LongName`, `Desc`, `Url`, `Color`, `TextColor`
 
+## Testing
+
+- Run single test: `go test ./path/to/package -run TestName`
+- Run tests with verbose output: `go test -v ./...`
+- Generate coverage: `make coverage` (opens HTML report in browser)
+
+Test files follow Go conventions with `_test.go` suffix and are co-located with the code they test.
+
+### Test Data Files
+
+Located in `testdata/`:
+- `raba.zip` - RABA transit static GTFS data
+- `raba.db` - Pre-built SQLite database
+- `raba-vehicle-positions.pb` - RABA real-time vehicle positions
+- `raba-trip-updates.pb` - RABA real-time trip updates
+- `unitrans-*.pb` - Unitrans real-time data (for mismatched data testing)
+- `config_*.json` - Configuration test fixtures
+
+### Testing Patterns
+
+**Basic Test Setup:**
+```go
+func createTestApi(t *testing.T) *RestAPI {
+    // Creates API with RABA test data from testdata/raba.zip
+}
+
+func serveApiAndRetrieveEndpoint(t *testing.T, api *RestAPI, endpoint string) map[string]interface{} {
+    // Makes HTTP request and returns parsed JSON response
+}
+```
+
+**Real-Time Test Setup:**
+```go
+func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
+    mux := http.NewServeMux()
+    mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, r *http.Request) {
+        data, _ := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
+        w.Header().Set("Content-Type", "application/x-protobuf")
+        w.Write(data)
+    })
+    server := httptest.NewServer(mux)
+    // ... configure with server URLs
+    return api, server.Close
+}
+```
+
+### Test Data Matching Requirements
+
+**Critical**: GTFS static data and GTFS-RT data must be from the same transit agency to achieve meaningful test coverage. Mismatched data results in:
+- Real-time vehicles that don't match any agency routes
+- Vehicle processing loops that never execute with actual data
+- Poor test coverage of core functionality
+
 ## OneBusAway API Patterns
 
 ### Response Structure
 
-All endpoints return standardized responses using `models.NewListResponse()`:
+All endpoints return standardized responses:
 
 ```go
+// Single entry response
+response := models.NewEntryResponse(entry, references)
+
+// List response
 response := models.NewListResponse(dataList, references)
 ```
 
@@ -164,59 +386,6 @@ Map GTFS-RT CurrentStatus enum to OneBusAway strings:
 ### API Route Registration
 
 Check `internal/restapi/routes.go` first - many endpoints are already registered but may need implementation updates. Route patterns follow: `/api/where/{endpoint}/{id}` with API key validation.
-
-## Testing Real-Time Data
-
-### Test Data Matching Requirements
-
-**Critical**: GTFS static data and GTFS-RT data must be from the same transit agency to achieve meaningful test coverage. Mismatched data results in:
-- Real-time vehicles that don't match any agency routes
-- Vehicle processing loops that never execute with actual data
-- Poor test coverage of core functionality
-
-**Example**: Using RABA static data (`raba.zip`) with Unitrans real-time data (`unitrans-*.pb`) will load vehicles but `VehiclesForAgencyID()` returns 0 vehicles.
-
-### Real-Time Test Infrastructure
-
-For testing GTFS-RT functionality, use HTTP test servers to serve local `.pb` files:
-
-```go
-func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
-    mux := http.NewServeMux()
-
-    mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, r *http.Request) {
-        data, err := os.ReadFile(filepath.Join("../../testdata", "agency-vehicle-positions.pb"))
-        require.NoError(t, err)
-        w.Header().Set("Content-Type", "application/x-protobuf")
-        w.Write(data)
-    })
-
-    server := httptest.NewServer(mux)
-
-    gtfsConfig := gtfs.Config{
-        GtfsURL:              filepath.Join("../../testdata", "agency.zip"),
-        VehiclePositionsURL:  server.URL + "/vehicle-positions",
-        TripUpdatesURL:       server.URL + "/trip-updates",
-    }
-
-    // ... rest of setup
-    return api, server.Close
-}
-```
-
-**Benefits**:
-- Simulates real-world HTTP usage without modifying production code
-- Keeps test-specific infrastructure isolated
-- Allows testing with matching static/real-time data pairs
-- Easy to set up and maintain
-
-### Coverage Improvements
-
-Real-time data testing can dramatically improve coverage:
-- **Before matching data**: ~30% handler coverage
-- **After matching data**: ~86% handler coverage
-
-Test the complete vehicle processing pipeline including timestamp conversion, location mapping, status translation, and reference building.
 
 ## GTFS Time Handling
 
@@ -272,7 +441,7 @@ arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
 - Use `models.NewEntryResponse()` or `models.NewListResponse()` for response structure
 
 ### 5. Route Registration
-- Add route to `internal/restapi/routes.go` with `validateAPIKey` wrapper
+- Add route to `internal/restapi/routes.go` with `rateLimitAndValidateAPIKey` wrapper
 - Follow pattern: `/api/where/{endpoint}/{id}` for single resource endpoints
 
 ### 6. Testing Strategy
@@ -286,11 +455,26 @@ arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
 - Use SQLite queries to verify data availability: `SELECT COUNT(*) FROM stop_times WHERE stop_id = '...'`
 - Handle cases where stops exist but have no schedule data (return empty arrays, not errors)
 
+## Configuration
+
+Maglev supports JSON configuration files with IDE validation via `config.schema.json`:
+
+```json
+{
+  "$schema": "./config.schema.json",
+  "port": 4000,
+  "env": "development",
+  "api-keys": ["test"],
+  "rate-limit": 100,
+  "gtfs-static-feed": { "url": "..." },
+  "gtfs-rt-feeds": [{ "vehicle-positions-url": "..." }]
+}
+```
+
 ## REST API Documentation
 
 The official REST API documentation is available at: https://developer.onebusaway.org/api/where/methods
 
 The Open API specification is located at https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
 
-You should always fetch the latest version of the OpenAPI specification from the OneBusAway SDK Config repository
-before implementing new endpoints or modifying existing ones.
+You should always fetch the latest version of the OpenAPI specification from the OneBusAway SDK Config repository before implementing new endpoints or modifying existing ones.
