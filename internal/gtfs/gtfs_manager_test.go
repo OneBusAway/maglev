@@ -116,7 +116,7 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 			assert.Nil(t, err)
 
 			// Get stops using the manager method
-			stops := manager.GetStopsForLocation(context.Background(), tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false)
+			stops := manager.GetStopsForLocation(context.Background(), tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
 
 			// The test expects that the spatial index query is used
 			// We'll verify this by checking that we get results and that

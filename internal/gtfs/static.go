@@ -152,6 +152,18 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 
 	// perform post-processing here!
 
+	// Rebuild spatial index with updated data
+	ctx := context.Background()
+	if manager.GtfsDB != nil && manager.GtfsDB.Queries != nil {
+		spatialIndex, err := buildStopSpatialIndex(ctx, manager.GtfsDB.Queries)
+		if err == nil {
+			manager.stopSpatialIndex = spatialIndex
+		} else if manager.config.Verbose {
+			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+			logging.LogError(logger, "Failed to rebuild spatial index", err)
+		}
+	}
+
 	if manager.config.Verbose {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogOperation(logger, "gtfs_data_updated_successfully",

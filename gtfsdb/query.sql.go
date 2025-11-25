@@ -544,6 +544,49 @@ func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, targetDate int
 	return items, nil
 }
 
+const getActiveStops = `-- name: GetActiveStops :many
+SELECT DISTINCT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
+FROM stops s
+INNER JOIN stop_times st ON s.id = st.stop_id
+`
+
+func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
+	rows, err := q.query(ctx, q.getActiveStopsStmt, getActiveStops)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Stop
+	for rows.Next() {
+		var i Stop
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.Desc,
+			&i.Lat,
+			&i.Lon,
+			&i.ZoneID,
+			&i.Url,
+			&i.LocationType,
+			&i.Timezone,
+			&i.WheelchairBoarding,
+			&i.PlatformCode,
+			&i.Direction,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAgenciesForStops = `-- name: GetAgenciesForStops :many
 SELECT DISTINCT
     a.id,
@@ -2285,6 +2328,61 @@ func (q *Queries) GetStopsForRoute(ctx context.Context, id string) ([]Stop, erro
 	return items, nil
 }
 
+const getStopsWithActiveServiceOnDate = `-- name: GetStopsWithActiveServiceOnDate :many
+SELECT DISTINCT st.stop_id
+FROM stop_times st
+JOIN trips t ON st.trip_id = t.id
+WHERE st.stop_id IN (/*SLICE:stop_ids*/?)
+  AND t.service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetStopsWithActiveServiceOnDateParams struct {
+	StopIds    []string
+	ServiceIds []string
+}
+
+// Returns stop IDs that have at least one trip with active service on the given date
+func (q *Queries) GetStopsWithActiveServiceOnDate(ctx context.Context, arg GetStopsWithActiveServiceOnDateParams) ([]string, error) {
+	query := getStopsWithActiveServiceOnDate
+	var queryParams []interface{}
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var stop_id string
+		if err := rows.Scan(&stop_id); err != nil {
+			return nil, err
+		}
+		items = append(items, stop_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStopsWithShapeContext = `-- name: GetStopsWithShapeContext :many
 SELECT
     s.id, s.lat, s.lon, s.name, s.code, s.direction,
@@ -2383,65 +2481,6 @@ func (q *Queries) GetStopsWithTripContext(ctx context.Context, id string) ([]Get
 			&i.TripID,
 			&i.StopSequence,
 			&i.ShapeID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getStopsWithinBounds = `-- name: GetStopsWithinBounds :many
-SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
-FROM
-    stops
-WHERE
-    lat >= ? AND lat <= ?
-    AND lon >= ? AND lon <= ?
-`
-
-type GetStopsWithinBoundsParams struct {
-	Lat   float64
-	Lat_2 float64
-	Lon   float64
-	Lon_2 float64
-}
-
-func (q *Queries) GetStopsWithinBounds(ctx context.Context, arg GetStopsWithinBoundsParams) ([]Stop, error) {
-	rows, err := q.query(ctx, q.getStopsWithinBoundsStmt, getStopsWithinBounds,
-		arg.Lat,
-		arg.Lat_2,
-		arg.Lon,
-		arg.Lon_2,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Stop
-	for rows.Next() {
-		var i Stop
-		if err := rows.Scan(
-			&i.ID,
-			&i.Code,
-			&i.Name,
-			&i.Desc,
-			&i.Lat,
-			&i.Lon,
-			&i.ZoneID,
-			&i.Url,
-			&i.LocationType,
-			&i.Timezone,
-			&i.WheelchairBoarding,
-			&i.PlatformCode,
-			&i.Direction,
 		); err != nil {
 			return nil, err
 		}

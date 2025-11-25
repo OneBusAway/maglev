@@ -3,11 +3,12 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"net/http"
+	"sort"
+
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
-	"net/http"
-	"sort"
 )
 
 func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +94,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 				var distanceFromPrevious float64
 				if i > 0 {
 					prevStop := stops[i-1]
-					distanceFromPrevious = utils.Haversine(
+					distanceFromPrevious = utils.Distance(
 						prevStop.Lat, prevStop.Lon,
 						stop.Lat, stop.Lon,
 					)
