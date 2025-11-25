@@ -129,11 +129,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		if len(rids) == 0 || agency == nil {
 			continue
 		}
-
-		direction := models.UnknownValue
-		if stop.Direction.Valid && stop.Direction.String != "" {
-			direction = stop.Direction.String
-		}
+		// Use the shared OBA direction pipeline (precomputed DB or shape-based fallback) for consistency.
+		direction := api.calculateStopDirection(ctx, stop.ID)
 
 		results = append(results, models.NewStop(
 			utils.NullStringOrEmpty(stop.Code),
