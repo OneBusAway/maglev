@@ -31,6 +31,10 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/patrickbr/gtfsparser v0.0.0-20250811204933-790d4e1c69c1 // indirect
+	github.com/patrickbr/gtfstidy v0.0.0-20251119090422-df802af33868 // indirect
+	github.com/patrickbr/gtfswriter v0.0.0-20240919073412-98e3602c6cd8 // indirect
+	github.com/paulmach/go.geojson v1.5.0 // indirect
 	github.com/pganalyze/pg_query_go/v6 v6.1.0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20240311024730-e056997136bb // indirect
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86 // indirect
@@ -45,6 +49,7 @@ require (
 	github.com/stoewer/go-strcase v1.2.0 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/tidwall/geoindex v1.7.0 // indirect
+	github.com/valyala/fastjson v1.6.4 // indirect
 	github.com/wasilibs/go-pgquery v0.0.0-20250409022910-10ac41983c07 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
