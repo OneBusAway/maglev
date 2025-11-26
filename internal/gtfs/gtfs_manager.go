@@ -46,7 +46,7 @@ type Manager struct {
 func InitGTFSManager(config Config) (*Manager, error) {
 	isLocalFile := !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
 
-	staticData, err := loadGTFSData(config.GtfsURL, isLocalFile, config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
+	staticData, err := loadGTFSData(config.GtfsURL, isLocalFile, config)
 	if err != nil {
 		return nil, err
 	}
