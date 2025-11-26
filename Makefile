@@ -3,7 +3,7 @@
 run: build
 	bin/maglev -f config.json
 
-build:
+build: generate
 	go build -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 
 clean:
@@ -32,3 +32,7 @@ models:
 
 watch:
 	air
+
+generate:
+	mkdir -p internal/restapi/git
+	go generate internal/restapi/config.go
