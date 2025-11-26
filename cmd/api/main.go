@@ -3,9 +3,10 @@ package main
 import (
 	"flag"
 	"log/slog"
+	"os"
+
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
-	"os"
 )
 
 func main() {
@@ -72,6 +73,7 @@ func main() {
 			GTFSDataPath:            gtfsCfgData.GTFSDataPath,
 			Env:                     gtfsCfgData.Env,
 			Verbose:                 gtfsCfgData.Verbose,
+			EnableGTFSTidy:          gtfsCfgData.EnableGTFSTidy,
 		}
 	} else {
 		// Use command-line flags for configuration

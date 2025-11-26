@@ -50,7 +50,8 @@ Example `config.json`:
   "gtfs-static-feed": {
     "url": "https://example.com/gtfs.zip",
     "auth-header-name": "Authorization",
-    "auth-header-value": "Bearer token456"
+    "auth-header-value": "Bearer token456",
+    "enable-gtfs-tidy": true
   },
   "gtfs-rt-feeds": [
     {

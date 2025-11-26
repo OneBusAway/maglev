@@ -50,6 +50,11 @@
         "auth-header-value": {
           "type": "string",
           "description": "Optional header value for static GTFS feed authentication"
+        },
+        "enable-gtfs-tidy": {
+          "type": "boolean",
+          "description": "Enable GTFS tidying with gtfstidy tool (requires gtfstidy to be installed)",
+          "default": false
         }
       },
       "required": ["url"],

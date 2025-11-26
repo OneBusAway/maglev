@@ -5,7 +5,8 @@
   "api-keys": ["test"],
   "rate-limit": 100,
   "gtfs-static-feed": {
-    "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+    "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
+    "enable-gtfs-tidy": false
   },
   "gtfs-rt-feeds": [
     {
