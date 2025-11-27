@@ -1,0 +1,33 @@
+services:
+  maglev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maglev:latest
+    container_name: maglev
+    ports:
+      - "4000:4000"
+    volumes:
+      # Persist SQLite database across container restarts
+      - maglev-data:/app/data
+      # Mount configuration file (read-only)
+      - ./config.json:/app/config.json:ro
+    environment:
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4000/api/where/current-time.json?key=test"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  maglev-data:
+    driver: local
+

@@ -1,0 +1,26 @@
+# Development Dockerfile with live reload support
+FROM golang:1.24-alpine
+
+# Install build dependencies for CGO and development tools
+RUN apk add --no-cache gcc musl-dev git wget
+
+# Install Air for live reload
+RUN go install github.com/air-verse/air@latest
+
+# Install Delve for debugging
+RUN go install github.com/go-delve/delve/cmd/dlv@latest
+
+WORKDIR /app
+
+# Copy dependency files first
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Source code will be mounted via docker-compose volume
+# This allows live reload without rebuilding the container
+
+EXPOSE 4000 2345
+
+# Default command uses Air for live reload
+CMD ["air", "-c", ".air.toml"]
+

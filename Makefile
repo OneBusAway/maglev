@@ -1,4 +1,5 @@
-.PHONY: build clean coverage test run lint make watch fmt
+.PHONY: build clean coverage test run lint make watch fmt \
+	docker-build docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean
 
 run: build
 	bin/maglev -f config.json
@@ -32,3 +33,28 @@ models:
 
 watch:
 	air
+
+# Docker targets
+docker-build:
+	docker build -t maglev .
+
+docker-run: docker-build
+	docker run -p 4000:4000 -v $(PWD)/config.json:/app/config.json:ro maglev
+
+docker-stop:
+	docker stop maglev 2>/dev/null || true
+	docker rm maglev 2>/dev/null || true
+
+docker-compose-up:
+	docker-compose up -d
+
+docker-compose-down:
+	docker-compose down
+
+docker-compose-dev:
+	docker-compose -f docker-compose.dev.yml up
+
+docker-clean:
+	docker-compose down -v
+	docker-compose -f docker-compose.dev.yml down -v
+	docker rmi maglev:latest maglev:dev 2>/dev/null || true
