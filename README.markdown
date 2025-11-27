@@ -20,23 +20,23 @@ Docker provides a consistent development environment across all platforms.
 **Quick Start:**
 
 ```bash
-# Copy and configure your settings
-cp config.example.json config.json
-
-# Build and run with Docker
-docker build -t maglev .
-docker run -p 4000:4000 -v $(pwd)/config.json:/app/config.json:ro maglev
-
-# Or use Docker Compose (recommended)
+# Build and run with Docker Compose (recommended)
+# Uses config.docker.json which stores data in /app/data/ for persistence
 docker-compose up
+
+# Or build and run manually
+docker build -t maglev .
+docker run -p 4000:4000 -v $(pwd)/config.docker.json:/app/config.json:ro -v maglev-data:/app/data maglev
 ```
 
 **Verify it works:**
+
 ```bash
 curl http://localhost:4000/api/where/current-time.json?key=test
 ```
 
 **Development with live reload:**
+
 ```bash
 docker-compose -f docker-compose.dev.yml up
 ```
@@ -100,6 +100,7 @@ Example `config.json`:
 **Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will error if you try to use both.
 
 **Dump Current Configuration:**
+
 ```bash
 ./bin/maglev --dump-config > my-config.json
 # or with other flags
@@ -111,6 +112,7 @@ Example `config.json`:
 A JSON schema file is provided at `config.schema.json` for IDE autocomplete and validation.
 
 To enable IDE validation, add `$schema` to your config file:
+
 ```json
 {
   "$schema": "./config.schema.json",
@@ -122,15 +124,15 @@ To enable IDE validation, add `$schema` to your config file:
 
 ### Configuration Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `port` | integer | 4000 | API server port |
-| `env` | string | "development" | Environment (development, test, production) |
-| `api-keys` | array | ["test"] | API keys for authentication |
-| `rate-limit` | integer | 100 | Requests per second per API key |
-| `gtfs-static-feed` | object | (Sound Transit) | Static GTFS feed configuration with URL and optional auth headers |
-| `gtfs-rt-feeds` | array | (Sound Transit) | GTFS-RT feed configurations |
-| `data-path` | string | "./gtfs.db" | Path to SQLite database |
+| Option             | Type    | Default         | Description                                                       |
+| ------------------ | ------- | --------------- | ----------------------------------------------------------------- |
+| `port`             | integer | 4000            | API server port                                                   |
+| `env`              | string  | "development"   | Environment (development, test, production)                       |
+| `api-keys`         | array   | ["test"]        | API keys for authentication                                       |
+| `rate-limit`       | integer | 100             | Requests per second per API key                                   |
+| `gtfs-static-feed` | object  | (Sound Transit) | Static GTFS feed configuration with URL and optional auth headers |
+| `gtfs-rt-feeds`    | array   | (Sound Transit) | GTFS-RT feed configurations                                       |
+| `data-path`        | string  | "./gtfs.db"     | Path to SQLite database                                           |
 
 ## Basic Commands
 
@@ -152,13 +154,13 @@ All basic commands are managed by our Makefile:
 
 ## Directory Structure
 
-* `bin` contains compiled application binaries, ready for deployment to a production server.
-* `cmd/api` contains application-specific code for Maglev. This will include the code for running the server, reading and writing HTTP requests, and managing authentication.
-* `internal` contains various ancillary packages used by our API. It will contain the code for interacting with our database, doing data validation, sending emails and so on. Basically, any code which isn’t application-specific and can potentially be reused will live in here. Our Go code under cmd/api will import the packages in the internal directory (but never the other way around).
-* `migrations` contains the SQL migration files for our database.
-* `remote` contains the configuration files and setup scripts for our production server.
-* `go.mod` declares our project dependencies, versions and module path.
-* `Makefile` contains recipes for automating common administrative tasks — like auditing our Go code, building binaries, and executing database migrations.
+- `bin` contains compiled application binaries, ready for deployment to a production server.
+- `cmd/api` contains application-specific code for Maglev. This will include the code for running the server, reading and writing HTTP requests, and managing authentication.
+- `internal` contains various ancillary packages used by our API. It will contain the code for interacting with our database, doing data validation, sending emails and so on. Basically, any code which isn’t application-specific and can potentially be reused will live in here. Our Go code under cmd/api will import the packages in the internal directory (but never the other way around).
+- `migrations` contains the SQL migration files for our database.
+- `remote` contains the configuration files and setup scripts for our production server.
+- `go.mod` declares our project dependencies, versions and module path.
+- `Makefile` contains recipes for automating common administrative tasks — like auditing our Go code, building binaries, and executing database migrations.
 
 ## Debugging
 
@@ -182,11 +184,11 @@ Use the command `make models` to regenerate all autogenerated files.
 
 ### Important files
 
-* `gtfsdb/models.go` Autogenerated by sqlc
-* `gtfsdb/query.sql` All of our SQL queries
-* `gtfsdb/query.sql.go` All of our SQL queries turned into Go code by sqlc
-* `gtfsdb/schema.sql` Our database schema
-* `gtfsdb/sqlc.yml` Configuration file for sqlc
+- `gtfsdb/models.go` Autogenerated by sqlc
+- `gtfsdb/query.sql` All of our SQL queries
+- `gtfsdb/query.sql.go` All of our SQL queries turned into Go code by sqlc
+- `gtfsdb/schema.sql` Our database schema
+- `gtfsdb/sqlc.yml` Configuration file for sqlc
 
 ## Docker
 
@@ -210,6 +212,7 @@ make docker-build
 ### Running with Docker
 
 **Using Docker directly:**
+
 ```bash
 # Run the container (mount your config file)
 docker run -p 4000:4000 -v $(pwd)/config.json:/app/config.json:ro maglev
@@ -219,6 +222,7 @@ make docker-run
 ```
 
 **Using Docker Compose (recommended for production):**
+
 ```bash
 # Start the service
 docker-compose up -d
@@ -243,29 +247,32 @@ make docker-compose-dev
 ```
 
 The development setup includes:
+
 - Live reload on code changes (via Air)
 - Delve debugger port exposed on 2345
 - Source code mounted for immediate updates
 
 ### Docker Make Targets
 
-| Command | Description |
-|---------|-------------|
-| `make docker-build` | Build the Docker image |
-| `make docker-run` | Build and run the container |
-| `make docker-stop` | Stop and remove the container |
-| `make docker-compose-up` | Start with Docker Compose |
-| `make docker-compose-down` | Stop Docker Compose services |
-| `make docker-compose-dev` | Start development environment |
-| `make docker-clean` | Remove all Docker artifacts |
+| Command                    | Description                   |
+| -------------------------- | ----------------------------- |
+| `make docker-build`        | Build the Docker image        |
+| `make docker-run`          | Build and run the container   |
+| `make docker-stop`         | Stop and remove the container |
+| `make docker-compose-up`   | Start with Docker Compose     |
+| `make docker-compose-down` | Stop Docker Compose services  |
+| `make docker-compose-dev`  | Start development environment |
+| `make docker-clean`        | Remove all Docker artifacts   |
 
 ### Data Persistence
 
 The SQLite database is persisted using Docker volumes:
+
 - **Production**: `maglev-data` volume mounted at `/app/data`
 - **Development**: `maglev-dev-data` volume
 
 To inspect the database:
+
 ```bash
 docker-compose exec maglev cat /app/data/gtfs.db
 ```
@@ -273,6 +280,7 @@ docker-compose exec maglev cat /app/data/gtfs.db
 ### Health Checks
 
 The container includes a health check that verifies the API is responding:
+
 ```bash
 # Check container health status
 docker inspect --format='{{.State.Health.Status}}' maglev
@@ -280,13 +288,14 @@ docker inspect --format='{{.State.Health.Status}}' maglev
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TZ` | Timezone for the container | `UTC` |
+| Variable | Description                | Default |
+| -------- | -------------------------- | ------- |
+| `TZ`     | Timezone for the container | `UTC`   |
 
 ### Troubleshooting
 
 **Container fails to start:**
+
 ```bash
 # Check logs
 docker-compose logs maglev
@@ -296,12 +305,14 @@ ls -la config.json
 ```
 
 **Health check failing:**
+
 ```bash
 # Test the endpoint manually
 curl http://localhost:4000/api/where/current-time.json?key=test
 ```
 
 **Permission issues:**
+
 ```bash
 # The container runs as non-root user (maglev:1000)
 # Ensure mounted volumes are accessible
