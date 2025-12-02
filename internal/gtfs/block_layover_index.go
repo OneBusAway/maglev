@@ -2,7 +2,6 @@ package gtfs
 
 import (
 	"sort"
-	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 )
@@ -83,8 +82,8 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 				layoverStopID := lastStopCurrent.Stop.Id
 				// Layover start = when previous trip DEPARTS from its last stop
 				// Layover end = when current trip ARRIVES at its first stop
-				layoverStart := int64(lastStopCurrent.DepartureTime) * int64(time.Second) // Convert to nanoseconds
-				layoverEnd := int64(firstStopNext.ArrivalTime) * int64(time.Second)       // Convert to nanoseconds
+				layoverStart := int64(lastStopCurrent.DepartureTime)
+				layoverEnd := int64(firstStopNext.ArrivalTime)
 
 				// Create a layover entry for the NEXT trip (the one departing from the layover)
 				layoverTrip := BlockLayoverTrip{
