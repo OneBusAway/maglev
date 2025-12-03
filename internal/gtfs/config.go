@@ -16,6 +16,7 @@ type Config struct {
 	GTFSDataPath            string
 	Env                     appconf.Environment
 	Verbose                 bool
+	EnableGTFSTidy          bool
 }
 
 func (config Config) realTimeDataEnabled() bool {
