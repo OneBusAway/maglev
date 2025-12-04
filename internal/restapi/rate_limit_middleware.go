@@ -18,12 +18,14 @@ type RateLimitMiddleware struct {
 	burstSize   int
 	cleanupTick *time.Ticker
 	exemptKeys  map[string]bool
+	stopChan    chan struct{}
+	stopOnce    sync.Once
 }
 
 // NewRateLimitMiddleware creates a new rate limiting middleware
 // ratePerSecond: number of requests allowed per second per API key
 // burstSize: number of requests allowed in a burst per API key
-func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration) func(http.Handler) http.Handler {
+func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration) *RateLimitMiddleware {
 	// Handle zero rate limit case
 	var rateLimit rate.Limit
 	if ratePerSecond <= 0 {
@@ -43,12 +45,18 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration) func(http
 		exemptKeys: map[string]bool{
 			"org.onebusaway.iphone": true, // Exempt OneBusAway iPhone app
 		},
+		stopChan: make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
 	go middleware.cleanup()
 
-	return middleware.rateLimitHandler
+	return middleware
+}
+
+// Handler returns the HTTP middleware handler function
+func (rl *RateLimitMiddleware) Handler() func(http.Handler) http.Handler {
+	return rl.rateLimitHandler
 }
 
 // getLimiter gets or creates a rate limiter for the given API key
@@ -151,29 +159,37 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 
 // cleanup periodically removes old, unused limiters to prevent memory leaks
 func (rl *RateLimitMiddleware) cleanup() {
-	for range rl.cleanupTick.C {
-		rl.mu.Lock()
+	for {
+		select {
+		case <-rl.cleanupTick.C:
+			rl.mu.Lock()
 
-		// Remove limiters that haven't been used recently
-		// For simplicity, we'll remove all limiters and let them be recreated as needed
-		// In a production system, you might want to track last access time
-		for key := range rl.limiters {
-			// Keep exempted keys and recently active limiters
-			if !rl.exemptKeys[key] {
-				// Simple cleanup: remove limiters that have tokens available (not recently used)
-				if limiter := rl.limiters[key]; limiter.Tokens() > 0 {
-					delete(rl.limiters, key)
+			// Remove limiters that haven't been used recently
+			// For simplicity, we'll remove all limiters and let them be recreated as needed
+			// In a production system, you might want to track last access time
+			for key := range rl.limiters {
+				// Keep exempted keys and recently active limiters
+				if !rl.exemptKeys[key] {
+					// Simple cleanup: remove limiters that have tokens available (not recently used)
+					if limiter := rl.limiters[key]; limiter.Tokens() > 0 {
+						delete(rl.limiters, key)
+					}
 				}
 			}
-		}
 
-		rl.mu.Unlock()
+			rl.mu.Unlock()
+		case <-rl.stopChan:
+			return
+		}
 	}
 }
 
-// Stop stops the cleanup goroutine
+// Stop stops the cleanup goroutine. It is safe to call multiple times.
 func (rl *RateLimitMiddleware) Stop() {
-	if rl.cleanupTick != nil {
-		rl.cleanupTick.Stop()
-	}
+	rl.stopOnce.Do(func() {
+		if rl.cleanupTick != nil {
+			rl.cleanupTick.Stop()
+		}
+		close(rl.stopChan)
+	})
 }
