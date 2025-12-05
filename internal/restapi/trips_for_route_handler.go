@@ -75,7 +75,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	layoverBlocks := gtfsInternal.GetBlocksInTimeRange(layoverIndices, timeRangeStart, timeRangeEnd)
 
 	if len(indexIDs) == 0 && len(layoverBlocks) == 0 {
-		references := buildTripReferences(api, w, r, ctx, includeSchedule, []gtfsdb.Route{}, []gtfsdb.Trip{}, []gtfsdb.Stop{}, []models.TripsForRouteListEntry{})
+		references := buildTripReferences(api, w, r, ctx, includeSchedule, []gtfsdb.Route{}, []gtfsdb.Trip{}, nil, []models.TripsForRouteListEntry{})
 		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false)
 		api.sendResponse(w, r, response)
 		return
@@ -250,6 +250,34 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 		presentTrips[tripID] = models.Trip{}
 	}
 
+	for i := range trips {
+		tripEntry := trips[i]
+
+		if entry, ok := any(tripEntry).(models.TripsForRouteListEntry); ok {
+			if entry.Schedule != nil {
+				if entry.Schedule.NextTripId != "" {
+					_, nextTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.NextTripId)
+					if err == nil {
+						presentTrips[nextTripID] = models.Trip{}
+					}
+				}
+				if entry.Schedule.PreviousTripId != "" {
+					_, prevTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.PreviousTripId)
+					if err == nil {
+						presentTrips[prevTripID] = models.Trip{}
+					}
+				}
+			}
+
+			if entry.Status != nil && entry.Status.ActiveTripID != "" {
+				_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Status.ActiveTripID)
+				if err == nil {
+					presentTrips[activeTripID] = models.Trip{}
+				}
+			}
+		}
+	}
+
 	// Build stop list and collect routes serving those stops
 	stopList := make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
@@ -349,7 +377,7 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 				tripsRefList = append(tripsRefList, models.Trip{
 					ID:            utils.FormCombinedID(currentAgency, trip.ID),
 					RouteID:       utils.FormCombinedID(currentAgency, tripDetails.RouteID),
-					ServiceID:     utils.FormCombinedID(currentAgency, trip.ServiceID),
+					ServiceID:     utils.FormCombinedID(currentAgency, tripDetails.ServiceID),
 					TripHeadsign:  tripDetails.TripHeadsign.String,
 					TripShortName: tripDetails.TripShortName.String,
 					DirectionID:   tripDetails.DirectionID.Int64,
