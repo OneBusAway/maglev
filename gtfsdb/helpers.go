@@ -947,7 +947,6 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 	logger := slog.Default().With(slog.String("component", "block_trip_index_builder"))
 
 	// Build terminal layover location for each trip
-	// This matches Java OBA's BlockLayoverIndex which groups by service_id + first stop (layover location)
 	type tripInfo struct {
 		tripID        string
 		routeID       string
@@ -976,7 +975,6 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 	}
 
 	// Group trips by (serviceID, layoverStopID)
-	// This matches Java OBA's BlockLayoverSequenceKey which uses service IDs + first stop
 	indexGroups := make(map[blockTripIndexKey][]*tripInfo)
 
 	for _, info := range tripMap {
@@ -1002,7 +1000,7 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 		indexID, err := c.Queries.CreateBlockTripIndex(ctx, CreateBlockTripIndexParams{
 			IndexKey:        indexKey,
 			ServiceIds:      key.serviceIDs,
-			StopSequenceKey: key.stopSequenceKey, // This is actually the terminal stop ID
+			StopSequenceKey: key.stopSequenceKey,
 			CreatedAt:       createdAt,
 		})
 		if err != nil {
@@ -1030,7 +1028,6 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 		}
 	}
 
-	// Log summary statistics
 	totalEntries := 0
 	for _, trips := range indexGroups {
 		totalEntries += len(trips)
