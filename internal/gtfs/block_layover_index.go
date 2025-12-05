@@ -7,7 +7,6 @@ import (
 )
 
 // BlockLayoverIndex represents a layover index that groups block trips by their layover patterns
-// This matches OneBusAway Java's BlockLayoverIndex which tracks where and when buses wait between trips
 type BlockLayoverIndex struct {
 	ServiceIDs    []string
 	LayoverStopID string
@@ -96,9 +95,8 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 					LayoverEnd:    layoverEnd,
 				}
 
-				// Group layover trips by layoverStopID ONLY - GLOBAL grouping across all services
 				globalKey := indexKey{
-					serviceID:     "", // Don't group by service - group all services together
+					serviceID:     "",
 					layoverStopID: layoverStopID,
 				}
 
@@ -121,7 +119,6 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 				existingIndex.StartTimes = append(existingIndex.StartTimes, layoverTrip.LayoverStart)
 				existingIndex.EndTimes = append(existingIndex.EndTimes, layoverTrip.LayoverEnd)
 
-				// Track service IDs
 				if !contains(existingIndex.ServiceIDs, key.serviceID) {
 					existingIndex.ServiceIDs = append(existingIndex.ServiceIDs, key.serviceID)
 				}
@@ -139,7 +136,7 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 		}
 	}
 
-	// Map global indices to routes (matching Java's StaticBlockIndexServiceImpl behavior)
+	// Map global indices to routes
 	// This causes cross-route contamination: each index gets added to ALL routes that have trips in it
 	for _, index := range globalIndices {
 		for _, routeID := range index.RouteIDs {
@@ -155,21 +152,17 @@ func getBlockLayoverIndicesForRoute(indices map[string][]*BlockLayoverIndex, rou
 }
 
 // GetBlocksInTimeRange returns all block IDs from layover indices that have active layovers
-// in the given time range. This matches Java's findBlockLayoversInRange behavior.
 func GetBlocksInTimeRange(indices []*BlockLayoverIndex, startTime, endTime int64) []string {
 	blockSet := make(map[string]bool)
 
 	for _, index := range indices {
 		// For each trip in the index, check if its layover interval overlaps with our time range
-		// This matches Java's findBlockLayoversInRange which returns all blocks with active layovers
 		for i := range index.Trips {
 			trip := index.Trips[i]
 
 			layoverStart := index.StartTimes[i]
 			layoverEnd := index.EndTimes[i]
 
-			// Check if [layoverStart, layoverEnd] overlaps with [startTime, endTime]
-			// Overlap occurs if: layoverStart < endTime AND layoverEnd > startTime
 			if layoverStart < endTime && layoverEnd > startTime {
 				blockID := trip.BlockID
 				blockSet[blockID] = true
