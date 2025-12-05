@@ -26,7 +26,7 @@ func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetStopIDsForAgency(ctx)
+	stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetStopIDsForAgency(ctx, id)
 
 	if err != nil {
 		api.serverErrorResponse(w, r, err)

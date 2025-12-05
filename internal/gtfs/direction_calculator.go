@@ -114,10 +114,10 @@ func (dc *DirectionCalculator) findClosestShapePoint(points []gtfsdb.GetShapePoi
 	}
 
 	closestIdx := 0
-	minDistance := utils.Haversine(lat, lon, points[0].Lat, points[0].Lon)
+	minDistance := utils.Distance(lat, lon, points[0].Lat, points[0].Lon)
 
 	for i, point := range points[1:] {
-		distance := utils.Haversine(lat, lon, point.Lat, point.Lon)
+		distance := utils.Distance(lat, lon, point.Lat, point.Lon)
 		if distance < minDistance {
 			minDistance = distance
 			closestIdx = i + 1

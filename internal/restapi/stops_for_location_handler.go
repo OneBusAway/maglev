@@ -1,7 +1,11 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -18,12 +22,60 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
 	query := queryParams.Get("query")
 
+	// Parse maxCount parameter (default 100, max 250) - matches Java's MaxCountSupport
+	maxCount := 100
+	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
+		parsedMaxCount, err := utils.ParseFloatParam(queryParams, "maxCount", fieldErrors)
+		if err == nil {
+			maxCount = int(parsedMaxCount)
+			if maxCount <= 0 {
+				if fieldErrors == nil {
+					fieldErrors = make(map[string][]string)
+				}
+				fieldErrors["maxCount"] = []string{"must be greater than zero"}
+			} else if maxCount > 250 {
+				if fieldErrors == nil {
+					fieldErrors = make(map[string][]string)
+				}
+				fieldErrors["maxCount"] = []string{"must not exceed 250"}
+			}
+		}
+	}
+
+	var routeTypes []int
+	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
+		routeTypeStrs := strings.Split(routeTypeStr, ",")
+		for _, rtStr := range routeTypeStrs {
+			rtStr = strings.TrimSpace(rtStr)
+			if rtStr != "" {
+				var rt int
+				if _, err := fmt.Sscanf(rtStr, "%d", &rt); err != nil {
+					if fieldErrors == nil {
+						fieldErrors = make(map[string][]string)
+					}
+					fieldErrors["routeType"] = append(fieldErrors["routeType"], fmt.Sprintf("invalid route type: %s", rtStr))
+				} else {
+					routeTypes = append(routeTypes, rt)
+				}
+			}
+		}
+	}
+
+	var queryTime time.Time
+	if timeStr := queryParams.Get("time"); timeStr != "" {
+		var timeMs int64
+		if _, err := fmt.Sscanf(timeStr, "%d", &timeMs); err == nil {
+			// Bin to 15 minutes
+			binnedMs := timeMs - (timeMs % 900000)
+			queryTime = time.UnixMilli(binnedMs)
+		}
+	}
+
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
-	// Validate location parameters
 	locationErrors := utils.ValidateLocationParams(lat, lon, radius, latSpan, lonSpan)
 	if len(locationErrors) > 0 {
 		api.validationErrorResponse(w, r, locationErrors)
@@ -49,13 +101,17 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, 100, false)
+	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, maxCount, false, routeTypes, queryTime)
+
+	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"
+	sort.SliceStable(stops, func(i, j int) bool {
+		return stops[i].ID < stops[j].ID
+	})
 
 	var results []models.Stop
 	routeIDs := map[string]bool{}
 	agencyIDs := map[string]bool{}
 
-	// Extract stop IDs for batch queries
 	stopIDs := make([]string, 0, len(stops))
 	stopMap := make(map[string]gtfsdb.Stop)
 	for _, stop := range stops {
@@ -98,16 +154,15 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	stopRouteIDs := make(map[string][]string)
 	stopAgency := make(map[string]*gtfsdb.GetAgenciesForStopsRow)
 
-	// Group route IDs by stop
 	for _, routeIDRow := range routeIDsForStops {
 		stopID := routeIDRow.StopID
 		routeIDStr, ok := routeIDRow.RouteID.(string)
 		if !ok {
 			continue
 		}
-		stopRouteIDs[stopID] = append(stopRouteIDs[stopID], routeIDStr)
 
 		agencyId, routeId, _ := utils.ExtractAgencyIDAndCodeID(routeIDStr)
+		stopRouteIDs[stopID] = append(stopRouteIDs[stopID], routeIDStr)
 		agencyIDs[agencyId] = true
 		routeIDs[routeId] = true
 	}

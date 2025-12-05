@@ -3,8 +3,11 @@
 run: build
 	bin/maglev -f config.json
 
-build:
+build: gtfstidy
 	go build -gcflags "all=-N -l" -o bin/maglev ./cmd/api
+
+gtfstidy:
+	go build -o bin/gtfstidy github.com/patrickbr/gtfstidy
 
 clean:
 	go clean

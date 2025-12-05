@@ -14,6 +14,7 @@ type GtfsStaticFeed struct {
 	URL             string `json:"url"`
 	AuthHeaderName  string `json:"auth-header-name"`
 	AuthHeaderValue string `json:"auth-header-value"`
+	EnableGTFSTidy  bool   `json:"enable-gtfs-tidy"`
 }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
@@ -187,6 +188,7 @@ type GtfsConfigData struct {
 	GTFSDataPath            string
 	Env                     Environment
 	Verbose                 bool
+	EnableGTFSTidy          bool
 }
 
 // ToGtfsConfigData converts JSONConfig to GtfsConfigData
@@ -199,6 +201,7 @@ func (j *JSONConfig) ToGtfsConfigData() GtfsConfigData {
 		GTFSDataPath:          j.DataPath,
 		Env:                   EnvFlagToEnvironment(j.Env),
 		Verbose:               true, // Always set to true like in main.go
+		EnableGTFSTidy:        j.GtfsStaticFeed.EnableGTFSTidy,
 	}
 
 	// Use first GTFS-RT feed if available

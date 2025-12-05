@@ -194,10 +194,15 @@ LIMIT
     1;
 
 -- name: GetStopIDsForAgency :many
-SELECT
+SELECT DISTINCT
     s.id
 FROM
-    stops s;
+    stops s
+    JOIN stop_times st ON s.id = st.stop_id
+    JOIN trips t ON st.trip_id = t.id
+    JOIN routes r ON t.route_id = r.id
+WHERE
+    r.agency_id = ?;
 
 -- name: GetTrip :one
 SELECT
@@ -223,6 +228,20 @@ FROM
 WHERE
     id = ?;
 
+-- name: GetStopForAgency :one
+-- Return the stop only if it is served by any route that belongs to the specified agency.
+-- We join stop_times -> trips -> routes and filter by routes.agency_id to enforce agency ownership.
+SELECT DISTINCT
+    stops.*
+FROM
+    stops
+    JOIN stop_times ON stops.id = stop_times.stop_id
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    stops.id = ?
+    AND routes.agency_id = ?;
+
 -- name: ListStops :many
 SELECT
     *
@@ -241,14 +260,10 @@ FROM
 WHERE
     stop_times.stop_id = ?;
 
--- name: GetStopsWithinBounds :many
-SELECT
-    *
-FROM
-    stops
-WHERE
-    lat >= ? AND lat <= ?
-    AND lon >= ? AND lon <= ?;
+-- name: GetActiveStops :many
+SELECT DISTINCT s.*
+FROM stops s
+INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetAllShapes :many
 SELECT
@@ -505,6 +520,14 @@ FROM
     JOIN agencies a ON routes.agency_id = a.id
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'));
+
+-- name: GetStopsWithActiveServiceOnDate :many
+-- Returns stop IDs that have at least one trip with active service on the given date
+SELECT DISTINCT st.stop_id
+FROM stop_times st
+JOIN trips t ON st.trip_id = t.id
+WHERE st.stop_id IN (sqlc.slice('stop_ids'))
+  AND t.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetStopTimesForTrip :many
 SELECT

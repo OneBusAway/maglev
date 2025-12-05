@@ -14,9 +14,11 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-func rawGtfsData(source string, isLocalFile bool, authHeaderKey, authHeaderValue string) ([]byte, error) {
+func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error) {
 	var b []byte
 	var err error
+
+	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
 
 	if isLocalFile {
 		b, err = os.ReadFile(source)
@@ -30,8 +32,8 @@ func rawGtfsData(source string, isLocalFile bool, authHeaderKey, authHeaderValue
 		}
 
 		// Add auth header if provided
-		if authHeaderKey != "" && authHeaderValue != "" {
-			req.Header.Set(authHeaderKey, authHeaderValue)
+		if config.StaticAuthHeaderKey != "" && config.StaticAuthHeaderValue != "" {
+			req.Header.Set(config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
 		}
 
 		client := &http.Client{}
@@ -48,6 +50,18 @@ func rawGtfsData(source string, isLocalFile bool, authHeaderKey, authHeaderValue
 			return nil, fmt.Errorf("error reading GTFS data: %w", err)
 		}
 	}
+
+	// Process through gtfstidy if enabled
+	if config.EnableGTFSTidy {
+		logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
+		tidiedData, err := tidyGTFSData(b, logger)
+		if err != nil {
+			logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
+		} else {
+			b = tidiedData
+		}
+	}
+
 	return b, nil
 }
 
@@ -82,8 +96,8 @@ func buildGtfsDB(config Config, isLocalFile bool) (*gtfsdb.Client, error) {
 }
 
 // loadGTFSData loads and parses GTFS data from either a URL or a local file
-func loadGTFSData(source string, isLocalFile bool, authHeaderKey, authHeaderValue string) (*gtfs.Static, error) {
-	b, err := rawGtfsData(source, isLocalFile, authHeaderKey, authHeaderValue)
+func loadGTFSData(source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
+	b, err := rawGtfsData(source, isLocalFile, config)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
@@ -122,7 +136,7 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 			_, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 
 			// Download and parse the GTFS feed
-			staticData, err := loadGTFSData(manager.gtfsSource, false, manager.config.StaticAuthHeaderKey, manager.config.StaticAuthHeaderValue)
+			staticData, err := loadGTFSData(manager.gtfsSource, false, manager.config)
 			cancel() // Always cancel the context when done
 
 			if err != nil {
@@ -151,6 +165,18 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.lastUpdated = time.Now()
 
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
+
+	// Rebuild spatial index with updated data
+	ctx := context.Background()
+	if manager.GtfsDB != nil && manager.GtfsDB.Queries != nil {
+		spatialIndex, err := buildStopSpatialIndex(ctx, manager.GtfsDB.Queries)
+		if err == nil {
+			manager.stopSpatialIndex = spatialIndex
+		} else if manager.config.Verbose {
+			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+			logging.LogError(logger, "Failed to rebuild spatial index", err)
+		}
+	}
 
 	if manager.config.Verbose {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))

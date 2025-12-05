@@ -275,7 +275,7 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 	// Fall back to geographic matching when shape_dist_traveled is not available
 	if minDiff == math.MaxFloat64 && stopLat != 0 && stopLon != 0 {
 		for i, point := range shapePoints {
-			distance := utils.Haversine(stopLat, stopLon, point.Lat, point.Lon)
+			distance := utils.Distance(stopLat, stopLon, point.Lat, point.Lon)
 			if distance < minDiff {
 				minDiff = distance
 				closestIdx = i

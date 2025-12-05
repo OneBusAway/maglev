@@ -3,7 +3,6 @@ package gtfs
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
+	"github.com/tidwall/rtree"
 )
 
 const NoRadiusLimit = -1
@@ -38,6 +38,7 @@ type Manager struct {
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
+	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
 }
 
@@ -46,7 +47,7 @@ type Manager struct {
 func InitGTFSManager(config Config) (*Manager, error) {
 	isLocalFile := !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
 
-	staticData, err := loadGTFSData(config.GtfsURL, isLocalFile, config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
+	staticData, err := loadGTFSData(config.GtfsURL, isLocalFile, config)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +68,14 @@ func InitGTFSManager(config Config) (*Manager, error) {
 		return nil, fmt.Errorf("error building GTFS database: %w", err)
 	}
 	manager.GtfsDB = gtfsDB
+
+	// Build spatial index for fast stop location queries
+	ctx := context.Background()
+	spatialIndex, err := buildStopSpatialIndex(ctx, gtfsDB.Queries)
+	if err != nil {
+		return nil, fmt.Errorf("error building spatial index: %w", err)
+	}
+	manager.stopSpatialIndex = spatialIndex
 
 	if !isLocalFile {
 		manager.wg.Add(1)
@@ -162,41 +171,24 @@ func (manager *Manager) GetStopsForLocation(
 	query string,
 	maxCount int,
 	isForRoutes bool,
+	routeTypes []int,
+	queryTime time.Time,
 ) []gtfsdb.Stop {
-	const epsilon = 1e-6
-
-	if radius == 0 {
-		radius = 1000
-	}
-	if query != "" {
-		radius *= 10
-	}
-
 	var candidates []stopWithDistance
 
-	// Calculate bounding box for spatial query
-	// Convert radius in meters to approximate degrees
-	// 1 degree latitude ≈ 111km, 1 degree longitude varies by latitude
-	latDegreeInMeters := 111000.0
-	lonDegreeInMeters := 111000.0 * math.Cos(lat*math.Pi/180)
-
-	var minLat, maxLat, minLon, maxLon float64
+	var bounds utils.CoordinateBounds
 
 	if latSpan > 0 && lonSpan > 0 {
-		// Use provided spans
-		minLat = lat - latSpan - epsilon
-		maxLat = lat + latSpan + epsilon
-		minLon = lon - lonSpan - epsilon
-		maxLon = lon + lonSpan + epsilon
+		bounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
 	} else {
-		// Calculate from radius
-		latRadiusDegrees := radius / latDegreeInMeters
-		lonRadiusDegrees := radius / lonDegreeInMeters
-
-		minLat = lat - latRadiusDegrees
-		maxLat = lat + latRadiusDegrees
-		minLon = lon - lonRadiusDegrees
-		maxLon = lon + lonRadiusDegrees
+		if radius == 0 {
+			if query != "" {
+				radius = 10000
+			} else {
+				radius = 500
+			}
+		}
+		bounds = utils.CalculateBounds(lat, lon, radius)
 	}
 
 	// Check if context is already cancelled
@@ -204,41 +196,99 @@ func (manager *Manager) GetStopsForLocation(
 		return []gtfsdb.Stop{}
 	}
 
-	// Use spatial index query for initial filtering
-	dbStops, err := manager.GtfsDB.Queries.GetStopsWithinBounds(ctx, gtfsdb.GetStopsWithinBoundsParams{
-		Lat:   minLat,
-		Lat_2: maxLat,
-		Lon:   minLon,
-		Lon_2: maxLon,
-	})
-	if err != nil {
-		// TODO: add logging.
-		return []gtfsdb.Stop{}
-	}
+	dbStops := queryStopsInBounds(manager.stopSpatialIndex, bounds)
 
-	// Process results from database query
 	for _, dbStop := range dbStops {
 		if query != "" && !isForRoutes {
 			if dbStop.Code.Valid && dbStop.Code.String == query {
-				distance := utils.Haversine(lat, lon, dbStop.Lat, dbStop.Lon)
-				if distance <= radius {
-					return []gtfsdb.Stop{dbStop}
-				}
+				return []gtfsdb.Stop{dbStop}
 			}
 			continue
 		}
+		distance := utils.Distance(lat, lon, dbStop.Lat, dbStop.Lon)
+		candidates = append(candidates, stopWithDistance{dbStop, distance})
+	}
 
-		// Calculate precise distance for final filtering
-		distance := utils.Haversine(lat, lon, dbStop.Lat, dbStop.Lon)
-		if distance <= radius {
-			candidates = append(candidates, stopWithDistance{dbStop, distance})
-		} else if radius == NoRadiusLimit {
-			// No radius specified; include all stops within the given latSpan and lonSpan
-			candidates = append(candidates, stopWithDistance{dbStop, distance})
+	// If the stop does not have any routes actively serving it, don't include it in the results
+	// This filtering is only applied if we are not searching for a specific stop code
+	if query == "" || isForRoutes {
+		if len(routeTypes) > 0 {
+			stopIDs := make([]string, 0, len(candidates))
+			for _, candidate := range candidates {
+				stopIDs = append(stopIDs, candidate.stop.ID)
+			}
+
+			routesForStops, err := manager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
+			if err == nil {
+				stopRouteTypes := make(map[string][]int)
+				for _, r := range routesForStops {
+					stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
+				}
+
+				filteredCandidates := make([]stopWithDistance, 0, len(candidates))
+				for _, candidate := range candidates {
+					types := stopRouteTypes[candidate.stop.ID]
+					hasMatchingType := false
+					for _, rt := range types {
+						for _, targetType := range routeTypes {
+							if rt == targetType {
+								hasMatchingType = true
+								break
+							}
+						}
+						if hasMatchingType {
+							break
+						}
+					}
+					if hasMatchingType {
+						filteredCandidates = append(filteredCandidates, candidate)
+					}
+				}
+				candidates = filteredCandidates
+			}
+		}
+
+		// Filter by service date - only include stops with active service on current date
+		if len(candidates) > 0 && !isForRoutes {
+			var currentDate string
+			if !queryTime.IsZero() {
+				currentDate = queryTime.Format("20060102")
+			} else {
+				currentDate = time.Now().Format("20060102")
+			}
+
+			// Get active service IDs for current date
+			activeServiceIDs, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
+
+			if err == nil && len(activeServiceIDs) > 0 {
+				stopIDs := make([]string, 0, len(candidates))
+				for _, candidate := range candidates {
+					stopIDs = append(stopIDs, candidate.stop.ID)
+				}
+
+				stopsWithActiveService, err := manager.GtfsDB.Queries.GetStopsWithActiveServiceOnDate(ctx, gtfsdb.GetStopsWithActiveServiceOnDateParams{
+					StopIds:    stopIDs,
+					ServiceIds: activeServiceIDs,
+				})
+
+				if err == nil {
+					stopsWithService := make(map[string]bool)
+					for _, stopID := range stopsWithActiveService {
+						stopsWithService[stopID] = true
+					}
+
+					filteredCandidates := make([]stopWithDistance, 0, len(candidates))
+					for _, candidate := range candidates {
+						if stopsWithService[candidate.stop.ID] {
+							filteredCandidates = append(filteredCandidates, candidate)
+						}
+					}
+					candidates = filteredCandidates
+				}
+			}
 		}
 	}
 
-	// Sort by distance
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].distance < candidates[j].distance
 	})

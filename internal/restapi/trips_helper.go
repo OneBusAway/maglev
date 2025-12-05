@@ -337,7 +337,7 @@ func findClosestStop(api *RestAPI, ctx context.Context, pos *gtfs.Position, stop
 			continue
 		}
 
-		d := utils.Haversine(
+		d := utils.Distance(
 			float64(*pos.Latitude),
 			float64(*pos.Longitude),
 			stop.Lat,
@@ -411,7 +411,7 @@ func getDistanceAlongShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
 	var minDist = math.MaxFloat64
 
 	for i := range shape {
-		dist := utils.Haversine(lat, lon, shape[i].Latitude, shape[i].Longitude)
+		dist := utils.Distance(lat, lon, shape[i].Latitude, shape[i].Longitude)
 		if dist < minDist {
 			minDist = dist
 			closestIndex = i
@@ -419,7 +419,7 @@ func getDistanceAlongShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
 	}
 
 	for i := 1; i <= closestIndex; i++ {
-		total += utils.Haversine(shape[i-1].Latitude, shape[i-1].Longitude, shape[i].Latitude, shape[i].Longitude)
+		total += utils.Distance(shape[i-1].Latitude, shape[i-1].Longitude, shape[i].Latitude, shape[i].Longitude)
 	}
 
 	return total
@@ -564,7 +564,7 @@ func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
 
 	// Add the projection distance within the closest segment
 	if closestSegmentIndex < len(shapePoints)-1 {
-		segmentDistance := utils.Haversine(
+		segmentDistance := utils.Distance(
 			shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
 			shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
 		)
@@ -604,7 +604,7 @@ func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
 	cumulativeDistances[0] = 0
 
 	for i := 1; i < len(shapePoints); i++ {
-		segmentDistance := utils.Haversine(
+		segmentDistance := utils.Distance(
 			shapePoints[i-1].Latitude, shapePoints[i-1].Longitude,
 			shapePoints[i].Latitude, shapePoints[i].Longitude,
 		)
@@ -621,7 +621,7 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 
 	if dx == 0 && dy == 0 {
 		// Line segment is a point
-		return utils.Haversine(px, py, x1, y1), 0
+		return utils.Distance(px, py, x1, y1), 0
 	}
 
 	// Calculate the parameter t for the projection of point onto the line
@@ -638,7 +638,7 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 	closestX := x1 + t*dx
 	closestY := y1 + t*dy
 
-	return utils.Haversine(px, py, closestX, closestY), t
+	return utils.Distance(px, py, closestX, closestY), t
 }
 
 func (api *RestAPI) GetSituationIDsForTrip(tripID string) []string {
