@@ -19,6 +19,23 @@ type Agency struct {
 	Email    sql.NullString
 }
 
+type BlockTripEntry struct {
+	ID                int64
+	BlockTripIndexID  int64
+	TripID            string
+	BlockID           sql.NullString
+	ServiceID         string
+	BlockTripSequence int64
+}
+
+type BlockTripIndex struct {
+	ID              int64
+	IndexKey        string
+	ServiceIds      string
+	StopSequenceKey string
+	CreatedAt       int64
+}
+
 type Calendar struct {
 	ID        string
 	Monday    int64

@@ -20,6 +20,24 @@ func (q *Queries) ClearAgencies(ctx context.Context) error {
 	return err
 }
 
+const clearBlockTripEntries = `-- name: ClearBlockTripEntries :exec
+DELETE FROM block_trip_entry
+`
+
+func (q *Queries) ClearBlockTripEntries(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearBlockTripEntriesStmt, clearBlockTripEntries)
+	return err
+}
+
+const clearBlockTripIndices = `-- name: ClearBlockTripIndices :exec
+DELETE FROM block_trip_index
+`
+
+func (q *Queries) ClearBlockTripIndices(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearBlockTripIndicesStmt, clearBlockTripIndices)
+	return err
+}
+
 const clearCalendar = `-- name: ClearCalendar :exec
 DELETE FROM calendar
 `
@@ -124,6 +142,70 @@ func (q *Queries) CreateAgency(ctx context.Context, arg CreateAgencyParams) (Age
 		&i.Email,
 	)
 	return i, err
+}
+
+const createBlockTripEntry = `-- name: CreateBlockTripEntry :exec
+INSERT INTO block_trip_entry (
+    block_trip_index_id,
+    trip_id,
+    block_id,
+    service_id,
+    block_trip_sequence
+)
+VALUES
+    (?, ?, ?, ?, ?)
+`
+
+type CreateBlockTripEntryParams struct {
+	BlockTripIndexID  int64
+	TripID            string
+	BlockID           sql.NullString
+	ServiceID         string
+	BlockTripSequence int64
+}
+
+func (q *Queries) CreateBlockTripEntry(ctx context.Context, arg CreateBlockTripEntryParams) error {
+	_, err := q.exec(ctx, q.createBlockTripEntryStmt, createBlockTripEntry,
+		arg.BlockTripIndexID,
+		arg.TripID,
+		arg.BlockID,
+		arg.ServiceID,
+		arg.BlockTripSequence,
+	)
+	return err
+}
+
+const createBlockTripIndex = `-- name: CreateBlockTripIndex :one
+
+INSERT INTO block_trip_index (
+    index_key,
+    service_ids,
+    stop_sequence_key,
+    created_at
+)
+VALUES
+    (?, ?, ?, ?)
+RETURNING id
+`
+
+type CreateBlockTripIndexParams struct {
+	IndexKey        string
+	ServiceIds      string
+	StopSequenceKey string
+	CreatedAt       int64
+}
+
+// BlockTripIndex queries
+func (q *Queries) CreateBlockTripIndex(ctx context.Context, arg CreateBlockTripIndexParams) (int64, error) {
+	row := q.queryRow(ctx, q.createBlockTripIndexStmt, createBlockTripIndex,
+		arg.IndexKey,
+		arg.ServiceIds,
+		arg.StopSequenceKey,
+		arg.CreatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const createCalendar = `-- name: CreateCalendar :one
@@ -500,29 +582,43 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 const getActiveServiceIDsForDate = `-- name: GetActiveServiceIDsForDate :many
 WITH formatted_date AS (
     SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
+),
+base_services AS (
+    SELECT c.id AS service_id
+    FROM calendar c, formatted_date fd
+    WHERE c.start_date <= ?1
+      AND c.end_date >= ?1
+      AND (
+        (fd.weekday = '0' AND c.sunday = 1) OR
+        (fd.weekday = '1' AND c.monday = 1) OR
+        (fd.weekday = '2' AND c.tuesday = 1) OR
+        (fd.weekday = '3' AND c.wednesday = 1) OR
+        (fd.weekday = '4' AND c.thursday = 1) OR
+        (fd.weekday = '5' AND c.friday = 1) OR
+        (fd.weekday = '6' AND c.saturday = 1)
+      )
+),
+removed_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 2
+),
+added_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 1
 )
-SELECT DISTINCT c.id AS service_id
-FROM calendar c, formatted_date fd
-WHERE c.start_date <= ?1
-  AND c.end_date >= ?1
-  AND (
-    (fd.weekday = '0' AND c.sunday = 1) OR
-    (fd.weekday = '1' AND c.monday = 1) OR
-    (fd.weekday = '2' AND c.tuesday = 1) OR
-    (fd.weekday = '3' AND c.wednesday = 1) OR
-    (fd.weekday = '4' AND c.thursday = 1) OR
-    (fd.weekday = '5' AND c.friday = 1) OR
-    (fd.weekday = '6' AND c.saturday = 1)
-    )
-UNION
 SELECT DISTINCT service_id
-FROM calendar_dates
-WHERE date = ?1
-  AND exception_type = 1
+FROM base_services
+WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+UNION
+SELECT DISTINCT service_id FROM added_services
 `
 
-func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, targetDate interface{}) ([]string, error) {
-	rows, err := q.query(ctx, q.getActiveServiceIDsForDateStmt, getActiveServiceIDsForDate, targetDate)
+func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interface{}) ([]string, error) {
+	rows, err := q.query(ctx, q.getActiveServiceIDsForDateStmt, getActiveServiceIDsForDate, substr)
 	if err != nil {
 		return nil, err
 	}
@@ -585,6 +681,121 @@ func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const getActiveTripForRouteAtTime = `-- name: GetActiveTripForRouteAtTime :one
+SELECT
+    t.id, t.route_id, t.service_id, t.trip_headsign, t.trip_short_name,
+    t.direction_id, t.block_id, t.shape_id, t.wheelchair_accessible, t.bikes_allowed
+FROM trips t
+JOIN block_trip_entry bte ON t.id = bte.trip_id
+JOIN stop_times st_first ON t.id = st_first.trip_id AND st_first.stop_sequence = (
+    SELECT MIN(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
+    SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+WHERE bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
+  AND t.route_id = ?2
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
+  AND st_first.departure_time <= ?4
+  AND st_last.arrival_time >= ?5
+ORDER BY st_first.departure_time DESC
+LIMIT 1
+`
+
+type GetActiveTripForRouteAtTimeParams struct {
+	IndexIds    []int64
+	RouteID     string
+	ServiceIds  []string
+	CurrentTime int64
+	FromTime    int64
+}
+
+// Find the ONE trip from a specific route that is active at the given time
+// A trip is active if current_time falls within its stop times
+func (q *Queries) GetActiveTripForRouteAtTime(ctx context.Context, arg GetActiveTripForRouteAtTimeParams) (Trip, error) {
+	query := getActiveTripForRouteAtTime
+	var queryParams []interface{}
+	if len(arg.IndexIds) > 0 {
+		for _, v := range arg.IndexIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", strings.Repeat(",?", len(arg.IndexIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.RouteID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.CurrentTime)
+	queryParams = append(queryParams, arg.FromTime)
+	row := q.queryRow(ctx, nil, query, queryParams...)
+	var i Trip
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.ServiceID,
+		&i.TripHeadsign,
+		&i.TripShortName,
+		&i.DirectionID,
+		&i.BlockID,
+		&i.ShapeID,
+		&i.WheelchairAccessible,
+		&i.BikesAllowed,
+	)
+	return i, err
+}
+
+const getActiveTripInBlockAtTime = `-- name: GetActiveTripInBlockAtTime :one
+SELECT t.id
+FROM trips t
+JOIN stop_times st_first ON t.id = st_first.trip_id AND st_first.stop_sequence = (
+        SELECT MIN(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
+        SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+WHERE t.block_id = ?1
+    AND t.service_id IN (/*SLICE:service_ids*/?)
+    AND st_first.departure_time <= ?3
+    AND st_last.arrival_time >= ?3
+ORDER BY st_first.departure_time ASC
+LIMIT 1
+`
+
+type GetActiveTripInBlockAtTimeParams struct {
+	BlockID     sql.NullString
+	ServiceIds  []string
+	CurrentTime int64
+}
+
+// Find the currently active trip in a specific block at the given time
+// Returns the trip whose stop times contain the current time (with late/early windows)
+// Orders by departure time ASC to get the EARLIEST matching trip (the one currently in progress)
+func (q *Queries) GetActiveTripInBlockAtTime(ctx context.Context, arg GetActiveTripInBlockAtTimeParams) (string, error) {
+	query := getActiveTripInBlockAtTime
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.BlockID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.CurrentTime)
+	row := q.queryRow(ctx, nil, query, queryParams...)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getAgenciesForStops = `-- name: GetAgenciesForStops :many
@@ -972,6 +1183,166 @@ func (q *Queries) GetBlockIDByTripID(ctx context.Context, id string) (sql.NullSt
 	var block_id sql.NullString
 	err := row.Scan(&block_id)
 	return block_id, err
+}
+
+const getBlockTripIndexIDsForBlocks = `-- name: GetBlockTripIndexIDsForBlocks :many
+SELECT DISTINCT bte.block_trip_index_id
+FROM block_trip_entry bte
+WHERE bte.block_id IN (/*SLICE:block_ids*/?)
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
+ORDER BY bte.block_trip_index_id
+`
+
+type GetBlockTripIndexIDsForBlocksParams struct {
+	BlockIds   []sql.NullString
+	ServiceIds []string
+}
+
+// Get all BlockTripIndex IDs that contain trips from the specified blocks
+func (q *Queries) GetBlockTripIndexIDsForBlocks(ctx context.Context, arg GetBlockTripIndexIDsForBlocksParams) ([]int64, error) {
+	query := getBlockTripIndexIDsForBlocks
+	var queryParams []interface{}
+	if len(arg.BlockIds) > 0 {
+		for _, v := range arg.BlockIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:block_ids*/?", strings.Repeat(",?", len(arg.BlockIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:block_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var block_trip_index_id int64
+		if err := rows.Scan(&block_trip_index_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_trip_index_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getBlockTripIndexIDsForRoute = `-- name: GetBlockTripIndexIDsForRoute :many
+SELECT DISTINCT bti.id
+FROM block_trip_index bti
+JOIN block_trip_entry bte ON bti.id = bte.block_trip_index_id
+JOIN trips t ON bte.trip_id = t.id
+WHERE t.route_id = ?1
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
+ORDER BY bti.id
+`
+
+type GetBlockTripIndexIDsForRouteParams struct {
+	RouteID    string
+	ServiceIds []string
+}
+
+// Get all block_trip_index IDs that contain trips for the specified route and service IDs
+func (q *Queries) GetBlockTripIndexIDsForRoute(ctx context.Context, arg GetBlockTripIndexIDsForRouteParams) ([]int64, error) {
+	query := getBlockTripIndexIDsForRoute
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.RouteID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getBlocksForBlockTripIndexIDs = `-- name: GetBlocksForBlockTripIndexIDs :many
+SELECT DISTINCT bte.block_id
+FROM block_trip_entry bte
+WHERE bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
+  AND bte.block_id IS NOT NULL
+`
+
+type GetBlocksForBlockTripIndexIDsParams struct {
+	IndexIds   []int64
+	ServiceIds []string
+}
+
+// Get all distinct block_ids that have trips in the specified BlockTripIndex IDs
+func (q *Queries) GetBlocksForBlockTripIndexIDs(ctx context.Context, arg GetBlocksForBlockTripIndexIDsParams) ([]sql.NullString, error) {
+	query := getBlocksForBlockTripIndexIDs
+	var queryParams []interface{}
+	if len(arg.IndexIds) > 0 {
+		for _, v := range arg.IndexIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", strings.Repeat(",?", len(arg.IndexIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var block_id sql.NullString
+		if err := rows.Scan(&block_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getCalendarByServiceID = `-- name: GetCalendarByServiceID :one
@@ -1424,6 +1795,61 @@ func (q *Queries) GetRoutesForStops(ctx context.Context, stopIds []string) ([]Ge
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRoutesInBlockTripIndices = `-- name: GetRoutesInBlockTripIndices :many
+SELECT DISTINCT t.route_id
+FROM trips t
+JOIN block_trip_entry bte ON t.id = bte.trip_id
+WHERE bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetRoutesInBlockTripIndicesParams struct {
+	IndexIds   []int64
+	ServiceIds []string
+}
+
+// Get all unique route IDs that have trips in the specified block_trip_index IDs
+func (q *Queries) GetRoutesInBlockTripIndices(ctx context.Context, arg GetRoutesInBlockTripIndicesParams) ([]string, error) {
+	query := getRoutesInBlockTripIndices
+	var queryParams []interface{}
+	if len(arg.IndexIds) > 0 {
+		for _, v := range arg.IndexIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", strings.Repeat(",?", len(arg.IndexIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var route_id string
+		if err := rows.Scan(&route_id); err != nil {
+			return nil, err
+		}
+		items = append(items, route_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -2585,27 +3011,49 @@ const getTripsByBlockIDOrdered = `-- name: GetTripsByBlockIDOrdered :many
 SELECT
     t.id,
     t.block_id,
-    MIN(st.departure_time) AS first_departure_time
+    t.service_id,
+    MIN(st.departure_time) AS first_departure_time,
+    MAX(st.arrival_time) AS last_arrival_time
 FROM
     trips t
     JOIN stop_times st ON st.trip_id = t.id
 WHERE
     t.block_id = ?
+    AND t.service_id IN (/*SLICE:service_ids*/?)
 GROUP BY
     t.id,
-    t.block_id
+    t.block_id,
+    t.service_id
 ORDER BY
     MIN(st.departure_time)
 `
 
+type GetTripsByBlockIDOrderedParams struct {
+	BlockID    sql.NullString
+	ServiceIds []string
+}
+
 type GetTripsByBlockIDOrderedRow struct {
 	ID                 string
 	BlockID            sql.NullString
+	ServiceID          string
 	FirstDepartureTime interface{}
+	LastArrivalTime    interface{}
 }
 
-func (q *Queries) GetTripsByBlockIDOrdered(ctx context.Context, blockID sql.NullString) ([]GetTripsByBlockIDOrderedRow, error) {
-	rows, err := q.query(ctx, q.getTripsByBlockIDOrderedStmt, getTripsByBlockIDOrdered, blockID)
+func (q *Queries) GetTripsByBlockIDOrdered(ctx context.Context, arg GetTripsByBlockIDOrderedParams) ([]GetTripsByBlockIDOrderedRow, error) {
+	query := getTripsByBlockIDOrdered
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.BlockID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
@@ -2613,7 +3061,113 @@ func (q *Queries) GetTripsByBlockIDOrdered(ctx context.Context, blockID sql.Null
 	var items []GetTripsByBlockIDOrderedRow
 	for rows.Next() {
 		var i GetTripsByBlockIDOrderedRow
-		if err := rows.Scan(&i.ID, &i.BlockID, &i.FirstDepartureTime); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.BlockID,
+			&i.ServiceID,
+			&i.FirstDepartureTime,
+			&i.LastArrivalTime,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTripsByBlockTripIndexIDs = `-- name: GetTripsByBlockTripIndexIDs :many
+SELECT DISTINCT
+    t.id, t.route_id, t.service_id, t.trip_headsign, t.trip_short_name,
+    t.direction_id, t.block_id, t.shape_id, t.wheelchair_accessible, t.bikes_allowed,
+    bte.block_trip_sequence
+FROM trips t
+JOIN block_trip_entry bte ON t.id = bte.trip_id
+WHERE bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
+  AND EXISTS (
+    -- Check if trip could be active: maxDeparture >= timeFrom AND minArrival <= timeTo
+    SELECT 1
+    FROM stop_times st
+    WHERE st.trip_id = t.id
+    GROUP BY st.trip_id
+    HAVING MAX(st.departure_time) >= ?3
+       AND MIN(st.arrival_time) <= ?4
+  )
+ORDER BY t.route_id, bte.block_trip_sequence, t.id
+`
+
+type GetTripsByBlockTripIndexIDsParams struct {
+	IndexIds   []int64
+	ServiceIds []string
+	FromTime   int64
+	ToTime     int64
+}
+
+type GetTripsByBlockTripIndexIDsRow struct {
+	ID                   string
+	RouteID              string
+	ServiceID            string
+	TripHeadsign         sql.NullString
+	TripShortName        sql.NullString
+	DirectionID          sql.NullInt64
+	BlockID              sql.NullString
+	ShapeID              sql.NullString
+	WheelchairAccessible sql.NullInt64
+	BikesAllowed         sql.NullInt64
+	BlockTripSequence    int64
+}
+
+// Get all trips that belong to the specified block_trip_index IDs within a time window
+// Matches Java's findBlockTripsInRange logic using binary search on maxDepartures and minArrivals
+// A trip is active if: maxDeparture >= timeFrom (could have started) AND minArrival <= timeTo (could still be active)
+func (q *Queries) GetTripsByBlockTripIndexIDs(ctx context.Context, arg GetTripsByBlockTripIndexIDsParams) ([]GetTripsByBlockTripIndexIDsRow, error) {
+	query := getTripsByBlockTripIndexIDs
+	var queryParams []interface{}
+	if len(arg.IndexIds) > 0 {
+		for _, v := range arg.IndexIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", strings.Repeat(",?", len(arg.IndexIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:index_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.FromTime)
+	queryParams = append(queryParams, arg.ToTime)
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTripsByBlockTripIndexIDsRow
+	for rows.Next() {
+		var i GetTripsByBlockTripIndexIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.ServiceID,
+			&i.TripHeadsign,
+			&i.TripShortName,
+			&i.DirectionID,
+			&i.BlockID,
+			&i.ShapeID,
+			&i.WheelchairAccessible,
+			&i.BikesAllowed,
+			&i.BlockTripSequence,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2780,6 +3334,53 @@ func (q *Queries) GetTripsForRouteInActiveServiceIDs(ctx context.Context, arg Ge
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTripsInBlock = `-- name: GetTripsInBlock :many
+SELECT id
+FROM trips
+WHERE block_id = ?1
+  AND service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetTripsInBlockParams struct {
+	BlockID    sql.NullString
+	ServiceIds []string
+}
+
+// Get all trip IDs in a specific block for the given service IDs
+func (q *Queries) GetTripsInBlock(ctx context.Context, arg GetTripsInBlockParams) ([]string, error) {
+	query := getTripsInBlock
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.BlockID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

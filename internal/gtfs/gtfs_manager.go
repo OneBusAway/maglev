@@ -39,6 +39,7 @@ type Manager struct {
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
 	stopSpatialIndex               *rtree.RTree
+	blockLayoverIndices            map[string][]*BlockLayoverIndex
 }
 
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
@@ -125,6 +126,12 @@ func (manager *Manager) GetStops() []gtfs.Stop {
 	manager.staticMutex.RLock()
 	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData.Stops
+}
+
+func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockLayoverIndex {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return getBlockLayoverIndicesForRoute(manager.blockLayoverIndices, routeID)
 }
 
 func (manager *Manager) FindAgency(id string) *gtfs.Agency {
@@ -390,6 +397,12 @@ func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {
 		return &manager.realTimeTrips[index], nil
 	}
 	return nil, fmt.Errorf("trip with ID %s not found", tripID)
+}
+
+func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+	return manager.realTimeTrips
 }
 
 func (manager *Manager) PrintStatistics() {

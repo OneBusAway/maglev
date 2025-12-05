@@ -368,12 +368,27 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		}
 	}
 
+	// Build BlockTripIndex after all trips and stop_times are inserted
+	logging.LogOperation(logger, "building_block_trip_index")
+	err = c.buildBlockTripIndex(ctx, staticData)
+	if err != nil {
+		logging.LogError(logger, "Unable to build block trip index", err)
+		return fmt.Errorf("unable to build block trip index: %w", err)
+	}
+	logging.LogOperation(logger, "block_trip_index_built")
+
 	return nil
 }
 
 // clearAllGTFSData clears all GTFS data from the database in the correct order to respect foreign key constraints
 func (c *Client) clearAllGTFSData(ctx context.Context) error {
 	// Delete in reverse order of dependencies to avoid foreign key constraint violations
+	if err := c.Queries.ClearBlockTripEntries(ctx); err != nil {
+		return fmt.Errorf("error clearing block_trip_entry: %w", err)
+	}
+	if err := c.Queries.ClearBlockTripIndices(ctx); err != nil {
+		return fmt.Errorf("error clearing block_trip_index: %w", err)
+	}
 	if err := c.Queries.ClearStopTimes(ctx); err != nil {
 		return fmt.Errorf("error clearing stop_times: %w", err)
 	}
@@ -918,4 +933,109 @@ func configureConnectionPool(db *sql.DB, config Config) {
 
 	// Set maximum lifetime of connections to 5 minutes
 	db.SetConnMaxLifetime(5 * time.Minute)
+}
+
+// blockTripIndexKey represents the grouping key for BlockTripIndex
+type blockTripIndexKey struct {
+	serviceIDs      string // comma-separated sorted service IDs
+	stopSequenceKey string // pipe-separated ordered stop IDs
+}
+
+// buildBlockTripIndex creates BlockTripIndex entries by grouping trips with identical
+// service IDs and stop sequences.
+func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Static) error {
+	logger := slog.Default().With(slog.String("component", "block_trip_index_builder"))
+
+	// Build terminal layover location for each trip
+	type tripInfo struct {
+		tripID        string
+		routeID       string
+		serviceID     string
+		blockID       string
+		layoverStopID string
+	}
+
+	tripMap := make(map[string]*tripInfo)
+
+	for _, trip := range staticData.Trips {
+		if len(trip.StopTimes) == 0 {
+			continue
+		}
+
+		// Get the FIRST stop - this is the layover location where the trip starts
+		firstStop := trip.StopTimes[0].Stop.Id
+
+		tripMap[trip.ID] = &tripInfo{
+			tripID:        trip.ID,
+			routeID:       trip.Route.Id,
+			serviceID:     trip.Service.Id,
+			blockID:       trip.BlockID,
+			layoverStopID: firstStop,
+		}
+	}
+
+	// Group trips by (serviceID, layoverStopID)
+	indexGroups := make(map[blockTripIndexKey][]*tripInfo)
+
+	for _, info := range tripMap {
+		key := blockTripIndexKey{
+			serviceIDs:      info.serviceID,
+			stopSequenceKey: info.layoverStopID, // Use first stop (layover) as the key
+		}
+		indexGroups[key] = append(indexGroups[key], info)
+	}
+
+	logging.LogOperation(logger, "grouped_trips_into_indices",
+		slog.Int("total_trips", len(tripMap)),
+		slog.Int("unique_indices", len(indexGroups)))
+
+	// Create block_trip_index and block_trip_entry records
+	// BlockLayoverIndex groups trips by first stop (layover location where trips begin)
+	createdAt := time.Now().Unix()
+
+	for key, trips := range indexGroups {
+		// Create unique index key (service ID + layover stop)
+		indexKey := fmt.Sprintf("%s|%s", key.serviceIDs, key.stopSequenceKey)
+
+		indexID, err := c.Queries.CreateBlockTripIndex(ctx, CreateBlockTripIndexParams{
+			IndexKey:        indexKey,
+			ServiceIds:      key.serviceIDs,
+			StopSequenceKey: key.stopSequenceKey,
+			CreatedAt:       createdAt,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create block trip index: %w", err)
+		} // Sort trips within the group by block_id and then trip_id for deterministic ordering
+		sort.Slice(trips, func(i, j int) bool {
+			if trips[i].blockID != trips[j].blockID {
+				return trips[i].blockID < trips[j].blockID
+			}
+			return trips[i].tripID < trips[j].tripID
+		})
+
+		// Insert block_trip_entry records for each trip in this index
+		for sequence, trip := range trips {
+			err = c.Queries.CreateBlockTripEntry(ctx, CreateBlockTripEntryParams{
+				BlockTripIndexID:  indexID,
+				TripID:            trip.tripID,
+				BlockID:           toNullString(trip.blockID),
+				ServiceID:         trip.serviceID,
+				BlockTripSequence: int64(sequence),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create block trip entry: %w", err)
+			}
+		}
+	}
+
+	totalEntries := 0
+	for _, trips := range indexGroups {
+		totalEntries += len(trips)
+	}
+
+	logging.LogOperation(logger, "block_trip_index_creation_complete",
+		slog.Int("indices_created", len(indexGroups)),
+		slog.Int("entries_created", totalEntries))
+
+	return nil
 }
