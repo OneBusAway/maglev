@@ -317,26 +317,41 @@ ORDER BY s.shape_pt_sequence;
 
 -- name: GetActiveServiceIDsForDate :many
 WITH formatted_date AS (
-    SELECT STRFTIME('%w', SUBSTR(@target_date, 1, 4) || '-' || SUBSTR(@target_date, 5, 2) || '-' || SUBSTR(@target_date, 7, 2)) AS weekday
+    SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
+),
+base_services AS (
+    SELECT c.id AS service_id
+    FROM calendar c, formatted_date fd
+    WHERE c.start_date <= ?1
+      AND c.end_date >= ?1
+      AND (
+        (fd.weekday = '0' AND c.sunday = 1) OR
+        (fd.weekday = '1' AND c.monday = 1) OR
+        (fd.weekday = '2' AND c.tuesday = 1) OR
+        (fd.weekday = '3' AND c.wednesday = 1) OR
+        (fd.weekday = '4' AND c.thursday = 1) OR
+        (fd.weekday = '5' AND c.friday = 1) OR
+        (fd.weekday = '6' AND c.saturday = 1)
+      )
+),
+removed_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 2
+),
+added_services AS (
+    SELECT service_id
+    FROM calendar_dates
+    WHERE date = ?1
+      AND exception_type = 1
 )
-SELECT DISTINCT c.id AS service_id
-FROM calendar c, formatted_date fd
-WHERE c.start_date <= @target_date
-  AND c.end_date >= @target_date
-  AND (
-    (fd.weekday = '0' AND c.sunday = 1) OR
-    (fd.weekday = '1' AND c.monday = 1) OR
-    (fd.weekday = '2' AND c.tuesday = 1) OR
-    (fd.weekday = '3' AND c.wednesday = 1) OR
-    (fd.weekday = '4' AND c.thursday = 1) OR
-    (fd.weekday = '5' AND c.friday = 1) OR
-    (fd.weekday = '6' AND c.saturday = 1)
-    )
-UNION
 SELECT DISTINCT service_id
-FROM calendar_dates
-WHERE date = @target_date
-  AND exception_type = 1;
+FROM base_services
+WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+UNION
+SELECT DISTINCT service_id FROM added_services;
+
 
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
@@ -586,15 +601,19 @@ ORDER BY
 SELECT
     t.id,
     t.block_id,
-    MIN(st.departure_time) AS first_departure_time
+    t.service_id,
+    MIN(st.departure_time) AS first_departure_time,
+    MAX(st.arrival_time) AS last_arrival_time
 FROM
     trips t
     JOIN stop_times st ON st.trip_id = t.id
 WHERE
     t.block_id = ?
+    AND t.service_id IN (sqlc.slice('service_ids'))
 GROUP BY
     t.id,
-    t.block_id
+    t.block_id,
+    t.service_id
 ORDER BY
     MIN(st.departure_time);
 
@@ -772,3 +791,140 @@ SELECT lat, lon, shape_pt_sequence, shape_dist_traveled
 FROM shapes
 WHERE shape_id = ?
 ORDER BY shape_pt_sequence;
+
+
+
+-- BlockTripIndex queries
+
+-- name: CreateBlockTripIndex :one
+INSERT INTO block_trip_index (
+    index_key,
+    service_ids,
+    stop_sequence_key,
+    created_at
+)
+VALUES
+    (?, ?, ?, ?)
+RETURNING id;
+
+-- name: CreateBlockTripEntry :exec
+INSERT INTO block_trip_entry (
+    block_trip_index_id,
+    trip_id,
+    block_id,
+    service_id,
+    block_trip_sequence
+)
+VALUES
+    (?, ?, ?, ?, ?);
+
+-- name: ClearBlockTripEntries :exec
+DELETE FROM block_trip_entry;
+
+-- name: ClearBlockTripIndices :exec
+DELETE FROM block_trip_index;
+
+-- name: GetBlockTripIndexIDsForRoute :many
+-- Get all block_trip_index IDs that contain trips for the specified route and service IDs
+SELECT DISTINCT bti.id
+FROM block_trip_index bti
+JOIN block_trip_entry bte ON bti.id = bte.block_trip_index_id
+JOIN trips t ON bte.trip_id = t.id
+WHERE t.route_id = sqlc.arg('route_id')
+  AND bte.service_id IN (sqlc.slice('service_ids'))
+ORDER BY bti.id;
+
+-- name: GetTripsByBlockTripIndexIDs :many
+-- Get all trips that belong to the specified block_trip_index IDs within a time window
+-- Matches Java's findBlockTripsInRange logic using binary search on maxDepartures and minArrivals
+-- A trip is active if: maxDeparture >= timeFrom (could have started) AND minArrival <= timeTo (could still be active)
+SELECT DISTINCT
+    t.id, t.route_id, t.service_id, t.trip_headsign, t.trip_short_name,
+    t.direction_id, t.block_id, t.shape_id, t.wheelchair_accessible, t.bikes_allowed,
+    bte.block_trip_sequence
+FROM trips t
+JOIN block_trip_entry bte ON t.id = bte.trip_id
+WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'))
+  AND EXISTS (
+    -- Check if trip could be active: maxDeparture >= timeFrom AND minArrival <= timeTo
+    SELECT 1
+    FROM stop_times st
+    WHERE st.trip_id = t.id
+    GROUP BY st.trip_id
+    HAVING MAX(st.departure_time) >= sqlc.arg('from_time')
+       AND MIN(st.arrival_time) <= sqlc.arg('to_time')
+  )
+ORDER BY t.route_id, bte.block_trip_sequence, t.id;
+
+-- name: GetActiveTripForRouteAtTime :one
+-- Find the ONE trip from a specific route that is active at the given time
+-- A trip is active if current_time falls within its stop times
+SELECT
+    t.id, t.route_id, t.service_id, t.trip_headsign, t.trip_short_name,
+    t.direction_id, t.block_id, t.shape_id, t.wheelchair_accessible, t.bikes_allowed
+FROM trips t
+JOIN block_trip_entry bte ON t.id = bte.trip_id
+JOIN stop_times st_first ON t.id = st_first.trip_id AND st_first.stop_sequence = (
+    SELECT MIN(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
+    SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND t.route_id = sqlc.arg('route_id')
+  AND bte.service_id IN (sqlc.slice('service_ids'))
+  AND st_first.departure_time <= sqlc.arg('current_time')
+  AND st_last.arrival_time >= sqlc.arg('from_time')
+ORDER BY st_first.departure_time DESC
+LIMIT 1;
+
+-- name: GetBlockTripIndexIDsForBlocks :many
+-- Get all BlockTripIndex IDs that contain trips from the specified blocks
+SELECT DISTINCT bte.block_trip_index_id
+FROM block_trip_entry bte
+WHERE bte.block_id IN (sqlc.slice('block_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'))
+ORDER BY bte.block_trip_index_id;
+
+-- name: GetBlocksForBlockTripIndexIDs :many
+-- Get all distinct block_ids that have trips in the specified BlockTripIndex IDs
+SELECT DISTINCT bte.block_id
+FROM block_trip_entry bte
+WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'))
+  AND bte.block_id IS NOT NULL;
+
+-- name: GetActiveTripInBlockAtTime :one
+-- Find the currently active trip in a specific block at the given time
+-- Returns the trip whose stop times contain the current time (with late/early windows)
+-- Orders by departure time ASC to get the EARLIEST matching trip (the one currently in progress)
+SELECT t.id
+FROM trips t
+JOIN stop_times st_first ON t.id = st_first.trip_id AND st_first.stop_sequence = (
+        SELECT MIN(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
+        SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = t.id
+)
+WHERE t.block_id = :block_id
+    AND t.service_id IN (sqlc.slice('service_ids'))
+    AND st_first.departure_time <= :current_time
+    AND st_last.arrival_time >= :current_time
+ORDER BY st_first.departure_time ASC
+LIMIT 1;
+
+-- name: GetTripsInBlock :many
+-- Get all trip IDs in a specific block for the given service IDs
+SELECT id
+FROM trips
+WHERE block_id = sqlc.arg('block_id')
+  AND service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetRoutesInBlockTripIndices :many
+-- Get all unique route IDs that have trips in the specified block_trip_index IDs
+SELECT DISTINCT t.route_id
+FROM trips t
+JOIN block_trip_entry bte ON t.id = bte.trip_id
+WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'));
