@@ -13,8 +13,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/tidwall/rtree"
+	_ "modernc.org/sqlite" // Pure Go SQLite driver with FTS5 support
 )
 
 const NoRadiusLimit = -1

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
+	_ "modernc.org/sqlite" // Pure Go SQLite driver with FTS5 support
 )
 
 func TestParseAPIKeys(t *testing.T) {
@@ -445,6 +445,7 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
 		// Convert to absolute path to avoid path traversal validation issues
 		absTestDataPath, err := filepath.Abs(testDataPath)
 		require.NoError(t, err)
+		absTestDataPath = filepath.ToSlash(absTestDataPath)
 
 		// Create a test config file that uses the test data
 		testConfigPath := filepath.Join("..", "..", "testdata", "config_test_build.json")

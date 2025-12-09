@@ -6,9 +6,9 @@ import (
 	"context"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
+	_ "modernc.org/sqlite" // Pure Go SQLite driver with FTS5 support
 )
 
 // createMinimalGTFSWithoutShapes creates a minimal GTFS zip file that has trips WITHOUT shape_id
