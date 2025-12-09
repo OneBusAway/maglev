@@ -66,8 +66,8 @@ github.com/ncruces/go-strftime v0.1.9 h1:bY0MQC28UADQmHmaF5dgpLmImcShSi2kHU9XLdh
 github.com/ncruces/go-strftime v0.1.9/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/patrickbr/gtfsparser v0.0.0-20250811204933-790d4e1c69c1 h1:ei2LAhpj7frAPBzbjqTA9ICXi7H2KhBXlYzO0WwP8hI=
 github.com/patrickbr/gtfsparser v0.0.0-20250811204933-790d4e1c69c1/go.mod h1:WsjXLsxSQc+KfBJ7APQhk3yz+4DztzMYARQ+EfxKYSQ=
-github.com/patrickbr/gtfstidy v0.0.0-20251119090422-df802af33868 h1:5RbZdJNYJbywbCwaQOzHUckzJ+F0w54imKZhkL0eUB0=
-github.com/patrickbr/gtfstidy v0.0.0-20251119090422-df802af33868/go.mod h1:qNytqg0F2xv/NCYHECvfjr/QPioK94q2rhPTC7NI4KA=
+github.com/patrickbr/gtfstidy v0.0.0-20251202081335-bd68452e3a13 h1:gejNUgrUSpFd/Cfsvr0WA4Pw1y8KeYJ6r+8dIaN0Gk4=
+github.com/patrickbr/gtfstidy v0.0.0-20251202081335-bd68452e3a13/go.mod h1:qNytqg0F2xv/NCYHECvfjr/QPioK94q2rhPTC7NI4KA=
 github.com/patrickbr/gtfswriter v0.0.0-20240919073412-98e3602c6cd8 h1:xEQhft28izewbL3fnF10Yj8zSNu2r+lW157GQq+eaaY=
 github.com/patrickbr/gtfswriter v0.0.0-20240919073412-98e3602c6cd8/go.mod h1:zYAfZRXtDhc4Tq+LYrvyksefggNiViL2pKMRUrGvUbE=
 github.com/paulmach/go.geojson v1.5.0 h1:7mhpMK89SQdHFcEGomT7/LuJhwhEgfmpWYVlVmLEdQw=

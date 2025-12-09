@@ -49,6 +49,30 @@ CREATE TABLE
     );
 
 -- migrate
+CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
+    name,
+    code,
+    desc,
+    tokenize = 'porter'
+);
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS stops_fts_insert_trigger AFTER INSERT ON stops BEGIN
+  INSERT INTO stops_fts(rowid, name, code, desc) VALUES (new.rowid, new.name, new.code, new.desc);
+END;
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS stops_fts_delete_trigger AFTER DELETE ON stops BEGIN
+  INSERT INTO stops_fts(stops_fts, rowid, name, code, desc) VALUES('delete', old.rowid, old.name, old.code, old.desc);
+END;
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS stops_fts_update_trigger AFTER UPDATE ON stops BEGIN
+  INSERT INTO stops_fts(stops_fts, rowid, name, code, desc) VALUES('delete', old.rowid, old.name, old.code, old.desc);
+  INSERT INTO stops_fts(rowid, name, code, desc) VALUES (new.rowid, new.name, new.code, new.desc);
+END;
+
+-- migrate
 CREATE VIRTUAL TABLE IF NOT EXISTS stops_rtree USING rtree (
     id, -- Integer primary key for the R*Tree
     min_lat,
