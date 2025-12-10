@@ -3578,13 +3578,13 @@ const searchStops = `-- name: SearchStops :many
 SELECT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
 FROM stops s
 JOIN stops_fts ON s.rowid = stops_fts.rowid
-WHERE stops_fts('fts5') MATCH ?2
+WHERE stops_fts MATCH ?2
 ORDER BY stops_fts.rank
 LIMIT ?
 `
 
 type SearchStopsParams struct {
-	SearchQuery interface{}
+	SearchQuery string
 	Limit       int64
 }
 

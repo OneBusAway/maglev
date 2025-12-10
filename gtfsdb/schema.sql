@@ -53,6 +53,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
     name,
     code,
     desc,
+    stops_fts, 
+    rank,      
     tokenize = 'porter'
 );
 
