@@ -31,6 +31,78 @@ CREATE TABLE
     );
 
 -- migrate
+CREATE VIRTUAL TABLE IF NOT EXISTS routes_fts USING fts5 (
+    id UNINDEXED,
+    agency_id UNINDEXED,
+    short_name,
+    long_name,
+    desc,
+    content = 'routes',
+    content_rowid = 'rowid'
+);
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS routes_fts_ai AFTER INSERT ON routes BEGIN
+INSERT INTO
+    routes_fts(rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        new.rowid,
+        new.id,
+        new.agency_id,
+        coalesce(new.short_name, ''),
+        coalesce(new.long_name, ''),
+        coalesce(new.desc, '')
+    );
+END;
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS routes_fts_ad AFTER DELETE ON routes BEGIN
+INSERT INTO
+    routes_fts(routes_fts, rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        'delete',
+        old.rowid,
+        old.id,
+        old.agency_id,
+        coalesce(old.short_name, ''),
+        coalesce(old.long_name, ''),
+        coalesce(old.desc, '')
+    );
+END;
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS routes_fts_au AFTER UPDATE ON routes BEGIN
+INSERT INTO
+    routes_fts(routes_fts, rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        'delete',
+        old.rowid,
+        old.id,
+        old.agency_id,
+        coalesce(old.short_name, ''),
+        coalesce(old.long_name, ''),
+        coalesce(old.desc, '')
+    );
+INSERT INTO
+    routes_fts(rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        new.rowid,
+        new.id,
+        new.agency_id,
+        coalesce(new.short_name, ''),
+        coalesce(new.long_name, ''),
+        coalesce(new.desc, '')
+    );
+END;
+
+-- migrate
+INSERT INTO routes_fts(routes_fts) VALUES ('rebuild');
+
+-- migrate
 CREATE TABLE
     IF NOT EXISTS stops (
         id TEXT PRIMARY KEY,

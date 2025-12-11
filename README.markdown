@@ -119,6 +119,18 @@ All basic commands are managed by our Makefile:
 
 `make watch` - Build and run the app with Air for live reloading during development (automatically rebuilds and restarts on code changes).
 
+### FTS5 (SQLite) builds and tests
+
+The server uses `github.com/mattn/go-sqlite3` and SQLite FTS5 for route search. Build and test with the FTS5 tag enabled:
+
+```bash
+CGO_ENABLED=1 go test -tags "sqlite_fts5" ./...
+# or
+CGO_ENABLED=1 go build -tags "sqlite_fts5" ./...
+```
+
+Ensure you have a working C toolchain when CGO is enabled.
+
 ## Directory Structure
 
 * `bin` contains compiled application binaries, ready for deployment to a production server.
