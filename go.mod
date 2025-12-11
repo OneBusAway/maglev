@@ -6,11 +6,11 @@ require (
 	github.com/OneBusAway/go-gtfs v1.1.0
 	github.com/davecgh/go-spew v1.1.1
 	github.com/klauspost/compress v1.18.0
+	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/stretchr/testify v1.10.0
 	github.com/tidwall/rtree v1.10.0
 	github.com/twpayne/go-polyline v1.1.1
 	golang.org/x/time v0.12.0
-	modernc.org/sqlite v1.40.1
 )
 
 require (
@@ -31,6 +31,10 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/patrickbr/gtfsparser v0.0.0-20250811204933-790d4e1c69c1 // indirect
+	github.com/patrickbr/gtfstidy v0.0.0-20251119090422-df802af33868 // indirect
+	github.com/patrickbr/gtfswriter v0.0.0-20240919073412-98e3602c6cd8 // indirect
+	github.com/paulmach/go.geojson v1.5.0 // indirect
 	github.com/pganalyze/pg_query_go/v6 v6.1.0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20240311024730-e056997136bb // indirect
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86 // indirect
@@ -45,6 +49,7 @@ require (
 	github.com/stoewer/go-strcase v1.2.0 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/tidwall/geoindex v1.7.0 // indirect
+	github.com/valyala/fastjson v1.6.4 // indirect
 	github.com/wasilibs/go-pgquery v0.0.0-20250409022910-10ac41983c07 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
@@ -54,7 +59,7 @@ require (
 	golang.org/x/exp v0.0.0-20250711185948-6ae5c78190dc // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250106144421-5f5ef82da422 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250115164207-1a7da9e5054f // indirect
@@ -62,9 +67,10 @@ require (
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.66.10 // indirect
+	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.37.0 // indirect
 )
 
 tool github.com/sqlc-dev/sqlc/cmd/sqlc

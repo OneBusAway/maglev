@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
-	_ "modernc.org/sqlite" // Pure Go SQLite driver with FTS5 support
 )
 
 func TestSQLitePerformancePragmasApplied(t *testing.T) {
@@ -218,7 +218,7 @@ func TestConfigureConnectionPoolWithDifferentConfigs(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			db, err := sql.Open("sqlite", ":memory:")
+			db, err := sql.Open("sqlite3", ":memory:")
 			require.NoError(t, err)
 			defer func() { _ = db.Close() }()
 

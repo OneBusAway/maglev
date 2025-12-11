@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
-	_ "modernc.org/sqlite" // Pure Go SQLite driver with FTS5 support
 )
 
 func TestDatabaseConnectionPoolSettings(t *testing.T) {
@@ -103,7 +103,7 @@ func TestConnectionLifetime(t *testing.T) {
 
 func TestConnectionPoolConfiguration(t *testing.T) {
 	// Test the specific configuration values for in-memory databases
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "Should open database")
 	defer func() { _ = db.Close() }()
 

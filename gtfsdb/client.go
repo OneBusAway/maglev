@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	_ "modernc.org/sqlite" // Pure Go SQLite driver with FTS5 support
+	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 )
 
 // Client is the main entry point for the library

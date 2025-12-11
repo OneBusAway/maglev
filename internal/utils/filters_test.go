@@ -11,7 +11,7 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
 
-	_ "modernc.org/sqlite" // Pure Go SQLite driver with FTS5 support
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestFilterAgencies(t *testing.T) {
