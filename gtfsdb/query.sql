@@ -930,9 +930,9 @@ WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'));
 
 -- name: SearchStops :many
-SELECT s.*
+SELECT
+*
 FROM stops s
 JOIN stops_fts ON s.rowid = stops_fts.rowid
 WHERE stops_fts MATCH sqlc.arg(search_query)
-ORDER BY stops_fts.rank
-LIMIT ?;
+LIMIT sqlc.arg(limit);

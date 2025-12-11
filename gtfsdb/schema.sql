@@ -49,29 +49,40 @@ CREATE TABLE
     );
 
 -- migrate
+-- Full-text search virtual table for stops
 CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
-    name,
-    code,
-    desc,
-    stops_fts, 
-    rank,      
-    tokenize = 'porter'
+    stop_id UNINDEXED,
+    stop_name,
+    content='stops',
+    content_rowid='rowid',
+    tokenize='porter unicode61'
 );
 
 -- migrate
-CREATE TRIGGER IF NOT EXISTS stops_fts_insert_trigger AFTER INSERT ON stops BEGIN
-  INSERT INTO stops_fts(rowid, name, code, desc) VALUES (new.rowid, new.name, new.code, new.desc);
+-- Trigger: Keep FTS in sync when inserting new stops
+CREATE TRIGGER IF NOT EXISTS stops_fts_ai
+AFTER INSERT ON stops
+BEGIN
+    INSERT INTO stops_fts(rowid, stop_id, stop_name)
+    VALUES (new.rowid, new.id, new.name);
 END;
 
 -- migrate
-CREATE TRIGGER IF NOT EXISTS stops_fts_delete_trigger AFTER DELETE ON stops BEGIN
-  INSERT INTO stops_fts(stops_fts, rowid, name, code, desc) VALUES('delete', old.rowid, old.name, old.code, old.desc);
+-- Trigger: Keep FTS in sync when deleting stops
+CREATE TRIGGER IF NOT EXISTS stops_fts_ad
+AFTER DELETE ON stops
+BEGIN
+    DELETE FROM stops_fts WHERE rowid = old.rowid;
 END;
 
 -- migrate
-CREATE TRIGGER IF NOT EXISTS stops_fts_update_trigger AFTER UPDATE ON stops BEGIN
-  INSERT INTO stops_fts(stops_fts, rowid, name, code, desc) VALUES('delete', old.rowid, old.name, old.code, old.desc);
-  INSERT INTO stops_fts(rowid, name, code, desc) VALUES (new.rowid, new.name, new.code, new.desc);
+-- Trigger: Keep FTS in sync when updating stops
+CREATE TRIGGER IF NOT EXISTS stops_fts_au
+AFTER UPDATE ON stops
+BEGIN
+    DELETE FROM stops_fts WHERE rowid = old.rowid;
+    INSERT INTO stops_fts(rowid, stop_id, stop_name)
+    VALUES (new.rowid, new.id, new.name);
 END;
 
 -- migrate
