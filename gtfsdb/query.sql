@@ -931,8 +931,8 @@ WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
 
 -- name: SearchStops :many
 SELECT
-*
+    s.*
 FROM stops s
 JOIN stops_fts ON s.rowid = stops_fts.rowid
-WHERE stops_fts MATCH sqlc.arg(search_query)
+WHERE stops_fts.stop_name MATCH sqlc.arg(search_query)
 LIMIT sqlc.arg(limit);

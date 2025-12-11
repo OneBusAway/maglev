@@ -50,7 +50,7 @@ CREATE TABLE
 
 -- migrate
 -- Full-text search virtual table for stops
-CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
+CREATE VIRTUAL TABLE stops_fts USING fts5(  
     stop_id UNINDEXED,
     stop_name,
     content='stops',

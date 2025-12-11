@@ -3575,12 +3575,12 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 }
 
 const searchStops = `-- name: SearchStops :many
-SELECT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
+SELECT
+    s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
 FROM stops s
 JOIN stops_fts ON s.rowid = stops_fts.rowid
-WHERE stops_fts MATCH ?2
-ORDER BY stops_fts.rank
-LIMIT ?
+WHERE stops_fts.stop_name MATCH ?1
+LIMIT ?2
 `
 
 type SearchStopsParams struct {

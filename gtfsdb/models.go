@@ -115,11 +115,8 @@ type StopTime struct {
 }
 
 type StopsFt struct {
-	Name     string
-	Code     string
-	Desc     string
-	StopsFts string
-	Rank     string
+	StopID   string
+	StopName string
 }
 
 type StopsRtreeNode struct {
