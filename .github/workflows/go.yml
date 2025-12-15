@@ -2,7 +2,7 @@ name: Go CI
 
 on:
   push:
-    branches: ["**"] # For testing 
+    branches: [main]
   pull_request:
 
 jobs:
