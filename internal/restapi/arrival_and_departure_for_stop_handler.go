@@ -305,7 +305,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		"",        // predictedOccupancy
 		"",        // historicalOccupancy
 		tripStatus,
-		[]string{},
+		api.GetSituationIDsForTrip(tripID),
 	)
 
 	references := models.NewEmptyReferences()
