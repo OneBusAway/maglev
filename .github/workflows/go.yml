@@ -2,7 +2,7 @@ name: Go CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"] # For testing 
   pull_request:
 
 jobs:
@@ -29,11 +29,14 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Set up Go ${{ matrix.os }}
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
