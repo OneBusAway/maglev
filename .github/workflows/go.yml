@@ -49,7 +49,9 @@ jobs:
         run: go mod verify
 
       - name: Run tests
-        run: go test -v -coverprofile=profile.cov ./...
+        shell: bash
+        run: |
+          go test -v -coverprofile=profile.cov ./...
 
 # Disabling coverage reporting for now. Re-enable once the project is made public.
 #      - uses: shogo82148/actions-goveralls@v1
