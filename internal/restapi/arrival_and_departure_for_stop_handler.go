@@ -308,6 +308,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		api.GetSituationIDsForTrip(tripID),
 	)
 
+	situationIDs := api.GetSituationIDsForTrip(tripID)
+
 	references := models.NewEmptyReferences()
 
 	references.Agencies = append(references.Agencies, models.NewAgencyReference(
@@ -437,6 +439,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			route.ShortName.String,
 		)
 		references.Routes = append(references.Routes, routeRef)
+	}
+
+	if len(situationIDs) > 0 {
+		alerts := api.GtfsManager.GetAlertsForTrip(tripID)
+		if len(alerts) > 0 {
+			situations := api.BuildSituationReferences(alerts, agencyID)
+			for _, situation := range situations {
+				references.Situations = append(references.Situations, situation)
+			}
+		}
 	}
 
 	response := models.NewEntryResponse(arrival, references)
