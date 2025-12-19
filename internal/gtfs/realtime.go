@@ -76,15 +76,15 @@ func (manager *Manager) GetAlertsForTrip(tripID string) []gtfs.Alert {
 
 	var routeID string
 	var agencyID string
-	trip, err := manager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
-	if err != nil {
-		return nil
-	}
-
-	routeID = trip.RouteID
-	route, err := manager.GtfsDB.Queries.GetRoute(context.Background(), routeID)
-	if err == nil {
-		agencyID = route.AgencyID
+	if manager.GtfsDB != nil {
+		trip, err := manager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+		if err == nil {
+			routeID = trip.RouteID
+			route, err := manager.GtfsDB.Queries.GetRoute(context.Background(), routeID)
+			if err == nil {
+				agencyID = route.AgencyID
+			}
+		}
 	}
 
 	alertMap := make(map[string]gtfs.Alert)
