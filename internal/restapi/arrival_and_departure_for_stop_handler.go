@@ -255,20 +255,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 
 		if vehicle != nil && vehicle.Position != nil {
-			// Calculate remaining distance along the trip shape to this stop
-			if d := api.getRemainingDistanceToStop(ctx, tripID, stopCode, vehicle); d != nil {
-				distanceFromStop = *d
-			} else {
-				distanceFromStop = 0
-			}
-			numberOfStopsAwayPtr := getNumberOfStopsAway(int(targetStopTime.StopSequence), vehicle)
+			distanceFromStop = api.getBlockDistanceToStop(ctx, tripID, stopCode, vehicle, serviceDate)
 
+			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate)
 			if numberOfStopsAwayPtr != nil {
 				numberOfStopsAway = *numberOfStopsAwayPtr
 			} else {
 				numberOfStopsAway = -1
 			}
-
 		}
 	}
 
@@ -519,46 +513,22 @@ func (api *RestAPI) getPredictedTimes(
 	return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli()
 }
 
-// TODO: Distance sometimes outputs negative values even when the vehicle has not passed the stop.
-func (api *RestAPI) getRemainingDistanceToStop(ctx context.Context, tripID string, stopID string, vehicle *gtfs.Vehicle) *float64 {
-	if vehicle == nil || vehicle.Position == nil || vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
-		return nil
-	}
+// TODO: Improve distance calculation consistency between Java and Go.
 
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
-	if err != nil || len(shapeRows) < 2 {
-		stop, e := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if e != nil {
-			return nil
-		}
-		distance := utils.Distance(float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude), stop.Lat, stop.Lon)
-		return &distance
-	}
-
-	shapePoints := make([]gtfs.ShapePoint, len(shapeRows))
-	for i, sp := range shapeRows {
-		shapePoints[i] = gtfs.ShapePoint{Latitude: sp.Lat, Longitude: sp.Lon}
-	}
-
-	vehicleAlong := getDistanceAlongShape(float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude), shapePoints)
-
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil {
-		return nil
-	}
-	stopAlong := getDistanceAlongShape(stop.Lat, stop.Lon, shapePoints)
-
-	remaining := stopAlong - vehicleAlong
-
-	return &remaining
-}
-
-func getNumberOfStopsAway(targetStopSequence int, vehicle *gtfs.Vehicle) *int {
+func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
 	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
 	if currentVehicleStopSequence == nil {
 		return nil
 	}
 
-	numberOfStopsAway := targetStopSequence - *currentVehicleStopSequence - 1
+	activeTripID := GetVehicleActiveTripID(vehicle)
+	if activeTripID == "" {
+		activeTripID = targetTripID
+	}
+
+	targetGlobalSeq := api.getBlockSequenceForStopSequence(ctx, targetTripID, targetStopSequence, serviceDate)
+	vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
+
+	numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq - 1
 	return &numberOfStopsAway
 }
