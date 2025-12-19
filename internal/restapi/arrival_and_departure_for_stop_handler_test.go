@@ -517,39 +517,11 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testin
 	assert.Equal(t, http.StatusNotFound, model2.Code)
 }
 
-func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
-	api := createTestApi(t)
-
-	scheduledArrival := time.Now()
-	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
-
-	// When there's no real-time data, should return 0, 0
-	predArrival, predDeparture := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", scheduledArrival, scheduledDeparture)
-
-	assert.Equal(t, int64(0), predArrival)
-	assert.Equal(t, int64(0), predDeparture)
-}
-
-func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
-	api := createTestApi(t)
-
-	// Test the case where scheduled arrival == scheduled departure
-	scheduledTime := time.Now()
-
-	// Even without real-time data, test the logic path
-	// This tests that the function handles the case correctly
-	predArrival, predDeparture := api.getPredictedTimes("test_trip", "test_stop", scheduledTime, scheduledTime)
-
-	// Without real-time data, returns 0,0
-	assert.Equal(t, int64(0), predArrival)
-	assert.Equal(t, int64(0), predDeparture)
-}
-
 func TestGetRemainingDistanceToStop_NilVehicle(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
 
-	result := api.getRemainingDistanceToStop(ctx, "test_trip", "test_stop", nil)
+	result := api.getRemainingDistanceToStop(ctx, "test_trip", "test_stop", nil, time.Now())
 
 	assert.Nil(t, result)
 }
@@ -562,17 +534,18 @@ func TestGetRemainingDistanceToStop_NoPosition(t *testing.T) {
 		Position: nil,
 	}
 
-	result := api.getRemainingDistanceToStop(ctx, "test_trip", "test_stop", vehicle)
+	result := api.getRemainingDistanceToStop(ctx, "test_trip", "test_stop", vehicle, time.Now())
 
 	assert.Nil(t, result)
 }
 
 func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
+	api := createTestApi(t)
 	vehicle := &gtfs.Vehicle{
 		// No current stop sequence set
 	}
 
-	result := getNumberOfStopsAway(5, vehicle)
+	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now())
 
 	assert.Nil(t, result)
 }
