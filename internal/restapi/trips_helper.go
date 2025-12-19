@@ -65,10 +65,10 @@ func (api *RestAPI) BuildTripStatus(
 				Longitude: sp.Lon,
 			}
 		}
-		status.TotalDistanceAlongTrip = getDistanceAlongShape(shapePoints[0].Latitude, shapePoints[0].Longitude, shapePoints)
+		status.TotalDistanceAlongTrip = preCalculateCumulativeDistances(shapePoints)[len(shapePoints)-1]
 
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-			status.DistanceAlongTrip = getDistanceAlongShape(float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude), shapePoints)
+			status.DistanceAlongTrip = api.getVehicleDistanceAlongShapeContextual(ctx, tripID, vehicle)
 		}
 	}
 
@@ -406,6 +406,9 @@ func findNextStopByTime(currentTimeSeconds int64, stopTimes []*gtfsdb.StopTime) 
 }
 
 func getDistanceAlongShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
+	if len(shape) == 0 {
+		return 0
+	}
 	var total float64
 	var closestIndex int
 	var minDist = math.MaxFloat64
@@ -423,6 +426,34 @@ func getDistanceAlongShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
 	}
 
 	return total
+}
+
+func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, minDistTraveled, maxDistTraveled float64) float64 {
+	if len(shape) == 0 {
+		return 0
+	}
+
+	cumulativeDistances := preCalculateCumulativeDistances(shape)
+	var bestDist float64
+	var minPointDist = math.MaxFloat64
+
+	// If maxDistTraveled is 0, it might mean it wasn't provided or it's the start.
+	// We should probably use the whole shape if the range is invalid.
+	useRange := maxDistTraveled > minDistTraveled
+
+	for i := 0; i < len(shape); i++ {
+		if useRange && (cumulativeDistances[i] < minDistTraveled-10 || cumulativeDistances[i] > maxDistTraveled+10) {
+			continue
+		}
+
+		dist := utils.Distance(lat, lon, shape[i].Latitude, shape[i].Longitude)
+		if dist < minPointDist {
+			minPointDist = dist
+			bestDist = cumulativeDistances[i]
+		}
+	}
+
+	return bestDist
 }
 
 func (api *RestAPI) setBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time, status *models.TripStatusForTripDetails) int {
