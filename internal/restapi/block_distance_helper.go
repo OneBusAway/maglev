@@ -99,10 +99,3 @@ func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, ta
 
 	return targetBlockDist - vehicleBlockDist
 }
-func (api *RestAPI) getRemainingDistanceToStop(ctx context.Context, targetTripID, targetStopID string, vehicle *gtfs.Vehicle, serviceDate time.Time) *float64 {
-	if vehicle == nil || vehicle.Position == nil {
-		return nil
-	}
-	dist := api.getBlockDistanceToStop(ctx, targetTripID, targetStopID, vehicle, serviceDate)
-	return &dist
-}
