@@ -272,6 +272,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
+	situationIDs := api.GetSituationIDsForTrip(tripID)
+
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(agencyID, route.ID),
 		route.ShortName.String,
@@ -299,10 +301,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		"",        // predictedOccupancy
 		"",        // historicalOccupancy
 		tripStatus,
-		api.GetSituationIDsForTrip(tripID),
+		situationIDs,
 	)
-
-	situationIDs := api.GetSituationIDsForTrip(tripID)
 
 	references := models.NewEmptyReferences()
 
