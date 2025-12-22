@@ -146,12 +146,9 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			
 			err := manager.ForceUpdate(ctx)
-			cancel() // Always cancel the context when done
+			cancel()
 			
 			if err != nil {
-				// Error logging is handled in ForceUpdate or here? 
-				// ForceUpdate should probably return error for the caller to handle/log if needed, 
-				// but for the loop we just want to continue.
 				continue
 			}
 
