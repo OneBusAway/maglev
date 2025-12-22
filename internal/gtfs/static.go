@@ -72,8 +72,12 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 	return b, nil
 }
 
-func buildGtfsDB(config Config, isLocalFile bool) (*gtfsdb.Client, error) {
-	dbConfig := gtfsdb.NewConfig(config.GTFSDataPath, config.Env, config.Verbose)
+func buildGtfsDB(config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client, error) {
+	// If no specific path is provided, use the one from config
+	if dbPath == "" {
+		dbPath = config.GTFSDataPath
+	}
+	dbConfig := gtfsdb.NewConfig(dbPath, config.Env, config.Verbose)
 	client, err := gtfsdb.NewClient(dbConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GTFS database client: %w", err)
@@ -138,24 +142,19 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	for { // nolint
 		select {
 		case <-ticker.C:
-			// Create a context with timeout for the download
-			_, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-
-			// Download and parse the GTFS feed
-			staticData, err := loadGTFSData(manager.gtfsSource, false, manager.config)
+			
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			
+			err := manager.ForceUpdate(ctx)
 			cancel() // Always cancel the context when done
-
+			
 			if err != nil {
-				// Log error but don't crash the application
-				logging.LogError(logger, "Error updating GTFS data", err,
-					slog.String("source", manager.gtfsSource))
+				// Error logging is handled in ForceUpdate or here? 
+				// ForceUpdate should probably return error for the caller to handle/log if needed, 
+				// but for the loop we just want to continue.
 				continue
 			}
 
-			// Update the GTFS data in the manager
-			logging.LogOperation(logger, "gtfs_static_data_updated",
-				slog.String("source", manager.gtfsSource))
-			manager.setStaticGTFS(staticData)
 		case <-manager.shutdownChan:
 			logging.LogOperation(logger, "shutting_down_static_gtfs_updates")
 			return
@@ -163,6 +162,80 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 }
 
+// ForceUpdate performs a hot swap update of the GTFS data.
+// It is public to allow for manual triggering (e.g. in tests or admin endpoints).
+func (manager *Manager) ForceUpdate(ctx context.Context) error {
+	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
+
+	// 1. Fetch and Parse new Data
+	// FIX: Use manager.isLocalFile to support testing with local files
+	newStaticData, err := loadGTFSData(manager.gtfsSource, manager.isLocalFile, manager.config)
+	if err != nil {
+		logging.LogError(logger, "Error updating GTFS data (load)", err,
+			slog.String("source", manager.gtfsSource))
+		return err
+	}
+
+	// 2. Build new DB
+	// Generate a unique filename for the new DB
+	timestamp := time.Now().Format("20060102_150405")
+	newDBPath := fmt.Sprintf("%s_%s.db", manager.config.GTFSDataPath, timestamp)
+
+	// FIX: Use manager.isLocalFile here too
+	newGtfsDB, err := buildGtfsDB(manager.config, manager.isLocalFile, newDBPath)
+	if err != nil {
+		logging.LogError(logger, "Error building new GTFS DB", err)
+		return err
+	}
+
+	// 3. Build Indices
+	newBlockLayoverIndices := buildBlockLayoverIndices(newStaticData)
+	newStopSpatialIndex, err := buildStopSpatialIndex(ctx, newGtfsDB.Queries)
+	if err != nil {
+		logging.LogError(logger, "Error building spatial index", err)
+		newGtfsDB.Close()
+		os.Remove(newDBPath)
+		return err
+	}
+
+	// Phase 2: Swap (Write Lock)
+	manager.staticMutex.Lock()
+
+	oldGtfsDB := manager.GtfsDB
+	
+	manager.gtfsData = newStaticData
+	manager.GtfsDB = newGtfsDB
+	manager.blockLayoverIndices = newBlockLayoverIndices
+	manager.stopSpatialIndex = newStopSpatialIndex
+	manager.lastUpdated = time.Now()
+
+	manager.staticMutex.Unlock()
+
+	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
+		slog.String("source", manager.gtfsSource),
+		slog.String("new_db", newDBPath))
+
+	// Phase 3: Cleanup (No Lock)
+	if oldGtfsDB != nil {
+		oldDBPath := oldGtfsDB.GetDBPath()
+		if err := oldGtfsDB.Close(); err != nil {
+			logging.LogError(logger, "Error closing old GTFS DB", err)
+		} else {
+            if oldDBPath != "" {
+                 if err := os.Remove(oldDBPath); err != nil {
+                     logging.LogError(logger, "Error removing old GTFS DB file", err, slog.String("path", oldDBPath))
+                 } else {
+                     logging.LogOperation(logger, "removed_old_gtfs_db_file", slog.String("path", oldDBPath))
+                 }
+            }
+        }
+	}
+	
+	return nil
+}
+
+// setStaticGTFS is used for initial load. 
+// For updates, use the hot swap logic in updateStaticGTFS
 func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
@@ -186,7 +259,7 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 
 	if manager.config.Verbose {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-		logging.LogOperation(logger, "gtfs_data_updated_successfully",
+		logging.LogOperation(logger, "gtfs_data_set_successfully",
 			slog.String("source", manager.gtfsSource),
 			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)))
 	}
