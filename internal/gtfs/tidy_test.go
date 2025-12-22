@@ -17,7 +17,9 @@ func TestTidyGTFSData(t *testing.T) {
 	} else {
 		binDir := filepath.Join(projectRoot, "bin")
 		currentPath := os.Getenv("PATH")
-		os.Setenv("PATH", binDir+string(os.PathListSeparator)+currentPath)
+		if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+currentPath); err != nil {
+			t.Logf("Failed to set PATH: %v", err)
+		}
 	}
 
 	path, err := checkGTFSTidyAvailable()

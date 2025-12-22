@@ -74,17 +74,47 @@ func (manager *Manager) GetAlertsForTrip(tripID string) []gtfs.Alert {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
-	var alerts []gtfs.Alert
+	var routeID string
+	var agencyID string
+	if manager.GtfsDB != nil {
+		trip, err := manager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+		if err == nil {
+			routeID = trip.RouteID
+			route, err := manager.GtfsDB.Queries.GetRoute(context.Background(), routeID)
+			if err == nil {
+				agencyID = route.AgencyID
+			}
+		}
+	}
+
+	alertMap := make(map[string]gtfs.Alert)
+
 	for _, alert := range manager.realTimeAlerts {
 		if alert.InformedEntities != nil {
 			for _, entity := range alert.InformedEntities {
 				if entity.TripID != nil && entity.TripID.ID == tripID {
-					alerts = append(alerts, alert)
+					alertMap[alert.ID] = alert
+					break
+				}
+
+				if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID {
+					alertMap[alert.ID] = alert
+					break
+				}
+
+				if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID {
+					alertMap[alert.ID] = alert
 					break
 				}
 			}
 		}
 	}
+
+	alerts := make([]gtfs.Alert, 0, len(alertMap))
+	for _, alert := range alertMap {
+		alerts = append(alerts, alert)
+	}
+
 	return alerts
 }
 
@@ -177,6 +207,8 @@ func (manager *Manager) updateGTFSRealtime(ctx context.Context, config Config) {
 
 	if alertData != nil && alertErr == nil {
 		manager.realTimeAlerts = alertData.Alerts
+	} else if alertErr != nil {
+		logging.LogError(logger, "Error loading GTFS-RT service alerts", alertErr)
 	}
 }
 
