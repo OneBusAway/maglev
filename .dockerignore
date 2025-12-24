@@ -1,0 +1,50 @@
+# Build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Database files (should be created inside container or mounted)
+*.db
+gtfs.db
+
+# Test files and coverage
+testdata/
+coverage.out
+*.test
+*.out
+
+# Git
+.git/
+.gitignore
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation and marketing (not needed in container)
+marketing/
+*.md
+!README.markdown
+
+# Configuration files (should be mounted, not baked in)
+config.json
+config.*.json
+!config.example.json
+!config.schema.json
+
+# Remote deployment configs
+remote/
+
+# Migrations (if not needed at runtime)
+migrations/
+
+# Air live reload temp files
+tmp/
+
