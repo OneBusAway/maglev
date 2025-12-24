@@ -14,6 +14,7 @@ import (
 
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/restapi"
@@ -50,15 +51,36 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 		directionCalculator = gtfs.NewDirectionCalculator(gtfsManager.GtfsDB.Queries)
 	}
 
+	// Select clock implementation based on environment
+	appClock := createClock(cfg.Env, logger)
+
 	coreApp := &app.Application{
 		Config:              cfg,
 		GtfsConfig:          gtfsCfg,
 		Logger:              logger,
 		GtfsManager:         gtfsManager,
 		DirectionCalculator: directionCalculator,
+		Clock:               appClock,
 	}
 
 	return coreApp, nil
+}
+
+// createClock returns the appropriate Clock implementation based on environment.
+// - Production/Development: RealClock (uses actual system time)
+// - Test: EnvironmentClock (reads from FAKETIME env var or file, fallback to system time)
+func createClock(env appconf.Environment, logger *slog.Logger) clock.Clock {
+	switch env {
+	case appconf.Test:
+		logger.Info("using EnvironmentClock for test environment",
+			slog.String("envVar", "FAKETIME"),
+			slog.String("filePath", "/etc/faketime"))
+
+		return clock.NewEnvironmentClock("FAKETIME", "/etc/faketime", time.Local, logger)
+	default:
+		// Production and Development use real system time
+		return clock.RealClock{}
+	}
 }
 
 // CreateServer creates and configures the HTTP server with routes and middleware.
