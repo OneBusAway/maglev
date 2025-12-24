@@ -1,0 +1,1 @@
+- [x] Update BuildTripSchedule in internal/restapi/trips_helper.go to convert arrival and departure times from nanoseconds to seconds by dividing by 1e9
