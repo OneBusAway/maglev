@@ -42,7 +42,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			currentTime = time.Unix(timeMs/1000, 0)
 		}
 	} else {
-		currentTime = time.Now()
+		currentTime = api.Clock.Now()
 	}
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
@@ -380,7 +380,7 @@ func convertToNanosSinceMidnight(t time.Time) int64 {
 	return duration.Nanoseconds()
 }
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
-	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, time.Now())
+	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, api.Clock.Now())
 	var nearbyStopIDs []string
 	for _, s := range nearbyStops {
 		if s.ID != stopID {

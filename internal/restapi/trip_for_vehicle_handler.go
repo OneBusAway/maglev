@@ -99,7 +99,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if params.Time != nil {
 		currentTime = params.Time.In(loc)
 	} else {
-		currentTime = time.Now().In(loc)
+		currentTime = api.Clock.Now().In(loc)
 	}
 
 	var serviceDate time.Time
