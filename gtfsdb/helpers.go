@@ -103,7 +103,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		if err != nil {
 			return fmt.Errorf("error clearing existing GTFS data: %w", err)
 		}
-	} else if err != nil && err != sql.ErrNoRows {
+	} else if err != sql.ErrNoRows {
 		// Some other error occurred
 		return fmt.Errorf("error checking import metadata: %w", err)
 	}

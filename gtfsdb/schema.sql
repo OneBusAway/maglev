@@ -45,20 +45,20 @@ CREATE TABLE IF NOT EXISTS stops (
     direction TEXT
 );
 
--- migrate: drops_fts_cleanup
+-- migrate
 DROP TRIGGER IF EXISTS stops_fts_ai;
 
--- migrate: drops_fts_cleanup_2
+-- migrate
 DROP TRIGGER IF EXISTS stops_fts_ad;
 
--- migrate: drops_fts_cleanup_3
+-- migrate
 DROP TRIGGER IF EXISTS stops_fts_au;
 
--- migrate: drops_fts_table
+-- migrate
 DROP TABLE IF EXISTS stops_fts;
 
--- migrate: create_stops_fts
-CREATE VIRTUAL TABLE stops_fts USING fts5(
+-- migrate
+CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
     stop_name,
     content='stops',
     content_rowid='rowid',
