@@ -933,7 +933,7 @@ WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
 WITH query_input AS (
     SELECT CAST(sqlc.arg(query) AS TEXT) AS val
 )
-SELECT 
+SELECT
     s.id,
     s.code,
     s.name,
@@ -943,8 +943,14 @@ SELECT
     s.location_type,
     s.wheelchair_boarding
 FROM stops_fts
-JOIN stops s ON s.id = stops_fts.stop_id
+JOIN stops s ON s.rowid = stops_fts.rowid
 JOIN query_input ON 1=1
 WHERE stops_fts.stop_name MATCH query_input.val
-ORDER BY stops_fts.rank 
+ORDER BY
+    CASE s.location_type
+        WHEN 1 THEN 0   -- station
+        WHEN 5 THEN 1   -- platform
+        ELSE 2          -- stop / entrance
+    END,
+    stops_fts.rank
 LIMIT sqlc.arg(limit);

@@ -115,23 +115,7 @@ type StopTime struct {
 }
 
 type StopsFt struct {
-	StopID   string
 	StopName string
-}
-
-type StopsRtreeNode struct {
-	Nodeno int64
-	Data   interface{}
-}
-
-type StopsRtreeParent struct {
-	Nodeno     int64
-	Parentnode interface{}
-}
-
-type StopsRtreeRowid struct {
-	Rowid  int64
-	Nodeno interface{}
 }
 
 type Trip struct {
