@@ -268,8 +268,8 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 			params := CreateStopTimeParams{
 				TripID:            t.ID,
-				ArrivalTime:       int64(st.ArrivalTime),
-				DepartureTime:     int64(st.DepartureTime),
+				ArrivalTime:       int64(st.ArrivalTime.Seconds()),
+				DepartureTime:     int64(st.DepartureTime.Seconds()),
 				StopID:            st.Stop.Id,
 				StopSequence:      int64(st.StopSequence),
 				StopHeadsign:      toNullString(st.Headsign),
