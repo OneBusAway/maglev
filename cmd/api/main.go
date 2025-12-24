@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	_ "github.com/mattn/go-sqlite3"
 
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"

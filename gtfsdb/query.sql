@@ -930,9 +930,21 @@ WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'));
 
 -- name: SearchStops :many
-SELECT
-    s.*
-FROM stops s
-JOIN stops_fts ON s.rowid = stops_fts.rowid
-WHERE stops_fts.stop_name MATCH sqlc.arg(search_query)
+WITH query_input AS (
+    SELECT CAST(sqlc.arg(query) AS TEXT) AS val
+)
+SELECT 
+    s.id,
+    s.code,
+    s.name,
+    s.desc,
+    s.lat,
+    s.lon,
+    s.location_type,
+    s.wheelchair_boarding
+FROM stops_fts
+JOIN stops s ON s.id = stops_fts.stop_id
+JOIN query_input ON 1=1
+WHERE stops_fts.stop_name MATCH query_input.val
+ORDER BY stops_fts.rank 
 LIMIT sqlc.arg(limit);

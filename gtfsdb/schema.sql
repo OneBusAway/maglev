@@ -48,41 +48,39 @@ CREATE TABLE
         direction TEXT
     );
 
--- migrate
--- Full-text search virtual table for stops
-CREATE VIRTUAL TABLE stops_fts USING fts5(  
+-- migrate: drops_fts_cleanup
+DROP TRIGGER IF EXISTS stops_fts_ai;
+
+-- migrate: drops_fts_cleanup_2
+DROP TRIGGER IF EXISTS stops_fts_ad;
+
+-- migrate: drops_fts_cleanup_3
+DROP TRIGGER IF EXISTS stops_fts_au;
+
+-- migrate: drops_fts_table
+DROP TABLE IF EXISTS stops_fts;
+
+-- migrate: create_stops_fts
+CREATE VIRTUAL TABLE stops_fts USING fts5(
     stop_id UNINDEXED,
     stop_name,
-    content='stops',
-    content_rowid='rowid',
     tokenize='porter unicode61'
 );
 
 -- migrate
--- Trigger: Keep FTS in sync when inserting new stops
-CREATE TRIGGER IF NOT EXISTS stops_fts_ai
-AFTER INSERT ON stops
-BEGIN
-    INSERT INTO stops_fts(rowid, stop_id, stop_name)
-    VALUES (new.rowid, new.id, new.name);
+CREATE TRIGGER IF NOT EXISTS stops_fts_ai AFTER INSERT ON stops BEGIN
+    INSERT INTO stops_fts(rowid, stop_id, stop_name) VALUES (new.rowid, new.id, new.name);
 END;
 
 -- migrate
--- Trigger: Keep FTS in sync when deleting stops
-CREATE TRIGGER IF NOT EXISTS stops_fts_ad
-AFTER DELETE ON stops
-BEGIN
+CREATE TRIGGER IF NOT EXISTS stops_fts_ad AFTER DELETE ON stops BEGIN
     DELETE FROM stops_fts WHERE rowid = old.rowid;
 END;
 
 -- migrate
--- Trigger: Keep FTS in sync when updating stops
-CREATE TRIGGER IF NOT EXISTS stops_fts_au
-AFTER UPDATE ON stops
-BEGIN
+CREATE TRIGGER IF NOT EXISTS stops_fts_au AFTER UPDATE ON stops BEGIN
     DELETE FROM stops_fts WHERE rowid = old.rowid;
-    INSERT INTO stops_fts(rowid, stop_id, stop_name)
-    VALUES (new.rowid, new.id, new.name);
+    INSERT INTO stops_fts(rowid, stop_id, stop_name) VALUES (new.rowid, new.id, new.name);
 END;
 
 -- migrate
@@ -92,8 +90,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS stops_rtree USING rtree (
     max_lat, -- Latitude bounds
     min_lon,
     max_lon -- Longitude bounds
-)
-/* stops_rtree(id,min_lat,max_lat,min_lon,max_lon) */;
+);
 
 -- migrate
 CREATE TABLE

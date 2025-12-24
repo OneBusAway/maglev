@@ -10,174 +10,180 @@ import (
 )
 
 func (api *RestAPI) searchStopHandler(w http.ResponseWriter, r *http.Request) {
-	queryParams := r.URL.Query()
+    queryParams := r.URL.Query()
 
-	input := queryParams.Get("input")
-	if input == "" {
-		fieldErrors := map[string][]string{
-			"input": {"input is required"},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+    input := queryParams.Get("input")
+    if input == "" {
+        fieldErrors := map[string][]string{
+            "input": {"input is required"},
+        }
+        api.validationErrorResponse(w, r, fieldErrors)
+        return
+    }
 
-	// Sanitize FTS5 query - escape special characters and wrap in quotes for phrase search
-	// This prevents FTS5 syntax errors from user input
-	sanitizedQuery := sanitizeFTS5Query(input)
+    sanitizedQuery := sanitizeFTS5Query(input)
 
-	// Parse maxCount parameter (default 20, max 250)
-	maxCount := 20
-	fieldErrors := make(map[string][]string)
-	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
-		parsedMaxCount, err := utils.ParseFloatParam(queryParams, "maxCount", fieldErrors)
-		if err == nil {
-			maxCount = int(parsedMaxCount)
-			if maxCount <= 0 {
-				fieldErrors["maxCount"] = []string{"must be greater than zero"}
-			} else if maxCount > 250 {
-				fieldErrors["maxCount"] = []string{"must not exceed 250"}
-			}
-		}
-	}
+    maxCount := 20
+    fieldErrors := make(map[string][]string)
+    if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
+        parsedMaxCount, err := utils.ParseFloatParam(queryParams, "maxCount", fieldErrors)
+        if err == nil {
+            maxCount = int(parsedMaxCount)
+            if maxCount <= 0 {
+                fieldErrors["maxCount"] = []string{"must be greater than zero"}
+            } else if maxCount > 250 {
+                fieldErrors["maxCount"] = []string{"must not exceed 250"}
+            }
+        }
+    }
 
-	if len(fieldErrors) > 0 {
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+    if len(fieldErrors) > 0 {
+        api.validationErrorResponse(w, r, fieldErrors)
+        return
+    }
 
-	ctx := r.Context()
-	// Execute Search
-	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStops(ctx, gtfsdb.SearchStopsParams{
-		SearchQuery: sanitizedQuery,
-		Limit:       int64(maxCount),
-	})
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
+    ctx := r.Context()
 
-	// If no stops found, return empty list immediately
-	if len(stops) == 0 {
-		response := models.NewListResponseWithRange([]models.Stop{}, models.NewEmptyReferences(), false)
-		api.sendResponse(w, r, response)
-		return
-	}
+    // 1. Get Stops from DB
+    stops, err := api.GtfsManager.GtfsDB.Queries.SearchStops(ctx, gtfsdb.SearchStopsParams{
+        Query: sanitizedQuery,
+        Limit: int64(maxCount),
+    })
+    if err != nil {
+        api.serverErrorResponse(w, r, err)
+        return
+    }
 
-	// Collect Stop IDs for batch fetching references
-	stopIDs := make([]string, len(stops))
-	stopMap := make(map[string]gtfsdb.Stop)
-	for i, stop := range stops {
-		stopIDs[i] = stop.ID
-		stopMap[stop.ID] = stop
-	}
+    if len(stops) == 0 {
+        response := models.NewListResponseWithRange([]models.Stop{}, models.NewEmptyReferences(), false)
+        api.sendResponse(w, r, response)
+        return
+    }
 
-	// Batch query to get route IDs for all stops
-	routeIDsForStops, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
+    // 2. Batch Fetch References
+    stopIDs := make([]string, len(stops))
+    for i, stop := range stops {
+        stopIDs[i] = stop.ID
+    }
 
-	// Batch query to get agencies for all stops
-	agenciesForStops, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
+    routeIDsForStops, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+    if err != nil {
+        api.serverErrorResponse(w, r, err)
+        return
+    }
 
-	// Create maps for efficient lookup
-	stopRouteIDs := make(map[string][]string)
-	stopAgency := make(map[string]*gtfsdb.GetAgenciesForStopsRow)
-	routeIDs := map[string]bool{}
-	agencyIDs := map[string]bool{}
+    agenciesForStops, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
+    if err != nil {
+        api.serverErrorResponse(w, r, err)
+        return
+    }
 
-	for _, routeIDRow := range routeIDsForStops {
-		stopID := routeIDRow.StopID
-		routeIDStr, ok := routeIDRow.RouteID.(string)
-		if !ok {
-			continue
-		}
+    stopRouteIDs := make(map[string][]string)
+    stopAgency := make(map[string]*gtfsdb.GetAgenciesForStopsRow)
+    routeIDs := map[string]bool{}
+    agencyIDs := map[string]bool{}
 
-		agencyId, routeId, _ := utils.ExtractAgencyIDAndCodeID(routeIDStr)
-		stopRouteIDs[stopID] = append(stopRouteIDs[stopID], routeIDStr)
-		agencyIDs[agencyId] = true
-		routeIDs[routeId] = true
-	}
+    for _, routeIDRow := range routeIDsForStops {
+        stopID := routeIDRow.StopID
+        routeIDStr, ok := routeIDRow.RouteID.(string)
+        if !ok {
+            continue
+        }
 
-	for _, agencyRow := range agenciesForStops {
-		stopID := agencyRow.StopID
-		if _, exists := stopAgency[stopID]; !exists {
-			stopAgency[stopID] = &agencyRow
-		}
-	}
+        agencyId, routeId, _ := utils.ExtractAgencyIDAndCodeID(routeIDStr)
+        stopRouteIDs[stopID] = append(stopRouteIDs[stopID], routeIDStr)
+        agencyIDs[agencyId] = true
+        routeIDs[routeId] = true
+    }
 
-	// Build Result List
-	var results []models.Stop
-	for _, stop := range stops {
-		rids := stopRouteIDs[stop.ID]
-		agency := stopAgency[stop.ID]
+    for _, agencyRow := range agenciesForStops {
+        stopID := agencyRow.StopID
+        if _, exists := stopAgency[stopID]; !exists {
+            stopAgency[stopID] = &agencyRow
+        }
+    }
 
-		// Skip stops that don't have valid agency/route info (data consistency)
-		if agency == nil {
-			continue
-		}
+    // 3. Build Results (THIS IS THE PART THAT FIXES YOUR EMPTY FIELDS)
+    var results []models.Stop
+    for _, stop := range stops {
+        rids := stopRouteIDs[stop.ID]
+        agency := stopAgency[stop.ID]
 
-		direction := models.UnknownValue
-		if stop.Direction.Valid && stop.Direction.String != "" {
-			direction = stop.Direction.String
-		}
+        if agency == nil {
+            continue
+        }
 
-		results = append(results, models.NewStop(
-			utils.NullStringOrEmpty(stop.Code),
-			direction,
-			utils.FormCombinedID(agency.ID, stop.ID),
-			utils.NullStringOrEmpty(stop.Name),
-			"", // Parent not currently supported
-			utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-			stop.Lat,
-			stop.Lon,
-			int(stop.LocationType.Int64),
-			rids,
-			rids, // StaticRouteIDs same as RouteIDs for now
-		))
-	}
+        // Logic to handle Direction
+        direction := models.UnknownValue
+        if stop.Desc.Valid && stop.Desc.String != "" {
+            direction = stop.Desc.String
+        }
 
-	// Build References
-	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
-	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+        // Logic to handle Stop Code (Fixes "code": "")
+        stopCode := ""
+        if stop.Code.Valid {
+            stopCode = stop.Code.String
+        }
 
-	references := models.ReferencesModel{
-		Agencies:   agencies,
-		Routes:     routes,
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
-	}
+        // Logic to handle Wheelchair Boarding (Fixes "wheelchairBoarding": "")
+        // GTFS: 0=Unknown, 1=Accessible, 2=Not Accessible
+        wcStatus := "UNKNOWN" 
+        if stop.WheelchairBoarding.Valid {
+            switch stop.WheelchairBoarding.Int64 {
+            case 1:
+                wcStatus = "ACCESSIBLE"
+            case 2:
+                wcStatus = "NOT_ACCESSIBLE"
+            default:
+                wcStatus = "UNKNOWN"
+            }
+        }
 
-	response := models.NewListResponseWithRange(results, references, false)
-	api.sendResponse(w, r, response)
+        results = append(results, models.NewStop(
+            stopCode,                                // Pass the mapped code
+            direction,
+            utils.FormCombinedID(agency.ID, stop.ID),
+            utils.NullStringOrEmpty(stop.Name),
+            "", 
+            wcStatus,                                // Pass the mapped string
+            stop.Lat,
+            stop.Lon,
+            int(stop.LocationType.Int64),
+            rids,
+            rids,
+        ))
+    }
+
+    // 4. Build References
+    agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+    routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+
+    references := models.ReferencesModel{
+        Agencies:   agencies,
+        Routes:     routes,
+        Situations: []interface{}{},
+        StopTimes:  []interface{}{},
+        Stops:      []models.Stop{},
+        Trips:      []interface{}{},
+    }
+
+    response := models.NewListResponseWithRange(results, references, false)
+    api.sendResponse(w, r, response)
 }
 
 // sanitizeFTS5Query sanitizes user input for FTS5 MATCH queries
-// It escapes special FTS5 characters and handles phrase searches
 func sanitizeFTS5Query(input string) string {
-	// Remove leading/trailing whitespace
-	input = strings.TrimSpace(input)
-	
-	if input == "" {
-		return ""
-	}
+    input = strings.TrimSpace(input)
+    if input == "" {
+        return ""
+    }
 
-	// Replace problematic characters that have special meaning in FTS5
-	// FTS5 special characters: " * AND OR NOT NEAR ( )
-	replacer := strings.NewReplacer(
-		`"`, `""`, // Escape quotes by doubling them (FTS5 convention)
-	)
-	
-	sanitized := replacer.Replace(input)
-	
-	// Wrap in quotes for phrase search to avoid FTS5 syntax errors
-	// This treats the input as a literal phrase rather than a query expression
-	return `"` + sanitized + `"`
+    // 1. Escape double quotes to prevent syntax errors
+    replacer := strings.NewReplacer(`"`, `""`)
+    sanitized := replacer.Replace(input)
+
+    // 2. Wrap in quotes and asterisks
+    // The query string becomes: "*Roosevelt*"
+    // This tells FTS5 to find this substring anywhere in the token.
+    return `"*` + sanitized + `*"`
 }

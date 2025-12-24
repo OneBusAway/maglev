@@ -3575,28 +3575,51 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 }
 
 const searchStops = `-- name: SearchStops :many
-SELECT
-    s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
-FROM stops s
-JOIN stops_fts ON s.rowid = stops_fts.rowid
-WHERE stops_fts.stop_name MATCH ?1
-LIMIT ?2
+WITH query_input AS (
+    SELECT CAST(?2 AS TEXT) AS val
+)
+SELECT 
+    s.id,
+    s.code,
+    s.name,
+    s.desc,
+    s.lat,
+    s.lon,
+    s.location_type,
+    s.wheelchair_boarding
+FROM stops_fts
+JOIN stops s ON s.id = stops_fts.stop_id
+JOIN query_input ON 1=1
+WHERE stops_fts.stop_name MATCH query_input.val
+ORDER BY stops_fts.rank 
+LIMIT ?1
 `
 
 type SearchStopsParams struct {
-	SearchQuery string
-	Limit       int64
+	Limit int64
+	Query string
 }
 
-func (q *Queries) SearchStops(ctx context.Context, arg SearchStopsParams) ([]Stop, error) {
-	rows, err := q.query(ctx, q.searchStopsStmt, searchStops, arg.SearchQuery, arg.Limit)
+type SearchStopsRow struct {
+	ID                 string
+	Code               sql.NullString
+	Name               sql.NullString
+	Desc               sql.NullString
+	Lat                float64
+	Lon                float64
+	LocationType       sql.NullInt64
+	WheelchairBoarding sql.NullInt64
+}
+
+func (q *Queries) SearchStops(ctx context.Context, arg SearchStopsParams) ([]SearchStopsRow, error) {
+	rows, err := q.query(ctx, q.searchStopsStmt, searchStops, arg.Limit, arg.Query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Stop
+	var items []SearchStopsRow
 	for rows.Next() {
-		var i Stop
+		var i SearchStopsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Code,
@@ -3604,13 +3627,8 @@ func (q *Queries) SearchStops(ctx context.Context, arg SearchStopsParams) ([]Sto
 			&i.Desc,
 			&i.Lat,
 			&i.Lon,
-			&i.ZoneID,
-			&i.Url,
 			&i.LocationType,
-			&i.Timezone,
 			&i.WheelchairBoarding,
-			&i.PlatformCode,
-			&i.Direction,
 		); err != nil {
 			return nil, err
 		}
