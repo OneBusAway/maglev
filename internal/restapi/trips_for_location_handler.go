@@ -19,7 +19,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, time.Now())
+	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, api.Clock.Now())
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -61,7 +61,7 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	currentAgency := api.GtfsManager.GetAgencies()[0]
 	currentLocation, _ = time.LoadLocation(currentAgency.Timezone)
 	timeParam := queryParams.Get("time")
-	currentTime := time.Now().In(currentLocation)
+	currentTime := api.Clock.Now().In(currentLocation)
 	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	_, serviceDate, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
 

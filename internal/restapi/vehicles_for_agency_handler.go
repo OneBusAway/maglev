@@ -78,7 +78,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			}
 
 			// Set service date (use current date for now)
-			tripStatus.ServiceDate = time.Now().UnixNano() / int64(time.Millisecond)
+			tripStatus.ServiceDate = api.Clock.NowUnixMilli()
 
 			vehicleStatus.TripStatus = tripStatus
 

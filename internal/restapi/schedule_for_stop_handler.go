@@ -59,7 +59,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		targetDate = parsedDate.Format("20060102")
 		weekday = strings.ToLower(parsedDate.Weekday().String())
 	} else {
-		now := time.Now()
+		now := api.Clock.Now()
 		date = now.UnixMilli()
 		targetDate = now.Format("20060102")
 		weekday = strings.ToLower(now.Weekday().String())

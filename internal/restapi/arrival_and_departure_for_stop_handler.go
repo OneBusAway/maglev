@@ -177,7 +177,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if params.Time != nil {
 		currentTime = params.Time.In(loc)
 	} else {
-		currentTime = time.Now().In(loc)
+		currentTime = api.Clock.Now().In(loc)
 	}
 
 	// Use the provided service date
