@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -19,6 +20,10 @@ func (api *RestAPI) searchStopHandler(w http.ResponseWriter, r *http.Request) {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
+
+	// Sanitize FTS5 query - escape special characters and wrap in quotes for phrase search
+	// This prevents FTS5 syntax errors from user input
+	sanitizedQuery := sanitizeFTS5Query(input)
 
 	// Parse maxCount parameter (default 20, max 250)
 	maxCount := 20
@@ -43,7 +48,7 @@ func (api *RestAPI) searchStopHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// Execute Search
 	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStops(ctx, gtfsdb.SearchStopsParams{
-		SearchQuery: input,
+		SearchQuery: sanitizedQuery,
 		Limit:       int64(maxCount),
 	})
 	if err != nil {
@@ -152,4 +157,27 @@ func (api *RestAPI) searchStopHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewListResponseWithRange(results, references, false)
 	api.sendResponse(w, r, response)
+}
+
+// sanitizeFTS5Query sanitizes user input for FTS5 MATCH queries
+// It escapes special FTS5 characters and handles phrase searches
+func sanitizeFTS5Query(input string) string {
+	// Remove leading/trailing whitespace
+	input = strings.TrimSpace(input)
+	
+	if input == "" {
+		return ""
+	}
+
+	// Replace problematic characters that have special meaning in FTS5
+	// FTS5 special characters: " * AND OR NOT NEAR ( )
+	replacer := strings.NewReplacer(
+		`"`, `""`, // Escape quotes by doubling them (FTS5 convention)
+	)
+	
+	sanitized := replacer.Replace(input)
+	
+	// Wrap in quotes for phrase search to avoid FTS5 syntax errors
+	// This treats the input as a literal phrase rather than a query expression
+	return `"` + sanitized + `"`
 }
