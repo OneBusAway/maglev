@@ -445,6 +445,7 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
 		// Convert to absolute path to avoid path traversal validation issues
 		absTestDataPath, err := filepath.Abs(testDataPath)
 		require.NoError(t, err)
+		absTestDataPath = filepath.ToSlash(absTestDataPath)
 
 		// Create a test config file that uses the test data
 		testConfigPath := filepath.Join("..", "..", "testdata", "config_test_build.json")

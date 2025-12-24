@@ -545,16 +545,16 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	assert.Equal(t, int64(0), predDeparture)
 }
 
-func TestGetRemainingDistanceToStop_NilVehicle(t *testing.T) {
+func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
 
-	result := api.getRemainingDistanceToStop(ctx, "test_trip", "test_stop", nil)
+	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", nil, time.Now())
 
-	assert.Nil(t, result)
+	assert.Equal(t, 0.0, result)
 }
 
-func TestGetRemainingDistanceToStop_NoPosition(t *testing.T) {
+func TestGetBlockDistanceToStop_NoPosition(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
 
@@ -562,17 +562,18 @@ func TestGetRemainingDistanceToStop_NoPosition(t *testing.T) {
 		Position: nil,
 	}
 
-	result := api.getRemainingDistanceToStop(ctx, "test_trip", "test_stop", vehicle)
+	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", vehicle, time.Now())
 
-	assert.Nil(t, result)
+	assert.Equal(t, 0.0, result)
 }
 
 func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
+	api := createTestApi(t)
 	vehicle := &gtfs.Vehicle{
 		// No current stop sequence set
 	}
 
-	result := getNumberOfStopsAway(5, vehicle)
+	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now())
 
 	assert.Nil(t, result)
 }
