@@ -39,7 +39,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	response := models.NewEntryResponse(blockResponse, references)
+	response := models.NewEntryResponse(blockResponse, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

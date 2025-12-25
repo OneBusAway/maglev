@@ -232,5 +232,5 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
 	}
-	api.sendResponse(w, r, models.NewEntryResponse(entry, references))
+	api.sendResponse(w, r, models.NewEntryResponse(entry, references, api.Clock))
 }

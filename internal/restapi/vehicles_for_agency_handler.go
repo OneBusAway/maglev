@@ -14,7 +14,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	agency := api.GtfsManager.FindAgency(id)
 	if agency == nil {
 		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]interface{}{}, models.ReferencesModel{}))
+		api.sendResponse(w, r, models.NewListResponse([]interface{}{}, models.ReferencesModel{}, api.Clock))
 		return
 	}
 
@@ -158,6 +158,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		Trips:      tripRefList,
 	}
 
-	response := models.NewListResponse(vehiclesList, references)
+	response := models.NewListResponse(vehiclesList, references, api.Clock)
 	api.sendResponse(w, r, response)
 }

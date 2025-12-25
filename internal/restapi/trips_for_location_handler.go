@@ -45,7 +45,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		Stops:       stops,
 		Trips:       result,
 	})
-	response := models.NewListResponseWithRange(result, references, len(result) == 0)
+	response := models.NewListResponseWithRange(result, references, len(result) == 0, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

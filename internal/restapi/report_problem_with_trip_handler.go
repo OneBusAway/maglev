@@ -47,5 +47,5 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		slog.String("user_lon", userLon),
 		slog.String("user_location_accuracy", userLocationAccuracy))
 
-	api.sendResponse(w, r, models.NewOKResponse(struct{}{}))
+	api.sendResponse(w, r, models.NewOKResponse(struct{}{}, api.Clock))
 }
