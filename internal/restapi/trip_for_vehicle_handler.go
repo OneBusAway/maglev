@@ -241,7 +241,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		references.Trips = append(references.Trips, tripRef)
 	}
 
-	response := models.NewEntryResponse(entry, references)
+	response := models.NewEntryResponse(entry, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

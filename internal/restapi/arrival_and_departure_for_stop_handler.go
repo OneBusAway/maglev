@@ -445,7 +445,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	response := models.NewEntryResponse(arrival, references)
+	response := models.NewEntryResponse(arrival, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

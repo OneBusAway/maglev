@@ -196,7 +196,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Routes = routesIface
 	}
 
-	response := models.NewEntryResponse(tripDetails, references)
+	response := models.NewEntryResponse(tripDetails, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

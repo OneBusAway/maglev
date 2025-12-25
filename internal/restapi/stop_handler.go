@@ -98,6 +98,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := models.NewEntryResponse(stopData, references)
+	response := models.NewEntryResponse(stopData, references, api.Clock)
 	api.sendResponse(w, r, response)
 }

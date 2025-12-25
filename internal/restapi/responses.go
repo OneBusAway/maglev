@@ -31,7 +31,7 @@ func (api *RestAPI) sendNotFound(w http.ResponseWriter, r *http.Request) {
 
 	response := models.ResponseModel{
 		Code:        http.StatusNotFound,
-		CurrentTime: models.ResponseCurrentTimeWithClock(api.Clock),
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "resource not found",
 		Version:     2,
 	}
@@ -49,7 +49,7 @@ func (api *RestAPI) sendUnauthorized(w http.ResponseWriter, r *http.Request) { /
 
 	response := models.ResponseModel{
 		Code:        http.StatusUnauthorized,
-		CurrentTime: models.ResponseCurrentTimeWithClock(api.Clock),
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "permission denied",
 		Version:     1,
 	}

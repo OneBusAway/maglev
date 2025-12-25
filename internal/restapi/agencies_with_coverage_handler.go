@@ -1,8 +1,9 @@
 package restapi
 
 import (
-	"maglev.onebusaway.org/internal/models"
 	"net/http"
+
+	"maglev.onebusaway.org/internal/models"
 )
 
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +58,6 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponse(agenciesWithCoverage, references)
+	response := models.NewListResponse(agenciesWithCoverage, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
