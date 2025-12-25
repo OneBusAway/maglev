@@ -258,6 +258,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listRoutesStmt, err = db.PrepareContext(ctx, listRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRoutes: %w", err)
 	}
+	if q.searchRoutesByFullTextStmt, err = db.PrepareContext(ctx, searchRoutesByFullText); err != nil {
+		return nil, fmt.Errorf("error preparing query SearchRoutesByFullText: %w", err)
+	}
 	if q.listStopsStmt, err = db.PrepareContext(ctx, listStops); err != nil {
 		return nil, fmt.Errorf("error preparing query ListStops: %w", err)
 	}
@@ -665,6 +668,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listRoutesStmt: %w", cerr)
 		}
 	}
+	if q.searchRoutesByFullTextStmt != nil {
+		if cerr := q.searchRoutesByFullTextStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing searchRoutesByFullTextStmt: %w", cerr)
+		}
+	}
 	if q.listStopsStmt != nil {
 		if cerr := q.listStopsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listStopsStmt: %w", cerr)
@@ -802,6 +810,7 @@ type Queries struct {
 	getTripsInBlockStmt                       *sql.Stmt
 	listAgenciesStmt                          *sql.Stmt
 	listRoutesStmt                            *sql.Stmt
+	searchRoutesByFullTextStmt                *sql.Stmt
 	listStopsStmt                             *sql.Stmt
 	listTripsStmt                             *sql.Stmt
 	updateStopDirectionStmt                   *sql.Stmt
@@ -890,6 +899,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsInBlockStmt:                       q.getTripsInBlockStmt,
 		listAgenciesStmt:                          q.listAgenciesStmt,
 		listRoutesStmt:                            q.listRoutesStmt,
+		searchRoutesByFullTextStmt:                q.searchRoutesByFullTextStmt,
 		listStopsStmt:                             q.listStopsStmt,
 		listTripsStmt:                             q.listTripsStmt,
 		updateStopDirectionStmt:                   q.updateStopDirectionStmt,
