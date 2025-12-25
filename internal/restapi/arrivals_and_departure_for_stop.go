@@ -228,6 +228,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 					}
 				}
 
+				if vehicle.Position != nil {
+					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, currentTime)
+
+					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, currentTime)
+					if numberOfStopsAwayPtr != nil {
+						numberOfStopsAway = *numberOfStopsAwayPtr
+					} else {
+						numberOfStopsAway = -1
+					}
+				}
+
 				// If there's an active trip that's different from the current trip, add it to references
 				if status.ActiveTripID != "" {
 					_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
