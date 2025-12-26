@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"fmt" // for fmt.Sprintf
 	"net/http"
 	"testing"
 
@@ -141,4 +142,69 @@ func TestStopsForLocationHandlerValidatesLatLonSpan(t *testing.T) {
 func TestStopsForLocationHandlerValidatesRadius(t *testing.T) {
 	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=invalid")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestStopsForLocationReturnsDirection(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, _ := model.Data.(map[string]interface{})
+	list := data["list"].([]interface{})
+	require.NotEmpty(t, list)
+
+	stop := list[0].(map[string]interface{})
+	dir := stop["direction"].(string)
+
+	// Direction should exist
+	require.NotEmpty(t, dir)
+
+	// It should be either a compass direction or NA
+	valid := map[string]bool{
+		"N": true, "NE": true, "E": true, "SE": true,
+		"S": true, "SW": true, "W": true, "NW": true,
+		"UNKNOWN": true, // <--- correct fallback for THIS repo
+	}
+	assert.True(t, valid[dir], "unexpected direction: %v", dir)
+
+}
+
+func TestStopsForLocationMatchesStopsForRoute(t *testing.T) {
+	// Call stops-for-location
+	_, _, locModel := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")
+	locList := locModel.Data.(map[string]interface{})["list"].([]interface{})
+	require.Equal(t, 1, len(locList))
+	locStop := locList[0].(map[string]interface{})
+	locDir := locStop["direction"].(string)
+
+	// Extract a valid routeId from the stop
+	routeIds := locStop["routeIds"].([]interface{})
+	require.NotEmpty(t, routeIds)
+
+	routeID := routeIds[0].(string)
+
+	// Call stops-for-route for that route
+	url := fmt.Sprintf("/api/where/stops-for-route/%s.json?key=TEST", routeID)
+
+	_, _, routeModel := serveAndRetrieveEndpoint(t, url)
+
+	refs := routeModel.Data.(map[string]interface{})["references"].(map[string]interface{})
+	stops := refs["stops"].([]interface{})
+	require.NotEmpty(t, stops)
+	// Find the SAME stop (2042) in the stops-for-route list
+	var routeDir string
+	for _, s := range stops {
+		stopMap := s.(map[string]interface{})
+		if stopMap["id"] == locStop["id"] {
+			routeDir = stopMap["direction"].(string)
+			break
+		}
+	}
+
+	require.NotEmpty(t, routeDir)
+
+	// Directions must match across endpoints
+	assert.Equalf(t, locDir, routeDir,
+		"direction mismatch: location=%s route=%s", locDir, routeDir)
+
 }
