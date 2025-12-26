@@ -151,7 +151,8 @@ func TestCreateServer(t *testing.T) {
 	coreApp, err := BuildApplication(cfg, gtfsCfg)
 	require.NoError(t, err, "BuildApplication should not fail")
 
-	srv := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg)
+	defer api.Shutdown()
 
 	assert.NotNil(t, srv, "Server should not be nil")
 	assert.Equal(t, ":8080", srv.Addr, "Server address should match port")
@@ -187,7 +188,8 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 	coreApp, err := BuildApplication(cfg, gtfsCfg)
 	require.NoError(t, err, "BuildApplication should not fail")
 
-	srv := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg)
+	defer api.Shutdown()
 
 	// Test that the handler responds to requests
 	req := httptest.NewRequest(http.MethodGet, "/api/where/current-time.json?key=test", nil)
@@ -235,7 +237,8 @@ func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 	defer testServer.Close()
 
 	// Test that we can create an HTTP server with proper configuration
-	srv := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg)
+	defer api.Shutdown()
 	assert.NotNil(t, srv, "Server should be created")
 
 	// Test the shutdown mechanism
@@ -311,7 +314,8 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 	coreApp, err := BuildApplication(cfg, gtfsCfg)
 	require.NoError(t, err)
 
-	srv := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg)
+	defer api.Shutdown()
 
 	// Run the server in a goroutine
 	done := make(chan error, 1)

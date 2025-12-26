@@ -106,10 +106,10 @@ func main() {
 	}
 
 	// Create HTTP server
-	srv := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg)
 
 	// Run server with graceful shutdown
-	if err := Run(srv, coreApp.GtfsManager, coreApp.Logger); err != nil {
+	if err := Run(srv, coreApp.GtfsManager, api, coreApp.Logger); err != nil {
 		coreApp.Logger.Error("server error", "error", err)
 		os.Exit(1)
 	}
