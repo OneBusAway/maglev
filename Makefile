@@ -15,20 +15,20 @@ clean:
 	rm -f coverage.out
 
 coverage:
-	go test -coverprofile=coverage.out ./...
+	go test -tags "sqlite_fts5" -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
 check-golangci-lint:
 	@which golangci-lint > /dev/null 2>&1 || (echo "Error: golangci-lint is not installed. Please install it by running: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
 
 lint: check-golangci-lint
-	golangci-lint run
+	golangci-lint run --build-tags "sqlite_fts5"
 
 fmt:
 	go fmt ./...
 
 test:
-	go test ./...
+	go test -tags "sqlite_fts5" ./...
 
 models:
 	go tool sqlc generate -f gtfsdb/sqlc.yml

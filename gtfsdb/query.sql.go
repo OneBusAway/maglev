@@ -3575,11 +3575,20 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 }
 
 const searchStopsByName = `-- name: SearchStopsByName :many
-SELECT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
+SELECT
+    s.id,
+    s.code,
+    s.name,
+    s.lat,
+    s.lon,
+    s.location_type,
+    s.wheelchair_boarding,
+    s.direction  
 FROM stops s
 JOIN stops_fts fts
   ON s.id = fts.id
 WHERE fts.stop_name MATCH ?1
+ORDER BY s.name
 LIMIT ?2
 `
 
@@ -3588,28 +3597,34 @@ type SearchStopsByNameParams struct {
 	Limit       int64
 }
 
-func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNameParams) ([]Stop, error) {
+type SearchStopsByNameRow struct {
+	ID                 string
+	Code               sql.NullString
+	Name               sql.NullString
+	Lat                float64
+	Lon                float64
+	LocationType       sql.NullInt64
+	WheelchairBoarding sql.NullInt64
+	Direction          sql.NullString
+}
+
+func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNameParams) ([]SearchStopsByNameRow, error) {
 	rows, err := q.query(ctx, q.searchStopsByNameStmt, searchStopsByName, arg.SearchQuery, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Stop
+	var items []SearchStopsByNameRow
 	for rows.Next() {
-		var i Stop
+		var i SearchStopsByNameRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Code,
 			&i.Name,
-			&i.Desc,
 			&i.Lat,
 			&i.Lon,
-			&i.ZoneID,
-			&i.Url,
 			&i.LocationType,
-			&i.Timezone,
 			&i.WheelchairBoarding,
-			&i.PlatformCode,
 			&i.Direction,
 		); err != nil {
 			return nil, err

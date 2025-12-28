@@ -939,9 +939,10 @@ SELECT
     s.lon,
     s.location_type,
     s.wheelchair_boarding,
-    s.parent_station
+    s.direction  
 FROM stops s
 JOIN stops_fts fts
-  ON s.rowid = fts.rowid
+  ON s.id = fts.id
 WHERE fts.stop_name MATCH sqlc.arg(search_query)
+ORDER BY s.name
 LIMIT sqlc.arg(limit);
