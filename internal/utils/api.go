@@ -50,9 +50,9 @@ func FormCombinedID(agencyID, codeID string) string {
 func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	switch wheelchairBoarding {
 	case gtfs.WheelchairBoarding_Possible:
-		return "ACCESSIBLE"
+		return models.Accessible
 	case gtfs.WheelchairBoarding_NotPossible:
-		return "NOT_ACCESSIBLE"
+		return models.NotAccessible
 	default:
 		return models.UnknownValue
 	}

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -101,7 +102,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if params.ServiceDate != nil {
 		serviceDate = *params.ServiceDate
 	} else {
-		serviceDate = currentTime.Truncate(24 * time.Hour)
+		y, m, d := currentTime.Date()
+		serviceDate = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
 
 	serviceDateMillis := serviceDate.Unix() * 1000
@@ -335,7 +337,7 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 			Code:               stop.Code.String,
 			Direction:          api.calculateStopDirection(ctx, stop.ID),
 			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: models.UnknownValue,
+			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}
