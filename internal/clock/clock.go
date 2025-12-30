@@ -5,12 +5,9 @@ package clock
 
 import (
 	"errors"
-	"log/slog"
 	"os"
 	"sync"
 	"time"
-
-	"maglev.onebusaway.org/internal/logging"
 )
 
 // Clock provides an abstraction for time operations.
@@ -68,25 +65,22 @@ func (m *MockClock) Advance(d time.Duration) {
 }
 
 // EnvironmentClock implements Clock using a time from an environment variable or file.
-// Priority: environment variable > file > system time.
 // The time is synced on each call to Now() or NowUnixMilli().
 type EnvironmentClock struct {
 	envVar   string
 	filePath string
 	mutex    *sync.Mutex
 	location *time.Location
-	logger   *slog.Logger
 }
 
 // NewEnvironmentClock creates a new EnvironmentClock with the given options.
 // If no sources are configured, it will fall back to system time.
-func NewEnvironmentClock(envVar string, filePath string, location *time.Location, logger *slog.Logger) *EnvironmentClock {
+func NewEnvironmentClock(envVar string, filePath string, location *time.Location) *EnvironmentClock {
 	e := &EnvironmentClock{
 		envVar:   envVar,
 		filePath: filePath,
 		mutex:    &sync.Mutex{},
 		location: location,
-		logger:   logger,
 	}
 	return e
 }
@@ -117,18 +111,14 @@ func (e *EnvironmentClock) syncFromEnvVar() (time.Time, error) {
 	defer e.mutex.Unlock()
 
 	if e.envVar == "" {
-		logging.LogError(e.logger, "Environment variable name not configured", errors.New("environment variable name not configured"), slog.String("envVar", e.envVar))
 		return time.Time{}, errors.New("environment variable name not configured")
 	}
 	timeStr := os.Getenv(e.envVar)
 	if timeStr == "" {
-		logging.LogError(e.logger, "Environment variable is empty", errors.New("environment variable is empty"), slog.String("timeStr", timeStr))
 		return time.Time{}, errors.New("environment variable is empty: " + e.envVar)
 	}
 	t, err := e.parseTime(timeStr)
 	if err != nil {
-		logging.LogError(e.logger, "Failed to parse time from environment variable",
-			err, slog.String("envVar", e.envVar), slog.String("value", timeStr))
 		return time.Time{}, err
 	}
 	return t, nil
@@ -141,20 +131,15 @@ func (e *EnvironmentClock) syncFromFile() (time.Time, error) {
 	defer e.mutex.Unlock()
 
 	if e.filePath == "" {
-		logging.LogError(e.logger, "File path not configured", errors.New("file path not configured"), slog.String("filePath", e.filePath))
 		return time.Time{}, errors.New("file path not configured")
 	}
 	data, err := os.ReadFile(e.filePath)
 	if err != nil {
-		logging.LogError(e.logger, "Failed to read time from file",
-			err, slog.String("filePath", e.filePath))
 		return time.Time{}, err
 	}
 	timeStr := string(data)
 	t, err := e.parseTime(timeStr)
 	if err != nil {
-		logging.LogError(e.logger, "Failed to parse time from file",
-			err, slog.String("filePath", e.filePath), slog.String("value", timeStr))
 		return time.Time{}, err
 	}
 	return t, nil

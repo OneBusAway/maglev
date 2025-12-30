@@ -52,7 +52,7 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 	}
 
 	// Select clock implementation based on environment
-	appClock := createClock(cfg.Env, logger)
+	appClock := createClock(cfg.Env)
 
 	coreApp := &app.Application{
 		Config:              cfg,
@@ -69,16 +69,11 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 // createClock returns the appropriate Clock implementation based on environment.
 // - Production/Development: RealClock (uses actual system time)
 // - Test: EnvironmentClock (reads from FAKETIME env var or file, fallback to system time)
-func createClock(env appconf.Environment, logger *slog.Logger) clock.Clock {
+func createClock(env appconf.Environment) clock.Clock {
 	switch env {
 	case appconf.Test:
-		logger.Info("using EnvironmentClock for test environment",
-			slog.String("envVar", "FAKETIME"),
-			slog.String("filePath", "/etc/faketime"))
-
-		return clock.NewEnvironmentClock("FAKETIME", "/etc/faketime", time.Local, logger)
+		return clock.NewEnvironmentClock("FAKETIME", "/etc/faketimerc", time.Local)
 	default:
-		// Production and Development use real system time
 		return clock.RealClock{}
 	}
 }
