@@ -170,8 +170,8 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		}
 
 		stopTimesVals[i] = models.StopTime{
-			ArrivalTime:         int(st.ArrivalTime),
-			DepartureTime:       int(st.DepartureTime),
+			ArrivalTime:         int(st.ArrivalTime / 1e9),
+			DepartureTime:       int(st.DepartureTime / 1e9),
 			StopID:              utils.FormCombinedID(agencyID, st.StopID),
 			StopHeadsign:        st.StopHeadsign.String,
 			DistanceAlongTrip:   distanceAlongTrip,
