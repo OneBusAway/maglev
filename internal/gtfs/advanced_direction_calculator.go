@@ -22,6 +22,7 @@ const (
 type AdvancedDirectionCalculator struct {
 	queries           *gtfsdb.Queries
 	varianceThreshold float64
+	contextCache      map[string][]gtfsdb.GetStopsWithShapeContextRow   // Cache of stop shape context data
 	shapeCache        map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized       atomic.Bool                                       // Tracks whether concurrent operations have started
 }
@@ -53,6 +54,14 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 		panic("SetShapeCache called after concurrent operations have started")
 	}
 	adc.shapeCache = cache
+}
+
+// SetContextCache sets a pre-loaded cache of stop shape context data to avoid database queries.
+// This can improve performance when calculating directions for many stops.
+// IMPORTANT: This must be called before any concurrent operations begin.
+// Panics if called after CalculateStopDirection has been invoked.
+func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) {
+	adc.contextCache = cache
 }
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
@@ -118,10 +127,14 @@ func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string)
 
 // computeFromShapes calculates direction from shape data using the Java algorithm
 func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, stopID string) string {
-	// Get trips with shape context for this stop
-	stopTrips, err := adc.queries.GetStopsWithShapeContext(ctx, stopID)
-	if err != nil || len(stopTrips) == 0 {
-		return ""
+
+	var stopTrips []gtfsdb.GetStopsWithShapeContextRow
+
+	// Use cache if available, otherwise hit DB
+	if adc.contextCache != nil {
+		stopTrips = adc.contextCache[stopID]
+	} else {
+		stopTrips, _ = adc.queries.GetStopsWithShapeContext(ctx, stopID)
 	}
 
 	// Collect orientations from all trips, using cache to avoid duplicates

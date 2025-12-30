@@ -352,6 +352,8 @@ WHERE service_id NOT IN (SELECT service_id FROM removed_services)
 UNION
 SELECT DISTINCT service_id FROM added_services;
 
+-- name: GetTripsByRoute :many
+SELECT * FROM trips WHERE route_id = ?;
 
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
@@ -596,6 +598,18 @@ WHERE
     t.id = ?
 ORDER BY
     s.shape_pt_sequence ASC;
+
+-- name: GetStopsWithShapeContextByIDs :many
+SELECT 
+    st.stop_id, 
+    t.shape_id, 
+    s.lat, 
+    s.lon, 
+    st.shape_dist_traveled
+FROM stop_times st
+JOIN trips t ON st.trip_id = t.id
+JOIN stops s ON st.stop_id = s.id
+WHERE st.stop_id IN (sqlc.slice('stop_ids'));    
 
 -- name: GetTripsByBlockIDOrdered :many
 SELECT
@@ -928,3 +942,9 @@ FROM trips t
 JOIN block_trip_entry bte ON t.id = bte.trip_id
 WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'));
+
+
+-- name: GetShapePointsByIDs :many
+SELECT * FROM shapes
+WHERE shape_id IN (sqlc.slice('shape_ids'))
+ORDER BY shape_id, shape_pt_sequence;

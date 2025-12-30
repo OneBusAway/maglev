@@ -198,7 +198,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 			Code:      stop.Code.String,
 			Lat:       stop.Lat,
 			Lon:       stop.Lon,
-			Direction: api.calculateStopDirection(ctx, stop.ID),
+			Direction: api.calculateStopDirection(ctx, stop.ID, stop.Direction),
 		})
 	}
 
