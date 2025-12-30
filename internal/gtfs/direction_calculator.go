@@ -77,7 +77,7 @@ func (dc *DirectionCalculator) calculateFromShape(ctx context.Context, stopID st
 			directions[direction]++
 		}
 	}
-
+	// Return the most common direction found in the directions map
 	return dc.getMostCommonDirection(directions)
 }
 
