@@ -11,12 +11,12 @@ import (
 const unknownDirection = models.UnknownValue
 
 type DirectionCalculator struct {
-	queries *gtfsdb.Queries
+	gtfsManager *Manager
 }
 
-func NewDirectionCalculator(queries *gtfsdb.Queries) *DirectionCalculator {
+func NewDirectionCalculator(gtfsManager *Manager) *DirectionCalculator {
 	return &DirectionCalculator{
-		queries: queries,
+		gtfsManager: gtfsManager,
 	}
 }
 
@@ -24,7 +24,7 @@ func NewDirectionCalculator(queries *gtfsdb.Queries) *DirectionCalculator {
 // First checks the database for precomputed direction, falls back to calculation if needed
 func (dc *DirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string) string {
 	// Strategy 1: Check database for precomputed direction (O(1) lookup)
-	stop, err := dc.queries.GetStop(ctx, stopID)
+	stop, err := dc.gtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 	if err == nil && stop.Direction.Valid && stop.Direction.String != "" {
 		return stop.Direction.String
 	}
@@ -45,7 +45,7 @@ func (dc *DirectionCalculator) CalculateStopDirection(ctx context.Context, stopI
 
 func (dc *DirectionCalculator) calculateFromShape(ctx context.Context, stopID string) string {
 	// Get trips serving this stop
-	stopTrips, err := dc.queries.GetStopsWithTripContext(ctx, stopID)
+	stopTrips, err := dc.gtfsManager.GtfsDB.Queries.GetStopsWithTripContext(ctx, stopID)
 	if err != nil || len(stopTrips) == 0 {
 		return unknownDirection
 	}
@@ -58,7 +58,7 @@ func (dc *DirectionCalculator) calculateFromShape(ctx context.Context, stopID st
 		}
 
 		// Get shape points for this trip
-		shapePoints, err := dc.queries.GetShapePointsForTrip(ctx, stopTrip.TripID)
+		shapePoints, err := dc.gtfsManager.GtfsDB.Queries.GetShapePointsForTrip(ctx, stopTrip.TripID)
 		if err != nil || len(shapePoints) < 2 {
 			continue
 		}
@@ -82,7 +82,7 @@ func (dc *DirectionCalculator) calculateFromShape(ctx context.Context, stopID st
 }
 
 func (dc *DirectionCalculator) calculateFromNextStop(ctx context.Context, stopID string) string {
-	stopTrips, err := dc.queries.GetStopsWithTripContext(ctx, stopID)
+	stopTrips, err := dc.gtfsManager.GtfsDB.Queries.GetStopsWithTripContext(ctx, stopID)
 	if err != nil || len(stopTrips) == 0 {
 		return unknownDirection
 	}
@@ -90,7 +90,7 @@ func (dc *DirectionCalculator) calculateFromNextStop(ctx context.Context, stopID
 	directions := make(map[string]int)
 
 	for _, stopTrip := range stopTrips {
-		nextStop, err := dc.queries.GetNextStopInTrip(ctx, gtfsdb.GetNextStopInTripParams{
+		nextStop, err := dc.gtfsManager.GtfsDB.Queries.GetNextStopInTrip(ctx, gtfsdb.GetNextStopInTripParams{
 			TripID:       stopTrip.TripID,
 			StopSequence: stopTrip.StopSequence,
 		})
