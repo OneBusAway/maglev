@@ -15,10 +15,11 @@ func TestNewDirectionCalculator(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	require.NotNil(t, dc)
-	assert.NotNil(t, dc.queries)
+	assert.NotNil(t, dc.gtfsManager)
 }
 
 func TestCalculateStopDirection_PrecomputedDirection(t *testing.T) {
@@ -33,7 +34,8 @@ func TestCalculateStopDirection_PrecomputedDirection(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.CalculateStopDirection(ctx, "STOP1")
 
 	assert.Equal(t, "N", direction)
@@ -92,7 +94,8 @@ func TestCalculateStopDirection_NoPrecomputedDirection_FallsBackToShape(t *testi
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.CalculateStopDirection(ctx, "STOP2")
 
 	// Should calculate direction from shape (northbound based on coordinates)
@@ -147,7 +150,8 @@ func TestCalculateStopDirection_NoShapeData_FallsBackToNextStop(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.CalculateStopDirection(ctx, "STOP3")
 
 	// Should calculate direction from next stop (northbound)
@@ -159,7 +163,8 @@ func TestCalculateStopDirection_NoData_ReturnsUnknown(t *testing.T) {
 	defer func() { _ = client.Close() }()
 	ctx := context.Background()
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.CalculateStopDirection(ctx, "NONEXISTENT")
 
 	assert.Equal(t, models.UnknownValue, direction)
@@ -177,7 +182,8 @@ func TestCalculateStopDirection_StopWithoutTrips_ReturnsUnknown(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.CalculateStopDirection(ctx, "STOP_ALONE")
 
 	assert.Equal(t, models.UnknownValue, direction)
@@ -186,7 +192,8 @@ func TestCalculateStopDirection_StopWithoutTrips_ReturnsUnknown(t *testing.T) {
 func TestFindClosestShapePoint_EmptyPoints(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	result := dc.findClosestShapePoint([]gtfsdb.GetShapePointsForTripRow{}, 40.7128, -74.0060)
 
@@ -196,7 +203,8 @@ func TestFindClosestShapePoint_EmptyPoints(t *testing.T) {
 func TestFindClosestShapePoint_SinglePoint(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	points := []gtfsdb.GetShapePointsForTripRow{
 		{Lat: 40.7128, Lon: -74.0060},
@@ -210,7 +218,8 @@ func TestFindClosestShapePoint_SinglePoint(t *testing.T) {
 func TestFindClosestShapePoint_MultiplePoints(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	points := []gtfsdb.GetShapePointsForTripRow{
 		{Lat: 40.7128, Lon: -74.0060}, // Point 0 - far
@@ -227,7 +236,8 @@ func TestFindClosestShapePoint_MultiplePoints(t *testing.T) {
 func TestFindClosestShapePoint_ClosestIsFirst(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	points := []gtfsdb.GetShapePointsForTripRow{
 		{Lat: 40.7128, Lon: -74.0060}, // Point 0 - closest
@@ -243,7 +253,8 @@ func TestFindClosestShapePoint_ClosestIsFirst(t *testing.T) {
 func TestFindClosestShapePoint_ClosestIsLast(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	points := []gtfsdb.GetShapePointsForTripRow{
 		{Lat: 40.7128, Lon: -74.0060}, // Point 0 - far
@@ -259,7 +270,8 @@ func TestFindClosestShapePoint_ClosestIsLast(t *testing.T) {
 func TestGetMostCommonDirection_EmptyMap(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	directions := make(map[string]int)
 
@@ -271,7 +283,8 @@ func TestGetMostCommonDirection_EmptyMap(t *testing.T) {
 func TestGetMostCommonDirection_SingleDirection(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	directions := map[string]int{
 		"N": 5,
@@ -285,7 +298,8 @@ func TestGetMostCommonDirection_SingleDirection(t *testing.T) {
 func TestGetMostCommonDirection_MultipleDirections(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	directions := map[string]int{
 		"N":  3,
@@ -301,7 +315,8 @@ func TestGetMostCommonDirection_MultipleDirections(t *testing.T) {
 func TestGetMostCommonDirection_TieGoesToFirst(t *testing.T) {
 	client := setupTestClient(t)
 	defer func() { _ = client.Close() }()
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 
 	// Map iteration order is random, but one will be selected
 	directions := map[string]int{
@@ -327,7 +342,8 @@ func TestCalculateFromShape_NoTrips(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.calculateFromShape(ctx, "STOP_NO_TRIPS")
 
 	assert.Equal(t, models.UnknownValue, direction)
@@ -375,7 +391,8 @@ func TestCalculateFromShape_TripWithoutShape(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.calculateFromShape(ctx, "STOP_NO_SHAPE")
 
 	assert.Equal(t, models.UnknownValue, direction)
@@ -429,7 +446,8 @@ func TestCalculateFromShape_ShapeWithOnePoint(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.calculateFromShape(ctx, "STOP_ONE_POINT")
 
 	assert.Equal(t, models.UnknownValue, direction)
@@ -486,7 +504,8 @@ func TestCalculateFromShape_ClosestPointIsLast(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.calculateFromShape(ctx, "STOP_AT_END")
 
 	// When stop is at last shape point, can't calculate direction
@@ -535,7 +554,8 @@ func TestCalculateFromNextStop_NoNextStop(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	dc := NewDirectionCalculator(client.Queries)
+	manager := &Manager{GtfsDB: client}
+	dc := NewDirectionCalculator(manager)
 	direction := dc.calculateFromNextStop(ctx, "LAST_STOP")
 
 	assert.Equal(t, models.UnknownValue, direction)
