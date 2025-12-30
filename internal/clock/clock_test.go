@@ -1,7 +1,6 @@
 package clock
 
 import (
-	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -77,16 +76,9 @@ func TestMockClock_Advance(t *testing.T) {
 	assert.Equal(t, expected, c.Now())
 }
 
-func TestClockInterface(t *testing.T) {
-	// Verify all types satisfy the Clock interface
-	var _ Clock = RealClock{}
-	var _ Clock = &MockClock{}
-	var _ Clock = &EnvironmentClock{}
-}
-
 func TestEnvironmentClock_FallbackToSystemTime(t *testing.T) {
 	// When no sources are configured, should fall back to system time
-	c := NewEnvironmentClock("", "", time.Local, slog.Default())
+	c := NewEnvironmentClock("", "", time.Local)
 
 	before := time.Now()
 	result := c.Now()
@@ -103,25 +95,34 @@ func TestEnvironmentClock_FromEnvVar(t *testing.T) {
 	// Set the environment variable
 	t.Setenv(envVarName, expectedTime.Format(time.RFC3339))
 
-	c := NewEnvironmentClock(envVarName, "", time.UTC, slog.Default())
+	c := NewEnvironmentClock(envVarName, "", time.UTC)
 	result := c.Now()
 
 	assert.Equal(t, expectedTime, result)
 }
 
-func TestEnvironmentClock_FromEnvVar_EmptyValue(t *testing.T) {
+func TestEnvironmentClock_FromEnvVar_InvalidValue(t *testing.T) {
 	const envVarName = "TEST_CLOCK_EMPTY"
 
 	// Ensure env var is empty
 	t.Setenv(envVarName, "")
 
-	c := NewEnvironmentClock(envVarName, "", time.Local, slog.Default())
+	c := NewEnvironmentClock(envVarName, "", time.Local)
 
 	before := time.Now()
 	result := c.Now()
 	after := time.Now()
 
 	// Should fall back to system time
+	assert.False(t, result.Before(before))
+	assert.False(t, result.After(after))
+
+	// Should return current time on invalid value
+	t.Setenv(envVarName, "2025-1")
+	before = time.Now()
+	result = c.Now()
+	after = time.Now()
+
 	assert.False(t, result.Before(before))
 	assert.False(t, result.After(after))
 }
@@ -138,7 +139,7 @@ func TestEnvironmentClock_FromFile(t *testing.T) {
 	assert.NoError(t, err)
 	tmpFile.Close()
 
-	c := NewEnvironmentClock("", tmpFile.Name(), time.UTC, slog.Default())
+	c := NewEnvironmentClock("", tmpFile.Name(), time.UTC)
 	result := c.Now()
 
 	assert.Equal(t, expectedTime, result)
@@ -156,7 +157,7 @@ func TestEnvironmentClock_FromFile_WithNewline(t *testing.T) {
 	assert.NoError(t, err)
 	tmpFile.Close()
 
-	c := NewEnvironmentClock("", tmpFile.Name(), time.UTC, slog.Default())
+	c := NewEnvironmentClock("", tmpFile.Name(), time.UTC)
 	result := c.Now()
 
 	assert.Equal(t, expectedTime, result)
@@ -179,7 +180,7 @@ func TestEnvironmentClock_EnvVarPriorityOverFile(t *testing.T) {
 	assert.NoError(t, err)
 	tmpFile.Close()
 
-	c := NewEnvironmentClock(envVarName, tmpFile.Name(), time.UTC, slog.Default())
+	c := NewEnvironmentClock(envVarName, tmpFile.Name(), time.UTC)
 	result := c.Now()
 
 	// Should use env var, not file
@@ -226,7 +227,7 @@ func TestEnvironmentClock_ParseTimeFormats(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(envVarName, tt.input)
 
-			c := NewEnvironmentClock(envVarName, "", loc, slog.Default())
+			c := NewEnvironmentClock(envVarName, "", loc)
 			result := c.Now()
 
 			assert.True(t, tt.expected.Equal(result),
@@ -241,7 +242,7 @@ func TestEnvironmentClock_NowUnixMilli(t *testing.T) {
 
 	t.Setenv(envVarName, expectedTime.Format(time.RFC3339))
 
-	c := NewEnvironmentClock(envVarName, "", time.UTC, slog.Default())
+	c := NewEnvironmentClock(envVarName, "", time.UTC)
 
 	assert.Equal(t, expectedTime.UnixMilli(), c.NowUnixMilli())
 }
@@ -249,21 +250,32 @@ func TestEnvironmentClock_NowUnixMilli(t *testing.T) {
 func TestEnvironmentClock_InvalidTimeFormat(t *testing.T) {
 	const envVarName = "TEST_CLOCK_INVALID"
 
-	t.Setenv(envVarName, "not-a-valid-time")
+	tests := []string{
+		"not-a-valid-time",
+		"2025-",
+		"2025-01-010",
+		"-2021-01-01",
+	}
 
-	c := NewEnvironmentClock(envVarName, "", time.Local, slog.Default())
+	for _, tt := range tests {
+		t.Run(tt, func(t *testing.T) {
+			t.Setenv(envVarName, tt)
 
-	before := time.Now()
-	result := c.Now()
-	after := time.Now()
+			c := NewEnvironmentClock(envVarName, "", time.Local)
 
-	// Should fall back to system time
-	assert.False(t, result.Before(before))
-	assert.False(t, result.After(after))
+			before := time.Now()
+			result := c.Now()
+			after := time.Now()
+
+			// Should fall back to system time
+			assert.False(t, result.Before(before))
+			assert.False(t, result.After(after))
+		})
+	}
 }
 
 func TestEnvironmentClock_NonExistentFile(t *testing.T) {
-	c := NewEnvironmentClock("", "/nonexistent/path/to/file.txt", time.Local, slog.Default())
+	c := NewEnvironmentClock("", "/nonexistent/path/to/file.txt", time.Local)
 
 	before := time.Now()
 	result := c.Now()

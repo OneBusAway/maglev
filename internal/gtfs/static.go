@@ -21,7 +21,6 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
 
 	if isLocalFile {
-		logger.Info("Loading local GTFS file", "source", source)
 		b, err = os.ReadFile(source)
 		if err != nil {
 			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
