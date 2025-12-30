@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"maglev.onebusaway.org/internal/logging"
@@ -72,6 +73,7 @@ func (m *MockClock) Advance(d time.Duration) {
 type EnvironmentClock struct {
 	envVar   string
 	filePath string
+	mutex    *sync.Mutex
 	location *time.Location
 	logger   *slog.Logger
 }
@@ -82,6 +84,7 @@ func NewEnvironmentClock(envVar string, filePath string, location *time.Location
 	e := &EnvironmentClock{
 		envVar:   envVar,
 		filePath: filePath,
+		mutex:    &sync.Mutex{},
 		location: location,
 		logger:   logger,
 	}
@@ -110,6 +113,9 @@ func (e *EnvironmentClock) NowUnixMilli() int64 {
 // syncFromEnvVar attempts to read and parse time from the configured environment variable.
 // Returns the parsed time or an error if the env var is not set, empty, or contains invalid time.
 func (e *EnvironmentClock) syncFromEnvVar() (time.Time, error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+
 	if e.envVar == "" {
 		logging.LogError(e.logger, "Environment variable name not configured", errors.New("environment variable name not configured"), slog.String("envVar", e.envVar))
 		return time.Time{}, errors.New("environment variable name not configured")
@@ -131,6 +137,9 @@ func (e *EnvironmentClock) syncFromEnvVar() (time.Time, error) {
 // syncFromFile attempts to read and parse time from the configured file.
 // Returns the parsed time or an error if the file path is not set, unreadable, or contains invalid time.
 func (e *EnvironmentClock) syncFromFile() (time.Time, error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+
 	if e.filePath == "" {
 		logging.LogError(e.logger, "File path not configured", errors.New("file path not configured"), slog.String("filePath", e.filePath))
 		return time.Time{}, errors.New("file path not configured")
