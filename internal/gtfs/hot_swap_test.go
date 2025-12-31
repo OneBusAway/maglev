@@ -2,6 +2,8 @@ package gtfs
 
 import (
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -45,7 +47,7 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 					return
 				default:
 					// Simulate read access
-					manager.RLock()
+					manager.staticMutex.RLock()
 					// 1. Access Static Data
 					agencies := manager.gtfsData.Agencies
 					if len(agencies) == 0 { //nolint
@@ -60,7 +62,7 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 						// The real handlers call methods on manager which call RLock.
 						// Here we are inside RLock manually.
 					}
-					manager.RUnlock()
+					manager.staticMutex.RUnlock()
 
 					// Also call public methods which use RLock internally
 					_ = manager.GetAgencies()
@@ -91,4 +93,46 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 	agencies := manager.GetAgencies()
 	assert.Equal(t, 1, len(agencies))
 	assert.Equal(t, "25", agencies[0].Id)
+}
+
+func TestForceUpdate_FileCleanup(t *testing.T) {
+	// 1. Setup Manager
+	tempDir := t.TempDir()
+	dbPath := tempDir + "/gtfs.db"
+
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: dbPath,
+		Env:          appconf.Development,
+	}
+
+	manager, err := InitGTFSManager(gtfsConfig)
+	if err != nil {
+		t.Fatalf("Failed to init manager: %v", err)
+	}
+	defer manager.Shutdown()
+
+	// Verify initial DB exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Fatalf("Initial DB missing at %s", dbPath)
+	}
+
+	// 2. Perform ForceUpdate
+	err = manager.ForceUpdate(context.Background())
+	assert.Nil(t, err, "ForceUpdate should succeed")
+
+	// 3. Verify Filesystem State
+	// gtfs.db should exist
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Errorf("Final DB missing at %s", dbPath)
+	}
+
+	tempPath := strings.TrimSuffix(dbPath, ".db") + ".temp.db"
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
+		t.Errorf("Temp DB should have been cleaned up/renamed: %s", tempPath)
+	}
+
+	// Verify Database is actually usable
+	agencies := manager.GetAgencies()
+	assert.Equal(t, 1, len(agencies), "Should still have data accessible")
 }

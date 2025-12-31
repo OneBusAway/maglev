@@ -44,13 +44,6 @@ type Manager struct {
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
 }
 
-func (manager *Manager) RUnlock() {
-	manager.staticMutex.RUnlock()
-}
-func (manager *Manager) RLock() {
-	manager.staticMutex.RLock()
-}
-
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
 // The source can be either a URL or a local file path
 func InitGTFSManager(config Config) (*Manager, error) {
