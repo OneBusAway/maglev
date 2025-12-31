@@ -48,13 +48,13 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 					manager.RLock()
 					// 1. Access Static Data
 					agencies := manager.gtfsData.Agencies
-					if len(agencies) == 0 {
+					if len(agencies) == 0 { //nolint
 						// Should not happen if initialized correctly
 						// But inside a tight loop with RLock, we just check access
 					}
 
 					// 2. Simulate DB Query Access (normally protected by RLock in handler)
-					if manager.GtfsDB != nil {
+					if manager.GtfsDB != nil { //nolint
 						// We can't easily query DB here without setting up queries fully or mocking
 						// but checking the pointer is non-nil is a start.
 						// The real handlers call methods on manager which call RLock.
