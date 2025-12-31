@@ -21,7 +21,7 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 		GTFSDataPath: tempDir + "/gtfs.db",
 		Env:          appconf.Development, // Use Development to allow file-based DB creation (Test env might force :memory:)
 	}
-	
+
 	manager, err := InitGTFSManager(gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
@@ -61,10 +61,10 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 						// Here we are inside RLock manually.
 					}
 					manager.RUnlock()
-					
+
 					// Also call public methods which use RLock internally
 					_ = manager.GetAgencies()
-					
+
 					time.Sleep(10 * time.Millisecond)
 				}
 			}
@@ -73,20 +73,20 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 
 	// 3. Perform Hot Swap
 	// We will call ForceUpdate.
-	
+
 	// Let readers run for a bit
 	time.Sleep(100 * time.Millisecond)
-	
+
 	err = manager.ForceUpdate(context.Background())
 	assert.Nil(t, err, "ForceUpdate should succeed")
-	
+
 	// Let readers run a bit more after update
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Stop readers
 	cancel()
 	wg.Wait()
-	
+
 	// 4. Verify Post-Swap State
 	agencies := manager.GetAgencies()
 	assert.Equal(t, 1, len(agencies))

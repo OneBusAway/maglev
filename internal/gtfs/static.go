@@ -142,12 +142,12 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	for { // nolint
 		select {
 		case <-ticker.C:
-			
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			
+
 			err := manager.ForceUpdate(ctx)
 			cancel()
-			
+
 			if err != nil {
 				continue
 			}
@@ -199,7 +199,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.staticMutex.Lock()
 
 	oldGtfsDB := manager.GtfsDB
-	
+
 	manager.gtfsData = newStaticData
 	manager.GtfsDB = newGtfsDB
 	manager.blockLayoverIndices = newBlockLayoverIndices
@@ -218,20 +218,20 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		if err := oldGtfsDB.Close(); err != nil {
 			logging.LogError(logger, "Error closing old GTFS DB", err)
 		} else {
-            if oldDBPath != "" {
-                 if err := os.Remove(oldDBPath); err != nil {
-                     logging.LogError(logger, "Error removing old GTFS DB file", err, slog.String("path", oldDBPath))
-                 } else {
-                     logging.LogOperation(logger, "removed_old_gtfs_db_file", slog.String("path", oldDBPath))
-                 }
-            }
-        }
+			if oldDBPath != "" {
+				if err := os.Remove(oldDBPath); err != nil {
+					logging.LogError(logger, "Error removing old GTFS DB file", err, slog.String("path", oldDBPath))
+				} else {
+					logging.LogOperation(logger, "removed_old_gtfs_db_file", slog.String("path", oldDBPath))
+				}
+			}
+		}
 	}
-	
+
 	return nil
 }
 
-// setStaticGTFS is used for initial load. 
+// setStaticGTFS is used for initial load.
 // For updates, use the hot swap logic in updateStaticGTFS
 func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.staticMutex.Lock()
