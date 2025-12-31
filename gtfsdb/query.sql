@@ -152,6 +152,31 @@ ORDER BY
     agency_id,
     id;
 
+-- name: SearchRoutesByFullText :many
+SELECT
+    r.id,
+    r.agency_id,
+    r.short_name,
+    r.long_name,
+    r."desc",
+    r.type,
+    r.url,
+    r.color,
+    r.text_color,
+    r.continuous_pickup,
+    r.continuous_drop_off
+FROM
+    routes_fts
+    JOIN routes r ON r.rowid = routes_fts.rowid
+WHERE
+    routes_fts MATCH @query
+ORDER BY
+    bm25(routes_fts),
+    r.agency_id,
+    r.id
+LIMIT
+    @limit;
+
 -- name: GetRouteIDsForAgency :many
 SELECT
     r.id
