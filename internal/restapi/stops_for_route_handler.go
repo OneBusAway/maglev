@@ -82,11 +82,14 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 1. Get Stop IDs for the route first to drive the caches
+	// This prevents nil pointer panics and ensures thread-safety.
+	adc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
+
+	// 1. Get Stop IDs for the route to drive the bulk-loading caches
 	stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetStopIDsForRoute(ctx, routeID)
 	if err == nil && len(stopIDs) > 0 {
 
-		// 2. Fetch Stop Contexts in bulk
+		// 2. Fetch Stop Contexts (Shapes + Distances) in bulk
 		contextRows, err := api.GtfsManager.GtfsDB.Queries.GetStopsWithShapeContextByIDs(ctx, stopIDs)
 		if err == nil {
 			contextCache := make(map[string][]gtfsdb.GetStopsWithShapeContextRow)
@@ -109,7 +112,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				}
 			}
 
-			// 3. Fetch Shape Points in bulk
+			// 3. Fetch Shape Points in bulk to populate the local cache
 			if len(uniqueShapeIDs) > 0 {
 				shapePoints, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs(ctx, uniqueShapeIDs)
 				if err == nil {
@@ -122,17 +125,16 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 						})
 					}
 
-					// 4. Inject Caches into the Calculator BEFORE the loop starts
-					if adc, ok := any(api.DirectionCalculator).(*GTFS.AdvancedDirectionCalculator); ok {
-						adc.SetShapeCache(shapeCache)
-						adc.SetContextCache(contextCache)
-					}
+					// 4. Inject caches into the LOCAL instance.
+					// This avoids touching the global singleton that causes test panics.
+					adc.SetShapeCache(shapeCache)
+					adc.SetContextCache(contextCache)
 				}
 			}
 		}
 	}
 
-	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, params.IncludePolylines)
+	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, params.IncludePolylines, adc)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -140,7 +142,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency)
 }
-func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, includePolylines bool) (models.RouteEntry, []models.Stop, error) {
+func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, includePolylines bool, adc *GTFS.AdvancedDirectionCalculator) (models.RouteEntry, []models.Stop, error) {
 	allStops := make(map[string]bool)
 	allPolylines := make([]models.Polyline, 0, 100)
 	var stopGroupings []models.StopGrouping
@@ -172,7 +174,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 	}
 
 	allStopsIds := formatStopIDs(agencyID, allStops)
-	stopsList, err := buildStopsList(ctx, api, agencyID, allStops)
+	stopsList, err := buildStopsList(ctx, api, adc, agencyID, allStops)
 	if err != nil {
 		return models.RouteEntry{}, nil, err
 	}
@@ -187,7 +189,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 	return result, stopsList, nil
 }
 
-func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops map[string]bool) ([]models.Stop, error) {
+func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirectionCalculator, agencyID string, allStops map[string]bool) ([]models.Stop, error) {
 
 	stopIDs := make([]string, 0, len(allStops))
 	for stopID := range allStops {
@@ -223,7 +225,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 		if stop.Direction.Valid && stop.Direction.String != "" {
 			direction = stop.Direction.String
 		} else {
-			direction = api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
+			direction = calc.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 		}
 
 		routeIdsString := append([]string(nil), routesMap[stop.ID]...)
