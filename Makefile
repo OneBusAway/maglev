@@ -7,7 +7,7 @@ build: gtfstidy
 	go build -tags "sqlite_fts5" -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 
 gtfstidy:
-	go build -tags "sqlite_fts5" -o bin/gtfstidy github.com/patrickbr/gtfstidy
+	set CGO_ENABLED=1 && set CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" && go build -tags "sqlite_fts5" -o bin/gtfstidy github.com/patrickbr/gtfstidy
 
 clean:
 	go clean
