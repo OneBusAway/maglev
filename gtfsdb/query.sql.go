@@ -405,7 +405,7 @@ OR REPLACE INTO stops (
     direction
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 `
 
 type CreateStopParams struct {
@@ -455,6 +455,7 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
 		&i.Direction,
+		&i.ParentStation,
 	)
 	return i, err
 }
@@ -641,7 +642,7 @@ func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interfa
 }
 
 const getActiveStops = `-- name: GetActiveStops :many
-SELECT DISTINCT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
+SELECT DISTINCT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction, s.parent_station
 FROM stops s
 INNER JOIN stop_times st ON s.id = st.stop_id
 `
@@ -669,6 +670,7 @@ func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -2301,16 +2303,46 @@ func (q *Queries) GetShapesGroupedByTripHeadSign(ctx context.Context, arg GetSha
 
 const getStop = `-- name: GetStop :one
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    id,
+    code,
+    name,
+    desc,
+    lat,
+    lon,
+    zone_id,
+    url,
+    location_type,
+    timezone,
+    wheelchair_boarding,
+    platform_code,
+    direction
 FROM
     stops
 WHERE
     id = ?
+LIMIT
+    1
 `
 
-func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
+type GetStopRow struct {
+	ID                 string
+	Code               sql.NullString
+	Name               sql.NullString
+	Desc               sql.NullString
+	Lat                float64
+	Lon                float64
+	ZoneID             sql.NullString
+	Url                sql.NullString
+	LocationType       sql.NullInt64
+	Timezone           sql.NullString
+	WheelchairBoarding sql.NullInt64
+	PlatformCode       sql.NullString
+	Direction          sql.NullString
+}
+
+func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
 	row := q.queryRow(ctx, q.getStopStmt, getStop, id)
-	var i Stop
+	var i GetStopRow
 	err := row.Scan(
 		&i.ID,
 		&i.Code,
@@ -2331,7 +2363,7 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 
 const getStopForAgency = `-- name: GetStopForAgency :one
 SELECT DISTINCT
-    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction
+    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction, stops.parent_station
 FROM
     stops
     JOIN stop_times ON stops.id = stop_times.stop_id
@@ -2366,6 +2398,7 @@ func (q *Queries) GetStopForAgency(ctx context.Context, arg GetStopForAgencyPara
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
 		&i.Direction,
+		&i.ParentStation,
 	)
 	return i, err
 }
@@ -2649,7 +2682,7 @@ func (q *Queries) GetStopTimesForTrip(ctx context.Context, tripID string) ([]Sto
 
 const getStopsByIDs = `-- name: GetStopsByIDs :many
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 FROM
     stops
 WHERE
@@ -2691,6 +2724,7 @@ func (q *Queries) GetStopsByIDs(ctx context.Context, stopIds []string) ([]Stop, 
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -2707,7 +2741,7 @@ func (q *Queries) GetStopsByIDs(ctx context.Context, stopIds []string) ([]Stop, 
 
 const getStopsForRoute = `-- name: GetStopsForRoute :many
 SELECT DISTINCT
-    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction
+    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction, stops.parent_station
 FROM
     stop_times
     JOIN trips ON stop_times.trip_id = trips.id
@@ -2740,6 +2774,7 @@ func (q *Queries) GetStopsForRoute(ctx context.Context, id string) ([]Stop, erro
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -3489,7 +3524,7 @@ func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
 
 const listStops = `-- name: ListStops :many
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 FROM
     stops
 ORDER BY
@@ -3519,6 +3554,7 @@ func (q *Queries) ListStops(ctx context.Context) ([]Stop, error) {
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -3577,16 +3613,16 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 const searchStopsByName = `-- name: SearchStopsByName :many
 SELECT
     s.id,
-    s.code,
+    s. code,
     s.name,
     s.lat,
     s.lon,
-    s.location_type,
-    s.wheelchair_boarding,
-    s.direction  
+    s. location_type,
+    s. wheelchair_boarding,
+    s. direction  
 FROM stops s
 JOIN stops_fts fts
-  ON s.id = fts.id
+  ON s.rowid = fts.rowid  
 WHERE fts.stop_name MATCH ?1
 ORDER BY s.name
 LIMIT ?2

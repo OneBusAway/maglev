@@ -9,6 +9,9 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: 1
+      CGO_CFLAGS: "-DSQLITE_ENABLE_FTS5"
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +36,9 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+    env:
+      CGO_ENABLED: 1
+      CGO_CFLAGS: "-DSQLITE_ENABLE_FTS5"
     steps:
       - uses: actions/checkout@v4
 

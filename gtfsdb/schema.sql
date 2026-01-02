@@ -45,7 +45,8 @@ CREATE TABLE
         timezone TEXT,
         wheelchair_boarding INTEGER DEFAULT 0,
         platform_code TEXT,
-        direction TEXT
+        direction TEXT,
+        parent_station TEXT
     );
 
 -- migrate

@@ -1,13 +1,22 @@
-.PHONY: build clean coverage test run lint make watch fmt
+# Detect OS
+ifeq ($(OS),Windows_NT)
+    # Windows
+    SET_ENV := set CGO_ENABLED=1 & set CGO_CFLAGS=-DSQLITE_ENABLE_FTS5 &
+else
+    # Linux/macOS
+    SET_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5"
+endif
 
-run: build
+.PHONY: build clean coverage test run lint watch fmt
+
+run:  build
 	bin/maglev -f config.json
 
 build: gtfstidy
-	go build -tags "sqlite_fts5" -gcflags "all=-N -l" -o bin/maglev ./cmd/api
+	$(SET_ENV) go build -tags "sqlite_fts5" -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 
 gtfstidy:
-	set CGO_ENABLED=1 && set CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" && go build -tags "sqlite_fts5" -o bin/gtfstidy github.com/patrickbr/gtfstidy
+	$(SET_ENV) go build -tags "sqlite_fts5" -o bin/gtfstidy github.com/patrickbr/gtfstidy
 
 clean:
 	go clean
@@ -15,7 +24,7 @@ clean:
 	rm -f coverage.out
 
 coverage:
-	go test -tags "sqlite_fts5" -coverprofile=coverage.out ./...
+	$(SET_ENV) go test -tags "sqlite_fts5" -coverprofile=coverage. out ./...
 	go tool cover -html=coverage.out
 
 check-golangci-lint:
@@ -24,14 +33,14 @@ check-golangci-lint:
 lint: check-golangci-lint
 	golangci-lint run --build-tags "sqlite_fts5"
 
-fmt:
+fmt: 
 	go fmt ./...
 
 test:
-	go test -tags "sqlite_fts5" ./...
+	$(SET_ENV) go test -tags "sqlite_fts5" ./...
 
 models:
-	go tool sqlc generate -f gtfsdb/sqlc.yml
+	go tool sqlc generate -f gtfsdb/sqlc. yml
 
 watch:
 	air
