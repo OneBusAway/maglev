@@ -9,7 +9,7 @@ endif
 
 .PHONY: build clean coverage test run lint watch fmt
 
-run:  build
+run: build
 	bin/maglev -f config.json
 
 build: gtfstidy
@@ -24,7 +24,7 @@ clean:
 	rm -f coverage.out
 
 coverage:
-	$(SET_ENV) go test -tags "sqlite_fts5" -coverprofile=coverage. out ./...
+	$(SET_ENV) go test -tags "sqlite_fts5" -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
 check-golangci-lint:
@@ -33,14 +33,14 @@ check-golangci-lint:
 lint: check-golangci-lint
 	golangci-lint run --build-tags "sqlite_fts5"
 
-fmt: 
+fmt:
 	go fmt ./...
 
 test:
 	$(SET_ENV) go test -tags "sqlite_fts5" ./...
 
 models:
-	go tool sqlc generate -f gtfsdb/sqlc. yml
+	go tool sqlc generate -f gtfsdb/sqlc.yml
 
 watch:
 	air
