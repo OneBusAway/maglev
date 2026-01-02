@@ -32,7 +32,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/patrickbr/gtfsparser v0.0.0-20250811204933-790d4e1c69c1 // indirect
-	github.com/patrickbr/gtfstidy v0.0.0-20251119090422-df802af33868 // indirect
+	github.com/patrickbr/gtfstidy v0.0.0-20251202081335-bd68452e3a13 // indirect
 	github.com/patrickbr/gtfswriter v0.0.0-20240919073412-98e3602c6cd8 // indirect
 	github.com/paulmach/go.geojson v1.5.0 // indirect
 	github.com/pganalyze/pg_query_go/v6 v6.1.0 // indirect
