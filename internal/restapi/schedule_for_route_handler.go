@@ -49,7 +49,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		}
 		targetDate = parsedDate.Format("20060102")
 	} else {
-		now := time.Now()
+		now := api.Clock.Now()
 		targetDate = now.Format("20060102")
 	}
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
@@ -232,5 +232,5 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
 	}
-	api.sendResponse(w, r, models.NewEntryResponse(entry, references))
+	api.sendResponse(w, r, models.NewEntryResponse(entry, references, api.Clock))
 }

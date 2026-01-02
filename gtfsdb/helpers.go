@@ -929,10 +929,10 @@ func configureConnectionPool(db *sql.DB, config Config) {
 
 		// Set maximum number of idle connections to 5
 		db.SetMaxIdleConns(5)
-	}
 
-	// Set maximum lifetime of connections to 5 minutes
-	db.SetConnMaxLifetime(5 * time.Minute)
+		// Set maximum lifetime of connections to 5 minutes
+		db.SetConnMaxLifetime(5 * time.Minute)
+	}
 }
 
 // blockTripIndexKey represents the grouping key for BlockTripIndex

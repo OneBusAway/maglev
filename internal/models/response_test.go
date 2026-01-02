@@ -2,10 +2,12 @@ package models
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestNewResponse(t *testing.T) {
@@ -13,8 +15,10 @@ func TestNewResponse(t *testing.T) {
 	testData := map[string]string{"key": "value"}
 	testText := "Resource Created"
 
+	clock := clock.RealClock{}
+
 	currentTimeBeforeCall := time.Now().UnixNano() / int64(time.Millisecond)
-	response := NewResponse(testCode, testData, testText)
+	response := NewResponse(testCode, testData, testText, clock)
 	currentTimeAfterCall := time.Now().UnixNano() / int64(time.Millisecond)
 
 	assert.Equal(t, testCode, response.Code, "Response code should match input")
@@ -30,7 +34,9 @@ func TestNewEntryResponse(t *testing.T) {
 	entryData := map[string]string{"id": "1", "name": "Test Entry"}
 	references := NewEmptyReferences() // Assuming NewEmptyReferences is available
 
-	response := NewEntryResponse(entryData, references)
+	clock := clock.RealClock{}
+
+	response := NewEntryResponse(entryData, references, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -46,7 +52,9 @@ func TestNewEntryResponse(t *testing.T) {
 func TestNewOKResponse(t *testing.T) {
 	testData := map[string]string{"status": "all good"}
 
-	response := NewOKResponse(testData)
+	clock := clock.RealClock{}
+
+	response := NewOKResponse(testData, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code, "Response code should be StatusOK")
 	assert.Equal(t, "OK", response.Text, "Response text should be 'OK'")
@@ -59,7 +67,9 @@ func TestNewListResponse(t *testing.T) {
 	itemList := []string{"item1", "item2"}
 	references := NewEmptyReferences()
 
-	response := NewListResponse(itemList, references)
+	clock := clock.RealClock{}
+
+	response := NewListResponse(itemList, references, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -78,7 +88,9 @@ func TestNewListResponseWithRange(t *testing.T) {
 	references := NewEmptyReferences()
 	outOfRange := true
 
-	response := NewListResponseWithRange(itemList, references, outOfRange)
+	clock := clock.RealClock{}
+
+	response := NewListResponseWithRange(itemList, references, outOfRange, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -97,7 +109,9 @@ func TestNewListResponseWithRangeFalseFlag(t *testing.T) {
 	itemList := []string{"item1"}
 	references := NewEmptyReferences()
 
-	response := NewListResponseWithRange(itemList, references, false)
+	clock := clock.RealClock{}
+
+	response := NewListResponseWithRange(itemList, references, false, clock)
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")
@@ -123,7 +137,9 @@ func TestNewArrivalsAndDepartureResponse(t *testing.T) {
 	situationIDs := []string{"situation_1"}
 	stopID := "stop_1"
 
-	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, references, nearbyStopIDs, situationIDs, stopID)
+	clock := clock.RealClock{}
+
+	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, references, nearbyStopIDs, situationIDs, stopID, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -149,7 +165,9 @@ func TestNewArrivalsAndDepartureResponseEmptyArrays(t *testing.T) {
 	situationIDs := []string{}
 	stopID := "stop_1"
 
-	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, references, nearbyStopIDs, situationIDs, stopID)
+	clock := clock.RealClock{}
+
+	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, references, nearbyStopIDs, situationIDs, stopID, clock)
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")

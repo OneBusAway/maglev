@@ -3,21 +3,22 @@ package restapi
 import (
 	"encoding/json"
 	"errors"
-	"maglev.onebusaway.org/internal/app"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestServerErrorResponse(t *testing.T) {
-	// Create a mock Application
-	app := &app.Application{
-		// If you have a logger in your app struct, you can mock it here
-		// errorLog: log.New(ioutil.Discard, "", 0), // Silent logger
+	// Create a mock Application with Clock
+	application := &app.Application{
+		Clock: clock.RealClock{},
 	}
 
-	api := &RestAPI{Application: app}
+	api := &RestAPI{Application: application}
 
 	// Create a mock request and response recorder
 	r, err := http.NewRequest("GET", "/test", nil)

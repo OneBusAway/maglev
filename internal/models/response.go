@@ -1,6 +1,8 @@
 package models
 
-import "time"
+import (
+	"maglev.onebusaway.org/internal/clock"
+)
 
 // ResponseModel Base response structure that can be reused
 type ResponseModel struct {
@@ -11,38 +13,39 @@ type ResponseModel struct {
 	Version     int         `json:"version"`
 }
 
-// NewOKResponse is a helper function that returns a successful response.
-func NewOKResponse(data interface{}) ResponseModel {
-	return NewResponse(200, data, "OK")
+// NewOKResponse creates a successful response using the provided clock.
+func NewOKResponse(data interface{}, c clock.Clock) ResponseModel {
+	return NewResponse(200, data, "OK", c)
 }
 
-func NewListResponse(list interface{}, references ReferencesModel) ResponseModel {
+func NewListResponse(list interface{}, references ReferencesModel, c clock.Clock) ResponseModel {
 	data := map[string]interface{}{
 		"limitExceeded": false,
 		"list":          list,
 		"references":    references,
 	}
-	return NewOKResponse(data)
+	return NewOKResponse(data, c)
 }
 
-func NewListResponseWithRange(list interface{}, references ReferencesModel, outOfRange bool) ResponseModel {
+func NewListResponseWithRange(list interface{}, references ReferencesModel, outOfRange bool, c clock.Clock) ResponseModel {
 	data := map[string]interface{}{
 		"limitExceeded": false,
 		"list":          list,
 		"outOfRange":    outOfRange,
 		"references":    references,
 	}
-	return NewOKResponse(data)
+	return NewOKResponse(data, c)
 }
 
-func NewEntryResponse(entry interface{}, references ReferencesModel) ResponseModel {
+func NewEntryResponse(entry interface{}, references ReferencesModel, c clock.Clock) ResponseModel {
 	data := map[string]interface{}{
 		"entry":      entry,
 		"references": references,
 	}
-	return NewOKResponse(data)
+	return NewOKResponse(data, c)
 }
-func NewArrivalsAndDepartureResponse(arrivalsAndDepartures interface{}, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string) ResponseModel {
+
+func NewArrivalsAndDepartureResponse(arrivalsAndDepartures interface{}, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string, c clock.Clock) ResponseModel {
 	entryData := map[string]interface{}{
 		"arrivalsAndDepartures": arrivalsAndDepartures,
 		"nearbyStopIds":         nearbyStopIds,
@@ -53,20 +56,21 @@ func NewArrivalsAndDepartureResponse(arrivalsAndDepartures interface{}, referenc
 		"entry":      entryData,
 		"references": references,
 	}
-	return NewOKResponse(data)
+	return NewOKResponse(data, c)
 }
 
-// NewResponse Helper function to create a standard response
-func NewResponse(code int, data interface{}, text string) ResponseModel {
+// NewResponse creates a standard response using the provided clock.
+func NewResponse(code int, data interface{}, text string, c clock.Clock) ResponseModel {
 	return ResponseModel{
 		Code:        code,
-		CurrentTime: ResponseCurrentTime(),
+		CurrentTime: ResponseCurrentTime(c),
 		Data:        data,
 		Text:        text,
 		Version:     2,
 	}
 }
 
-func ResponseCurrentTime() int64 {
-	return time.Now().UnixNano() / int64(time.Millisecond)
+// ResponseCurrentTime returns the current time from the provided clock as Unix milliseconds.
+func ResponseCurrentTime(c clock.Clock) int64 {
+	return c.NowUnixMilli()
 }
