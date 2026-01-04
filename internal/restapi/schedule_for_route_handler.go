@@ -93,7 +93,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	groupings := make(map[tripGroupKey][]gtfsdb.Trip)
 	for _, trip := range trips {
 		tripIDsSet[trip.ID] = true
-		key := tripGroupKey{directionID: trip.DirectionID.Int64 - 1, tripHeadsign: trip.TripHeadsign.String}
+		key := tripGroupKey{directionID:  trip.DirectionID.Int64, tripHeadsign: trip. TripHeadsign.String}
 		groupings[key] = append(groupings[key], trip)
 	}
 	var stopTripGroupings []models.StopTripGrouping
