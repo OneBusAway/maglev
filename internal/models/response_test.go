@@ -90,7 +90,7 @@ func TestNewListResponseWithRange(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewListResponseWithRange(itemList, references, outOfRange, clock)
+	response := NewListResponseWithRange(itemList, references, outOfRange, clock, false)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -111,7 +111,7 @@ func TestNewListResponseWithRangeFalseFlag(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewListResponseWithRange(itemList, references, false, clock)
+	response := NewListResponseWithRange(itemList, references, false, clock, false)
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")

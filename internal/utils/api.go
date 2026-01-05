@@ -142,3 +142,26 @@ func LoadLocationWithUTCFallBack(timeZone string, agencyId string) *time.Locatio
 	}
 	return loc
 }
+
+// ParseMaxCount Parse maxCount parameter (default is taken as a parameter, max 250) - matches Java's MaxCountSupport
+func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
+	maxCount := defaultCount
+	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
+		parsedMaxCount, floatErrorResults := ParseFloatParam(queryParams, "maxCount", fieldErrors)
+		if len(floatErrorResults) == 0 {
+			maxCount = int(parsedMaxCount)
+			if maxCount <= 0 {
+				if fieldErrors == nil {
+					fieldErrors = make(map[string][]string)
+				}
+				fieldErrors["maxCount"] = []string{"must be greater than zero"}
+			} else if maxCount > 250 {
+				if fieldErrors == nil {
+					fieldErrors = make(map[string][]string)
+				}
+				fieldErrors["maxCount"] = []string{"must not exceed 250"}
+			}
+		}
+	}
+	return maxCount, fieldErrors
+}
