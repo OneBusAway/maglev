@@ -36,32 +36,41 @@ func (RealClock) NowUnixMilli() int64 {
 // MockClock implements Clock with a controllable time for testing.
 // Use NewMockClock to create instances.
 type MockClock struct {
-	CurrentTime time.Time
+	currentTime time.Time
+	mu          sync.Mutex
 }
 
 // NewMockClock creates a new MockClock set to the specified time.
 func NewMockClock(t time.Time) *MockClock {
-	return &MockClock{CurrentTime: t}
+	return &MockClock{currentTime: t}
 }
 
 // Now returns the mock clock's current time.
 func (m *MockClock) Now() time.Time {
-	return m.CurrentTime
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.currentTime
 }
 
 // NowUnixMilli returns the mock clock's current time as Unix milliseconds.
 func (m *MockClock) NowUnixMilli() int64 {
-	return m.CurrentTime.UnixMilli()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.currentTime.UnixMilli()
 }
 
 // Set changes the mock clock's current time.
 func (m *MockClock) Set(t time.Time) {
-	m.CurrentTime = t
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentTime = t
 }
 
 // Advance moves the mock clock forward by the specified duration.
 func (m *MockClock) Advance(d time.Duration) {
-	m.CurrentTime = m.CurrentTime.Add(d)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentTime = m.currentTime.Add(d)
 }
 
 // EnvironmentClock implements Clock using a time from an environment variable or file.
