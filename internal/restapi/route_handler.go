@@ -19,7 +19,7 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, routeID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
+	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -33,22 +33,22 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	routeData := &models.Route{
-		ID:                utils.FormCombinedID(route.AgencyID, route.ID),
-		AgencyID:          route.AgencyID,
-		Color:             route.Color.String,
-		Description:       route.Desc.String,
-		ShortName:         route.ShortName.String,
-		LongName:          route.LongName.String,
-		NullSafeShortName: utils.NullStringOrEmpty(route.ShortName),
-		TextColor:         route.TextColor.String,
-		Type:              models.RouteType(route.Type),
-		URL:               route.Url.String,
-	}
+	routeData := models.NewRoute(
+		utils.FormCombinedID(agencyID, route.ID),
+		agencyID,
+		route.ShortName.String,
+		route.LongName.String,
+		route.Desc.String,
+		models.RouteType(route.Type),
+		route.Url.String,
+		route.Color.String,
+		route.TextColor.String,
+		utils.NullStringOrEmpty(route.ShortName),
+	)
 
 	references := models.NewEmptyReferences()
 
-	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
+	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err == nil {
 		agencyModel := models.NewAgencyReference(
 			agency.ID,

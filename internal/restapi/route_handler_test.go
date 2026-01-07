@@ -18,7 +18,7 @@ func TestRouteHandlerRequiresValidApiKey(t *testing.T) {
 	routes := api.GtfsManager.GetRoutes()
 	assert.NotEmpty(t, routes, "Test data should contain at least one route")
 
-	routeID := utils.FormCombinedID(agencies[0].Id, routes[0].Id)
+	routeID := utils.FormCombinedID(routes[0].Agency.Id, routes[0].Id)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+routeID+".json?key=invalid")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -35,7 +35,7 @@ func TestRouteHandlerEndToEnd(t *testing.T) {
 	routes := api.GtfsManager.GetRoutes()
 	assert.NotEmpty(t, routes, "Test data should contain at least one route")
 
-	routeID := utils.FormCombinedID(agencies[0].Id, routes[0].Id)
+	routeID := utils.FormCombinedID(routes[0].Agency.Id, routes[0].Id)
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+routeID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
@@ -75,7 +75,10 @@ func TestInvalidRouteID(t *testing.T) {
 	agencies := api.GtfsManager.GetAgencies()
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	invalidRouteID := utils.FormCombinedID(agencies[0].Id, "invalid_route_id")
+	routes := api.GtfsManager.GetRoutes()
+	assert.NotEmpty(t, routes, "Test data should contain at least one route")
+
+	invalidRouteID := utils.FormCombinedID(routes[0].Agency.Id, "invalid_route_id")
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+invalidRouteID+".json?key=TEST")
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -92,7 +95,7 @@ func TestRouteHandlerVerifiesReferences(t *testing.T) {
 	routes := api.GtfsManager.GetRoutes()
 	assert.NotEmpty(t, routes, "Test data should contain at least one route")
 
-	routeID := utils.FormCombinedID(agencies[0].Id, routes[0].Id)
+	routeID := utils.FormCombinedID(routes[0].Agency.Id, routes[0].Id)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+routeID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -110,7 +113,7 @@ func TestRouteHandlerVerifiesReferences(t *testing.T) {
 		agency, ok := agenciesRef[0].(map[string]interface{})
 		assert.True(t, ok)
 		assert.NotEmpty(t, agency["id"], "Agency should have an ID")
-		assert.Equal(t, agencies[0].Id, agency["id"])
+		assert.Equal(t, routes[0].Agency.Id, agency["id"])
 		assert.NotEmpty(t, agency["name"], "Agency should have a name")
 	}
 }
