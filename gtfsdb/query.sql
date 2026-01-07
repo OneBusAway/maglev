@@ -352,9 +352,6 @@ WHERE service_id NOT IN (SELECT service_id FROM removed_services)
 UNION
 SELECT DISTINCT service_id FROM added_services;
 
--- name: GetTripsByRoute :many
-SELECT * FROM trips WHERE route_id = ?;
-
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
 FROM trips t

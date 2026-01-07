@@ -249,9 +249,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getTripsByIDsStmt, err = db.PrepareContext(ctx, getTripsByIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsByIDs: %w", err)
 	}
-	if q.getTripsByRouteStmt, err = db.PrepareContext(ctx, getTripsByRoute); err != nil {
-		return nil, fmt.Errorf("error preparing query GetTripsByRoute: %w", err)
-	}
 	if q.getTripsByServiceIDStmt, err = db.PrepareContext(ctx, getTripsByServiceID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsByServiceID: %w", err)
 	}
@@ -659,11 +656,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getTripsByIDsStmt: %w", cerr)
 		}
 	}
-	if q.getTripsByRouteStmt != nil {
-		if cerr := q.getTripsByRouteStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getTripsByRouteStmt: %w", cerr)
-		}
-	}
 	if q.getTripsByServiceIDStmt != nil {
 		if cerr := q.getTripsByServiceIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getTripsByServiceIDStmt: %w", cerr)
@@ -823,7 +815,6 @@ type Queries struct {
 	getTripsByBlockIDOrderedStmt              *sql.Stmt
 	getTripsByBlockTripIndexIDsStmt           *sql.Stmt
 	getTripsByIDsStmt                         *sql.Stmt
-	getTripsByRouteStmt                       *sql.Stmt
 	getTripsByServiceIDStmt                   *sql.Stmt
 	getTripsForRouteInActiveServiceIDsStmt    *sql.Stmt
 	getTripsInBlockStmt                       *sql.Stmt
@@ -914,7 +905,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsByBlockIDOrderedStmt:              q.getTripsByBlockIDOrderedStmt,
 		getTripsByBlockTripIndexIDsStmt:           q.getTripsByBlockTripIndexIDsStmt,
 		getTripsByIDsStmt:                         q.getTripsByIDsStmt,
-		getTripsByRouteStmt:                       q.getTripsByRouteStmt,
 		getTripsByServiceIDStmt:                   q.getTripsByServiceIDStmt,
 		getTripsForRouteInActiveServiceIDsStmt:    q.getTripsForRouteInActiveServiceIDsStmt,
 		getTripsInBlockStmt:                       q.getTripsInBlockStmt,

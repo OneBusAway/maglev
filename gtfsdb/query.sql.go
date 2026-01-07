@@ -3342,44 +3342,6 @@ func (q *Queries) GetTripsByIDs(ctx context.Context, tripIds []string) ([]Trip, 
 	return items, nil
 }
 
-const getTripsByRoute = `-- name: GetTripsByRoute :many
-SELECT id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed FROM trips WHERE route_id = ?
-`
-
-func (q *Queries) GetTripsByRoute(ctx context.Context, routeID string) ([]Trip, error) {
-	rows, err := q.query(ctx, q.getTripsByRouteStmt, getTripsByRoute, routeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Trip
-	for rows.Next() {
-		var i Trip
-		if err := rows.Scan(
-			&i.ID,
-			&i.RouteID,
-			&i.ServiceID,
-			&i.TripHeadsign,
-			&i.TripShortName,
-			&i.DirectionID,
-			&i.BlockID,
-			&i.ShapeID,
-			&i.WheelchairAccessible,
-			&i.BikesAllowed,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getTripsByServiceID = `-- name: GetTripsByServiceID :many
 SELECT id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed
 FROM trips

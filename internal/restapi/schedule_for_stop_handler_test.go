@@ -42,7 +42,7 @@ func TestScheduleForStopHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			
+
 			// If we expect a valid response, force a known valid date (2025-06-12).
 			url := "/api/where/schedule-for-stop/" + tt.stopID + ".json?key=TEST"
 			if tt.expectValidResponse {

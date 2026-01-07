@@ -160,7 +160,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	)
 
 	stopIDs := []string{}
-	calc:= gtfs.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
+	calc := gtfs.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
 
 	if status != nil {
 		if status.ClosestStop != "" {

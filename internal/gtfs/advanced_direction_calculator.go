@@ -61,22 +61,26 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 // IMPORTANT: This must be called before any concurrent operations begin.
 // Panics if called after CalculateStopDirection has been invoked.
 func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) {
+	if adc.initialized.Load() {
+		panic("SetContextCache called after concurrent operations have started")
+	}
 	adc.contextCache = cache
 }
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
 func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection ...sql.NullString) string {
-  if len(gtfsDirection) > 0 && gtfsDirection[0].Valid && gtfsDirection[0].String != "" {
-    if direction := adc.translateGtfsDirection(gtfsDirection[0].String); direction != "" {
-      return direction
-    }
-  }
-	
+	if len(gtfsDirection) > 0 && gtfsDirection[0].Valid && gtfsDirection[0].String != "" {
+		if direction := adc.translateGtfsDirection(gtfsDirection[0].String); direction != "" {
+			return direction
+		}
+	}
+
 	// Mark as initialized for concurrency safety
 	adc.initialized.Store(true)
 
 	return adc.computeFromShapes(ctx, stopID)
 }
+
 // translateGtfsDirection converts GTFS direction field to compass direction
 func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string) string {
 	direction = strings.TrimSpace(strings.ToLower(direction))
