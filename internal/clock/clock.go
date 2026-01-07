@@ -6,6 +6,7 @@ package clock
 import (
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -156,7 +157,7 @@ func (e *EnvironmentClock) syncFromFile() (time.Time, error) {
 
 // parseTime attempts to parse a time string using multiple common formats.
 func (e *EnvironmentClock) parseTime(s string) (time.Time, error) {
-	s = trimWhitespace(s)
+	s = strings.TrimSpace(s)
 
 	// Try RFC3339 first (includes timezone)
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
@@ -176,16 +177,4 @@ func (e *EnvironmentClock) parseTime(s string) (time.Time, error) {
 	}
 
 	return time.Time{}, errors.New("unable to parse time: " + s)
-}
-
-// trimWhitespace removes leading and trailing whitespace from a string.
-func trimWhitespace(s string) string {
-	// Simple trim for newlines and spaces
-	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t' || s[0] == '\n' || s[0] == '\r') {
-		s = s[1:]
-	}
-	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t' || s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
-		s = s[:len(s)-1]
-	}
-	return s
 }
