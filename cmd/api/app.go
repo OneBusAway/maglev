@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/appconf"
-	"maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/logging"
-	"maglev.onebusaway.org/internal/restapi"
-	"maglev.onebusaway.org/internal/webui"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/restapi"
+	"maglev.onebusaway.org/internal/webui"
 )
 
 // ParseAPIKeys splits a comma-separated string of API keys and trims whitespace from each key.
@@ -133,13 +134,14 @@ func Run(srv *http.Server, gtfsManager *gtfs.Manager, api *restapi.RestAPI, logg
 		return fmt.Errorf("server forced to shutdown: %w", err)
 	}
 
-	// Shutdown GTFS manager
-	if gtfsManager != nil {
-		gtfsManager.Shutdown()
-	}
-
+	// Shutdown API rate limiter first (stops background goroutines for request handling)
 	if api != nil {
 		api.Shutdown()
+	}
+
+	// Then shutdown GTFS manager (stops data fetching - the lowest-level dependency)
+	if gtfsManager != nil {
+		gtfsManager.Shutdown()
 	}
 
 	logger.Info("server exited")

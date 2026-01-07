@@ -185,11 +185,13 @@ func (rl *RateLimitMiddleware) cleanup() {
 }
 
 // Stop stops the cleanup goroutine. It is safe to call multiple times.
+// Note: This does not affect in-flight requests - it only stops the
+// background cleanup goroutine.
 func (rl *RateLimitMiddleware) Stop() {
 	rl.stopOnce.Do(func() {
+		close(rl.stopChan)
 		if rl.cleanupTick != nil {
 			rl.cleanupTick.Stop()
 		}
-		close(rl.stopChan)
 	})
 }
