@@ -18,6 +18,7 @@ func TestStopIdsForAgencyRequiresValidApiKey(t *testing.T) {
 
 func TestStopIdsForAgencyEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id

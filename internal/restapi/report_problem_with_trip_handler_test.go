@@ -18,6 +18,7 @@ func TestReportProblemWithTripRequiresValidApiKey(t *testing.T) {
 
 func TestReportProblemWithTripEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	tripId := "1_12345"
 

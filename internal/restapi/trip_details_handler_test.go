@@ -19,6 +19,7 @@ func TestTripDetailsHandlerRequiresValidApiKey(t *testing.T) {
 
 func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -125,6 +126,7 @@ func TestTripDetailsHandlerWithInvalidTripID(t *testing.T) {
 
 func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -152,6 +154,7 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 
 func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -181,6 +184,7 @@ func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 
 func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -219,6 +223,7 @@ func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
 
 func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -245,6 +250,7 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 
 func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -273,6 +279,7 @@ func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
 
 func TestTripDetailsHandlerWithAllParametersFalse(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()

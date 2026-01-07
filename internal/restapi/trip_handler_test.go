@@ -18,6 +18,7 @@ func TestTripHandlerRequiresValidApiKey(t *testing.T) {
 func TestTripHandlerEndToEnd(t *testing.T) {
 
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 

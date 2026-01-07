@@ -20,7 +20,7 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 	// Then rate limiting - use the shared rate limiter instance
 	var rateLimitedHandler http.Handler
 	if api.rateLimiter != nil {
-		rateLimitedHandler = api.rateLimiter(compressedHandler)
+		rateLimitedHandler = api.rateLimiter.Handler()(compressedHandler)
 	} else {
 		// Fallback for tests that don't use NewRestAPI constructor
 		rateLimitedHandler = compressedHandler

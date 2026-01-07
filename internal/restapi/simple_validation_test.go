@@ -9,6 +9,7 @@ import (
 
 func TestSimpleValidationErrors(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	tests := []struct {
 		name           string
@@ -42,6 +43,7 @@ func TestSimpleValidationErrors(t *testing.T) {
 
 func TestValidationBoundaryConditions(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	tests := []struct {
 		name           string

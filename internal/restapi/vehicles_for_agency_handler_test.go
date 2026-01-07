@@ -16,6 +16,7 @@ import (
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -28,6 +29,7 @@ func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -56,6 +58,7 @@ func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/nonexistent.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -72,6 +75,7 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerResponseStructure(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -117,6 +121,7 @@ func TestVehiclesForAgencyHandlerResponseStructure(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerReferencesBuilding(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -169,6 +174,7 @@ func TestVehiclesForAgencyHandlerReferencesBuilding(t *testing.T) {
 func TestVehiclesForAgencyHandlerEmptyResult(t *testing.T) {
 	// Test with an agency that likely has no vehicles
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Test with a specific agency that should return empty results
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/25.json?key=TEST")
@@ -190,6 +196,7 @@ func TestVehiclesForAgencyHandlerEmptyResult(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerFieldMapping(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -220,6 +227,7 @@ func TestVehiclesForAgencyHandlerFieldMapping(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerWithAllAgencies(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 
@@ -250,6 +258,7 @@ func TestVehiclesForAgencyHandlerWithAllAgencies(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -341,8 +350,9 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 
 	api := NewRestAPI(app)
 
-	// Cleanup function to close the server
+	// Cleanup function to close the server and API
 	cleanup := func() {
+		api.Shutdown()
 		server.Close()
 	}
 

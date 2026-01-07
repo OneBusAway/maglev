@@ -10,6 +10,7 @@ import (
 
 func TestRateLimitingIntegration(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	tests := []struct {
 		name          string
@@ -85,6 +86,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 func TestRateLimitingPerAPIKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Test that different API keys have separate rate limits
 	endpoint := "/api/where/current-time.json"
@@ -115,6 +117,7 @@ func TestRateLimitingPerAPIKey(t *testing.T) {
 
 func TestRateLimitingExemption(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	endpoint := "/api/where/current-time.json"
 	exemptKey := "org.onebusaway.iphone"
@@ -129,6 +132,7 @@ func TestRateLimitingExemption(t *testing.T) {
 
 func TestRateLimitingHeaders(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	endpoint := "/api/where/current-time.json?key=test-headers"
 
@@ -157,6 +161,7 @@ func TestRateLimitingRefill(t *testing.T) {
 	// Note: This test modifies the global rate limiter configuration
 
 	api := createTestApi(t)
+	defer api.Shutdown()
 	endpoint := "/api/where/current-time.json?key=test-refill"
 
 	// Make one request to establish the limiter
@@ -172,6 +177,7 @@ func TestRateLimitingRefill(t *testing.T) {
 
 func TestRateLimitingWithoutAPIKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	endpoint := "/api/where/current-time.json"
 
@@ -187,6 +193,7 @@ func TestRateLimitingWithoutAPIKey(t *testing.T) {
 
 func TestRateLimitingErrorResponse(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	endpoint := "/api/where/current-time.json?key=test-error-format"
 

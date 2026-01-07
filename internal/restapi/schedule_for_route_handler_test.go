@@ -11,6 +11,7 @@ import (
 
 func TestScheduleForRouteHandler(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies, "Test data should contain at least one agency")
@@ -118,6 +119,7 @@ func TestScheduleForRouteHandler(t *testing.T) {
 
 func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	static := api.GtfsManager.GetStaticData()

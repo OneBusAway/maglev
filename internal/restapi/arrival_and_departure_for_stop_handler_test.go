@@ -19,6 +19,7 @@ import (
 
 func TestArrivalAndDepartureForStopHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -39,6 +40,7 @@ func TestArrivalAndDepartureForStopHandlerRequiresValidApiKey(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -124,6 +126,7 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithInvalidStopID(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -143,6 +146,7 @@ func TestArrivalAndDepartureForStopHandlerWithInvalidStopID(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -190,6 +194,7 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -222,6 +227,7 @@ func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -255,6 +261,7 @@ func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -293,6 +300,7 @@ func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithMinutesParameters(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -325,6 +333,7 @@ func TestArrivalAndDepartureForStopHandlerWithMinutesParameters(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithInvalidTripID(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -344,6 +353,7 @@ func TestArrivalAndDepartureForStopHandlerWithInvalidTripID(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedTripID(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -362,6 +372,7 @@ func TestArrivalAndDepartureForStopHandlerWithMalformedTripID(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedStopID(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -380,6 +391,7 @@ func TestArrivalAndDepartureForStopHandlerWithMalformedStopID(t *testing.T) {
 
 func TestArrivalAndDepartureForStopHandlerWithValidTripStopCombination(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	ctx := context.Background()
@@ -459,6 +471,7 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripStopCombination(t *testin
 
 func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	ctx := context.Background()
@@ -519,6 +532,7 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testin
 
 func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	scheduledArrival := time.Now()
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
@@ -532,6 +546,7 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Test the case where scheduled arrival == scheduled departure
 	scheduledTime := time.Now()
@@ -547,6 +562,7 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", nil, time.Now())
@@ -556,6 +572,7 @@ func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
 
 func TestGetBlockDistanceToStop_NoPosition(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	vehicle := &gtfs.Vehicle{
@@ -580,6 +597,7 @@ func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
 
 func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	req := httptest.NewRequest("GET", "/test?minutesAfter=60&minutesBefore=15&time=1609459200000&tripId=trip_123&serviceDate=1609459200000&vehicleId=vehicle_456&stopSequence=3", nil)
 
@@ -597,6 +615,7 @@ func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {
 
 func TestParseArrivalAndDepartureParams_DefaultValues(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	req := httptest.NewRequest("GET", "/test", nil)
 
@@ -613,6 +632,7 @@ func TestParseArrivalAndDepartureParams_DefaultValues(t *testing.T) {
 
 func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&time=invalid&serviceDate=invalid&stopSequence=invalid", nil)
 

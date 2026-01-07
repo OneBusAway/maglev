@@ -184,6 +184,7 @@ func TestInputValidationIntegration(t *testing.T) {
 
 func TestInputSanitizationIntegration(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	tests := []struct {
 		name     string
@@ -221,6 +222,7 @@ func TestInputSanitizationIntegration(t *testing.T) {
 
 func TestValidInputsPassThrough(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	validTests := []struct {
 		name     string

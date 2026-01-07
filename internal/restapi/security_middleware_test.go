@@ -98,6 +98,7 @@ func TestSecurityHeadersOPTIONSRequest(t *testing.T) {
 func TestWithSecurityHeaders(t *testing.T) {
 	// Create a test API instance
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Create a simple handler
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
