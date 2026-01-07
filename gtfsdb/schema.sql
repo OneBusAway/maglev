@@ -238,3 +238,6 @@ CREATE INDEX IF NOT EXISTS idx_block_trip_entry_service_id ON block_trip_entry (
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_trips_block_id ON trips (block_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_shapes_shape_id ON shapes (shape_id);
