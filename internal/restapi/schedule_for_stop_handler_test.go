@@ -42,7 +42,7 @@ func TestScheduleForStopHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-stop/"+tt.stopID+".json?key=TEST")
+			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-stop/"+tt.stopID+".json?key=TEST&date=2025-06-12")
 
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 			assert.Equal(t, tt.expectedStatus, model.Code)
@@ -258,7 +258,7 @@ func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 
 	t.Run("Stop with no routes returns empty schedule", func(t *testing.T) {
 		stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
-		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
