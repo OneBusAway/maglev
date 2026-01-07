@@ -1,10 +1,12 @@
 package restapi
 
 import (
-	"github.com/stretchr/testify/assert"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestCurrentTimeHandlerRequiresValidApiKey(t *testing.T) {
@@ -60,4 +62,29 @@ func TestCurrentTimeHandler(t *testing.T) {
 		assert.True(t, ok, "could not find %s array in references", field)
 		assert.Equal(t, 0, len(array), "expected empty %s array, got length %d", field, len(array))
 	}
+}
+
+// TestCurrentTimeHandler_DeterministicTime tests the current-time endpoint with a mock clock
+// to verify that the response contains the exact time from the clock.
+func TestCurrentTimeHandler_DeterministicTime(t *testing.T) {
+	// Create a fixed time: June 15, 2024 at 2:30 PM UTC
+	fixedTime := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(fixedTime)
+
+	// Create API with mock clock
+	api := createTestApiWithClock(t, mockClock)
+	_, response := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+
+	// Response time should be exactly the fixed time
+	expectedMs := fixedTime.UnixMilli()
+	assert.Equal(t, expectedMs, response.CurrentTime, "Response currentTime should equal mock clock time")
+
+	// Entry time should also match
+	responseData := response.Data.(map[string]interface{})
+	entry := responseData["entry"].(map[string]interface{})
+	assert.Equal(t, float64(expectedMs), entry["time"], "Entry time should equal mock clock time")
+
+	// Readable time should match
+	expectedReadable := fixedTime.Format(time.RFC3339)
+	assert.Equal(t, expectedReadable, entry["readableTime"], "Readable time should match mock clock")
 }

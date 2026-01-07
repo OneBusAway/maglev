@@ -3,9 +3,11 @@ package restapi
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestStopsForLocationHandlerRequiresValidApiKey(t *testing.T) {
@@ -16,7 +18,14 @@ func TestStopsForLocationHandlerRequiresValidApiKey(t *testing.T) {
 }
 
 func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500")
+	// Mock clock set to Dec 26, 2025. This date was chosen by evaluating the test
+	// criteria: we need a day with active stops within the queried location.
+	// Any date that satisfies the test requirements against the test GTFS data can be used
+	// in the test.
+
+	clock := clock.NewMockClock(time.Date(2025, 12, 26, 14, 00, 00, 0, time.UTC))
+	api := createTestApiWithClock(t, clock)
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)

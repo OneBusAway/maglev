@@ -20,7 +20,7 @@ type stopsForRouteParams struct {
 }
 
 func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParams {
-	now := time.Now()
+	now := api.Clock.Now()
 	params := stopsForRouteParams{
 		IncludePolylines: true,
 		Time:             &now,
@@ -199,7 +199,7 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewEntryResponse(result, references)
+	response := models.NewEntryResponse(result, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
