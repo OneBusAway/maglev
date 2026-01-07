@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -349,7 +350,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Code:               stopData.Code.String,
 			Direction:          api.calculateStopDirection(ctx, stopID),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: "UNKNOWN",
+			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stopData.WheelchairBoarding.Int64)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

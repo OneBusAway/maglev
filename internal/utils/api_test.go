@@ -237,12 +237,12 @@ func TestMapWheelchairBoarding(t *testing.T) {
 		{
 			name:     "Possible",
 			input:    gtfs.WheelchairBoarding_Possible,
-			expected: "ACCESSIBLE",
+			expected: models.Accessible,
 		},
 		{
 			name:     "Not possible",
 			input:    gtfs.WheelchairBoarding_NotPossible,
-			expected: "NOT_ACCESSIBLE",
+			expected: models.NotAccessible,
 		},
 		{
 			name:     "Not specified (default)",
