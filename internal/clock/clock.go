@@ -79,20 +79,17 @@ func (m *MockClock) Advance(d time.Duration) {
 type EnvironmentClock struct {
 	envVar   string
 	filePath string
-	mutex    *sync.Mutex
 	location *time.Location
 }
 
 // NewEnvironmentClock creates a new EnvironmentClock with the given options.
 // If no sources are configured, it will fall back to system time.
 func NewEnvironmentClock(envVar string, filePath string, location *time.Location) *EnvironmentClock {
-	e := &EnvironmentClock{
+	return &EnvironmentClock{
 		envVar:   envVar,
 		filePath: filePath,
-		mutex:    &sync.Mutex{},
 		location: location,
 	}
-	return e
 }
 
 // Now returns the current time by checking sources in priority order:
@@ -117,9 +114,6 @@ func (e *EnvironmentClock) NowUnixMilli() int64 {
 // syncFromEnvVar attempts to read and parse time from the configured environment variable.
 // Returns the parsed time or an error if the env var is not set, empty, or contains invalid time.
 func (e *EnvironmentClock) syncFromEnvVar() (time.Time, error) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
 	if e.envVar == "" {
 		return time.Time{}, errors.New("environment variable name not configured")
 	}
@@ -137,9 +131,6 @@ func (e *EnvironmentClock) syncFromEnvVar() (time.Time, error) {
 // syncFromFile attempts to read and parse time from the configured file.
 // Returns the parsed time or an error if the file path is not set, unreadable, or contains invalid time.
 func (e *EnvironmentClock) syncFromFile() (time.Time, error) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
 	if e.filePath == "" {
 		return time.Time{}, errors.New("file path not configured")
 	}
@@ -162,6 +153,11 @@ func (e *EnvironmentClock) parseTime(s string) (time.Time, error) {
 	// Try RFC3339 first (includes timezone)
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
+	}
+
+	// requires timezone
+	if e.location == nil {
+		return time.Time{}, errors.New("timezone not configured")
 	}
 
 	// Try common formats without timezone, using configured location
