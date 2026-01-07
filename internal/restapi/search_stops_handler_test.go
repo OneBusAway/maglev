@@ -40,7 +40,7 @@ func TestSearchStopsHandlerMissingInput(t *testing.T) {
 	// Call without 'input' parameter
 	resp, err := http.Get(server.URL + "/api/where/search/stop.json?key=TEST")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 1. Assert Status Code matches 400
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -76,7 +76,7 @@ func TestSearchStopsHandlerEndToEnd(t *testing.T) {
 
 	resp, err := http.Get(server.URL + reqUrl)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Response status should be 200 OK. Body: %s", string(bodyBytes))
@@ -151,7 +151,7 @@ func TestSearchStopsHandlerMaxCount(t *testing.T) {
 
 	resp, err := http.Get(server.URL + reqUrl)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Response status should be 200 OK. Body: %s", string(bodyBytes))

@@ -93,12 +93,12 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	groupings := make(map[tripGroupKey][]gtfsdb.Trip)
 	for _, trip := range trips {
 		tripIDsSet[trip.ID] = true
-		key := tripGroupKey{directionID:  trip.DirectionID.Int64, tripHeadsign: trip.TripHeadsign.String}
+		key := tripGroupKey{directionID: trip.DirectionID.Int64 - 1, tripHeadsign: trip.TripHeadsign.String}
 		groupings[key] = append(groupings[key], trip)
 	}
 	var stopTripGroupings []models.StopTripGrouping
 	globalStopIDSet := make(map[string]struct{})
-	var stopTimesRefs []models.RouteStopTime
+	var stopTimesRefs []interface{}
 	for key, groupedTrips := range groupings {
 		stopIDSet := make(map[string]struct{})
 		tripIDs := make([]string, 0, len(groupedTrips))
@@ -122,7 +122,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			for _, st := range stopTimes {
 				arrivalSec := int(st.ArrivalTime / 1e9)
 				departureSec := int(st.DepartureTime / 1e9)
-				stopTime := models.RouteStopTime{
+				stopTimesList = append(stopTimesList, models.RouteStopTime{
 					ArrivalEnabled:   true,
 					ArrivalTime:      arrivalSec,
 					DepartureEnabled: true,
@@ -131,14 +131,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					StopHeadsign:     st.StopHeadsign.String,
 					StopID:           utils.FormCombinedID(agencyID, st.StopID),
 					TripID:           utils.FormCombinedID(agencyID, trip.ID),
-				}
-				stopTimesList = append(stopTimesList, stopTime)
-				stopTimesRefs = append(stopTimesRefs, stopTime)
+				})
 			}
 			tripsWithStopTimes = append(tripsWithStopTimes, models.TripStopTimes{
-				TripID:     utils.FormCombinedID(agencyID, trip. ID),
+				TripID:    utils.FormCombinedID(agencyID, trip.ID),
 				StopTimes: stopTimesList,
 			})
+			stopTimesRefs = append(stopTimesRefs, stopTimesList)
 		}
 		stopIDsOrdered := make([]string, 0, len(stopIDSet))
 		for stopID := range stopIDSet {
@@ -191,7 +190,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					t.TripHeadsign.String,
 					t.TripShortName.String,
 					t.DirectionID.Int64,
-					utils.FormCombinedID(agencyID, t.BlockID. String),
+					utils.FormCombinedID(agencyID, t.BlockID.String),
 					utils.FormCombinedID(agencyID, t.ShapeID.String),
 				)
 				references.Trips = append(references.Trips, tripRef)
@@ -210,8 +209,21 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	for _, st := range stopTimesRefs {
-		references.StopTimes = append(references.StopTimes, st)
+	for _, sref := range stopTimesRefs {
+		switch v := sref.(type) {
+		case []models.RouteStopTime:
+			for _, st := range v {
+				references.StopTimes = append(references.StopTimes, st)
+			}
+		case []map[string]interface{}:
+			for _, st := range v {
+				references.StopTimes = append(references.StopTimes, st)
+			}
+		case []interface{}:
+			references.StopTimes = append(references.StopTimes, v...)
+		default:
+			references.StopTimes = append(references.StopTimes, v)
+		}
 	}
 
 	entry := models.ScheduleForRouteEntry{
