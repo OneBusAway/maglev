@@ -22,7 +22,7 @@ func TestScheduleForRouteHandler(t *testing.T) {
 	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
 
 	t.Run("Valid route", func(t *testing.T) {
-		resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-route/"+routeID+".json?key=TEST")
+		resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-route/"+routeID+".json?key=TEST&date=2025-06-12")
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, http.StatusOK, model.Code)
