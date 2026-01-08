@@ -20,27 +20,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
 	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
+	maxCount, _ := utils.ParseMaxCount(queryParams, 100, fieldErrors)
 	query := queryParams.Get("query")
-
-	// Parse maxCount parameter (default 100, max 250) - matches Java's MaxCountSupport
-	maxCount := 100
-	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
-		parsedMaxCount, err := utils.ParseFloatParam(queryParams, "maxCount", fieldErrors)
-		if err == nil {
-			maxCount = int(parsedMaxCount)
-			if maxCount <= 0 {
-				if fieldErrors == nil {
-					fieldErrors = make(map[string][]string)
-				}
-				fieldErrors["maxCount"] = []string{"must be greater than zero"}
-			} else if maxCount > 250 {
-				if fieldErrors == nil {
-					fieldErrors = make(map[string][]string)
-				}
-				fieldErrors["maxCount"] = []string{"must not exceed 250"}
-			}
-		}
-	}
 
 	var routeTypes []int
 	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
@@ -131,7 +112,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			Stops:      []models.Stop{},
 			Trips:      []interface{}{},
 		}
-		response := models.NewListResponseWithRange(results, references, true)
+		response := models.NewListResponseWithRange(results, references, true, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -217,6 +198,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponseWithRange(results, references, len(results) == 0)
+	response := models.NewListResponseWithRange(results, references, len(results) == 0, len(results) >= maxCount)
 	api.sendResponse(w, r, response)
 }

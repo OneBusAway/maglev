@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -187,4 +188,54 @@ func TestRoutesForLocationHandlerNoStopsFound(t *testing.T) {
 	trips, ok := refs["trips"].([]interface{})
 	require.True(t, ok)
 	assert.Empty(t, trips)
+}
+
+func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
+	maxCount := 1
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&maxCount=1")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	limitExceeded, ok := data["limitExceeded"].(bool)
+	require.True(t, ok)
+	assert.True(t, limitExceeded)
+
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.Equal(t, maxCount, len(list))
+}
+
+func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
+	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=invalid")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestRoutesForLocationHandlerMaxCountLessThanOrEqualZero(t *testing.T) {
+	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=0")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestRoutesForLocationHandlerInRangeWithNoResults(t *testing.T) {
+	api := createTestApi(t)
+	lat, lon, _, _ := api.GtfsManager.GetRegionBounds()
+	resp, model := serveApiAndRetrieveEndpoint(t, api, fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=1", lat, lon))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	outOfRange, ok := data["outOfRange"].(bool)
+	require.True(t, ok)
+	assert.False(t, outOfRange)
+
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.Equal(t, 0, len(list))
 }
