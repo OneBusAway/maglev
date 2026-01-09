@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -207,12 +209,163 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	}
 }
 
-func TestBlockHandlerMissingBlock(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/block/25_nonexistent.json?key=TEST")
-	if resp.StatusCode == http.StatusInternalServerError {
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+// NEW: Test for non-existent block - should return error
+func TestBlockHandlerNonExistentBlock(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_nonexistent.json?key=TEST")
+
+	// Should return an error response (either 404 or 500 is acceptable for now)
+	// The model should indicate an error
+	if resp.StatusCode == http.StatusOK {
+		// If status is OK, check if there's an error in the model
+		assert.NotEqual(t, http.StatusOK, model.Code, "Expected error code in model for non-existent block")
 	} else {
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Non-OK status is also acceptable
+		assert.True(t, resp.StatusCode >= 400, "Expected error status code for non-existent block")
+	}
+}
+
+// NEW: Test for invalid block ID format
+func TestBlockHandlerInvalidBlockID(t *testing.T) {
+	testCases := []struct {
+		name     string
+		endpoint string
+	}{
+		{"Empty block ID", "/api/where/block/.json?key=TEST"},
+		{"Missing agency", "/api/where/block/invalidblock.json?key=TEST"},
+		{"Special characters", "/api/where/block/25_@#$.json?key=TEST"},
+		{"Only underscore", "/api/where/block/_.json?key=TEST"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, resp, _ := serveAndRetrieveEndpoint(t, tc.endpoint)
+			assert.True(t, resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= 400,
+				"Expected error status for invalid block ID: %s", tc.name)
+		})
+	}
+}
+
+// NEW: Test response schema validation
+func TestBlockHandlerResponseSchema(t *testing.T) {
+	api := createTestApi(t)
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Validate top-level response structure
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+	assert.NotNil(t, model.Data)
+	assert.Greater(t, model.CurrentTime, int64(0), "currentTime should be set")
+	assert.Equal(t, 2, model.Version, "version should be 2")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	// Validate entry wrapper structure
+	require.Contains(t, data, "entry")
+	require.Contains(t, data, "references")
+
+	entryWrapper, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, entryWrapper, "data")
+
+	entryData, ok := entryWrapper["data"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, entryData, "entry")
+
+	// Validate block entry structure
+	entry, ok := entryData["entry"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, entry, "id")
+	require.Contains(t, entry, "configurations")
+
+	// Validate configurations array
+	configs, ok := entry["configurations"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, configs)
+
+	// Validate each configuration
+	for _, rawConfig := range configs {
+		config, ok := rawConfig.(map[string]interface{})
+		require.True(t, ok)
+
+		require.Contains(t, config, "activeServiceIds")
+		require.Contains(t, config, "inactiveServiceIds")
+		require.Contains(t, config, "trips")
+
+		// Validate trips array
+		trips, ok := config["trips"].([]interface{})
+		require.True(t, ok)
+
+		for _, rawTrip := range trips {
+			trip, ok := rawTrip.(map[string]interface{})
+			require.True(t, ok)
+
+			require.Contains(t, trip, "tripId")
+			require.Contains(t, trip, "distanceAlongBlock")
+			require.Contains(t, trip, "blockStopTimes")
+			require.Contains(t, trip, "accumulatedSlackTime")
+
+			// Validate blockStopTimes
+			blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
+			require.True(t, ok)
+
+			for _, rawStopTime := range blockStopTimes {
+				stopTime, ok := rawStopTime.(map[string]interface{})
+				require.True(t, ok)
+
+				require.Contains(t, stopTime, "blockSequence")
+				require.Contains(t, stopTime, "distanceAlongBlock")
+				require.Contains(t, stopTime, "accumulatedSlackTime")
+				require.Contains(t, stopTime, "stopTime")
+
+				// Validate nested stopTime
+				st, ok := stopTime["stopTime"].(map[string]interface{})
+				require.True(t, ok)
+				require.Contains(t, st, "arrivalTime")
+				require.Contains(t, st, "departureTime")
+				require.Contains(t, st, "stopId")
+				require.Contains(t, st, "pickupType")
+				require.Contains(t, st, "dropOffType")
+			}
+		}
+	}
+
+	// Validate references structure
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, refs, "agencies")
+	require.Contains(t, refs, "routes")
+	require.Contains(t, refs, "stops")
+	require.Contains(t, refs, "trips")
+	require.Contains(t, refs, "stopTimes")
+	require.Contains(t, refs, "situations")
+}
+
+// NEW: Test different block IDs
+func TestBlockHandlerDifferentBlockIDs(t *testing.T) {
+	testCases := []struct {
+		name          string
+		blockID       string
+		shouldSucceed bool
+	}{
+		{"Valid block ID", "25_1", true},
+		// Add more valid block IDs from your test data if available
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			endpoint := "/api/where/block/" + tc.blockID + ".json?key=TEST"
+			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+			if tc.shouldSucceed {
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				assert.Equal(t, http.StatusOK, model.Code)
+			} else {
+				assert.True(t, resp.StatusCode >= 400 || model.Code >= 400)
+			}
+		})
 	}
 }
 
@@ -319,4 +472,109 @@ func TestBlockHandlerRequiresValidApiKey(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
+}
+
+// NEW: Test missing API key
+func TestBlockHandlerMissingApiKey(t *testing.T) {
+	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json")
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// NEW: Performance benchmark test
+func BenchmarkBlockHandler(b *testing.B) {
+	api := createTestApi(&testing.T{})
+	endpoint := "/api/where/block/25_1.json?key=TEST"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = serveApiAndRetrieveEndpoint(&testing.T{}, api, endpoint)
+	}
+}
+
+// NEW: Test response time is acceptable
+func TestBlockHandlerResponseTime(t *testing.T) {
+	api := createTestApi(t)
+
+	start := time.Now()
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+	duration := time.Since(start)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Less(t, duration.Milliseconds(), int64(1000), "Response should be under 1 second")
+}
+
+// NEW: Test all required fields are present and non-empty
+func TestBlockHandlerDataCompleteness(t *testing.T) {
+	api := createTestApi(t)
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	entryWrapper, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	entryData, ok := entryWrapper["data"].(map[string]interface{})
+	require.True(t, ok)
+
+	entry, ok := entryData["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	// Verify block ID is not empty
+	blockID, ok := entry["id"].(string)
+	require.True(t, ok)
+	assert.NotEmpty(t, blockID)
+
+	// Verify configurations exist
+	configs, ok := entry["configurations"].([]interface{})
+	require.True(t, ok)
+	assert.NotEmpty(t, configs, "Block should have at least one configuration")
+
+	// Verify each configuration has required data
+	for _, rawConfig := range configs {
+		config, ok := rawConfig.(map[string]interface{})
+		require.True(t, ok)
+
+		activeServiceIds, ok := config["activeServiceIds"].([]interface{})
+		require.True(t, ok)
+		assert.NotEmpty(t, activeServiceIds, "Configuration should have active service IDs")
+
+		trips, ok := config["trips"].([]interface{})
+		require.True(t, ok)
+		assert.NotEmpty(t, trips, "Configuration should have trips")
+
+		// Verify each trip has stops
+		for _, rawTrip := range trips {
+			trip, ok := rawTrip.(map[string]interface{})
+			require.True(t, ok)
+
+			blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
+			require.True(t, ok)
+			assert.NotEmpty(t, blockStopTimes, "Trip should have block stop times")
+		}
+	}
+}
+
+// NEW: Test JSON marshaling/unmarshaling
+func TestBlockHandlerJSONSerialization(t *testing.T) {
+	api := createTestApi(t)
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Re-marshal the data to ensure it's valid JSON
+	jsonBytes, err := json.Marshal(model)
+	require.NoError(t, err, "Should be able to marshal response to JSON")
+
+	// Unmarshal back
+	var unmarshaled map[string]interface{}
+	err = json.Unmarshal(jsonBytes, &unmarshaled)
+	require.NoError(t, err, "Should be able to unmarshal JSON")
+
+	// Verify key fields exist after round-trip
+	assert.Contains(t, unmarshaled, "code")
+	assert.Contains(t, unmarshaled, "text")
+	assert.Contains(t, unmarshaled, "data")
+	assert.Contains(t, unmarshaled, "version")
+	assert.Contains(t, unmarshaled, "currentTime")
 }

@@ -7,8 +7,8 @@ type StopTimes struct {
 type StopTime struct {
 	ArrivalTime         int     `json:"arrivalTime"`
 	DepartureTime       int     `json:"departureTime"`
-	DropOffType         int     `json:"dropOffType,omitempty"`
-	PickupType          int     `json:"pickupType,omitempty"`
+	DropOffType         int     `json:"dropOffType"`
+	PickupType          int     `json:"pickupType"`
 	StopID              string  `json:"stopId"`
 	StopHeadsign        string  `json:"stopHeadsign"`
 	DistanceAlongTrip   float64 `json:"distanceAlongTrip"`
