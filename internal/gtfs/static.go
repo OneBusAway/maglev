@@ -226,21 +226,10 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		slog.String("db_path", finalDBPath))
 
 	if oldGtfsDB != nil {
-		oldDBPath := oldGtfsDB.GetDBPath()
+		// oldDBPath := oldGtfsDB.GetDBPath()
 
 		if err := oldGtfsDB.Close(); err != nil {
 			logging.LogError(logger, "Error closing old GTFS DB", err)
-		}
-
-		if oldDBPath != "" && oldDBPath != finalDBPath {
-			if err := os.Remove(oldDBPath); err != nil {
-				// It might have been already removed or replaced
-				if !os.IsNotExist(err) {
-					logging.LogError(logger, "Error removing old GTFS DB file", err, slog.String("path", oldDBPath))
-				}
-			} else {
-				logging.LogOperation(logger, "removed_old_gtfs_db_file", slog.String("path", oldDBPath))
-			}
 		}
 	}
 
