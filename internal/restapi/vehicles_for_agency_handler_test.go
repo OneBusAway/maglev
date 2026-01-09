@@ -1,17 +1,18 @@
 package restapi
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/appconf"
-	"maglev.onebusaway.org/internal/gtfs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
@@ -344,6 +345,7 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 	// Cleanup function to close the server
 	cleanup := func() {
 		server.Close()
+		gtfsManager.Shutdown()
 	}
 
 	return api, cleanup

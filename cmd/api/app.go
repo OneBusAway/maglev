@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/appconf"
-	"maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/logging"
-	"maglev.onebusaway.org/internal/restapi"
-	"maglev.onebusaway.org/internal/webui"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/restapi"
+	"maglev.onebusaway.org/internal/webui"
 )
 
 // ParseAPIKeys splits a comma-separated string of API keys and trims whitespace from each key.
@@ -46,7 +47,7 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 
 	var directionCalculator *gtfs.DirectionCalculator
 	if gtfsManager != nil {
-		directionCalculator = gtfs.NewDirectionCalculator(gtfsManager.GtfsDB.Queries)
+		directionCalculator = gtfs.NewDirectionCalculator(gtfsManager)
 	}
 
 	coreApp := &app.Application{
