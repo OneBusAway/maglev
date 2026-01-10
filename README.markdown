@@ -148,7 +148,7 @@ All basic commands are managed by our Makefile:
 
 `make test` - Run tests.
 
-`make schema` - Dump the DB's SQL schema to a file for sqlc.
+`make models` - Generate Go code from SQL queries using sqlc.
 
 `make watch` - Build and run the app with Air for live reloading during development (automatically rebuilds and restarts on code changes).
 
