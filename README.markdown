@@ -286,6 +286,8 @@ The container includes a health check that verifies the API is responding:
 docker inspect --format='{{.State.Health.Status}}' maglev
 ```
 
+**Important:** The health checks in `Dockerfile`, `docker-compose.yml`, and `docker-compose.dev.yml` use `key=test` by default. If you change your API keys in the configuration, make sure to update the health check commands accordingly to avoid container restart loops.
+
 ### Environment Variables
 
 | Variable | Description                | Default |
