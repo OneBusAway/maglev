@@ -39,7 +39,9 @@ docker-build:
 	docker build -t maglev .
 
 docker-run: docker-build
-	docker run -p 4000:4000 -v $(PWD)/config.json:/app/config.json:ro maglev
+	docker run --name maglev -p 4000:4000 \
+		-v $(PWD)/config.docker.json:/app/config.json:ro \
+		-v maglev-data:/app/data maglev
 
 docker-stop:
 	docker stop maglev 2>/dev/null || true
