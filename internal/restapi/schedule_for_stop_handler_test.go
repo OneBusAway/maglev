@@ -85,6 +85,7 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 
 	// Test valid date parameter
 	t.Run("Valid date parameter", func(t *testing.T) {
+		// NOTE: Hardcoded date 2025-06-12 used for test consistency with GTFS data validity
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
@@ -143,6 +144,9 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 		expectedStatus int
 		validateResult func(t *testing.T, entry map[string]interface{})
 	}{
+		// NOTE: These dates (2025-06-12, etc.) are chosen to match the validity period of the
+		// test GTFS data loaded in createTestApi. If the test data changes, these dates
+		// must be updated to avoid test failures.
 		{
 			name:           "Thursday date - query executes successfully",
 			date:           "2025-06-12",
@@ -205,6 +209,7 @@ func TestScheduleForStopHandlerReferences(t *testing.T) {
 	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
 
 	t.Run("Response structure is correct", func(t *testing.T) {
+		// NOTE: Hardcoded date 2025-06-12 matches GTFS data validity
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
@@ -291,6 +296,7 @@ func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
 
 	t.Run("Handler executes successfully", func(t *testing.T) {
+		// NOTE: Hardcoded date matches GTFS data validity
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
@@ -318,7 +324,8 @@ func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 
 	t.Run("Stop with no routes returns empty schedule", func(t *testing.T) {
 		stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
-		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
+		// NOTE: Hardcoded date matches GTFS data validity
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)

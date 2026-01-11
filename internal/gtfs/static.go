@@ -233,8 +233,6 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		slog.String("source", manager.gtfsSource),
 		slog.String("db_path", finalDBPath))
 
-	
-
 	return nil
 }
 
