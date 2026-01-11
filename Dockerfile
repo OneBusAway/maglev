@@ -21,8 +21,9 @@ FROM alpine:3.21
 
 # Install runtime dependencies
 # - ca-certificates: for HTTPS requests to GTFS feeds
+# - tzdata: for timezone parsing support
 # - wget: for health check
-RUN apk add --no-cache ca-certificates wget
+RUN apk add --no-cache ca-certificates tzdata wget
 
 # Create non-root user for security
 RUN addgroup -g 1000 maglev && \
