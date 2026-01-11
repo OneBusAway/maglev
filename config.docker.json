@@ -1,0 +1,22 @@
+{
+  "$schema": "./config.schema.json",
+  "port": 4000,
+  "env": "production",
+  "api-keys": ["test"],
+  "_comment": "WARNING: Change 'api-keys' before deploying to production! The default 'test' key is for development only.",
+  "rate-limit": 100,
+  "gtfs-static-feed": {
+    "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+  },
+  "gtfs-rt-feeds": [
+    {
+      "trip-updates-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone",
+      "vehicle-positions-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency/40.pb?key=org.onebusaway.iphone",
+      "service-alerts-url": "",
+      "realtime-auth-header-name": "",
+      "realtime-auth-header-value": ""
+    }
+  ],
+  "data-path": "/app/data/gtfs.db"
+}
+
