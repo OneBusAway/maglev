@@ -170,6 +170,10 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	finalDBPath := manager.config.GTFSDataPath
 	tempDBPath := strings.TrimSuffix(finalDBPath, ".db") + ".temp.db"
 
@@ -178,6 +182,12 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	newGtfsDB, err := buildGtfsDB(manager.config, manager.isLocalFile, tempDBPath)
 	if err != nil {
 		logging.LogError(logger, "Error building new GTFS DB", err)
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
+		newGtfsDB.Close()
+		os.Remove(tempDBPath)
 		return err
 	}
 
@@ -190,22 +200,9 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return err
 	}
 
-	if err := newGtfsDB.Close(); err != nil {
-		logging.LogError(logger, "Error closing temp GTFS DB", err)
+	if err := ctx.Err(); err != nil {
+		newGtfsDB.Close()
 		os.Remove(tempDBPath)
-		return err
-	}
-
-	if err := os.Rename(tempDBPath, finalDBPath); err != nil {
-		logging.LogError(logger, "Error renaming temp DB to final DB", err)
-		os.Remove(tempDBPath) // Try to cleanup
-		return err
-	}
-
-	dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
-	finalGtfsDB, err := gtfsdb.NewClient(dbConfig)
-	if err != nil {
-		logging.LogError(logger, "Error opening final GTFS DB", err)
 		return err
 	}
 
@@ -214,24 +211,30 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	oldGtfsDB := manager.GtfsDB
 
 	manager.gtfsData = newStaticData
-	manager.GtfsDB = finalGtfsDB
+	manager.GtfsDB = newGtfsDB
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.lastUpdated = time.Now()
 
 	manager.staticMutex.Unlock()
 
-	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
-		slog.String("source", manager.gtfsSource),
-		slog.String("db_path", finalDBPath))
-
 	if oldGtfsDB != nil {
-		// oldDBPath := oldGtfsDB.GetDBPath()
 
 		if err := oldGtfsDB.Close(); err != nil {
 			logging.LogError(logger, "Error closing old GTFS DB", err)
 		}
 	}
+	if err := os.Rename(tempDBPath, finalDBPath); err != nil {
+		logging.LogError(logger, "Error renaming temp DB to final DB", err)
+		os.Remove(tempDBPath) // Try to cleanup
+		return err
+	}
+
+	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
+		slog.String("source", manager.gtfsSource),
+		slog.String("db_path", finalDBPath))
+
+	
 
 	return nil
 }
