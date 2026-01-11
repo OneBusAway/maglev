@@ -69,6 +69,19 @@ func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
 	assert.Contains(t, route, "longName")
 	assert.Contains(t, route, "type")
 
+	referencedRouteIds := collectAllNestedIdsFromObjects(list, "routeIds")
+	referencedRouteIds = append(referencedRouteIds, collectAllNestedIdsFromObjects(list, "staticRouteIds")...)
+	routeIds := collectAllIdsFromObjects(routes, "id")
+	for _, routeId := range referencedRouteIds {
+		assert.Contains(t, routeIds, routeId, "Trip routeId should reference known route")
+	}
+
+	referencedAgencyIds := collectAllIdsFromObjects(routes, "agencyId")
+	agencyIds := collectAllIdsFromObjects(agencies, "id")
+	for _, agencyId := range referencedAgencyIds {
+		assert.Contains(t, agencyIds, agencyId, "Route agencyId should reference known agency")
+	}
+
 	assert.Empty(t, refs["situations"])
 	assert.Empty(t, refs["stopTimes"])
 	assert.Empty(t, refs["stops"])
