@@ -165,7 +165,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	newStaticData, err := loadGTFSData(manager.gtfsSource, manager.isLocalFile, manager.config)
 	if err != nil {
-		logging.LogError(logger, "Error updating GTFS data (load)", err,
+		logging.LogError(logger, "Error updating GTFS data (1load)", err,
 			slog.String("source", manager.gtfsSource))
 		return err
 	}
@@ -226,7 +226,6 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 	if err := os.Rename(tempDBPath, finalDBPath); err != nil {
 		logging.LogError(logger, "Error renaming temp DB to final DB", err)
-		os.Remove(tempDBPath) // Try to cleanup
 		return err
 	}
 
