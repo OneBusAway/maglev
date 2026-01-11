@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -22,7 +24,7 @@ type TripForVehicleParams struct {
 
 func (api *RestAPI) parseTripForVehicleParams(r *http.Request) TripForVehicleParams {
 	params := TripForVehicleParams{
-		IncludeTrip:     false,
+		IncludeTrip:     true,
 		IncludeSchedule: false,
 		IncludeStatus:   true,
 	}
@@ -71,7 +73,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		api.sendNotFound(w, r)
 		return
 	}
-	if vehicle == nil || vehicle.Trip == nil {
+
+	// Edge Case Check: Vehicle exists but is not currently on a trip
+	// We also check for empty trip ID string to prevent DB lookup errors
+	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}
@@ -106,11 +111,21 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	var status *models.TripStatusForTripDetails
 	if params.IncludeStatus {
-		status, _ = api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+		var statusErr error
+		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+		if statusErr != nil {
+			fmt.Println("BuildTripStatus error:", statusErr)
+			// Proceeding with nil status, as it's an optional field
+		}
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
+		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+			return
+		}
 		api.serverErrorResponse(w, r, err)
 		fmt.Println("GetTrip error:", err)
 		return
@@ -142,7 +157,6 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Build references
-
 	references := models.NewEmptyReferences()
 
 	agencyModel := models.NewAgencyReference(
@@ -186,9 +200,6 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	references.Stops = stops
 
-	fmt.Println("RefStops:", stops)
-	fmt.Println("RefRoutes:", uniqueRouteMap)
-
 	for _, route := range uniqueRouteMap {
 		routeModel := models.NewRoute(
 			utils.FormCombinedID(agencyID, route.ID),
@@ -207,20 +218,22 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	references.Agencies = append(references.Agencies, agencyModel)
 
-	tripRef := models.NewTripReference(
-		utils.FormCombinedID(agencyID, trip.ID),
-		utils.FormCombinedID(agencyID, trip.RouteID),
-		utils.FormCombinedID(agencyID, trip.ServiceID),
-		trip.TripHeadsign.String,
-		trip.TripShortName.String,
-		trip.DirectionID.Int64,
-		utils.FormCombinedID(agencyID, trip.BlockID.String),
-		utils.FormCombinedID(agencyID, trip.ShapeID.String),
-	)
-	references.Trips = append(references.Trips, tripRef)
+	if params.IncludeTrip {
+		tripRef := models.NewTripReference(
+			utils.FormCombinedID(agencyID, trip.ID),
+			utils.FormCombinedID(agencyID, trip.RouteID),
+			utils.FormCombinedID(agencyID, trip.ServiceID),
+			trip.TripHeadsign.String,
+			trip.TripShortName.String,
+			trip.DirectionID.Int64,
+			utils.FormCombinedID(agencyID, trip.BlockID.String),
+			utils.FormCombinedID(agencyID, trip.ShapeID.String),
+		)
+		references.Trips = append(references.Trips, tripRef)
+	}
+
 	response := models.NewEntryResponse(entry, references)
 	api.sendResponse(w, r, response)
-
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds stop references and collects unique routes for the given stop IDs.
