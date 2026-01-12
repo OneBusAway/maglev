@@ -14,6 +14,9 @@ clean:
 	rm -f maglev
 	rm -f coverage.out
 
+coverage-report:
+	go test ./... -cover | awk '{print $$2, $$5}' | jq -R 'split(" ") | {pkg: .[0], coverage: .[1]}'
+
 coverage:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
