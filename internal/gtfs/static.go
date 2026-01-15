@@ -136,7 +136,7 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 
 	// Update every 24 hours
-	ticker := time.NewTicker(24 * time.Second)
+	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 
 	for { // nolint
@@ -205,7 +205,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		os.Remove(tempDBPath)
 		return err
 	}
-	
+
 	newGtfsDB.Close()
 	oldGtfsDB := manager.GtfsDB
 	manager.staticMutex.Lock()
