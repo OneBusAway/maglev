@@ -22,6 +22,9 @@ func TestScheduleForRouteHandler(t *testing.T) {
 	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
 
 	t.Run("Valid route", func(t *testing.T) {
+		// NOTE: We use a hardcoded date (2025-06-12) because it corresponds to the validity period
+		// of the test GTFS data. If the test data is updated, this date may need to be changed
+		// to ensure it falls within the new feed's validity period.
 		resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-route/"+routeID+".json?key=TEST&date=2025-06-12")
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -127,6 +130,7 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
 
 	t.Run("Valid date parameter", func(t *testing.T) {
+		// NOTE: Hardcoded date 2025-06-12 used to match test GTFS data validity
 		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
