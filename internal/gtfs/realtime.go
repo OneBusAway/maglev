@@ -249,7 +249,9 @@ func rebuildRealTimeVehicleLookupByVehicle(manager *Manager) {
 		}
 	}
 	for i, vehicle := range manager.realTimeVehicles {
-		manager.realTimeVehicleLookupByVehicle[vehicle.ID.ID] = i
+		if vehicle.ID != nil {
+			manager.realTimeVehicleLookupByVehicle[vehicle.ID.ID] = i
+		}
 	}
 }
 
