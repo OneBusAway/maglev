@@ -136,7 +136,7 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 
 	// Update every 24 hours
-	ticker := time.NewTicker(24 * time.Hour)
+	ticker := time.NewTicker(24 * time.Second)
 	defer ticker.Stop()
 
 	for { // nolint
@@ -205,19 +205,10 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		os.Remove(tempDBPath)
 		return err
 	}
-
-	manager.staticMutex.Lock()
-
+	
+	newGtfsDB.Close()
 	oldGtfsDB := manager.GtfsDB
-
-	manager.gtfsData = newStaticData
-	manager.GtfsDB = newGtfsDB
-	manager.blockLayoverIndices = newBlockLayoverIndices
-	manager.stopSpatialIndex = newStopSpatialIndex
-	manager.lastUpdated = time.Now()
-
-	manager.staticMutex.Unlock()
-
+	manager.staticMutex.Lock()
 	if oldGtfsDB != nil {
 
 		if err := oldGtfsDB.Close(); err != nil {
@@ -228,6 +219,21 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		logging.LogError(logger, "Error renaming temp DB to final DB", err)
 		return err
 	}
+
+	dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
+	client, err := gtfsdb.NewClient(dbConfig)
+
+	if err != nil {
+		return fmt.Errorf("failed to update GTFS database client: %w", err)
+	}
+
+	manager.gtfsData = newStaticData
+	manager.GtfsDB = client
+	manager.blockLayoverIndices = newBlockLayoverIndices
+	manager.stopSpatialIndex = newStopSpatialIndex
+	manager.lastUpdated = time.Now()
+
+	manager.staticMutex.Unlock()
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
 		slog.String("source", manager.gtfsSource),
