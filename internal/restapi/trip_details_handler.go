@@ -118,12 +118,13 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	situationsIDs := api.GetSituationIDsForTrip(tripID)
 	tripDetails := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
 		Frequency:    nil,
-		SituationIDs: api.GetSituationIDsForTrip(tripID),
+		SituationIDs: situationsIDs,
 	}
 
 	if status != nil && status.VehicleID != "" {
@@ -174,6 +175,16 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		false,
 	)
 	references.Agencies = append(references.Agencies, agencyModel)
+
+	if len(situationsIDs) > 0 {
+		alerts := api.GtfsManager.GetAlertsForTrip(tripID)
+		if len(alerts) > 0 {
+			situations := api.BuildSituationReferences(alerts, agencyID)
+			for _, situation := range situations {
+				references.Situations = append(references.Situations, situation)
+			}
+		}
+	}
 
 	if params.IncludeSchedule && schedule != nil {
 		stops, err := api.buildStopReferences(ctx, agencyID, schedule.StopTimes)
