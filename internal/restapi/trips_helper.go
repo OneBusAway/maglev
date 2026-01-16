@@ -38,7 +38,7 @@ func (api *RestAPI) BuildTripStatus(
 		ServiceDate:     serviceDate.Unix() * 1000,
 		VehicleID:       vehicleID,
 		OccupancyStatus: occupancyStatus,
-		SituationIDs:    []string{},
+		SituationIDs:    api.GetSituationIDsForTrip(tripID),
 	}
 
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status)
