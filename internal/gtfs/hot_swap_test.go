@@ -47,7 +47,7 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 					return
 				default:
 					// Simulate read access
-					manager.staticMutex.RLock()
+					manager.RLock()
 					// 1. Access Static Data
 					agencies := manager.gtfsData.Agencies
 					if len(agencies) == 0 { //nolint
@@ -62,7 +62,7 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 						// The real handlers call methods on manager which call RLock.
 						// Here we are inside RLock manually.
 					}
-					manager.staticMutex.RUnlock()
+					manager.RUnlock()
 
 					// Also call public methods which use RLock internally
 					_ = manager.GetAgencies()

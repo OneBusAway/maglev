@@ -109,39 +109,35 @@ func (manager *Manager) Shutdown() {
 	})
 }
 
-func (manager *Manager) GetAgencies() []gtfs.Agency {
+func (manager *Manager) RLock() {
 	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
+}
+
+func (manager *Manager) RUnlock() {
+	manager.staticMutex.RUnlock()
+}
+
+func (manager *Manager) GetAgencies() []gtfs.Agency {
 	return manager.gtfsData.Agencies
 }
 
 func (manager *Manager) GetTrips() []gtfs.ScheduledTrip {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData.Trips
 }
 
 func (manager *Manager) GetStaticData() *gtfs.Static {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData
 }
 
 func (manager *Manager) GetStops() []gtfs.Stop {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData.Stops
 }
 
 func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockLayoverIndex {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return getBlockLayoverIndicesForRoute(manager.blockLayoverIndices, routeID)
 }
 
 func (manager *Manager) FindAgency(id string) *gtfs.Agency {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	for _, agency := range manager.gtfsData.Agencies {
 		if agency.Id == id {
 			agencyCopy := agency
@@ -159,8 +155,6 @@ func (manager *Manager) GetRoutes() []gtfs.Route {
 
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.
 func (manager *Manager) RoutesForAgencyID(agencyID string) []*gtfs.Route {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	var agencyRoutes []*gtfs.Route
 
 	for i := range manager.gtfsData.Routes {
@@ -421,8 +415,6 @@ func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
 }
 
 func (manager *Manager) PrintStatistics() {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	fmt.Printf("Source: %s (Local File: %v)\n", manager.gtfsSource, manager.isLocalFile)
 	fmt.Printf("Last Updated: %s\n", manager.lastUpdated)
 	fmt.Println("Stops Count: ", len(manager.gtfsData.Stops))

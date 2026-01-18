@@ -70,6 +70,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Acquire read lock
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
 
 	if err != nil {

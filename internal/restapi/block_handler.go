@@ -29,6 +29,9 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
 	if err != nil {
 		if ctx.Err() != nil {
