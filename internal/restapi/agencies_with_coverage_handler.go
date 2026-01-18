@@ -9,6 +9,10 @@ import (
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// Acquire read lock
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
 		api.serverErrorResponse(w, r, ctx.Err())

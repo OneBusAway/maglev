@@ -1,13 +1,18 @@
 package restapi
 
 import (
+	"net/http"
+
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
-	"net/http"
 )
 
 func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
+
+	// Acquire read lock
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
 
 	// Validate ID
 	if err := utils.ValidateID(id); err != nil {
