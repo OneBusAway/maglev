@@ -220,6 +220,46 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	assert.Equal(t, "40", agencies[0].Id)
 }
 
+
+func TestHotSwap_FailureRecovery(t *testing.T) {
+	// 1. Setup Manager with valid database (raba.zip)
+	tempDir := t.TempDir()
+
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: tempDir + "/gtfs.db",
+		Env:          appconf.Development,
+	}
+
+	manager, err := InitGTFSManager(gtfsConfig)
+	if err != nil {
+		t.Fatalf("Failed to init manager: %v", err)
+	}
+	defer manager.Shutdown()
+
+	// Verify initial state
+	agencies := manager.GetAgencies()
+	assert.Equal(t, 1, len(agencies))
+	assert.Equal(t, "25", agencies[0].Id)
+
+	// 2. Attempt Swap with Invalid Choice
+	// Point to a non-existent file
+	manager.gtfsSource = "/path/to/non/existent/file.zip"
+
+	err = manager.ForceUpdate(context.Background())
+	
+	// 3. Verify Error is Returned
+	assert.Error(t, err, "ForceUpdate should fail with invalid source")
+
+	// 4. Verify Original Database is Still Accessible
+	// The manager should revert/keep using the old DB
+	agencies = manager.GetAgencies()
+	assert.Equal(t, 1, len(agencies), "Original data should be preserved")
+	assert.Equal(t, "25", agencies[0].Id, "Should still be using original agency")
+}
+
+
+
 func loggerErrorf(format string, args ...interface{}) error {
 	err := fmt.Errorf(format, args...)
 	return err
