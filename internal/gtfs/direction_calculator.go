@@ -20,8 +20,9 @@ func NewDirectionCalculator(gtfsManager *Manager) *DirectionCalculator {
 	}
 }
 
-// CalculateStopDirection determines the compass direction for a stop
+// CalculateStopDirection calculates the direction for a stop.
 // First checks the database for precomputed direction, falls back to calculation if needed
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (dc *DirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string) string {
 	// Strategy 1: Check database for precomputed direction (O(1) lookup)
 	stop, err := dc.gtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)

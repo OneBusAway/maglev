@@ -227,6 +227,8 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	client, err := gtfsdb.NewClient(dbConfig)
 
 	if err != nil {
+		logging.LogError(logger, "CRITICAL: Failed to create new GTFS client after database swap", err,
+			slog.String("db_path", finalDBPath))
 		return fmt.Errorf("failed to update GTFS database client: %w", err)
 	}
 
