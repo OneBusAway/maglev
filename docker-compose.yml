@@ -14,8 +14,10 @@ services:
       - ./config.docker.json:/app/config.json:ro
     environment:
       - TZ=UTC
+      # Health check API key - change this if you modify api-keys in config
+      - HEALTH_CHECK_KEY=test
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4000/api/where/current-time.json?key=test"]
+      test: ["CMD-SHELL", "wget -q --spider \"http://localhost:4000/api/where/current-time.json?key=$$HEALTH_CHECK_KEY\" || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
