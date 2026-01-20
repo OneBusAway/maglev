@@ -64,7 +64,6 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 					}
 					manager.RUnlock()
 
-					// Also call public methods which use RLock internally
 					_ = manager.GetAgencies()
 
 					time.Sleep(10 * time.Millisecond)
