@@ -287,13 +287,20 @@ The container includes a health check that verifies the API is responding:
 docker inspect --format='{{.State.Health.Status}}' maglev
 ```
 
-**Important:** The health checks in `Dockerfile`, `docker-compose.yml`, and `docker-compose.dev.yml` use `key=test` by default. If you change your API keys in the configuration, make sure to update the health check commands accordingly to avoid container restart loops.
+**Important:** The health checks use the `HEALTH_CHECK_KEY` environment variable (defaults to `test`). If you change your API keys in the configuration, update this environment variable to match:
+
+```yaml
+# In docker-compose.yml or docker-compose.dev.yml
+environment:
+  - HEALTH_CHECK_KEY=your-api-key
+```
 
 ### Environment Variables
 
-| Variable | Description                | Default |
-| -------- | -------------------------- | ------- |
-| `TZ`     | Timezone for the container | `UTC`   |
+| Variable           | Description                              | Default |
+| ------------------ | ---------------------------------------- | ------- |
+| `TZ`               | Timezone for the container               | `UTC`   |
+| `HEALTH_CHECK_KEY` | API key used for health check endpoint   | `test`  |
 
 ### Troubleshooting
 
@@ -312,6 +319,10 @@ ls -la config.json
 ```bash
 # Test the endpoint manually
 curl http://localhost:4000/api/where/current-time.json?key=test
+
+# If you changed api-keys, make sure HEALTH_CHECK_KEY matches
+# Check the current health check key
+docker-compose exec maglev printenv HEALTH_CHECK_KEY
 ```
 
 **Permission issues:**

@@ -49,9 +49,12 @@ USER maglev
 # Expose API port
 EXPOSE 4000
 
+# Health check API key (override via docker run -e or docker-compose environment)
+ENV HEALTH_CHECK_KEY=test
+
 # Health check using the current-time endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q --spider http://localhost:4000/api/where/current-time.json?key=test || exit 1
+    CMD wget -q --spider "http://localhost:4000/api/where/current-time.json?key=${HEALTH_CHECK_KEY}" || exit 1
 
 # Default command - run with config file
 # Users should mount config.json or use command-line flags
