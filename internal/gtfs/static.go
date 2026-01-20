@@ -142,6 +142,8 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 			cancel()
 
 			if err != nil {
+				logging.LogError(logger, "Error updating GTFS data", err,
+					slog.String("source", manager.gtfsSource))
 				continue
 			}
 
@@ -200,8 +202,9 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 
 	newGtfsDB.Close()
-	oldGtfsDB := manager.GtfsDB
 	manager.staticMutex.Lock()
+	oldGtfsDB := manager.GtfsDB
+	defer manager.staticMutex.Unlock()
 	if oldGtfsDB != nil {
 
 		if err := oldGtfsDB.Close(); err != nil {
@@ -226,7 +229,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.lastUpdated = time.Now()
 
-	manager.staticMutex.Unlock()
+	
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
 		slog.String("source", manager.gtfsSource),
