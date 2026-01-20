@@ -180,7 +180,9 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	finalDBPath := manager.config.GTFSDataPath
 	tempDBPath := strings.TrimSuffix(finalDBPath, ".db") + ".temp.db"
 
-	_ = os.Remove(tempDBPath)
+	if err := os.Remove(tempDBPath); err != nil && !os.IsNotExist(err) {
+		logging.LogError(logger, "Failed to remove existing temp DB", err)
+	}
 
 	newGtfsDB, err := buildGtfsDB(manager.config, manager.isLocalFile, tempDBPath)
 	if err != nil {
