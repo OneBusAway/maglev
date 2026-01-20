@@ -222,9 +222,8 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 
 
 func TestHotSwap_FailureRecovery(t *testing.T) {
-	// 1. Setup Manager with valid database (raba.zip)
-	tempDir := t.TempDir()
 
+	tempDir := t.TempDir()
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: tempDir + "/gtfs.db",
@@ -237,22 +236,16 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	// Verify initial state
 	agencies := manager.GetAgencies()
 	assert.Equal(t, 1, len(agencies))
 	assert.Equal(t, "25", agencies[0].Id)
 
-	// 2. Attempt Swap with Invalid Choice
-	// Point to a non-existent file
 	manager.gtfsSource = "/path/to/non/existent/file.zip"
 
 	err = manager.ForceUpdate(context.Background())
 	
-	// 3. Verify Error is Returned
 	assert.Error(t, err, "ForceUpdate should fail with invalid source")
 
-	// 4. Verify Original Database is Still Accessible
-	// The manager should revert/keep using the old DB
 	agencies = manager.GetAgencies()
 	assert.Equal(t, 1, len(agencies), "Original data should be preserved")
 	assert.Equal(t, "25", agencies[0].Id, "Should still be using original agency")
@@ -263,4 +256,101 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 func loggerErrorf(format string, args ...interface{}) error {
 	err := fmt.Errorf(format, args...)
 	return err
+}
+
+func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
+	tempDir := t.TempDir()
+	
+	gtfsOriginal := models.GetFixturePath(t, "raba.zip")
+	gtfsNew := models.GetFixturePath(t, "gtfs.zip")
+	
+	gtfsConfig := Config{
+		GtfsURL:      gtfsOriginal,
+		GTFSDataPath: tempDir + "/gtfs.db",
+		Env:          appconf.Development,
+	}
+
+	manager, err := InitGTFSManager(gtfsConfig)
+	if err != nil {
+		t.Fatalf("Failed to init manager: %v", err)
+	}
+	defer manager.Shutdown()
+	
+	agencies := manager.GetAgencies()
+	assert.Equal(t, "25", agencies[0].Id)
+	
+	readerStarted := make(chan struct{})
+	readerFinished := make(chan struct{})
+	
+	go func() {
+		defer close(readerFinished)
+		
+		manager.RLock()
+		defer manager.RUnlock()
+		
+		close(readerStarted)
+		
+		// Simulate long read - wait for signal to release
+		time.Sleep(100 * time.Millisecond)
+		
+		agenciesWithLock := manager.GetAgencies()
+		if len(agenciesWithLock) == 0 || agenciesWithLock[0].Id != "25" {
+			t.Errorf("Reader should see old data during lock, got: %+v", agenciesWithLock)
+		}
+		
+		if manager.GtfsDB == nil {
+			t.Error("GtfsDB is nil inside lock")
+		}
+	}()
+	
+	<-readerStarted
+	
+	manager.gtfsSource = gtfsNew
+	
+	updateDone := make(chan error)
+	go func() {
+		updateDone <- manager.ForceUpdate(context.Background())
+	}()
+	
+	select {
+	case <-updateDone:
+		t.Fatal("ForceUpdate should have blocked while RLock is held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	
+	<-readerFinished
+	
+	select {
+	case err := <-updateDone:
+		assert.Nil(t, err, "ForceUpdate should succeed after lock release")
+	case <-time.After(1 * time.Second):
+		t.Fatal("ForceUpdate timed out after lock release")
+	}
+	
+	agencies = manager.GetAgencies()
+	assert.Equal(t, "40", agencies[0].Id)
+	
+	for i := 0; i < 3; i++ {
+		// Swap back to Original
+		manager.gtfsSource = gtfsOriginal
+		err = manager.ForceUpdate(context.Background())
+		assert.Nil(t, err)
+		assert.Equal(t, "25", manager.GetAgencies()[0].Id)
+		
+		// Swap to New
+		manager.gtfsSource = gtfsNew
+		err = manager.ForceUpdate(context.Background())
+		assert.Nil(t, err)
+		assert.Equal(t, "40", manager.GetAgencies()[0].Id)
+	}
+	
+	files, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.Contains(f.Name(), ".temp.db") {
+			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
+		}
+	}
 }
