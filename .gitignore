@@ -10,3 +10,4 @@ gtfsdb/tmp/main
 .idea
 config.json
 configs/*.json
+config.docker.json
