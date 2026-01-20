@@ -10,6 +10,7 @@ import (
 
 func TestAgencyHandlerReturnsAgencyWhenItExists(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyID := agencies[0].Id
@@ -41,6 +42,7 @@ func TestAgencyHandlerReturnsNullWhenAgencyDoesNotExist(t *testing.T) {
 
 func TestAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyID := agencies[0].Id
