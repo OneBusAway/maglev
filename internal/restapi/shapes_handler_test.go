@@ -11,6 +11,7 @@ import (
 
 func TestShapesHandlerReturnsShapeWhenItExists(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	ctx := context.Background()
 	shapes, err := api.GtfsManager.GtfsDB.Queries.GetAllShapes(ctx)
@@ -50,6 +51,7 @@ func TestShapesHandlerReturnsNullWhenShapeDoesNotExist(t *testing.T) {
 
 func TestShapesHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	ctx := context.Background()
 	shapes, err := api.GtfsManager.GtfsDB.Queries.GetAllShapes(ctx)
