@@ -99,6 +99,7 @@ func buildGtfsDB(config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client
 	// Precompute stop directions after GTFS data is loaded
 	precomputer := NewDirectionPrecomputer(client.Queries, client.DB)
 	if err := precomputer.PrecomputeAllDirections(ctx); err != nil {
+		// Log error but don't fail the entire import
 		logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
 		logging.LogError(logger, "Failed to precompute stop directions - API will fallback to on-demand calculation", err)
 	}
@@ -167,7 +168,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	newStaticData, err := loadGTFSData(manager.gtfsSource, manager.isLocalFile, manager.config)
 	if err != nil {
-		logging.LogError(logger, "Error updating GTFS data (1load)", err,
+		logging.LogError(logger, "Error updating GTFS data", err,
 			slog.String("source", manager.gtfsSource))
 		return err
 	}
@@ -188,8 +189,12 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 
 	if err := ctx.Err(); err != nil {
-		newGtfsDB.Close()
-		os.Remove(tempDBPath)
+		if closeErr := newGtfsDB.Close(); closeErr != nil {
+			logging.LogError(logger, "Failed to close new GTFS DB during cancellation cleanup", closeErr)
+		}
+		if removeErr := os.Remove(tempDBPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.LogError(logger, "Failed to remove temp DB during cancellation cleanup", removeErr)
+		}
 		return err
 	}
 
@@ -197,21 +202,31 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	newStopSpatialIndex, err := buildStopSpatialIndex(ctx, newGtfsDB.Queries)
 	if err != nil {
 		logging.LogError(logger, "Error building spatial index", err)
-		newGtfsDB.Close()
-		os.Remove(tempDBPath)
+		if closeErr := newGtfsDB.Close(); closeErr != nil {
+			logging.LogError(logger, "Failed to close new GTFS DB during cleanup", closeErr)
+		}
+		if removeErr := os.Remove(tempDBPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.LogError(logger, "Failed to remove temp DB during cleanup", removeErr)
+		}
 		return err
 	}
 
 	if err := ctx.Err(); err != nil {
-		newGtfsDB.Close()
-		os.Remove(tempDBPath)
+		if closeErr := newGtfsDB.Close(); closeErr != nil {
+			logging.LogError(logger, "Failed to close new GTFS DB during cancellation cleanup", closeErr)
+		}
+		if removeErr := os.Remove(tempDBPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.LogError(logger, "Failed to remove temp DB during cancellation cleanup", removeErr)
+		}
 		return err
 	}
 
 	newGtfsDB.Close()
 	manager.staticMutex.Lock()
-	oldGtfsDB := manager.GtfsDB
 	defer manager.staticMutex.Unlock()
+
+	oldGtfsDB := manager.GtfsDB
+	
 	if oldGtfsDB != nil {
 
 		if err := oldGtfsDB.Close(); err != nil {
