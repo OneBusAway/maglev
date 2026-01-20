@@ -1,5 +1,5 @@
 .PHONY: build clean coverage test run lint make watch fmt \
-	docker-build docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean
+	docker-build docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all
 
 run: build
 	bin/maglev -f config.json
@@ -59,7 +59,15 @@ docker-compose-down:
 docker-compose-dev:
 	docker-compose -f docker-compose.dev.yml up
 
-docker-clean:
+docker-clean-all:
+	@echo "WARNING: This will delete all data volumes!"
 	docker-compose down -v
 	docker-compose -f docker-compose.dev.yml down -v
-	docker rmi maglev:latest maglev:dev 2>/dev/null || true
+	@if docker image inspect maglev:latest >/dev/null 2>&1; then docker rmi maglev:latest; fi
+	@if docker image inspect maglev:dev >/dev/null 2>&1; then docker rmi maglev:dev; fi
+
+docker-clean:
+	docker-compose down
+	docker-compose -f docker-compose.dev.yml down
+	@if docker image inspect maglev:latest >/dev/null 2>&1; then docker rmi maglev:latest; fi
+	@if docker image inspect maglev:dev >/dev/null 2>&1; then docker rmi maglev:dev; fi
