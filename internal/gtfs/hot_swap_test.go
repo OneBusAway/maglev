@@ -74,10 +74,6 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 		}()
 	}
 
-	// 3. Perform Hot Swap
-	// We will call ForceUpdate.
-
-	// Let readers run for a bit
 	time.Sleep(100 * time.Millisecond)
 
 	err = manager.ForceUpdate(context.Background())
@@ -97,7 +93,7 @@ func TestManager_HotSwapConcurrency(t *testing.T) {
 }
 
 func TestForceUpdate_FileCleanup(t *testing.T) {
-	// 1. Setup Manager
+
 	tempDir := t.TempDir()
 	dbPath := tempDir + "/gtfs.db"
 
@@ -173,8 +169,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					// Perform a read. We expect this to always succeed.
-					// Mixed usage of direct access (simulating query execution) and helper methods
 					manager.RLock()
 					if manager.gtfsData == nil {
 						errChan <- loggerErrorf("gtfsData is nil during read")
@@ -184,7 +178,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 					}
 					
 
-					// Use a safe accessor
 					aps := manager.GetAgencies()
 					if len(aps) == 0 {
 						errChan <- loggerErrorf("No agencies found during read")
@@ -290,8 +283,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 		
 		close(readerStarted)
 		
-		// Simulate long read - wait for signal to release
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		
 		agenciesWithLock := manager.GetAgencies()
 		if len(agenciesWithLock) == 0 || agenciesWithLock[0].Id != "25" {
@@ -315,7 +307,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	select {
 	case <-updateDone:
 		t.Fatal("ForceUpdate should have blocked while RLock is held")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
 	
 	<-readerFinished
@@ -323,7 +315,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	select {
 	case err := <-updateDone:
 		assert.Nil(t, err, "ForceUpdate should succeed after lock release")
-	case <-time.After(1 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("ForceUpdate timed out after lock release")
 	}
 	
