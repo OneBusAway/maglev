@@ -20,6 +20,10 @@ Docker provides a consistent development environment across all platforms.
 **Quick Start:**
 
 ```bash
+# Create docker config from template
+cp config.docker.example.json config.docker.json
+# Edit config.docker.json with your settings
+
 # Build and run with Docker Compose (recommended)
 # Uses config.docker.json which stores data in /app/data/ for persistence
 docker-compose up
@@ -211,12 +215,13 @@ make docker-build
 ```
 
 ### Running with Docker
+Ensure you have created config.docker.json from the template as shown in the Quick Start section above.
 
 **Using Docker directly:**
 
 ```bash
 # Run the container (mount your config file)
-docker run -p 4000:4000 -v $(pwd)/config.json:/app/config.json:ro maglev
+docker run -p 4000:4000 -v $(pwd)/config.docker.json:/app/config.json:ro maglev
 
 # Or use make
 make docker-run
@@ -311,14 +316,14 @@ environment:
 docker-compose logs maglev
 
 # Verify config file exists
-ls -la config.json
+ls -la config.docker.json
 ```
 
 **Health check failing:**
 
 ```bash
 # Test the endpoint manually
-curl http://localhost:4000/api/where/current-time.json?key=test
+curl http://localhost:4000/api/where/current-time.json?key=<your-api-key>
 
 # If you changed api-keys, make sure HEALTH_CHECK_KEY matches
 # Check the current health check key
