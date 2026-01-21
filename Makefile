@@ -7,7 +7,8 @@ else
     SET_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5"
 endif
 
-.PHONY: build clean coverage test run lint make watch fmt \
+.PHONY: build clean coverage test run lint watch fmt \
+	gtfstidy models check-golangci-lint \
 	docker-build docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean
 
 run: build
