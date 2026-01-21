@@ -11,3 +11,5 @@ gtfsdb/tmp/main
 config.json
 configs/*.json
 config.docker.json
+tmp/
+*.log
