@@ -13,6 +13,7 @@ import (
 
 func TestSendResponse(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("sends valid JSON response", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -68,6 +69,7 @@ func TestSendResponse(t *testing.T) {
 
 func TestSendNull(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("sends null response", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -83,6 +85,7 @@ func TestSendNull(t *testing.T) {
 
 func TestSendNotFound(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("sends 404 not found response", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -119,6 +122,7 @@ func TestSendNotFound(t *testing.T) {
 
 func TestSendUnauthorized(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("sends 401 unauthorized response", func(t *testing.T) {
 		w := httptest.NewRecorder()

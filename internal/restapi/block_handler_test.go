@@ -10,6 +10,7 @@ import (
 
 func TestBlockHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
@@ -114,6 +115,7 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 
 func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -218,6 +220,7 @@ func TestBlockHandlerMissingBlock(t *testing.T) {
 
 func TestBlockHandlerAgencyIdExtraction(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -242,6 +245,7 @@ func TestBlockHandlerAgencyIdExtraction(t *testing.T) {
 
 func TestBlockHandlerReferencesConsistency(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 

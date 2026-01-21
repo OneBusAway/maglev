@@ -1,0 +1,40 @@
+services:
+  maglev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: maglev:dev
+    container_name: maglev-dev
+    ports:
+      - "4000:4000"
+      # Delve debugger port
+      - "2345:2345"
+    volumes:
+      # Mount source code for live reload
+      - .:/app
+      # Use named volume for Go modules cache
+      - go-mod-cache:/go/pkg/mod
+      # Persist SQLite database
+      - maglev-dev-data:/app/data
+    environment:
+      - TZ=UTC
+      - CGO_ENABLED=1
+      # Health check API key - change this if you modify api-keys in config
+      - HEALTH_CHECK_KEY=test
+    working_dir: /app
+    # Use Air for live reload during development (Docker-specific config)
+    command: ["air", "-c", ".air.docker.toml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider \"http://localhost:4000/api/where/current-time.json?key=$$HEALTH_CHECK_KEY\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  maglev-dev-data:
+    driver: local
+  go-mod-cache:
+    driver: local
+

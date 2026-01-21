@@ -1,0 +1,35 @@
+services:
+  maglev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maglev:latest
+    container_name: maglev
+    ports:
+      - "4000:4000"
+    volumes:
+      # Persist SQLite database across container restarts
+      - maglev-data:/app/data
+      # Mount Docker-specific config (uses /app/data/gtfs.db for persistence)
+      - ./config.docker.json:/app/config.json:ro
+    environment:
+      - TZ=UTC
+      # Health check API key - change this if you modify api-keys in config
+      - HEALTH_CHECK_KEY=test
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider \"http://localhost:4000/api/where/current-time.json?key=$$HEALTH_CHECK_KEY\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  maglev-data:
+    driver: local
+

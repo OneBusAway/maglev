@@ -10,6 +10,7 @@ import (
 
 func TestScheduleForStopHandler(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Get available agencies and stops for testing
 	agencies := api.GtfsManager.GetAgencies()
@@ -42,7 +43,7 @@ func TestScheduleForStopHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-stop/"+tt.stopID+".json?key=TEST")
+			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-stop/"+tt.stopID+".json?key=TEST&date=2025-06-12")
 
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 			assert.Equal(t, tt.expectedStatus, model.Code)
@@ -65,6 +66,7 @@ func TestScheduleForStopHandler(t *testing.T) {
 
 func TestScheduleForStopHandlerDateParam(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Get valid stop for testing
 	agencies := api.GtfsManager.GetAgencies()
@@ -90,6 +92,7 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 
 func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Get valid stop for testing
 	agencies := api.GtfsManager.GetAgencies()
@@ -157,6 +160,7 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 
 func TestScheduleForStopHandlerTripReferences(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
 	stops := api.GtfsManager.GetStops()
@@ -185,6 +189,7 @@ func TestScheduleForStopHandlerTripReferences(t *testing.T) {
 
 func TestScheduleForStopHandlerInvalidDateFormat(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
 	stops := api.GtfsManager.GetStops()
@@ -227,6 +232,7 @@ func TestScheduleForStopHandlerInvalidDateFormat(t *testing.T) {
 
 func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
 	stops := api.GtfsManager.GetStops()
@@ -252,13 +258,14 @@ func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 
 func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
 	stops := api.GtfsManager.GetStops()
 
 	t.Run("Stop with no routes returns empty schedule", func(t *testing.T) {
 		stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
-		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -276,6 +283,7 @@ func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 // TestScheduleForStopQueryValidation verifies the SQL query logic
 func TestScheduleForStopQueryValidation(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
 	stops := api.GtfsManager.GetStops()
