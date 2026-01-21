@@ -43,7 +43,13 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	agency, _ := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
 	loc, _ := time.LoadLocation(agency.Timezone)
 	currentTime := time.Now().In(loc)
 	var date int64
@@ -124,7 +130,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		tripIDsSet[row.TripID] = true
 
-		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in milliseconds
+		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in the agency's timezone in milliseconds
 		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
 		startOfDay := time.UnixMilli(date).In(loc)
 		arrivalDuration := time.Duration(row.ArrivalTime)
