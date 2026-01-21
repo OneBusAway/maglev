@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -42,12 +43,15 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	agency, _ := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	loc, _ := time.LoadLocation(agency.Timezone)
+	currentTime := time.Now().In(loc)
 	var date int64
 	var targetDate string
 	var weekday string
 
 	if dateParam != "" {
-		parsedDate, err := time.Parse("2006-01-02", dateParam)
+		parsedDate, err := time.ParseInLocation("2006-01-02", dateParam, loc)
 		if err != nil {
 			fieldErrors := map[string][]string{
 				"date": {"Invalid date format. Use YYYY-MM-DD"},
@@ -59,14 +63,14 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		targetDate = parsedDate.Format("20060102")
 		weekday = strings.ToLower(parsedDate.Weekday().String())
 	} else {
-		now := time.Now()
-		date = now.UnixMilli()
-		targetDate = now.Format("20060102")
-		weekday = strings.ToLower(now.Weekday().String())
+		y, m, d := currentTime.Date()
+		date = time.Date(y, m, d, 0, 0, 0, 0, loc).UnixMilli()
+		targetDate = currentTime.Format("20060102")
+		weekday = strings.ToLower(currentTime.Weekday().String())
 	}
 
 	// Verify stop exists
-	_, err = api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
+	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 	if err != nil {
 		api.sendNotFound(w, r)
 		return
@@ -122,7 +126,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in milliseconds
 		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
-		startOfDay := time.Unix(date/1000, 0).Truncate(24 * time.Hour)
+		startOfDay := time.UnixMilli(date).In(loc)
 		arrivalDuration := time.Duration(row.ArrivalTime)
 		departureDuration := time.Duration(row.DepartureTime)
 		arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
@@ -131,7 +135,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		stopTime := models.NewScheduleStopTime(
 			arrivalTimeMs,
 			departureTimeMs,
-			row.ServiceID,
+			utils.FormCombinedID(agencyID, row.ServiceID),
 			row.StopHeadsign.String,
 			combinedTripID,
 		)
@@ -248,6 +252,26 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		references.Trips = append(references.Trips, tripRef)
 	}
 
+	routeIDsWithAgency := make([]string, 0, len(routeIDs))
+	for _, ri := range routeIDs {
+		routeIDsWithAgency = append(routeIDsWithAgency, utils.FormCombinedID(agencyID, ri))
+	}
+
+	stopRef := models.NewStop(
+		stop.Code.String,
+		stop.Direction.String,
+		utils.FormCombinedID(agencyID, stop.ID),
+		stop.Name.String,
+		"",
+		utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
+		stop.Lat,
+		stop.Lon,
+		int(stop.LocationType.Int64),
+		routeIDsWithAgency,
+		routeIDsWithAgency,
+	)
+
+	references.Stops = append(references.Stops, stopRef)
 	// Create and send response
 	response := models.NewEntryResponse(entry, references)
 	api.sendResponse(w, r, response)
