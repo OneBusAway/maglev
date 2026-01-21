@@ -274,8 +274,71 @@ The SQLite database is persisted using Docker volumes:
 
 To inspect the database:
 
+## Data Persistence
+
+The GTFS database is stored in `/app/data/gtfs.db` within the container.
+
+### Copy database to host for inspection
+
 ```bash
-docker-compose exec maglev cat /app/data/gtfs.db
+docker cp maglev:/app/data/gtfs.db ./gtfs-backup.db
+```
+
+Once copied, you can inspect it with any SQLite client:
+
+```bash
+sqlite3 gtfs-backup.db "SELECT name FROM sqlite_master WHERE type='table';"
+```
+
+### Check database file exists and size
+
+```bash
+docker-compose exec maglev ls -lh /app/data/
+```
+
+### Interactive SQLite session inside container
+
+```bash
+docker-compose exec maglev sh -c "sqlite3 /app/data/gtfs.db"
+```
+
+Common SQLite queries for inspection:
+
+```sql
+-- List all tables
+.tables
+
+-- Show table schema
+.schema stops
+
+-- Count records in a table
+SELECT COUNT(*) FROM stops;
+
+-- View sample data
+SELECT * FROM stops LIMIT 5;
+
+-- Exit SQLite
+.quit
+```
+
+### Additional troubleshooting commands
+
+Verify database integrity:
+
+```bash
+docker-compose exec maglev sqlite3 /app/data/gtfs.db "PRAGMA integrity_check;"
+```
+
+Check database size:
+
+```bash
+docker-compose exec maglev du -h /app/data/gtfs.db
+```
+
+View recent database modifications:
+
+```bash
+docker-compose exec maglev stat /app/data/gtfs.db
 ```
 
 ### Health Checks
@@ -297,10 +360,10 @@ environment:
 
 ### Environment Variables
 
-| Variable           | Description                              | Default |
-| ------------------ | ---------------------------------------- | ------- |
-| `TZ`               | Timezone for the container               | `UTC`   |
-| `HEALTH_CHECK_KEY` | API key used for health check endpoint   | `test`  |
+| Variable           | Description                            | Default |
+| ------------------ | -------------------------------------- | ------- |
+| `TZ`               | Timezone for the container             | `UTC`   |
+| `HEALTH_CHECK_KEY` | API key used for health check endpoint | `test`  |
 
 ### Troubleshooting
 
