@@ -212,7 +212,6 @@ func (api *RestAPI) buildScheduleForTrip(
 }
 
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
 
 	// Batch-fetch all stop coordinates at once
 	stopIDs := make([]string, len(stopTimes))
@@ -237,23 +236,8 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 	}
 
 	stopTimesList := make([]models.StopTime, 0, len(stopTimes))
-	for _, stopTime := range stopTimes {
-		var distanceAlongTrip float64
-		if coords, exists := stopCoords[stopTime.StopID]; exists && len(shapePoints) > 0 {
-			distanceAlongTrip = api.calculatePreciseDistanceAlongTripWithCoords(
-				coords.lat, coords.lon, shapePoints, cumulativeDistances,
-			)
-		}
 
-		stopTimesList = append(stopTimesList, models.StopTime{
-			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-			ArrivalTime:         int(stopTime.ArrivalTime),
-			DepartureTime:       int(stopTime.DepartureTime),
-			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
-			DistanceAlongTrip:   distanceAlongTrip,
-			HistoricalOccupancy: "",
-		})
-	}
+	stopTimesList = api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 	return stopTimesList
 }
 
