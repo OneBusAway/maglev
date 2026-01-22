@@ -46,7 +46,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.sendNotFound(w, r)
 		return
 	}
 
