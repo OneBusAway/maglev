@@ -647,16 +647,16 @@ func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
 
 // calculateBatchStopDistances calculates distances for the entire trip using Monotonic Search (O(N+M))
 func (api *RestAPI) calculateBatchStopDistances(
-  timeStops []gtfsdb.StopTime,
-  shapePoints []gtfs.ShapePoint,
-  stopCoords map[string]struct{ lat, lon float64 },
-  agencyID string,
+	timeStops []gtfsdb.StopTime,
+	shapePoints []gtfs.ShapePoint,
+	stopCoords map[string]struct{ lat, lon float64 },
+	agencyID string,
 ) []models.StopTime {
 
 	stopTimesList := make([]models.StopTime, 0, len(timeStops))
-  
-  if len(shapePoints) < 2 {
-    for _, stopTime := range timeStops {
+
+	if len(shapePoints) < 2 {
+		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 				ArrivalTime:         int(stopTime.ArrivalTime),
@@ -667,12 +667,12 @@ func (api *RestAPI) calculateBatchStopDistances(
 			})
 		}
 		return stopTimesList
-  }
-  
-  // Pre-calculate cumulative distances
-  cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-  if len(cumulativeDistances) != len(shapePoints) {
-    for _, stopTime := range timeStops {
+	}
+
+	// Pre-calculate cumulative distances
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	if len(cumulativeDistances) != len(shapePoints) {
+		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 				ArrivalTime:         int(stopTime.ArrivalTime),
@@ -683,68 +683,68 @@ func (api *RestAPI) calculateBatchStopDistances(
 			})
 		}
 		return stopTimesList
-  }
+	}
 
-  lastMatchedIndex := 0 
+	lastMatchedIndex := 0
 
-  for _, stopTime := range timeStops {
-    var distanceAlongTrip float64
-    
-    // Only calculate if we have valid coordinates
-    if coords, exists := stopCoords[stopTime.StopID]; exists {
-        stopLat := coords.lat
-        stopLon := coords.lon
+	for _, stopTime := range timeStops {
+		var distanceAlongTrip float64
 
-        // ensure lastMatchedIndex didn't go out of bounds
-        if lastMatchedIndex >= len(shapePoints)-1 {
-            lastMatchedIndex = len(shapePoints) - 2
-        }
-    
-        var minDistance = math.Inf(1)
-        var closestSegmentIndex = lastMatchedIndex 
-        var projectionRatio float64
+		// Only calculate if we have valid coordinates
+		if coords, exists := stopCoords[stopTime.StopID]; exists {
+			stopLat := coords.lat
+			stopLon := coords.lon
 
-        // Start from lastMatchedIndex
-        for i := lastMatchedIndex; i < len(shapePoints)-1; i++ {
-            distance, ratio := distanceToLineSegment(
-                stopLat, stopLon,
-                shapePoints[i].Latitude, shapePoints[i].Longitude,
-                shapePoints[i+1].Latitude, shapePoints[i+1].Longitude,
-            )
+			// ensure lastMatchedIndex didn't go out of bounds
+			if lastMatchedIndex >= len(shapePoints)-1 {
+				lastMatchedIndex = len(shapePoints) - 2
+			}
 
-            if distance < minDistance {
-                minDistance = distance
-                closestSegmentIndex = i
-                projectionRatio = ratio
-                lastMatchedIndex = i 
-            } else if distance > minDistance + 100 {
-                // Early exit: 
-                break 
-            }
-        }
+			var minDistance = math.Inf(1)
+			var closestSegmentIndex = lastMatchedIndex
+			var projectionRatio float64
 
-        // Calculate distance along trip
-        cumulativeDistance := cumulativeDistances[closestSegmentIndex]
-        if closestSegmentIndex < len(shapePoints)-1 {
-            segmentDistance := utils.Distance(
-                shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
-                shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
-            )
-            cumulativeDistance += segmentDistance * projectionRatio
-        }
-        distanceAlongTrip = cumulativeDistance
-    }
+			// Start from lastMatchedIndex
+			for i := lastMatchedIndex; i < len(shapePoints)-1; i++ {
+				distance, ratio := distanceToLineSegment(
+					stopLat, stopLon,
+					shapePoints[i].Latitude, shapePoints[i].Longitude,
+					shapePoints[i+1].Latitude, shapePoints[i+1].Longitude,
+				)
 
-    stopTimesList = append(stopTimesList, models.StopTime{
-      StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-      ArrivalTime:         int(stopTime.ArrivalTime),
-      DepartureTime:       int(stopTime.DepartureTime),
-      StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
-      DistanceAlongTrip:   distanceAlongTrip,
-      HistoricalOccupancy: "",
-    })
-  }
-  return stopTimesList
+				if distance < minDistance {
+					minDistance = distance
+					closestSegmentIndex = i
+					projectionRatio = ratio
+					lastMatchedIndex = i
+				} else if distance > minDistance+100 {
+					// Early exit:
+					break
+				}
+			}
+
+			// Calculate distance along trip
+			cumulativeDistance := cumulativeDistances[closestSegmentIndex]
+			if closestSegmentIndex < len(shapePoints)-1 {
+				segmentDistance := utils.Distance(
+					shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
+					shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
+				)
+				cumulativeDistance += segmentDistance * projectionRatio
+			}
+			distanceAlongTrip = cumulativeDistance
+		}
+
+		stopTimesList = append(stopTimesList, models.StopTime{
+			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
+			ArrivalTime:         int(stopTime.ArrivalTime),
+			DepartureTime:       int(stopTime.DepartureTime),
+			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
+			DistanceAlongTrip:   distanceAlongTrip,
+			HistoricalOccupancy: "",
+		})
+	}
+	return stopTimesList
 }
 
 // Helper function to calculate distance from point to line segment

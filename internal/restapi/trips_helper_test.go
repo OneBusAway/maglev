@@ -355,7 +355,7 @@ func TestCalculateBatchStopDistances(t *testing.T) {
 	// Distance C should be roughly the distance to index 90
 	assert.Greater(t, results[1].DistanceAlongTrip, results[0].DistanceAlongTrip, "Stop B should be further than Stop A")
 	assert.Greater(t, results[2].DistanceAlongTrip, results[1].DistanceAlongTrip, "Stop C should be further than Stop B")
-	
+
 	assert.NotZero(t, results[0].DistanceAlongTrip, "Distance should not be zero")
 }
 
@@ -661,5 +661,49 @@ func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 				_, _ = api.BuildTripSchedule(ctx, agencyID, serviceDate, ti.trip, loc)
 			}
 		})
+	}
+}
+
+
+// Helper to generate large datasets for benchmarking
+func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]struct{ lat, lon float64 }) {
+	shapeSize := 10000 // 10k shape points
+	stopsSize := 100   // 100 stops
+
+	shapePoints := make([]gtfs.ShapePoint, shapeSize)
+	for i := 0; i < shapeSize; i++ {
+		shapePoints[i] = gtfs.ShapePoint{
+			Latitude:  40.0 + (float64(i) * 0.0001),
+			Longitude: -74.0 + (float64(i) * 0.0001),
+		}
+	}
+
+	stopTimes := make([]gtfsdb.StopTime, stopsSize)
+	stopCoords := make(map[string]struct{ lat, lon float64 })
+
+	for i := 0; i < stopsSize; i++ {
+		stopID := fmt.Sprintf("stop_%d", i)
+		// Place stops sequentially along the route
+		idx := i * (shapeSize / stopsSize)
+		
+		stopTimes[i] = gtfsdb.StopTime{StopID: stopID}
+		stopCoords[stopID] = struct{ lat, lon float64 }{
+			lat: shapePoints[idx].Latitude,
+			lon: shapePoints[idx].Longitude,
+		}
+	}
+
+	return shapePoints, stopTimes, stopCoords
+}
+
+// BenchmarkOptimized_MonotonicBatch benchmarks the optimized batch distance calculation
+func BenchmarkOptimized_MonotonicBatch(b *testing.B) {
+	api := &RestAPI{}
+	shape, stops, coords := generateBenchmarkData()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Single call handles all logic -> O(N+M)
+		api.calculateBatchStopDistances(stops, shape, coords, "agency_1")
 	}
 }
