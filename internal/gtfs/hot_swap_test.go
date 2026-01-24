@@ -224,7 +224,7 @@ func TestHotSwap_AtomicSwap(t *testing.T) {
 
 	// 4. Verify Final State
 	manager.RLock()
-	assert.Equal(t, "25", manager.gtfsData.Agencies[0].Id)
+	assert.Equal(t, "40", manager.gtfsData.Agencies[0].Id)
 
 	// Verify memory cleanup (references replaced)
 	assert.NotEqual(t, oldStaticData, manager.gtfsData, "StaticData Reference should have been replaced")
