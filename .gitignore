@@ -9,4 +9,5 @@ gtfsdb/tmp/main
 .claude
 .idea
 config.json
+config.docker.json
 configs/*.json

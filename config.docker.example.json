@@ -1,0 +1,22 @@
+{
+  "$schema": "./config.schema.json",
+  "_comment": "IMPORTANT: Copy this file to config.docker.json and replace 'YOUR_API_KEY_HERE' before deploying to production",
+  "port": 4000,
+  "env": "production",
+  "api-keys": ["YOUR_API_KEY_HERE"],
+  "rate-limit": 100,
+  "gtfs-static-feed": {
+    "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
+    "enable-gtfs-tidy": false
+  },
+  "gtfs-rt-feeds": [
+    {
+      "trip-updates-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone",
+      "vehicle-positions-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency/40.pb?key=org.onebusaway.iphone",
+      "service-alerts-url": "",
+      "realtime-auth-header-name": "",
+      "realtime-auth-header-value": ""
+    }
+  ],
+  "data-path": "./gtfs.db"
+}
