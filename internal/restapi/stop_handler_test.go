@@ -133,4 +133,14 @@ func TestStopHandlerVerifiesReferences(t *testing.T) {
 		assert.NotEmpty(t, agency["id"], "Agency should have an ID")
 		assert.NotEmpty(t, agency["name"], "Agency should have a name")
 	}
+
+}
+func TestStopHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	agencies := api.GtfsManager.GetAgencies()
+	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
+	malformedID := "1110"
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+malformedID+".json?key=TEST")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }
