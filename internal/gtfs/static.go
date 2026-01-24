@@ -184,7 +184,11 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		logging.LogError(logger, "Failed to remove existing temp DB", err)
 	}
 
-	newGtfsDB, err := buildGtfsDB(manager.config, manager.isLocalFile, tempDBPath)
+	// Create a config copy with the updated source URL
+	newConfig := manager.config
+	newConfig.GtfsURL = manager.gtfsSource
+
+	newGtfsDB, err := buildGtfsDB(newConfig, manager.isLocalFile, tempDBPath)
 	if err != nil {
 		logging.LogError(logger, "Error building new GTFS DB", err)
 		return err
@@ -221,6 +225,11 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 			logging.LogError(logger, "Failed to remove temp DB during cancellation cleanup", removeErr)
 		}
 		return err
+	}
+
+	// Force WAL checkpoint to ensure all data is in the main .db file before renaming
+	if _, err := newGtfsDB.DB.Exec("PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+		logging.LogError(logger, "Failed to checkpoint new GTFS DB", err)
 	}
 
 	newGtfsDB.Close()
