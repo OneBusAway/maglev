@@ -137,21 +137,44 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 }
 
 func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops map[string]bool) ([]models.Stop, error) {
-	stopsList := make([]models.Stop, 0, len(allStops))
+	if len(allStops) == 0 {
+		return []models.Stop{}, nil
+	}
+
+	// Collect all stop IDs for batch fetching
+	stopIDs := make([]string, 0, len(allStops))
 	for stopID := range allStops {
-		stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
+		stopIDs = append(stopIDs, stopID)
+	}
+
+	// Batch fetch all stops in a single query (instead of N queries)
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Batch fetch all route IDs for all stops in a single query (instead of N queries)
+	routeIDsForStops, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build a lookup map: stopID -> []routeID
+	routeIDsByStop := make(map[string][]string)
+	for _, row := range routeIDsForStops {
+		routeID, ok := row.RouteID.(string)
+		if !ok {
 			continue
 		}
+		routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], routeID)
+	}
 
-		routeIds, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(ctx, stop.ID)
-		if err != nil {
-			continue
-		}
-
-		routeIdsString := make([]string, len(routeIds))
-		for i, id := range routeIds {
-			routeIdsString[i] = id.(string)
+	// Build the stops list
+	stopsList := make([]models.Stop, 0, len(stops))
+	for _, stop := range stops {
+		routeIDs := routeIDsByStop[stop.ID]
+		if routeIDs == nil {
+			routeIDs = []string{}
 		}
 
 		stopsList = append(stopsList, models.Stop{
@@ -162,8 +185,8 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
 			Name:               stop.Name.String,
-			RouteIDs:           routeIdsString,
-			StaticRouteIDs:     routeIdsString,
+			RouteIDs:           routeIDs,
+			StaticRouteIDs:     routeIDs,
 			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
 		})
 	}
