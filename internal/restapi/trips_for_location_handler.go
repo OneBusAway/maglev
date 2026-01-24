@@ -235,10 +235,8 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 		}
 	}
 
-	stopTimesList := make([]models.StopTime, 0, len(stopTimes))
+	return api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
-	stopTimesList = api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
-	return stopTimesList
 }
 
 type ReferenceParams struct {

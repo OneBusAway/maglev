@@ -664,7 +664,6 @@ func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 	}
 }
 
-
 // Helper to generate large datasets for benchmarking
 func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]struct{ lat, lon float64 }) {
 	shapeSize := 10000 // 10k shape points
@@ -685,7 +684,7 @@ func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]s
 		stopID := fmt.Sprintf("stop_%d", i)
 		// Place stops sequentially along the route
 		idx := i * (shapeSize / stopsSize)
-		
+
 		stopTimes[i] = gtfsdb.StopTime{StopID: stopID}
 		stopCoords[stopID] = struct{ lat, lon float64 }{
 			lat: shapePoints[idx].Latitude,
