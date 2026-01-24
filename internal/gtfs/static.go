@@ -237,7 +237,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	defer manager.staticMutex.Unlock()
 
 	oldGtfsDB := manager.GtfsDB
-	
+
 	if oldGtfsDB != nil {
 
 		if err := oldGtfsDB.Close(); err != nil {
@@ -263,8 +263,6 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.lastUpdated = time.Now()
-
-	
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
 		slog.String("source", manager.gtfsSource),
