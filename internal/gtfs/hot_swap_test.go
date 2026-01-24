@@ -99,7 +99,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	assert.Equal(t, "40", agencies[0].Id)
 }
 
-
 func TestHotSwap_FailureRecovery(t *testing.T) {
 
 	tempDir := t.TempDir()
@@ -115,14 +114,17 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	agencies,err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to list agencies: %v", err)
+	}
 	assert.Equal(t, 1, len(agencies))
 	assert.Equal(t, "25", agencies[0].ID)
 
 	manager.gtfsSource = "/path/to/non/existent/file.zip"
 
 	err = manager.ForceUpdate(context.Background())
-	
+
 	assert.Error(t, err, "ForceUpdate should fail with invalid source")
 
 	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
@@ -183,7 +185,6 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 
 	}
 
-	
 }
 func TestHotSwap_AtomicSwap(t *testing.T) {
 	tempDir := t.TempDir()
