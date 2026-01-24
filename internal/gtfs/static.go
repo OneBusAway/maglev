@@ -36,7 +36,9 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 			req.Header.Set(config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
 		}
 
-		client := &http.Client{}
+		client := &http.Client{
+			Timeout: 60 * time.Second,
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("error downloading GTFS data: %w", err)
