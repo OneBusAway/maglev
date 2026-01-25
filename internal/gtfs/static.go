@@ -227,10 +227,10 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return err
 	}
 
-	// Force WAL checkpoint to ensure all data is in the main .db file before renaming
-	if _, err := newGtfsDB.DB.Exec("PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
-		logging.LogError(logger, "Failed to checkpoint new GTFS DB", err)
-	}
+	// // Force WAL checkpoint to ensure all data is in the main .db file before renaming
+	// if _, err := newGtfsDB.DB.Exec("PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+	// 	logging.LogError(logger, "Failed to checkpoint new GTFS DB", err)
+	// }
 
 	newGtfsDB.Close()
 	manager.staticMutex.Lock()
