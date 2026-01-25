@@ -227,11 +227,6 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return err
 	}
 
-	// // Force WAL checkpoint to ensure all data is in the main .db file before renaming
-	// if _, err := newGtfsDB.DB.Exec("PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
-	// 	logging.LogError(logger, "Failed to checkpoint new GTFS DB", err)
-	// }
-
 	newGtfsDB.Close()
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
@@ -239,13 +234,27 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	oldGtfsDB := manager.GtfsDB
 
 	if oldGtfsDB != nil {
-
 		if err := oldGtfsDB.Close(); err != nil {
 			logging.LogError(logger, "Error closing old GTFS DB", err)
 		}
 	}
+
+	// Rename: finalDBPath is overwritten by tempDBPath
 	if err := os.Rename(tempDBPath, finalDBPath); err != nil {
 		logging.LogError(logger, "Error renaming temp DB to final DB", err)
+
+		// ATTEMPT RECOVERY: Re-open the old database so the app isn't left in a broken state
+		// Note: If os.Rename failed, finalDBPath should still exist with the old data (usually).
+		logging.LogOperation(logger, "attempting_recovery_reopening_old_db")
+		
+		dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
+		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
+			manager.GtfsDB = reopenedClient
+			logging.LogOperation(logger, "recovery_successful_old_db_reopened")
+		} else {
+			logging.LogError(logger, "CRITICAL: Failed to recover old DB after rename failure", reopenErr)
+		}
+
 		return err
 	}
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -155,8 +156,11 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 
 		manager.gtfsSource = gtfsOriginal
 		err = manager.ForceUpdate(context.Background())
-		assert.Nil(t, err)
-		assert.Equal(t, "25", manager.GetAgencies()[0].Id)
+		require.NoError(t, err, "ForceUpdate failed for original GTFS")
+		
+		agencies := manager.GetAgencies()
+		require.NotEmpty(t, agencies, "No agencies found after update")
+		assert.Equal(t, "25", agencies[0].Id)
 
 		files, err := os.ReadDir(tempDir)
 		if err != nil {
@@ -170,8 +174,11 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 
 		manager.gtfsSource = gtfsNew
 		err = manager.ForceUpdate(context.Background())
-		assert.Nil(t, err)
-		assert.Equal(t, "40", manager.GetAgencies()[0].Id)
+		require.NoError(t, err, "ForceUpdate failed for new GTFS")
+		
+		agencies = manager.GetAgencies()
+		require.NotEmpty(t, agencies, "No agencies found after second update")
+		assert.Equal(t, "40", agencies[0].Id)
 
 		files, err = os.ReadDir(tempDir)
 		if err != nil {
