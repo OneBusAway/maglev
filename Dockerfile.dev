@@ -10,10 +10,19 @@ RUN go install github.com/air-verse/air@latest
 # Install Delve for debugging
 RUN go install github.com/go-delve/delve/cmd/dlv@latest
 
+# Create app directory and set ownership
+RUN mkdir -p /app && \
+    addgroup -g 1000 maglev && \
+    adduser -u 1000 -G maglev -s /bin/sh -D maglev && \
+    chown -R maglev:maglev /app
+
+# Switch to non-root user
+USER maglev
+
 WORKDIR /app
 
 # Copy dependency files first
-COPY go.mod go.sum ./
+COPY --chown=maglev:maglev go.mod go.sum ./
 RUN go mod download
 
 # Source code will be mounted via docker-compose volume
@@ -23,4 +32,3 @@ EXPOSE 4000 2345
 
 # Default command uses Air for live reload
 CMD ["air", "-c", ".air.docker.toml"]
-
