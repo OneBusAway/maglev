@@ -227,7 +227,10 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return err
 	}
 
-	newGtfsDB.Close()
+	if err := newGtfsDB.Close(); err != nil {
+		logging.LogError(logger, "Error closing new GTFS DB", err)
+		return err
+	}
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
@@ -243,10 +246,8 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	if err := os.Rename(tempDBPath, finalDBPath); err != nil {
 		logging.LogError(logger, "Error renaming temp DB to final DB", err)
 
-		// ATTEMPT RECOVERY: Re-open the old database so the app isn't left in a broken state
-		// Note: If os.Rename failed, finalDBPath should still exist with the old data (usually).
 		logging.LogOperation(logger, "attempting_recovery_reopening_old_db")
-		
+
 		dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
 		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
 			manager.GtfsDB = reopenedClient

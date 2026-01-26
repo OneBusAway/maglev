@@ -155,7 +155,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	manager.gtfsSource = gtfsNew
 	err = manager.ForceUpdate(context.Background())
 	require.NoError(t, err, "ForceUpdate failed for new GTFS")
-	
+
 	agencies := manager.GetAgencies()
 	require.NotEmpty(t, agencies, "No agencies found after second update")
 	assert.Equal(t, "40", agencies[0].Id)
@@ -171,7 +171,6 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	}
 
 }
-
 
 func TestHotSwap_AtomicSwap(t *testing.T) {
 	tempDir := t.TempDir()
