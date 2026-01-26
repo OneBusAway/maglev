@@ -947,13 +947,13 @@ WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
 -- name: SearchStopsByName :many
 SELECT
     s.id,
-    s. code,
+    s.code,
     s.name,
     s.lat,
     s.lon,
-    s. location_type,
-    s. wheelchair_boarding,
-    s. direction  
+    s.location_type,
+    s.wheelchair_boarding,
+    s.direction  
 FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid  

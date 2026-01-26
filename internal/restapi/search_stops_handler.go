@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,9 +21,9 @@ func sanitizeFTS5Query(input string) string {
 		`(`, " ",
 		`)`, " ",
 	)
-	
+
 	sanitized := replacer.Replace(input)
-	
+
 	// Remove FTS5 operators (case-insensitive)
 	sanitized = strings.ReplaceAll(sanitized, " AND ", " ")
 	sanitized = strings.ReplaceAll(sanitized, " OR ", " ")
@@ -30,11 +31,11 @@ func sanitizeFTS5Query(input string) string {
 	sanitized = strings.ReplaceAll(sanitized, " and ", " ")
 	sanitized = strings.ReplaceAll(sanitized, " or ", " ")
 	sanitized = strings.ReplaceAll(sanitized, " not ", " ")
-	
+
 	// Trim and collapse multiple spaces
 	sanitized = strings.TrimSpace(sanitized)
 	sanitized = strings.Join(strings.Fields(sanitized), " ")
-	
+
 	return sanitized
 }
 
@@ -57,7 +58,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Sanitize and construct FTS5 query
 	sanitizedQuery := sanitizeFTS5Query(query)
-	
+
 	// If sanitization removed everything, return empty results
 	if sanitizedQuery == "" {
 		data := struct {
@@ -83,7 +84,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		api.sendResponse(w, r, response)
 		return
 	}
-	
+
 	// Wrap in quotes and add wildcard for prefix matching
 	searchQuery := `"` + sanitizedQuery + `*"`
 
@@ -95,13 +96,17 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	// 3. Perform Full Text Search with error handling
 	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
 	if err != nil {
-		// If FTS5 query still fails (edge case), try without wildcard as fallback
+		// Fallback: try without wildcard
 		searchQuery = `"` + sanitizedQuery + `"`
 		searchParams.SearchQuery = searchQuery
-		
+
 		stops, err = api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
 		if err != nil {
-			api.serverErrorResponse(w, r, err)
+			api.serverErrorResponse(
+				w,
+				r,
+				fmt.Errorf("SearchStopsByName failed for query %q: %w", searchParams.SearchQuery, err),
+			)
 			return
 		}
 	}
@@ -115,14 +120,14 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	// Fetch Routes for all found stops
 	routesRows, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch routes for stops: %w", err))
 		return
 	}
 
 	// Fetch Agencies for all found stops
 	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch agencies for stops: %w", err))
 		return
 	}
 
@@ -175,15 +180,12 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	for _, s := range stops {
 		var agencyID string
 
-		// Attempt to derive Agency ID from routes serving this stop
 		if rts, ok := routesByStopID[s.ID]; ok && len(rts) > 0 {
 			agencyID, _, _ = utils.ExtractAgencyIDAndCodeID(rts[0])
-		} else {
-			if len(agenciesMap) == 1 {
-				for id := range agenciesMap {
-					agencyID = id
-					break
-				}
+		} else if len(agenciesMap) == 1 {
+			for id := range agenciesMap {
+				agencyID = id
+				break
 			}
 		}
 
@@ -191,7 +193,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		if agencyID != "" {
 			combinedStopID = utils.FormCombinedID(agencyID, s.ID)
 		} else {
-			// Absolute fallback: Return the raw database ID rather than an empty string
 			combinedStopID = s.ID
 		}
 
@@ -211,7 +212,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			WheelchairBoarding: models.UnknownValue,
 			RouteIDs:           routeIDs,
 			StaticRouteIDs:     routeIDs,
-			Parent:             "", // s.ParentStation.String if you add it to the query
+			Parent:             "",
 		}
 
 		if s.WheelchairBoarding.Valid {
