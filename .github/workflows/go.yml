@@ -2,7 +2,7 @@ name: Go CI
 
 on:
   push:
-    branches: [main, db_update]
+    branches: [main]
   pull_request:
 
 jobs:
