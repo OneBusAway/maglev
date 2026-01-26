@@ -32,3 +32,4 @@ EXPOSE 4000 2345
 
 # Default command uses Air for live reload
 CMD ["air", "-c", ".air.docker.toml"]
+
