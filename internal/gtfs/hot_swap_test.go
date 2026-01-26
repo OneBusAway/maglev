@@ -61,6 +61,8 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 					}
 					if manager.GtfsDB == nil {
 						errChan <- loggerErrorf("GtfsDB is nil during read")
+						manager.RUnlock()
+						continue
 					}
 
 					aps, err := manager.GtfsDB.Queries.ListAgencies(ctx)

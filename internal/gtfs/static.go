@@ -265,6 +265,16 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	if err != nil {
 		logging.LogError(logger, "CRITICAL: Failed to create new GTFS client after database swap", err,
 			slog.String("db_path", finalDBPath))
+
+		logging.LogOperation(logger, "attempting_recovery_reopening_old_db")
+
+		dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
+		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
+			manager.GtfsDB = reopenedClient
+			logging.LogOperation(logger, "recovery_successful_old_db_reopened")
+		} else {
+			logging.LogError(logger, "CRITICAL: Failed to recover old DB after rename failure", reopenErr)
+		}
 		return fmt.Errorf("failed to update GTFS database client: %w", err)
 	}
 
