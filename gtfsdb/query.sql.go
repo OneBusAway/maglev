@@ -3619,7 +3619,8 @@ SELECT
     s.lon,
     s.location_type,
     s.wheelchair_boarding,
-    s.direction  
+    s.direction,
+    s.parent_station  
 FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid  
@@ -3642,6 +3643,7 @@ type SearchStopsByNameRow struct {
 	LocationType       sql.NullInt64
 	WheelchairBoarding sql.NullInt64
 	Direction          sql.NullString
+	ParentStation      sql.NullString
 }
 
 func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNameParams) ([]SearchStopsByNameRow, error) {
@@ -3662,6 +3664,7 @@ func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNamePa
 			&i.LocationType,
 			&i.WheelchairBoarding,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}

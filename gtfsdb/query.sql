@@ -953,7 +953,8 @@ SELECT
     s.lon,
     s.location_type,
     s.wheelchair_boarding,
-    s.direction  
+    s.direction,
+    s.parent_station  
 FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid  

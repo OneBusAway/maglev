@@ -245,6 +245,11 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			direction = s.Direction.String
 		}
 
+		parentStation := ""
+		if s.ParentStation.Valid {
+			parentStation = s.ParentStation.String
+		}
+
 		stopModel := models.Stop{
 			ID:                 combinedStopID,
 			Name:               name,
@@ -256,7 +261,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(s.WheelchairBoarding.Int64)),
 			RouteIDs:           routeIDs,
 			StaticRouteIDs:     routeIDs,
-			Parent:             "",
+			Parent:             parentStation,
 		}
 
 		stopModels = append(stopModels, stopModel)
