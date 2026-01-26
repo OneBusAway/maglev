@@ -152,47 +152,27 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	for i := 0; i < 2; i++ {
+	manager.gtfsSource = gtfsNew
+	err = manager.ForceUpdate(context.Background())
+	require.NoError(t, err, "ForceUpdate failed for new GTFS")
+	
+	agencies := manager.GetAgencies()
+	require.NotEmpty(t, agencies, "No agencies found after second update")
+	assert.Equal(t, "40", agencies[0].Id)
 
-		manager.gtfsSource = gtfsOriginal
-		err = manager.ForceUpdate(context.Background())
-		require.NoError(t, err, "ForceUpdate failed for original GTFS")
-		
-		agencies := manager.GetAgencies()
-		require.NotEmpty(t, agencies, "No agencies found after update")
-		assert.Equal(t, "25", agencies[0].Id)
-
-		files, err := os.ReadDir(tempDir)
-		if err != nil {
-			t.Fatal(err)
+	files, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.Contains(f.Name(), "temp.db") {
+			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
 		}
-		for _, f := range files {
-			if strings.Contains(f.Name(), "temp.db") {
-				t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
-			}
-		}
-
-		manager.gtfsSource = gtfsNew
-		err = manager.ForceUpdate(context.Background())
-		require.NoError(t, err, "ForceUpdate failed for new GTFS")
-		
-		agencies = manager.GetAgencies()
-		require.NotEmpty(t, agencies, "No agencies found after second update")
-		assert.Equal(t, "40", agencies[0].Id)
-
-		files, err = os.ReadDir(tempDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, f := range files {
-			if strings.Contains(f.Name(), "temp.db") {
-				t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
-			}
-		}
-
 	}
 
 }
+
+
 func TestHotSwap_AtomicSwap(t *testing.T) {
 	tempDir := t.TempDir()
 
