@@ -31,6 +31,9 @@ CREATE TABLE
     );
 
 -- migrate
+-- FTS5 external content table for full-text route search.
+-- Data lives in 'routes' table; only the search index is stored here.
+-- The triggers below keep the index synchronized with the content table.
 CREATE VIRTUAL TABLE IF NOT EXISTS routes_fts USING fts5 (
     id UNINDEXED,
     agency_id UNINDEXED,
@@ -42,6 +45,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS routes_fts USING fts5 (
 );
 
 -- migrate
+-- Trigger naming: ai=After Insert, ad=After Delete, au=After Update
 CREATE TRIGGER IF NOT EXISTS routes_fts_ai AFTER INSERT ON routes BEGIN
 INSERT INTO
     routes_fts(rowid, id, agency_id, short_name, long_name, desc)

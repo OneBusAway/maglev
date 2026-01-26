@@ -65,17 +65,43 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	agencyIDs := make(map[string]bool)
 	for _, routeRow := range routes {
 		agencyIDs[routeRow.AgencyID] = true
+
+		shortName := ""
+		if routeRow.ShortName.Valid {
+			shortName = routeRow.ShortName.String
+		}
+		longName := ""
+		if routeRow.LongName.Valid {
+			longName = routeRow.LongName.String
+		}
+		desc := ""
+		if routeRow.Desc.Valid {
+			desc = routeRow.Desc.String
+		}
+		url := ""
+		if routeRow.Url.Valid {
+			url = routeRow.Url.String
+		}
+		color := ""
+		if routeRow.Color.Valid {
+			color = routeRow.Color.String
+		}
+		textColor := ""
+		if routeRow.TextColor.Valid {
+			textColor = routeRow.TextColor.String
+		}
+
 		results = append(results, models.NewRoute(
 			utils.FormCombinedID(routeRow.AgencyID, routeRow.ID),
 			routeRow.AgencyID,
-			routeRow.ShortName.String,
-			routeRow.LongName.String,
-			routeRow.Desc.String,
+			shortName,
+			longName,
+			desc,
 			models.RouteType(routeRow.Type),
-			routeRow.Url.String,
-			routeRow.Color.String,
-			routeRow.TextColor.String,
-			routeRow.ShortName.String,
+			url,
+			color,
+			textColor,
+			shortName,
 		))
 	}
 

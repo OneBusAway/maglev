@@ -2,6 +2,8 @@ package gtfs
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -34,13 +36,21 @@ func (manager *Manager) SearchRoutes(ctx context.Context, input string, maxCount
 	if limit <= 0 {
 		limit = 20
 	}
-	if limit > 100 {
-		limit = 100
-	}
 
 	query := buildRouteSearchQuery(input)
-	return manager.GtfsDB.Queries.SearchRoutesByFullText(ctx, gtfsdb.SearchRoutesByFullTextParams{
+	if query == "" {
+		return []gtfsdb.Route{}, nil
+	}
+
+	logger := slog.Default().With(slog.String("component", "route_search"))
+	logger.Debug("route search", slog.String("input", input), slog.String("query", query), slog.Int("limit", limit))
+
+	routes, err := manager.GtfsDB.Queries.SearchRoutesByFullText(ctx, gtfsdb.SearchRoutesByFullTextParams{
 		Query: query,
 		Limit: int64(limit),
 	})
+	if err != nil {
+		return nil, fmt.Errorf("route search failed for query %q: %w", query, err)
+	}
+	return routes, nil
 }
