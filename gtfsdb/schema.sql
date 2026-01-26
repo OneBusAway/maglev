@@ -102,6 +102,8 @@ WHERE
 
 END;
 
+-- FTS5 external content table for full-text stop search.
+-- Data lives in 'stops' table; only the search index is stored here.
 -- migrate
 CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
     id UNINDEXED,
@@ -109,6 +111,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
     tokenize = 'porter'
 );
 
+-- The triggers below keep the index synchronized with the content table.
 -- migrate
 DROP TRIGGER IF EXISTS stops_fts_insert_trigger;
 CREATE TRIGGER IF NOT EXISTS stops_fts_insert_trigger

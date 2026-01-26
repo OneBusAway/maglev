@@ -3613,13 +3613,13 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 const searchStopsByName = `-- name: SearchStopsByName :many
 SELECT
     s.id,
-    s. code,
+    s.code,
     s.name,
     s.lat,
     s.lon,
-    s. location_type,
-    s. wheelchair_boarding,
-    s. direction  
+    s.location_type,
+    s.wheelchair_boarding,
+    s.direction  
 FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid  

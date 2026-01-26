@@ -3,18 +3,19 @@ package restapi
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// sanitizeFTS5Query escapes special FTS5 characters to prevent query syntax errors
+// sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
+// to prevent query syntax errors. Does not preserve the original characters.
 func sanitizeFTS5Query(input string) string {
-	// FTS5 special characters that need escaping: " * ( ) AND OR NOT
-	// Replace them with spaces to maintain word boundaries
 	replacer := strings.NewReplacer(
 		`"`, " ",
 		`*`, " ",
@@ -24,15 +25,10 @@ func sanitizeFTS5Query(input string) string {
 
 	sanitized := replacer.Replace(input)
 
-	// Remove FTS5 operators (case-insensitive)
-	sanitized = strings.ReplaceAll(sanitized, " AND ", " ")
-	sanitized = strings.ReplaceAll(sanitized, " OR ", " ")
-	sanitized = strings.ReplaceAll(sanitized, " NOT ", " ")
-	sanitized = strings.ReplaceAll(sanitized, " and ", " ")
-	sanitized = strings.ReplaceAll(sanitized, " or ", " ")
-	sanitized = strings.ReplaceAll(sanitized, " not ", " ")
+	// Remove AND / OR / NOT operators (case-insensitive)
+	re := regexp.MustCompile(`(?i)\s+(AND|OR|NOT)\s+`)
+	sanitized = re.ReplaceAllString(sanitized, " ")
 
-	// Trim and collapse multiple spaces
 	sanitized = strings.TrimSpace(sanitized)
 	sanitized = strings.Join(strings.Fields(sanitized), " ")
 
@@ -59,7 +55,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	// 2. Sanitize and construct FTS5 query
 	sanitizedQuery := sanitizeFTS5Query(query)
 
-	// If sanitization removed everything, return empty results
 	if sanitizedQuery == "" {
 		data := struct {
 			LimitExceeded bool                   `json:"limitExceeded"`
@@ -85,7 +80,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Wrap in quotes and add wildcard for prefix matching
 	searchQuery := `"` + sanitizedQuery + `*"`
 
 	searchParams := gtfsdb.SearchStopsByNameParams{
@@ -93,10 +87,16 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		Limit:       int64(limit),
 	}
 
-	// 3. Perform Full Text Search with error handling
+	// 3. Perform Full Text Search (with logged fallback)
 	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
 	if err != nil {
-		// Fallback: try without wildcard
+
+		api.Logger.Debug(
+			"FTS5 wildcard query failed, retrying without wildcard",
+			"original_error", err,
+			"query", sanitizedQuery,
+		)
+
 		searchQuery = `"` + sanitizedQuery + `"`
 		searchParams.SearchQuery = searchQuery
 
@@ -111,27 +111,25 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 4. Batch Fetch Related Data (Routes & Agencies)
+	// 4. Batch Fetch Related Data
 	stopIDs := make([]string, len(stops))
 	for i, s := range stops {
 		stopIDs[i] = s.ID
 	}
 
-	// Fetch Routes for all found stops
 	routesRows, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch routes for stops: %w", err))
 		return
 	}
 
-	// Fetch Agencies for all found stops
 	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch agencies for stops: %w", err))
 		return
 	}
 
-	// 5. Organize Data for Response Construction
+	// 5. Organize Data
 	routesByStopID := make(map[string][]string)
 	routesMap := make(map[string]models.Route)
 
@@ -141,17 +139,48 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
 
 		if _, exists := routesMap[combinedRouteID]; !exists {
+
+			shortName := ""
+			if row.ShortName.Valid {
+				shortName = row.ShortName.String
+			}
+
+			longName := ""
+			if row.LongName.Valid {
+				longName = row.LongName.String
+			}
+
+			desc := ""
+			if row.Desc.Valid {
+				desc = row.Desc.String
+			}
+
+			url := ""
+			if row.Url.Valid {
+				url = row.Url.String
+			}
+
+			color := ""
+			if row.Color.Valid {
+				color = row.Color.String
+			}
+
+			textColor := ""
+			if row.TextColor.Valid {
+				textColor = row.TextColor.String
+			}
+
 			routesMap[combinedRouteID] = models.NewRoute(
 				combinedRouteID,
 				row.AgencyID,
-				row.ShortName.String,
-				row.LongName.String,
-				row.Desc.String,
+				shortName,
+				longName,
+				desc,
 				models.RouteType(row.Type),
-				row.Url.String,
-				row.Color.String,
-				row.TextColor.String,
-				row.ShortName.String,
+				url,
+				color,
+				textColor,
+				shortName,
 			)
 		}
 	}
@@ -201,27 +230,33 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			routeIDs = []string{}
 		}
 
+		name := ""
+		if s.Name.Valid {
+			name = s.Name.String
+		}
+
+		code := ""
+		if s.Code.Valid {
+			code = s.Code.String
+		}
+
+		direction := ""
+		if s.Direction.Valid {
+			direction = s.Direction.String
+		}
+
 		stopModel := models.Stop{
 			ID:                 combinedStopID,
-			Name:               s.Name.String,
+			Name:               name,
 			Lat:                s.Lat,
 			Lon:                s.Lon,
-			Code:               s.Code.String,
-			Direction:          s.Direction.String,
+			Code:               code,
+			Direction:          direction,
 			LocationType:       int(s.LocationType.Int64),
-			WheelchairBoarding: models.UnknownValue,
+			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(s.WheelchairBoarding.Int64)),
 			RouteIDs:           routeIDs,
 			StaticRouteIDs:     routeIDs,
 			Parent:             "",
-		}
-
-		if s.WheelchairBoarding.Valid {
-			switch s.WheelchairBoarding.Int64 {
-			case 1:
-				stopModel.WheelchairBoarding = "ACCESSIBLE"
-			case 2:
-				stopModel.WheelchairBoarding = "NOT_ACCESSIBLE"
-			}
 		}
 
 		stopModels = append(stopModels, stopModel)

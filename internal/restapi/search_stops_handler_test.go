@@ -31,44 +31,36 @@ func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
 func TestSearchStopsHandlerMissingInput(t *testing.T) {
 	api := createTestApi(t)
 
-	// Manually set up server to handle custom 400 response format
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	// Call without 'input' parameter
 	resp, err := http.Get(server.URL + "/api/where/search/stop.json?key=TEST")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	// 1. Assert Status Code matches 400
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
-	// 2. Decode specific validation error structure
 	var errorResponse struct {
 		FieldErrors map[string][]string `json:"fieldErrors"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
-	require.NoError(t, err, "Should be able to decode validation error response")
+	require.NoError(t, err)
 
-	// 3. Verify content
-	assert.Contains(t, errorResponse.FieldErrors, "input", "Should contain error for 'input' field")
+	assert.Contains(t, errorResponse.FieldErrors, "input")
 }
 
 func TestSearchStopsHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 
-	// Get a real stop from the loaded test data
 	stops := api.GtfsManager.GetStops()
-	require.NotEmpty(t, stops, "Test data should contain at least one stop")
+	require.NotEmpty(t, stops)
 	targetStop := stops[0]
 
-	// URL Encode the input parameter to handle spaces (e.g. "Downtown Passenger Terminal")
 	query := url.QueryEscape(targetStop.Name)
 	reqUrl := fmt.Sprintf("/api/where/search/stop.json?key=TEST&input=%s", query)
 
-	// Manually perform request to inspect errors clearly
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
 	server := httptest.NewServer(mux)
@@ -79,46 +71,50 @@ func TestSearchStopsHandlerEndToEnd(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "Response status should be 200 OK. Body: %s", string(bodyBytes))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(bodyBytes))
 
 	var model models.ResponseModel
 	err = json.Unmarshal(bodyBytes, &model)
-	require.NoError(t, err, "Failed to decode response JSON: %s", string(bodyBytes))
+	require.NoError(t, err)
 
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
 	data, ok := model.Data.(map[string]interface{})
-	require.True(t, ok, "Data should be a map")
-	assert.NotEmpty(t, data)
+	require.True(t, ok)
 
 	assert.Equal(t, false, data["limitExceeded"])
 	assert.Equal(t, false, data["outOfRange"])
 
 	list, ok := data["list"].([]interface{})
-	require.True(t, ok, "List should exist and be an array")
-	assert.NotEmpty(t, list, "Search should return at least the stop we queried for")
+	require.True(t, ok)
+	assert.NotEmpty(t, list)
 
 	firstResult, ok := list[0].(map[string]interface{})
 	require.True(t, ok)
 
-	assert.NotEmpty(t, firstResult["id"], "Stop ID should not be empty")
-	assert.NotEmpty(t, firstResult["name"], "Stop Name should not be empty")
-	assert.NotEmpty(t, firstResult["lat"], "Lat should not be empty")
-	assert.NotEmpty(t, firstResult["lon"], "Lon should not be empty")
+	assert.NotEmpty(t, firstResult["id"])
+	assert.NotEmpty(t, firstResult["name"])
+	assert.NotEmpty(t, firstResult["lat"])
+	assert.NotEmpty(t, firstResult["lon"])
 
 	references, ok := data["references"].(map[string]interface{})
-	require.True(t, ok, "References section should exist")
+	require.True(t, ok)
 
 	agenciesRef, ok := references["agencies"].([]interface{})
-	assert.True(t, ok, "References should contain agencies array")
-	assert.NotEmpty(t, agenciesRef, "References should contain at least one agency")
+	assert.True(t, ok)
+	assert.NotEmpty(t, agenciesRef)
 }
 
 func TestSearchStopsHandlerNoResults(t *testing.T) {
 	api := createTestApi(t)
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/search/stop.json?key=TEST&input=NonExistentStopName12345")
+	resp, model := serveApiAndRetrieveEndpoint(
+		t,
+		api,
+		"/api/where/search/stop.json?key=TEST&input=NonExistentStopName12345",
+	)
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data, ok := model.Data.(map[string]interface{})
@@ -126,7 +122,7 @@ func TestSearchStopsHandlerNoResults(t *testing.T) {
 
 	list, ok := data["list"].([]interface{})
 	require.True(t, ok)
-	assert.Empty(t, list, "List should be empty for no results")
+	assert.Empty(t, list)
 }
 
 func TestSearchStopsHandlerMaxCount(t *testing.T) {
@@ -134,16 +130,17 @@ func TestSearchStopsHandlerMaxCount(t *testing.T) {
 
 	stops := api.GtfsManager.GetStops()
 	if len(stops) < 2 {
-		t.Skip("Not enough stops in test data to verify maxCount limiting")
+		t.Skip("Not enough stops")
 	}
 
 	targetStop := stops[0]
-	// URL Encode the input parameter
 	query := url.QueryEscape(targetStop.Name)
-	
-	reqUrl := fmt.Sprintf("/api/where/search/stop.json?key=TEST&input=%s&maxCount=1", query)
 
-	// Use manual setup to ensure URL is handled correctly
+	reqUrl := fmt.Sprintf(
+		"/api/where/search/stop.json?key=TEST&input=%s&maxCount=1",
+		query,
+	)
+
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
 	server := httptest.NewServer(mux)
@@ -154,7 +151,7 @@ func TestSearchStopsHandlerMaxCount(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "Response status should be 200 OK. Body: %s", string(bodyBytes))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(bodyBytes))
 
 	var model models.ResponseModel
 	err = json.Unmarshal(bodyBytes, &model)
@@ -166,5 +163,174 @@ func TestSearchStopsHandlerMaxCount(t *testing.T) {
 	list, ok := data["list"].([]interface{})
 	require.True(t, ok)
 
-	assert.LessOrEqual(t, len(list), 1, "Should return at most 1 result")
+	assert.LessOrEqual(t, len(list), 1)
+}
+
+func TestSearchStopsHandlerWhitespaceOnlyInput(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, model := serveApiAndRetrieveEndpoint(
+		t,
+		api,
+		"/api/where/search/stop.json?key=TEST&input=%20%20%20",
+	)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+
+	assert.Empty(t, list)
+}
+
+func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
+	api := createTestApi(t)
+
+	query := url.QueryEscape(`*()"`)
+	resp, model := serveApiAndRetrieveEndpoint(
+		t,
+		api,
+		"/api/where/search/stop.json?key=TEST&input="+query,
+	)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+
+	assert.Empty(t, list)
+}
+
+func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
+	api := createTestApi(t)
+
+	stops := api.GtfsManager.GetStops()
+	require.NotEmpty(t, stops)
+
+	targetStop := stops[0]
+	query := url.QueryEscape(targetStop.Name)
+
+	tests := []struct {
+		name     string
+		maxCount string
+	}{
+		{"zero", "0"},
+		{"negative", "-1"},
+		{"tooLarge", "101"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqUrl := fmt.Sprintf(
+				"/api/where/search/stop.json?key=TEST&input=%s&maxCount=%s",
+				query,
+				tt.maxCount,
+			)
+
+			resp, model := serveApiAndRetrieveEndpoint(t, api, reqUrl)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			data, ok := model.Data.(map[string]interface{})
+			require.True(t, ok)
+
+			list, ok := data["list"].([]interface{})
+			require.True(t, ok)
+
+			assert.NotEmpty(t, list)
+		})
+	}
+}
+
+func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {
+	api := createTestApi(t)
+
+	query := url.QueryEscape(`test" OR "1"="1`)
+	resp, model := serveApiAndRetrieveEndpoint(
+		t,
+		api,
+		"/api/where/search/stop.json?key=TEST&input="+query,
+	)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+
+	assert.Less(t, len(list), 50)
+}
+
+func TestSanitizeFTS5Query(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "whitespace only",
+			input:    "     ",
+			expected: "",
+		},
+		{
+			name:     "all special characters",
+			input:    `"*()`,
+			expected: "",
+		},
+		{
+			name:     "mixed case operators AND",
+			input:    "test AND foo",
+			expected: "test foo",
+		},
+		{
+			name:     "mixed case operators And",
+			input:    "test And foo",
+			expected: "test foo",
+		},
+		{
+			name:     "mixed case operators aNd",
+			input:    "test aNd foo",
+			expected: "test foo",
+		},
+		{
+			name:     "consecutive operators",
+			input:    "foo AND AND bar",
+			expected: "foo bar",
+		},
+		{
+			name:     "operator at beginning",
+			input:    "AND test",
+			expected: "test",
+		},
+		{
+			name:     "operator at end",
+			input:    "test OR",
+			expected: "test",
+		},
+		{
+			name:     "unicode input",
+			input:    "中央駅 テスト",
+			expected: "中央駅 テスト",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := sanitizeFTS5Query(tt.input)
+			assert.Equal(t, tt.expected, out)
+		})
+	}
 }
