@@ -25,10 +25,11 @@ func sanitizeFTS5Query(input string) string {
 
 	sanitized := replacer.Replace(input)
 
-	// Remove AND / OR / NOT operators (case-insensitive)
-	re := regexp.MustCompile(`(?i)\s+(AND|OR|NOT)\s+`)
+	// Remove AND / OR / NOT tokens anywhere (case-insensitive, word-boundary based)
+	re := regexp.MustCompile(`(?i)\b(AND|OR|NOT)\b`)
 	sanitized = re.ReplaceAllString(sanitized, " ")
 
+	// Trim and collapse whitespace
 	sanitized = strings.TrimSpace(sanitized)
 	sanitized = strings.Join(strings.Fields(sanitized), " ")
 
