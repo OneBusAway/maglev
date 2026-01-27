@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -128,4 +129,16 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 
 	// Valid date, use it
 	return parsedTime.Format("20060102"), parsedTime, nil, true
+}
+
+func LoadLocationWithUTCFallBack(timeZone string, agencyId string) *time.Location {
+	loc, err := time.LoadLocation(timeZone)
+	if err != nil {
+		slog.Warn("invalid agency timezone, using UTC",
+			slog.String("agencyID", agencyId),
+			slog.String("timezone", timeZone),
+			slog.String("error", err.Error()))
+		loc = time.UTC
+	}
+	return loc
 }

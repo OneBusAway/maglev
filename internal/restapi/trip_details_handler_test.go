@@ -42,6 +42,22 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, tripID, entry["tripId"])
 	assert.NotNil(t, entry["serviceDate"])
 
+	// Testing Default Path where no Service Date is given
+	loc, err := time.LoadLocation(agency.Timezone)
+	assert.Nil(t, err)
+
+	currentTimeInLoc := time.Now().In(loc)
+	y, m, d := currentTimeInLoc.Date()
+	expectedServiceDate := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	expectedServiceDateMillis := expectedServiceDate.Unix() * 1000
+	assert.Equal(t, float64(expectedServiceDateMillis), entry["serviceDate"])
+
+	// Test if the fields are being omitted on empty or not
+	_, exists := entry["situationIds"]
+	assert.True(t, exists)
+	_, exists = entry["frequency"]
+	assert.True(t, exists)
+
 	schedule, ok := entry["schedule"].(map[string]interface{})
 	if ok {
 		assert.NotNil(t, schedule)

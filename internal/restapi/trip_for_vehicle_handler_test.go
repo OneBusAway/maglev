@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -119,6 +120,9 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
 	defer api.Shutdown()
 
+	ctx := context.Background()
+	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	require.NoError(t, err)
 	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
 
 	mux := http.NewServeMux()
@@ -147,6 +151,16 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 
 	assert.NotNil(t, entry["tripId"])
 	assert.NotNil(t, entry["serviceDate"])
+
+	// Testing Default Path where no Service Date is given
+	loc, err := time.LoadLocation(agency.Timezone)
+	assert.Nil(t, err)
+
+	currentTimeInLoc := time.Now().In(loc)
+	y, m, d := currentTimeInLoc.Date()
+	expectedServiceDate := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	expectedServiceDateMillis := expectedServiceDate.Unix() * 1000
+	assert.Equal(t, float64(expectedServiceDateMillis), entry["serviceDate"])
 
 	status, statusOk := entry["status"].(map[string]interface{})
 	if statusOk {

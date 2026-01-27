@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -89,7 +88,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 
 	var currentTime time.Time
 	if params.Time != nil {
@@ -102,6 +101,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if params.ServiceDate != nil {
 		serviceDate = *params.ServiceDate
 	} else {
+		// Use time.Date() to get local midnight, not Truncate() which uses UTC
 		y, m, d := currentTime.Date()
 		serviceDate = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
@@ -337,7 +337,7 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 			Code:               stop.Code.String,
 			Direction:          api.calculateStopDirection(ctx, stop.ID),
 			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

@@ -515,3 +515,19 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		assert.Contains(t, fieldErrors, "time")
 	})
 }
+
+func TestLoadLocationWithUTCFallBack(t *testing.T) {
+	t.Run("Valid location", func(t *testing.T) {
+		loc := LoadLocationWithUTCFallBack("America/Los_Angeles", "test-agency")
+
+		assert.NotNil(t, loc)
+		assert.Equal(t, "America/Los_Angeles", loc.String())
+	})
+
+	t.Run("Invalid location falls back to UTC", func(t *testing.T) {
+		loc := LoadLocationWithUTCFallBack("Invalid/Timezone", "test-agency")
+
+		assert.NotNil(t, loc)
+		assert.Equal(t, time.UTC, loc)
+	})
+}

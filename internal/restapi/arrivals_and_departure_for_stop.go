@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -61,7 +60,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agencyID)
 	currentTime = currentTime.In(loc)
 	windowStart := currentTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
 	windowEnd := currentTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
@@ -350,7 +349,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Code:               stopData.Code.String,
 			Direction:          api.calculateStopDirection(ctx, stopID),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stopData.WheelchairBoarding.Int64)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}
