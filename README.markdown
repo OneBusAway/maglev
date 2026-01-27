@@ -215,7 +215,7 @@ make docker-build
 ```
 
 ### Running with Docker
-Ensure you have created config.docker.json from the template as shown in the Quick Start section above.
+**Note:** Ensure you have created `config.docker.json` from the template as shown in the Quick Start section above.
 
 **Using Docker directly:**
 
@@ -323,7 +323,7 @@ ls -la config.docker.json
 
 ```bash
 # Test the endpoint manually
-curl http://localhost:4000/api/where/current-time.json?key=<your-api-key>
+curl http://localhost:4000/api/where/current-time.json?key=test
 
 # If you changed api-keys, make sure HEALTH_CHECK_KEY matches
 # Check the current health check key
