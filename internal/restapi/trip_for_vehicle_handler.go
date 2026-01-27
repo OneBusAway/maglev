@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -74,9 +73,11 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Edge Case Check: Vehicle exists but is not currently on a trip
-	// We also check for empty trip ID string to prevent DB lookup errors
+	// Return 404 when vehicle has no associated trip (idle vehicle)
+	// or when the trip ID is empty (avoiding a futile DB lookup)
 	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
+		api.Logger.Debug("vehicle has no current trip (idle)",
+			"vehicleID", vehicleID, "agencyID", agencyID)
 		api.sendNotFound(w, r)
 		return
 	}
@@ -114,7 +115,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		var statusErr error
 		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
 		if statusErr != nil {
-			fmt.Println("BuildTripStatus error:", statusErr)
+			api.Logger.Warn("failed to build trip status",
+				"tripID", tripID,
+				"agencyID", agencyID,
+				"error", statusErr)
 			// Proceeding with nil status, as it's an optional field
 		}
 	}
@@ -123,11 +127,16 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
 		if errors.Is(err, sql.ErrNoRows) {
+			api.Logger.Warn("vehicle references non-existent trip",
+				"vehicleID", vehicleID, "tripID", tripID, "agencyID", agencyID)
 			api.sendNotFound(w, r)
 			return
 		}
+		api.Logger.Error("database error fetching trip",
+			"error", err,
+			"tripID", tripID,
+			"agencyID", agencyID)
 		api.serverErrorResponse(w, r, err)
-		fmt.Println("GetTrip error:", err)
 		return
 	}
 

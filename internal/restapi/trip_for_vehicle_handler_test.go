@@ -2,8 +2,10 @@ package restapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -17,6 +19,9 @@ import (
 // Helper to create a mock vehicle and inject it into the test API
 func setupTestApiWithMockVehicle(t *testing.T) (*RestAPI, string, string) {
 	api := createTestApi(t)
+	// Initialize the logger to prevent nil pointer panics during handler execution
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
 	// Note: caller is responsible for calling api.Shutdown()
 
 	agencyStatic := api.GtfsManager.GetAgencies()[0]
@@ -207,7 +212,7 @@ func TestTripForVehicleHandlerWithInvalidVehicleID(t *testing.T) {
 func TestTripForVehicleHandlerWithIdleVehicle(t *testing.T) {
 	api, agencyID, _ := setupTestApiWithMockVehicle(t)
 
-	// Create an idle vehicle (empty tripID usually results in nil trip in mock)
+	// Create a vehicle with empty trip ID (tests vehicle.Trip.ID.ID == "" branch)
 	idleVehicleID := "IDLE_VEHICLE"
 	api.GtfsManager.MockAddVehicle(idleVehicleID, "", "")
 
@@ -231,6 +236,34 @@ func TestTripForVehicleHandlerWithIdleVehicle(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, model.Code)
 }
 
+// Ensure proper handling when a vehicle references a trip that does not exist in the DB (sql.ErrNoRows)
+func TestTripForVehicleHandlerWithNonExistentTrip(t *testing.T) {
+	api := createTestApi(t)
+	// Initialize the logger to prevent nil pointer panics during handler execution
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	defer api.Shutdown()
+
+	agencyID := api.GtfsManager.GetAgencies()[0].Id
+
+	// Create vehicle with trip ID that doesn't exist in DB
+	vehicleID := "GHOST_TRIP_VEHICLE"
+	nonExistentTripID := "TRIP_THAT_DOES_NOT_EXIST"
+	api.GtfsManager.MockAddVehicle(vehicleID, nonExistentTripID, "some_route")
+
+	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
 func TestTripForVehicleHandlerWithInvalidAgencyID(t *testing.T) {
 	api, _, vehicleID := setupTestApiWithMockVehicle(t)
 	// Use a non-existent agency ID
@@ -245,9 +278,8 @@ func TestTripForVehicleHandlerWithInvalidAgencyID(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	// Should return either 404 (not found) or 500 (server error) - not panic
-	assert.True(t, resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusInternalServerError,
-		"Should return 404 or 500 for invalid agency, got %d", resp.StatusCode)
+	// Should return 404 (Not Found) because GetAgency returns sql.ErrNoRows, which is handled as 404
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestTripForVehicleHandlerWithServiceDate(t *testing.T) {
