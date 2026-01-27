@@ -133,11 +133,11 @@ func TestEnvironmentClock_FromFile(t *testing.T) {
 	// Create a temp file with the time
 	tmpFile, err := os.CreateTemp("", "clock_test_*.txt")
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(expectedTime.Format(time.RFC3339))
 	assert.NoError(t, err)
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	c := NewEnvironmentClock("", tmpFile.Name(), time.UTC)
 	result := c.Now()
@@ -151,11 +151,11 @@ func TestEnvironmentClock_FromFile_WithNewline(t *testing.T) {
 	// Create a temp file with the time and trailing newline
 	tmpFile, err := os.CreateTemp("", "clock_test_*.txt")
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(expectedTime.Format(time.RFC3339) + "\n")
 	assert.NoError(t, err)
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	c := NewEnvironmentClock("", tmpFile.Name(), time.UTC)
 	result := c.Now()
@@ -174,11 +174,11 @@ func TestEnvironmentClock_EnvVarPriorityOverFile(t *testing.T) {
 	// Create file
 	tmpFile, err := os.CreateTemp("", "clock_test_*.txt")
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(fileTime.Format(time.RFC3339))
 	assert.NoError(t, err)
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	c := NewEnvironmentClock(envVarName, tmpFile.Name(), time.UTC)
 	result := c.Now()
