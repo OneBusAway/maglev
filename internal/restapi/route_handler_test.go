@@ -117,14 +117,10 @@ func TestRouteHandlerVerifiesReferences(t *testing.T) {
 		assert.NotEmpty(t, agency["name"], "Agency should have a name")
 	}
 }
+
 func TestRouteHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
-
-	agencies := api.GtfsManager.GetAgencies()
-	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
-
-	routes := api.GtfsManager.GetRoutes()
-	assert.NotEmpty(t, routes, "Test data should contain at least one route")
+	defer api.Shutdown()
 
 	malformedID := "1-SHUTTLE"
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+malformedID+".json?key=TEST")
