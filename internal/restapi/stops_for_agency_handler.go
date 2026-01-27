@@ -11,7 +11,6 @@ import (
 func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Acquire read lock
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

@@ -33,7 +33,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 
-	// Acquire read lock
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

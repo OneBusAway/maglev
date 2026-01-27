@@ -14,7 +14,6 @@ import (
 func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
-	// Acquire read lock
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

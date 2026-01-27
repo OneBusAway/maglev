@@ -11,7 +11,6 @@ import (
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
 
-	// Acquire read lock
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

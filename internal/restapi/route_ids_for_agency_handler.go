@@ -10,7 +10,6 @@ import (
 func (api *RestAPI) routeIDsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
 
-	// Acquire read lock
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

@@ -28,7 +28,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Acquire read lock for thread safety
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

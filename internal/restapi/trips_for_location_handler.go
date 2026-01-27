@@ -14,7 +14,6 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Acquire read lock
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
