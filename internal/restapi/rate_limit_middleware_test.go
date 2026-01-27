@@ -9,17 +9,23 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/clock"
 )
 
+// initRateLimitMiddleware initializes a rate limit middleware with clock.RealClock for testing
+func initRateLimitMiddleware(ratePerSecond int, interval time.Duration) func(http.Handler) *RateLimitMiddleware {
+	return NewRateLimitMiddleware(ratePerSecond, interval, clock.RealClock{})
+}
+
 func TestNewRateLimitMiddleware(t *testing.T) {
-	middleware := NewRateLimitMiddleware(10, time.Second)
+	middleware := initRateLimitMiddleware(10, time.Second)
 	defer middleware.Stop()
 	assert.NotNil(t, middleware, "Middleware should not be nil")
 	assert.NotNil(t, middleware.Handler(), "Handler should not be nil")
 }
 
 func TestRateLimitMiddleware_AllowsRequestsWithinLimit(t *testing.T) {
-	middleware := NewRateLimitMiddleware(5, time.Second)
+	middleware := initRateLimitMiddleware(5, time.Second)
 	defer middleware.Stop()
 
 	// Create a simple handler that responds with 200
@@ -43,7 +49,7 @@ func TestRateLimitMiddleware_AllowsRequestsWithinLimit(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_BlocksRequestsOverLimit(t *testing.T) {
-	middleware := NewRateLimitMiddleware(3, time.Second)
+	middleware := initRateLimitMiddleware(3, time.Second)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +80,7 @@ func TestRateLimitMiddleware_BlocksRequestsOverLimit(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_PerAPIKeyLimiting(t *testing.T) {
-	middleware := NewRateLimitMiddleware(2, time.Second)
+	middleware := initRateLimitMiddleware(2, time.Second)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +120,7 @@ func TestRateLimitMiddleware_PerAPIKeyLimiting(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_ExemptsOneBusAwayiPhone(t *testing.T) {
-	middleware := NewRateLimitMiddleware(1, time.Second)
+	middleware := initRateLimitMiddleware(1, time.Second)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +143,7 @@ func TestRateLimitMiddleware_ExemptsOneBusAwayiPhone(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_HandlesNoAPIKey(t *testing.T) {
-	middleware := NewRateLimitMiddleware(5, time.Second)
+	middleware := initRateLimitMiddleware(5, time.Second)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +165,7 @@ func TestRateLimitMiddleware_HandlesNoAPIKey(t *testing.T) {
 
 func TestRateLimitMiddleware_RefillsOverTime(t *testing.T) {
 	// Use a very short refill interval for testing
-	middleware := NewRateLimitMiddleware(1, 100*time.Millisecond)
+	middleware := initRateLimitMiddleware(1, 100*time.Millisecond)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +205,7 @@ func TestRateLimitMiddleware_RefillsOverTime(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_ConcurrentRequests(t *testing.T) {
-	middleware := NewRateLimitMiddleware(5, time.Second)
+	middleware := initRateLimitMiddleware(5, time.Second)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +252,7 @@ func TestRateLimitMiddleware_ConcurrentRequests(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
-	middleware := NewRateLimitMiddleware(1, time.Second)
+	middleware := initRateLimitMiddleware(1, time.Second)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -276,7 +282,7 @@ func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_CleanupOldLimiters(t *testing.T) {
-	middleware := NewRateLimitMiddleware(5, time.Second)
+	middleware := initRateLimitMiddleware(5, time.Second)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +311,7 @@ func TestRateLimitMiddleware_CleanupOldLimiters(t *testing.T) {
 
 func TestRateLimitMiddleware_EdgeCases(t *testing.T) {
 	t.Run("Zero rate limit", func(t *testing.T) {
-		middleware := NewRateLimitMiddleware(0, time.Second)
+		middleware := initRateLimitMiddleware(0, time.Second)
 		defer middleware.Stop()
 
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +331,7 @@ func TestRateLimitMiddleware_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("Very high rate limit", func(t *testing.T) {
-		middleware := NewRateLimitMiddleware(1000, time.Second)
+		middleware := initRateLimitMiddleware(1000, time.Second)
 		defer middleware.Stop()
 
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +353,7 @@ func TestRateLimitMiddleware_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("Empty API key", func(t *testing.T) {
-		middleware := NewRateLimitMiddleware(5, time.Second)
+		middleware := initRateLimitMiddleware(5, time.Second)
 		defer middleware.Stop()
 
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
