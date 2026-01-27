@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -209,12 +211,165 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	}
 }
 
-func TestBlockHandlerMissingBlock(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/block/25_nonexistent.json?key=TEST")
-	if resp.StatusCode == http.StatusInternalServerError {
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	} else {
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+func TestBlockHandlerNonExistentBlock(t *testing.T) {
+	api, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_nonexistent.json?key=TEST")
+	defer api.Shutdown()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
+	assert.Equal(t, 2, model.Version)
+	assert.Greater(t, model.CurrentTime, int64(0))
+}
+
+func TestBlockHandlerInvalidBlockID(t *testing.T) {
+	testCases := []struct {
+		name           string
+		endpoint       string
+		expectedStatus int
+	}{
+		{"Empty block ID", "/api/where/block/.json?key=TEST", http.StatusBadRequest},
+		{"Missing agency", "/api/where/block/invalidblock.json?key=TEST", http.StatusBadRequest},
+		{"Special characters", "/api/where/block/25_@%23$.json?key=TEST", http.StatusNotFound},
+		{"Only underscore", "/api/where/block/_.json?key=TEST", http.StatusBadRequest},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			api, resp, model := serveAndRetrieveEndpoint(t, tc.endpoint)
+			defer api.Shutdown()
+
+			assert.Equal(t, tc.expectedStatus, resp.StatusCode,
+				"Expected HTTP %d for test case: %s", tc.expectedStatus, tc.name)
+
+			assert.Equal(t, tc.expectedStatus, model.Code, "Response model should match expected status code")
+			assert.NotEmpty(t, model.Text, "Response model should contain an error message")
+			assert.Equal(t, 2, model.Version, "Response model should contain API version")
+		})
+	}
+}
+
+func TestBlockHandlerResponseValidation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+	assert.NotNil(t, model.Data)
+	assert.Greater(t, model.CurrentTime, int64(0), "currentTime should be set")
+	assert.Equal(t, 2, model.Version, "version should be 2")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	require.Contains(t, data, "entry")
+	require.Contains(t, data, "references")
+
+	entryWrapper, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, entryWrapper, "data")
+
+	entryData, ok := entryWrapper["data"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, entryData, "entry")
+
+	entry, ok := entryData["entry"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, entry, "id")
+	require.Contains(t, entry, "configurations")
+
+	blockID, ok := entry["id"].(string)
+	require.True(t, ok)
+	assert.NotEmpty(t, blockID)
+
+	configs, ok := entry["configurations"].([]interface{})
+	require.True(t, ok)
+	assert.NotEmpty(t, configs, "Block should have at least one configuration")
+
+	for _, rawConfig := range configs {
+		config, ok := rawConfig.(map[string]interface{})
+		require.True(t, ok)
+
+		require.Contains(t, config, "activeServiceIds")
+		require.Contains(t, config, "inactiveServiceIds")
+		require.Contains(t, config, "trips")
+
+		activeServiceIds, ok := config["activeServiceIds"].([]interface{})
+		require.True(t, ok)
+		assert.NotEmpty(t, activeServiceIds, "Configuration should have active service IDs")
+
+		trips, ok := config["trips"].([]interface{})
+		require.True(t, ok)
+		assert.NotEmpty(t, trips, "Configuration should have trips")
+
+		for _, rawTrip := range trips {
+			trip, ok := rawTrip.(map[string]interface{})
+			require.True(t, ok)
+
+			require.Contains(t, trip, "tripId")
+			require.Contains(t, trip, "distanceAlongBlock")
+			require.Contains(t, trip, "blockStopTimes")
+			require.Contains(t, trip, "accumulatedSlackTime")
+
+			blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
+			require.True(t, ok)
+			assert.NotEmpty(t, blockStopTimes, "Trip should have block stop times")
+
+			for _, rawStopTime := range blockStopTimes {
+				stopTime, ok := rawStopTime.(map[string]interface{})
+				require.True(t, ok)
+
+				require.Contains(t, stopTime, "blockSequence")
+				require.Contains(t, stopTime, "distanceAlongBlock")
+				require.Contains(t, stopTime, "accumulatedSlackTime")
+				require.Contains(t, stopTime, "stopTime")
+
+				st, ok := stopTime["stopTime"].(map[string]interface{})
+				require.True(t, ok)
+				require.Contains(t, st, "arrivalTime")
+				require.Contains(t, st, "departureTime")
+				require.Contains(t, st, "stopId")
+				require.Contains(t, st, "pickupType")
+				require.Contains(t, st, "dropOffType")
+			}
+		}
+	}
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, refs, "agencies")
+	require.Contains(t, refs, "routes")
+	require.Contains(t, refs, "stops")
+	require.Contains(t, refs, "trips")
+	require.Contains(t, refs, "stopTimes")
+	require.Contains(t, refs, "situations")
+}
+
+func TestBlockHandlerDifferentBlockIDs(t *testing.T) {
+	testCases := []struct {
+		name          string
+		blockID       string
+		shouldSucceed bool
+	}{
+		{"Valid block ID", "25_1", true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			endpoint := "/api/where/block/" + tc.blockID + ".json?key=TEST"
+			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+			if tc.shouldSucceed {
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				assert.Equal(t, http.StatusOK, model.Code)
+			} else {
+				assert.True(t, resp.StatusCode >= 400 || model.Code >= 400)
+			}
+		})
 	}
 }
 
@@ -319,8 +474,58 @@ func TestBlockHandlerReferencesConsistency(t *testing.T) {
 }
 
 func TestBlockHandlerRequiresValidApiKey(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json?key=invalid")
+	api, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json?key=invalid")
+	defer api.Shutdown()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
+}
+
+func TestBlockHandlerMissingApiKey(t *testing.T) {
+	api, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json")
+	defer api.Shutdown()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func BenchmarkBlockHandler(b *testing.B) {
+	api := createTestApi(b)
+	defer api.Shutdown()
+	endpoint := "/api/where/block/25_1.json?key=TEST"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = serveApiAndRetrieveEndpoint(b, api, endpoint)
+	}
+}
+
+func TestBlockHandlerResponseTime(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	start := time.Now()
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+	duration := time.Since(start)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Less(t, duration.Milliseconds(), int64(5000), "Response should be under 5 seconds")
+}
+
+func TestBlockHandlerJSONSerialization(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	jsonBytes, err := json.Marshal(model)
+	require.NoError(t, err, "Should be able to marshal response to JSON")
+
+	var unmarshaled map[string]interface{}
+	err = json.Unmarshal(jsonBytes, &unmarshaled)
+	require.NoError(t, err, "Should be able to unmarshal JSON")
+
+	assert.Contains(t, unmarshaled, "code")
+	assert.Contains(t, unmarshaled, "text")
+	assert.Contains(t, unmarshaled, "data")
+	assert.Contains(t, unmarshaled, "version")
+	assert.Contains(t, unmarshaled, "currentTime")
 }

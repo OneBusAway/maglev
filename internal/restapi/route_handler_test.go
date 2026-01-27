@@ -117,3 +117,12 @@ func TestRouteHandlerVerifiesReferences(t *testing.T) {
 		assert.NotEmpty(t, agency["name"], "Agency should have a name")
 	}
 }
+
+func TestRouteHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1-SHUTTLE"
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+malformedID+".json?key=TEST")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}

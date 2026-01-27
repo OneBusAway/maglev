@@ -21,7 +21,10 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 	agencyID, stopID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -95,6 +98,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := models.NewEntryResponse(stopData, references)
+	response := models.NewEntryResponse(stopData, references, api.Clock)
 	api.sendResponse(w, r, response)
 }

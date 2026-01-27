@@ -21,7 +21,10 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 
 	agencyID, id, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -95,5 +98,5 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		false,
 	))
 
-	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, references))
+	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, references, api.Clock))
 }

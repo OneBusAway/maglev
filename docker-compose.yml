@@ -8,10 +8,10 @@ services:
     ports:
       - "4000:4000"
     volumes:
-      # Persist SQLite database across container restarts
-      - maglev-data:/app/data
       # Mount Docker-specific config (uses /app/data/gtfs.db for persistence)
       - ./config.docker.json:/app/config.json:ro
+      # Persist SQLite database across container restarts
+      - maglev-data:/app/data
     environment:
       - TZ=UTC
       # Health check API key - change this if you modify api-keys in config

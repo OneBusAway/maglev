@@ -31,18 +31,21 @@ docker-compose up
 # Or build and run manually
 docker build -t maglev .
 docker run -p 4000:4000 -v $(pwd)/config.docker.json:/app/config.json:ro -v maglev-data:/app/data maglev
+
 ```
 
 **Verify it works:**
 
 ```bash
 curl http://localhost:4000/api/where/current-time.json?key=test
+
 ```
 
 **Development with live reload:**
 
 ```bash
 docker-compose -f docker-compose.dev.yml up
+
 ```
 
 See the [Docker](#docker) section below for more details.
@@ -57,6 +60,7 @@ Run the server with command-line flags:
 
 ```bash
 ./bin/maglev -port 8080 -env production -api-keys "key1,key2" -rate-limit 50
+
 ```
 
 ### JSON Configuration File
@@ -65,6 +69,7 @@ Alternatively, use a JSON configuration file with the `-f` flag:
 
 ```bash
 ./bin/maglev -f config.json
+
 ```
 
 An example configuration file is provided as `config.example.json`. You can copy and modify it:
@@ -73,6 +78,7 @@ An example configuration file is provided as `config.example.json`. You can copy
 cp config.example.json config.json
 # Edit config.json with your settings
 ./bin/maglev -f config.json
+
 ```
 
 Example `config.json`:
@@ -100,6 +106,7 @@ Example `config.json`:
   ],
   "data-path": "/data/gtfs.db"
 }
+
 ```
 
 **Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will error if you try to use both.
@@ -110,13 +117,12 @@ Example `config.json`:
 ./bin/maglev --dump-config > my-config.json
 # or with other flags
 ./bin/maglev -port 8080 -env production --dump-config > config.json
+
 ```
 
 **JSON Schema & IDE Integration:**
 
-A JSON schema file is provided at `config.schema.json` for IDE autocomplete and validation.
-
-To enable IDE validation, add `$schema` to your config file:
+A JSON schema file is provided at `config.schema.json` for IDE autocomplete and validation. To enable IDE validation, add `$schema` to your config file:
 
 ```json
 {
@@ -125,47 +131,55 @@ To enable IDE validation, add `$schema` to your config file:
   "env": "development",
   ...
 }
+
 ```
 
 ### Configuration Options
 
-| Option             | Type    | Default         | Description                                                       |
-| ------------------ | ------- | --------------- | ----------------------------------------------------------------- |
-| `port`             | integer | 4000            | API server port                                                   |
-| `env`              | string  | "development"   | Environment (development, test, production)                       |
-| `api-keys`         | array   | ["test"]        | API keys for authentication                                       |
-| `rate-limit`       | integer | 100             | Requests per second per API key                                   |
-| `gtfs-static-feed` | object  | (Sound Transit) | Static GTFS feed configuration with URL and optional auth headers |
-| `gtfs-rt-feeds`    | array   | (Sound Transit) | GTFS-RT feed configurations                                       |
-| `data-path`        | string  | "./gtfs.db"     | Path to SQLite database                                           |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `port` | integer | 4000 | API server port |
+| `env` | string | "development" | Environment (development, test, production) |
+| `api-keys` | array | ["test"] | API keys for authentication |
+| `rate-limit` | integer | 100 | Requests per second per API key |
+| `gtfs-static-feed` | object | (Sound Transit) | Static GTFS feed configuration |
+| `gtfs-rt-feeds` | array | (Sound Transit) | GTFS-RT feed configurations |
+| `data-path` | string | "./gtfs.db" | Path to SQLite database |
 
 ## Basic Commands
 
 All basic commands are managed by our Makefile:
 
-`make run` - Build and run the app with a fake API key: `test`.
+* `make run` - Build and run the app with a fake API key: `test`.
+* `make build` - Build the app.
+* `make clean` - Delete all build and coverage artifacts.
+* `make coverage` - Test and generate HTML coverage artifacts.
+* `make test` - Run tests.
+* `make models` - Generate Go code from SQL queries using sqlc.
+* `make watch` - Build and run the app with Air for live reloading.
 
-`make build` - Build the app.
+### FTS5 (SQLite) builds and tests
 
-`make clean` - Delete all build and coverage artifacts.
+The server uses `github.com/mattn/go-sqlite3` and SQLite FTS5 for route search. Build and test with the FTS5 tag enabled:
 
-`make coverage` - Test and generate HTML coverage artifacts.
+```bash
+CGO_ENABLED=1 go test -tags "sqlite_fts5" ./...
+# or
+CGO_ENABLED=1 go build -tags "sqlite_fts5" ./...
 
-`make test` - Run tests.
+```
 
-`make models` - Generate Go code from SQL queries using sqlc.
-
-`make watch` - Build and run the app with Air for live reloading during development (automatically rebuilds and restarts on code changes).
+Ensure you have a working C toolchain when CGO is enabled.
 
 ## Directory Structure
 
-- `bin` contains compiled application binaries, ready for deployment to a production server.
-- `cmd/api` contains application-specific code for Maglev. This will include the code for running the server, reading and writing HTTP requests, and managing authentication.
-- `internal` contains various ancillary packages used by our API. It will contain the code for interacting with our database, doing data validation, sending emails and so on. Basically, any code which isn’t application-specific and can potentially be reused will live in here. Our Go code under cmd/api will import the packages in the internal directory (but never the other way around).
-- `migrations` contains the SQL migration files for our database.
-- `remote` contains the configuration files and setup scripts for our production server.
-- `go.mod` declares our project dependencies, versions and module path.
-- `Makefile` contains recipes for automating common administrative tasks — like auditing our Go code, building binaries, and executing database migrations.
+* `bin`: Compiled application binaries.
+* `cmd/api`: Application-specific code (server, HTTP handling, auth).
+* `internal`: Ancillary packages (database, validation, etc.). Code here is reusable and imported by `cmd/api`.
+* `migrations`: SQL migration files.
+* `remote`: Production server configuration and setup scripts.
+* `go.mod`: Project dependencies and module path.
+* `Makefile`: Automation for building, testing, and migrations.
 
 ## Debugging
 
@@ -178,44 +192,45 @@ make build
 
 # Start the debugger
 dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./bin/maglev
+
 ```
 
-And then you'll be able to debug in the GoLand IDE.
+This allows debugging in the GoLand IDE.
 
 ## SQL
 
-We use sqlc with SQLite to generate a data access layer for our app.
-Use the command `make models` to regenerate all autogenerated files.
+We use sqlc with SQLite to generate a data access layer. Use `make models` to regenerate files.
 
 ### Important files
 
-- `gtfsdb/models.go` Autogenerated by sqlc
-- `gtfsdb/query.sql` All of our SQL queries
-- `gtfsdb/query.sql.go` All of our SQL queries turned into Go code by sqlc
-- `gtfsdb/schema.sql` Our database schema
-- `gtfsdb/sqlc.yml` Configuration file for sqlc
+* `gtfsdb/models.go`: Autogenerated by sqlc.
+* `gtfsdb/query.sql`: All SQL queries.
+* `gtfsdb/query.sql.go`: SQL turned into Go code.
+* `gtfsdb/schema.sql`: Database schema.
+* `gtfsdb/sqlc.yml`: sqlc configuration.
 
 ## Docker
 
-Docker support provides a consistent development environment and simplified deployment.
+Docker support provides a consistent environment and simplified deployment.
 
 ### Prerequisites
 
-- Docker 20.10 or later
-- Docker Compose v2.0 or later
+* Docker 20.10 or later.
+* Docker Compose v2.0 or later.
 
 ### Building the Image
 
 ```bash
 # Build the production image
 docker build -t maglev .
-
 # Or use make
 make docker-build
+
 ```
 
 ### Running with Docker
-**Note:** Ensure you have created `config.docker.json` from the template as shown in the Quick Start section above.
+
+**Note:** Ensure you have created `config.docker.json` from the template.
 
 **Using Docker directly:**
 
@@ -225,6 +240,7 @@ docker run -p 4000:4000 -v $(pwd)/config.docker.json:/app/config.json:ro maglev
 
 # Or use make
 make docker-run
+
 ```
 
 **Using Docker Compose (recommended for production):**
@@ -238,6 +254,7 @@ docker-compose logs -f
 
 # Stop the service
 docker-compose down
+
 ```
 
 ### Development with Docker
@@ -250,37 +267,100 @@ docker-compose -f docker-compose.dev.yml up
 
 # Or use make
 make docker-compose-dev
+
 ```
-
-The development setup includes:
-
-- Live reload on code changes (via Air)
-- Delve debugger port exposed on 2345
-- Source code mounted for immediate updates
 
 ### Docker Make Targets
 
-| Command                    | Description                   |
-| -------------------------- | ----------------------------- |
-| `make docker-build`        | Build the Docker image        |
-| `make docker-run`          | Build and run the container   |
-| `make docker-stop`         | Stop and remove the container |
-| `make docker-compose-up`   | Start with Docker Compose     |
-| `make docker-compose-down` | Stop Docker Compose services  |
-| `make docker-compose-dev`  | Start development environment |
-| `make docker-clean`        | Remove all Docker artifacts   |
+| Command | Description |
+| --- | --- |
+| `make docker-build` | Build the Docker image |
+| `make docker-run` | Build and run the container |
+| `make docker-stop` | Stop and remove the container |
+| `make docker-compose-up` | Start with Docker Compose |
+| `make docker-compose-down` | Stop Docker Compose services |
+| `make docker-compose-dev` | Start development environment |
+| `make docker-clean` | Remove all Docker artifacts |
 
 ### Data Persistence
 
 The SQLite database is persisted using Docker volumes:
 
-- **Production**: `maglev-data` volume mounted at `/app/data`
-- **Development**: `maglev-dev-data` volume
+* **Production**: `maglev-data` volume mounted at `/app/data`.
+* **Development**: `maglev-dev-data` volume.
 
-To inspect the database:
+The GTFS database is stored in `/app/data/gtfs.db` within the container.
+
+#### Copy database to host for inspection
 
 ```bash
-docker-compose exec maglev cat /app/data/gtfs.db
+# Note: 'maglev' is the default container name when using docker-compose
+docker cp maglev:/app/data/gtfs.db ./gtfs-backup.db
+
+```
+
+Once copied, you can inspect it with any SQLite client:
+
+```bash
+sqlite3 gtfs-backup.db "SELECT name FROM sqlite_master WHERE type='table';"
+
+```
+
+#### Check database file exists and size
+
+```bash
+docker-compose exec maglev ls -lh /app/data/
+
+```
+
+#### Interactive SQLite session inside container
+
+```bash
+docker-compose exec maglev sqlite3 /app/data/gtfs.db
+
+```
+
+**SQLite CLI commands:**
+
+```text
+.tables
+.schema stops
+.quit
+
+```
+
+**SQL queries:**
+
+```sql
+-- Count records in a table
+SELECT COUNT(*) FROM stops;
+
+-- View sample data
+SELECT * FROM stops LIMIT 5;
+
+```
+
+#### Additional troubleshooting commands
+
+Verify database integrity:
+
+```bash
+docker-compose exec maglev sqlite3 /app/data/gtfs.db "PRAGMA integrity_check;"
+
+```
+
+Check database size:
+
+```bash
+docker-compose exec maglev du -h /app/data/gtfs.db
+
+```
+
+View recent database modifications:
+
+```bash
+docker-compose exec maglev stat /app/data/gtfs.db
+
 ```
 
 ### Health Checks
@@ -290,6 +370,7 @@ The container includes a health check that verifies the API is responding:
 ```bash
 # Check container health status
 docker inspect --format='{{.State.Health.Status}}' maglev
+
 ```
 
 **Important:** The health checks use the `HEALTH_CHECK_KEY` environment variable (defaults to `test`). If you change your API keys in the configuration, update this environment variable to match:
@@ -298,14 +379,15 @@ docker inspect --format='{{.State.Health.Status}}' maglev
 # In docker-compose.yml or docker-compose.dev.yml
 environment:
   - HEALTH_CHECK_KEY=your-api-key
+
 ```
 
 ### Environment Variables
 
-| Variable           | Description                              | Default |
-| ------------------ | ---------------------------------------- | ------- |
-| `TZ`               | Timezone for the container               | `UTC`   |
-| `HEALTH_CHECK_KEY` | API key used for health check endpoint   | `test`  |
+| Variable | Description | Default |
+| --- | --- | --- |
+| `TZ` | Timezone for the container | `UTC` |
+| `HEALTH_CHECK_KEY` | API key used for health check endpoint | `test` |
 
 ### Troubleshooting
 
@@ -317,6 +399,7 @@ docker-compose logs maglev
 
 # Verify config file exists
 ls -la config.docker.json
+
 ```
 
 **Health check failing:**
@@ -326,13 +409,11 @@ ls -la config.docker.json
 curl http://localhost:4000/api/where/current-time.json?key=test
 
 # If you changed api-keys, make sure HEALTH_CHECK_KEY matches
-# Check the current health check key
 docker-compose exec maglev printenv HEALTH_CHECK_KEY
+
 ```
 
 **Permission issues:**
 
-```bash
-# The container runs as non-root user (maglev:1000)
-# Ensure mounted volumes are accessible
-```
+* The container runs as non-root user (maglev:1000).
+* Ensure mounted volumes are accessible.
