@@ -49,6 +49,9 @@ func (api *RestAPI) BuildVehicleStatus(
 		}
 		status.Position = position
 		status.LastKnownLocation = position
+		if vehicle.Timestamp != nil {
+			status.LastLocationUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
+		}
 	}
 
 	if vehicle.Position != nil && vehicle.Position.Bearing != nil {
