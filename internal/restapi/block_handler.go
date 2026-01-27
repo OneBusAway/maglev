@@ -17,36 +17,20 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
 	agencyID, blockID, err := utils.ExtractAgencyIDAndCodeID(id)
 
-	// Fix: Return JSON 400 response for invalid block IDs
+	//  Return JSON 400 response for invalid block IDs
 	// We use an explicit struct here to ensure the text is exactly "invalid block id"
 	if err != nil || blockID == "" {
-		response := struct {
-			Code        int    `json:"code"`
-			CurrentTime int64  `json:"currentTime"`
-			Text        string `json:"text"`
-			Version     int    `json:"version"`
-		}{
-			Code:        http.StatusBadRequest,
-			CurrentTime: models.ResponseCurrentTime(),
-			Text:        "invalid block id",
-			Version:     2,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			api.Logger.Error("failed to encode 400 response", "error", err)
-		}
+		api.sendError(w, r, http.StatusBadRequest, "invalid block id")
 		return
 	}
 
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.sendError(w, r, http.StatusNotFound, "block not found")
 		return
 	}
 
-	// Fix: Return JSON 404 response if no block data is found
+	//  Return JSON 404 response if no block data is found
 	// We use an explicit struct here to ensure the text is exactly "block not found"
 	// (api.sendNotFound typically returns "resource not found", which fails the test)
 	if len(block) == 0 {
