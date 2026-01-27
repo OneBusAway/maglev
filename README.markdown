@@ -48,7 +48,7 @@ docker-compose -f docker-compose.dev.yml up
 
 ```
 
-See the [Docker](https://www.google.com/search?q=%23docker) section below for more details.
+See the [Docker](#docker) section below for more details.
 
 ## Configuration
 
