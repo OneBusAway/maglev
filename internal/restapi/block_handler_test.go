@@ -217,7 +217,7 @@ func TestBlockHandlerNonExistentBlock(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "block not found", model.Text)
+	assert.Equal(t, "resource not found", model.Text)
 	assert.Equal(t, 2, model.Version)
 	assert.Greater(t, model.CurrentTime, int64(0))
 }

@@ -2,8 +2,7 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json" // Added missing import
+	"database/sql" 
 	"net/http"
 	"sort"
 
@@ -26,31 +25,13 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
 	if err != nil {
-		api.sendError(w, r, http.StatusNotFound, "block not found")
+		api.sendNotFound(w, r)
 		return
 	}
 
 	//  Return JSON 404 response if no block data is found
-	// We use an explicit struct here to ensure the text is exactly "block not found"
-	// (api.sendNotFound typically returns "resource not found", which fails the test)
 	if len(block) == 0 {
-		response := struct {
-			Code        int    `json:"code"`
-			CurrentTime int64  `json:"currentTime"`
-			Text        string `json:"text"`
-			Version     int    `json:"version"`
-		}{
-			Code:        http.StatusNotFound,
-			CurrentTime: models.ResponseCurrentTime(),
-			Text:        "block not found",
-			Version:     2,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			api.Logger.Error("failed to encode 404 response", "error", err)
-		}
+		api.sendNotFound(w, r)
 		return
 	}
 
