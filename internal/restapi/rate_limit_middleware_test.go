@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,7 @@ import (
 )
 
 // initRateLimitMiddleware initializes a rate limit middleware with clock.RealClock for testing
-func initRateLimitMiddleware(ratePerSecond int, interval time.Duration) func(http.Handler) *RateLimitMiddleware {
+func initRateLimitMiddleware(ratePerSecond int, interval time.Duration) *RateLimitMiddleware {
 	return NewRateLimitMiddleware(ratePerSecond, interval, clock.RealClock{})
 }
 
@@ -252,7 +253,8 @@ func TestRateLimitMiddleware_ConcurrentRequests(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
-	middleware := initRateLimitMiddleware(1, time.Second)
+	mockClock := clock.NewMockClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	middleware := NewRateLimitMiddleware(1, time.Second, mockClock)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -277,8 +279,13 @@ func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 	assert.NotEmpty(t, w.Header().Get("Retry-After"), "Should include Retry-After header")
 
 	// Check response body format
-	body := w.Body.String()
-	assert.Contains(t, body, "Rate limit", "Response should mention rate limiting")
+	var responseBody map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+
+	assert.Contains(t, responseBody["text"].(string), "Rate limit")
+
+	// check currentTime
+	assert.Equal(t, mockClock.Now().UnixMilli(), int64(responseBody["currentTime"].(float64)))
 }
 
 func TestRateLimitMiddleware_CleanupOldLimiters(t *testing.T) {
