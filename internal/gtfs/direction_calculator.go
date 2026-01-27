@@ -44,6 +44,7 @@ func (dc *DirectionCalculator) CalculateStopDirection(ctx context.Context, stopI
 	return unknownDirection
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (dc *DirectionCalculator) calculateFromShape(ctx context.Context, stopID string) string {
 	// Get trips serving this stop
 	stopTrips, err := dc.gtfsManager.GtfsDB.Queries.GetStopsWithTripContext(ctx, stopID)
@@ -82,6 +83,7 @@ func (dc *DirectionCalculator) calculateFromShape(ctx context.Context, stopID st
 	return dc.getMostCommonDirection(directions)
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (dc *DirectionCalculator) calculateFromNextStop(ctx context.Context, stopID string) string {
 	stopTrips, err := dc.gtfsManager.GtfsDB.Queries.GetStopsWithTripContext(ctx, stopID)
 	if err != nil || len(stopTrips) == 0 {
