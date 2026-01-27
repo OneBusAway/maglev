@@ -19,6 +19,10 @@ RUN CGO_ENABLED=1 GOOS=linux go build -tags sqlite_fts5 -o maglev ./cmd/api
 # Runtime stage
 FROM alpine:3.21
 
+# Configuration for non-root user
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
 # Install runtime dependencies
 # - ca-certificates: for HTTPS requests to GTFS feeds
 # - tzdata: for timezone parsing support
@@ -27,8 +31,8 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata wget sqlite
 
 # Create non-root user for security
-RUN addgroup -g 1000 maglev && \
-    adduser -u 1000 -G maglev -s /bin/sh -D maglev
+RUN addgroup -g ${GROUP_ID} maglev && \
+    adduser -u ${USER_ID} -G maglev -s /bin/sh -D maglev
 
 WORKDIR /app
 
@@ -37,7 +41,6 @@ RUN mkdir -p /app/data && chown -R maglev:maglev /app
 
 # Copy binary from builder
 COPY --from=builder /build/maglev .
-
 # Copy example config (users should mount their own config.json)
 COPY --from=builder /build/config.example.json ./config.example.json
 
