@@ -89,8 +89,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	ctx := r.Context()
-	
-	// Acquire read lock
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

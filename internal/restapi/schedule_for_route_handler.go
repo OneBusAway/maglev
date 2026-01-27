@@ -36,8 +36,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ctx := r.Context()
-	
-	// Acquire read lock
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 

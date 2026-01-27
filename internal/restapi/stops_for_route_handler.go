@@ -41,8 +41,7 @@ func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParam
 
 func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	
-	// Acquire read lock
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
