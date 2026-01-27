@@ -73,3 +73,4 @@ docker-clean:
 	docker-compose down -v
 	docker-compose -f docker-compose.dev.yml down -v
 	docker rmi maglev:latest maglev:dev 2>/dev/null || true
+  
