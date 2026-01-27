@@ -84,6 +84,7 @@ func createTestApi(t *testing.T) *RestAPI {
 // and decoded model.
 func serveAndRetrieveEndpoint(t *testing.T, endpoint string) (*RestAPI, *http.Response, models.ResponseModel) {
 	api := createTestApi(t)
+	// Note: caller is responsible for calling api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 	return api, resp, model
 }
@@ -205,6 +206,7 @@ func TestCompressionMiddleware(t *testing.T) {
 func TestCompressionMiddlewareIntegration(t *testing.T) {
 	// Create a test API instance
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("API responses are compressed when requested", func(t *testing.T) {
 		// Use the standard test setup approach

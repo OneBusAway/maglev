@@ -17,6 +17,7 @@ import (
 // Helper to create a mock vehicle and inject it into the test API
 func setupTestApiWithMockVehicle(t *testing.T) (*RestAPI, string, string) {
 	api := createTestApi(t)
+	// Note: caller is responsible for calling api.Shutdown()
 
 	agencyStatic := api.GtfsManager.GetAgencies()[0]
 	trips := api.GtfsManager.GetTrips()
@@ -111,6 +112,7 @@ func TestTripForVehicleHandlerResponseSchemaValidation(t *testing.T) {
 
 func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
 
 	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
 
@@ -179,6 +181,7 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 
 func TestTripForVehicleHandlerWithInvalidVehicleID(t *testing.T) {
 	api, agencyID, _ := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
 	vehicleCombinedID := utils.FormCombinedID(agencyID, "invalid")
 
 	mux := http.NewServeMux()
@@ -249,6 +252,7 @@ func TestTripForVehicleHandlerWithInvalidAgencyID(t *testing.T) {
 
 func TestTripForVehicleHandlerWithServiceDate(t *testing.T) {
 	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
 	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
 	tomorrow := time.Now().AddDate(0, 0, 1)
 	serviceDateMs := tomorrow.Unix() * 1000
@@ -280,6 +284,7 @@ func TestTripForVehicleHandlerWithServiceDate(t *testing.T) {
 
 func TestTripForVehicleHandlerWithIncludeStatusFalse(t *testing.T) {
 	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
 	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
 
 	mux := http.NewServeMux()
@@ -384,6 +389,7 @@ func TestTripForVehicleHandlerWithIncludeScheduleTrue(t *testing.T) {
 
 func TestTripForVehicleHandlerWithTimeParameter(t *testing.T) {
 	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
 	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
 	specificTime := time.Now().Add(1 * time.Hour)
 	timeMs := specificTime.Unix() * 1000
@@ -415,6 +421,7 @@ func TestTripForVehicleHandlerWithTimeParameter(t *testing.T) {
 
 func TestTripForVehicleHandlerWithAllParametersFalse(t *testing.T) {
 	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
 	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
 
 	mux := http.NewServeMux()

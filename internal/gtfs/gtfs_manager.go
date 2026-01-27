@@ -145,6 +145,12 @@ func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 	return nil
 }
 
+func (manager *Manager) GetRoutes() []gtfs.Route {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.gtfsData.Routes
+}
+
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.
 func (manager *Manager) RoutesForAgencyID(agencyID string) []*gtfs.Route {
 	manager.staticMutex.RLock()
