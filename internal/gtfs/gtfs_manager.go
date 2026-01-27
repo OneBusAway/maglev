@@ -148,6 +148,7 @@ func (manager *Manager) GetRoutes() []gtfs.Route {
 }
 
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) RoutesForAgencyID(agencyID string) []*gtfs.Route {
 	var agencyRoutes []*gtfs.Route
 
@@ -165,6 +166,9 @@ type stopWithDistance struct {
 	distance float64
 }
 
+// GetStopsForLocation retrieves stops near a given location using the spatial index.
+// It supports filtering by route types and querying for specific stop codes.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	lat, lon, radius, latSpan, lonSpan float64,
@@ -302,6 +306,7 @@ func (manager *Manager) GetStopsForLocation(
 	return stops
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 	routes := manager.RoutesForAgencyID(agencyID)
 	routeIDs := make(map[string]bool) // all route IDs for the agency.
