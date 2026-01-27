@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build the application with CGO enabled (required for SQLite)
-RUN CGO_ENABLED=1 GOOS=linux go build -o maglev ./cmd/api
+RUN CGO_ENABLED=1 GOOS=linux go build -tags sqlite_fts5 -o maglev ./cmd/api
 
 # Runtime stage
 FROM alpine:3.21
