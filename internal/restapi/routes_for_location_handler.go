@@ -17,6 +17,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
 	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
+	maxCount, _ := utils.ParseMaxCount(queryParams, 50, fieldErrors)
 	query := queryParams.Get("query")
 
 	if len(fieldErrors) > 0 {
@@ -57,7 +58,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, 50, true, nil, time.Time{})
+	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, maxCount, true, nil, time.Time{})
 
 	var results = []models.Route{}
 	routeIDs := map[string]bool{}
@@ -80,7 +81,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			Stops:      []models.Stop{},
 			Trips:      []interface{}{},
 		}
-		response := models.NewListResponseWithRange(results, references, true)
+		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -113,6 +114,9 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			))
 		}
 		routeIDs[routeRow.ID] = true
+		if len(results) >= maxCount {
+			break
+		}
 	}
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
@@ -126,6 +130,21 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponseWithRange(results, references, len(results) == 0)
+	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), len(results) >= maxCount)
 	api.sendResponse(w, r, response)
+}
+
+func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
+	regionLat, regionLon, regionLatSpan, regionLonSpan := api.GtfsManager.GetRegionBounds()
+
+	var innerBounds utils.CoordinateBounds
+	var outerBounds utils.CoordinateBounds
+	if latSpan > 0 && lonSpan > 0 {
+		innerBounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
+	} else {
+		innerBounds = utils.CalculateBounds(lat, lon, radius)
+	}
+	outerBounds = utils.CalculateBoundsFromSpan(regionLat, regionLon, regionLatSpan/2, regionLonSpan/2)
+
+	return utils.IsOutOfBounds(innerBounds, outerBounds)
 }

@@ -2,10 +2,11 @@ package models
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewResponse(t *testing.T) {
@@ -78,7 +79,7 @@ func TestNewListResponseWithRange(t *testing.T) {
 	references := NewEmptyReferences()
 	outOfRange := true
 
-	response := NewListResponseWithRange(itemList, references, outOfRange)
+	response := NewListResponseWithRange(itemList, references, outOfRange, false)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -97,7 +98,7 @@ func TestNewListResponseWithRangeFalseFlag(t *testing.T) {
 	itemList := []string{"item1"}
 	references := NewEmptyReferences()
 
-	response := NewListResponseWithRange(itemList, references, false)
+	response := NewListResponseWithRange(itemList, references, false, false)
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")
