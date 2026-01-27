@@ -186,6 +186,7 @@ func TestDistanceToLineSegment_GeographicCoordinates(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTrip tests the main distance calculation function
 func TestCalculatePreciseDistanceAlongTrip(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Get a test trip with shape data
@@ -243,6 +244,7 @@ func TestCalculatePreciseDistanceAlongTrip(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTrip_EdgeCases tests edge cases
 func TestCalculatePreciseDistanceAlongTrip_EdgeCases(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	t.Run("Empty shape points", func(t *testing.T) {
@@ -280,6 +282,7 @@ func TestCalculatePreciseDistanceAlongTrip_EdgeCases(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTrip_Correctness validates the algorithm correctness
 func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Create a simple linear shape: three points in a line
@@ -317,6 +320,7 @@ func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTripWithCoords_Validation tests input validation
 func TestCalculatePreciseDistanceAlongTripWithCoords_Validation(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("Mismatched array sizes", func(t *testing.T) {
 		shapePoints := []gtfs.ShapePoint{
@@ -370,6 +374,7 @@ func TestCalculatePreciseDistanceAlongTripWithCoords_Validation(t *testing.T) {
 // TestBuildStopTimesList_ErrorHandling tests error handling when batch query fails
 func TestBuildStopTimesList_ErrorHandling(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Get real stop times to work with
@@ -462,6 +467,7 @@ func BenchmarkDistanceToLineSegment(b *testing.B) {
 func BenchmarkCalculatePreciseDistanceAlongTrip(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Find a trip with shape data
@@ -513,6 +519,7 @@ func BenchmarkCalculatePreciseDistanceAlongTrip(b *testing.B) {
 func BenchmarkBuildTripSchedule(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Find a trip
@@ -552,6 +559,7 @@ func BenchmarkBuildTripSchedule(b *testing.B) {
 func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	trips := api.GtfsManager.GetTrips()

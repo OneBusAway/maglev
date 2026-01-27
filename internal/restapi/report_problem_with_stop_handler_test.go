@@ -18,6 +18,7 @@ func TestReportProblemWithStopRequiresValidApiKey(t *testing.T) {
 
 func TestReportProblemWithStopEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	stopId := "1_75403"
 
