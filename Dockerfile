@@ -23,7 +23,8 @@ FROM alpine:3.21
 # - ca-certificates: for HTTPS requests to GTFS feeds
 # - tzdata: for timezone parsing support
 # - wget: for health check
-RUN apk add --no-cache ca-certificates tzdata wget
+# - sqlite3 to support in-container database inspection
+RUN apk add --no-cache ca-certificates tzdata wget sqlite3
 
 # Create non-root user for security
 RUN addgroup -g 1000 maglev && \
