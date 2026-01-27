@@ -2,6 +2,7 @@ package clock
 
 import (
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -224,10 +225,28 @@ func TestEnvironmentClock_ParseTimeFormats(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		// Test env var source
+		t.Run("env_"+tt.name, func(t *testing.T) {
 			t.Setenv(envVarName, tt.input)
 
 			c := NewEnvironmentClock(envVarName, "", loc)
+			result := c.Now()
+
+			assert.True(t, tt.expected.Equal(result),
+				"expected %v, got %v", tt.expected, result)
+		})
+
+		// Test file source
+		t.Run("file_"+tt.name, func(t *testing.T) {
+			tmpFile, err := os.CreateTemp("", "clock_test_*.txt")
+			assert.NoError(t, err)
+			defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+			_, err = tmpFile.WriteString(tt.input)
+			assert.NoError(t, err)
+			_ = tmpFile.Close()
+
+			c := NewEnvironmentClock("", tmpFile.Name(), loc)
 			result := c.Now()
 
 			assert.True(t, tt.expected.Equal(result),
@@ -258,10 +277,32 @@ func TestEnvironmentClock_InvalidTimeFormat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt, func(t *testing.T) {
+		// Test env var source
+		t.Run("env_"+tt, func(t *testing.T) {
 			t.Setenv(envVarName, tt)
 
 			c := NewEnvironmentClock(envVarName, "", time.Local)
+
+			before := time.Now()
+			result := c.Now()
+			after := time.Now()
+
+			// Should fall back to system time
+			assert.False(t, result.Before(before))
+			assert.False(t, result.After(after))
+		})
+
+		// Test file source
+		t.Run("file_"+tt, func(t *testing.T) {
+			tmpFile, err := os.CreateTemp("", "clock_test_*.txt")
+			assert.NoError(t, err)
+			defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+			_, err = tmpFile.WriteString(tt)
+			assert.NoError(t, err)
+			_ = tmpFile.Close()
+
+			c := NewEnvironmentClock("", tmpFile.Name(), time.Local)
 
 			before := time.Now()
 			result := c.Now()
@@ -284,4 +325,87 @@ func TestEnvironmentClock_NonExistentFile(t *testing.T) {
 	// Should fall back to system time
 	assert.False(t, result.Before(before))
 	assert.False(t, result.After(after))
+}
+
+func TestEnvironmentClock_NilLocation(t *testing.T) {
+	const envVarName = "TEST_CLOCK_NIL_LOC"
+
+	// Set a non-RFC3339 format that requires location for parsing
+	t.Setenv(envVarName, "2024-06-15 10:30:00")
+
+	c := NewEnvironmentClock(envVarName, "", nil)
+
+	// Should fall back to system time since location is nil and format is not RFC3339
+	before := time.Now()
+	result := c.Now()
+	after := time.Now()
+
+	assert.False(t, result.Before(before), "should fall back to system time")
+	assert.False(t, result.After(after), "should fall back to system time")
+}
+
+func TestEnvironmentClock_NilLocation_RFC3339Works(t *testing.T) {
+	const envVarName = "TEST_CLOCK_NIL_LOC_RFC"
+	expectedTime := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
+
+	// Set an RFC3339 format (includes timezone, so location is not needed)
+	t.Setenv(envVarName, "2024-06-15T10:30:00Z")
+
+	c := NewEnvironmentClock(envVarName, "", nil)
+
+	result := c.Now()
+
+	// RFC3339 should work even with nil location since it has embedded timezone
+	assert.Equal(t, expectedTime, result)
+}
+
+// TestMockClock_ConcurrentAccess verifies thread-safety of MockClock.
+// Run with '-race' flag to detect race conditions.
+func TestMockClock_ConcurrentAccess(t *testing.T) {
+	initialTime := time.Date(2024, 6, 15, 8, 0, 0, 0, time.UTC)
+	c := NewMockClock(initialTime)
+
+	const goroutines = 100
+	const iterations = 100
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 3) // readers, setters, and advancers
+
+	// Concurrent readers
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				_ = c.Now()
+				_ = c.NowUnixMilli()
+			}
+		}()
+	}
+
+	// Concurrent setters
+	for i := range goroutines {
+		go func(offset int) {
+			defer wg.Done()
+			for j := range iterations {
+				c.Set(initialTime.Add(time.Duration(offset+j) * time.Second))
+			}
+		}(i)
+	}
+
+	// Concurrent advancers
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				c.Advance(time.Millisecond)
+			}
+		}()
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	// If we reach here without panics or race detector errors, the test passes
+	// Just verify the clock still works
+	_ = c.Now()
 }
