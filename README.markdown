@@ -20,6 +20,10 @@ Docker provides a consistent development environment across all platforms.
 **Quick Start:**
 
 ```bash
+# Create docker config from template
+cp config.docker.example.json config.docker.json
+# Edit config.docker.json with your settings
+
 # Build and run with Docker Compose (recommended)
 # Uses config.docker.json which stores data in /app/data/ for persistence
 docker-compose up
@@ -153,6 +157,18 @@ All basic commands are managed by our Makefile:
 
 `make watch` - Build and run the app with Air for live reloading during development (automatically rebuilds and restarts on code changes).
 
+### FTS5 (SQLite) builds and tests
+
+The server uses `github.com/mattn/go-sqlite3` and SQLite FTS5 for route search. Build and test with the FTS5 tag enabled:
+
+```bash
+CGO_ENABLED=1 go test -tags "sqlite_fts5" ./...
+# or
+CGO_ENABLED=1 go build -tags "sqlite_fts5" ./...
+```
+
+Ensure you have a working C toolchain when CGO is enabled.
+
 ## Directory Structure
 
 - `bin` contains compiled application binaries, ready for deployment to a production server.
@@ -211,12 +227,13 @@ make docker-build
 ```
 
 ### Running with Docker
+**Note:** Ensure you have created `config.docker.json` from the template as shown in the Quick Start section above.
 
 **Using Docker directly:**
 
 ```bash
 # Run the container (mount your config file)
-docker run -p 4000:4000 -v $(pwd)/config.json:/app/config.json:ro maglev
+docker run -p 4000:4000 -v $(pwd)/config.docker.json:/app/config.json:ro maglev
 
 # Or use make
 make docker-run
@@ -374,7 +391,7 @@ environment:
 docker-compose logs maglev
 
 # Verify config file exists
-ls -la config.json
+ls -la config.docker.json
 ```
 
 **Health check failing:**
