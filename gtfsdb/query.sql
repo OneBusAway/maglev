@@ -247,11 +247,25 @@ WHERE
 
 -- name: GetStop :one
 SELECT
-    *
+    id,
+    code,
+    name,
+    desc,
+    lat,
+    lon,
+    zone_id,
+    url,
+    location_type,
+    timezone,
+    wheelchair_boarding,
+    platform_code,
+    direction
 FROM
     stops
 WHERE
-    id = ?;
+    id = ?
+LIMIT
+    1;
 
 -- name: GetStopForAgency :one
 -- Return the stop only if it is served by any route that belongs to the specified agency.
@@ -953,3 +967,22 @@ FROM trips t
 JOIN block_trip_entry bte ON t.id = bte.trip_id
 WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'));
+
+
+-- name: SearchStopsByName :many
+SELECT
+    s.id,
+    s.code,
+    s.name,
+    s.lat,
+    s.lon,
+    s.location_type,
+    s.wheelchair_boarding,
+    s.direction,
+    s.parent_station  
+FROM stops s
+JOIN stops_fts fts
+  ON s.rowid = fts.rowid  
+WHERE fts.stop_name MATCH sqlc.arg(search_query)
+ORDER BY s.name
+LIMIT sqlc.arg(limit);

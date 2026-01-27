@@ -121,7 +121,8 @@ CREATE TABLE
         timezone TEXT,
         wheelchair_boarding INTEGER DEFAULT 0,
         platform_code TEXT,
-        direction TEXT
+        direction TEXT,
+        parent_station TEXT
     );
 
 -- migrate
@@ -175,6 +176,43 @@ DELETE FROM stops_rtree
 WHERE
     id = old.rowid;
 
+END;
+
+-- FTS5 external content table for full-text stop search.
+-- Data lives in 'stops' table; only the search index is stored here.
+-- migrate
+CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
+    id UNINDEXED,
+    stop_name,
+    tokenize = 'porter'
+);
+
+-- The triggers below keep the index synchronized with the content table.
+-- migrate
+DROP TRIGGER IF EXISTS stops_fts_insert_trigger;
+CREATE TRIGGER IF NOT EXISTS stops_fts_insert_trigger
+AFTER INSERT ON stops
+BEGIN
+    INSERT INTO stops_fts (rowid, id, stop_name)
+    VALUES (new.rowid, new.id, new.name);
+END;
+
+-- migrate
+DROP TRIGGER IF EXISTS stops_fts_update_trigger;
+CREATE TRIGGER IF NOT EXISTS stops_fts_update_trigger
+AFTER UPDATE ON stops
+BEGIN
+    DELETE FROM stops_fts WHERE rowid = old.rowid;
+    INSERT INTO stops_fts (rowid, id, stop_name)
+    VALUES (new.rowid, new.id, new.name);
+END;
+
+-- migrate
+DROP TRIGGER IF EXISTS stops_fts_delete_trigger;
+CREATE TRIGGER IF NOT EXISTS stops_fts_delete_trigger
+AFTER DELETE ON stops
+BEGIN
+    DELETE FROM stops_fts WHERE rowid = old.rowid;
 END;
 
 -- migrate
