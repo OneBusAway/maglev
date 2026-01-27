@@ -74,4 +74,5 @@ require (
 )
 
 tool github.com/sqlc-dev/sqlc/cmd/sqlc
+
 tool github.com/patrickbr/gtfstidy

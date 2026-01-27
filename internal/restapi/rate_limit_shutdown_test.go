@@ -64,7 +64,7 @@ func TestRateLimitMiddleware_GoroutineActuallyExits(t *testing.T) {
 	// Force garbage collection to clean up any lingering goroutines from previous tests
 	runtime.GC()
 	time.Sleep(50 * time.Millisecond)
-	
+
 	// Get baseline goroutine count
 	initial := runtime.NumGoroutine()
 
@@ -80,4 +80,3 @@ func TestRateLimitMiddleware_GoroutineActuallyExits(t *testing.T) {
 	afterStop := runtime.NumGoroutine()
 	assert.LessOrEqual(t, afterStop, initial, "cleanup goroutine should have exited")
 }
-

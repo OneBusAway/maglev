@@ -25,7 +25,7 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: latest
-          args: --timeout=5m
+          args: --timeout=5m --build-tags=sqlite_fts5
 
   test:
     name: Test
@@ -49,9 +49,11 @@ jobs:
         run: go mod verify
 
       - name: Run tests
+        run: go test -v -tags=sqlite_fts5 -coverprofile=profile.cov ./...
+        env:
+          CGO_ENABLED: 1
         shell: bash
-        run: |
-          go test -v -coverprofile=profile.cov ./...
+        
 
 # Disabling coverage reporting for now. Re-enable once the project is made public.
 #      - uses: shogo82148/actions-goveralls@v1

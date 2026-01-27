@@ -17,7 +17,7 @@ services:
       # Health check API key - change this if you modify api-keys in config
       - HEALTH_CHECK_KEY=test
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider \"http://localhost:4000/api/where/current-time.json?key=$$HEALTH_CHECK_KEY\" || exit 1"]
+      test: [ "CMD-SHELL", "wget --spider \"http://localhost:4000/api/where/current-time.json?key=$$HEALTH_CHECK_KEY\" 2>&1 || exit 1" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -32,4 +32,3 @@ services:
 volumes:
   maglev-data:
     driver: local
-
