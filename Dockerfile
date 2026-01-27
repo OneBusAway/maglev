@@ -24,7 +24,7 @@ FROM alpine:3.21
 # - tzdata: for timezone parsing support
 # - wget: for health check
 # - sqlite3 to support in-container database inspection
-RUN apk add --no-cache ca-certificates tzdata wget sqlite3
+RUN apk add --no-cache ca-certificates tzdata wget sqlite
 
 # Create non-root user for security
 RUN addgroup -g 1000 maglev && \
