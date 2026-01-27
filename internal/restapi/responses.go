@@ -63,21 +63,3 @@ func (api *RestAPI) sendUnauthorized(w http.ResponseWriter, r *http.Request) { /
 func setJSONResponseType(w *http.ResponseWriter) {
 	(*w).Header().Set("Content-Type", "application/json")
 }
-
-func (api *RestAPI) sendBadRequest(w http.ResponseWriter, r *http.Request, text string) {
-	setJSONResponseType(&w)
-	w.WriteHeader(http.StatusBadRequest)
-
-	response := models.ResponseModel{
-		Code:        http.StatusBadRequest,
-		CurrentTime: models.ResponseCurrentTime(),
-		Text:        text,
-		Version:     2,
-	}
-
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-}

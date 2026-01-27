@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"encoding/json" // Added missing import
 	"net/http"
 	"sort"
 
@@ -16,9 +17,26 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
 	agencyID, blockID, err := utils.ExtractAgencyIDAndCodeID(id)
 
-	// Return JSON 400 response for invalid block IDs
+	// Fix: Return JSON 400 response for invalid block IDs
+	// We use an explicit struct here to ensure the text is exactly "invalid block id"
 	if err != nil || blockID == "" {
-		api.sendBadRequest(w, r, "invalid block id")
+		response := struct {
+			Code        int    `json:"code"`
+			CurrentTime int64  `json:"currentTime"`
+			Text        string `json:"text"`
+			Version     int    `json:"version"`
+		}{
+			Code:        http.StatusBadRequest,
+			CurrentTime: models.ResponseCurrentTime(),
+			Text:        "invalid block id",
+			Version:     2,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			api.Logger.Error("failed to encode 400 response", "error", err)
+		}
 		return
 	}
 
@@ -28,9 +46,27 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return JSON 404 response if no block data is found
+	// Fix: Return JSON 404 response if no block data is found
+	// We use an explicit struct here to ensure the text is exactly "block not found"
+	// (api.sendNotFound typically returns "resource not found", which fails the test)
 	if len(block) == 0 {
-		api.sendNotFound(w, r)
+		response := struct {
+			Code        int    `json:"code"`
+			CurrentTime int64  `json:"currentTime"`
+			Text        string `json:"text"`
+			Version     int    `json:"version"`
+		}{
+			Code:        http.StatusNotFound,
+			CurrentTime: models.ResponseCurrentTime(),
+			Text:        "block not found",
+			Version:     2,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			api.Logger.Error("failed to encode 404 response", "error", err)
+		}
 		return
 	}
 
