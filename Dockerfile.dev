@@ -12,7 +12,7 @@ ARG GROUP_ID=1000
 RUN apk add --no-cache gcc musl-dev git wget
 
 # Install Air for live reload
-RUN go install github.com/air-verse/air@latest
+RUN go install github.com/air-verse/air@v1.61.7
 
 # Install Delve for debugging
 RUN go install github.com/go-delve/delve/cmd/dlv@latest
