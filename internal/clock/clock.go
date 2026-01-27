@@ -5,6 +5,8 @@ package clock
 
 import (
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -34,7 +36,7 @@ func (RealClock) NowUnixMilli() int64 {
 	return time.Now().UnixMilli()
 }
 
-// MockClock implements Clock with a controllable time for testing.
+// MockClock implements Clock and provides a controllable, thread-safe time for tests.
 // Use NewMockClock to create instances.
 type MockClock struct {
 	currentTime time.Time
@@ -67,7 +69,8 @@ func (m *MockClock) Set(t time.Time) {
 	m.currentTime = t
 }
 
-// Advance moves the mock clock forward by the specified duration.
+// Advance moves the mock clock by the specified duration.
+// Use positive durations to move forward, negative to move backward.
 func (m *MockClock) Advance(d time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -75,6 +78,7 @@ func (m *MockClock) Advance(d time.Duration) {
 }
 
 // EnvironmentClock implements Clock using a time from an environment variable or file.
+// Priority: environment variable > file > system time (fallback).
 // The time is synced on each call to Now() or NowUnixMilli().
 type EnvironmentClock struct {
 	envVar   string
@@ -103,6 +107,8 @@ func (e *EnvironmentClock) Now() time.Time {
 	if t, err := e.syncFromFile(); err == nil {
 		return t
 	}
+	slog.Warn("EnvironmentClock: failed to sync from env var, falling back to system time",
+		slog.String("envVar", e.envVar), slog.String("filePath", e.filePath))
 	return time.Now()
 }
 
@@ -172,5 +178,5 @@ func (e *EnvironmentClock) parseTime(s string) (time.Time, error) {
 		}
 	}
 
-	return time.Time{}, errors.New("unable to parse time: " + s)
+	return time.Time{}, fmt.Errorf("unable to parse time %q: expected RFC3339 (2006-01-02T15:04:05Z07:00), or YYYY-MM-DD HH:MM:SS, YYYY-MM-DDTHH:MM:SS, or YYYY-MM-DD", s)
 }
