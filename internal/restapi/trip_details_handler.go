@@ -91,7 +91,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if params.Time != nil {
 		currentTime = params.Time.In(loc)
 	} else {
-		currentTime = time.Now().In(loc)
+		currentTime = api.Clock.Now().In(loc)
 	}
 
 	var serviceDate time.Time
@@ -196,7 +196,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Routes = routesIface
 	}
 
-	response := models.NewEntryResponse(tripDetails, references)
+	response := models.NewEntryResponse(tripDetails, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

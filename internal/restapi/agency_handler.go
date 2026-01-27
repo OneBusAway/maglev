@@ -38,6 +38,6 @@ func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 		false,
 	)
 
-	response := models.NewEntryResponse(agencyData, models.NewEmptyReferences())
+	response := models.NewEntryResponse(agencyData, models.NewEmptyReferences(), api.Clock)
 	api.sendResponse(w, r, response)
 }

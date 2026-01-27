@@ -42,7 +42,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			currentTime = time.Unix(timeMs/1000, 0)
 		}
 	} else {
-		currentTime = time.Now()
+		currentTime = api.Clock.Now()
 	}
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
@@ -81,7 +81,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	))
 
 	if len(activeServiceIDs) == 0 {
-		response := models.NewArrivalsAndDepartureResponse(arrivals, references, []string{}, []string{}, stopID)
+		response := models.NewArrivalsAndDepartureResponse(arrivals, references, []string{}, []string{}, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -370,7 +370,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, agencyID)
-	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, []string{}, stopID)
+	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, []string{}, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
@@ -380,7 +380,7 @@ func convertToNanosSinceMidnight(t time.Time) int64 {
 	return duration.Nanoseconds()
 }
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
-	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, time.Now())
+	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, api.Clock.Now())
 	var nearbyStopIDs []string
 	for _, s := range nearbyStops {
 		if s.ID != stopID {

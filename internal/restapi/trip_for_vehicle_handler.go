@@ -99,7 +99,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if params.Time != nil {
 		currentTime = params.Time.In(loc)
 	} else {
-		currentTime = time.Now().In(loc)
+		currentTime = api.Clock.Now().In(loc)
 	}
 
 	var serviceDate time.Time
@@ -241,7 +241,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		references.Trips = append(references.Trips, tripRef)
 	}
 
-	response := models.NewEntryResponse(entry, references)
+	response := models.NewEntryResponse(entry, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
