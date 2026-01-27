@@ -46,7 +46,8 @@ func TestMain(m *testing.M) {
 
 // createTestApi creates a new restAPI instance with a GTFS manager initialized for use in tests.
 // The GTFS database is created once and reused across all tests for performance.
-func createTestApi(t *testing.T) *RestAPI {
+// Accepts testing.TB to support both *testing.T and *testing.B
+func createTestApi(t testing.TB) *RestAPI {
 	// Initialize the shared GTFS manager only once
 	testDbSetupOnce.Do(func() {
 		gtfsConfig := gtfs.Config{
@@ -82,14 +83,17 @@ func createTestApi(t *testing.T) *RestAPI {
 
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
 // and decoded model.
-func serveAndRetrieveEndpoint(t *testing.T, endpoint string) (*RestAPI, *http.Response, models.ResponseModel) {
+// Accepts testing.TB to support both *testing.T and *testing.B
+func serveAndRetrieveEndpoint(t testing.TB, endpoint string) (*RestAPI, *http.Response, models.ResponseModel) {
 	api := createTestApi(t)
 	// Note: caller is responsible for calling api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 	return api, resp, model
 }
 
-func serveApiAndRetrieveEndpoint(t *testing.T, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
+// serveApiAndRetrieveEndpoint performs the request against an existing API instance
+// Accepts testing.TB to support both *testing.T and *testing.B
+func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
 	server := httptest.NewServer(mux)

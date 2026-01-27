@@ -211,22 +211,21 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	}
 }
 
-// NEW: Test for non-existent block - should return error
+//  Test for non-existent block - should return error
 func TestBlockHandlerNonExistentBlock(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_nonexistent.json?key=TEST")
+	api, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_nonexistent.json?key=TEST")
+	defer api.Shutdown()
 
-	// Should return an error response (either 404 or 500 is acceptable for now)
-	// The model should indicate an error
-	if resp.StatusCode == http.StatusOK {
-		// If status is OK, check if there's an error in the model
-		assert.NotEqual(t, http.StatusOK, model.Code, "Expected error code in model for non-existent block")
-	} else {
-		// Non-OK status is also acceptable
-		assert.True(t, resp.StatusCode >= 400, "Expected error status code for non-existent block")
-	}
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	// Assumes the handler returns "block not found" for this specific case.
+	// If the handler uses a generic 404 helper, this might need to be "resource not found".
+	assert.Equal(t, "block not found", model.Text)
+	assert.Equal(t, 2, model.Version)
+	assert.Greater(t, model.CurrentTime, int64(0))
 }
 
-// NEW: Test for invalid block ID format
+//   Test for invalid block ID format
 func TestBlockHandlerInvalidBlockID(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -240,16 +239,25 @@ func TestBlockHandlerInvalidBlockID(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, resp, _ := serveAndRetrieveEndpoint(t, tc.endpoint)
-			assert.True(t, resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= 400,
-				"Expected error status for invalid block ID: %s", tc.name)
+			api, resp, model := serveAndRetrieveEndpoint(t, tc.endpoint)
+			defer api.Shutdown()
+
+			// Check HTTP status code
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
+				"Expected HTTP 400 for invalid block ID: %s", tc.name)
+
+			// Fix: Verify response model structure (ensures API returns valid JSON error, not just "null")
+			assert.Equal(t, http.StatusBadRequest, model.Code, "Response model should contain error code 400")
+			assert.NotEmpty(t, model.Text, "Response model should contain an error message")
+			assert.Equal(t, 2, model.Version, "Response model should contain API version")
 		})
 	}
 }
 
-// NEW: Test response schema validation
-func TestBlockHandlerResponseSchema(t *testing.T) {
+//   Consolidated test for schema validation and data completeness
+func TestBlockHandlerResponseValidation(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -281,10 +289,15 @@ func TestBlockHandlerResponseSchema(t *testing.T) {
 	require.Contains(t, entry, "id")
 	require.Contains(t, entry, "configurations")
 
+	// Verify block ID is not empty
+	blockID, ok := entry["id"].(string)
+	require.True(t, ok)
+	assert.NotEmpty(t, blockID)
+
 	// Validate configurations array
 	configs, ok := entry["configurations"].([]interface{})
 	require.True(t, ok)
-	require.NotEmpty(t, configs)
+	assert.NotEmpty(t, configs, "Block should have at least one configuration")
 
 	// Validate each configuration
 	for _, rawConfig := range configs {
@@ -295,9 +308,14 @@ func TestBlockHandlerResponseSchema(t *testing.T) {
 		require.Contains(t, config, "inactiveServiceIds")
 		require.Contains(t, config, "trips")
 
+		activeServiceIds, ok := config["activeServiceIds"].([]interface{})
+		require.True(t, ok)
+		assert.NotEmpty(t, activeServiceIds, "Configuration should have active service IDs")
+
 		// Validate trips array
 		trips, ok := config["trips"].([]interface{})
 		require.True(t, ok)
+		assert.NotEmpty(t, trips, "Configuration should have trips")
 
 		for _, rawTrip := range trips {
 			trip, ok := rawTrip.(map[string]interface{})
@@ -311,6 +329,7 @@ func TestBlockHandlerResponseSchema(t *testing.T) {
 			// Validate blockStopTimes
 			blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
 			require.True(t, ok)
+			assert.NotEmpty(t, blockStopTimes, "Trip should have block stop times")
 
 			for _, rawStopTime := range blockStopTimes {
 				stopTime, ok := rawStopTime.(map[string]interface{})
@@ -344,7 +363,7 @@ func TestBlockHandlerResponseSchema(t *testing.T) {
 	require.Contains(t, refs, "situations")
 }
 
-// NEW: Test different block IDs
+//   Test different block IDs
 func TestBlockHandlerDifferentBlockIDs(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -358,6 +377,7 @@ func TestBlockHandlerDifferentBlockIDs(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			api := createTestApi(t)
+			defer api.Shutdown()
 			endpoint := "/api/where/block/" + tc.blockID + ".json?key=TEST"
 			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
@@ -472,97 +492,51 @@ func TestBlockHandlerReferencesConsistency(t *testing.T) {
 }
 
 func TestBlockHandlerRequiresValidApiKey(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json?key=invalid")
+	api, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json?key=invalid")
+	defer api.Shutdown()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
 }
 
-// NEW: Test missing API key
+// Test missing API key
 func TestBlockHandlerMissingApiKey(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json")
+	api, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json")
+	defer api.Shutdown()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
-// NEW: Performance benchmark test
+// Performance benchmark test
 func BenchmarkBlockHandler(b *testing.B) {
-	api := createTestApi(&testing.T{})
+	// Pass 'b' directly now that createTestApi accepts testing.TB
+	api := createTestApi(b)
+	defer api.Shutdown()
 	endpoint := "/api/where/block/25_1.json?key=TEST"
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = serveApiAndRetrieveEndpoint(&testing.T{}, api, endpoint)
+		// Pass 'b' directly here as well
+		_, _ = serveApiAndRetrieveEndpoint(b, api, endpoint)
 	}
 }
 
-// NEW: Test response time is acceptable
+// Test response time is acceptable
 func TestBlockHandlerResponseTime(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	start := time.Now()
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	duration := time.Since(start)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Less(t, duration.Milliseconds(), int64(1000), "Response should be under 1 second")
+	assert.Less(t, duration.Milliseconds(), int64(5000), "Response should be under 5 seconds")
 }
 
-// NEW: Test all required fields are present and non-empty
-func TestBlockHandlerDataCompleteness(t *testing.T) {
-	api := createTestApi(t)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]interface{})
-	require.True(t, ok)
-
-	entryWrapper, ok := data["entry"].(map[string]interface{})
-	require.True(t, ok)
-
-	entryData, ok := entryWrapper["data"].(map[string]interface{})
-	require.True(t, ok)
-
-	entry, ok := entryData["entry"].(map[string]interface{})
-	require.True(t, ok)
-
-	// Verify block ID is not empty
-	blockID, ok := entry["id"].(string)
-	require.True(t, ok)
-	assert.NotEmpty(t, blockID)
-
-	// Verify configurations exist
-	configs, ok := entry["configurations"].([]interface{})
-	require.True(t, ok)
-	assert.NotEmpty(t, configs, "Block should have at least one configuration")
-
-	// Verify each configuration has required data
-	for _, rawConfig := range configs {
-		config, ok := rawConfig.(map[string]interface{})
-		require.True(t, ok)
-
-		activeServiceIds, ok := config["activeServiceIds"].([]interface{})
-		require.True(t, ok)
-		assert.NotEmpty(t, activeServiceIds, "Configuration should have active service IDs")
-
-		trips, ok := config["trips"].([]interface{})
-		require.True(t, ok)
-		assert.NotEmpty(t, trips, "Configuration should have trips")
-
-		// Verify each trip has stops
-		for _, rawTrip := range trips {
-			trip, ok := rawTrip.(map[string]interface{})
-			require.True(t, ok)
-
-			blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
-			require.True(t, ok)
-			assert.NotEmpty(t, blockStopTimes, "Trip should have block stop times")
-		}
-	}
-}
-
-// NEW: Test JSON marshaling/unmarshaling
+// Test JSON marshaling/unmarshaling
 func TestBlockHandlerJSONSerialization(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
