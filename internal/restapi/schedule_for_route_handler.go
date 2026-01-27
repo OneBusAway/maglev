@@ -20,7 +20,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 	dateParam := r.URL.Query().Get("date")

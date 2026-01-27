@@ -169,7 +169,19 @@ func TestStopsForRouteHandlerWithInvalidTimeFormats(t *testing.T) {
 		t.Run("Invalid format: "+format, func(t *testing.T) {
 			_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25-151.json?key=TEST&time="+format)
 
-			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		})
 	}
+}
+
+func TestStopsForRouteHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1110"
+	endpoint := "/api/where/stops-for-route/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }

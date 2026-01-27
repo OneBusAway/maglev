@@ -80,7 +80,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	agencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(stopID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -105,7 +108,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	_, tripID, err := utils.ExtractAgencyIDAndCodeID(params.TripID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 

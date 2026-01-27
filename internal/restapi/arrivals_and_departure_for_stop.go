@@ -15,7 +15,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	stopID := utils.ExtractIDFromParams(r)
 	agencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(stopID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 

@@ -362,12 +362,11 @@ func TestArrivalAndDepartureForStopHandlerWithMalformedTripID(t *testing.T) {
 	tripID := "malformedid" // No underscore, will fail extraction
 	serviceDate := time.Now().Unix() * 1000
 
-	_, resp, model := serveAndRetrieveEndpoint(t,
+	_, resp, _ := serveAndRetrieveEndpoint(t,
 		"/api/where/arrival-and-departure-for-stop/"+stopID+".json?key=TEST&tripId="+tripID+
 			"&serviceDate="+fmt.Sprintf("%d", serviceDate))
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedStopID(t *testing.T) {
@@ -381,12 +380,11 @@ func TestArrivalAndDepartureForStopHandlerWithMalformedStopID(t *testing.T) {
 	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
 	serviceDate := time.Now().Unix() * 1000
 
-	_, resp, model := serveAndRetrieveEndpoint(t,
+	_, resp, _ := serveAndRetrieveEndpoint(t,
 		"/api/where/arrival-and-departure-for-stop/"+stopID+".json?key=TEST&tripId="+tripID+
 			"&serviceDate="+fmt.Sprintf("%d", serviceDate))
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }
 
 func TestArrivalAndDepartureForStopHandlerWithValidTripStopCombination(t *testing.T) {
@@ -644,4 +642,16 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	assert.Nil(t, params.Time)
 	assert.Nil(t, params.ServiceDate)
 	assert.Nil(t, params.StopSequence)
+}
+
+func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1110"
+	endpoint := "/api/where/arrival-and-departure-for-stop/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }

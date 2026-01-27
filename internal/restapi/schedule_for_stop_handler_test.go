@@ -443,3 +443,15 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestScheduleForStopHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1110"
+	endpoint := "/api/where/schedule-for-stop/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
