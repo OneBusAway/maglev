@@ -9,7 +9,7 @@ endif
 
 .PHONY: build clean coverage test run lint watch fmt \
 	gtfstidy models check-golangci-lint \
-	docker-build docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean
+	docker-build docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all
 
 
 run: build
