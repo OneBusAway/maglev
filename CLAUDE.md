@@ -38,7 +38,8 @@ Docker provides a consistent development environment across all platforms:
 - `make docker-compose-up` - Start production services with Docker Compose
 - `make docker-compose-down` - Stop Docker Compose services
 - `make docker-compose-dev` - Start development environment with live reload
-- `make docker-clean` - Remove all Docker images and volumes
+- `make docker-clean` - Remove Docker images (preserves data volumes)
+- `make docker-clean-all` - Remove all Docker images and volumes (destructive)
 
 **Quick Start with Docker:**
 ```bash
