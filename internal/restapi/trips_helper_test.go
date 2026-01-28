@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // TestDistanceToLineSegment tests the helper function that calculates distance from a point to a line segment
@@ -491,6 +492,32 @@ func TestBuildStopTimesList_ErrorHandling(t *testing.T) {
 			assert.Equal(t, 0.0, st.DistanceAlongTrip, "Distance should be 0 with no shape")
 		}
 	})
+}
+
+func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencyStatic := api.GtfsManager.GetAgencies()[0]
+	trips := api.GtfsManager.GetTrips()
+
+	tripID := trips[0].ID
+	agencyID := agencyStatic.Id
+	vehicleID := "MOCK_VEHICLE_1"
+	routeID := utils.FormCombinedID(agencyID, trips[0].Route.Id)
+
+	api.GtfsManager.MockAddAgency(agencyID, "unitrans")
+	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
+	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
+	api.GtfsManager.MockAddVehicle(vehicleID, tripID, routeID)
+	ctx := context.Background()
+
+	currentTime := time.Now()
+	model, err := api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, model)
+	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), model.VehicleID)
 }
 
 // BenchmarkDistanceToLineSegment benchmarks the line segment distance calculation

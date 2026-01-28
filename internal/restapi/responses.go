@@ -2,8 +2,9 @@ package restapi
 
 import (
 	"encoding/json"
-	"maglev.onebusaway.org/internal/models"
 	"net/http"
+
+	"maglev.onebusaway.org/internal/models"
 )
 
 func (api *RestAPI) sendResponse(w http.ResponseWriter, r *http.Request, response models.ResponseModel) {
@@ -30,7 +31,7 @@ func (api *RestAPI) sendNotFound(w http.ResponseWriter, r *http.Request) {
 
 	response := models.ResponseModel{
 		Code:        http.StatusNotFound,
-		CurrentTime: models.ResponseCurrentTime(),
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "resource not found",
 		Version:     2,
 	}
@@ -48,7 +49,7 @@ func (api *RestAPI) sendUnauthorized(w http.ResponseWriter, r *http.Request) { /
 
 	response := models.ResponseModel{
 		Code:        http.StatusUnauthorized,
-		CurrentTime: models.ResponseCurrentTime(),
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "permission denied",
 		Version:     1,
 	}
@@ -62,4 +63,20 @@ func (api *RestAPI) sendUnauthorized(w http.ResponseWriter, r *http.Request) { /
 
 func setJSONResponseType(w *http.ResponseWriter) {
 	(*w).Header().Set("Content-Type", "application/json")
+}
+
+func (api *RestAPI) sendError(w http.ResponseWriter, r *http.Request, code int, message string) {
+	setJSONResponseType(&w)
+	w.WriteHeader(code)
+
+	response := models.ResponseModel{
+		Code:        code,
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
+		Text:        message,
+		Version:     2,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		api.serverErrorResponse(w, r, err)
+	}
 }

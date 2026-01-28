@@ -1,17 +1,19 @@
 package restapi
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/appconf"
-	"maglev.onebusaway.org/internal/gtfs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
@@ -338,7 +340,7 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 	gtfsManager, err := gtfs.InitGTFSManager(gtfsConfig)
 	require.NoError(t, err)
 
-	app := &app.Application{
+	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
 			ApiKeys:   []string{"TEST"},
@@ -346,9 +348,10 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 		},
 		GtfsConfig:  gtfsConfig,
 		GtfsManager: gtfsManager,
+		Clock:       clock.RealClock{},
 	}
 
-	api := NewRestAPI(app)
+	api := NewRestAPI(application)
 
 	// Cleanup function to close the server and API
 	cleanup := func() {

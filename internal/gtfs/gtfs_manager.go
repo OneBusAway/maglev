@@ -139,7 +139,8 @@ func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 	defer manager.staticMutex.RUnlock()
 	for _, agency := range manager.gtfsData.Agencies {
 		if agency.Id == id {
-			return &agency
+			agencyCopy := agency
+			return &agencyCopy
 		}
 	}
 	return nil

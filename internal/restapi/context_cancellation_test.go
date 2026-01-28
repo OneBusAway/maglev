@@ -78,6 +78,7 @@ func TestContextCancellationHandling(t *testing.T) {
 			// Valid responses: 200 (completed), 401 (API validation), 500 (error), or timeout-related
 			assert.True(t, statusCode == http.StatusOK ||
 				statusCode == http.StatusUnauthorized || // API key validation happens first
+				statusCode == http.StatusBadRequest ||
 				statusCode == http.StatusInternalServerError ||
 				statusCode == http.StatusRequestTimeout ||
 				statusCode == http.StatusGatewayTimeout ||

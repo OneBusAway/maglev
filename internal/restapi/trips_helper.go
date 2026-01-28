@@ -30,7 +30,7 @@ func (api *RestAPI) BuildTripStatus(
 		}
 
 		if vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
+			vehicleID = utils.FormCombinedID(agencyID, vehicle.ID.ID)
 		}
 	}
 

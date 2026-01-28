@@ -179,6 +179,19 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	var allStopParams []CreateStopParams
 	for _, s := range staticData.Stops {
+		// Skip stops without coordinates to prevent nil pointer dereference and avoid
+		// storing invalid (0,0) placeholder coordinates that would contaminate spatial
+		// indexing and API responses. Per GTFS spec, lat/lon are optional for generic
+		// nodes (type=3) and boarding areas (type=4), which are used for modeling
+		// pathways within stations.
+		//
+		// See: https://github.com/OneBusAway/maglev/pull/209
+		//
+		// Future: If pathways or station accessibility features are needed, consider
+		// making lat/lon nullable in the schema and updating handlers accordingly.
+		if s.Latitude == nil || s.Longitude == nil {
+			continue
+		}
 		params := CreateStopParams{
 			ID:                 s.Id,
 			Code:               toNullString(s.Code),
@@ -929,10 +942,10 @@ func configureConnectionPool(db *sql.DB, config Config) {
 
 		// Set maximum number of idle connections to 5
 		db.SetMaxIdleConns(5)
-	}
 
-	// Set maximum lifetime of connections to 5 minutes
-	db.SetConnMaxLifetime(5 * time.Minute)
+		// Set maximum lifetime of connections to 5 minutes
+		db.SetConnMaxLifetime(5 * time.Minute)
+	}
 }
 
 // blockTripIndexKey represents the grouping key for BlockTripIndex

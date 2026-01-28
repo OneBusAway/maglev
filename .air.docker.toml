@@ -6,7 +6,7 @@ tmp_dir = "tmp"
 
 [build]
 # Build command - output to tmp directory for Docker
-cmd = "go build -gcflags 'all=-N -l' -o ./tmp/maglev ./cmd/api"
+cmd = "CGO_ENABLED=1 go build -tags sqlite_fts5 -gcflags 'all=-N -l' -o ./tmp/maglev ./cmd/api"
 # Binary to run with Docker config (uses /app/data/gtfs.db for persistence)
 bin = "./tmp/maglev -f config.docker.json"
 # Watch these extensions

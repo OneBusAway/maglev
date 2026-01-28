@@ -21,7 +21,10 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 
 	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -65,6 +68,6 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		references.Agencies = append(references.Agencies, agencyModel)
 	}
 
-	response := models.NewEntryResponse(routeData, references)
+	response := models.NewEntryResponse(routeData, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
