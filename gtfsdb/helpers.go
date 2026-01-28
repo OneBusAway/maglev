@@ -179,6 +179,9 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	var allStopParams []CreateStopParams
 	for _, s := range staticData.Stops {
+		if s.Latitude == nil || s.Longitude == nil {
+			continue
+		}
 		params := CreateStopParams{
 			ID:                 s.Id,
 			Code:               toNullString(s.Code),
