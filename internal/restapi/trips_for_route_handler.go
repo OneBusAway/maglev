@@ -218,7 +218,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(tripID),
+			SituationIds: api.GetSituationIDsForTrip(r.Context(),tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)

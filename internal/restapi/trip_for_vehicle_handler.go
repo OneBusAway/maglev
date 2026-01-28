@@ -153,7 +153,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	situationIDs := []string{}
 
 	if status != nil {
-		alerts := api.GtfsManager.GetAlertsForTrip(vehicle.Trip.ID.ID)
+		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), vehicle.Trip.ID.ID)
 		for _, alert := range alerts {
 			if alert.ID != "" {
 				situationIDs = append(situationIDs, alert.ID)

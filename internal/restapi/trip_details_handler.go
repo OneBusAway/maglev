@@ -128,7 +128,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
 		Frequency:    nil,
-		SituationIDs: api.GetSituationIDsForTrip(tripID),
+		SituationIDs: api.GetSituationIDsForTrip(r.Context(),tripID),
 	}
 
 	if status != nil && status.VehicleID != "" {

@@ -295,7 +295,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			"",                                        // predictedOccupancy
 			"",                                        // historicalOccupancy
 			tripStatus,                                // tripStatus
-			api.GetSituationIDsForTrip(st.TripID),     // situationIDs
+			api.GetSituationIDsForTrip(r.Context(),st.TripID),     // situationIDs
 		)
 
 		arrivals = append(arrivals, *arrival)

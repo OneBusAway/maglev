@@ -672,15 +672,15 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 	return utils.Distance(px, py, closestX, closestY), t
 }
 
-func (api *RestAPI) GetSituationIDsForTrip(tripID string) []string {
-	alerts := api.GtfsManager.GetAlertsForTrip(tripID)
+func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
+	alerts := api.GtfsManager.GetAlertsForTrip(ctx, tripID)
 
 	var agencyID string
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
 		return nil
 	}
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(context.Background(), trip.RouteID)
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
 	if err == nil {
 		agencyID = route.AgencyID
 	}
