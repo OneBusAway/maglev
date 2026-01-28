@@ -16,6 +16,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/tidwall/rtree"
+	"maglev.onebusaway.org/internal/logging"
 )
 
 const NoRadiusLimit = -1
@@ -101,7 +102,8 @@ func (manager *Manager) Shutdown() {
 		manager.wg.Wait()
 		if manager.GtfsDB != nil {
 			if err := manager.GtfsDB.Close(); err != nil {
-				slog.Error("failed to close GTFS database", "error", err)
+				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+				logging.LogError(logger, "failed to close GTFS database", err)
 			}
 		}
 	})
