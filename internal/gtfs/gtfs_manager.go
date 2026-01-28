@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -99,7 +100,9 @@ func (manager *Manager) Shutdown() {
 		close(manager.shutdownChan)
 		manager.wg.Wait()
 		if manager.GtfsDB != nil {
-			_ = manager.GtfsDB.Close()
+			if err := manager.GtfsDB.Close(); err != nil {
+				slog.Error("failed to close GTFS database", "error", err)
+			}
 		}
 	})
 }
