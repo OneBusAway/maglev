@@ -56,7 +56,13 @@ func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authH
 		req.Header.Set(authHeaderKey, authHeaderValue)
 	}
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 5 * time.Minute,
+		Transport: &http.Transport{
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		}}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
