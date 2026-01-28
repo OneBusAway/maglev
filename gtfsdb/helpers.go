@@ -179,20 +179,16 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	var allStopParams []CreateStopParams
 	for _, s := range staticData.Stops {
-		var lat, lon float64
-		if s.Latitude != nil {
-			lat = *s.Latitude
-		}
-		if s.Longitude != nil {
-			lon = *s.Longitude
+		if s.Latitude == nil || s.Longitude == nil {
+			continue
 		}
 		params := CreateStopParams{
 			ID:                 s.Id,
 			Code:               toNullString(s.Code),
 			Name:               toNullString(s.Name),
 			Desc:               toNullString(s.Description),
-			Lat:                lat,
-			Lon:                lon,
+			Lat:                *s.Latitude,
+			Lon:                *s.Longitude,
 			ZoneID:             toNullString(s.ZoneId),
 			Url:                toNullString(s.Url),
 			LocationType:       toNullInt64(int64(s.Type)),
