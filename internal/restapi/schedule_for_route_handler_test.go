@@ -27,6 +27,7 @@ func TestScheduleForRouteHandler(t *testing.T) {
 	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
 
 	t.Run("Valid route", func(t *testing.T) {
+		// Use a date known to be in the test data's service calendar
 		resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-route/"+routeID+".json?key=TEST&date=2025-06-12")
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -133,6 +134,7 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
 
 	t.Run("Valid date parameter", func(t *testing.T) {
+		// Use a date known to be in the test data's service calendar
 		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
