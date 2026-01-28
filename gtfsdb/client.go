@@ -44,6 +44,10 @@ func (c *Client) Close() error {
 	return c.DB.Close()
 }
 
+func (c *Client) GetDBPath() string {
+	return c.config.DBPath
+}
+
 // DownloadAndStore downloads GTFS data from the given URL and stores it in the database
 func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authHeaderValue string) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)

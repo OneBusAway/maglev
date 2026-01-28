@@ -13,6 +13,10 @@ import (
 
 func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
+
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	id := utils.ExtractIDFromParams(r)
 	agencyID, blockID, err := utils.ExtractAgencyIDAndCodeID(id)
 

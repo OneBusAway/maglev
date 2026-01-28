@@ -285,8 +285,8 @@ func (tm *testManagerWithMutex) safeSetStaticGTFS(staticData *gtfs.Static) {
 
 func (tm *testManagerWithMutex) safeGetAgencies() []gtfs.Agency {
 	// This will be implemented with proper mutex protection
-	tm.staticMutex.RLock()
-	defer tm.staticMutex.RUnlock()
+	tm.RLock()
+	defer tm.RUnlock()
 	if tm.gtfsData == nil {
 		return []gtfs.Agency{}
 	}

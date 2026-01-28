@@ -16,6 +16,9 @@ import (
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(utils.ExtractIDFromParams(r))
 	if err != nil {
 		fieldErrors := map[string][]string{

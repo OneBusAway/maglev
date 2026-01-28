@@ -68,6 +68,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	params := api.parseTripIdDetailsParams(r)
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)

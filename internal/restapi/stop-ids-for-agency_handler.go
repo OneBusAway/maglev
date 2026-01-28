@@ -11,6 +11,9 @@ func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Reque
 
 	id := utils.ExtractIDFromParams(r)
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	agency := api.GtfsManager.FindAgency(id)
 
 	if agency == nil {

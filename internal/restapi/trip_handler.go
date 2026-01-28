@@ -28,6 +28,9 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	ctx := r.Context()
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, id)
