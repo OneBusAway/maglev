@@ -1,21 +1,24 @@
 package restapi
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/appconf"
-	"maglev.onebusaway.org/internal/gtfs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -28,6 +31,7 @@ func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -56,6 +60,7 @@ func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/nonexistent.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -72,6 +77,7 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerResponseStructure(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -117,6 +123,7 @@ func TestVehiclesForAgencyHandlerResponseStructure(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerReferencesBuilding(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -169,6 +176,7 @@ func TestVehiclesForAgencyHandlerReferencesBuilding(t *testing.T) {
 func TestVehiclesForAgencyHandlerEmptyResult(t *testing.T) {
 	// Test with an agency that likely has no vehicles
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Test with a specific agency that should return empty results
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/25.json?key=TEST")
@@ -190,6 +198,7 @@ func TestVehiclesForAgencyHandlerEmptyResult(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerFieldMapping(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -220,6 +229,7 @@ func TestVehiclesForAgencyHandlerFieldMapping(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerWithAllAgencies(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 
@@ -250,6 +260,7 @@ func TestVehiclesForAgencyHandlerWithAllAgencies(t *testing.T) {
 
 func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].Id
@@ -329,7 +340,7 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 	gtfsManager, err := gtfs.InitGTFSManager(gtfsConfig)
 	require.NoError(t, err)
 
-	app := &app.Application{
+	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
 			ApiKeys:   []string{"TEST"},
@@ -337,12 +348,14 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 		},
 		GtfsConfig:  gtfsConfig,
 		GtfsManager: gtfsManager,
+		Clock:       clock.RealClock{},
 	}
 
-	api := NewRestAPI(app)
+	api := NewRestAPI(application)
 
-	// Cleanup function to close the server
+	// Cleanup function to close the server and API
 	cleanup := func() {
+		api.Shutdown()
 		server.Close()
 	}
 

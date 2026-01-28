@@ -15,7 +15,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	stopID := utils.ExtractIDFromParams(r)
 	agencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(stopID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -42,7 +45,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			currentTime = time.Unix(timeMs/1000, 0)
 		}
 	} else {
-		currentTime = time.Now()
+		currentTime = api.Clock.Now()
 	}
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
@@ -57,7 +60,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agencyID)
 	currentTime = currentTime.In(loc)
 	windowStart := currentTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
 	windowEnd := currentTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
@@ -81,7 +84,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	))
 
 	if len(activeServiceIDs) == 0 {
-		response := models.NewArrivalsAndDepartureResponse(arrivals, references, []string{}, []string{}, stopID)
+		response := models.NewArrivalsAndDepartureResponse(arrivals, references, []string{}, []string{}, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -228,6 +231,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 					}
 				}
 
+				if vehicle.Position != nil {
+					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, currentTime)
+
+					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, currentTime)
+					if numberOfStopsAwayPtr != nil {
+						numberOfStopsAway = *numberOfStopsAwayPtr
+					} else {
+						numberOfStopsAway = -1
+					}
+				}
+
 				// If there's an active trip that's different from the current trip, add it to references
 				if status.ActiveTripID != "" {
 					_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
@@ -333,9 +347,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               stopData.Code.String,
-			Direction:          "N", // TODO: Calculate actual direction
+			Direction:          api.calculateStopDirection(ctx, stopID),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: "UNKNOWN",
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}
@@ -359,7 +373,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, agencyID)
-	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, []string{}, stopID)
+	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, []string{}, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
@@ -369,7 +383,7 @@ func convertToNanosSinceMidnight(t time.Time) int64 {
 	return duration.Nanoseconds()
 }
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
-	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, time.Now())
+	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, api.Clock.Now())
 	var nearbyStopIDs []string
 	for _, s := range nearbyStops {
 		if s.ID != stopID {

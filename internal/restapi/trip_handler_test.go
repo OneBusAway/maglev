@@ -18,6 +18,7 @@ func TestTripHandlerRequiresValidApiKey(t *testing.T) {
 func TestTripHandlerEndToEnd(t *testing.T) {
 
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 
@@ -79,4 +80,16 @@ func TestTripHandlerWithInvalidTripID(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, model.Code)
 	assert.Equal(t, "resource not found", model.Text)
 	assert.Nil(t, model.Data)
+}
+
+func TestTripHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1110"
+	endpoint := "/api/where/trip/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }

@@ -2,7 +2,9 @@ package app
 
 import (
 	"log/slog"
+
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 )
 
@@ -15,4 +17,5 @@ type Application struct {
 	Logger              *slog.Logger
 	GtfsManager         *gtfs.Manager
 	DirectionCalculator *gtfs.AdvancedDirectionCalculator
+	Clock               clock.Clock
 }

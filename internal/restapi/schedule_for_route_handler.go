@@ -21,7 +21,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 	dateParam := r.URL.Query().Get("date")
@@ -50,7 +53,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		}
 		targetDate = parsedDate.Format("20060102")
 	} else {
-		now := time.Now()
+		now := api.Clock.Now()
 		targetDate = now.Format("20060102")
 	}
 
@@ -267,5 +270,5 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
 	}
-	api.sendResponse(w, r, models.NewEntryResponse(entry, references))
+	api.sendResponse(w, r, models.NewEntryResponse(entry, references, api.Clock))
 }

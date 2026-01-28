@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -gcflags 'all=-N -l' -o bin/maglev ./cmd/api"
+  cmd = "CGO_ENABLED=1 go build -tags sqlite_fts5 -gcflags 'all=-N -l' -o bin/maglev ./cmd/api"
   bin = "bin/maglev"
   full_bin = "make run"
 

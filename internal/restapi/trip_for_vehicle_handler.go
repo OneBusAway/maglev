@@ -2,7 +2,8 @@ package restapi
 
 import (
 	"context"
-	"fmt"
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,7 +24,7 @@ type TripForVehicleParams struct {
 
 func (api *RestAPI) parseTripForVehicleParams(r *http.Request) TripForVehicleParams {
 	params := TripForVehicleParams{
-		IncludeTrip:     false,
+		IncludeTrip:     true,
 		IncludeSchedule: false,
 		IncludeStatus:   true,
 	}
@@ -62,7 +63,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	agencyID, vehicleID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -72,7 +76,12 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		api.sendNotFound(w, r)
 		return
 	}
-	if vehicle == nil || vehicle.Trip == nil {
+
+	// Return 404 when vehicle has no associated trip (idle vehicle)
+	// or when the trip ID is empty (avoiding a futile DB lookup)
+	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
+		api.Logger.Debug("vehicle has no current trip (idle)",
+			"vehicleID", vehicleID, "agencyID", agencyID)
 		api.sendNotFound(w, r)
 		return
 	}
@@ -88,32 +97,52 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 
 	var currentTime time.Time
 	if params.Time != nil {
 		currentTime = params.Time.In(loc)
 	} else {
-		currentTime = time.Now().In(loc)
+		currentTime = api.Clock.Now().In(loc)
 	}
 
 	var serviceDate time.Time
 	if params.ServiceDate != nil {
 		serviceDate = *params.ServiceDate
 	} else {
-		serviceDate = currentTime.Truncate(24 * time.Hour)
+		// Use time.Date() to get local midnight, not Truncate() which uses UTC
+		y, m, d := currentTime.Date()
+		serviceDate = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
 	serviceDateMillis := serviceDate.Unix() * 1000
 
 	var status *models.TripStatusForTripDetails
 	if params.IncludeStatus {
-		status, _ = api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+		var statusErr error
+		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+		if statusErr != nil {
+			api.Logger.Warn("failed to build trip status",
+				"tripID", tripID,
+				"agencyID", agencyID,
+				"error", statusErr)
+			// Proceeding with nil status, as it's an optional field
+		}
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
+		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
+		if errors.Is(err, sql.ErrNoRows) {
+			api.Logger.Warn("vehicle references non-existent trip",
+				"vehicleID", vehicleID, "tripID", tripID, "agencyID", agencyID)
+			api.sendNotFound(w, r)
+			return
+		}
+		api.Logger.Error("database error fetching trip",
+			"error", err,
+			"tripID", tripID,
+			"agencyID", agencyID)
 		api.serverErrorResponse(w, r, err)
-		fmt.Println("GetTrip error:", err)
 		return
 	}
 
@@ -143,7 +172,6 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Build references
-
 	references := models.NewEmptyReferences()
 
 	agencyModel := models.NewAgencyReference(
@@ -206,20 +234,22 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	references.Agencies = append(references.Agencies, agencyModel)
 
-	tripRef := models.NewTripReference(
-		utils.FormCombinedID(agencyID, trip.ID),
-		utils.FormCombinedID(agencyID, trip.RouteID),
-		utils.FormCombinedID(agencyID, trip.ServiceID),
-		trip.TripHeadsign.String,
-		trip.TripShortName.String,
-		trip.DirectionID.Int64,
-		utils.FormCombinedID(agencyID, trip.BlockID.String),
-		utils.FormCombinedID(agencyID, trip.ShapeID.String),
-	)
-	references.Trips = append(references.Trips, tripRef)
-	response := models.NewEntryResponse(entry, references)
-	api.sendResponse(w, r, response)
+	if params.IncludeTrip {
+		tripRef := models.NewTripReference(
+			utils.FormCombinedID(agencyID, trip.ID),
+			utils.FormCombinedID(agencyID, trip.RouteID),
+			utils.FormCombinedID(agencyID, trip.ServiceID),
+			trip.TripHeadsign.String,
+			trip.TripShortName.String,
+			trip.DirectionID.Int64,
+			utils.FormCombinedID(agencyID, trip.BlockID.String),
+			utils.FormCombinedID(agencyID, trip.ShapeID.String),
+		)
+		references.Trips = append(references.Trips, tripRef)
+	}
 
+	response := models.NewEntryResponse(entry, references, api.Clock)
+	api.sendResponse(w, r, response)
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds stop references and collects unique routes for the given stop IDs.
@@ -289,7 +319,7 @@ func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, a
 			Code:               stop.Code.String,
 			Direction:          calc.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: models.UnknownValue,
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

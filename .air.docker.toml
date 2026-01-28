@@ -1,0 +1,45 @@
+# Air configuration for live reload in Docker development
+# https://github.com/air-verse/air
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+# Build command - output to tmp directory for Docker
+cmd = "CGO_ENABLED=1 go build -tags sqlite_fts5 -gcflags 'all=-N -l' -o ./tmp/maglev ./cmd/api"
+# Binary to run with Docker config (uses /app/data/gtfs.db for persistence)
+bin = "./tmp/maglev -f config.docker.json"
+# Watch these extensions
+include_ext = ["go", "json"]
+# Exclude directories
+exclude_dir = ["tmp", "bin", "testdata", "vendor", "marketing", "remote", "migrations"]
+# Exclude files
+exclude_file = []
+# Exclude regex
+exclude_regex = ["_test\\.go$"]
+# Delay before rebuild (in ms)
+delay = 1000
+# Stop running old binary when build errors occur
+stop_on_error = true
+# Send interrupt signal before killing process
+send_interrupt = true
+# Delay before sending SIGKILL after SIGINT (in ms)
+kill_delay = 500
+
+[log]
+# Show log time
+time = true
+# Main log only shows main information
+main_only = false
+
+[color]
+# Customize colors for log output
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+[misc]
+# Delete tmp directory on exit
+clean_on_exit = true
+

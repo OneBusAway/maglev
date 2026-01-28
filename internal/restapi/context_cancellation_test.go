@@ -13,6 +13,7 @@ import (
 
 func TestContextCancellationHandling(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	tests := []struct {
 		name     string
@@ -77,6 +78,7 @@ func TestContextCancellationHandling(t *testing.T) {
 			// Valid responses: 200 (completed), 401 (API validation), 500 (error), or timeout-related
 			assert.True(t, statusCode == http.StatusOK ||
 				statusCode == http.StatusUnauthorized || // API key validation happens first
+				statusCode == http.StatusBadRequest ||
 				statusCode == http.StatusInternalServerError ||
 				statusCode == http.StatusRequestTimeout ||
 				statusCode == http.StatusGatewayTimeout ||
@@ -88,6 +90,7 @@ func TestContextCancellationHandling(t *testing.T) {
 
 func TestLongerTimeoutContextHandling(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// Test with a reasonable timeout that should allow completion
 	t.Run("reasonable timeout should complete successfully", func(t *testing.T) {
@@ -113,6 +116,7 @@ func TestLongerTimeoutContextHandling(t *testing.T) {
 func TestContextCancellationInGetStopsForLocation(t *testing.T) {
 	// Test the GTFS manager's GetStopsForLocation method with context cancellation
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	// This test verifies that our current implementation works normally
 	// since it uses context.Background() internally
@@ -129,6 +133,7 @@ func TestContextCancellationInGetStopsForLocation(t *testing.T) {
 
 func TestContextCancellationDuringDatabaseQueries(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("cancelled context in database query should be handled", func(t *testing.T) {
 		// Create a context that's already cancelled

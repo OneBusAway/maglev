@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"net/http"
 	"time"
 
 	"maglev.onebusaway.org/internal/app"
@@ -9,13 +8,20 @@ import (
 
 type RestAPI struct {
 	*app.Application
-	rateLimiter func(http.Handler) http.Handler
+	rateLimiter *RateLimitMiddleware
 }
 
 // NewRestAPI creates a new RestAPI instance with initialized rate limiter
 func NewRestAPI(app *app.Application) *RestAPI {
 	return &RestAPI{
 		Application: app,
-		rateLimiter: NewRateLimitMiddleware(app.Config.RateLimit, time.Second),
+		rateLimiter: NewRateLimitMiddleware(app.Config.RateLimit, time.Second, app.Clock),
+	}
+}
+
+// Shutdown gracefully stops the RestAPI resources
+func (api *RestAPI) Shutdown() {
+	if api.rateLimiter != nil {
+		api.rateLimiter.Stop()
 	}
 }

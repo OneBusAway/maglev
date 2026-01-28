@@ -9,6 +9,9 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: 1
+      CGO_CFLAGS: "-DSQLITE_ENABLE_FTS5"
     steps:
       - uses: actions/checkout@v4
 
@@ -25,7 +28,7 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: latest
-          args: --timeout=5m
+          args: --timeout=5m --build-tags=sqlite_fts5
 
   test:
     name: Test
@@ -33,6 +36,9 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+    env:
+      CGO_ENABLED: 1
+      CGO_CFLAGS: "-DSQLITE_ENABLE_FTS5"
     steps:
       - uses: actions/checkout@v4
 
@@ -50,8 +56,10 @@ jobs:
 
       - name: Run tests
         shell: bash
+        env:
+          CGO_ENABLED: 1
         run: |
-          go test -v -coverprofile=profile.cov ./...
+          go test -tags=sqlite_fts5 -v -coverprofile=profile.cov ./...
 
 # Disabling coverage reporting for now. Re-enable once the project is made public.
 #      - uses: shogo82148/actions-goveralls@v1

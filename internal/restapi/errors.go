@@ -2,8 +2,9 @@ package restapi
 
 import (
 	"encoding/json"
-	"maglev.onebusaway.org/internal/models"
 	"net/http"
+
+	"maglev.onebusaway.org/internal/models"
 )
 
 // invalidAPIKeyResponse sends a 401 Unauthorized response with the required format
@@ -17,7 +18,7 @@ func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter, r *http.Request
 		Version     int    `json:"version"`
 	}{
 		Code:        http.StatusUnauthorized,
-		CurrentTime: models.ResponseCurrentTime(),
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "permission denied",
 		Version:     1, // Note: This is version 1, not 2 as in a successful response. Probably a mistake, but back-compat.
 	}
@@ -39,7 +40,7 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 		Version     int    `json:"version"`
 	}{
 		Code:        http.StatusInternalServerError,
-		CurrentTime: models.ResponseCurrentTime(),
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "internal server error",
 		Version:     1,
 	}

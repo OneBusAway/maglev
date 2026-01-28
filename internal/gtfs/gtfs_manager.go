@@ -139,10 +139,17 @@ func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 	defer manager.staticMutex.RUnlock()
 	for _, agency := range manager.gtfsData.Agencies {
 		if agency.Id == id {
-			return &agency
+			agencyCopy := agency
+			return &agencyCopy
 		}
 	}
 	return nil
+}
+
+func (manager *Manager) GetRoutes() []gtfs.Route {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.gtfsData.Routes
 }
 
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.

@@ -1,0 +1,44 @@
+# Development Dockerfile with live reload support
+FROM golang:1.24-alpine
+
+# Add build arguments for UID and GID to support different host users
+# Note: UID 1000 matches the default first user on most Linux systems.
+# If your host user has a different UID, you may need to rebuild with:
+# docker build --build-arg USER_ID=$(id -u) --build-arg GROUP_ID=$(id -g) -f Dockerfile.dev .
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+# Install build dependencies for CGO and development tools
+RUN apk add --no-cache gcc musl-dev git wget
+
+# Install Air for live reload
+RUN go install github.com/air-verse/air@v1.61.7
+
+# Install Delve for debugging
+RUN go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Create app directory and set ownership
+# Critical Fix: chown -R /go ensures the maglev user can access the Go module cache volume
+RUN mkdir -p /app && \
+    addgroup -g ${GROUP_ID} maglev && \
+    adduser -u ${USER_ID} -G maglev -s /bin/sh -D maglev && \
+    chown -R maglev:maglev /app && \
+    chown -R maglev:maglev /go
+
+# Switch to non-root user
+USER maglev
+
+WORKDIR /app
+
+# Copy dependency files first
+COPY --chown=maglev:maglev go.mod go.sum ./
+RUN go mod download
+
+# Source code will be mounted via docker-compose volume
+# This allows live reload without rebuilding the container
+
+EXPOSE 4000 2345
+
+# Default command uses Air for live reload
+CMD ["air", "-c", ".air.docker.toml"]
+
