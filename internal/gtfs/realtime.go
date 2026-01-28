@@ -201,6 +201,7 @@ func (manager *Manager) updateGTFSRealtime(ctx context.Context, config Config) {
 	}
 	if vehicleData != nil && vehicleErr == nil {
 		manager.realTimeVehicles = vehicleData.Vehicles
+		filterRealTimeVehicleByValidId(manager)
 		rebuildRealTimeVehicleLookupByTrip(manager)
 		rebuildRealTimeVehicleLookupByVehicle(manager)
 	}
@@ -210,6 +211,16 @@ func (manager *Manager) updateGTFSRealtime(ctx context.Context, config Config) {
 	} else if alertErr != nil {
 		logging.LogError(logger, "Error loading GTFS-RT service alerts", alertErr)
 	}
+}
+
+func filterRealTimeVehicleByValidId(manager *Manager) {
+	validVehicles := make([]gtfs.Vehicle, 0, len(manager.realTimeVehicles))
+	for _, v := range manager.realTimeVehicles {
+		if v.ID != nil {
+			validVehicles = append(validVehicles, v)
+		}
+	}
+	manager.realTimeVehicles = validVehicles
 }
 
 func rebuildRealTimeTripLookup(manager *Manager) {
@@ -249,7 +260,7 @@ func rebuildRealTimeVehicleLookupByVehicle(manager *Manager) {
 		}
 	}
 	for i, vehicle := range manager.realTimeVehicles {
-		if vehicle.ID != nil {
+		if vehicle.ID.ID != "" {
 			manager.realTimeVehicleLookupByVehicle[vehicle.ID.ID] = i
 		}
 	}

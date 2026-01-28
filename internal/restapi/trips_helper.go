@@ -29,9 +29,7 @@ func (api *RestAPI) BuildTripStatus(
 			occupancyStatus = vehicle.OccupancyStatus.String()
 		}
 
-		if vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
-		}
+		vehicleID = vehicle.ID.ID
 	}
 
 	status := &models.TripStatusForTripDetails{
