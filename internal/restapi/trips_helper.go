@@ -29,7 +29,9 @@ func (api *RestAPI) BuildTripStatus(
 			occupancyStatus = vehicle.OccupancyStatus.String()
 		}
 
-		vehicleID = vehicle.ID.ID
+		if vehicle.ID != nil {
+			vehicleID = utils.FormCombinedID(agencyID, vehicle.ID.ID)
+		}
 	}
 
 	status := &models.TripStatusForTripDetails{

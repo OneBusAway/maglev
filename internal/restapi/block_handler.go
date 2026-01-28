@@ -2,7 +2,7 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
+	"database/sql" 
 	"net/http"
 	"sort"
 
@@ -16,14 +16,22 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
 	agencyID, blockID, err := utils.ExtractAgencyIDAndCodeID(id)
 
+	//  Return JSON 400 response for invalid block IDs
+	// We use an explicit struct here to ensure the text is exactly "invalid block id"
 	if err != nil || blockID == "" {
-		http.Error(w, "null", http.StatusBadRequest)
+		api.sendError(w, r, http.StatusBadRequest, "invalid block id")
 		return
 	}
 
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.sendNotFound(w, r)
+		return
+	}
+
+	//  Return JSON 404 response if no block data is found
+	if len(block) == 0 {
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -39,7 +47,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	response := models.NewEntryResponse(blockResponse, references)
+	response := models.NewEntryResponse(blockResponse, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

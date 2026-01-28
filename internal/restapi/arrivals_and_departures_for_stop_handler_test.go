@@ -370,3 +370,15 @@ func TestArrivalsAndDeparturesForStopHandlerDefaultParameters(t *testing.T) {
 	_, ok = data["references"].(map[string]interface{})
 	assert.True(t, ok)
 }
+
+func TestArrivalsAndDeparturesForStopHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1110"
+	endpoint := "/api/where/arrivals-and-departures-for-stop/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}

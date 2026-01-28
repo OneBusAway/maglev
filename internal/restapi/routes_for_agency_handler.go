@@ -40,6 +40,6 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponse(routesList, references)
+	response := models.NewListResponse(routesList, references, api.Clock)
 	api.sendResponse(w, r, response)
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -44,9 +45,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// createTestApi creates a new restAPI instance with a GTFS manager initialized for use in tests.
+// createTestApiWithClock creates a new restAPI instance with a custom clock for deterministic testing.
 // The GTFS database is created once and reused across all tests for performance.
-func createTestApi(t *testing.T) *RestAPI {
+func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 	// Initialize the shared GTFS manager only once
 	testDbSetupOnce.Do(func() {
 		gtfsConfig := gtfs.Config{
@@ -65,7 +66,7 @@ func createTestApi(t *testing.T) *RestAPI {
 		GTFSDataPath: testDbPath,
 	}
 
-	app := &app.Application{
+	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
 			ApiKeys:   []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
@@ -73,22 +74,34 @@ func createTestApi(t *testing.T) *RestAPI {
 		},
 		GtfsConfig:  gtfsConfig,
 		GtfsManager: testGtfsManager,
+		Clock:       c,
 	}
 
-	api := NewRestAPI(app)
+	api := NewRestAPI(application)
 
 	return api
 }
 
+// createTestApi creates a new restAPI instance with a GTFS manager initialized for use in tests.
+// Uses RealClock - for deterministic tests, use createTestApiWithClock with MockClock.
+// Accepts testing.TB to support both *testing.T and *testing.B
+func createTestApi(t testing.TB) *RestAPI {
+	return createTestApiWithClock(t, clock.RealClock{})
+}
+
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
 // and decoded model.
-func serveAndRetrieveEndpoint(t *testing.T, endpoint string) (*RestAPI, *http.Response, models.ResponseModel) {
+// Accepts testing.TB to support both *testing.T and *testing.B
+func serveAndRetrieveEndpoint(t testing.TB, endpoint string) (*RestAPI, *http.Response, models.ResponseModel) {
 	api := createTestApi(t)
+	// Note: caller is responsible for calling api.Shutdown()
 	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 	return api, resp, model
 }
 
-func serveApiAndRetrieveEndpoint(t *testing.T, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
+// serveApiAndRetrieveEndpoint performs the request against an existing API instance
+// Accepts testing.TB to support both *testing.T and *testing.B
+func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
 	server := httptest.NewServer(mux)
@@ -205,6 +218,7 @@ func TestCompressionMiddleware(t *testing.T) {
 func TestCompressionMiddlewareIntegration(t *testing.T) {
 	// Create a test API instance
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("API responses are compressed when requested", func(t *testing.T) {
 		// Use the standard test setup approach

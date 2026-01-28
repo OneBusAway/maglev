@@ -1,10 +1,10 @@
 package models
 
 type TripDetails struct {
-	Frequency    *Frequency                `json:"frequency,omitempty"`
+	Frequency    *Frequency                `json:"frequency"`
 	Schedule     *Schedule                 `json:"schedule"`
 	ServiceDate  int64                     `json:"serviceDate"`
-	SituationIDs []string                  `json:"situationIds,omitempty"`
+	SituationIDs []string                  `json:"situationIds"`
 	Status       *TripStatusForTripDetails `json:"status,omitempty"`
 	TripID       string                    `json:"tripId"`
 }

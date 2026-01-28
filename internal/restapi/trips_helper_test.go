@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // TestDistanceToLineSegment tests the helper function that calculates distance from a point to a line segment
@@ -186,6 +187,7 @@ func TestDistanceToLineSegment_GeographicCoordinates(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTrip tests the main distance calculation function
 func TestCalculatePreciseDistanceAlongTrip(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Get a test trip with shape data
@@ -243,6 +245,7 @@ func TestCalculatePreciseDistanceAlongTrip(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTrip_EdgeCases tests edge cases
 func TestCalculatePreciseDistanceAlongTrip_EdgeCases(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	t.Run("Empty shape points", func(t *testing.T) {
@@ -280,6 +283,7 @@ func TestCalculatePreciseDistanceAlongTrip_EdgeCases(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTrip_Correctness validates the algorithm correctness
 func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Create a simple linear shape: three points in a line
@@ -317,6 +321,7 @@ func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
 // TestCalculatePreciseDistanceAlongTripWithCoords_Validation tests input validation
 func TestCalculatePreciseDistanceAlongTripWithCoords_Validation(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	t.Run("Mismatched array sizes", func(t *testing.T) {
 		shapePoints := []gtfs.ShapePoint{
@@ -370,6 +375,7 @@ func TestCalculatePreciseDistanceAlongTripWithCoords_Validation(t *testing.T) {
 // TestBuildStopTimesList_ErrorHandling tests error handling when batch query fails
 func TestBuildStopTimesList_ErrorHandling(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Get real stop times to work with
@@ -446,6 +452,32 @@ func TestBuildStopTimesList_ErrorHandling(t *testing.T) {
 	})
 }
 
+func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencyStatic := api.GtfsManager.GetAgencies()[0]
+	trips := api.GtfsManager.GetTrips()
+
+	tripID := trips[0].ID
+	agencyID := agencyStatic.Id
+	vehicleID := "MOCK_VEHICLE_1"
+	routeID := utils.FormCombinedID(agencyID, trips[0].Route.Id)
+
+	api.GtfsManager.MockAddAgency(agencyID, "unitrans")
+	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
+	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
+	api.GtfsManager.MockAddVehicle(vehicleID, tripID, routeID)
+	ctx := context.Background()
+
+	currentTime := time.Now()
+	model, err := api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, model)
+	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), model.VehicleID)
+}
+
 // BenchmarkDistanceToLineSegment benchmarks the line segment distance calculation
 func BenchmarkDistanceToLineSegment(b *testing.B) {
 	px, py := 0.5, 1.0
@@ -462,6 +494,7 @@ func BenchmarkDistanceToLineSegment(b *testing.B) {
 func BenchmarkCalculatePreciseDistanceAlongTrip(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Find a trip with shape data
@@ -513,6 +546,7 @@ func BenchmarkCalculatePreciseDistanceAlongTrip(b *testing.B) {
 func BenchmarkBuildTripSchedule(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	// Find a trip
@@ -552,6 +586,7 @@ func BenchmarkBuildTripSchedule(b *testing.B) {
 func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 
 	trips := api.GtfsManager.GetTrips()

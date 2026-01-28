@@ -4,9 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Getting Started
 
-**Prerequisites**:
-- Go 1.24.2 or later
-- Copy `config.example.json` to `config.json` and configure required values (needed for `make run`)
+**Prerequisites** (choose one):
+- **Native**: Go 1.24.2 or later
+- **Docker**: Docker 20.10+ and Docker Compose v2.0+
+
+**Setup**:
+- Native: Copy `config.example.json` to `config.json` and configure required values
+- Docker: Copy `config.docker.example.json` to `config.docker.json` and change `api-keys` to secure values
 
 **Verify installation**: `http://localhost:4000/api/where/current-time.json?key=test`
 
@@ -23,6 +27,37 @@ All commands are managed through the Makefile:
 - `make watch` - Run with Air for live reloading during development
 - `make fmt` - Format all Go code with `go fmt`
 - `make clean` - Clean build artifacts
+
+## Docker Commands
+
+Docker provides a consistent development environment across all platforms:
+
+- `make docker-build` - Build the Docker image
+- `make docker-run` - Build and run the container with mounted config
+- `make docker-stop` - Stop and remove the running container
+- `make docker-compose-up` - Start production services with Docker Compose
+- `make docker-compose-down` - Stop Docker Compose services
+- `make docker-compose-dev` - Start development environment with live reload
+- `make docker-clean` - Remove all Docker images and volumes
+
+**Quick Start with Docker:**
+```bash
+cp config.docker.example.json config.docker.json
+docker-compose up
+```
+
+**Development with live reload:**
+```bash
+docker-compose -f docker-compose.dev.yml up
+```
+
+**Docker Files:**
+- `Dockerfile` - Multi-stage production build (Go 1.24 + Alpine)
+- `Dockerfile.dev` - Development image with Air live reload
+- `docker-compose.yml` - Production configuration with volumes and health check
+- `docker-compose.dev.yml` - Development setup with source mounting
+- `.dockerignore` - Files excluded from Docker context
+- `.air.docker.toml` - Air live reload configuration for Docker development
 
 ## Debugging
 

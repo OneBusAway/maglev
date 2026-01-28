@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 )
 
@@ -37,7 +38,7 @@ func createTestApiForValidationTests(t *testing.T) *RestAPI {
 		GTFSDataPath: testDbPath,
 	}
 
-	app := &app.Application{
+	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
 			ApiKeys:   []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
@@ -45,9 +46,10 @@ func createTestApiForValidationTests(t *testing.T) *RestAPI {
 		},
 		GtfsConfig:  gtfsConfig,
 		GtfsManager: testGtfsManager,
+		Clock:       clock.RealClock{},
 	}
 
-	api := NewRestAPI(app)
+	api := NewRestAPI(application)
 
 	return api
 }
@@ -184,6 +186,7 @@ func TestInputValidationIntegration(t *testing.T) {
 
 func TestInputSanitizationIntegration(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	tests := []struct {
 		name     string
@@ -221,6 +224,7 @@ func TestInputSanitizationIntegration(t *testing.T) {
 
 func TestValidInputsPassThrough(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	validTests := []struct {
 		name     string
