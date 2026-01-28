@@ -238,13 +238,18 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	if oldGtfsDB != nil {
 		if err := oldGtfsDB.Close(); err != nil {
-			logging.LogError(logger, "Error closing old GTFS DB", err)
+			logging.LogError(logger, "Error closing old GTFS DB, did not swap DB", err)
+			return err
 		}
 	}
 
 	// Rename: finalDBPath is overwritten by tempDBPath
 	if err := os.Rename(tempDBPath, finalDBPath); err != nil {
 		logging.LogError(logger, "Error renaming temp DB to final DB", err)
+
+		if removeErr := os.Remove(tempDBPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.LogError(logger, "Failed to remove temp DB after rename failure", removeErr)
+		}
 
 		logging.LogOperation(logger, "attempting_recovery_reopening_old_db")
 
