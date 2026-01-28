@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestCurrentTimeModel(t *testing.T) {
@@ -149,8 +151,10 @@ func TestCurrentTimeDataEndToEnd(t *testing.T) {
 	// Create the data using our function
 	timeData := NewCurrentTimeData(testTime)
 
+	clock := clock.NewMockClock(testTime)
+
 	// Create a response using this data
-	response := NewResponse(200, timeData, "OK")
+	response := NewResponse(200, timeData, "OK", clock)
 
 	// Marshal to JSON
 	jsonData, err := json.Marshal(response)

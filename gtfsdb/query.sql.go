@@ -405,7 +405,7 @@ OR REPLACE INTO stops (
     direction
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 `
 
 type CreateStopParams struct {
@@ -455,6 +455,7 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
 		&i.Direction,
+		&i.ParentStation,
 	)
 	return i, err
 }
@@ -641,7 +642,7 @@ func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interfa
 }
 
 const getActiveStops = `-- name: GetActiveStops :many
-SELECT DISTINCT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction
+SELECT DISTINCT s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction, s.parent_station
 FROM stops s
 INNER JOIN stop_times st ON s.id = st.stop_id
 `
@@ -669,6 +670,7 @@ func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -2301,16 +2303,46 @@ func (q *Queries) GetShapesGroupedByTripHeadSign(ctx context.Context, arg GetSha
 
 const getStop = `-- name: GetStop :one
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    id,
+    code,
+    name,
+    desc,
+    lat,
+    lon,
+    zone_id,
+    url,
+    location_type,
+    timezone,
+    wheelchair_boarding,
+    platform_code,
+    direction
 FROM
     stops
 WHERE
     id = ?
+LIMIT
+    1
 `
 
-func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
+type GetStopRow struct {
+	ID                 string
+	Code               sql.NullString
+	Name               sql.NullString
+	Desc               sql.NullString
+	Lat                float64
+	Lon                float64
+	ZoneID             sql.NullString
+	Url                sql.NullString
+	LocationType       sql.NullInt64
+	Timezone           sql.NullString
+	WheelchairBoarding sql.NullInt64
+	PlatformCode       sql.NullString
+	Direction          sql.NullString
+}
+
+func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
 	row := q.queryRow(ctx, q.getStopStmt, getStop, id)
-	var i Stop
+	var i GetStopRow
 	err := row.Scan(
 		&i.ID,
 		&i.Code,
@@ -2331,7 +2363,7 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 
 const getStopForAgency = `-- name: GetStopForAgency :one
 SELECT DISTINCT
-    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction
+    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction, stops.parent_station
 FROM
     stops
     JOIN stop_times ON stops.id = stop_times.stop_id
@@ -2366,6 +2398,7 @@ func (q *Queries) GetStopForAgency(ctx context.Context, arg GetStopForAgencyPara
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
 		&i.Direction,
+		&i.ParentStation,
 	)
 	return i, err
 }
@@ -2649,7 +2682,7 @@ func (q *Queries) GetStopTimesForTrip(ctx context.Context, tripID string) ([]Sto
 
 const getStopsByIDs = `-- name: GetStopsByIDs :many
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 FROM
     stops
 WHERE
@@ -2691,6 +2724,7 @@ func (q *Queries) GetStopsByIDs(ctx context.Context, stopIds []string) ([]Stop, 
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -2707,7 +2741,7 @@ func (q *Queries) GetStopsByIDs(ctx context.Context, stopIds []string) ([]Stop, 
 
 const getStopsForRoute = `-- name: GetStopsForRoute :many
 SELECT DISTINCT
-    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction
+    stops.id, stops.code, stops.name, stops."desc", stops.lat, stops.lon, stops.zone_id, stops.url, stops.location_type, stops.timezone, stops.wheelchair_boarding, stops.platform_code, stops.direction, stops.parent_station
 FROM
     stop_times
     JOIN trips ON stop_times.trip_id = trips.id
@@ -2740,6 +2774,7 @@ func (q *Queries) GetStopsForRoute(ctx context.Context, id string) ([]Stop, erro
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -3487,9 +3522,75 @@ func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
 	return items, nil
 }
 
+const searchRoutesByFullText = `-- name: SearchRoutesByFullText :many
+SELECT
+    r.id,
+    r.agency_id,
+    r.short_name,
+    r.long_name,
+    r."desc",
+    r.type,
+    r.url,
+    r.color,
+    r.text_color,
+    r.continuous_pickup,
+    r.continuous_drop_off
+FROM
+    routes_fts
+    JOIN routes r ON r.rowid = routes_fts.rowid
+WHERE
+    routes_fts MATCH ?
+ORDER BY
+    bm25(routes_fts),
+    r.agency_id,
+    r.id
+LIMIT
+    ?
+`
+
+type SearchRoutesByFullTextParams struct {
+	Query string
+	Limit int64
+}
+
+func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesByFullTextParams) ([]Route, error) {
+	rows, err := q.query(ctx, q.searchRoutesByFullTextStmt, searchRoutesByFullText, arg.Query, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Route
+	for rows.Next() {
+		var i Route
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgencyID,
+			&i.ShortName,
+			&i.LongName,
+			&i.Desc,
+			&i.Type,
+			&i.Url,
+			&i.Color,
+			&i.TextColor,
+			&i.ContinuousPickup,
+			&i.ContinuousDropOff,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStops = `-- name: ListStops :many
 SELECT
-    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction
+    id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 FROM
     stops
 ORDER BY
@@ -3519,6 +3620,7 @@ func (q *Queries) ListStops(ctx context.Context) ([]Stop, error) {
 			&i.WheelchairBoarding,
 			&i.PlatformCode,
 			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}
@@ -3560,6 +3662,75 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 			&i.ShapeID,
 			&i.WheelchairAccessible,
 			&i.BikesAllowed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchStopsByName = `-- name: SearchStopsByName :many
+SELECT
+    s.id,
+    s.code,
+    s.name,
+    s.lat,
+    s.lon,
+    s.location_type,
+    s.wheelchair_boarding,
+    s.direction,
+    s.parent_station  
+FROM stops s
+JOIN stops_fts fts
+  ON s.rowid = fts.rowid  
+WHERE fts.stop_name MATCH ?1
+ORDER BY s.name
+LIMIT ?2
+`
+
+type SearchStopsByNameParams struct {
+	SearchQuery string
+	Limit       int64
+}
+
+type SearchStopsByNameRow struct {
+	ID                 string
+	Code               sql.NullString
+	Name               sql.NullString
+	Lat                float64
+	Lon                float64
+	LocationType       sql.NullInt64
+	WheelchairBoarding sql.NullInt64
+	Direction          sql.NullString
+	ParentStation      sql.NullString
+}
+
+func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNameParams) ([]SearchStopsByNameRow, error) {
+	rows, err := q.query(ctx, q.searchStopsByNameStmt, searchStopsByName, arg.SearchQuery, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchStopsByNameRow
+	for rows.Next() {
+		var i SearchStopsByNameRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.Lat,
+			&i.Lon,
+			&i.LocationType,
+			&i.WheelchairBoarding,
+			&i.Direction,
+			&i.ParentStation,
 		); err != nil {
 			return nil, err
 		}

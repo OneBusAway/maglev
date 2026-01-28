@@ -7,7 +7,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OneBusAway/go-gtfs"
 	"github.com/twpayne/go-polyline"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -20,7 +19,7 @@ type stopsForRouteParams struct {
 }
 
 func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParams {
-	now := time.Now()
+	now := api.Clock.Now()
 	params := stopsForRouteParams{
 		IncludePolylines: true,
 		Time:             &now,
@@ -47,7 +46,14 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	agencyID, routeID, _ := utils.ExtractAgencyIDAndCodeID(utils.ExtractIDFromParams(r))
+	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(utils.ExtractIDFromParams(r))
+	if err != nil {
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	params := api.parseStopsForRouteParams(r)
 
@@ -164,7 +170,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 			Name:               stop.Name.String,
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 	return stopsList, nil
@@ -199,7 +205,7 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewEntryResponse(result, references)
+	response := models.NewEntryResponse(result, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

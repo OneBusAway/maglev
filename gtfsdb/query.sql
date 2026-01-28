@@ -152,6 +152,31 @@ ORDER BY
     agency_id,
     id;
 
+-- name: SearchRoutesByFullText :many
+SELECT
+    r.id,
+    r.agency_id,
+    r.short_name,
+    r.long_name,
+    r."desc",
+    r.type,
+    r.url,
+    r.color,
+    r.text_color,
+    r.continuous_pickup,
+    r.continuous_drop_off
+FROM
+    routes_fts
+    JOIN routes r ON r.rowid = routes_fts.rowid
+WHERE
+    routes_fts MATCH @query
+ORDER BY
+    bm25(routes_fts),
+    r.agency_id,
+    r.id
+LIMIT
+    @limit;
+
 -- name: GetRouteIDsForAgency :many
 SELECT
     r.id
@@ -222,11 +247,25 @@ WHERE
 
 -- name: GetStop :one
 SELECT
-    *
+    id,
+    code,
+    name,
+    desc,
+    lat,
+    lon,
+    zone_id,
+    url,
+    location_type,
+    timezone,
+    wheelchair_boarding,
+    platform_code,
+    direction
 FROM
     stops
 WHERE
-    id = ?;
+    id = ?
+LIMIT
+    1;
 
 -- name: GetStopForAgency :one
 -- Return the stop only if it is served by any route that belongs to the specified agency.
@@ -928,3 +967,22 @@ FROM trips t
 JOIN block_trip_entry bte ON t.id = bte.trip_id
 WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'));
+
+
+-- name: SearchStopsByName :many
+SELECT
+    s.id,
+    s.code,
+    s.name,
+    s.lat,
+    s.lon,
+    s.location_type,
+    s.wheelchair_boarding,
+    s.direction,
+    s.parent_station  
+FROM stops s
+JOIN stops_fts fts
+  ON s.rowid = fts.rowid  
+WHERE fts.stop_name MATCH sqlc.arg(search_query)
+ORDER BY s.name
+LIMIT sqlc.arg(limit);

@@ -14,7 +14,10 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, shapeID, err := utils.ExtractAgencyIDAndCodeID(utils.ExtractIDFromParams(r))
 
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -83,5 +86,5 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 		Points: encodedPoints,
 	}
 
-	api.sendResponse(w, r, models.NewEntryResponse(shapeEntry, models.NewEmptyReferences()))
+	api.sendResponse(w, r, models.NewEntryResponse(shapeEntry, models.NewEmptyReferences(), api.Clock))
 }

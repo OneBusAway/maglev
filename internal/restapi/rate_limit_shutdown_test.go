@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestRateLimitMiddleware_Shutdown(t *testing.T) {
-	middleware := NewRateLimitMiddleware(10, time.Second)
+	middleware := NewRateLimitMiddleware(10, time.Second, clock.RealClock{})
 
 	assert.NotNil(t, middleware)
 	assert.NotNil(t, middleware.Handler())
@@ -28,7 +29,7 @@ func TestRateLimitMiddleware_Shutdown(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_ShutdownIdempotent(t *testing.T) {
-	middleware := NewRateLimitMiddleware(10, time.Second)
+	middleware := NewRateLimitMiddleware(10, time.Second, clock.RealClock{})
 
 	middleware.Stop()
 	middleware.Stop()
@@ -64,11 +65,11 @@ func TestRateLimitMiddleware_GoroutineActuallyExits(t *testing.T) {
 	// Force garbage collection to clean up any lingering goroutines from previous tests
 	runtime.GC()
 	time.Sleep(50 * time.Millisecond)
-	
+
 	// Get baseline goroutine count
 	initial := runtime.NumGoroutine()
 
-	middleware := NewRateLimitMiddleware(10, time.Second)
+	middleware := NewRateLimitMiddleware(10, time.Second, clock.RealClock{})
 	time.Sleep(50 * time.Millisecond) // Give goroutine time to start
 
 	afterCreate := runtime.NumGoroutine()
@@ -80,4 +81,3 @@ func TestRateLimitMiddleware_GoroutineActuallyExits(t *testing.T) {
 	afterStop := runtime.NumGoroutine()
 	assert.LessOrEqual(t, afterStop, initial, "cleanup goroutine should have exited")
 }
-

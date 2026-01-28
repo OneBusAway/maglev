@@ -99,6 +99,7 @@ type Stop struct {
 	WheelchairBoarding sql.NullInt64
 	PlatformCode       sql.NullString
 	Direction          sql.NullString
+	ParentStation      sql.NullString
 }
 
 type StopTime struct {
@@ -112,6 +113,11 @@ type StopTime struct {
 	DropOffType       sql.NullInt64
 	ShapeDistTraveled sql.NullFloat64
 	Timepoint         sql.NullInt64
+}
+
+type StopsFt struct {
+	ID       string
+	StopName string
 }
 
 type StopsRtreeNode struct {
