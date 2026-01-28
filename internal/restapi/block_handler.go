@@ -2,7 +2,7 @@ package restapi
 
 import (
 	"context"
-	"database/sql" 
+	"database/sql"
 	"net/http"
 	"sort"
 

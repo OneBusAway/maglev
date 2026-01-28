@@ -141,8 +141,6 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, err
 	}
 
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-
 	// Batch-fetch all stop coordinates at once
 	stopIDs := make([]string, len(stopTimes))
 	for i, st := range stopTimes {
@@ -160,24 +158,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		stopCoords[stop.ID] = struct{ lat, lon float64 }{lat: stop.Lat, lon: stop.Lon}
 	}
 
-	stopTimesVals := make([]models.StopTime, len(stopTimes))
-	for i, st := range stopTimes {
-		var distanceAlongTrip float64
-		if coords, exists := stopCoords[st.StopID]; exists && len(shapePoints) > 0 {
-			distanceAlongTrip = api.calculatePreciseDistanceAlongTripWithCoords(
-				coords.lat, coords.lon, shapePoints, cumulativeDistances,
-			)
-		}
-
-		stopTimesVals[i] = models.StopTime{
-			ArrivalTime:         int(st.ArrivalTime / 1e9),
-			DepartureTime:       int(st.DepartureTime / 1e9),
-			StopID:              utils.FormCombinedID(agencyID, st.StopID),
-			StopHeadsign:        st.StopHeadsign.String,
-			DistanceAlongTrip:   distanceAlongTrip,
-			HistoricalOccupancy: "",
-		}
-	}
+	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
@@ -659,8 +640,8 @@ func (api *RestAPI) calculateBatchStopDistances(
 		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         int(stopTime.ArrivalTime),
-				DepartureTime:       int(stopTime.DepartureTime),
+				ArrivalTime:         int(stopTime.ArrivalTime / 1e9),
+				DepartureTime:       int(stopTime.DepartureTime / 1e9),
 				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
@@ -675,8 +656,8 @@ func (api *RestAPI) calculateBatchStopDistances(
 		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         int(stopTime.ArrivalTime),
-				DepartureTime:       int(stopTime.DepartureTime),
+				ArrivalTime:         int(stopTime.ArrivalTime / 1e9),
+				DepartureTime:       int(stopTime.DepartureTime / 1e9),
 				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
@@ -704,6 +685,10 @@ func (api *RestAPI) calculateBatchStopDistances(
 			var closestSegmentIndex = lastMatchedIndex
 			var projectionRatio float64
 
+			// Early exit threshold to speed up search
+			//This may be too conservative for some cases but helps performance significantly
+			const earlyExitThresholdMeters = 100.0
+
 			// Start from lastMatchedIndex
 			for i := lastMatchedIndex; i < len(shapePoints)-1; i++ {
 				distance, ratio := distanceToLineSegment(
@@ -717,7 +702,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 					closestSegmentIndex = i
 					projectionRatio = ratio
 					lastMatchedIndex = i
-				} else if distance > minDistance+100 {
+				} else if distance > minDistance+earlyExitThresholdMeters {
 					// Early exit:
 					break
 				}
@@ -737,8 +722,8 @@ func (api *RestAPI) calculateBatchStopDistances(
 
 		stopTimesList = append(stopTimesList, models.StopTime{
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-			ArrivalTime:         int(stopTime.ArrivalTime),
-			DepartureTime:       int(stopTime.DepartureTime),
+			ArrivalTime:         int(stopTime.ArrivalTime / 1e9),
+			DepartureTime:       int(stopTime.DepartureTime / 1e9),
 			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 			DistanceAlongTrip:   distanceAlongTrip,
 			HistoricalOccupancy: "",

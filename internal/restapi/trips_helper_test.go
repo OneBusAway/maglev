@@ -722,6 +722,26 @@ func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]s
 	return shapePoints, stopTimes, stopCoords
 }
 
+// BENCHMARK OLD WAY (Simulating the loop over O(M) function)
+func BenchmarkLegacy_LinearScan(b *testing.B) {
+	api := &RestAPI{}
+	shape, stops, coords := generateBenchmarkData()
+
+	// Pre-calc happens once in the handler
+	cumDist := preCalculateCumulativeDistances(shape)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Simulate the handler loop
+		for _, st := range stops {
+			if c, ok := coords[st.StopID]; ok {
+				// Each call scans from 0 -> O(M)
+				api.calculatePreciseDistanceAlongTripWithCoords(c.lat, c.lon, shape, cumDist)
+			}
+		}
+	}
+}
+
 // BenchmarkOptimized_MonotonicBatch benchmarks the optimized batch distance calculation
 func BenchmarkOptimized_MonotonicBatch(b *testing.B) {
 	api := &RestAPI{}
