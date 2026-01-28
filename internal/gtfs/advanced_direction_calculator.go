@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -56,10 +57,10 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 	adc.shapeCache = cache
 }
 
-// SetContextCache sets a pre-loaded cache of stop shape context data to avoid database queries.
-// This can improve performance when calculating directions for many stops.
-// IMPORTANT: This must be called before any concurrent operations begin.
-// Panics if called after CalculateStopDirection has been invoked.
+// SetContextCache injects the bulk-loaded context data.
+// IMPORTANT: This must be called before any concurrent calculation operations begin.
+// Panics if called after internal state has been initialized (i.e., after the first
+// fallback to shape-based calculation).
 func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) {
 	if adc.initialized.Load() {
 		panic("SetContextCache called after concurrent operations have started")
@@ -135,7 +136,14 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	if adc.contextCache != nil {
 		stopTrips = adc.contextCache[stopID]
 	} else {
-		stopTrips, _ = adc.queries.GetStopsWithShapeContext(ctx, stopID)
+		var err error
+		stopTrips, err = adc.queries.GetStopsWithShapeContext(ctx, stopID)
+		if err != nil {
+			slog.Warn("failed to get stop shape context",
+				slog.String("stopID", stopID),
+				slog.String("error", err.Error()))
+			return ""
+		}
 	}
 
 	// Collect orientations from all trips, using cache to avoid duplicates

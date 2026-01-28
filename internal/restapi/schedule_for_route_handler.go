@@ -60,8 +60,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Handle cases where no services are running (e.g. 2026 date vs 2025 data).
-	// Return 200 OK with empty data instead of 500 Error.
+	// Behavior Change (Jan 2026): Previously, this returned a 500 Server Error.
+	// We now return 200 OK with an empty schedule because "no service found" is a valid state, not a server failure.
 	if len(serviceIDs) == 0 {
 		entry := models.ScheduleForRouteEntry{
 			RouteID:           utils.FormCombinedID(agencyID, routeID),

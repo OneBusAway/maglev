@@ -188,9 +188,6 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	references.Stops = stops
 
-	fmt.Println("RefStops:", stops)
-	fmt.Println("RefRoutes:", uniqueRouteMap)
-
 	for _, route := range uniqueRouteMap {
 		routeModel := models.NewRoute(
 			utils.FormCombinedID(agencyID, route.ID),

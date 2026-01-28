@@ -2,8 +2,8 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -60,6 +60,10 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	currentLocation, err := time.LoadLocation(currentAgency.Timezone)
 	// Fallback to UTC on error
 	if err != nil {
+		slog.Warn("failed to load agency timezone, defaulting to UTC",
+			slog.String("agencyID", agencyID),
+			slog.String("timezone", currentAgency.Timezone),
+			slog.String("error", err.Error()))
 		currentLocation = time.UTC
 	}
 
@@ -85,13 +89,17 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	// This prevents nil pointer panics and ensures thread-safety.
 	adc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
 
-	// 1. Get Stop IDs for the route to drive the bulk-loading caches
+	// Get Stop IDs for the route to drive the bulk-loading caches
 	stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetStopIDsForRoute(ctx, routeID)
 	if err == nil && len(stopIDs) > 0 {
 
-		// 2. Fetch Stop Contexts (Shapes + Distances) in bulk
 		contextRows, err := api.GtfsManager.GtfsDB.Queries.GetStopsWithShapeContextByIDs(ctx, stopIDs)
-		if err == nil {
+		if err != nil {
+			// Log error when bulk context load fails
+			slog.Warn("bulk context cache load failed, falling back to per-stop queries",
+				slog.String("routeID", routeID),
+				slog.String("error", err.Error()))
+		} else {
 			contextCache := make(map[string][]gtfsdb.GetStopsWithShapeContextRow)
 			shapeIDMap := make(map[string]bool)
 			var uniqueShapeIDs []string
@@ -112,10 +120,15 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				}
 			}
 
-			// 3. Fetch Shape Points in bulk to populate the local cache
+			// Fetch Shape Points in bulk to populate the local cache
 			if len(uniqueShapeIDs) > 0 {
 				shapePoints, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs(ctx, uniqueShapeIDs)
-				if err == nil {
+				if err != nil {
+					// Log error when bulk shape load fails
+					slog.Warn("bulk shape cache load failed, falling back to per-stop queries",
+						slog.String("routeID", routeID),
+						slog.String("error", err.Error()))
+				} else {
 					shapeCache := make(map[string][]gtfsdb.GetShapePointsWithDistanceRow)
 					for _, p := range shapePoints {
 						shapeCache[p.ShapeID] = append(shapeCache[p.ShapeID], gtfsdb.GetShapePointsWithDistanceRow{
@@ -125,8 +138,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 						})
 					}
 
-					// 4. Inject caches into the LOCAL instance.
-					// This avoids touching the global singleton that causes test panics.
+					// Inject caches into the LOCAL instance.
 					adc.SetShapeCache(shapeCache)
 					adc.SetContextCache(contextCache)
 				}
@@ -206,7 +218,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirect
 		return nil, err
 	}
 
-	// 4. Organize Routes in Memory
+	// Organize Routes in Memory
 	routesMap := make(map[string][]string)
 	for _, row := range routeRows {
 		routeID, ok := row.RouteID.(string)
@@ -221,12 +233,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirect
 
 	for _, stop := range stops {
 
-		var direction string
-		if stop.Direction.Valid && stop.Direction.String != "" {
-			direction = stop.Direction.String
-		} else {
-			direction = calc.CalculateStopDirection(ctx, stop.ID, stop.Direction)
-		}
+		direction := calc.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
 		routeIdsString := append([]string(nil), routesMap[stop.ID]...)
 
@@ -390,17 +397,4 @@ func formatStopIDs(agencyID string, stops map[string]bool) []string {
 		stopIDs = append(stopIDs, stopID)
 	}
 	return stopIDs
-}
-
-func (api *RestAPI) calculateStopDirection(ctx context.Context, stopID string, gtfsDirection sql.NullString) string {
-	if api.DirectionCalculator == nil {
-		return models.UnknownValue // Fallback for tests
-	}
-
-	direction := api.DirectionCalculator.CalculateStopDirection(ctx, stopID, gtfsDirection)
-	if direction == "" {
-		return models.UnknownValue // Default when calculation fails
-	}
-
-	return direction
 }
