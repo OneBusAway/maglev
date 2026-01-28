@@ -65,20 +65,26 @@ docker-compose-up:
 	docker-compose up -d
 
 docker-compose-down:
-	docker-compose down
+	docker-compose down || echo "Note: docker-compose down failed (may not be running)"
+	docker-compose -f docker-compose.dev.yml down || echo "Note: docker-compose dev down failed (may not be running)"
 
 docker-compose-dev:
 	docker-compose -f docker-compose.dev.yml up
 
 docker-clean-all:
 	@echo "WARNING: This will delete all data volumes!"
-	docker-compose down -v
-	docker-compose -f docker-compose.dev.yml down -v
-	@if docker image inspect maglev:latest >/dev/null 2>&1; then docker rmi maglev:latest; fi
-	@if docker image inspect maglev:dev >/dev/null 2>&1; then docker rmi maglev:dev; fi
+	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	docker-compose down -v || echo "Note: docker-compose down -v failed (may not be running)"
+	docker-compose -f docker-compose.dev.yml down -v || echo "Note: docker-compose dev down -v failed (may not be running)"
+	@echo "Removing Docker images..."
+	@if docker image inspect maglev:latest >/dev/null 2>&1; then docker rmi maglev:latest && echo "Removed maglev:latest" || echo "Warning: Could not remove maglev:latest (may be in use)"; fi
+	@if docker image inspect maglev:dev >/dev/null 2>&1; then docker rmi maglev:dev && echo "Removed maglev:dev" || echo "Warning: Could not remove maglev:dev (may be in use)"; fi
+	@echo "Cleanup complete."
 
 docker-clean:
-	docker-compose down
-	docker-compose -f docker-compose.dev.yml down
-	@if docker image inspect maglev:latest >/dev/null 2>&1; then docker rmi maglev:latest; fi
-	@if docker image inspect maglev:dev >/dev/null 2>&1; then docker rmi maglev:dev; fi
+	docker-compose down || echo "Note: docker-compose down failed (may not be running)"
+	docker-compose -f docker-compose.dev.yml down || echo "Note: docker-compose dev down failed (may not be running)"
+	@echo "Removing Docker images..."
+	@if docker image inspect maglev:latest >/dev/null 2>&1; then docker rmi maglev:latest && echo "Removed maglev:latest" || echo "Warning: Could not remove maglev:latest (may be in use)"; fi
+	@if docker image inspect maglev:dev >/dev/null 2>&1; then docker rmi maglev:dev && echo "Removed maglev:dev" || echo "Warning: Could not remove maglev:dev (may be in use)"; fi
+	@echo "Cleanup complete."
