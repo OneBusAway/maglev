@@ -179,7 +179,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Set current time
 	var currentTime time.Time
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 	if params.Time != nil {
 		currentTime = params.Time.In(loc)
 	} else {
@@ -417,7 +417,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Code:               stopData.Code.String,
 			Direction:          api.calculateStopDirection(r.Context(), stopData.ID),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: models.UnknownValue,
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}
