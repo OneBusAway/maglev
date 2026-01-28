@@ -318,6 +318,48 @@ func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
 	assert.LessOrEqual(t, distance, maxPossibleDistance, "Distance should be reasonable")
 }
 
+// TestCalculateBatchStopDistances verifies the new Monotonic Search logic
+func TestCalculateBatchStopDistances(t *testing.T) {
+
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Setup a simple straight line shape (1 meter per point)
+	// Point 0: (0,0), Point 1: (0, 0.00001), ...
+	shapePoints := make([]gtfs.ShapePoint, 100)
+	for i := 0; i < 100; i++ {
+		shapePoints[i] = gtfs.ShapePoint{
+			Latitude:  0.0,
+			Longitude: float64(i) * 0.00001, // Roughly 1.1 meters per index
+		}
+	}
+
+	// 2. Setup Stops at known indices
+	stopCoords := map[string]struct{ lat, lon float64 }{
+		"stop_A": {lat: 0.0, lon: shapePoints[10].Longitude},
+		"stop_B": {lat: 0.0, lon: shapePoints[50].Longitude},
+		"stop_C": {lat: 0.0, lon: shapePoints[90].Longitude},
+	}
+
+	stops := []gtfsdb.StopTime{
+		{StopID: "stop_A", ArrivalTime: 100},
+		{StopID: "stop_B", ArrivalTime: 200},
+		{StopID: "stop_C", ArrivalTime: 300},
+	}
+
+	results := api.calculateBatchStopDistances(stops, shapePoints, stopCoords, "agency_1")
+
+	assert.Equal(t, 3, len(results), "Should return 3 results")
+
+	// Distance A should be roughly the distance to index 10
+	// Distance B should be roughly the distance to index 50
+	// Distance C should be roughly the distance to index 90
+	assert.Greater(t, results[1].DistanceAlongTrip, results[0].DistanceAlongTrip, "Stop B should be further than Stop A")
+	assert.Greater(t, results[2].DistanceAlongTrip, results[1].DistanceAlongTrip, "Stop C should be further than Stop B")
+
+	assert.NotZero(t, results[0].DistanceAlongTrip, "Distance should not be zero")
+}
+
 // TestCalculatePreciseDistanceAlongTripWithCoords_Validation tests input validation
 func TestCalculatePreciseDistanceAlongTripWithCoords_Validation(t *testing.T) {
 	api := createTestApi(t)
@@ -646,5 +688,68 @@ func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 				_, _ = api.BuildTripSchedule(ctx, agencyID, serviceDate, ti.trip, loc)
 			}
 		})
+	}
+}
+
+// Helper to generate large datasets for benchmarking
+func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]struct{ lat, lon float64 }) {
+	shapeSize := 10000 // 10k shape points
+	stopsSize := 100   // 100 stops
+
+	shapePoints := make([]gtfs.ShapePoint, shapeSize)
+	for i := 0; i < shapeSize; i++ {
+		shapePoints[i] = gtfs.ShapePoint{
+			Latitude:  40.0 + (float64(i) * 0.0001),
+			Longitude: -74.0 + (float64(i) * 0.0001),
+		}
+	}
+
+	stopTimes := make([]gtfsdb.StopTime, stopsSize)
+	stopCoords := make(map[string]struct{ lat, lon float64 })
+
+	for i := 0; i < stopsSize; i++ {
+		stopID := fmt.Sprintf("stop_%d", i)
+		// Place stops sequentially along the route
+		idx := i * (shapeSize / stopsSize)
+
+		stopTimes[i] = gtfsdb.StopTime{StopID: stopID}
+		stopCoords[stopID] = struct{ lat, lon float64 }{
+			lat: shapePoints[idx].Latitude,
+			lon: shapePoints[idx].Longitude,
+		}
+	}
+
+	return shapePoints, stopTimes, stopCoords
+}
+
+// BENCHMARK OLD WAY (Simulating the loop over O(M) function)
+func BenchmarkLegacy_LinearScan(b *testing.B) {
+	api := &RestAPI{}
+	shape, stops, coords := generateBenchmarkData()
+
+	// Pre-calc happens once in the handler
+	cumDist := preCalculateCumulativeDistances(shape)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Simulate the handler loop
+		for _, st := range stops {
+			if c, ok := coords[st.StopID]; ok {
+				// Each call scans from 0 -> O(M)
+				api.calculatePreciseDistanceAlongTripWithCoords(c.lat, c.lon, shape, cumDist)
+			}
+		}
+	}
+}
+
+// BenchmarkOptimized_MonotonicBatch benchmarks the optimized batch distance calculation
+func BenchmarkOptimized_MonotonicBatch(b *testing.B) {
+	api := &RestAPI{}
+	shape, stops, coords := generateBenchmarkData()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Single call handles all logic -> O(N+M)
+		api.calculateBatchStopDistances(stops, shape, coords, "agency_1")
 	}
 }
