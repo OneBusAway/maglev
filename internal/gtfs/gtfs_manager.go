@@ -337,8 +337,6 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 // for that trip. Note we depend on getting the vehicle that may not match the trip ID exactly,
 // but is part of the same block.
 func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -361,6 +359,9 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	for _, trip := range blockTrips {
 		blockTripIDs[trip.ID] = true
 	}
+
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
 
 	for _, v := range manager.realTimeVehicles {
 		if v.Trip != nil && v.Trip.ID.ID != "" && blockTripIDs[v.Trip.ID.ID] {
