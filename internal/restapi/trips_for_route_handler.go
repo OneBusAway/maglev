@@ -33,7 +33,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		http.Error(w, "null", http.StatusNotFound)
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -149,11 +149,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		vehiclesInBlock := 0
-		if err == nil {
-			for _, tripInBlock := range tripsInBlock {
-				if _, hasVehicle := vehiclesByTripID[tripInBlock]; hasVehicle {
-					vehiclesInBlock++
-				}
+		for _, tripInBlock := range tripsInBlock {
+			if _, hasVehicle := vehiclesByTripID[tripInBlock]; hasVehicle {
+				vehiclesInBlock++
 			}
 		}
 
@@ -201,7 +199,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			// Collect stop IDs from this trip's schedule
-			if schedule != nil && schedule.StopTimes != nil {
+			if schedule.StopTimes != nil {
 				for _, stopTime := range schedule.StopTimes {
 					_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 					if err == nil {
@@ -239,7 +237,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		for stopID := range stopIDsMap {
 			stopIDs = append(stopIDs, stopID)
 		}
-		stops, _ = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		var err error
+		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		if err != nil {
+			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+			stops = []gtfsdb.Stop{}
+		}
 	}
 
 	references := buildTripReferences(api, w, r, ctx, includeSchedule, allRoutes, allTrips, stops, result)
@@ -396,8 +399,13 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 		}
 	}
 
+	const maxReferenceRoutes = 1000
+	capacity := len(presentRoutes)
+	if capacity > maxReferenceRoutes {
+		capacity = maxReferenceRoutes
+	}
 	// Convert presentRoutes and presentTrips maps to slices
-	routes := make([]interface{}, 0, len(presentRoutes))
+	routes := make([]interface{}, 0, capacity)
 	for _, route := range presentRoutes {
 		if route.ID != "" {
 			routes = append(routes, route)

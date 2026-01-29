@@ -17,17 +17,18 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
 
 	agency := api.GtfsManager.FindAgency(id)
+
 	if agency == nil {
 		api.sendNull(w, r)
 		return
 	}
 
 	routesForAgency := api.GtfsManager.RoutesForAgencyID(id)
+	// Safe allocation logic
 	routesList := make([]models.Route, 0, len(routesForAgency))
+
 	for _, route := range routesForAgency {
 		routesList = append(routesList, models.NewRoute(
 			utils.FormCombinedID(route.Agency.Id, route.Id), route.Agency.Id, route.ShortName, route.LongName,
