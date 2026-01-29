@@ -256,6 +256,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds stop references and collects unique routes for the given stop IDs.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, agencyID string, stopIDs []string, calc *gtfs.AdvancedDirectionCalculator) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
 	if len(stopIDs) == 0 {
 		return []models.Stop{}, map[string]gtfsdb.GetRoutesForStopsRow{}, nil

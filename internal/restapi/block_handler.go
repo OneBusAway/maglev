@@ -165,6 +165,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 	}
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) getReferences(ctx context.Context, agencyID string, calc *GTFS.AdvancedDirectionCalculator, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
 	routeIDs := make(map[string]struct{})
 	stopIDs := make(map[string]struct{})
