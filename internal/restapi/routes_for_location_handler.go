@@ -80,7 +80,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			Stops:      []models.Stop{},
 			Trips:      []interface{}{},
 		}
-		response := models.NewListResponseWithRange(results, references, true)
+		response := models.NewListResponseWithRange(results, references, true, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -126,6 +126,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponseWithRange(results, references, len(results) == 0)
+	response := models.NewListResponseWithRange(results, references, len(results) == 0, api.Clock)
 	api.sendResponse(w, r, response)
 }

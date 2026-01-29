@@ -31,6 +31,82 @@ CREATE TABLE
     );
 
 -- migrate
+-- FTS5 external content table for full-text route search.
+-- Data lives in 'routes' table; only the search index is stored here.
+-- The triggers below keep the index synchronized with the content table.
+CREATE VIRTUAL TABLE IF NOT EXISTS routes_fts USING fts5 (
+    id UNINDEXED,
+    agency_id UNINDEXED,
+    short_name,
+    long_name,
+    desc,
+    content = 'routes',
+    content_rowid = 'rowid'
+);
+
+-- migrate
+-- Trigger naming: ai=After Insert, ad=After Delete, au=After Update
+CREATE TRIGGER IF NOT EXISTS routes_fts_ai AFTER INSERT ON routes BEGIN
+INSERT INTO
+    routes_fts(rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        new.rowid,
+        new.id,
+        new.agency_id,
+        coalesce(new.short_name, ''),
+        coalesce(new.long_name, ''),
+        coalesce(new.desc, '')
+    );
+END;
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS routes_fts_ad AFTER DELETE ON routes BEGIN
+INSERT INTO
+    routes_fts(routes_fts, rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        'delete',
+        old.rowid,
+        old.id,
+        old.agency_id,
+        coalesce(old.short_name, ''),
+        coalesce(old.long_name, ''),
+        coalesce(old.desc, '')
+    );
+END;
+
+-- migrate
+CREATE TRIGGER IF NOT EXISTS routes_fts_au AFTER UPDATE ON routes BEGIN
+INSERT INTO
+    routes_fts(routes_fts, rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        'delete',
+        old.rowid,
+        old.id,
+        old.agency_id,
+        coalesce(old.short_name, ''),
+        coalesce(old.long_name, ''),
+        coalesce(old.desc, '')
+    );
+INSERT INTO
+    routes_fts(rowid, id, agency_id, short_name, long_name, desc)
+VALUES
+    (
+        new.rowid,
+        new.id,
+        new.agency_id,
+        coalesce(new.short_name, ''),
+        coalesce(new.long_name, ''),
+        coalesce(new.desc, '')
+    );
+END;
+
+-- migrate
+INSERT INTO routes_fts(routes_fts) VALUES ('rebuild');
+
+-- migrate
 CREATE TABLE
     IF NOT EXISTS stops (
         id TEXT PRIMARY KEY,
@@ -45,7 +121,8 @@ CREATE TABLE
         timezone TEXT,
         wheelchair_boarding INTEGER DEFAULT 0,
         platform_code TEXT,
-        direction TEXT
+        direction TEXT,
+        parent_station TEXT
     );
 
 -- migrate
@@ -99,6 +176,43 @@ DELETE FROM stops_rtree
 WHERE
     id = old.rowid;
 
+END;
+
+-- FTS5 external content table for full-text stop search.
+-- Data lives in 'stops' table; only the search index is stored here.
+-- migrate
+CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5(
+    id UNINDEXED,
+    stop_name,
+    tokenize = 'porter'
+);
+
+-- The triggers below keep the index synchronized with the content table.
+-- migrate
+DROP TRIGGER IF EXISTS stops_fts_insert_trigger;
+CREATE TRIGGER IF NOT EXISTS stops_fts_insert_trigger
+AFTER INSERT ON stops
+BEGIN
+    INSERT INTO stops_fts (rowid, id, stop_name)
+    VALUES (new.rowid, new.id, new.name);
+END;
+
+-- migrate
+DROP TRIGGER IF EXISTS stops_fts_update_trigger;
+CREATE TRIGGER IF NOT EXISTS stops_fts_update_trigger
+AFTER UPDATE ON stops
+BEGIN
+    DELETE FROM stops_fts WHERE rowid = old.rowid;
+    INSERT INTO stops_fts (rowid, id, stop_name)
+    VALUES (new.rowid, new.id, new.name);
+END;
+
+-- migrate
+DROP TRIGGER IF EXISTS stops_fts_delete_trigger;
+CREATE TRIGGER IF NOT EXISTS stops_fts_delete_trigger
+AFTER DELETE ON stops
+BEGIN
+    DELETE FROM stops_fts WHERE rowid = old.rowid;
 END;
 
 -- migrate
@@ -238,3 +352,6 @@ CREATE INDEX IF NOT EXISTS idx_block_trip_entry_service_id ON block_trip_entry (
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_trips_block_id ON trips (block_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_shapes_shape_id ON shapes (shape_id);

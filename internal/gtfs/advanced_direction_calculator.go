@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -22,6 +23,7 @@ const (
 type AdvancedDirectionCalculator struct {
 	queries           *gtfsdb.Queries
 	varianceThreshold float64
+	contextCache      map[string][]gtfsdb.GetStopsWithShapeContextRow   // Cache of stop shape context data
 	shapeCache        map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized       atomic.Bool                                       // Tracks whether concurrent operations have started
 }
@@ -55,19 +57,28 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 	adc.shapeCache = cache
 }
 
-// CalculateStopDirection computes the direction for a stop using the Java algorithm
-func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection sql.NullString) string {
-	// Mark as initialized on first use to prevent configuration changes during concurrent operations
-	adc.initialized.Store(true)
+// SetContextCache injects the bulk-loaded context data.
+// IMPORTANT: This must be called before any concurrent calculation operations begin.
+// Panics if called after internal state has been initialized (i.e., after the first
+// fallback to shape-based calculation).
+func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) {
+	if adc.initialized.Load() {
+		panic("SetContextCache called after concurrent operations have started")
+	}
+	adc.contextCache = cache
+}
 
-	// Step 1: Try to use GTFS direction field if provided
-	if gtfsDirection.Valid && gtfsDirection.String != "" {
-		if direction := adc.translateGtfsDirection(gtfsDirection.String); direction != "" {
+// CalculateStopDirection computes the direction for a stop using the Java algorithm
+func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection ...sql.NullString) string {
+	if len(gtfsDirection) > 0 && gtfsDirection[0].Valid && gtfsDirection[0].String != "" {
+		if direction := adc.translateGtfsDirection(gtfsDirection[0].String); direction != "" {
 			return direction
 		}
 	}
 
-	// Step 2: Calculate from shape data
+	// Mark as initialized for concurrency safety
+	adc.initialized.Store(true)
+
 	return adc.computeFromShapes(ctx, stopID)
 }
 
@@ -118,10 +129,21 @@ func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string)
 
 // computeFromShapes calculates direction from shape data using the Java algorithm
 func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, stopID string) string {
-	// Get trips with shape context for this stop
-	stopTrips, err := adc.queries.GetStopsWithShapeContext(ctx, stopID)
-	if err != nil || len(stopTrips) == 0 {
-		return ""
+
+	var stopTrips []gtfsdb.GetStopsWithShapeContextRow
+
+	// Use cache if available, otherwise hit DB
+	if adc.contextCache != nil {
+		stopTrips = adc.contextCache[stopID]
+	} else {
+		var err error
+		stopTrips, err = adc.queries.GetStopsWithShapeContext(ctx, stopID)
+		if err != nil {
+			slog.Warn("failed to get stop shape context",
+				slog.String("stopID", stopID),
+				slog.String("error", err.Error()))
+			return ""
+		}
 	}
 
 	// Collect orientations from all trips, using cache to avoid duplicates

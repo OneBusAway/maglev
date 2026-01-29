@@ -19,7 +19,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, time.Now())
+	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, api.Clock.Now())
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -45,7 +45,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		Stops:       stops,
 		Trips:       result,
 	})
-	response := models.NewListResponseWithRange(result, references, len(result) == 0)
+	response := models.NewListResponseWithRange(result, references, len(result) == 0, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
@@ -61,7 +61,7 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	currentAgency := api.GtfsManager.GetAgencies()[0]
 	currentLocation, _ = time.LoadLocation(currentAgency.Timezone)
 	timeParam := queryParams.Get("time")
-	currentTime := time.Now().In(currentLocation)
+	currentTime := api.Clock.Now().In(currentLocation)
 	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	_, serviceDate, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
 
@@ -212,7 +212,6 @@ func (api *RestAPI) buildScheduleForTrip(
 }
 
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
 
 	// Batch-fetch all stop coordinates at once
 	stopIDs := make([]string, len(stopTimes))
@@ -236,25 +235,8 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 		}
 	}
 
-	stopTimesList := make([]models.StopTime, 0, len(stopTimes))
-	for _, stopTime := range stopTimes {
-		var distanceAlongTrip float64
-		if coords, exists := stopCoords[stopTime.StopID]; exists && len(shapePoints) > 0 {
-			distanceAlongTrip = api.calculatePreciseDistanceAlongTripWithCoords(
-				coords.lat, coords.lon, shapePoints, cumulativeDistances,
-			)
-		}
+	return api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
-		stopTimesList = append(stopTimesList, models.StopTime{
-			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-			ArrivalTime:         int(stopTime.ArrivalTime),
-			DepartureTime:       int(stopTime.DepartureTime),
-			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
-			DistanceAlongTrip:   distanceAlongTrip,
-			HistoricalOccupancy: "",
-		})
-	}
-	return stopTimesList
 }
 
 type ReferenceParams struct {

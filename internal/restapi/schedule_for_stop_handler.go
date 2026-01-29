@@ -25,7 +25,10 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	agencyID, stopID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
@@ -50,8 +53,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
-	currentTime := time.Now().In(loc)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 	var date int64
 	var targetDate string
 	var weekday string
@@ -69,10 +71,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		targetDate = parsedDate.Format("20060102")
 		weekday = strings.ToLower(parsedDate.Weekday().String())
 	} else {
-		y, m, d := currentTime.Date()
+		now := api.Clock.Now()
+		y, m, d := now.Date()
 		date = time.Date(y, m, d, 0, 0, 0, 0, loc).UnixMilli()
-		targetDate = currentTime.Format("20060102")
-		weekday = strings.ToLower(currentTime.Weekday().String())
+		targetDate = now.Format("20060102")
+		weekday = strings.ToLower(now.Weekday().String())
 	}
 
 	// Verify stop exists
@@ -97,6 +100,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		api.sendResponse(w, r, models.NewEntryResponse(
 			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), date, nil),
 			models.NewEmptyReferences(),
+			api.Clock,
 		))
 		return
 	}
@@ -279,6 +283,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	references.Stops = append(references.Stops, stopRef)
 	// Create and send response
-	response := models.NewEntryResponse(entry, references)
+	response := models.NewEntryResponse(entry, references, api.Clock)
 	api.sendResponse(w, r, response)
 }

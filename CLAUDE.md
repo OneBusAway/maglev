@@ -9,7 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Docker**: Docker 20.10+ and Docker Compose v2.0+
 
 **Setup**:
-- Copy `config.example.json` to `config.json` and configure required values
+- Native: Copy `config.example.json` to `config.json` and configure required values
+- Docker: Copy `config.docker.example.json` to `config.docker.json` and change `api-keys` to secure values
 
 **Verify installation**: `http://localhost:4000/api/where/current-time.json?key=test`
 
@@ -37,11 +38,12 @@ Docker provides a consistent development environment across all platforms:
 - `make docker-compose-up` - Start production services with Docker Compose
 - `make docker-compose-down` - Stop Docker Compose services
 - `make docker-compose-dev` - Start development environment with live reload
-- `make docker-clean` - Remove all Docker images and volumes
+- `make docker-clean` - Remove Docker images (preserves data volumes)
+- `make docker-clean-all` - Remove all Docker images and volumes (destructive)
 
 **Quick Start with Docker:**
 ```bash
-cp config.example.json config.json
+cp config.docker.example.json config.docker.json
 docker-compose up
 ```
 

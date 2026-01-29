@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -384,4 +385,225 @@ func TestTranslateGtfsDirection_NumericEdgeCases(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestSetContextCache_HappyPath(t *testing.T) {
+	// Create a bare instance (no queries needed for this test)
+	adc := &AdvancedDirectionCalculator{}
+
+	// Create dummy cache data
+	cache := make(map[string][]gtfsdb.GetStopsWithShapeContextRow)
+	cache["stop1"] = []gtfsdb.GetStopsWithShapeContextRow{
+		{
+			ID:  "stop1",
+			Lat: 40.7128,
+			Lon: -74.0060,
+		},
+	}
+
+	// Set the cache
+	adc.SetContextCache(cache)
+
+	// Verify it was set correctly (accessing private field)
+	assert.Equal(t, 1, len(adc.contextCache))
+	assert.Equal(t, "stop1", adc.contextCache["stop1"][0].ID)
+}
+
+func TestSetContextCache_PanicAfterInit(t *testing.T) {
+	// Create the instance
+	adc := &AdvancedDirectionCalculator{}
+
+	// Simulate that concurrent operations have already started
+	// We manually toggle the atomic boolean to "true"
+	adc.initialized.Store(true)
+
+	// Define the recovery to catch the panic
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("SetContextCache did not panic as expected when initialized=true")
+		} else {
+			assert.Equal(t, "SetContextCache called after concurrent operations have started", r)
+		}
+	}()
+
+	// This call MUST panic now
+	adc.SetContextCache(make(map[string][]gtfsdb.GetStopsWithShapeContextRow))
+}
+
+func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
+
+	// Setup in-memory DB so the calculator has a valid query interface
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	// Create the calculator using the VALID queries object
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Case 1: Caller provides the optimized direction (should be used instantly)
+	// We pass "North", expect "N"
+	dirProvided := calc.CalculateStopDirection(context.Background(), "any_stop", sql.NullString{String: "North", Valid: true})
+	assert.Equal(t, "N", dirProvided, "Should use provided direction argument")
+
+	// Case 2: Caller omits the argument (should fall back to DB)
+	// The DB query will run, find nothing for "any_stop", and return "" gracefully.
+	// Crucially, it won't panic because 'queries' is initialized.
+	dirOmitted := calc.CalculateStopDirection(context.Background(), "any_stop")
+	assert.Equal(t, "", dirOmitted, "Should fall back gracefully when argument is omitted")
+}
+
+func TestSetContextCache_ConcurrentAccess(t *testing.T) {
+	// Setup
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	assert.Nil(t, err)
+	defer manager.Shutdown()
+
+	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+
+	// Create dummy cache
+	cache := make(map[string][]gtfsdb.GetStopsWithShapeContextRow)
+
+	// Channel to coordinate start
+	start := make(chan struct{})
+	done := make(chan struct{})
+
+	// Launch a "Reader" Goroutine (Simulating a request coming in)
+	go func() {
+		<-start // Wait for signal
+		// This triggers 'initialized.Store(true)' internally
+		calc.CalculateStopDirection(context.Background(), "7000")
+		close(done)
+	}()
+
+	// Launch a "Writer" (Simulating the bulk loader trying to set cache late)
+	// We want to verify this doesn't crash the program with a race condition,
+	// but correctly panics if it happens too late.
+	go func() {
+		<-start // Wait for signal
+		defer func() {
+			// recover if it panics (which is expected/allowed behavior for safety)
+			_ = recover()
+		}()
+		calc.SetContextCache(cache)
+	}()
+
+	// Start the race
+	close(start)
+
+	// Wait for reader to finish
+	<-done
+
+	// If got here without the test binary crashing/deadlocking, the atomic guards did their job.
+}
+
+// TestBulkQuery_GetStopsWithShapeContextByIDs verifies the bulk optimization
+func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
+	// Setup
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	if err != nil {
+		t.Fatalf("Failed to init manager: %v", err)
+	}
+	defer manager.Shutdown()
+
+	ctx := context.Background()
+
+	// DYNAMICALLY fetch valid Stop IDs
+	rows, err := manager.GtfsDB.DB.QueryContext(ctx, "SELECT id FROM stops LIMIT 5")
+
+	if err != nil {
+		t.Fatalf("Failed to query stops: %v", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("Error closing rows: %v", err)
+		}
+	}()
+
+	var stopIDs []string
+	for rows.Next() {
+		var id string
+		err := rows.Scan(&id)
+		if err != nil {
+			t.Fatalf("Failed to scan row: %v", err)
+		}
+		stopIDs = append(stopIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Row iteration error: %v", err)
+	}
+	assert.NotEmpty(t, stopIDs, "Database should have stops")
+
+	// Execute the Bulk Query
+	results, err := manager.GtfsDB.Queries.GetStopsWithShapeContextByIDs(ctx, stopIDs)
+
+	// Verify Results
+	assert.Nil(t, err)
+	assert.NotEmpty(t, results)
+
+	// We expect AT LEAST as many rows as IDs we asked for.
+	assert.GreaterOrEqual(t, len(results), len(stopIDs),
+		"Should return context rows for the requested stops")
+
+	// Verify fields
+	assert.NotEmpty(t, results[0].StopID)
+	// Check NotZero for Lat because 0.0 is technically a valid lat, but unlikely in test data
+	assert.NotZero(t, results[0].Lat)
+}
+
+// TestBulkQuery_GetShapePointsByIDs verifies fetching shape points in bulk.
+func TestBulkQuery_GetShapePointsByIDs(t *testing.T) {
+	// Setup
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	if err != nil {
+		t.Fatalf("Failed to init manager: %v", err)
+	}
+	defer manager.Shutdown()
+
+	ctx := context.Background()
+
+	// DYNAMICALLY fetch a real Shape ID from the DB
+	var shapeID string
+	err = manager.GtfsDB.DB.QueryRowContext(ctx, "SELECT shape_id FROM shapes LIMIT 1").Scan(&shapeID)
+
+	// Stop immediately on error
+	if err != nil {
+		t.Fatalf("Failed to query shapes: %v", err)
+	}
+
+	shapeIDs := []string{shapeID}
+
+	// Execute Bulk Query
+	points, err := manager.GtfsDB.Queries.GetShapePointsByIDs(ctx, shapeIDs)
+
+	// Verify
+	assert.Nil(t, err)
+	assert.NotEmpty(t, points)
+
+	// Verify sorting
+	isSorted := true
+	for i := 0; i < len(points)-1; i++ {
+		if points[i].ShapeID == points[i+1].ShapeID {
+			if points[i].ShapePtSequence > points[i+1].ShapePtSequence {
+				isSorted = false
+				break
+			}
+		}
+	}
+	assert.True(t, isSorted, "Shape points should be returned in sequence order")
 }

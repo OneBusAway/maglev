@@ -3,14 +3,18 @@ package restapi
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestScheduleForRouteHandler(t *testing.T) {
-	api := createTestApi(t)
+
+	clk := clock.NewMockClock(time.Date(2025, 12, 26, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
 	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
@@ -23,6 +27,7 @@ func TestScheduleForRouteHandler(t *testing.T) {
 	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
 
 	t.Run("Valid route", func(t *testing.T) {
+		// Use a date known to be in the test data's service calendar
 		resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-route/"+routeID+".json?key=TEST&date=2025-06-12")
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -129,6 +134,7 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
 
 	t.Run("Valid date parameter", func(t *testing.T) {
+		// Use a date known to be in the test data's service calendar
 		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
@@ -152,4 +158,16 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, model.Code)
 		}
 	})
+}
+
+func TestScheduleForRouteHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1110"
+	endpoint := "/api/where/schedule-for-route/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }

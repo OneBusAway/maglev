@@ -3,13 +3,16 @@ package restapi
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestScheduleForStopHandler(t *testing.T) {
-	api := createTestApi(t)
+	clock := clock.NewMockClock(time.Date(2025, 12, 26, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clock)
 	defer api.Shutdown()
 
 	// Get available agencies and stops for testing
@@ -43,7 +46,14 @@ func TestScheduleForStopHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-stop/"+tt.stopID+".json?key=TEST&date=2025-06-12")
+
+			// If we expect a valid response, force a known valid date (2025-06-12).
+			url := "/api/where/schedule-for-stop/" + tt.stopID + ".json?key=TEST"
+			if tt.expectValidResponse {
+				url += "&date=2025-06-12"
+			}
+
+			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 			assert.Equal(t, tt.expectedStatus, model.Code)
@@ -257,7 +267,8 @@ func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 }
 
 func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
-	api := createTestApi(t)
+	clk := clock.NewMockClock(time.Date(2025, 12, 26, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
 	defer api.Shutdown()
 
 	agencies := api.GtfsManager.GetAgencies()
@@ -265,7 +276,7 @@ func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 
 	t.Run("Stop with no routes returns empty schedule", func(t *testing.T) {
 		stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
-		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -438,4 +449,16 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestScheduleForStopHandlerWithMalformedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "1110"
+	endpoint := "/api/where/schedule-for-stop/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }
