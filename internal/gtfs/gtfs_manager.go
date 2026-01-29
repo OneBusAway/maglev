@@ -109,26 +109,32 @@ func (manager *Manager) Shutdown() {
 	})
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) RLock() {
 	manager.staticMutex.RLock()
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) RUnlock() {
 	manager.staticMutex.RUnlock()
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetAgencies() []gtfs.Agency {
 	return manager.gtfsData.Agencies
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetTrips() []gtfs.ScheduledTrip {
 	return manager.gtfsData.Trips
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetStaticData() *gtfs.Static {
 	return manager.gtfsData
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetStops() []gtfs.Stop {
 	return manager.gtfsData.Stops
 }
