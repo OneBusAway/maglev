@@ -279,7 +279,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
-	situationIDs := api.GetSituationIDsForTrip(tripID)
+	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(agencyID, route.ID),
@@ -443,7 +443,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	if len(situationIDs) > 0 {
-		alerts := api.GtfsManager.GetAlertsForTrip(tripID)
+		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
 			situations := api.BuildSituationReferences(alerts, agencyID)
 			for _, situation := range situations {

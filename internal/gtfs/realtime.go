@@ -70,17 +70,17 @@ func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
 	return alerts
 }
 
-func (manager *Manager) GetAlertsForTrip(tripID string) []gtfs.Alert {
+func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []gtfs.Alert {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
 	var routeID string
 	var agencyID string
 	if manager.GtfsDB != nil {
-		trip, err := manager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+		trip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
 		if err == nil {
 			routeID = trip.RouteID
-			route, err := manager.GtfsDB.Queries.GetRoute(context.Background(), routeID)
+			route, err := manager.GtfsDB.Queries.GetRoute(ctx, routeID)
 			if err == nil {
 				agencyID = route.AgencyID
 			}
