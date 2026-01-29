@@ -42,9 +42,15 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	var currentTime time.Time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
-			currentTime = time.Unix(timeMs/1000, 0)
+		timeMs, err := strconv.ParseInt(timeStr, 10, 64)
+		if err != nil {
+			fieldErrors := map[string][]string{
+				"time": {"must be a valid Unix timestamp in milliseconds"},
+			}
+			api.validationErrorResponse(w, r, fieldErrors)
+			return
 		}
+		currentTime = time.Unix(timeMs/1000, 0)
 	} else {
 		currentTime = api.Clock.Now()
 	}
