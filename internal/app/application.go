@@ -16,6 +16,6 @@ type Application struct {
 	GtfsConfig          gtfs.Config
 	Logger              *slog.Logger
 	GtfsManager         *gtfs.Manager
-	DirectionCalculator *gtfs.DirectionCalculator
+	DirectionCalculator *gtfs.AdvancedDirectionCalculator
 	Clock               clock.Clock
 }

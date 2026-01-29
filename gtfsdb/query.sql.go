@@ -2127,6 +2127,52 @@ func (q *Queries) GetShapePointWindow(ctx context.Context, shapeID string) ([]Ge
 	return items, nil
 }
 
+const getShapePointsByIDs = `-- name: GetShapePointsByIDs :many
+SELECT id, shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled FROM shapes
+WHERE shape_id IN (/*SLICE:shape_ids*/?)
+ORDER BY shape_id, shape_pt_sequence
+`
+
+func (q *Queries) GetShapePointsByIDs(ctx context.Context, shapeIds []string) ([]Shape, error) {
+	query := getShapePointsByIDs
+	var queryParams []interface{}
+	if len(shapeIds) > 0 {
+		for _, v := range shapeIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:shape_ids*/?", strings.Repeat(",?", len(shapeIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:shape_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Shape
+	for rows.Next() {
+		var i Shape
+		if err := rows.Scan(
+			&i.ID,
+			&i.ShapeID,
+			&i.Lat,
+			&i.Lon,
+			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getShapePointsByTripID = `-- name: GetShapePointsByTripID :many
 SELECT
     s.id,
@@ -2888,6 +2934,66 @@ func (q *Queries) GetStopsWithShapeContext(ctx context.Context, id string) ([]Ge
 			&i.StopSequence,
 			&i.ShapeDistTraveled,
 			&i.ShapeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStopsWithShapeContextByIDs = `-- name: GetStopsWithShapeContextByIDs :many
+SELECT 
+    st.stop_id, 
+    t.shape_id, 
+    s.lat, 
+    s.lon, 
+    st.shape_dist_traveled
+FROM stop_times st
+JOIN trips t ON st.trip_id = t.id
+JOIN stops s ON st.stop_id = s.id
+WHERE st.stop_id IN (/*SLICE:stop_ids*/?)
+`
+
+type GetStopsWithShapeContextByIDsRow struct {
+	StopID            string
+	ShapeID           sql.NullString
+	Lat               float64
+	Lon               float64
+	ShapeDistTraveled sql.NullFloat64
+}
+
+func (q *Queries) GetStopsWithShapeContextByIDs(ctx context.Context, stopIds []string) ([]GetStopsWithShapeContextByIDsRow, error) {
+	query := getStopsWithShapeContextByIDs
+	var queryParams []interface{}
+	if len(stopIds) > 0 {
+		for _, v := range stopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(stopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopsWithShapeContextByIDsRow
+	for rows.Next() {
+		var i GetStopsWithShapeContextByIDsRow
+		if err := rows.Scan(
+			&i.StopID,
+			&i.ShapeID,
+			&i.Lat,
+			&i.Lon,
+			&i.ShapeDistTraveled,
 		); err != nil {
 			return nil, err
 		}
