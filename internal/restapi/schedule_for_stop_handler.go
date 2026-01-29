@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -71,11 +70,12 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		targetDate = parsedDate.Format("20060102")
 		weekday = strings.ToLower(parsedDate.Weekday().String())
 	} else {
-		now := api.Clock.Now()
+		now := api.Clock.Now().In(loc)
 		y, m, d := now.Date()
-		date = time.Date(y, m, d, 0, 0, 0, 0, loc).UnixMilli()
-		targetDate = now.Format("20060102")
-		weekday = strings.ToLower(now.Weekday().String())
+		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		date = startOfDay.UnixMilli()
+		targetDate = startOfDay.Format("20060102")
+		weekday = strings.ToLower(startOfDay.Weekday().String())
 	}
 
 	// Verify stop exists
@@ -120,6 +120,21 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	// Build references maps
 	agencyRefs := make(map[string]models.AgencyReference)
+
+	// add the already fetched agency
+	agencyRefs[agencyID] = models.NewAgencyReference(
+		agency.ID,
+		agency.Name,
+		agency.Url,
+		agency.Timezone,
+		agency.Lang.String,
+		agency.Phone.String,
+		agency.Email.String,
+		agency.FareUrl.String,
+		"",    // disclaimer
+		false, // privateService
+	)
+
 	routeRefs := make(map[string]models.Route)
 	tripIDsSet := make(map[string]bool)
 
@@ -181,17 +196,17 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		// Add agency to references if not already present
 		if _, exists := agencyRefs[row.AgencyID]; !exists {
-			agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, row.AgencyID)
+			agencyOfCurrentRow, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, row.AgencyID)
 			if err == nil {
 				agencyModel := models.NewAgencyReference(
-					agency.ID,
-					agency.Name,
-					agency.Url,
-					agency.Timezone,
-					agency.Lang.String,
-					agency.Phone.String,
-					agency.Email.String,
-					agency.FareUrl.String,
+					agencyOfCurrentRow.ID,
+					agencyOfCurrentRow.Name,
+					agencyOfCurrentRow.Url,
+					agencyOfCurrentRow.Timezone,
+					agencyOfCurrentRow.Lang.String,
+					agencyOfCurrentRow.Phone.String,
+					agencyOfCurrentRow.Email.String,
+					agencyOfCurrentRow.FareUrl.String,
 					"",    // disclaimer
 					false, // privateService
 				)
@@ -251,8 +266,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
 		tripRef := models.NewTripReference(
 			combinedTripID,
-			trip.RouteID,
-			trip.ServiceID,
+			utils.FormCombinedID(agencyID, trip.RouteID),
+			utils.FormCombinedID(agencyID, trip.ServiceID),
 			trip.TripHeadsign.String,
 			trip.TripShortName.String,
 			trip.DirectionID.Int64,
@@ -268,12 +283,12 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	stopRef := models.NewStop(
-		stop.Code.String,
-		stop.Direction.String,
+		utils.NullStringOrEmpty(stop.Code),
+		utils.NullStringOrEmpty(stop.Direction),
 		utils.FormCombinedID(agencyID, stop.ID),
-		stop.Name.String,
+		utils.NullStringOrEmpty(stop.Name),
 		"",
-		utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
+		utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		stop.Lat,
 		stop.Lon,
 		int(stop.LocationType.Int64),
