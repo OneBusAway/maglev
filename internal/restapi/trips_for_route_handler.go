@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -107,6 +108,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		allLinkedBlocks[blockID] = true
 	}
 
+	// 1. DETERMINISM FIX: Extract keys and sort them
+	blockIDs := make([]string, 0, len(allLinkedBlocks))
+	for bID := range allLinkedBlocks {
+		blockIDs = append(blockIDs, bID)
+	}
+	sort.Strings(blockIDs)
+
 	realTimeVehicles := api.GtfsManager.GetRealTimeVehicles()
 	vehiclesByTripID := make(map[string]gtfs.Vehicle)
 
@@ -124,7 +132,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 	var activeTrips []ActiveTripEntry
 
-	for blockID := range allLinkedBlocks {
+	// Use sorted blockIDs for deterministic iteration
+	for _, blockID := range blockIDs {
 		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
 
 		tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
@@ -145,12 +154,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
+		// 2. TAUTOLOGICAL CHECK FIX: Removed redundant 'if err == nil'
+
 		vehiclesInBlock := 0
-		if err == nil {
-			for _, tripInBlock := range tripsInBlock {
-				if _, hasVehicle := vehiclesByTripID[tripInBlock]; hasVehicle {
-					vehiclesInBlock++
-				}
+		for _, tripInBlock := range tripsInBlock {
+			if _, hasVehicle := vehiclesByTripID[tripInBlock]; hasVehicle {
+				vehiclesInBlock++
 			}
 		}
 
@@ -161,7 +170,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 					HasVehicle: true,
 				})
 			}
-
 		} else {
 			activeTrips = append(activeTrips, ActiveTripEntry{
 				TripID:     activeTrip,
@@ -186,8 +194,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		tripID := activeEntry.TripID
 		agencyID := tripAgencyResolver.GetAgencyNameByTripID(tripID)
 
-		vehicle := vehiclesByTripID[tripID]
-
 		var schedule *models.TripsSchedule
 		var status *models.TripStatusForTripDetails
 
@@ -197,8 +203,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 
-			// Collect stop IDs from this trip's schedule
-			if schedule != nil && schedule.StopTimes != nil {
+			// 3. TAUTOLOGICAL CHECK FIX: Removed redundant 'if schedule != nil'
+			if schedule.StopTimes != nil {
 				for _, stopTime := range schedule.StopTimes {
 					_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 					if err == nil {
@@ -206,45 +212,43 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 					}
 				}
 			}
+
+		}
+			// Build status if we have a vehicle (either on this trip or we know block has vehicles)
+			if includeStatus {
+				status, _ = api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+			}
+
+			entry := models.TripsForRouteListEntry{
+				Frequency:    nil,
+				Schedule:     schedule,
+				Status:       status,
+				ServiceDate:  todayMidnight.UnixMilli(),
+				SituationIds: api.GetSituationIDsForTrip(tripID),
+				TripId:       utils.FormCombinedID(agencyID, tripID),
+			}
+			result = append(result, entry)
+    } // This closes the for _, activeEntry := range activeTrips loop
+
+		if result == nil {
+			result = []models.TripsForRouteListEntry{}
 		}
 
-		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
-		if includeStatus {
-			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+		var stops []gtfsdb.Stop
+		if len(stopIDsMap) > 0 {
+			stopIDs := make([]string, 0, len(stopIDsMap))
+			for stopID := range stopIDsMap {
+				stopIDs = append(stopIDs, stopID)
+			}
+			stops, _ = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
 		}
 
-		entry := models.TripsForRouteListEntry{
-			Frequency:    nil,
-			Schedule:     schedule,
-			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(tripID),
-			TripId:       utils.FormCombinedID(agencyID, tripID),
-		}
-		result = append(result, entry)
-
-		_ = vehicle
+		references := buildTripReferences(api, w, r, ctx, includeSchedule, allRoutes, allTrips, stops, result)
+		response := models.NewListResponseWithRange(result, references, false, api.Clock)
+		api.sendResponse(w, r, response)
 	}
 
-	if result == nil {
-		result = []models.TripsForRouteListEntry{}
-	}
-
-	var stops []gtfsdb.Stop
-	if len(stopIDsMap) > 0 {
-		stopIDs := make([]string, 0, len(stopIDsMap))
-		for stopID := range stopIDsMap {
-			stopIDs = append(stopIDs, stopID)
-		}
-		stops, _ = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-	}
-
-	references := buildTripReferences(api, w, r, ctx, includeSchedule, allRoutes, allTrips, stops, result)
-	response := models.NewListResponseWithRange(result, references, false, api.Clock)
-	api.sendResponse(w, r, response)
-}
-
-func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http.ResponseWriter, r *http.Request, ctx context.Context, includeTrip bool, allRoutes []gtfsdb.Route, allTrips []gtfsdb.Trip, stops []gtfsdb.Stop, trips []T) models.ReferencesModel {
+	func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http.ResponseWriter, r *http.Request, ctx context.Context, includeTrip bool, allRoutes []gtfsdb.Route, allTrips []gtfsdb.Trip, stops []gtfsdb.Stop, trips []T) models.ReferencesModel {
 	presentTrips := make(map[string]models.Trip, len(trips))
 	presentRoutes := make(map[string]models.Route)
 
