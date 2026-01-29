@@ -174,7 +174,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 
 }
 
-func TestHotSwap_AtomicSwap(t *testing.T) {
+func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	tempDir := t.TempDir()
 
 	gtfsOriginal := models.GetFixturePath(t, "raba.zip")

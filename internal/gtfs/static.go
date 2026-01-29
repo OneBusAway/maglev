@@ -162,7 +162,21 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 }
 
-// ForceUpdate performs a hot swap update of the GTFS data.
+// ForceUpdate performs a thread-safe, mutex protected hot-swap of the GTFS static data and database.
+//
+// This process involves several critical steps to ensure data integrity and minimal downtime:
+//  1. Fetching Data: Downloads or reads the latest GTFS data from the configured source.
+//  2. Staging: Creates a temporary SQLite database ("*.temp.db") and populates it with the new data.
+//  3. Precomputation: Builds necessary indices (e.g., stop spatial index, block layover indices) using the temporary database to ensure the new data is ready for query immediately upon swapping.
+//  4. Mutex Protected Swap:
+//     - Acquires a write lock (staticMutex) to pause all concurrent readers.
+//     - Closes the existing database connection.
+//     - Uses os.Rename to replace the active database file with the fully prepared temporary database.
+//     - Re-opens the database at the stable path.
+//  5. State Update: Updates the manager's references (GtfsDB, gtfsData, indices) to usage the new data components.
+//
+// If the update fails at any point before the swap, temporary files are cleaned up, and the application continues serving the old data.
+// If the final swap (file rename) fails, the system attempts to recover by re-opening the existing database.
 func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
