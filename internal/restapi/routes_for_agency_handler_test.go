@@ -50,3 +50,15 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, refAgencies, 1)
 }
+
+func TestRoutesForAgencyHandlerInvalidID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "11@10"
+	endpoint := "/api/where/routes-for-agency/" + malformedID + ".json?key=TEST"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
