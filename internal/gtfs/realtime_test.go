@@ -144,14 +144,19 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 	assert.Equal(t, 1, manager.realTimeVehicleLookupByVehicle["vehicle2"])
 }
 
-func TestRebuildRealTimeVehicleLookupByVehicle_WithNilID(t *testing.T) {
+func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 	manager := &Manager{
 		realTimeVehicles: []gtfs.Vehicle{
 			{
 				ID: &gtfs.VehicleID{ID: "vehicle1"},
 			},
 			{
-				ID: nil, // Vehicle with nil ID - should be skipped
+				// Vehicle with nil ID - should be skipped
+				ID: nil,
+			},
+			{
+				// Vehicle with empty ID - should be skipped
+				ID: &gtfs.VehicleID{ID: ""},
 			},
 			{
 				ID: &gtfs.VehicleID{ID: "vehicle3"},
@@ -165,5 +170,5 @@ func TestRebuildRealTimeVehicleLookupByVehicle_WithNilID(t *testing.T) {
 	assert.NotNil(t, manager.realTimeVehicleLookupByVehicle)
 	assert.Len(t, manager.realTimeVehicleLookupByVehicle, 2)
 	assert.Equal(t, 0, manager.realTimeVehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 1, manager.realTimeVehicleLookupByVehicle["vehicle3"])
+	assert.Equal(t, 2, manager.realTimeVehicleLookupByVehicle["vehicle3"])
 }
