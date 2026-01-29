@@ -1,9 +1,10 @@
 package restapi
 
 import (
+	"net/http"
+
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
-	"net/http"
 )
 
 func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +20,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 	routesList := make([]models.Route, 0, len(routesForAgency))
 	for _, route := range routesForAgency {
 		routesList = append(routesList, models.NewRoute(
-			route.Id, route.Agency.Id, route.ShortName, route.LongName,
+			utils.FormCombinedID(route.Agency.Id, route.Id), route.Agency.Id, route.ShortName, route.LongName,
 			route.Description, models.RouteType(route.Type),
 			route.Url, route.Color, route.TextColor, route.ShortName,
 		))
