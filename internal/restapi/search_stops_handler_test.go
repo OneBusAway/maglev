@@ -325,6 +325,51 @@ func TestSanitizeFTS5Query(t *testing.T) {
 			input:    "中央駅 テスト",
 			expected: "中央駅 テスト",
 		},
+		{
+			name:     "colon character",
+			input:    "column:value",
+			expected: "column value",
+		},
+		{
+			name:     "caret character",
+			input:    "test^2",
+			expected: "test 2",
+		},
+		{
+			name:     "curly braces",
+			input:    "test{foo}bar",
+			expected: "test foo bar",
+		},
+		{
+			name:     "square brackets",
+			input:    "test[foo]bar",
+			expected: "test foo bar",
+		},
+		{
+			name:     "angle brackets",
+			input:    "test<foo>bar",
+			expected: "test foo bar",
+		},
+		{
+			name:     "tilde character",
+			input:    "test~2",
+			expected: "test 2",
+		},
+		{
+			name:     "pipe character",
+			input:    "test|foo",
+			expected: "test foo",
+		},
+		{
+			name:     "NEAR operator",
+			input:    "test NEAR foo",
+			expected: "test foo",
+		},
+		{
+			name:     "NEAR operator mixed case",
+			input:    "test near foo",
+			expected: "test foo",
+		},
 	}
 
 	for _, tt := range tests {

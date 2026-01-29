@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -55,23 +56,53 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		now := api.Clock.Now()
 		targetDate = now.Format("20060102")
 	}
+
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
-	if err != nil || len(serviceIDs) == 0 {
+	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	// Behavior Change (Jan 2026): Previously, this returned a 500 Server Error.
+	// We now return 200 OK with an empty schedule because "no service found" is a valid state, not a server failure.
+	if len(serviceIDs) == 0 {
+		entry := models.ScheduleForRouteEntry{
+			RouteID:           utils.FormCombinedID(agencyID, routeID),
+			ScheduleDate:      targetDate,
+			ServiceIDs:        []string{},
+			StopTripGroupings: []models.StopTripGrouping{},
+		}
+		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		return
+	}
+
 	combinedServiceIDs := make([]string, 0, len(serviceIDs))
 	for _, sid := range serviceIDs {
 		combinedServiceIDs = append(combinedServiceIDs, utils.FormCombinedID(agencyID, sid))
 	}
+
 	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsForRouteInActiveServiceIDs(ctx, gtfsdb.GetTripsForRouteInActiveServiceIDsParams{
 		RouteID:    routeID,
 		ServiceIds: serviceIDs,
 	})
-	if err != nil || len(trips) == 0 {
+	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	// Handle case where service exists but this route has no trips today.
+	// Return 200 OK with empty data.
+	if len(trips) == 0 {
+		entry := models.ScheduleForRouteEntry{
+			RouteID:           utils.FormCombinedID(agencyID, routeID),
+			ScheduleDate:      targetDate,
+			ServiceIDs:        combinedServiceIDs,
+			StopTripGroupings: []models.StopTripGrouping{},
+		}
+		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		return
+	}
+
 	routeRefs := make(map[string]models.Route)
 	tripIDsSet := make(map[string]bool)
 
@@ -201,12 +232,16 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// Create a local calculator to ensure thread safety
+	calc := gtfs.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
+
 	uniqueStopIDs := make([]string, 0, len(globalStopIDSet))
 	for sid := range globalStopIDSet {
 		uniqueStopIDs = append(uniqueStopIDs, sid)
 	}
 	if len(uniqueStopIDs) > 0 {
-		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
+		// Pass the local calculator
+		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs, calc)
 		if err == nil {
 			references.Stops = append(references.Stops, modelStops...)
 		}

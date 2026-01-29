@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -50,9 +51,9 @@ func FormCombinedID(agencyID, codeID string) string {
 func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	switch wheelchairBoarding {
 	case gtfs.WheelchairBoarding_Possible:
-		return "ACCESSIBLE"
+		return models.Accessible
 	case gtfs.WheelchairBoarding_NotPossible:
-		return "NOT_ACCESSIBLE"
+		return models.NotAccessible
 	default:
 		return models.UnknownValue
 	}
@@ -128,4 +129,16 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 
 	// Valid date, use it
 	return parsedTime.Format("20060102"), parsedTime, nil, true
+}
+
+func LoadLocationWithUTCFallBack(timeZone string, agencyId string) *time.Location {
+	loc, err := time.LoadLocation(timeZone)
+	if err != nil {
+		slog.Warn("invalid agency timezone, using UTC",
+			slog.String("agencyID", agencyId),
+			slog.String("timezone", timeZone),
+			slog.String("error", err.Error()))
+		loc = time.UTC
+	}
+	return loc
 }

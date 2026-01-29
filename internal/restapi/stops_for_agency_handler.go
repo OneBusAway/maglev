@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -110,7 +109,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			Name:               stop.Name.String,
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(stop.WheelchairBoarding.Int64)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 

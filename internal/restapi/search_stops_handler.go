@@ -16,20 +16,15 @@ import (
 // sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
 // to prevent query syntax errors. Does not preserve the original characters.
 func sanitizeFTS5Query(input string) string {
-	replacer := strings.NewReplacer(
-		`"`, " ",
-		`*`, " ",
-		`(`, " ",
-		`)`, " ",
-	)
+	// 1. Remove ALL FTS5 special characters
+	specialChars := regexp.MustCompile(`[*"():^$@#~<>{}[\]\\|&!]`)
+	sanitized := specialChars.ReplaceAllString(input, " ")
 
-	sanitized := replacer.Replace(input)
-
-	// Remove AND / OR / NOT tokens anywhere (case-insensitive, word-boundary based)
-	re := regexp.MustCompile(`(?i)\b(AND|OR|NOT)\b`)
+	// 2. Remove FTS5 operators (AND, OR, NOT, NEAR) case-insensitive
+	re := regexp.MustCompile(`(?i)\b(AND|OR|NOT|NEAR)\b`)
 	sanitized = re.ReplaceAllString(sanitized, " ")
 
-	// Trim and collapse whitespace
+	// 3. Trim and collapse whitespace
 	sanitized = strings.TrimSpace(sanitized)
 	sanitized = strings.Join(strings.Fields(sanitized), " ")
 

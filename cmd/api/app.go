@@ -46,9 +46,9 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
 	}
 
-	var directionCalculator *gtfs.DirectionCalculator
+	var directionCalculator *gtfs.AdvancedDirectionCalculator
 	if gtfsManager != nil {
-		directionCalculator = gtfs.NewDirectionCalculator(gtfsManager.GtfsDB.Queries)
+		directionCalculator = gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
 	}
 
 	// Select clock implementation based on environment

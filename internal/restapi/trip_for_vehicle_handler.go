@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -96,7 +97,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 
 	var currentTime time.Time
 	if params.Time != nil {
@@ -109,7 +110,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if params.ServiceDate != nil {
 		serviceDate = *params.ServiceDate
 	} else {
-		serviceDate = currentTime.Truncate(24 * time.Hour)
+		// Use time.Date() to get local midnight, not Truncate() which uses UTC
+		y, m, d := currentTime.Date()
+		serviceDate = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
 	serviceDateMillis := serviceDate.Unix() * 1000
 
@@ -185,6 +188,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	)
 
 	stopIDs := []string{}
+	calc := gtfs.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
 
 	if status != nil {
 		if status.ClosestStop != "" {
@@ -204,7 +208,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 			stopIDs = append(stopIDs, nextStopID)
 		}
 	}
-	stops, uniqueRouteMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
+	stops, uniqueRouteMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs, calc)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -249,7 +253,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds stop references and collects unique routes for the given stop IDs.
-func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
+func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, agencyID string, stopIDs []string, calc *gtfs.AdvancedDirectionCalculator) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
 	if len(stopIDs) == 0 {
 		return []models.Stop{}, map[string]gtfsdb.GetRoutesForStopsRow{}, nil
 	}
@@ -313,9 +317,9 @@ func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, a
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			Code:               stop.Code.String,
-			Direction:          api.calculateStopDirection(ctx, stop.ID),
+			Direction:          calc.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: models.UnknownValue,
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

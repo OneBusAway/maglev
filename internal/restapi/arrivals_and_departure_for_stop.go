@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -60,7 +61,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agencyID)
 	currentTime = currentTime.In(loc)
 	windowStart := currentTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
 	windowEnd := currentTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
@@ -315,6 +316,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		references.Trips = append(references.Trips, tripRef)
 	}
 
+	calc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
+
 	for stopID := range stopIDSet {
 		stopData, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 		if err != nil {
@@ -347,9 +350,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               stopData.Code.String,
-			Direction:          api.calculateStopDirection(ctx, stopID),
+			Direction:          calc.CalculateStopDirection(ctx, stopID),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: "UNKNOWN",
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

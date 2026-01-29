@@ -237,12 +237,12 @@ func TestMapWheelchairBoarding(t *testing.T) {
 		{
 			name:     "Possible",
 			input:    gtfs.WheelchairBoarding_Possible,
-			expected: "ACCESSIBLE",
+			expected: models.Accessible,
 		},
 		{
 			name:     "Not possible",
 			input:    gtfs.WheelchairBoarding_NotPossible,
-			expected: "NOT_ACCESSIBLE",
+			expected: models.NotAccessible,
 		},
 		{
 			name:     "Not specified (default)",
@@ -513,5 +513,21 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		assert.False(t, valid)
 		assert.NotNil(t, fieldErrors)
 		assert.Contains(t, fieldErrors, "time")
+	})
+}
+
+func TestLoadLocationWithUTCFallBack(t *testing.T) {
+	t.Run("Valid location", func(t *testing.T) {
+		loc := LoadLocationWithUTCFallBack("America/Los_Angeles", "test-agency")
+
+		assert.NotNil(t, loc)
+		assert.Equal(t, "America/Los_Angeles", loc.String())
+	})
+
+	t.Run("Invalid location falls back to UTC", func(t *testing.T) {
+		loc := LoadLocationWithUTCFallBack("Invalid/Timezone", "test-agency")
+
+		assert.NotNil(t, loc)
+		assert.Equal(t, time.UTC, loc)
 	})
 }

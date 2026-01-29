@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -88,7 +89,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loc, _ := time.LoadLocation(agency.Timezone)
+	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 
 	var currentTime time.Time
 	if params.Time != nil {
@@ -101,7 +102,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if params.ServiceDate != nil {
 		serviceDate = *params.ServiceDate
 	} else {
-		serviceDate = currentTime.Truncate(24 * time.Hour)
+		// Use time.Date() to get local midnight, not Truncate() which uses UTC
+		y, m, d := currentTime.Date()
+		serviceDate = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
 
 	serviceDateMillis := serviceDate.Unix() * 1000
@@ -164,6 +167,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Trips = referencedTripsIface
 	}
 
+	calc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
+
 	agencyModel := models.NewAgencyReference(
 		agency.ID,
 		agency.Name,
@@ -179,7 +184,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	references.Agencies = append(references.Agencies, agencyModel)
 
 	if params.IncludeSchedule && schedule != nil {
-		stops, err := api.buildStopReferences(ctx, agencyID, schedule.StopTimes)
+		stops, err := api.buildStopReferences(ctx, calc, agencyID, schedule.StopTimes)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -251,7 +256,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	return referencedTrips, nil
 }
 
-func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, stopTimes []models.StopTime) ([]models.Stop, error) {
+func (api *RestAPI) buildStopReferences(ctx context.Context, calc *GTFS.AdvancedDirectionCalculator, agencyID string, stopTimes []models.StopTime) ([]models.Stop, error) {
 	stopIDSet := make(map[string]bool)
 	originalStopIDs := make([]string, 0, len(stopTimes))
 
@@ -333,9 +338,9 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			Code:               stop.Code.String,
-			Direction:          api.calculateStopDirection(ctx, stop.ID),
+			Direction:          calc.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: models.UnknownValue,
+			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/tidwall/rtree"
+	"maglev.onebusaway.org/internal/logging"
 )
 
 const NoRadiusLimit = -1
@@ -99,7 +101,10 @@ func (manager *Manager) Shutdown() {
 		close(manager.shutdownChan)
 		manager.wg.Wait()
 		if manager.GtfsDB != nil {
-			_ = manager.GtfsDB.Close()
+			if err := manager.GtfsDB.Close(); err != nil {
+				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+				logging.LogError(logger, "failed to close GTFS database", err)
+			}
 		}
 	})
 }
@@ -139,7 +144,8 @@ func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 	defer manager.staticMutex.RUnlock()
 	for _, agency := range manager.gtfsData.Agencies {
 		if agency.Id == id {
-			return &agency
+			agencyCopy := agency
+			return &agencyCopy
 		}
 	}
 	return nil
