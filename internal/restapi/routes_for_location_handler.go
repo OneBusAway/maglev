@@ -9,11 +9,6 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
-const (
-	DefaultSearchRadiusInMeters = 600
-	QuerySearchRadiusInMeters   = 10000
-)
-
 func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 
@@ -47,9 +42,9 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 	query = strings.ToLower(sanitizedQuery)
 	if radius == 0 {
-		radius = DefaultSearchRadiusInMeters
+		radius = models.DefaultSearchRadiusInMeters
 		if query != "" {
-			radius = QuerySearchRadiusInMeters
+			radius = models.QuerySearchRadiusInMeters
 		}
 	}
 
