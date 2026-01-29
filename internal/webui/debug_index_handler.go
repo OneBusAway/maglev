@@ -2,9 +2,11 @@ package webui
 
 import (
 	"embed"
-	"github.com/davecgh/go-spew/spew"
 	"html/template"
 	"net/http"
+
+	"github.com/davecgh/go-spew/spew"
+	"maglev.onebusaway.org/internal/appconf"
 )
 
 //go:embed debug_index.html
@@ -36,6 +38,10 @@ func writeDebugData(w http.ResponseWriter, title string, data interface{}) {
 }
 
 func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
+	if webUI.Application.Config.Env == appconf.Production {
+		http.NotFound(w, r)
+		return
+	}
 	dataType := r.URL.Query().Get("dataType")
 
 	var data interface{}
