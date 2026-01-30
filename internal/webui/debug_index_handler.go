@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/davecgh/go-spew/spew"
+
 	"maglev.onebusaway.org/internal/appconf"
 )
 
@@ -38,10 +39,12 @@ func writeDebugData(w http.ResponseWriter, title string, data interface{}) {
 }
 
 func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
+	// Disable debug endpoint in production to prevent information disclosure and DoS
 	if webUI.Config.Env == appconf.Production {
 		http.NotFound(w, r)
 		return
 	}
+
 	dataType := r.URL.Query().Get("dataType")
 
 	var data interface{}
