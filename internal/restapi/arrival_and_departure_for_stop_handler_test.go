@@ -655,3 +655,14 @@ func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }
+
+func TestArrivalsAndDeparturesForStopHandlerInvalidTime(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	endpoint := "/api/where/arrivals-and-departures-for-stop/1_75403.json?key=TEST&time=invalid_time"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
