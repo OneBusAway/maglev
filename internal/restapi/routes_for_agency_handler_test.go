@@ -39,6 +39,7 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
 
+	// Check that we have a list of routes
 	_, ok = data["list"].([]interface{})
 	require.True(t, ok)
 
@@ -68,10 +69,10 @@ func TestRoutesForAgencyHandlerNonExistentAgency(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/non-existent-agency.json?key=TEST")
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/nonexistent.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "", model.Text)
+	assert.Equal(t, 200, model.Code)
 	assert.Nil(t, model.Data)
 }
 
