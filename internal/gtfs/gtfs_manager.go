@@ -140,10 +140,12 @@ func (manager *Manager) GetStops() []gtfs.Stop {
 	return manager.gtfsData.Stops
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockLayoverIndex {
 	return getBlockLayoverIndicesForRoute(manager.blockLayoverIndices, routeID)
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 	for _, agency := range manager.gtfsData.Agencies {
 		if agency.Id == id {

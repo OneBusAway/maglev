@@ -31,6 +31,7 @@ func buildRouteSearchQuery(input string) string {
 }
 
 // SearchRoutes performs a full text search against routes using SQLite FTS5.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) SearchRoutes(ctx context.Context, input string, maxCount int) ([]gtfsdb.Route, error) {
 	limit := maxCount
 	if limit <= 0 {
