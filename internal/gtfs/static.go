@@ -178,6 +178,9 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 // If the update fails at any point before the swap, temporary files are cleaned up, and the application continues serving the old data.
 // If the final swap (file rename) fails, the system attempts to recover by re-opening the existing database.
 func (manager *Manager) ForceUpdate(ctx context.Context) error {
+	manager.staticUpdateMutex.Lock()
+	defer manager.staticUpdateMutex.Unlock()
+
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
 	newStaticData, err := loadGTFSData(manager.gtfsSource, manager.isLocalFile, manager.config)

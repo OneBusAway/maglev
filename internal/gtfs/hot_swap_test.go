@@ -227,3 +227,60 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	manager.RUnlock()
 
 }
+
+func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Initial setup with "raba.zip"
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: tempDir + "/gtfs.db",
+		Env:          appconf.Development,
+	}
+
+	manager, err := InitGTFSManager(gtfsConfig)
+	require.NoError(t, err)
+	defer manager.Shutdown()
+
+	// Verify initial state
+	manager.RLock()
+	assert.Equal(t, "25", manager.gtfsData.Agencies[0].Id)
+	manager.RUnlock()
+
+	// Prepare to update to "gtfs.zip"
+	newSource := models.GetFixturePath(t, "gtfs.zip")
+	manager.gtfsSource = newSource
+
+	// Launch concurrent ForceUpdate calls
+	concurrency := 2
+	errChan := make(chan error, concurrency)
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			// Calling ForceUpdate concurrently
+			err := manager.ForceUpdate(context.Background())
+			errChan <- err
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Both updates should succeed (serialized one after another)
+	// OR essentially one might overwrite the other's result, but neither should crash.
+	for err := range errChan {
+		assert.NoError(t, err, "Concurrent ForceUpdate should not return error")
+	}
+
+	// Verify final state matches "gtfs.zip" (agency ID 40)
+	manager.RLock()
+	defer manager.RUnlock()
+	if len(manager.gtfsData.Agencies) > 0 {
+		assert.Equal(t, "40", manager.gtfsData.Agencies[0].Id, "Should utilize new GTFS data")
+	} else {
+		t.Error("Agencies should not be empty after update")
+	}
+}
