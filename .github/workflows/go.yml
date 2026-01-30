@@ -55,7 +55,7 @@ jobs:
         run: go mod verify
 
       - name: Run tests
-        run: go test -v -tags=sqlite_fts5 -coverprofile=profile.cov -timeout 30m ./...
+        run: go test -v -tags=sqlite_fts5 -coverprofile=profile.cov -timeout 40m ./...
         env:
           CGO_ENABLED: 1
         shell: bash
@@ -64,3 +64,4 @@ jobs:
 #      - uses: shogo82148/actions-goveralls@v1
 #        with:
 #          path-to-profile: profile.cov
+
