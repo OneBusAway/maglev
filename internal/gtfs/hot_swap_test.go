@@ -130,6 +130,17 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 
 	assert.Error(t, err, "ForceUpdate should fail with invalid source")
 
+	// Verify temp file is cleaned up
+	files, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.Contains(f.Name(), "temp.db") {
+			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
+		}
+	}
+
 	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(agencies), "Original data should be preserved")
