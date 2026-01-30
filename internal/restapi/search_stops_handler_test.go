@@ -43,12 +43,15 @@ func TestSearchStopsHandlerMissingInput(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var errorResponse struct {
-		FieldErrors map[string][]string `json:"fieldErrors"`
+		Code int `json:"code"`
+		Data struct {
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		} `json:"data"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 	require.NoError(t, err)
 
-	assert.Contains(t, errorResponse.FieldErrors, "input")
+	assert.Contains(t, errorResponse.Data.FieldErrors, "input")
 }
 
 func TestSearchStopsHandlerEndToEnd(t *testing.T) {

@@ -20,7 +20,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 
 	agency := api.GtfsManager.FindAgency(id)
 	if agency == nil {
-		api.sendNotFound(w, r)
+		api.sendNull(w, r)
 		return
 	}
 

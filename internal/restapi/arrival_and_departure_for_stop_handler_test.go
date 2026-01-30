@@ -215,14 +215,17 @@ func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var errorResponse struct {
-		FieldErrors map[string][]string `json:"fieldErrors"`
+		Code int `json:"code"`
+		Data struct {
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		} `json:"data"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 	require.NoError(t, err)
 
-	assert.Contains(t, errorResponse.FieldErrors, "tripId")
-	assert.Len(t, errorResponse.FieldErrors["tripId"], 1)
-	assert.Equal(t, "missingRequiredField", errorResponse.FieldErrors["tripId"][0])
+	assert.Contains(t, errorResponse.Data.FieldErrors, "tripId")
+	assert.Len(t, errorResponse.Data.FieldErrors["tripId"], 1)
+	assert.Equal(t, "missingRequiredField", errorResponse.Data.FieldErrors["tripId"][0])
 }
 
 func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
@@ -249,14 +252,17 @@ func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var errorResponse struct {
-		FieldErrors map[string][]string `json:"fieldErrors"`
+		Code int `json:"code"`
+		Data struct {
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		} `json:"data"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 	require.NoError(t, err)
 
-	assert.Contains(t, errorResponse.FieldErrors, "serviceDate")
-	assert.Len(t, errorResponse.FieldErrors["serviceDate"], 1)
-	assert.Equal(t, "missingRequiredField", errorResponse.FieldErrors["serviceDate"][0])
+	assert.Contains(t, errorResponse.Data.FieldErrors, "serviceDate")
+	assert.Len(t, errorResponse.Data.FieldErrors["serviceDate"], 1)
+	assert.Equal(t, "missingRequiredField", errorResponse.Data.FieldErrors["serviceDate"][0])
 }
 
 func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {

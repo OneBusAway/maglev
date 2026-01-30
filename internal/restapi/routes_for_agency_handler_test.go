@@ -39,7 +39,6 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
 
-	// Check that we have a list of routes
 	_, ok = data["list"].([]interface{})
 	require.True(t, ok)
 
