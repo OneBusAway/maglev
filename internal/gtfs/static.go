@@ -94,9 +94,8 @@ func buildGtfsDB(config Config, isLocalFile bool) (*gtfsdb.Client, error) {
 	// Precompute stop directions after GTFS data is loaded
 	precomputer := NewDirectionPrecomputer(client.Queries, client.DB)
 	if err := precomputer.PrecomputeAllDirections(ctx); err != nil {
-		// Log error but don't fail the entire import
 		logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
-		logging.LogError(logger, "Failed to precompute stop directions", err)
+		logging.LogError(logger, "Failed to precompute stop directions - API will fallback to on-demand calculation", err)
 	}
 
 	return client, nil
