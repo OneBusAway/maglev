@@ -278,6 +278,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 			logging.LogError(logger, "CRITICAL: Failed to recover old DB after rename failure", reopenErr)
 			logging.LogOperation(logger, "setting manager.gtfsDB to nil")
 			manager.GtfsDB = nil
+			// TODO: trigger health check failure
 		}
 
 		return err
@@ -291,6 +292,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 			slog.String("db_path", finalDBPath))
 		logging.LogOperation(logger, "setting manager.gtfsDB to nil")
 		manager.GtfsDB = nil
+		// TODO: trigger health check failure
 		return fmt.Errorf("failed to update GTFS database client: %w", err)
 	}
 
