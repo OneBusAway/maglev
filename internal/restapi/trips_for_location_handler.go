@@ -7,6 +7,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -30,18 +31,57 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	activeTrips := api.getActiveTrips(stopTimes, api.GtfsManager.GetRealTimeVehicles())
 	bbox := boundingBox(lat, lon, latSpan, lonSpan)
 
-	allRoutes, allTrips, err := api.getAllRoutesAndTrips(ctx, w, r)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+	visibleTripIDs := make([]string, 0, len(activeTrips))
+	for _, vehicle := range activeTrips {
+		if vehicle.Position == nil {
+			continue
+		}
+		vLat, vLon := float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude)
+		if vLat >= bbox.minLat && vLat <= bbox.maxLat && vLon >= bbox.minLon && vLon <= bbox.maxLon {
+			visibleTripIDs = append(visibleTripIDs, vehicle.Trip.ID.ID)
+		}
 	}
-	tripAgencyResolver := NewTripAgencyResolver(allRoutes, allTrips)
 
-	result := api.buildTripsForLocationEntries(ctx, activeTrips, bbox, tripAgencyResolver, includeSchedule, currentLocation, todayMidnight, serviceDate, w, r)
+	var trips []gtfsdb.Trip
+	if len(visibleTripIDs) > 0 {
+		trips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, visibleTripIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+	}
+
+	routeIDs := make([]string, 0, len(trips))
+	tripRouteMap := make(map[string]string)
+	for _, trip := range trips {
+		routeIDs = append(routeIDs, trip.RouteID)
+		tripRouteMap[trip.ID] = trip.RouteID
+	}
+
+	var routes []gtfsdb.Route
+	if len(routeIDs) > 0 {
+		routes, err = api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+	}
+
+	tripAgencyMap := make(map[string]string)
+	routeAgencyMap := make(map[string]string)
+
+	for _, route := range routes {
+		routeAgencyMap[route.ID] = route.AgencyID
+	}
+	for tripID, routeID := range tripRouteMap {
+		if agencyID, ok := routeAgencyMap[routeID]; ok {
+			tripAgencyMap[tripID] = agencyID
+		}
+	}
+
+	result := api.buildTripsForLocationEntries(ctx, activeTrips, bbox, tripAgencyMap, includeSchedule, currentLocation, todayMidnight, serviceDate, w, r)
 	references := api.BuildReference(w, r, ctx, ReferenceParams{
 		IncludeTrip: includeTrip,
-		AllRoutes:   allRoutes,
-		AllTrips:    allTrips,
 		Stops:       stops,
 		Trips:       result,
 	})
@@ -116,25 +156,11 @@ func boundingBox(lat, lon, latSpan, lonSpan float64) boundingBoxStruct {
 	}
 }
 
-func (api *RestAPI) getAllRoutesAndTrips(ctx context.Context, w http.ResponseWriter, r *http.Request) ([]gtfsdb.Route, []gtfsdb.Trip, error) {
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.ListRoutes(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return nil, nil, err
-	}
-	allTrips, err := api.GtfsManager.GtfsDB.Queries.ListTrips(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return nil, nil, err
-	}
-	return allRoutes, allTrips, nil
-}
-
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
 	activeTrips map[string]gtfs.Vehicle,
 	bbox boundingBoxStruct,
-	tripAgencyResolver *TripAgencyResolver,
+	tripAgencyMap map[string]string,
 	includeSchedule bool,
 	currentLocation *time.Location,
 	todayMidnight time.Time,
@@ -144,6 +170,10 @@ func (api *RestAPI) buildTripsForLocationEntries(
 ) []models.TripsForLocationListEntry {
 	var result []models.TripsForLocationListEntry
 	for _, vehicle := range activeTrips {
+		if ctx.Err() != nil {
+			return result
+		}
+
 		pos := vehicle.Position
 		if pos == nil {
 			continue
@@ -153,7 +183,12 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			continue
 		}
 		tripID := vehicle.Trip.ID.ID
-		agencyID := tripAgencyResolver.GetAgencyNameByTripID(tripID)
+
+		agencyID, ok := tripAgencyMap[tripID]
+		if !ok {
+			continue
+		}
+
 		var schedule *models.TripsSchedule
 		if includeSchedule {
 			schedule = api.buildScheduleForTrip(ctx, tripID, agencyID, serviceDate, currentLocation, w, r)
@@ -165,7 +200,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    nil,
 			Schedule:     schedule,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(r.Context(), tripID),
+			SituationIds: api.GetSituationIDsForTrip(ctx, tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
@@ -241,8 +276,6 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 
 type ReferenceParams struct {
 	IncludeTrip bool
-	AllRoutes   []gtfsdb.Route
-	AllTrips    []gtfsdb.Trip
 	Stops       []gtfsdb.Stop
 	Trips       []models.TripsForLocationListEntry
 }
@@ -276,9 +309,10 @@ type referenceBuilder struct {
 func (rb *referenceBuilder) build(params ReferenceParams) error {
 	rb.collectTripIDs(params.Trips)
 	rb.buildStopList(params.Stops)
-	rb.enrichTripsData(params.AllTrips)
 
-	if err := rb.collectAgenciesAndRoutes(params.AllRoutes); err != nil {
+	rb.enrichTripsData()
+
+	if err := rb.collectAgenciesAndRoutes(); err != nil {
 		return err
 	}
 
@@ -353,8 +387,23 @@ func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) mode
 	}
 }
 
-func (rb *referenceBuilder) enrichTripsData(allTrips []gtfsdb.Trip) {
-	for _, trip := range allTrips {
+func (rb *referenceBuilder) enrichTripsData() {
+	var tripIDs []string
+	for id := range rb.presentTrips {
+		tripIDs = append(tripIDs, id)
+	}
+
+	if len(tripIDs) == 0 {
+		return
+	}
+
+	trips, err := rb.api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(rb.ctx, tripIDs)
+	if err != nil {
+		logging.LogError(rb.api.Logger, "failed to batch fetch trips for references", err)
+		return
+	}
+
+	for _, trip := range trips {
 		if _, exists := rb.presentTrips[trip.ID]; exists {
 			rb.presentTrips[trip.ID] = rb.createTrip(trip)
 			rb.presentRoutes[trip.RouteID] = models.Route{}
@@ -377,14 +426,24 @@ func (rb *referenceBuilder) createTrip(trip gtfsdb.Trip) models.Trip {
 	}
 }
 
-func (rb *referenceBuilder) collectAgenciesAndRoutes(allRoutes []gtfsdb.Route) error {
+func (rb *referenceBuilder) collectAgenciesAndRoutes() error {
 	rb.presentAgencies = make(map[string]models.AgencyReference)
 
-	for _, route := range allRoutes {
-		if _, exists := rb.presentRoutes[route.ID]; !exists {
-			continue
-		}
+	var routeIDs []string
+	for id := range rb.presentRoutes {
+		routeIDs = append(routeIDs, id)
+	}
 
+	if len(routeIDs) == 0 {
+		return nil
+	}
+
+	routes, err := rb.api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(rb.ctx, routeIDs)
+	if err != nil {
+		return err
+	}
+
+	for _, route := range routes {
 		rb.presentRoutes[route.ID] = rb.createRoute(route)
 		if err := rb.addAgency(route.AgencyID); err != nil {
 			return err
