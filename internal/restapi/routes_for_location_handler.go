@@ -42,10 +42,9 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 	query = strings.ToLower(sanitizedQuery)
 	if radius == 0 {
-		// Default radius to 600 meters if not specified
-		radius = 600
+		radius = models.DefaultSearchRadiusInMeters
 		if query != "" {
-			radius = 10000
+			radius = models.QuerySearchRadiusInMeters
 		}
 	}
 
