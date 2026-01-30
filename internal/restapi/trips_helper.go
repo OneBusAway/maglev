@@ -12,6 +12,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
@@ -117,6 +118,7 @@ func (api *RestAPI) BuildTripStatus(
 	return status, nil
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
@@ -169,6 +171,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	}, nil
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
 	if !trip.BlockID.Valid {
 		return "", "", nil, nil
@@ -290,6 +293,7 @@ func findNextStop(
 	return "", 0
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func findClosestStop(api *RestAPI, ctx context.Context, pos *gtfs.Position, stopTimes []*gtfsdb.StopTime) (stopID string, offset int) {
 	if pos == nil || pos.Latitude == nil || pos.Longitude == nil {
 		return "", 0
@@ -437,12 +441,14 @@ func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, min
 	return bestDist
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) setBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time, status *models.TripStatusForTripDetails) int {
 	return api.calculateBlockTripSequence(ctx, tripID, serviceDate)
 }
 
 // calculateBlockTripSequence calculates the index of a trip within its block's ordered trip sequence
 // for trips that are active on the given service date
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
 	blockID, err := api.GtfsManager.GtfsDB.Queries.GetBlockIDByTripID(ctx, tripID)
 
@@ -588,6 +594,7 @@ func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
 
 // calculatePreciseDistanceAlongTrip is the legacy version that fetches stop coordinates from the database
 // Deprecated: Use calculatePreciseDistanceAlongTripWithCoords with batch-fetched coordinates instead
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopID string, shapePoints []gtfs.ShapePoint) float64 {
 	if len(shapePoints) == 0 {
 		return 0.0
@@ -759,6 +766,7 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 	return utils.Distance(px, py, closestX, closestY), t
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
 	alerts := api.GtfsManager.GetAlertsForTrip(ctx, tripID)
 

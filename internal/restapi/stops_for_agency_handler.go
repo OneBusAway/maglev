@@ -78,6 +78,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	api.sendResponse(w, r, response)
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, error) {
 	stopsList := make([]models.Stop, 0, len(stopIDs))
 
