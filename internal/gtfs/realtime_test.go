@@ -1,6 +1,7 @@
 package gtfs
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestGetAlertsForTrip(t *testing.T) {
 		},
 	}
 
-	alerts := manager.GetAlertsForTrip("trip123")
+	alerts := manager.GetAlertsForTrip(context.Background(), "trip123")
 
 	assert.Len(t, alerts, 1)
 	assert.Equal(t, "alert1", alerts[0].ID)
