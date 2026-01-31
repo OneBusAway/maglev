@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -381,4 +382,35 @@ func TestArrivalsAndDeparturesForStopHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
+
+func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyId := agencies[0].Id
+
+	stops := api.GtfsManager.GetStops()
+	require.NotEmpty(t, stops)
+	stopId := utils.FormCombinedID(agencyId, stops[0].Id)
+
+	endpoint := "/api/where/arrivals-and-departures-for-stop/" + stopId + ".json?key=TEST&time=invalid_time"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Should return 400 for invalid time")
+	assert.Equal(t, 400, model.Code)
+
+	endpoint = "/api/where/arrivals-and-departures-for-stop/" + stopId + ".json?key=TEST&minutesAfter=abc"
+	resp, model = serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Should return 400 for invalid minutesAfter")
+	assert.Equal(t, 400, model.Code)
+
+	endpoint = "/api/where/arrivals-and-departures-for-stop/" + stopId + ".json?key=TEST&minutesBefore=xyz"
+	resp, model = serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Should return 400 for invalid minutesBefore")
+	assert.Equal(t, 400, model.Code)
 }

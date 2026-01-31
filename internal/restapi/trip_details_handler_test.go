@@ -352,3 +352,20 @@ func TestTripDetailsHandlerWithMalformedID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 }
+
+func TestTripDetailsHandlerWithInvalidParams(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := api.GtfsManager.GetAgencies()[0]
+	trips := api.GtfsManager.GetTrips()
+	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+
+	endpoint := "/api/where/trip-details/" + tripID + ".json?key=TEST&serviceDate=invalid"
+	_, resp, _ := serveAndRetrieveEndpoint(t, endpoint)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	endpoint = "/api/where/trip-details/" + tripID + ".json?key=TEST&time=invalid"
+	_, resp, _ = serveAndRetrieveEndpoint(t, endpoint)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
