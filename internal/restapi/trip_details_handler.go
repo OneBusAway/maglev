@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -20,17 +21,20 @@ type TripDetailsParams struct {
 	Time            *time.Time
 }
 
-func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) TripDetailsParams {
+func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) (TripDetailsParams, error) {
 	params := TripDetailsParams{
 		IncludeTrip:     true,
 		IncludeSchedule: true,
 		IncludeStatus:   true,
 	}
 
+	// 1. Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
+		} else {
+			return params, errors.New("serviceDate") // Return error field name
 		}
 	}
 
@@ -46,14 +50,17 @@ func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) TripDetailsParams 
 		params.IncludeStatus = includeStatusStr == "true"
 	}
 
+	// 2. Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else {
+			return params, errors.New("time") // Return error field name
 		}
 	}
 
-	return params
+	return params, nil
 }
 
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +79,14 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	params := api.parseTripIdDetailsParams(r)
+	params, err := api.parseTripIdDetailsParams(r)
+	if err != nil {
+		fieldErrors := map[string][]string{
+			err.Error(): {"invalid value"},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {

@@ -22,17 +22,20 @@ type TripForVehicleParams struct {
 	Time            *time.Time
 }
 
-func (api *RestAPI) parseTripForVehicleParams(r *http.Request) TripForVehicleParams {
+func (api *RestAPI) parseTripForVehicleParams(r *http.Request) (TripForVehicleParams, error) {
 	params := TripForVehicleParams{
 		IncludeTrip:     true,
 		IncludeSchedule: false,
 		IncludeStatus:   true,
 	}
 
+	// 1. Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
+		} else {
+			return params, errors.New("serviceDate") // Return error field name
 		}
 	}
 
@@ -48,14 +51,17 @@ func (api *RestAPI) parseTripForVehicleParams(r *http.Request) TripForVehiclePar
 		params.IncludeStatus = includeStatusStr == "true"
 	}
 
+	// 2. Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else {
+			return params, errors.New("time") // Return error field name
 		}
 	}
 
-	return params
+	return params, nil
 }
 
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +96,15 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	params := api.parseTripForVehicleParams(r)
+
+	params, err := api.parseTripForVehicleParams(r)
+	if err != nil {
+		fieldErrors := map[string][]string{
+			err.Error(): {"invalid value"},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	tripID := vehicle.Trip.ID.ID
 

@@ -605,7 +605,8 @@ func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/test?minutesAfter=60&minutesBefore=15&time=1609459200000&tripId=trip_123&serviceDate=1609459200000&vehicleId=vehicle_456&stopSequence=3", nil)
 
-	params := api.parseArrivalAndDepartureParams(req)
+	params, err := api.parseArrivalAndDepartureParams(req)
+	require.NoError(t, err) // Ensure no error
 
 	assert.Equal(t, 60, params.MinutesAfter)
 	assert.Equal(t, 15, params.MinutesBefore)
@@ -623,7 +624,8 @@ func TestParseArrivalAndDepartureParams_DefaultValues(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/test", nil)
 
-	params := api.parseArrivalAndDepartureParams(req)
+	params, err := api.parseArrivalAndDepartureParams(req)
+	require.NoError(t, err)
 
 	assert.Equal(t, 30, params.MinutesAfter) // Default
 	assert.Equal(t, 5, params.MinutesBefore) // Default
@@ -638,37 +640,50 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&time=invalid&serviceDate=invalid&stopSequence=invalid", nil)
+	// 1. Invalid minutesAfter
+	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid", nil)
+	_, err := api.parseArrivalAndDepartureParams(req)
+	assert.Error(t, err)
+	assert.Equal(t, "minutesAfter", err.Error())
 
-	params := api.parseArrivalAndDepartureParams(req)
+	// 2. Invalid minutesBefore
+	req = httptest.NewRequest("GET", "/test?minutesBefore=invalid", nil)
+	_, err = api.parseArrivalAndDepartureParams(req)
+	assert.Error(t, err)
+	assert.Equal(t, "minutesBefore", err.Error())
 
-	// Should use defaults when parsing fails
-	assert.Equal(t, 30, params.MinutesAfter)
-	assert.Equal(t, 5, params.MinutesBefore)
-	assert.Nil(t, params.Time)
-	assert.Nil(t, params.ServiceDate)
-	assert.Nil(t, params.StopSequence)
+	// 3. Invalid time
+	req = httptest.NewRequest("GET", "/test?time=invalid", nil)
+	_, err = api.parseArrivalAndDepartureParams(req)
+	assert.Error(t, err)
+	assert.Equal(t, "time", err.Error())
+
+	// 4. Invalid serviceDate
+	req = httptest.NewRequest("GET", "/test?serviceDate=invalid", nil)
+	_, err = api.parseArrivalAndDepartureParams(req)
+	assert.Error(t, err)
+	assert.Equal(t, "serviceDate", err.Error())
+
+	// 5. Invalid stopSequence
+	req = httptest.NewRequest("GET", "/test?stopSequence=invalid", nil)
+	_, err = api.parseArrivalAndDepartureParams(req)
+	assert.Error(t, err)
+	assert.Equal(t, "stopSequence", err.Error())
 }
 
-func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
+func TestArrivalAndDepartureForStopHandler_InvalidParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	malformedID := "1110"
-	endpoint := "/api/where/arrival-and-departure-for-stop/" + malformedID + ".json?key=TEST"
+	agency := api.GtfsManager.GetAgencies()[0]
+	stops := api.GtfsManager.GetStops()
+	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	tripID := "trip_1" // Dummy
+	serviceDate := time.Now().Unix() * 1000
 
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
-}
-
-func TestArrivalsAndDeparturesForStopHandlerInvalidTime(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	endpoint := "/api/where/arrivals-and-departures-for-stop/1_75403.json?key=TEST&time=invalid_time"
-
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	_, resp, _ := serveAndRetrieveEndpoint(t,
+		"/api/where/arrival-and-departure-for-stop/"+stopID+".json?key=TEST&tripId="+tripID+
+			"&serviceDate="+fmt.Sprintf("%d", serviceDate)+"&time=invalid")
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

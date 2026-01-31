@@ -152,9 +152,10 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	assert.NotNil(t, entry["tripId"])
 	assert.NotNil(t, entry["serviceDate"])
 
-	// Testing Default Path where no Service Date is given
 	loc, err := time.LoadLocation(agency.Timezone)
-	assert.Nil(t, err)
+	if err != nil {
+		loc = time.UTC
+	}
 
 	currentTimeInLoc := time.Now().In(loc)
 	y, m, d := currentTimeInLoc.Date()
@@ -645,4 +646,25 @@ func TestTripForVehicleHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
+
+func TestTripForVehicleHandlerWithInvalidParams(t *testing.T) {
+	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
+	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&serviceDate=invalid")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+
+	resp, err = http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&time=invalid")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
 }

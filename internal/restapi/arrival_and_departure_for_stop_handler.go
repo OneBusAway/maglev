@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,28 +24,37 @@ type ArrivalAndDepartureParams struct {
 	StopSequence  *int
 }
 
-func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) ArrivalAndDepartureParams {
+func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) (ArrivalAndDepartureParams, error) {
 	params := ArrivalAndDepartureParams{
 		MinutesAfter:  30, // Default 30 minutes after
 		MinutesBefore: 5,  // Default 5 minutes before
 	}
 
+	// 1. Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
 		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
 			params.MinutesAfter = minutesAfter
+		} else {
+			return params, errors.New("minutesAfter")
 		}
 	}
 
+	// 2. Validate minutesBefore
 	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
 		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
 			params.MinutesBefore = minutesBefore
+		} else {
+			return params, errors.New("minutesBefore")
 		}
 	}
 
+	// 3. Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else {
+			return params, errors.New("time")
 		}
 	}
 
@@ -53,11 +63,13 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) ArrivalAndDe
 		params.TripID = tripIDStr
 	}
 
-	// Required serviceDate parameter
+	// 4. Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
+		} else {
+			return params, errors.New("serviceDate")
 		}
 	}
 
@@ -66,14 +78,16 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) ArrivalAndDe
 		params.VehicleID = vehicleIDStr
 	}
 
-	// Optional stopSequence parameter
+	// 5. Validate stopSequence
 	if stopSequenceStr := r.URL.Query().Get("stopSequence"); stopSequenceStr != "" {
 		if stopSequence, err := strconv.Atoi(stopSequenceStr); err == nil {
 			params.StopSequence = &stopSequence
+		} else {
+			return params, errors.New("stopSequence")
 		}
 	}
 
-	return params
+	return params, nil
 }
 
 func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +107,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	params := api.parseArrivalAndDepartureParams(r)
+	params, err := api.parseArrivalAndDepartureParams(r)
+	if err != nil {
+		fieldErrors := map[string][]string{
+			err.Error(): {"invalid value"},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	if params.TripID == "" {
 		fieldErrors := map[string][]string{
