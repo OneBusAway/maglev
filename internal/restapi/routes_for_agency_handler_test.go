@@ -69,10 +69,10 @@ func TestRoutesForAgencyHandlerNonExistentAgency(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/nonexistent.json?key=TEST")
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/non-existent-agency.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, 200, model.Code)
+	assert.Equal(t, "", model.Text)
 	assert.Nil(t, model.Data)
 }
 
