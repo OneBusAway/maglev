@@ -173,7 +173,7 @@ func (rl *RateLimitMiddleware) cleanup() {
 		case <-rl.cleanupTick.C:
 			rl.mu.Lock()
 			now := rl.clock.Now()
-			
+
 			for key, client := range rl.limiters {
 				// Skip exempted keys
 				if !rl.exemptKeys[key] {
