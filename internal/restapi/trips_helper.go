@@ -792,33 +792,3 @@ func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) [
 	}
 	return situationIDs
 }
-
-type TripAgencyResolver struct {
-	RouteToAgency map[string]string
-	TripToRoute   map[string]string
-}
-
-// NewTripAgencyResolver creates a new TripAgencyResolver that maps trip IDs to their respective agency IDs.
-func NewTripAgencyResolver(allRoutes []gtfsdb.Route, allTrips []gtfsdb.Trip) *TripAgencyResolver {
-	routeToAgency := make(map[string]string, len(allRoutes))
-	for _, route := range allRoutes {
-		routeToAgency[route.ID] = route.AgencyID
-	}
-	tripToRoute := make(map[string]string, len(allTrips))
-	for _, trip := range allTrips {
-		tripToRoute[trip.ID] = trip.RouteID
-	}
-	return &TripAgencyResolver{
-		RouteToAgency: routeToAgency,
-		TripToRoute:   tripToRoute,
-	}
-}
-
-// GetAgencyNameByTripID retrieves the agency name for a given trip ID.
-func (r *TripAgencyResolver) GetAgencyNameByTripID(tripID string) string {
-	routeID := r.TripToRoute[tripID]
-
-	agency := r.RouteToAgency[routeID]
-
-	return agency
-}
