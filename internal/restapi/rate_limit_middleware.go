@@ -11,9 +11,16 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 )
 
+// rateLimitClient tracks the limiter and its last usage time.
+// This allows us to remove inactive users without disrupting active ones.
+type rateLimitClient struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
 // RateLimitMiddleware provides per-API-key rate limiting
 type RateLimitMiddleware struct {
-	limiters    map[string]*rate.Limiter
+	limiters    map[string]*rateLimitClient
 	mu          sync.RWMutex
 	rateLimit   rate.Limit
 	burstSize   int
@@ -40,7 +47,7 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, clock clo
 	}
 
 	middleware := &RateLimitMiddleware{
-		limiters:    make(map[string]*rate.Limiter),
+		limiters:    make(map[string]*rateLimitClient),
 		rateLimit:   rateLimit,
 		burstSize:   ratePerSecond,
 		cleanupTick: time.NewTicker(5 * time.Minute), // Cleanup old limiters every 5 minutes
@@ -63,27 +70,23 @@ func (rl *RateLimitMiddleware) Handler() func(http.Handler) http.Handler {
 }
 
 // getLimiter gets or creates a rate limiter for the given API key
+// and updates the last usage timestamp.
 func (rl *RateLimitMiddleware) getLimiter(apiKey string) *rate.Limiter {
-	rl.mu.RLock()
-	limiter, exists := rl.limiters[apiKey]
-	rl.mu.RUnlock()
-
-	if exists {
-		return limiter
-	}
-
-	// Create new limiter
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	// Double-check after acquiring write lock
-	if limiter, exists := rl.limiters[apiKey]; exists {
-		return limiter
+	// If the client exists, update the lastSeen time and return the limiter
+	if client, exists := rl.limiters[apiKey]; exists {
+		client.lastSeen = rl.clock.Now()
+		return client.limiter
 	}
 
-	// Create new limiter with the configured rate and burst
-	limiter = rate.NewLimiter(rl.rateLimit, rl.burstSize)
-	rl.limiters[apiKey] = limiter
+	// Create new limiter and wrap it in our client struct
+	limiter := rate.NewLimiter(rl.rateLimit, rl.burstSize)
+	rl.limiters[apiKey] = &rateLimitClient{
+		limiter:  limiter,
+		lastSeen: rl.clock.Now(),
+	}
 
 	return limiter
 }
@@ -162,19 +165,21 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 
 // cleanup periodically removes old, unused limiters to prevent memory leaks
 func (rl *RateLimitMiddleware) cleanup() {
+	// Define how long a client must be idle before eviction
+	threshold := 10 * time.Minute
+
 	for {
 		select {
 		case <-rl.cleanupTick.C:
 			rl.mu.Lock()
-
-			// Remove limiters that haven't been used recently
-			// For simplicity, we'll remove all limiters and let them be recreated as needed
-			// In a production system, you might want to track last access time
-			for key := range rl.limiters {
-				// Keep exempted keys and recently active limiters
+			now := rl.clock.Now()
+			
+			for key, client := range rl.limiters {
+				// Skip exempted keys
 				if !rl.exemptKeys[key] {
-					// Simple cleanup: remove limiters that have tokens available (not recently used)
-					if limiter := rl.limiters[key]; limiter.Tokens() > 0 {
+					// using Time-Based Eviction (LRU)
+					// only delete if the client hasn't been seen in 10 minutes.
+					if now.Sub(client.lastSeen) > threshold {
 						delete(rl.limiters, key)
 					}
 				}
