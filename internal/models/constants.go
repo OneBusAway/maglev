@@ -9,3 +9,8 @@ const (
 	// NotAccessible indicates wheelchair boarding is not possible (GTFS wheelchair_boarding = 2)
 	NotAccessible = "NOT_ACCESSIBLE"
 )
+
+const (
+	DefaultSearchRadiusInMeters = 600
+	QuerySearchRadiusInMeters   = 10000
+)

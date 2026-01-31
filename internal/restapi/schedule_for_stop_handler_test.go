@@ -100,6 +100,34 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 	})
 }
 
+func TestScheduleForStopHandlerAgencyTimeZone(t *testing.T) {
+	clk := clock.NewMockClock(
+		time.Date(2025, 12, 26, 23, 30, 0, 0, time.UTC),
+	)
+	api := createTestApiWithClock(t, clk)
+	defer api.Shutdown()
+
+	agencies := api.GtfsManager.GetAgencies()
+	stops := api.GtfsManager.GetStops()
+
+	agency := agencies[0]
+	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+
+	endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
+	_, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	data := model.Data.(map[string]interface{})
+	entry, ok := data["entry"].(map[string]interface{})
+	assert.True(t, ok)
+	assert.NotNil(t, entry["date"])
+
+	loc, _ := time.LoadLocation(agency.Timezone)
+	localAgencyTime := clk.Now().In(loc)
+	y, m, d := localAgencyTime.Date()
+	expected := time.Date(y, m, d, 0, 0, 0, 0, loc).UnixMilli()
+	assert.Equal(t, float64(expected), entry["date"])
+}
+
 func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -168,7 +196,7 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 	}
 }
 
-func TestScheduleForStopHandlerTripReferences(t *testing.T) {
+func TestScheduleForStopHandlerReferences(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
@@ -194,6 +222,20 @@ func TestScheduleForStopHandlerTripReferences(t *testing.T) {
 		assert.Contains(t, entry, "stopId", "Entry should have stopId")
 		assert.Contains(t, entry, "date", "Entry should have date")
 
+		references := data["references"].(map[string]interface{})
+
+		agenciesRef, ok := references["agencies"].([]interface{})
+		assert.True(t, ok, "Agencies should exist")
+		assert.True(t, len(agenciesRef) >= 1, "Should Have at least one Agency")
+
+		stopsRef, ok := references["stops"].([]interface{})
+		assert.True(t, ok, "Stops should exist in references")
+		assert.Len(t, stopsRef, 1, "Should have exactly one stop")
+
+		_, ok = references["trips"].([]interface{})
+		assert.True(t, ok, "Trips should exist in references")
+		_, ok = references["routes"].([]interface{})
+		assert.True(t, ok, "Routes should exist in references")
 	})
 }
 
@@ -368,6 +410,11 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 					require.True(ok, "TripID should be a string")
 					require.NotEmpty(tripID, "TripID should not be empty")
 					require.Contains(tripID, "_", "TripID should be in combined format (agency_trip)")
+
+					serviceID, ok := stopTime["serviceId"].(string)
+					require.True(ok, "ServiceID should be a string")
+					require.NotEmpty(serviceID, "ServiceID should not be empty")
+					require.Contains(serviceID, "_", "serviceId should have agency prefix")
 				}
 			}
 		}

@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -98,7 +99,13 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
-	currentAgency := api.GtfsManager.GetAgencies()[0]
+	agencies := api.GtfsManager.GetAgencies()
+	if len(agencies) == 0 {
+		err := errors.New("no agencies configured in GTFS manager")
+		api.serverErrorResponse(w, r, err)
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, err
+	}
+	currentAgency := agencies[0]
 	currentLocation, _ = time.LoadLocation(currentAgency.Timezone)
 	timeParam := queryParams.Get("time")
 	currentTime := api.Clock.Now().In(currentLocation)

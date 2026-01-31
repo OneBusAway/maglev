@@ -13,7 +13,12 @@ import (
 )
 
 func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	ctx := r.Context()
+	if ctx.Err() != nil {
+		api.serverErrorResponse(w, r, ctx.Err())
+		return
+	}
+
 	id := utils.ExtractIDFromParams(r)
 	agencyID, blockID, err := utils.ExtractAgencyIDAndCodeID(id)
 
@@ -26,6 +31,10 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
 	if err != nil {
+		if ctx.Err() != nil {
+			api.serverErrorResponse(w, r, ctx.Err())
+			return
+		}
 		api.sendNotFound(w, r)
 		return
 	}
