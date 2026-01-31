@@ -33,7 +33,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		http.Error(w, "null", http.StatusNotFound)
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -149,11 +149,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		vehiclesInBlock := 0
-		if err == nil {
-			for _, tripInBlock := range tripsInBlock {
-				if _, hasVehicle := vehiclesByTripID[tripInBlock]; hasVehicle {
-					vehiclesInBlock++
-				}
+		for _, tripInBlock := range tripsInBlock {
+			if _, hasVehicle := vehiclesByTripID[tripInBlock]; hasVehicle {
+				vehiclesInBlock++
 			}
 		}
 
@@ -201,7 +199,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			// Collect stop IDs from this trip's schedule
-			if schedule != nil && schedule.StopTimes != nil {
+			if schedule.StopTimes != nil {
 				for _, stopTime := range schedule.StopTimes {
 					_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 					if err == nil {
@@ -239,7 +237,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		for stopID := range stopIDsMap {
 			stopIDs = append(stopIDs, stopID)
 		}
-		stops, _ = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		var err error
+		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		if err != nil {
+			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+			stops = []gtfsdb.Stop{}
+		}
 	}
 
 	references := buildTripReferences(api, w, r, ctx, includeSchedule, allRoutes, allTrips, stops, result)
@@ -248,7 +251,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http.ResponseWriter, r *http.Request, ctx context.Context, includeTrip bool, allRoutes []gtfsdb.Route, allTrips []gtfsdb.Trip, stops []gtfsdb.Stop, trips []T) models.ReferencesModel {
-	presentTrips := make(map[string]models.Trip, len(trips))
+	// Define the capacity constant at the top to use it everywhere
+	// Cap initial capacity to prevent excessive pre-allocation with large datasets.
+	const initialCapacity = 1000
+
+	tripsCap := len(trips)
+	if tripsCap > initialCapacity {
+		tripsCap = initialCapacity
+	}
+	presentTrips := make(map[string]models.Trip, tripsCap)
+
 	presentRoutes := make(map[string]models.Route)
 
 	for _, trip := range trips {
@@ -284,8 +296,13 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 		}
 	}
 
+	stopsCap := len(stops)
+	if stopsCap > initialCapacity {
+		stopsCap = initialCapacity
+	}
+	stopList := make([]models.Stop, 0, stopsCap)
+
 	// Build stop list and collect routes serving those stops
-	stopList := make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
 		routeIds, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(ctx, stop.ID)
 		if err != nil {
@@ -337,8 +354,13 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 		}
 	}
 
+	agenciesCap := len(allRoutes)
+	if agenciesCap > initialCapacity {
+		agenciesCap = initialCapacity
+	}
+	presentAgencies := make(map[string]models.AgencyReference, agenciesCap)
+
 	// Collect agencies for present routes
-	presentAgencies := make(map[string]models.AgencyReference)
 	for _, route := range allRoutes {
 		if _, exists := presentRoutes[route.ID]; exists {
 			presentRoutes[route.ID] = models.NewRoute(
@@ -373,8 +395,13 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 		}
 	}
 
+	tripsRefCap := len(presentTrips)
+	if tripsRefCap > initialCapacity {
+		tripsRefCap = initialCapacity
+	}
+	tripsRefList := make([]interface{}, 0, tripsRefCap)
+
 	// Optionally include trip details
-	tripsRefList := make([]interface{}, 0, len(presentTrips))
 	if includeTrip {
 		for _, trip := range presentTrips {
 			tripDetails, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, trip.ID)
@@ -396,8 +423,13 @@ func buildTripReferences[T interface{ GetTripId() string }](api *RestAPI, w http
 		}
 	}
 
+	routesCap := len(presentRoutes)
+	if routesCap > initialCapacity {
+		routesCap = initialCapacity
+	}
+
 	// Convert presentRoutes and presentTrips maps to slices
-	routes := make([]interface{}, 0, len(presentRoutes))
+	routes := make([]interface{}, 0, routesCap)
 	for _, route := range presentRoutes {
 		if route.ID != "" {
 			routes = append(routes, route)
