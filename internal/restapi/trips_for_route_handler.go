@@ -229,8 +229,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
-		vehicle := vehiclesByTripID[tripID]
-
 		var schedule *models.TripsSchedule
 		var status *models.TripStatusForTripDetails
 
@@ -265,8 +263,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
-
-		_ = vehicle
 	}
 
 	if result == nil {
@@ -342,22 +338,24 @@ func buildTripReferences[T interface{ GetTripId() string }](
 
 	if len(tripIDsToFetch) > 0 {
 		fetchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
-		if err == nil {
-			for _, trip := range fetchedTrips {
-				presentTrips[trip.ID] = models.Trip{
-					ID:            trip.ID,
-					RouteID:       trip.RouteID,
-					ServiceID:     trip.ServiceID,
-					TripHeadsign:  trip.TripHeadsign.String,
-					TripShortName: trip.TripShortName.String,
-					DirectionID:   trip.DirectionID.Int64,
-					BlockID:       trip.BlockID.String,
-					ShapeID:       trip.ShapeID.String,
-					PeakOffPeak:   0,
-					TimeZone:      "",
-				}
-				presentRoutes[trip.RouteID] = models.Route{}
+		if err != nil {
+			api.Logger.Debug("failed to fetch trips for references", "error", err)
+		}
+
+		for _, trip := range fetchedTrips {
+			presentTrips[trip.ID] = models.Trip{
+				ID:            trip.ID,
+				RouteID:       trip.RouteID,
+				ServiceID:     trip.ServiceID,
+				TripHeadsign:  trip.TripHeadsign.String,
+				TripShortName: trip.TripShortName.String,
+				DirectionID:   trip.DirectionID.Int64,
+				BlockID:       trip.BlockID.String,
+				ShapeID:       trip.ShapeID.String,
+				PeakOffPeak:   0,
+				TimeZone:      "",
 			}
+			presentRoutes[trip.RouteID] = models.Route{}
 		}
 	}
 
@@ -370,37 +368,39 @@ func buildTripReferences[T interface{ GetTripId() string }](
 
 	if len(routeIDsToFetch) > 0 {
 		fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDsToFetch)
-		if err == nil {
-			for _, route := range fetchedRoutes {
-				presentRoutes[route.ID] = models.NewRoute(
-					utils.FormCombinedID(route.AgencyID, route.ID),
-					route.AgencyID,
-					route.ShortName.String,
-					route.LongName.String,
-					route.Desc.String,
-					models.RouteType(route.Type),
-					route.Url.String,
-					route.Color.String,
-					route.TextColor.String,
-					route.ShortName.String,
-				)
-				// Identify Agency IDs needed
-				if _, exists := presentAgencies[route.AgencyID]; !exists {
-					currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
-					if err == nil {
-						presentAgencies[currentAgency.ID] = models.NewAgencyReference(
-							currentAgency.ID,
-							currentAgency.Name,
-							currentAgency.Url,
-							currentAgency.Timezone,
-							currentAgency.Lang.String,
-							currentAgency.Phone.String,
-							currentAgency.Email.String,
-							currentAgency.FareUrl.String,
-							"",
-							false,
-						)
-					}
+		if err != nil {
+			api.Logger.Debug("failed to fetch routes for references", "error", err)
+		}
+
+		for _, route := range fetchedRoutes {
+			presentRoutes[route.ID] = models.NewRoute(
+				utils.FormCombinedID(route.AgencyID, route.ID),
+				route.AgencyID,
+				route.ShortName.String,
+				route.LongName.String,
+				route.Desc.String,
+				models.RouteType(route.Type),
+				route.Url.String,
+				route.Color.String,
+				route.TextColor.String,
+				route.ShortName.String,
+			)
+			// Identify Agency IDs needed
+			if _, exists := presentAgencies[route.AgencyID]; !exists {
+				currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
+				if err == nil {
+					presentAgencies[currentAgency.ID] = models.NewAgencyReference(
+						currentAgency.ID,
+						currentAgency.Name,
+						currentAgency.Url,
+						currentAgency.Timezone,
+						currentAgency.Lang.String,
+						currentAgency.Phone.String,
+						currentAgency.Email.String,
+						currentAgency.FareUrl.String,
+						"",
+						false,
+					)
 				}
 			}
 		}
