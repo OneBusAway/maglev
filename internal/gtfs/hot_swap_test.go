@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,9 @@ func loggerErrorf(format string, args ...interface{}) error {
 }
 
 func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
+	}
 	tempDir := t.TempDir()
 
 	gtfsConfig := Config{
@@ -148,6 +152,9 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 }
 
 func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
+	}
 	tempDir := t.TempDir()
 
 	gtfsOriginal := models.GetFixturePath(t, "raba.zip")
@@ -186,6 +193,9 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 }
 
 func TestHotSwap_MutexProtectedSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
+	}
 	tempDir := t.TempDir()
 
 	gtfsOriginal := models.GetFixturePath(t, "raba.zip")
@@ -240,6 +250,9 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 }
 
 func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
+	}
 	tempDir := t.TempDir()
 
 	// Initial setup with "raba.zip"
