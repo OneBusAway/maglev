@@ -190,10 +190,13 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		if vehicle != nil && vehicle.Trip != nil {
 			vehicleID = vehicle.ID.ID
 
-			// Check if we have stop time updates for this trip
-			if len(vehicle.Trip.StopTimeUpdates) > 0 {
+			// Fetch the Trip Update separately
+			tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
+
+			// Use the tripUpdate for predictions
+			if tripUpdate != nil && len(tripUpdate.StopTimeUpdates) > 0 {
 				// Look for StopTimeUpdate that matches this stop
-				for _, stopTimeUpdate := range vehicle.Trip.StopTimeUpdates {
+				for _, stopTimeUpdate := range tripUpdate.StopTimeUpdates {
 					// Match by stop sequence or stop ID
 					if (stopTimeUpdate.StopSequence != nil && int64(*stopTimeUpdate.StopSequence) == st.StopSequence) ||
 						(stopTimeUpdate.StopID != nil && *stopTimeUpdate.StopID == stopCode) {
@@ -400,8 +403,7 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 	var nearbyStopIDs []string
 	for _, s := range nearbyStops {
 		if s.ID != stopID {
-			nearbyStopIDs = []string{utils.FormCombinedID(agencyID, s.ID)}
-			break
+			nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agencyID, s.ID))
 		}
 	}
 	return nearbyStopIDs
