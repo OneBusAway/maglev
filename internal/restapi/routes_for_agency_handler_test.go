@@ -39,7 +39,6 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
 
-	// Check that we have a list of routes
 	_, ok = data["list"].([]interface{})
 	require.True(t, ok)
 
@@ -49,6 +48,31 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	refAgencies, ok := refs["agencies"].([]interface{})
 	require.True(t, ok)
 	assert.Len(t, refAgencies, 1)
+}
+
+func TestRoutesForAgencyHandlerInvalidID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	malformedID := "11@10"
+	endpoint := "/api/where/routes-for-agency/" + malformedID + ".json?key=TEST"
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Contains(t, model.Text, "invalid")
+}
+
+func TestRoutesForAgencyHandlerNonExistentAgency(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/non-existent-agency.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "", model.Text)
+	assert.Nil(t, model.Data)
 }
 
 func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
