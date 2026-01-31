@@ -38,7 +38,7 @@ func writeDebugData(w http.ResponseWriter, title string, data interface{}) {
 }
 
 func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
-	if webUI.Application.Config.Env == appconf.Production {
+	if webUI.Config.Env == appconf.Production {
 		http.NotFound(w, r)
 		return
 	}
