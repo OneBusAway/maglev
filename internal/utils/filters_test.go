@@ -173,8 +173,8 @@ func TestFilterRoutes(t *testing.T) {
 		{
 			name: "Filter with some routes present",
 			present: map[string]bool{
-				"route1": true,
-				"route3": true,
+				"agency1_route1": true,
+				"agency2_route3": true,
 			},
 			expected: 2,
 		},
@@ -186,24 +186,24 @@ func TestFilterRoutes(t *testing.T) {
 		{
 			name: "Filter with all routes present",
 			present: map[string]bool{
-				"route1": true,
-				"route2": true,
-				"route3": true,
+				"agency1_route1": true,
+				"agency1_route2": true,
+				"agency2_route3": true,
 			},
 			expected: 3,
 		},
 		{
 			name: "Filter with single route",
 			present: map[string]bool{
-				"route2": true,
+				"agency1_route2": true,
 			},
 			expected: 1,
 		},
 		{
 			name: "Filter with non-existent route in map",
 			present: map[string]bool{
-				"route1":     true,
-				"route_fake": true,
+				"agency1_route1":     true,
+				"agency1_route_fake": true,
 			},
 			expected: 1,
 		},
@@ -228,14 +228,14 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	present := map[string]bool{"route1": true}
+	present := map[string]bool{"agency1_route1": true}
 
 	result := FilterRoutes(client.Queries, ctx, present)
 
 	require.Len(t, result, 1)
 	route := result[0].(models.Route)
 
-	assert.Equal(t, "route1", route.ID)
+	assert.Equal(t, "agency1_route1", route.ID)
 	assert.Equal(t, "agency1", route.AgencyID)
 	assert.Equal(t, "R1", route.ShortName)
 	assert.Equal(t, "Route One", route.LongName)
