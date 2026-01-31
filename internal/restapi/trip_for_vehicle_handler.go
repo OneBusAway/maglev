@@ -22,17 +22,23 @@ type TripForVehicleParams struct {
 	Time            *time.Time
 }
 
-func (api *RestAPI) parseTripForVehicleParams(r *http.Request) TripForVehicleParams {
+// parseTripForVehicleParams parses and validates parameters.
+func (api *RestAPI) parseTripForVehicleParams(r *http.Request) (TripForVehicleParams, map[string][]string) {
 	params := TripForVehicleParams{
 		IncludeTrip:     true,
 		IncludeSchedule: false,
 		IncludeStatus:   true,
 	}
 
+	fieldErrors := make(map[string][]string)
+
+	// Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
+		} else {
+			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
 	}
 
@@ -48,14 +54,21 @@ func (api *RestAPI) parseTripForVehicleParams(r *http.Request) TripForVehiclePar
 		params.IncludeStatus = includeStatusStr == "true"
 	}
 
+	// Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else {
+			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
 	}
 
-	return params
+	if len(fieldErrors) > 0 {
+		return params, fieldErrors
+	}
+
+	return params, nil
 }
 
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +103,13 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	params := api.parseTripForVehicleParams(r)
+
+	// Capture parsing errors
+	params, fieldErrors := api.parseTripForVehicleParams(r)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	tripID := vehicle.Trip.ID.ID
 

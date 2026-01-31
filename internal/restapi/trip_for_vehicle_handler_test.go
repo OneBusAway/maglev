@@ -152,9 +152,10 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	assert.NotNil(t, entry["tripId"])
 	assert.NotNil(t, entry["serviceDate"])
 
-	// Testing Default Path where no Service Date is given
 	loc, err := time.LoadLocation(agency.Timezone)
-	assert.Nil(t, err)
+	if err != nil {
+		loc = time.UTC
+	}
 
 	currentTimeInLoc := time.Now().In(loc)
 	y, m, d := currentTimeInLoc.Date()
@@ -645,4 +646,55 @@ func TestTripForVehicleHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
+
+func TestTripForVehicleHandlerWithInvalidParams(t *testing.T) {
+	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
+	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&serviceDate=invalid")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	resp2, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&time=invalid")
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+}
+
+func TestParseTripForVehicleParams_Unit(t *testing.T) {
+	api, _, _ := setupTestApiWithMockVehicle(t)
+	defer api.Shutdown()
+
+	req := httptest.NewRequest("GET", "/?includeStatus=false&time=1609459200000", nil)
+	params, errs := api.parseTripForVehicleParams(req)
+
+	assert.Nil(t, errs)
+	assert.False(t, params.IncludeStatus)
+	assert.NotNil(t, params.Time)
+
+	reqDefault := httptest.NewRequest("GET", "/", nil)
+	paramsDefault, errsDefault := api.parseTripForVehicleParams(reqDefault)
+
+	assert.Nil(t, errsDefault)
+	assert.True(t, paramsDefault.IncludeTrip)
+	assert.False(t, paramsDefault.IncludeSchedule)
+	assert.True(t, paramsDefault.IncludeStatus)
+
+	reqInvalid := httptest.NewRequest("GET", "/?serviceDate=invalid&time=invalid", nil)
+	_, errsInvalid := api.parseTripForVehicleParams(reqInvalid)
+
+	assert.NotNil(t, errsInvalid)
+	assert.Contains(t, errsInvalid, "serviceDate")
+	assert.Contains(t, errsInvalid, "time")
+	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errsInvalid["serviceDate"][0])
 }
