@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -528,4 +530,29 @@ func TestBlockHandlerJSONSerialization(t *testing.T) {
 	assert.Contains(t, unmarshaled, "data")
 	assert.Contains(t, unmarshaled, "version")
 	assert.Contains(t, unmarshaled, "currentTime")
+}
+
+func TestBlockHandlerContextCancellation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	t.Run("cancelled context should be handled gracefully", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "/api/where/block/25_1.json?key=TEST", nil)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		time.Sleep(time.Microsecond)
+
+		w := httptest.NewRecorder()
+		mux := http.NewServeMux()
+		api.SetRoutes(mux)
+		mux.ServeHTTP(w, req)
+
+		assert.True(t,
+			w.Code == http.StatusInternalServerError || (w.Code == http.StatusOK && w.Body.Len() > 0),
+			"Expected explicit error or valid response, but got silent failure (200 with empty body) or unexpected code: %d", w.Code)
+	})
 }
