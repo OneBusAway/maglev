@@ -2,14 +2,14 @@
 // IDs from JSON response structures in integration tests.
 package restapi
 
-import (
-	"testing"
-)
+type testingFatalf interface {
+	Fatalf(format string, args ...any)
+}
 
 // collectAllNestedIdsFromObjects extracts string IDs from a nested array field
 // across all objects in the list. For example, extracting all routeIds from
 // a list of stop objects where each stop has a routeIds array.
-func collectAllNestedIdsFromObjects(t *testing.T, list []interface{}, key string) (ids []string) {
+func collectAllNestedIdsFromObjects(t testingFatalf, list []interface{}, key string) (ids []string) {
 	for i, item := range list {
 		object, ok := item.(map[string]interface{})
 		if !ok {
@@ -36,7 +36,7 @@ func collectAllNestedIdsFromObjects(t *testing.T, list []interface{}, key string
 
 // collectAllIdsFromObjects extracts string IDs from all objects in this list.
 // For example, extracting all agency IDs from a list of agency objects.
-func collectAllIdsFromObjects(t *testing.T, list []interface{}, key string) (ids []string) {
+func collectAllIdsFromObjects(t testingFatalf, list []interface{}, key string) (ids []string) {
 	for i, item := range list {
 		object, ok := item.(map[string]interface{})
 		if !ok {
