@@ -102,6 +102,9 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, maxCount, false, routeTypes, queryTime)
 
 	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"

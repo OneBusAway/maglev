@@ -35,6 +35,7 @@ type Manager struct {
 	realTimeTripLookup             map[string]int
 	realTimeVehicleLookupByTrip    map[string]int
 	realTimeVehicleLookupByVehicle map[string]int
+	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
 	staticMutex                    sync.RWMutex // Protects gtfsData and lastUpdated
 	config                         Config
 	shutdownChan                   chan struct{}
@@ -65,7 +66,7 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	}
 	manager.setStaticGTFS(staticData)
 
-	gtfsDB, err := buildGtfsDB(config, isLocalFile)
+	gtfsDB, err := buildGtfsDB(config, isLocalFile, "")
 	if err != nil {
 		return nil, fmt.Errorf("error building GTFS database: %w", err)
 	}
@@ -109,39 +110,43 @@ func (manager *Manager) Shutdown() {
 	})
 }
 
-func (manager *Manager) GetAgencies() []gtfs.Agency {
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func (manager *Manager) RLock() {
 	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
+}
+
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func (manager *Manager) RUnlock() {
+	manager.staticMutex.RUnlock()
+}
+
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func (manager *Manager) GetAgencies() []gtfs.Agency {
 	return manager.gtfsData.Agencies
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetTrips() []gtfs.ScheduledTrip {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData.Trips
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetStaticData() *gtfs.Static {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetStops() []gtfs.Stop {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData.Stops
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockLayoverIndex {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return getBlockLayoverIndicesForRoute(manager.blockLayoverIndices, routeID)
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) FindAgency(id string) *gtfs.Agency {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	for _, agency := range manager.gtfsData.Agencies {
 		if agency.Id == id {
 			agencyCopy := agency
@@ -151,16 +156,14 @@ func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 	return nil
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetRoutes() []gtfs.Route {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	return manager.gtfsData.Routes
 }
 
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) RoutesForAgencyID(agencyID string) []*gtfs.Route {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	var agencyRoutes []*gtfs.Route
 
 	for i := range manager.gtfsData.Routes {
@@ -177,6 +180,9 @@ type stopWithDistance struct {
 	distance float64
 }
 
+// GetStopsForLocation retrieves stops near a given location using the spatial index.
+// It supports filtering by route types and querying for specific stop codes.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	lat, lon, radius, latSpan, lonSpan float64,
@@ -314,6 +320,7 @@ func (manager *Manager) GetStopsForLocation(
 	return stops
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 	routes := manager.RoutesForAgencyID(agencyID)
 	routeIDs := make(map[string]bool) // all route IDs for the agency.
@@ -336,6 +343,7 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 // GetVehicleForTrip retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block
 // for that trip. Note we depend on getting the vehicle that may not match the trip ID exactly,
 // but is part of the same block.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -420,9 +428,8 @@ func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
 	return manager.realTimeTrips
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) PrintStatistics() {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
 	fmt.Printf("Source: %s (Local File: %v)\n", manager.gtfsSource, manager.isLocalFile)
 	fmt.Printf("Last Updated: %s\n", manager.lastUpdated)
 	fmt.Println("Stops Count: ", len(manager.gtfsData.Stops))
@@ -431,6 +438,7 @@ func (manager *Manager) PrintStatistics() {
 	fmt.Println("Agencies Count: ", len(manager.gtfsData.Agencies))
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID string, date time.Time) (int64, error) {
 	serviceDate := date.Format("20060102")
 

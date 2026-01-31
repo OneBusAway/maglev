@@ -15,6 +15,10 @@ import (
 
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, err := api.parseAndValidateRequest(w, r)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)

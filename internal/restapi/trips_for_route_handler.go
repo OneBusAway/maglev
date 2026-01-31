@@ -16,6 +16,9 @@ import (
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(utils.ExtractIDFromParams(r))
 	if err != nil {
 		fieldErrors := map[string][]string{
@@ -30,7 +33,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		http.Error(w, "null", http.StatusNotFound)
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -239,7 +242,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			// Collect stop IDs from this trip's schedule
-			if schedule != nil && schedule.StopTimes != nil {
+			if schedule.StopTimes != nil {
 				for _, stopTime := range schedule.StopTimes {
 					_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 					if err == nil {
@@ -275,7 +278,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		for stopID := range stopIDsMap {
 			stopIDs = append(stopIDs, stopID)
 		}
-		stops, _ = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		var err error
+		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		if err != nil {
+			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+			stops = []gtfsdb.Stop{}
+		}
 	}
 
 	// Pass only the result list; references function will fetch what it needs

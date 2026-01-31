@@ -41,6 +41,9 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	limit := 50
 	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
 		if parsed, err := strconv.Atoi(maxCountStr); err == nil && parsed > 0 {

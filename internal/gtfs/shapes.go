@@ -1,5 +1,6 @@
 package gtfs
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetRegionBounds() (lat, lon, latSpan, lonSpan float64) {
 	var minLat, maxLat, minLon, maxLon float64
 	first := true

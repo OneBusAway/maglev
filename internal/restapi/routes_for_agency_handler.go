@@ -1,22 +1,34 @@
 package restapi
 
 import (
+	"net/http"
+
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
-	"net/http"
 )
 
 func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
 
+	if err := utils.ValidateID(id); err != nil {
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	agency := api.GtfsManager.FindAgency(id)
+
 	if agency == nil {
-		http.Error(w, "null", http.StatusNotFound)
+		api.sendNull(w, r)
 		return
 	}
 
 	routesForAgency := api.GtfsManager.RoutesForAgencyID(id)
+	// Safe allocation logic
 	routesList := make([]models.Route, 0, len(routesForAgency))
+
 	for _, route := range routesForAgency {
 		routesList = append(routesList, models.NewRoute(
 			utils.FormCombinedID(route.Agency.Id, route.Id), route.Agency.Id, route.ShortName, route.LongName,

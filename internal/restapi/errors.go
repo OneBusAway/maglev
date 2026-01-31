@@ -55,11 +55,30 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 
 // validationErrorResponse sends a 400 Bad Request response with field-specific validation errors
 func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, r *http.Request, fieldErrors map[string][]string) {
-	// Create response with the required format for validation errors
+	errorText := "validation error"
+	for _, errs := range fieldErrors {
+		if len(errs) > 0 {
+			errorText = errs[0]
+			break
+		}
+	}
+
 	response := struct {
-		FieldErrors map[string][]string `json:"fieldErrors"`
+		Code        int         `json:"code"`
+		CurrentTime int64       `json:"currentTime"`
+		Text        string      `json:"text"`
+		Version     int         `json:"version"`
+		Data        interface{} `json:"data"`
 	}{
-		FieldErrors: fieldErrors,
+		Code:        http.StatusBadRequest,
+		CurrentTime: models.ResponseCurrentTime(api.Clock),
+		Text:        errorText,
+		Version:     2,
+		Data: struct {
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		}{
+			FieldErrors: fieldErrors,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
