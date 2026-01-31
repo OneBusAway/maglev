@@ -161,7 +161,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		agencyId, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDStr)
+		agencyId, _, err := utils.ExtractAgencyIDAndCodeID(routeIDStr)
+		if err != nil {
+			continue  // Skip malformed route IDs
+		}
 		stopRouteIDs[stopID] = append(stopRouteIDs[stopID], routeIDStr)
 		agencyIDs[agencyId] = true
 		routeIDs[routeIDStr] = true

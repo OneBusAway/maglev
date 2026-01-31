@@ -69,15 +69,17 @@ func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
 	assert.Contains(t, route, "longName")
 	assert.Contains(t, route, "type")
 
-	referencedRouteIds := collectAllNestedIdsFromObjects(list, "routeIds")
-	referencedRouteIds = append(referencedRouteIds, collectAllNestedIdsFromObjects(list, "staticRouteIds")...)
-	routeIds := collectAllIdsFromObjects(routes, "id")
+	referencedRouteIds := collectAllNestedIdsFromObjects(t, list, "routeIds")
+	referencedRouteIds = append(referencedRouteIds, collectAllNestedIdsFromObjects(t, list, "staticRouteIds")...)
+	require.NotEmpty(t, referencedRouteIds, "Test data must have route references to verify")
+	routeIds := collectAllIdsFromObjects(t, routes, "id")
 	for _, routeId := range referencedRouteIds {
-		assert.Contains(t, routeIds, routeId, "Trip routeId should reference known route")
+		assert.Contains(t, routeIds, routeId, "Stop routeId should reference known route")
 	}
 
-	referencedAgencyIds := collectAllIdsFromObjects(routes, "agencyId")
-	agencyIds := collectAllIdsFromObjects(agencies, "id")
+	referencedAgencyIds := collectAllIdsFromObjects(t, routes, "agencyId")
+	require.NotEmpty(t, referencedAgencyIds, "Test data must have agency references to verify")
+	agencyIds := collectAllIdsFromObjects(t, agencies, "id")
 	for _, agencyId := range referencedAgencyIds {
 		assert.Contains(t, agencyIds, agencyId, "Route agencyId should reference known agency")
 	}

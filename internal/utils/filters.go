@@ -22,6 +22,7 @@ func FilterAgencies(all []gtfs.Agency, present map[string]bool) []models.AgencyR
 }
 
 // FilterRoutes filters a list of GTFS routes based on their presence in the provided map.
+// The present map must be keyed by the combined Agency+Route ID.
 func FilterRoutes(q *gtfsdb.Queries, ctx context.Context, present map[string]bool) []interface{} {
 	routes, err := q.ListRoutes(ctx)
 	if err != nil {
