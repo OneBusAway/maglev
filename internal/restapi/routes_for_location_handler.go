@@ -56,6 +56,9 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, 50, true, nil, time.Time{})
 
 	var results = []models.Route{}

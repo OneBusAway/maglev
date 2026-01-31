@@ -29,6 +29,10 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
+	// maxCount defaults to 20
 	maxCount := 20
 	var fieldErrors map[string][]string
 	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {

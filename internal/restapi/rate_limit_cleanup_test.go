@@ -232,7 +232,7 @@ func TestRateLimitMiddleware_CleanupPreservesExemptedKeys(t *testing.T) {
 	// Manually add an exempted key to the limiters map
 	middleware.mu.Lock()
 	middleware.limiters["org.onebusaway.iphone"] = &rateLimitClient{
-		limiter:  nil, // Not needed for this test
+		limiter:  nil,                                    // Not needed for this test
 		lastSeen: mockClock.Now().Add(-20 * time.Minute), // Very old
 	}
 	middleware.mu.Unlock()

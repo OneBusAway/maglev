@@ -8,6 +8,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
 	routeIDSet := make(map[string]bool)
 	originalRouteIDs := make([]string, 0)
@@ -55,6 +56,7 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 	return modelRoutes, nil
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildRouteReferencesAsInterface(ctx context.Context, agencyID string, stops []models.Stop) ([]interface{}, error) {
 	routes, err := api.BuildRouteReferences(ctx, agencyID, stops)
 	if err != nil {

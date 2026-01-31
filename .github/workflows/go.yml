@@ -55,13 +55,13 @@ jobs:
         run: go mod verify
 
       - name: Run tests
-        shell: bash
+        run: go test -v -tags=sqlite_fts5 -coverprofile=profile.cov -timeout 40m ./...
         env:
           CGO_ENABLED: 1
-        run: |
-          go test -tags=sqlite_fts5 -v -coverprofile=profile.cov ./...
+        shell: bash
 
 # Disabling coverage reporting for now. Re-enable once the project is made public.
 #      - uses: shogo82148/actions-goveralls@v1
 #        with:
 #          path-to-profile: profile.cov
+

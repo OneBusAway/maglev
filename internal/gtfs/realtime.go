@@ -70,6 +70,7 @@ func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
 	return alerts
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []gtfs.Alert {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()

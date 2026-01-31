@@ -9,6 +9,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 )
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, targetStopID string, vehicle *gtfs.Vehicle, serviceDate time.Time) float64 {
 	if vehicle == nil || vehicle.Position == nil || vehicle.Trip == nil {
 		return 0
