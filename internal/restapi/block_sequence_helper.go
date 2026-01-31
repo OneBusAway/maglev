@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID string, stopSequence int, serviceDate time.Time) int {
 	blockID, err := api.GtfsManager.GtfsDB.Queries.GetBlockIDByTripID(ctx, tripID)
 	if err != nil || !blockID.Valid || blockID.String == "" {

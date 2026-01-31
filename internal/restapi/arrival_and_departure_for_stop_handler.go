@@ -89,6 +89,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	ctx := r.Context()
+
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	params := api.parseArrivalAndDepartureParams(r)
 
 	if params.TripID == "" {

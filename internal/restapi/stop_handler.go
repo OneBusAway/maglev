@@ -28,6 +28,9 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	ctx := r.Context()
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)

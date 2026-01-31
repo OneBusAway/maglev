@@ -17,6 +17,8 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
 
 	agency := api.GtfsManager.FindAgency(id)
 	if agency == nil {
