@@ -50,3 +50,34 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, refAgencies, 1)
 }
+
+func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyId := agencies[0].Id
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	routes, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, routes)
+
+	for _, r := range routes {
+		route, ok := r.(map[string]interface{})
+		require.True(t, ok)
+
+		id, ok := route["id"].(string)
+		require.True(t, ok)
+
+		// Check that agencyId is prepended to id
+		assert.Contains(t, id, agencyId+"_", "route id must be in {agencyId}_{routeId} format")
+	}
+}
