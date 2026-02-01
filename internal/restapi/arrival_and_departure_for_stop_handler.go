@@ -265,6 +265,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
 				vehicle = v
 			}
+		} else {
+			api.Logger.Warn("malformed vehicleId provided",
+				"vehicleId", params.VehicleID,
+				"error", err)
 		}
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
@@ -404,6 +408,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
+				return
 			}
 
 			stopIDSet[nextStopID] = true
@@ -413,6 +418,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
+				return
 			}
 			stopIDSet[closestStopID] = true
 		}

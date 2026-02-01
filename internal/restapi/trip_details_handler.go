@@ -41,15 +41,27 @@ func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) (TripDetailsParams
 	}
 
 	if includeTripStr := r.URL.Query().Get("includeTrip"); includeTripStr != "" {
-		params.IncludeTrip = includeTripStr == "true"
+		if val, err := strconv.ParseBool(includeTripStr); err == nil {
+			params.IncludeTrip = val
+		} else {
+			fieldErrors["includeTrip"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	if includeScheduleStr := r.URL.Query().Get("includeSchedule"); includeScheduleStr != "" {
-		params.IncludeSchedule = includeScheduleStr == "true"
+		if val, err := strconv.ParseBool(includeScheduleStr); err == nil {
+			params.IncludeSchedule = val
+		} else {
+			fieldErrors["includeSchedule"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	if includeStatusStr := r.URL.Query().Get("includeStatus"); includeStatusStr != "" {
-		params.IncludeStatus = includeStatusStr == "true"
+		if val, err := strconv.ParseBool(includeStatusStr); err == nil {
+			params.IncludeStatus = val
+		} else {
+			fieldErrors["includeStatus"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	// Validate time

@@ -660,19 +660,17 @@ func TestTripForVehicleHandlerWithInvalidParams(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&serviceDate=invalid")
 	require.NoError(t, err)
-	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	resp2, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&time=invalid")
 	require.NoError(t, err)
-	defer resp2.Body.Close()
 
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 }
 
 func TestParseTripForVehicleParams_Unit(t *testing.T) {
-	api, _, _ := setupTestApiWithMockVehicle(t)
+	api := createTestApi(t)
 	defer api.Shutdown()
 
 	req := httptest.NewRequest("GET", "/?includeStatus=false&time=1609459200000", nil)

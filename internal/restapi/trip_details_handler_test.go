@@ -365,14 +365,12 @@ func TestTripDetailsHandlerWithInvalidParams(t *testing.T) {
 	endpoint := "/api/where/trip-details/" + tripID + ".json?key=TEST&serviceDate=invalid"
 
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	endpoint = "/api/where/trip-details/" + tripID + ".json?key=TEST&time=invalid"
 
 	resp2, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-	defer resp2.Body.Close()
 
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 }

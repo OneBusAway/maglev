@@ -43,15 +43,27 @@ func (api *RestAPI) parseTripForVehicleParams(r *http.Request) (TripForVehiclePa
 	}
 
 	if includeTripStr := r.URL.Query().Get("includeTrip"); includeTripStr != "" {
-		params.IncludeTrip = includeTripStr == "true"
+		if val, err := strconv.ParseBool(includeTripStr); err == nil {
+			params.IncludeTrip = val
+		} else {
+			fieldErrors["includeTrip"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	if includeScheduleStr := r.URL.Query().Get("includeSchedule"); includeScheduleStr != "" {
-		params.IncludeSchedule = includeScheduleStr == "true"
+		if val, err := strconv.ParseBool(includeScheduleStr); err == nil {
+			params.IncludeSchedule = val
+		} else {
+			fieldErrors["includeSchedule"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	if includeStatusStr := r.URL.Query().Get("includeStatus"); includeStatusStr != "" {
-		params.IncludeStatus = includeStatusStr == "true"
+		if val, err := strconv.ParseBool(includeStatusStr); err == nil {
+			params.IncludeStatus = val
+		} else {
+			fieldErrors["includeStatus"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	// Validate time
@@ -170,7 +182,14 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	var schedule *models.Schedule
 	if params.IncludeSchedule {
-		schedule, _ = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, time.Local)
+		var scheduleErr error
+		schedule, scheduleErr = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, time.Local)
+		if scheduleErr != nil {
+			api.Logger.Warn("failed to build trip schedule",
+				"tripID", tripID,
+				"agencyID", agencyID,
+				"error", scheduleErr)
+		}
 	}
 
 	situationIDs := []string{}

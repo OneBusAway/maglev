@@ -662,7 +662,6 @@ func TestArrivalsAndDeparturesForStopHandlerInvalidTime(t *testing.T) {
 	endpoint := "/api/where/arrival-and-departure-for-stop/1_75403.json?key=TEST&time=invalid_time"
 
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
