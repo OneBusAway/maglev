@@ -33,14 +33,25 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		MinutesBefore: 5,
 	}
 
+	const maxMinutesBefore = 60 // Maximum 1 hour before
+	const maxMinutesAfter = 240 // Maximum 4 hours after
+
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
 		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
-			params.MinutesAfter = minutesAfter
+			if minutesAfter > 0 && minutesAfter <= maxMinutesAfter {
+				params.MinutesAfter = minutesAfter
+			} else if minutesAfter > maxMinutesAfter {
+				params.MinutesAfter = maxMinutesAfter
+			}
 		}
 	}
 	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
 		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
-			params.MinutesBefore = minutesBefore
+			if minutesBefore > 0 && minutesBefore <= maxMinutesBefore {
+				params.MinutesBefore = minutesBefore
+			} else if minutesBefore > maxMinutesBefore {
+				params.MinutesBefore = maxMinutesBefore
+			}
 		}
 	}
 
@@ -125,7 +136,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	// Filter stop times to only include active trips
 	var stopTimes []gtfsdb.GetStopTimesForStopInWindowRow
-
 	for _, st := range allStopTimes {
 		if activeTripIDs[st.TripID] {
 			stopTimes = append(stopTimes, gtfsdb.GetStopTimesForStopInWindowRow{
@@ -141,6 +151,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 	}
 
+	// Maps for Caching and References
 	tripIDSet := make(map[string]*gtfsdb.Trip)
 	routeIDSet := make(map[string]*gtfsdb.Route)
 	stopIDSet := make(map[string]bool)
@@ -149,18 +160,29 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	stopIDSet[stop.ID] = true
 
 	for _, st := range stopTimes {
-		route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, st.RouteID)
-		if err != nil {
-			continue
+		var route gtfsdb.Route
+		if cachedRoute, exists := routeIDSet[st.RouteID]; exists {
+			route = *cachedRoute
+		} else {
+			r, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, st.RouteID)
+			if err != nil {
+				continue
+			}
+			route = r
+			routeIDSet[route.ID] = &route
 		}
 
-		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, st.TripID)
-		if err != nil {
-			continue
+		var trip gtfsdb.Trip
+		if cachedTrip, exists := tripIDSet[st.TripID]; exists {
+			trip = *cachedTrip
+		} else {
+			t, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, st.TripID)
+			if err != nil {
+				continue
+			}
+			trip = t
+			tripIDSet[trip.ID] = &trip
 		}
-
-		routeIDSet[route.ID] = &route
-		tripIDSet[trip.ID] = &trip
 
 		serviceDateMillis := currentTime.UnixMilli()
 
@@ -260,9 +282,12 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				if status.ActiveTripID != "" {
 					_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 					if err == nil && activeTripID != st.TripID {
-						activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
-						if err == nil {
-							tripIDSet[activeTrip.ID] = &activeTrip
+						// Check cache for active trip
+						if _, exists := tripIDSet[activeTripID]; !exists {
+							activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+							if err == nil {
+								tripIDSet[activeTrip.ID] = &activeTrip
+							}
 						}
 					}
 				}
@@ -363,7 +388,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               stopData.Code.String,
-			Direction:          calc.CalculateStopDirection(ctx, stopID),
+			Direction:          calc.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
@@ -398,6 +423,7 @@ func convertToNanosSinceMidnight(t time.Time) int64 {
 	duration := t.Sub(midnight)
 	return duration.Nanoseconds()
 }
+
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
 	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, api.Clock.Now())
 	var nearbyStopIDs []string
