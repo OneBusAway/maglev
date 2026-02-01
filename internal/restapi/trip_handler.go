@@ -56,13 +56,21 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var blockID, shapeID string
+	if trip.BlockID.Valid {
+		blockID = utils.FormCombinedID(agencyID, trip.BlockID.String)
+	}
+	if trip.ShapeID.Valid {
+		shapeID = utils.FormCombinedID(agencyID, trip.ShapeID.String)
+	}
+
 	tripModel := &models.Trip{
 		ID:             utils.FormCombinedID(agencyID, trip.ID),
 		RouteID:        utils.FormCombinedID(agencyID, trip.RouteID),
 		ServiceID:      utils.FormCombinedID(agencyID, trip.ServiceID),
 		DirectionID:    trip.DirectionID.Int64,
-		BlockID:        utils.FormCombinedID(agencyID, trip.BlockID.String),
-		ShapeID:        utils.FormCombinedID(agencyID, trip.ShapeID.String),
+		BlockID:        blockID,
+		ShapeID:        shapeID,
 		TripHeadsign:   trip.TripHeadsign.String,
 		TripShortName:  trip.TripShortName.String,
 		RouteShortName: route.ShortName.String,
