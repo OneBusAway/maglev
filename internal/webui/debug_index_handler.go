@@ -47,6 +47,9 @@ func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
 	var data interface{}
 	var title string
 
+	webUI.GtfsManager.RLock()
+	defer webUI.GtfsManager.RUnlock()
+
 	staticData := webUI.GtfsManager.GetStaticData()
 
 	switch dataType {
