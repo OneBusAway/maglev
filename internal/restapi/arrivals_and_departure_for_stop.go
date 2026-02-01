@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,6 +12,59 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
+
+// Define params structure for the plural handler
+type ArrivalsStopParams struct {
+	MinutesAfter  int
+	MinutesBefore int
+	Time          time.Time
+}
+
+// parseArrivalsAndDeparturesParams parses and validates parameters.
+func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
+	params := ArrivalsStopParams{
+		MinutesAfter:  35, // Default
+		MinutesBefore: 5,  // Default
+		Time:          api.Clock.Now(),
+	}
+
+	// Initialize errors map
+	fieldErrors := make(map[string][]string)
+
+	// Validate minutesAfter
+	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
+		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
+			params.MinutesAfter = minutesAfter
+		} else {
+			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
+		}
+	}
+
+	// Validate minutesBefore
+	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
+		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
+			params.MinutesBefore = minutesBefore
+		} else {
+			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
+		}
+	}
+
+	// Validate time
+	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
+		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
+			params.Time = time.Unix(timeMs/1000, 0)
+		} else {
+			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+		}
+	}
+
+	// Return all errors if any existed
+	if len(fieldErrors) > 0 {
+		return params, fieldErrors
+	}
+
+	return params, nil
+}
 
 func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r *http.Request) {
 	stopID := utils.ExtractIDFromParams(r)
@@ -28,9 +82,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	params := ArrivalAndDepartureParams{
-		MinutesAfter:  35,
-		MinutesBefore: 5,
+	// Capture parsing errors
+	params, fieldErrors := api.parseArrivalsAndDeparturesParams(r)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
 	}
 
 	const maxMinutesBefore = 60 // Maximum 1 hour before
@@ -359,10 +415,18 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	for stopID := range stopIDSet {
 		stopData, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 		if err != nil {
+			api.Logger.Debug("skipping stop reference: stop not found",
+				slog.String("stopID", stopID),
+				slog.Any("error", err))
 			continue
 		}
 
-		routesForThisStop, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
+		routesForThisStop, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
+		if err != nil {
+			api.Logger.Debug("failed to get routes for stop",
+				slog.String("stopID", stopID),
+				slog.Any("error", err))
+		}
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			combinedRouteIDs[i] = utils.FormCombinedID(agencyID, route.ID)

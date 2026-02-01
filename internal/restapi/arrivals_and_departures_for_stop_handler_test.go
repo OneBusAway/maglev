@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -381,4 +382,67 @@ func TestArrivalsAndDeparturesForStopHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
+
+func TestParseArrivalsAndDeparturesParams_AllParameters(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req := httptest.NewRequest("GET", "/test?minutesAfter=60&minutesBefore=15&time=1609459200000", nil)
+
+	params, errs := api.parseArrivalsAndDeparturesParams(req)
+
+	assert.Nil(t, errs)
+	assert.Equal(t, 60, params.MinutesAfter)
+	assert.Equal(t, 15, params.MinutesBefore)
+	assert.False(t, params.Time.IsZero())
+}
+
+func TestParseArrivalsAndDeparturesParams_DefaultValues(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+
+	params, errs := api.parseArrivalsAndDeparturesParams(req)
+
+	assert.Nil(t, errs)
+	assert.Equal(t, 35, params.MinutesAfter) // Default for plural handler
+	assert.Equal(t, 5, params.MinutesBefore) // Default
+	assert.WithinDuration(t, api.Clock.Now(), params.Time, 1*time.Second)
+}
+
+func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&time=invalid", nil)
+
+	_, errs := api.parseArrivalsAndDeparturesParams(req)
+
+	assert.NotNil(t, errs)
+	assert.Contains(t, errs, "minutesAfter")
+	assert.Contains(t, errs, "minutesBefore")
+	assert.Contains(t, errs, "time")
+
+	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
+	assert.Equal(t, "must be a valid integer", errs["minutesBefore"][0])
+	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
+}
+
+func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := api.GtfsManager.GetAgencies()[0]
+	stops := api.GtfsManager.GetStops()
+	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+
+	endpoint := "/api/where/arrivals-and-departures-for-stop/" + stopID + ".json?key=TEST&time=invalid"
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	endpoint = "/api/where/arrivals-and-departures-for-stop/" + stopID + ".json?key=TEST&minutesAfter=invalid"
+	resp, _ = serveApiAndRetrieveEndpoint(t, api, endpoint)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
