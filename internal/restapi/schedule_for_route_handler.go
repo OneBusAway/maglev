@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -236,16 +235,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Create a local calculator to ensure thread safety
-	calc := gtfs.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
-
 	uniqueStopIDs := make([]string, 0, len(globalStopIDSet))
 	for sid := range globalStopIDSet {
 		uniqueStopIDs = append(uniqueStopIDs, sid)
 	}
 	if len(uniqueStopIDs) > 0 {
-		// Pass the local calculator
-		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs, calc)
+
+		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
 		if err == nil {
 			references.Stops = append(references.Stops, modelStops...)
 		}
