@@ -15,9 +15,21 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 
 	// TODO: Add required validation
 	if tripID == "" {
-		api.sendNull(w, r)
+		api.Logger.Warn("report problem with trip failed: missing tripID")
+		http.Error(w, `{"code":400,"text":"tripID is required"}`, http.StatusBadRequest)
 		return
 	}
+
+    // fetch ID from DB.
+	_, err := api.GtfsManager.GtfsDB.Queries.GetTrip(r.Context(), tripID)
+    if err != nil {
+		// we get an error, it means the ID wasn't found.
+        api.Logger.Warn("report problem with trip failed: tripID not found", 
+            slog.String("tripID", tripID),
+            slog.Any("error", err))
+        http.Error(w, `{"code":404, "text":"tripID not found"}`, http.StatusNotFound)
+        return
+    }
 
 	query := r.URL.Query()
 

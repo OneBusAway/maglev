@@ -14,9 +14,21 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 
 	// TODO: Add required validation
 	if stopID == "" {
-		api.sendNull(w, r)
+		api.Logger.Warn("report problem with stop failed: missing stopID")
+		http.Error(w, `{"code":400,"text":"stopID is required"}`, http.StatusBadRequest)
 		return
 	}
+
+    // fetch ID from DB.
+    _, err := api.GtfsManager.GtfsDB.Queries.GetStop(r.Context(), stopID)
+    if err != nil {
+        // we get an error, it means the ID wasn't found.
+        api.Logger.Warn("report problem with stop failed: stopID not found", 
+            slog.String("stopID", stopID), 
+            slog.Any("error", err))
+        http.Error(w, `{"code":404, "text":"stopID not found"}`, http.StatusNotFound)
+        return
+    }
 
 	query := r.URL.Query()
 
