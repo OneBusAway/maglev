@@ -1,6 +1,9 @@
 package app
 
-import "net/http"
+import (
+	"crypto/subtle"
+	"net/http"
+)
 
 func (app *Application) RequestHasInvalidAPIKey(r *http.Request) bool {
 	key := r.URL.Query().Get("key")
@@ -12,10 +15,10 @@ func (app *Application) IsInvalidAPIKey(key string) bool {
 		return true
 	}
 
-	// For example, checking against keys stored in your app Config:
 	validKeys := app.Config.ApiKeys
 	for _, validKey := range validKeys {
-		if key == validKey {
+		// Use constant-time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(key), []byte(validKey)) == 1 {
 			return false
 		}
 	}
