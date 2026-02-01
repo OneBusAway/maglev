@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -151,11 +152,19 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	for _, st := range stopTimes {
 		route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, st.RouteID)
 		if err != nil {
+			api.Logger.Debug("skipping stop time: route not found",
+				slog.String("routeID", st.RouteID),
+				slog.String("tripID", st.TripID),
+				slog.Any("error", err))
 			continue
 		}
 
 		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, st.TripID)
 		if err != nil {
+			api.Logger.Debug("skipping stop time: trip not found",
+				slog.String("routeID", st.RouteID),
+				slog.String("tripID", st.TripID),
+				slog.Any("error", err))
 			continue
 		}
 
@@ -334,10 +343,18 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	for stopID := range stopIDSet {
 		stopData, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 		if err != nil {
+			api.Logger.Debug("skipping stop reference: stop not found",
+				slog.String("stopID", stopID),
+				slog.Any("error", err))
 			continue
 		}
 
-		routesForThisStop, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
+		routesForThisStop, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
+		if err != nil {
+			api.Logger.Debug("failed to get routes for stop",
+				slog.String("stopID", stopID),
+				slog.Any("error", err))
+		}
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			combinedRouteIDs[i] = utils.FormCombinedID(agencyID, route.ID)
