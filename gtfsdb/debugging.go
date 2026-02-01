@@ -3,11 +3,12 @@ package gtfsdb
 import (
 	"database/sql"
 	"fmt"
-	"github.com/OneBusAway/go-gtfs"
 	"log"
 	"log/slog"
-	"maglev.onebusaway.org/internal/logging"
 	"strings"
+
+	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/internal/logging"
 )
 
 func PrintSimpleSchema(db *sql.DB) error { // nolint:unused
@@ -74,7 +75,28 @@ func (c *Client) TableCounts() (map[string]int, error) {
 
 	counts := make(map[string]int)
 
+	// Whitelist allowed table names to prevent SQL injection
+	allowedTables := map[string]bool{
+		"agencies":         true,
+		"routes":           true,
+		"stops":            true,
+		"trips":            true,
+		"stop_times":       true,
+		"calendar":         true,
+		"calendar_dates":   true,
+		"shapes":           true,
+		"transfers":        true,
+		"feed_info":        true,
+		"block_trip_index": true,
+		"block_trip_entry": true,
+		"import_metadata":  true,
+	}
+
 	for _, table := range tables {
+		if !allowedTables[table] {
+			continue
+		}
+
 		var count int
 		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", table)
 		err := c.DB.QueryRow(query).Scan(&count)
