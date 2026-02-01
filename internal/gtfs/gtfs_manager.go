@@ -43,6 +43,7 @@ type Manager struct {
 	shutdownOnce                   sync.Once
 	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
+	isHealthy					   bool
 }
 
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
@@ -482,4 +483,25 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 	default:
 		return 0, nil
 	}
+}
+
+// IsHealthy returns true if the GTFS data is loaded and valid.
+func (manager *Manager) IsHealthy() bool {
+    manager.staticMutex.RLock()
+    defer manager.staticMutex.RUnlock()
+    return manager.isHealthy
+}
+
+// MarkHealthy sets the manager status to healthy.
+func (manager *Manager) MarkHealthy() {
+    manager.staticMutex.Lock()
+    defer manager.staticMutex.Unlock()
+    manager.isHealthy = true
+}
+
+// MarkUnhealthy sets the manager status to unhealthy.
+func (manager *Manager) MarkUnhealthy() {
+    manager.staticMutex.Lock()
+    defer manager.staticMutex.Unlock()
+    manager.isHealthy = false
 }

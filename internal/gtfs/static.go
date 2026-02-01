@@ -278,7 +278,8 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 			logging.LogError(logger, "CRITICAL: Failed to recover old DB after rename failure", reopenErr)
 			logging.LogOperation(logger, "setting manager.gtfsDB to nil")
 			manager.GtfsDB = nil
-			// TODO: trigger health check failure
+			// TODO: trigger health check failure [DONE]
+			manager.MarkUnhealthy()
 		}
 
 		return err
@@ -292,7 +293,8 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 			slog.String("db_path", finalDBPath))
 		logging.LogOperation(logger, "setting manager.gtfsDB to nil")
 		manager.GtfsDB = nil
-		// TODO: trigger health check failure
+		// TODO: trigger health check failure [DONE]
+		manager.MarkUnhealthy()
 		return fmt.Errorf("failed to update GTFS database client: %w", err)
 	}
 
@@ -301,6 +303,8 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.lastUpdated = time.Now()
+
+	manager.MarkHealthy()
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
 		slog.String("source", manager.gtfsSource),
@@ -316,7 +320,7 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 
 	manager.gtfsData = staticData
 	manager.lastUpdated = time.Now()
-
+	manager.isHealthy = true
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
 
 	// Rebuild spatial index with updated data
