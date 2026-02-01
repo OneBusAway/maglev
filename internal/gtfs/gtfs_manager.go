@@ -23,7 +23,6 @@ const NoRadiusLimit = -1
 
 // Manager manages the GTFS data and provides methods to access it
 type Manager struct {
-	// gtfsSource                     string
 	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
 	lastUpdated                    time.Time
@@ -56,7 +55,6 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		// gtfsSource:                     config.GtfsURL,
 		isLocalFile:                    isLocalFile,
 		config:                         config,
 		shutdownChan:                   make(chan struct{}),
