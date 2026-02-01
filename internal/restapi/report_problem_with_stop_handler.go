@@ -12,7 +12,7 @@ import (
 func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.Request) {
 	stopID := utils.ExtractIDFromParams(r)
 
-	// TODO: Add required validation
+	// TODO: Add required validation [DONE]
 	if stopID == "" {
 		api.Logger.Warn("report problem with stop failed: missing stopID")
 		http.Error(w, `{"code":400,"text":"stopID is required"}`, http.StatusBadRequest)

@@ -13,7 +13,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 
 	tripID := utils.ExtractIDFromParams(r)
 
-	// TODO: Add required validation
+	// TODO: Add required validation [DONE]
 	if tripID == "" {
 		api.Logger.Warn("report problem with trip failed: missing tripID")
 		http.Error(w, `{"code":400,"text":"tripID is required"}`, http.StatusBadRequest)
