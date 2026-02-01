@@ -132,7 +132,7 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	// If it's a local file, don't update periodically
 	if manager.isLocalFile {
 		logging.LogOperation(logger, "gtfs_source_is_local_file_skipping_periodic_updates",
-			slog.String("source", manager.gtfsSource))
+			slog.String("source", manager.config.GtfsURL))
 		return
 	}
 
@@ -151,7 +151,7 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 
 			if err != nil {
 				logging.LogError(logger, "Error updating GTFS data", err,
-					slog.String("source", manager.gtfsSource))
+					slog.String("source", manager.config.GtfsURL))
 				continue
 			}
 
@@ -183,10 +183,10 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
-	newStaticData, err := loadGTFSData(manager.gtfsSource, manager.isLocalFile, manager.config)
+	newStaticData, err := loadGTFSData(manager.config.GtfsURL, manager.isLocalFile, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error updating GTFS data", err,
-			slog.String("source", manager.gtfsSource))
+			slog.String("source", manager.config.GtfsURL))
 		return err
 	}
 
@@ -203,7 +203,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	// Create a config copy with the updated source URL
 	newConfig := manager.config
-	newConfig.GtfsURL = manager.gtfsSource
+	
 
 	newGtfsDB, err := buildGtfsDB(newConfig, manager.isLocalFile, tempDBPath)
 	if err != nil {
@@ -303,7 +303,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.lastUpdated = time.Now()
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
-		slog.String("source", manager.gtfsSource),
+		slog.String("source", manager.config.GtfsURL),
 		slog.String("db_path", finalDBPath))
 
 	return nil
@@ -334,7 +334,7 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	if manager.config.Verbose {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogOperation(logger, "gtfs_data_set_successfully",
-			slog.String("source", manager.gtfsSource),
+			slog.String("source", manager.config.GtfsURL),
 			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)))
 	}
 }

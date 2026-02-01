@@ -23,7 +23,7 @@ const NoRadiusLimit = -1
 
 // Manager manages the GTFS data and provides methods to access it
 type Manager struct {
-	gtfsSource                     string
+	
 	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
 	lastUpdated                    time.Time
@@ -56,7 +56,6 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		gtfsSource:                     config.GtfsURL,
 		isLocalFile:                    isLocalFile,
 		config:                         config,
 		shutdownChan:                   make(chan struct{}),
@@ -430,7 +429,7 @@ func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) PrintStatistics() {
-	fmt.Printf("Source: %s (Local File: %v)\n", manager.gtfsSource, manager.isLocalFile)
+	fmt.Printf("Source: %s (Local File: %v)\n", manager.config.GtfsURL, manager.isLocalFile)
 	fmt.Printf("Last Updated: %s\n", manager.lastUpdated)
 	fmt.Println("Stops Count: ", len(manager.gtfsData.Stops))
 	fmt.Println("Routes Count: ", len(manager.gtfsData.Routes))
