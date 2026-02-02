@@ -76,14 +76,6 @@ type Route struct {
 	ContinuousDropOff sql.NullInt64
 }
 
-type RoutesFt struct {
-	ID        string
-	AgencyID  string
-	ShortName string
-	LongName  string
-	Desc      string
-}
-
 type Shape struct {
 	ID                int64
 	ShapeID           string
