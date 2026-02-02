@@ -80,22 +80,37 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, error) {
-	stopsList := make([]models.Stop, 0, len(stopIDs))
+	// If no stops, return empty list 
+    if len(stopIDs) == 0 {
+        return []models.Stop{}, nil
+    }
 
-	for _, stopID := range stopIDs {
-		stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
-			continue
+	// Batch fetch all stops in one query
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Batch fetch all route IDs for these stops in one query
+	routeIDsRows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build a map of stop ID to route IDs in memory
+	routesByStop := make(map[string][]string)
+	for _, row := range routeIDsRows {
+		if rid, ok := row.RouteID.(string); ok {
+			routesByStop[row.StopID] = append(routesByStop[row.StopID], utils.FormCombinedID(agencyID, rid))
 		}
+	}
 
-		routeIds, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(ctx, stop.ID)
-		if err != nil {
-			continue
-		}
-
-		routeIdsString := make([]string, len(routeIds))
-		for i, id := range routeIds {
-			routeIdsString[i] = utils.FormCombinedID(agencyID, id.(string))
+	// Construct the stops list
+	stopsList := make([]models.Stop, 0, len(stops))
+	for _, stop := range stops {
+		routeIdsString := routesByStop[stop.ID]
+		if routeIdsString == nil {
+			routeIdsString = []string{}
 		}
 
 		direction := models.UnknownValue
