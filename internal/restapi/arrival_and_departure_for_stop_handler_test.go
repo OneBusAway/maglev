@@ -18,21 +18,7 @@ import (
 )
 
 func TestArrivalAndDepartureForStopHandlerRequiresValidApiKey(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	agency := api.GtfsManager.GetAgencies()[0]
-	stops := api.GtfsManager.GetStops()
-	trips := api.GtfsManager.GetTrips()
-
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
-	serviceDate := time.Now().Unix() * 1000
-
-	_, resp, model := serveAndRetrieveEndpoint(t,
-		"/api/where/arrival-and-departure-for-stop/"+stopID+".json?key=invalid&tripId="+tripID+"&serviceDate="+
-			fmt.Sprintf("%d", serviceDate))
-
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/arrival-and-departure-for-stop/invalid.json?key=invalid")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
@@ -605,7 +591,9 @@ func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/test?minutesAfter=60&minutesBefore=15&time=1609459200000&tripId=trip_123&serviceDate=1609459200000&vehicleId=vehicle_456&stopSequence=3", nil)
 
-	params := api.parseArrivalAndDepartureParams(req)
+	params, errs := api.parseArrivalAndDepartureParams(req)
+
+	assert.Nil(t, errs)
 
 	assert.Equal(t, 60, params.MinutesAfter)
 	assert.Equal(t, 15, params.MinutesBefore)
@@ -623,7 +611,9 @@ func TestParseArrivalAndDepartureParams_DefaultValues(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/test", nil)
 
-	params := api.parseArrivalAndDepartureParams(req)
+	params, errs := api.parseArrivalAndDepartureParams(req)
+
+	assert.Nil(t, errs)
 
 	assert.Equal(t, 30, params.MinutesAfter) // Default
 	assert.Equal(t, 5, params.MinutesBefore) // Default
@@ -640,14 +630,17 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&time=invalid&serviceDate=invalid&stopSequence=invalid", nil)
 
-	params := api.parseArrivalAndDepartureParams(req)
+	_, errs := api.parseArrivalAndDepartureParams(req)
 
-	// Should use defaults when parsing fails
-	assert.Equal(t, 30, params.MinutesAfter)
-	assert.Equal(t, 5, params.MinutesBefore)
-	assert.Nil(t, params.Time)
-	assert.Nil(t, params.ServiceDate)
-	assert.Nil(t, params.StopSequence)
+	assert.NotNil(t, errs)
+	assert.Contains(t, errs, "minutesAfter")
+	assert.Contains(t, errs, "minutesBefore")
+	assert.Contains(t, errs, "time")
+	assert.Contains(t, errs, "serviceDate")
+	assert.Contains(t, errs, "stopSequence")
+
+	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
+	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
 }
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
@@ -666,7 +659,7 @@ func TestArrivalsAndDeparturesForStopHandlerInvalidTime(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	endpoint := "/api/where/arrivals-and-departures-for-stop/1_75403.json?key=TEST&time=invalid_time"
+	endpoint := "/api/where/arrival-and-departure-for-stop/1_75403.json?key=TEST&time=invalid_time"
 
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
