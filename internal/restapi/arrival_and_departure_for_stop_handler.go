@@ -23,41 +23,57 @@ type ArrivalAndDepartureParams struct {
 	StopSequence  *int
 }
 
-func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) ArrivalAndDepartureParams {
+// parseArrivalAndDepartureParams parses and validates request parameters.
+// Returns parameters and a map of validation errors if any.
+func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) (ArrivalAndDepartureParams, map[string][]string) {
 	params := ArrivalAndDepartureParams{
 		MinutesAfter:  30, // Default 30 minutes after
 		MinutesBefore: 5,  // Default 5 minutes before
 	}
 
+	// Initialize errors map
+	fieldErrors := make(map[string][]string)
+
+	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
 		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
 			params.MinutesAfter = minutesAfter
+		} else {
+			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
 		}
 	}
 
+	// Validate minutesBefore
 	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
 		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
 			params.MinutesBefore = minutesBefore
+		} else {
+			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
 		}
 	}
 
+	// Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else {
+			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
 	}
 
-	// Required tripId parameter
+	// Check TripID (Assignment only, required check is in handler)
 	if tripIDStr := r.URL.Query().Get("tripId"); tripIDStr != "" {
 		params.TripID = tripIDStr
 	}
 
-	// Required serviceDate parameter
+	// Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
+		} else {
+			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
 	}
 
@@ -66,14 +82,21 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) ArrivalAndDe
 		params.VehicleID = vehicleIDStr
 	}
 
-	// Optional stopSequence parameter
+	// Validate stopSequence
 	if stopSequenceStr := r.URL.Query().Get("stopSequence"); stopSequenceStr != "" {
 		if stopSequence, err := strconv.Atoi(stopSequenceStr); err == nil {
 			params.StopSequence = &stopSequence
+		} else {
+			fieldErrors["stopSequence"] = []string{"must be a valid integer"}
 		}
 	}
 
-	return params
+	// Return errors if any existed
+	if len(fieldErrors) > 0 {
+		return params, fieldErrors
+	}
+
+	return params, nil
 }
 
 func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +116,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	params := api.parseArrivalAndDepartureParams(r)
+	// Capture parsing errors
+	params, fieldErrors := api.parseArrivalAndDepartureParams(r)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	if params.TripID == "" {
 		fieldErrors := map[string][]string{
@@ -237,6 +265,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
 				vehicle = v
 			}
+		} else {
+			api.Logger.Warn("malformed vehicleId provided",
+				"vehicleId", params.VehicleID,
+				"error", err)
 		}
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
@@ -376,6 +408,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
+				return
 			}
 
 			stopIDSet[nextStopID] = true
@@ -385,6 +418,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
+				return
 			}
 			stopIDSet[closestStopID] = true
 		}

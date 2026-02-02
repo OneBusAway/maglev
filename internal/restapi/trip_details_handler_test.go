@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -351,4 +352,54 @@ func TestTripDetailsHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
+
+func TestTripDetailsHandlerWithInvalidParams(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := api.GtfsManager.GetAgencies()[0]
+	trips := api.GtfsManager.GetTrips()
+	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+
+	endpoint := "/api/where/trip-details/" + tripID + ".json?key=TEST&serviceDate=invalid"
+
+	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	endpoint = "/api/where/trip-details/" + tripID + ".json?key=TEST&time=invalid"
+
+	resp2, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+}
+
+func TestParseTripIdDetailsParams_Unit(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req := httptest.NewRequest("GET", "/?includeTrip=false&includeSchedule=false&serviceDate=1609459200000", nil)
+	params, errs := api.parseTripIdDetailsParams(req)
+
+	assert.Nil(t, errs)
+	assert.False(t, params.IncludeTrip)
+	assert.False(t, params.IncludeSchedule)
+	assert.NotNil(t, params.ServiceDate)
+
+	reqDefault := httptest.NewRequest("GET", "/", nil)
+	paramsDefault, errsDefault := api.parseTripIdDetailsParams(reqDefault)
+
+	assert.Nil(t, errsDefault)
+	assert.True(t, paramsDefault.IncludeTrip)
+	assert.True(t, paramsDefault.IncludeStatus)
+	assert.True(t, paramsDefault.IncludeSchedule)
+
+	reqInvalid := httptest.NewRequest("GET", "/?time=invalid&serviceDate=invalid", nil)
+	_, errsInvalid := api.parseTripIdDetailsParams(reqInvalid)
+
+	assert.NotNil(t, errsInvalid)
+	assert.Contains(t, errsInvalid, "time")
+	assert.Contains(t, errsInvalid, "serviceDate")
+	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errsInvalid["time"][0])
 }

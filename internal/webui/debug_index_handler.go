@@ -3,6 +3,7 @@ package webui
 import (
 	"embed"
 	"html/template"
+	"log/slog"
 	"net/http"
 
 	"github.com/davecgh/go-spew/spew"
@@ -22,7 +23,9 @@ func writeDebugData(w http.ResponseWriter, title string, data interface{}) {
 	w.Header().Set("Content-Type", "text/html")
 	tmpl, err := template.ParseFS(templateFS, "debug_index.html")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Log the actual error server-side
+		slog.Error("failed to parse debug template", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -33,7 +36,8 @@ func writeDebugData(w http.ResponseWriter, title string, data interface{}) {
 
 	err = tmpl.Execute(w, dataStruct)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("failed to execute debug template", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
 
@@ -46,6 +50,9 @@ func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
 
 	var data interface{}
 	var title string
+
+	webUI.GtfsManager.RLock()
+	defer webUI.GtfsManager.RUnlock()
 
 	staticData := webUI.GtfsManager.GetStaticData()
 
