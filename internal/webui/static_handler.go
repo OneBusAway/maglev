@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,15 +43,18 @@ func (webUI *WebUI) marketingHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal configuration error", http.StatusInternalServerError)
 		return
 	}
-	if !strings.HasPrefix(absPath, marketingDir) {
+	rel, err := filepath.Rel(marketingDir, absPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		slog.Warn("potential path traversal attempt blocked", "path", absPath)
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	stat, err := os.Stat(absPath)
+	if err != nil || stat.IsDir() {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
-	http.ServeFile(w, r, filePath)
+	http.ServeFile(w, r, absPath)
 }
