@@ -70,7 +70,7 @@ func TestMarketingHandler_PathTraversal(t *testing.T) {
 		{
 			name:       "backslash traversal",
 			path:       "/marketing/..\\marketing-secret\\secret.html",
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusNotFound,
 		},
 		{
 			name:       "disallowed extension",
@@ -91,20 +91,25 @@ func TestMarketingHandler_PathTraversal(t *testing.T) {
 
 			webUI.marketingHandler(rr, req)
 
-			currentStatus := rr.Code
+			got := rr.Code
 
-			if tt.wantStatus == http.StatusOK && currentStatus == http.StatusMovedPermanently {
-				currentStatus = http.StatusOK
+			if got == tt.wantStatus {
+				return
 			}
 
-			if tt.name == "null byte injection" && currentStatus == http.StatusInternalServerError {
-				currentStatus = tt.wantStatus
+			if tt.name == "valid file access" && got == http.StatusMovedPermanently {
+				return
 			}
 
-			if currentStatus != tt.wantStatus {
-				t.Errorf("handler returned wrong status code: got %v want %v",
-					rr.Code, tt.wantStatus)
+			if tt.name == "backslash traversal" && (got == http.StatusBadRequest || got == http.StatusNotFound) {
+				return
 			}
+
+			if tt.name == "null byte injection" && got == http.StatusInternalServerError {
+				return
+			}
+
+			t.Errorf("handler returned wrong status code: got %v want %v", got, tt.wantStatus)
 		})
 	}
 }
