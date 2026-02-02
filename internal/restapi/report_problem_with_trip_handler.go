@@ -10,7 +10,6 @@ import (
 )
 
 func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.Request) {
-	// Defensive: Ensure we have a logger, even if api.Logger is nil (common in tests)
 	logger := api.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -40,8 +39,6 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Note: We don't validate that the trip exists - just accept the report and log it
 
 	query := r.URL.Query()
 

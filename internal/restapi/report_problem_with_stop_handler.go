@@ -39,9 +39,7 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Note: We don't validate that the stop exists - just accept the report and log it
-
+	
 	query := r.URL.Query()
 
 	code := query.Get("code")
