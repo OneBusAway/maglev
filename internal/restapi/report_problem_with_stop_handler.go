@@ -10,25 +10,37 @@ import (
 )
 
 func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.Request) {
-	stopID := utils.ExtractIDFromParams(r)
+	logger := api.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
-	// TODO: Add required validation [DONE]
-	if stopID == "" {
-		api.Logger.Warn("report problem with stop failed: missing stopID")
-		http.Error(w, `{"code":400,"text":"stopID is required"}`, http.StatusBadRequest)
+	compositeID := utils.ExtractIDFromParams(r)
+
+	if compositeID == "" {
+		logger.Warn("report problem with stop failed: missing stopID")
+		http.Error(w, `{"code":400, "text":"stopID is required"}`, http.StatusBadRequest)
 		return
 	}
 
-    // fetch ID from DB.
-    _, err := api.GtfsManager.GtfsDB.Queries.GetStop(r.Context(), stopID)
-    if err != nil {
-        // we get an error, it means the ID wasn't found.
-        api.Logger.Warn("report problem with stop failed: stopID not found", 
-            slog.String("stopID", stopID), 
-            slog.Any("error", err))
-        http.Error(w, `{"code":404, "text":"stopID not found"}`, http.StatusNotFound)
-        return
-    }
+	// Extract agency ID and stop ID from composite ID
+	_, stopID, err := utils.ExtractAgencyIDAndCodeID(compositeID)
+	if err != nil {
+		logger.Warn("report problem with stop failed: invalid stopID format",
+			slog.String("stopID", compositeID),
+			slog.Any("error", err))
+		http.Error(w, `{"code":400, "text":"stopID is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Safety check: Ensure DB is initialized
+	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil {
+		logger.Error("report problem with stop failed: GTFS DB not initialized")
+		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Note: We don't validate that the stop exists - just accept the report and log it
 
 	query := r.URL.Query()
 
@@ -39,8 +51,8 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	userLocationAccuracy := query.Get("userLocationAccuracy")
 
 	// TODO: Add storage logic for the problem report, I leave it as a log statement for now
-	logger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
-	logging.LogOperation(logger, "problem_report_received_for_stop",
+	opLogger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
+	logging.LogOperation(opLogger, "problem_report_received_for_stop",
 		slog.String("stop_id", stopID),
 		slog.String("code", code),
 		slog.String("user_comment", userComment),

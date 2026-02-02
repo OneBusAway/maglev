@@ -10,26 +10,38 @@ import (
 )
 
 func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.Request) {
+	// Defensive: Ensure we have a logger, even if api.Logger is nil (common in tests)
+	logger := api.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
-	tripID := utils.ExtractIDFromParams(r)
+	compositeID := utils.ExtractIDFromParams(r)
 
-	// TODO: Add required validation [DONE]
-	if tripID == "" {
-		api.Logger.Warn("report problem with trip failed: missing tripID")
-		http.Error(w, `{"code":400,"text":"tripID is required"}`, http.StatusBadRequest)
+	if compositeID == "" {
+		logger.Warn("report problem with trip failed: missing tripID")
+		http.Error(w, `{"code":400, "text":"tripID is required"}`, http.StatusBadRequest)
 		return
 	}
 
-    // fetch ID from DB.
-	_, err := api.GtfsManager.GtfsDB.Queries.GetTrip(r.Context(), tripID)
-    if err != nil {
-		// we get an error, it means the ID wasn't found.
-        api.Logger.Warn("report problem with trip failed: tripID not found", 
-            slog.String("tripID", tripID),
-            slog.Any("error", err))
-        http.Error(w, `{"code":404, "text":"tripID not found"}`, http.StatusNotFound)
-        return
-    }
+	// Extract agency ID and trip ID from composite ID
+	_, tripID, err := utils.ExtractAgencyIDAndCodeID(compositeID)
+	if err != nil {
+		logger.Warn("report problem with trip failed: invalid tripID format",
+			slog.String("tripID", compositeID),
+			slog.Any("error", err))
+		http.Error(w, `{"code":400, "text":"tripID is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Safety check: Ensure DB is initialized
+	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil {
+		logger.Error("report problem with trip failed: GTFS DB not initialized")
+		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Note: We don't validate that the trip exists - just accept the report and log it
 
 	query := r.URL.Query()
 
@@ -45,8 +57,8 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	userLocationAccuracy := query.Get("userLocationAccuracy")
 
 	// TODO: Add storage logic for the problem report, I leave it as a log statement for now
-	logger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
-	logging.LogOperation(logger, "problem_report_received_for_trip",
+	opLogger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
+	logging.LogOperation(opLogger, "problem_report_received_for_trip",
 		slog.String("trip_id", tripID),
 		slog.String("code", code),
 		slog.String("service_date", serviceDate),
