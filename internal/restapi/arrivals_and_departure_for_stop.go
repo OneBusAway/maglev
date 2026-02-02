@@ -22,48 +22,59 @@ type ArrivalsStopParams struct {
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
 func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
+	const maxMinutesBefore = 60
+	const maxMinutesAfter = 240
+
 	params := ArrivalsStopParams{
-		MinutesAfter:  35, // Default
-		MinutesBefore: 5,  // Default
-		Time:          api.Clock.Now(),
+		MinutesAfter:  35,              // Default
+		MinutesBefore: 5,               // Default
+		Time:          api.Clock.Now(), // Default to current time
 	}
 
-	// Initialize errors map
-	fieldErrors := make(map[string][]string)
+	var fieldErrors map[string][]string
 
-	// Validate minutesAfter
-	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
-		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
-			params.MinutesAfter = minutesAfter
+	addError := func(field, msg string) {
+		if fieldErrors == nil {
+			fieldErrors = make(map[string][]string)
+		}
+		fieldErrors[field] = append(fieldErrors[field], msg)
+	}
+
+	query := r.URL.Query()
+
+	if val := query.Get("minutesAfter"); val != "" {
+		if minutes, err := strconv.Atoi(val); err == nil {
+			if minutes > maxMinutesAfter {
+				params.MinutesAfter = maxMinutesAfter
+			} else if minutes > 0 {
+				params.MinutesAfter = minutes
+			}
 		} else {
-			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
+			addError("minutesAfter", "must be a valid integer")
 		}
 	}
 
-	// Validate minutesBefore
-	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
-		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
-			params.MinutesBefore = minutesBefore
+	if val := query.Get("minutesBefore"); val != "" {
+		if minutes, err := strconv.Atoi(val); err == nil {
+			if minutes > maxMinutesBefore {
+				params.MinutesBefore = maxMinutesBefore
+			} else if minutes > 0 {
+				params.MinutesBefore = minutes
+			}
 		} else {
-			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
+			addError("minutesBefore", "must be a valid integer")
 		}
 	}
 
-	// Validate time
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
-			params.Time = time.Unix(timeMs/1000, 0)
+	if val := query.Get("time"); val != "" {
+		if timeMs, err := strconv.ParseInt(val, 10, 64); err == nil {
+			params.Time = time.Unix(timeMs/1000, (timeMs%1000)*1000000)
 		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			addError("time", "must be a valid Unix timestamp in milliseconds")
 		}
 	}
 
-	// Return all errors if any existed
-	if len(fieldErrors) > 0 {
-		return params, fieldErrors
-	}
-
-	return params, nil
+	return params, fieldErrors
 }
 
 func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r *http.Request) {
@@ -89,43 +100,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	const maxMinutesBefore = 60 // Maximum 1 hour before
-	const maxMinutesAfter = 240 // Maximum 4 hours after
-
-	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
-		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
-			if minutesAfter > 0 && minutesAfter <= maxMinutesAfter {
-				params.MinutesAfter = minutesAfter
-			} else if minutesAfter > maxMinutesAfter {
-				params.MinutesAfter = maxMinutesAfter
-			}
-		}
-	}
-	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
-		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
-			if minutesBefore > 0 && minutesBefore <= maxMinutesBefore {
-				params.MinutesBefore = minutesBefore
-			} else if minutesBefore > maxMinutesBefore {
-				params.MinutesBefore = maxMinutesBefore
-			}
-		}
-	}
-
-	var currentTime time.Time
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		timeMs, err := strconv.ParseInt(timeStr, 10, 64)
-		if err != nil {
-			fieldErrors := map[string][]string{
-				"time": {"must be a valid Unix timestamp in milliseconds"},
-			}
-			api.validationErrorResponse(w, r, fieldErrors)
-			return
-		}
-		currentTime = time.Unix(timeMs/1000, 0)
-	} else {
-		currentTime = api.Clock.Now()
-	}
-
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
 		api.sendNotFound(w, r)
@@ -139,14 +113,14 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agencyID)
-	currentTime = currentTime.In(loc)
-	windowStart := currentTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
-	windowEnd := currentTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
+	params.Time = params.Time.In(loc)
+	windowStart := params.Time.Add(-time.Duration(params.MinutesBefore) * time.Minute)
+	windowEnd := params.Time.Add(time.Duration(params.MinutesAfter) * time.Minute)
 
 	windowStartNanos := convertToNanosSinceMidnight(windowStart)
 	windowEndNanos := convertToNanosSinceMidnight(windowEnd)
 
-	serviceDate := currentTime.Format("20060102")
+	serviceDate := params.Time.Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -240,12 +214,12 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			tripIDSet[trip.ID] = &trip
 		}
 
-		serviceDateMillis := currentTime.UnixMilli()
+		serviceDateMillis := params.Time.UnixMilli()
 
 		serviceMidnight := time.Date(
-			currentTime.Year(),
-			currentTime.Month(),
-			currentTime.Day(),
+			params.Time.Year(),
+			params.Time.Month(),
+			params.Time.Day(),
 			0, 0, 0, 0,
 			loc,
 		)
@@ -306,7 +280,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 
 		if vehicle != nil {
-			status, _ := api.BuildTripStatus(ctx, agencyID, st.TripID, currentTime, currentTime)
+			status, _ := api.BuildTripStatus(ctx, agencyID, st.TripID, params.Time, params.Time)
 			if status != nil {
 				tripStatus = status
 
@@ -324,9 +298,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				}
 
 				if vehicle.Position != nil {
-					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, currentTime)
+					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, params.Time)
 
-					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, currentTime)
+					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, params.Time)
 					if numberOfStopsAwayPtr != nil {
 						numberOfStopsAway = *numberOfStopsAwayPtr
 					} else {
@@ -361,7 +335,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			totalStopsInTrip = 0
 		}
 
-		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, currentTime)
+		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, params.Time)
 
 		arrival := models.NewArrivalAndDeparture(
 			utils.FormCombinedID(agencyID, route.ID),  // routeID
@@ -376,7 +350,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			scheduledDepartureTime,                    // scheduledDepartureTime
 			predictedArrivalTime,                      // predictedArrivalTime
 			predictedDepartureTime,                    // predictedDepartureTime
-			currentTime.UnixMilli(),                   // lastUpdateTime
+			params.Time.UnixMilli(),                   // lastUpdateTime
 			predicted,                                 // predicted
 			true,                                      // arrivalEnabled
 			true,                                      // departureEnabled
