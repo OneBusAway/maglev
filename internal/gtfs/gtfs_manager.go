@@ -309,8 +309,9 @@ func (manager *Manager) GetStopsForLocation(
 		return candidates[i].distance < candidates[j].distance
 	})
 
-	// Limit to maxCount, ignore it if using stops to search for routes
-	// since limiting the stops can affect the returned routes results
+	// When isForRoutes is true, return all matching stops without applying maxCount limit.
+	// This prevents artificially limiting route results when the stop count would truncate
+	// routes that exist at stops beyond the maxCount threshold.
 	var stops []gtfsdb.Stop
 	for i := 0; i < len(candidates) && (i < maxCount || isForRoutes); i++ {
 		stops = append(stops, candidates[i].stop)

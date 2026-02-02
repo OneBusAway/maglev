@@ -20,7 +20,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
 	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
-	maxCount, _ := utils.ParseMaxCount(queryParams, 100, fieldErrors)
+	maxCount, _ := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
 
 	var routeTypes []int
@@ -163,6 +163,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	isLimitExceeded := false
 	// Build results using the pre-fetched data
 	for _, stopID := range stopIDs {
 		stop := stopMap[stopID]
@@ -191,6 +192,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			rids,
 			rids,
 		))
+		if len(results) >= maxCount {
+			isLimitExceeded = true
+			break
+		}
 	}
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
@@ -205,6 +210,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponseWithRange(results, references, len(results) == 0, api.Clock, len(results) >= maxCount)
+	response := models.NewListResponseWithRange(results, references, len(results) == 0, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

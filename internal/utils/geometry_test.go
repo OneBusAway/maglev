@@ -315,3 +315,116 @@ func TestDistance_OutputRange(t *testing.T) {
 			"Distance should not exceed half Earth's circumference")
 	}
 }
+
+func TestIsOutOfBounds(t *testing.T) {
+	tests := []struct {
+		name     string
+		inner    CoordinateBounds
+		outer    CoordinateBounds
+		expected bool
+	}{
+		{
+			name: "Inner fully inside outer",
+			inner: CoordinateBounds{
+				MinLat: 1, MaxLat: 2,
+				MinLon: 1, MaxLon: 2,
+			},
+			outer: CoordinateBounds{
+				MinLat: 0, MaxLat: 3,
+				MinLon: 0, MaxLon: 3,
+			},
+			expected: false,
+		},
+		{
+			name: "Inner completely north of outer",
+			inner: CoordinateBounds{
+				MinLat: 5, MaxLat: 6,
+				MinLon: 1, MaxLon: 2,
+			},
+			outer: CoordinateBounds{
+				MinLat: 0, MaxLat: 4,
+				MinLon: 0, MaxLon: 3,
+			},
+			expected: true,
+		},
+		{
+			name: "Inner completely south of outer",
+			inner: CoordinateBounds{
+				MinLat: -6, MaxLat: -5,
+				MinLon: 1, MaxLon: 2,
+			},
+			outer: CoordinateBounds{
+				MinLat: -4, MaxLat: 4,
+				MinLon: 0, MaxLon: 3,
+			},
+			expected: true,
+		},
+		{
+			name: "Inner completely east of outer",
+			inner: CoordinateBounds{
+				MinLat: 1, MaxLat: 2,
+				MinLon: 5, MaxLon: 6,
+			},
+			outer: CoordinateBounds{
+				MinLat: 0, MaxLat: 3,
+				MinLon: 0, MaxLon: 4,
+			},
+			expected: true,
+		},
+		{
+			name: "Inner completely west of outer",
+			inner: CoordinateBounds{
+				MinLat: 1, MaxLat: 2,
+				MinLon: -6, MaxLon: -5,
+			},
+			outer: CoordinateBounds{
+				MinLat: 0, MaxLat: 3,
+				MinLon: -4, MaxLon: 4,
+			},
+			expected: true,
+		},
+		{
+			name: "Partial overlap (inner intersects outer)",
+			inner: CoordinateBounds{
+				MinLat: 2, MaxLat: 5,
+				MinLon: 2, MaxLon: 5,
+			},
+			outer: CoordinateBounds{
+				MinLat: 0, MaxLat: 3,
+				MinLon: 0, MaxLon: 3,
+			},
+			expected: false,
+		},
+		{
+			name: "Equal bounds",
+			inner: CoordinateBounds{
+				MinLat: 0, MaxLat: 3,
+				MinLon: 0, MaxLon: 3,
+			},
+			outer: CoordinateBounds{
+				MinLat: 0, MaxLat: 3,
+				MinLon: 0, MaxLon: 3,
+			},
+			expected: false,
+		},
+		{
+			name: "Touching boundary exactly (edge case)",
+			inner: CoordinateBounds{
+				MinLat: 3, MaxLat: 4,
+				MinLon: 1, MaxLon: 2,
+			},
+			outer: CoordinateBounds{
+				MinLat: 0, MaxLat: 3,
+				MinLon: 0, MaxLon: 3,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsOutOfBounds(tt.inner, tt.outer)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

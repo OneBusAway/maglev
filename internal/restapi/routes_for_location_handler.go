@@ -17,7 +17,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
 	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
-	maxCount, _ := utils.ParseMaxCount(queryParams, 50, fieldErrors)
+	maxCount, _ := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, fieldErrors)
 	query := queryParams.Get("query")
 
 	if len(fieldErrors) > 0 {
@@ -95,6 +95,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	isLimitExceeded := false
 	// Process routes and filter by query if provided
 	for _, routeRow := range routesForStops {
 		if query != "" && strings.ToLower(routeRow.ShortName.String) != query {
@@ -117,6 +118,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		}
 		routeIDs[routeRow.ID] = true
 		if len(results) >= maxCount {
+			isLimitExceeded = true
 			break
 		}
 	}
@@ -132,12 +134,22 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, len(results) >= maxCount)
+	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
 
+// Uses Region Bounds to check if the given user location
+// is fully or partially inside the Region Bounds or not
 func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
 	regionLat, regionLon, regionLatSpan, regionLonSpan := api.GtfsManager.GetRegionBounds()
+
+	// TODO: use stop locations data as a fallback if no shapes exists
+	// returns false if there is no shapes or there exists only one point
+	if regionLatSpan == 0 && regionLonSpan == 0 {
+		return false
+	}
 
 	var innerBounds utils.CoordinateBounds
 	var outerBounds utils.CoordinateBounds
