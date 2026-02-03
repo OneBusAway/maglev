@@ -80,22 +80,37 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, error) {
-	stopsList := make([]models.Stop, 0, len(stopIDs))
+	if len(stopIDs) == 0 {
+		return []models.Stop{}, nil
+	}
 
-	for _, stopID := range stopIDs {
-		stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
-			continue
+	// Batch query 1: Get all stops in one query
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Batch query 2: Get all route IDs for all stops in one query
+	routeRows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Organize routes in memory by stop ID
+	routesMap := make(map[string][]string)
+	for _, row := range routeRows {
+		routeID, ok := row.RouteID.(string)
+		if ok {
+			routesMap[row.StopID] = append(routesMap[row.StopID], utils.FormCombinedID(agencyID, routeID))
 		}
+	}
 
-		routeIds, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(ctx, stop.ID)
-		if err != nil {
-			continue
-		}
-
-		routeIdsString := make([]string, len(routeIds))
-		for i, id := range routeIds {
-			routeIdsString[i] = utils.FormCombinedID(agencyID, id.(string))
+	// Build stops list from batched results
+	stopsList := make([]models.Stop, 0, len(stops))
+	for _, stop := range stops {
+		routeIDs := routesMap[stop.ID]
+		if routeIDs == nil {
+			routeIDs = []string{}
 		}
 
 		direction := models.UnknownValue
@@ -111,8 +126,8 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
 			Name:               stop.Name.String,
-			RouteIDs:           routeIdsString,
-			StaticRouteIDs:     routeIdsString,
+			RouteIDs:           routeIDs,
+			StaticRouteIDs:     routeIDs,
 			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
