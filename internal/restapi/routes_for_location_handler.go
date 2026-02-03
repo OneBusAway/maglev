@@ -140,9 +140,8 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 // Uses Region Bounds to check if the given user location
 // is fully or partially inside the Region Bounds or not
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
 	regionLat, regionLon, regionLatSpan, regionLonSpan := api.GtfsManager.GetRegionBounds()
 
 	// TODO: use stop locations data as a fallback if no shapes exists
