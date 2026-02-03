@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -343,12 +342,13 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 // but is part of the same block.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
+	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil || !requestedTrip.BlockID.Valid {
-		fmt.Fprintf(os.Stderr, "Could not get block ID for trip %s: %v\n", tripID, err)
+		logging.LogError(logger, "could not get block ID for trip", err, slog.String("trip_id", tripID))
 		return nil
 	}
 
@@ -356,7 +356,7 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get trips for block %s: %v\n", requestedBlockID, err)
+		logging.LogError(logger, "could not get trips for block", err, slog.String("block_id", requestedBlockID))
 		return nil
 	}
 
