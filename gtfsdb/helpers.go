@@ -116,15 +116,15 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return err
 	}
 
-	fmt.Printf("retrieved static data (warnings: %d)\n", len(staticData.Warnings))
-	fmt.Print("========\n\n")
+	logging.LogOperation(logger, "static_data_retrieved",
+		slog.Int("warnings", len(staticData.Warnings)))
 
 	staticCounts = c.staticDataCounts(staticData)
 	for k, v := range staticCounts {
-		fmt.Printf("%s: %d\n", k, v)
+		logging.LogOperation(logger, "static_count",
+			slog.String("table", k),
+			slog.Int("count", v))
 	}
-
-	fmt.Print("========\n\n")
 
 	logging.LogOperation(logger, "starting_database_import")
 
@@ -329,7 +329,10 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return fmt.Errorf("failed to get table counts: %w", err)
 	}
 	for k, v := range counts {
-		fmt.Printf("%s: %d (Static matches? %v)\n", k, v, v == staticCounts[k])
+		logging.LogOperation(logger, "table_count_verification",
+			slog.String("table", k),
+			slog.Int("count", v),
+			slog.Bool("matches_static", v == staticCounts[k]))
 	}
 
 	logging.LogOperation(logger, "updating_import_metadata",
