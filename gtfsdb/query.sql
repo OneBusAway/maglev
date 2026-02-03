@@ -1002,3 +1002,74 @@ JOIN stops_fts fts
 WHERE fts.stop_name MATCH sqlc.arg(search_query)
 ORDER BY s.name
 LIMIT sqlc.arg(limit);
+
+-- Problem Report Queries
+
+-- name: CreateProblemReportTrip :one
+INSERT INTO problem_reports_trip (
+    trip_id,
+    service_date,
+    vehicle_id,
+    stop_id,
+    code,
+    user_comment,
+    user_lat,
+    user_lon,
+    user_location_accuracy,
+    user_on_vehicle,
+    user_vehicle_number,
+    created_at,
+    submitted_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+
+-- name: CreateProblemReportStop :one
+INSERT INTO problem_reports_stop (
+    stop_id,
+    code,
+    user_comment,
+    user_lat,
+    user_lon,
+    user_location_accuracy,
+    created_at,
+    submitted_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+
+-- name: GetProblemReportsByTrip :many
+SELECT * FROM problem_reports_trip
+WHERE trip_id = ?
+ORDER BY created_at DESC;
+
+-- name: GetProblemReportsByStop :many
+SELECT * FROM problem_reports_stop
+WHERE stop_id = ?
+ORDER BY created_at DESC;
+
+-- name: GetProblemReportsTripByDateRange :many
+SELECT * FROM problem_reports_trip
+WHERE created_at >= sqlc.arg(start_time) AND created_at <= sqlc.arg(end_time)
+ORDER BY created_at DESC;
+
+-- name: GetProblemReportsStopByDateRange :many
+SELECT * FROM problem_reports_stop
+WHERE created_at >= sqlc.arg(start_time) AND created_at <= sqlc.arg(end_time)
+ORDER BY created_at DESC;
+
+-- name: GetProblemReportsTripByCode :many
+SELECT * FROM problem_reports_trip
+WHERE code = ?
+ORDER BY created_at DESC;
+
+-- name: GetProblemReportsStopByCode :many
+SELECT * FROM problem_reports_stop
+WHERE code = ?
+ORDER BY created_at DESC;
+
+-- name: GetRecentProblemReportsTrip :many
+SELECT * FROM problem_reports_trip
+ORDER BY created_at DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
+
+-- name: GetRecentProblemReportsStop :many
+SELECT * FROM problem_reports_stop
+ORDER BY created_at DESC
+LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);

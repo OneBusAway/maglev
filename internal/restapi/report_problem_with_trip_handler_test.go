@@ -42,3 +42,17 @@ func TestReportProblemWithTripEndToEnd(t *testing.T) {
 	assert.Equal(t, 0, nullModel.Code)
 	assert.Nil(t, nullModel.Data, "Response data should be null when trip ID is missing")
 }
+
+func TestReportProblemWithTrip_MinimalParams(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "1_12345"
+
+	url := fmt.Sprintf("/api/where/report-problem-with-trip/%s.json?key=TEST", tripID)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 200, model.Code)
+}
+

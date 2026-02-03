@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -32,7 +33,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	userLon := query.Get("userLon")
 	userLocationAccuracy := query.Get("userLocationAccuracy")
 
-	// TODO: Add storage logic for the problem report, I leave it as a log statement for now
+	// Log the problem report for observability
 	logger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
 	logging.LogOperation(logger, "problem_report_received_for_trip",
 		slog.String("trip_id", tripID),
@@ -47,5 +48,34 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		slog.String("user_lon", userLon),
 		slog.String("user_location_accuracy", userLocationAccuracy))
 
+	// Store the problem report in the database
+	now := api.Clock.Now().UnixMilli()
+	params := gtfsdb.CreateProblemReportTripParams{
+		TripID:               tripID,
+		ServiceDate:          gtfsdb.ToNullString(serviceDate),
+		VehicleID:            gtfsdb.ToNullString(vehicleID),
+		StopID:               gtfsdb.ToNullString(stopID),
+		Code:                 gtfsdb.ToNullString(code),
+		UserComment:          gtfsdb.ToNullString(userComment),
+		UserLat:              gtfsdb.ParseNullFloat(userLat),
+		UserLon:              gtfsdb.ParseNullFloat(userLon),
+		UserLocationAccuracy: gtfsdb.ParseNullFloat(userLocationAccuracy),
+		UserOnVehicle:        gtfsdb.ParseNullBool(userOnVehicle),
+		UserVehicleNumber:    gtfsdb.ToNullString(userVehicleNumber),
+		CreatedAt:            now,
+		SubmittedAt:          now,
+	}
+
+	// Store in database if available (gracefully handle missing schema)
+	if api.GtfsManager != nil && api.GtfsManager.GtfsDB != nil && api.GtfsManager.GtfsDB.Queries != nil {
+		_, err := api.GtfsManager.GtfsDB.Queries.CreateProblemReportTrip(r.Context(), params)
+		if err != nil {
+			logging.LogError(logger, "failed to store problem report", err,
+				slog.String("trip_id", tripID))
+			// Continue despite storage failure - report was already logged
+		}
+	}
+
 	api.sendResponse(w, r, models.NewOKResponse(struct{}{}, api.Clock))
 }
+
