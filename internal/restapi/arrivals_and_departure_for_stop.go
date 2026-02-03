@@ -180,27 +180,63 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Add the current stop
 	stopIDSet[stop.ID] = true
 
+	// Collect unique route and trip IDs for batch fetching
+	uniqueRouteIDs := make(map[string]bool)
+	uniqueTripIDs := make(map[string]bool)
 	for _, st := range stopTimes {
-		route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, st.RouteID)
-		if err != nil {
+		uniqueRouteIDs[st.RouteID] = true
+		uniqueTripIDs[st.TripID] = true
+	}
+
+	// Batch fetch all routes
+	routeIDList := make([]string, 0, len(uniqueRouteIDs))
+	for id := range uniqueRouteIDs {
+		routeIDList = append(routeIDList, id)
+	}
+	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDList)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	routeMap := make(map[string]*gtfsdb.Route)
+	for i := range routes {
+		routeMap[routes[i].ID] = &routes[i]
+	}
+
+	// Batch fetch all trips
+	tripIDList := make([]string, 0, len(uniqueTripIDs))
+	for id := range uniqueTripIDs {
+		tripIDList = append(tripIDList, id)
+	}
+	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDList)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	tripMap := make(map[string]*gtfsdb.Trip)
+	for i := range trips {
+		tripMap[trips[i].ID] = &trips[i]
+	}
+
+	for _, st := range stopTimes {
+		route, routeExists := routeMap[st.RouteID]
+		if !routeExists {
 			api.Logger.Debug("skipping stop time: route not found",
 				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID),
-				slog.Any("error", err))
+				slog.String("tripID", st.TripID))
 			continue
 		}
 
-		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, st.TripID)
-		if err != nil {
+		trip, tripExists := tripMap[st.TripID]
+		if !tripExists {
 			api.Logger.Debug("skipping stop time: trip not found",
 				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID),
-				slog.Any("error", err))
+				slog.String("tripID", st.TripID))
 			continue
 		}
 
-		routeIDSet[route.ID] = &route
-		tripIDSet[trip.ID] = &trip
+		routeIDSet[route.ID] = route
+		tripIDSet[trip.ID] = trip
 
 		serviceDateMillis := currentTime.UnixMilli()
 
