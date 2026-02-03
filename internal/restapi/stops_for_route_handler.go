@@ -387,8 +387,8 @@ func processTripGroups(
 }
 
 func generatePolylines(shapes []gtfsdb.GetShapesGroupedByTripHeadSignRow) []models.Polyline {
-	var polylines []models.Polyline
-	var coords [][]float64
+	polylines := make([]models.Polyline, 0, 1)
+	coords := make([][]float64, 0, len(shapes))
 	for _, shape := range shapes {
 		coords = append(coords, []float64{shape.Lat, shape.Lon})
 	}
@@ -402,7 +402,7 @@ func generatePolylines(shapes []gtfsdb.GetShapesGroupedByTripHeadSignRow) []mode
 }
 
 func formatStopIDs(agencyID string, stops map[string]bool) []string {
-	var stopIDs []string
+	stopIDs := make([]string, 0, len(stops))
 	for key := range stops {
 		stopID := utils.FormCombinedID(agencyID, key)
 		stopIDs = append(stopIDs, stopID)
