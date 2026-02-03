@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -160,7 +161,9 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 		"version":     2,
 	}
 
-	_ = json.NewEncoder(w).Encode(errorResponse)
+	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
+		slog.Error("failed to encode rate limit response", "error", err)
+	}
 }
 
 // cleanup periodically removes old, unused limiters to prevent memory leaks

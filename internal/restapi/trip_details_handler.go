@@ -20,40 +20,65 @@ type TripDetailsParams struct {
 	Time            *time.Time
 }
 
-func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) TripDetailsParams {
+// parseTripIdDetailsParams parses and validates parameters.
+func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) (TripDetailsParams, map[string][]string) {
 	params := TripDetailsParams{
 		IncludeTrip:     true,
 		IncludeSchedule: true,
 		IncludeStatus:   true,
 	}
 
+	fieldErrors := make(map[string][]string)
+
+	// Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
+		} else {
+			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
 	}
 
 	if includeTripStr := r.URL.Query().Get("includeTrip"); includeTripStr != "" {
-		params.IncludeTrip = includeTripStr == "true"
+		if val, err := strconv.ParseBool(includeTripStr); err == nil {
+			params.IncludeTrip = val
+		} else {
+			fieldErrors["includeTrip"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	if includeScheduleStr := r.URL.Query().Get("includeSchedule"); includeScheduleStr != "" {
-		params.IncludeSchedule = includeScheduleStr == "true"
+		if val, err := strconv.ParseBool(includeScheduleStr); err == nil {
+			params.IncludeSchedule = val
+		} else {
+			fieldErrors["includeSchedule"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
 	if includeStatusStr := r.URL.Query().Get("includeStatus"); includeStatusStr != "" {
-		params.IncludeStatus = includeStatusStr == "true"
+		if val, err := strconv.ParseBool(includeStatusStr); err == nil {
+			params.IncludeStatus = val
+		} else {
+			fieldErrors["includeStatus"] = []string{"must be a boolean value (true/false)"}
+		}
 	}
 
+	// Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else {
+			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
 	}
 
-	return params
+	if len(fieldErrors) > 0 {
+		return params, fieldErrors
+	}
+
+	return params, nil
 }
 
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +97,12 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	params := api.parseTripIdDetailsParams(r)
+	// Capture parsing errors
+	params, fieldErrors := api.parseTripIdDetailsParams(r)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
