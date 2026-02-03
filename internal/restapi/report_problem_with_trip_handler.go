@@ -78,4 +78,3 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 
 	api.sendResponse(w, r, models.NewOKResponse(struct{}{}, api.Clock))
 }
-

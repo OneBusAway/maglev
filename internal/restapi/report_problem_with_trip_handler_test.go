@@ -55,4 +55,3 @@ func TestReportProblemWithTrip_MinimalParams(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, 200, model.Code)
 }
-

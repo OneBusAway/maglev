@@ -71,4 +71,3 @@ func TestReportProblemWithStop_InvalidCoordinates(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, 200, model.Code)
 }
-
