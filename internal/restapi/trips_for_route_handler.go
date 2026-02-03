@@ -19,7 +19,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(utils.ExtractIDFromParams(r))
+	id := utils.ExtractIDFromParams(r)
+
+	if err := utils.ValidateID(id); err != nil {
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
+	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(id)
 	if err != nil {
 		fieldErrors := map[string][]string{
 			"id": {err.Error()},

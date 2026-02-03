@@ -232,7 +232,7 @@ func TestBlockHandlerInvalidBlockID(t *testing.T) {
 	}{
 		{"Empty block ID", "/api/where/block/.json?key=TEST", http.StatusBadRequest},
 		{"Missing agency", "/api/where/block/invalidblock.json?key=TEST", http.StatusBadRequest},
-		{"Special characters", "/api/where/block/25_@%23$.json?key=TEST", http.StatusNotFound},
+		{"Special characters", "/api/where/block/25_@%23$.json?key=TEST", http.StatusBadRequest},
 		{"Only underscore", "/api/where/block/_.json?key=TEST", http.StatusBadRequest},
 	}
 

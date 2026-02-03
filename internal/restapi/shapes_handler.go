@@ -11,7 +11,17 @@ import (
 )
 
 func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
-	agencyID, shapeID, err := utils.ExtractAgencyIDAndCodeID(utils.ExtractIDFromParams(r))
+	id := utils.ExtractIDFromParams(r)
+
+	if err := utils.ValidateID(id); err != nil {
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
+	agencyID, shapeID, err := utils.ExtractAgencyIDAndCodeID(id)
 
 	if err != nil {
 		fieldErrors := map[string][]string{

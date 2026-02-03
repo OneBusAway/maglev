@@ -40,5 +40,5 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, nullResp.StatusCode, "Should return 400 when ID is missing")
 	assert.Equal(t, 400, nullModel.Code)
-	assert.Equal(t, "stopID is required", nullModel.Text)
+	assert.Equal(t, "id cannot be empty", nullModel.Text)
 }
