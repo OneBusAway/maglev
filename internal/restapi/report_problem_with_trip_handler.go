@@ -11,12 +11,33 @@ import (
 )
 
 func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.Request) {
+	logger := api.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
-	tripID := utils.ExtractIDFromParams(r)
+	compositeID := utils.ExtractIDFromParams(r)
 
-	// TODO: Add required validation
-	if tripID == "" {
-		api.sendNull(w, r)
+	if compositeID == "" {
+		logger.Warn("report problem with trip failed: missing tripID")
+		http.Error(w, `{"code":400, "text":"tripID is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Extract agency ID and trip ID from composite ID
+	_, tripID, err := utils.ExtractAgencyIDAndCodeID(compositeID)
+	if err != nil {
+		logger.Warn("report problem with trip failed: invalid tripID format",
+			slog.String("tripID", compositeID),
+			slog.Any("error", err))
+		http.Error(w, `{"code":400, "text":"tripID is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Safety check: Ensure DB is initialized
+	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil {
+		logger.Error("report problem with trip failed: GTFS DB not initialized")
+		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -33,9 +54,9 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	userLon := query.Get("userLon")
 	userLocationAccuracy := query.Get("userLocationAccuracy")
 
-	// Log the problem report for observability
-	logger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
-	logging.LogOperation(logger, "problem_report_received_for_trip",
+	// TODO: Add storage logic for the problem report, I leave it as a log statement for now
+	opLogger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
+	logging.LogOperation(opLogger, "problem_report_received_for_trip",
 		slog.String("trip_id", tripID),
 		slog.String("code", code),
 		slog.String("service_date", serviceDate),

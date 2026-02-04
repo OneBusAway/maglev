@@ -38,9 +38,9 @@ func TestReportProblemWithTripEndToEnd(t *testing.T) {
 	nullURL := "/api/where/report-problem-with-trip/.json?key=TEST&code=vehicle_never_came"
 	nullResp, nullModel := serveApiAndRetrieveEndpoint(t, api, nullURL)
 
-	assert.Equal(t, http.StatusOK, nullResp.StatusCode)
-	assert.Equal(t, 0, nullModel.Code)
-	assert.Nil(t, nullModel.Data, "Response data should be null when trip ID is missing")
+	assert.Equal(t, http.StatusBadRequest, nullResp.StatusCode, "Should return 400 when ID is missing")
+	assert.Equal(t, 400, nullModel.Code)
+	assert.Equal(t, "tripID is required", nullModel.Text)
 }
 
 func TestReportProblemWithTrip_MinimalParams(t *testing.T) {
