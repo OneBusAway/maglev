@@ -38,7 +38,7 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 	nullURL := "/api/where/report-problem-with-stop/.json?key=TEST&code=stop_name_wrong"
 	nullResp, nullModel := serveApiAndRetrieveEndpoint(t, api, nullURL)
 
-	assert.Equal(t, http.StatusOK, nullResp.StatusCode)
-	assert.Equal(t, 0, nullModel.Code)
-	assert.Nil(t, nullModel.Data, "Response data should be null when stop ID is missing")
+	assert.Equal(t, http.StatusBadRequest, nullResp.StatusCode, "Should return 400 when ID is missing")
+	assert.Equal(t, 400, nullModel.Code)
+	assert.Equal(t, "stopID is required", nullModel.Text)
 }
