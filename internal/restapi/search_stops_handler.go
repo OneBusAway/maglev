@@ -13,16 +13,20 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// Pre-compiled regex patterns for FTS5 query sanitization
+var (
+	fts5SpecialCharsRegex = regexp.MustCompile(`[*"():^$@#~<>{}[\]\\|&!]`)
+	fts5OperatorsRegex    = regexp.MustCompile(`(?i)\b(AND|OR|NOT|NEAR)\b`)
+)
+
 // sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
 // to prevent query syntax errors. Does not preserve the original characters.
 func sanitizeFTS5Query(input string) string {
-	// 1. Remove ALL FTS5 special characters
-	specialChars := regexp.MustCompile(`[*"():^$@#~<>{}[\]\\|&!]`)
-	sanitized := specialChars.ReplaceAllString(input, " ")
+	// 1. Remove ALL FTS5 special characters using pre-compiled regex
+	sanitized := fts5SpecialCharsRegex.ReplaceAllString(input, " ")
 
-	// 2. Remove FTS5 operators (AND, OR, NOT, NEAR) case-insensitive
-	re := regexp.MustCompile(`(?i)\b(AND|OR|NOT|NEAR)\b`)
-	sanitized = re.ReplaceAllString(sanitized, " ")
+	// 2. Remove FTS5 operators using pre-compiled regex
+	sanitized = fts5OperatorsRegex.ReplaceAllString(sanitized, " ")
 
 	// 3. Trim and collapse whitespace
 	sanitized = strings.TrimSpace(sanitized)
