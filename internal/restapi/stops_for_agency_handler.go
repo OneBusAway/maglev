@@ -80,10 +80,10 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, error) {
-	// If no stops, return empty list 
-    if len(stopIDs) == 0 {
-        return []models.Stop{}, nil
-    }
+	// If no stops, return empty list
+	if len(stopIDs) == 0 {
+		return []models.Stop{}, nil
+	}
 
 	// Batch fetch all stops in one query
 	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
@@ -101,7 +101,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 	routesByStop := make(map[string][]string)
 	for _, row := range routeIDsRows {
 		if rid, ok := row.RouteID.(string); ok {
-			routesByStop[row.StopID] = append(routesByStop[row.StopID], utils.FormCombinedID(agencyID, rid))
+			routesByStop[row.StopID] = append(routesByStop[row.StopID], rid)
 		}
 	}
 
