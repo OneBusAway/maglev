@@ -164,8 +164,9 @@ func (q *Queries) GetProblemReportsByTrip(ctx context.Context, tripID string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
+	defer func() {
+		_ = rows.Close()
+	}()
 	var items []ProblemReportsTrip
 	for rows.Next() {
 		var i ProblemReportsTrip
@@ -209,7 +210,9 @@ func (q *Queries) GetProblemReportsByStop(ctx context.Context, stopID string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var items []ProblemReportsStop
 	for rows.Next() {
