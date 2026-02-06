@@ -22,10 +22,8 @@ func (m *mockTestingFatalf) Fatalf(format string, args ...any) {
 
 func TestCollectAllNestedIdsFromObjects(t *testing.T) {
 	data := []interface{}{
-		map[string]interface{}{"routes": []interface{}{"234", "235"},
-		},
-		map[string]interface{}{"routes": []interface{}{"345"},
-		},
+		map[string]interface{}{"routes": []interface{}{"234", "235"}},
+		map[string]interface{}{"routes": []interface{}{"345"}},
 	}
 	expected := []string{"234", "235", "345"}
 	actual := collectAllNestedIdsFromObjects(t, data, "routes")
@@ -63,8 +61,7 @@ func TestCollectAllNestedIdsFromObjectsFailures(t *testing.T) {
 		{
 			name: "Invalid nested array type",
 			data: []interface{}{
-				map[string]interface{}{"routes": []interface{}{234},
-				},
+				map[string]interface{}{"routes": []interface{}{234}},
 			},
 			expectedError: "item 0 key \"routes\" index 0 is not a string: int",
 		},
