@@ -348,8 +348,14 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 
 	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
-	if err != nil || !requestedTrip.BlockID.Valid {
-		logging.LogError(logger, "could not get block ID for trip", err,
+	if err != nil {
+		logging.LogError(logger, "could not get trip", err,
+			slog.String("trip_id", tripID))
+		return nil
+	}
+
+	if !requestedTrip.BlockID.Valid {
+		logger.Debug("trip has no block ID, cannot find vehicle by block",
 			slog.String("trip_id", tripID))
 		return nil
 	}
