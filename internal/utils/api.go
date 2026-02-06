@@ -115,18 +115,6 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		return "", time.Time{}, fieldErrors, false
 	}
 
-	// Set time to midnight for accurate comparison
-	currentTime := time.Now().In(currentLocation)
-	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	parsedTimeMidnight := time.Date(parsedTime.Year(), parsedTime.Month(), parsedTime.Day(), 0, 0, 0, 0, currentLocation)
-
-	if parsedTimeMidnight.After(todayMidnight) {
-		fieldErrors := map[string][]string{
-			"time": {"Invalid field value for field \"time\"."},
-		}
-		return "", time.Time{}, fieldErrors, false
-	}
-
 	// Valid date, use it
 	return parsedTime.Format("20060102"), parsedTime, nil, true
 }
