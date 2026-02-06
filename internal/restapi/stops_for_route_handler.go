@@ -388,7 +388,8 @@ func processTripGroups(
 
 func generatePolylines(shapes []gtfsdb.GetShapesGroupedByTripHeadSignRow) []models.Polyline {
 	var polylines []models.Polyline
-	var coords [][]float64
+	// This prevents repeated memory re-allocation during the loop.
+	coords := make([][]float64, 0, len(shapes))
 	for _, shape := range shapes {
 		coords = append(coords, []float64{shape.Lat, shape.Lon})
 	}
