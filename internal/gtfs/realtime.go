@@ -26,6 +26,17 @@ func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 	return manager.realTimeVehicles
 }
 
+// GetAllAlerts returns all active service alerts safely
+func (manager *Manager) GetAllAlerts() []gtfs.Alert {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	alerts := make([]gtfs.Alert, len(manager.realTimeAlerts))
+	copy(alerts, manager.realTimeAlerts)
+
+	return alerts
+}
+
 func loadRealtimeData(ctx context.Context, source string, headers map[string]string) (*gtfs.Realtime, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 	if err != nil {
