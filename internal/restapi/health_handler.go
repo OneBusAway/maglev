@@ -27,7 +27,7 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-+	if err := api.GtfsManager.GtfsDB.DB.PingContext(r.Context()); err != nil {
+	if err := api.GtfsManager.GtfsDB.DB.PingContext(r.Context()); err != nil {
 		logging.LogError(api.Logger, "GTFS DB ping failed", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(HealthResponse{
