@@ -158,8 +158,10 @@ func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[str
 			maxCount = parsedMaxCount
 			if maxCount <= 0 {
 				fieldErrors["maxCount"] = []string{"must be greater than zero"}
+				maxCount = defaultCount
 			} else if maxCount > models.MaxAllowedCount {
 				fieldErrors["maxCount"] = []string{"must not exceed 250"}
+				maxCount = defaultCount
 			}
 		} else {
 			fieldErrors["maxCount"] = []string{"Invalid field value for field \"maxCount\"."}

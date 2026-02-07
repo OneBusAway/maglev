@@ -138,8 +138,8 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	api.sendResponse(w, r, response)
 }
 
-// Uses Region Bounds to check if the given user location
-// is fully or partially inside the Region Bounds or not
+// checkIfOutOfBounds returns true if the user's search area is completely
+// outside the transit agency's region bounds (derived from shape data).
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
 	regionLat, regionLon, regionLatSpan, regionLonSpan := api.GtfsManager.GetRegionBounds()
@@ -150,14 +150,13 @@ func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64,
 		return false
 	}
 
-	var innerBounds utils.CoordinateBounds
-	var outerBounds utils.CoordinateBounds
+	innerBounds := utils.CalculateBounds(lat, lon, radius)
+
 	if latSpan > 0 && lonSpan > 0 {
 		innerBounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
-	} else {
-		innerBounds = utils.CalculateBounds(lat, lon, radius)
 	}
-	outerBounds = utils.CalculateBoundsFromSpan(regionLat, regionLon, regionLatSpan/2, regionLonSpan/2)
+
+	outerBounds := utils.CalculateBoundsFromSpan(regionLat, regionLon, regionLatSpan/2, regionLonSpan/2)
 
 	return utils.IsOutOfBounds(innerBounds, outerBounds)
 }
