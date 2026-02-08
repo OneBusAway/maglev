@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -57,12 +58,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Calculate nanoseconds since midnight of the service day
-	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
-	nanosSinceMidnight := currentTime.Sub(serviceDayMidnight).Nanoseconds()
-	if nanosSinceMidnight < 0 {
-		nanosSinceMidnight = 0
+	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation())
+	currentNanosSinceMidnight := currentTime.Sub(serviceDayMidnight).Nanoseconds()
+	if currentNanosSinceMidnight < 0 {
+		currentNanosSinceMidnight = 0
 	}
-	currentNanosSinceMidnight := nanosSinceMidnight
 
 	indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
 		RouteID:    routeID,
@@ -126,8 +126,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		HasVehicle bool
 	}
 	var activeTrips []ActiveTripEntry
-
+	// Extract block IDs from map and sort them to enable deterministic iteration.
+	deterministicBlockIDs := make([]string, 0, len(allLinkedBlocks))
 	for blockID := range allLinkedBlocks {
+		deterministicBlockIDs = append(deterministicBlockIDs, blockID)
+	}
+	sort.Strings(deterministicBlockIDs)
+	for _, blockID := range deterministicBlockIDs {
 		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
 
 		tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
@@ -172,14 +177,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	tripIDsSet := make(map[string]bool)
+
 	for _, entry := range activeTrips {
 		tripIDsSet[entry.TripID] = true
 	}
 	var tripIDs []string
+
 	for id := range tripIDsSet {
 		tripIDs = append(tripIDs, id)
 	}
-
+    sort.Strings(tripIDs)
 	var fetchedTrips []gtfsdb.Trip
 	if len(tripIDs) > 0 {
 		fetchedTrips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
@@ -199,6 +206,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	for id := range routeIDsSet {
 		routeIDs = append(routeIDs, id)
 	}
+	sort.Strings(routeIDs)
 
 	var fetchedRoutes []gtfsdb.Route
 	if len(routeIDs) > 0 {
@@ -220,7 +228,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]bool)
 
 	var result []models.TripsForRouteListEntry
@@ -261,7 +268,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  serviceDayMidnight.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(r.Context(), tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
@@ -343,6 +350,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	for id := range presentTrips {
 		tripIDsToFetch = append(tripIDsToFetch, id)
 	}
+	sort.Strings(tripIDsToFetch)
 
 	if len(tripIDsToFetch) > 0 {
 		fetchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
@@ -371,7 +379,8 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	for id := range presentRoutes {
 		routeIDsToFetch = append(routeIDsToFetch, id)
 	}
-
+    
+	sort.Strings(routeIDsToFetch)
 	presentAgencies := make(map[string]models.AgencyReference)
 
 	if len(routeIDsToFetch) > 0 {
