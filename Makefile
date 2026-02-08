@@ -7,7 +7,7 @@ else
     SET_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5"
 endif
 
-.PHONY: build clean coverage test run lint watch fmt \
+.PHONY: build build-debug clean coverage test run lint watch fmt \
 	gtfstidy models check-golangci-lint \
 	docker-build docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all
 
@@ -16,6 +16,9 @@ run: build
 	bin/maglev -f config.json
 
 build: gtfstidy
+	$(SET_ENV) go build -tags "sqlite_fts5" -o bin/maglev ./cmd/api
+
+build-debug: gtfstidy
 	$(SET_ENV) go build -tags "sqlite_fts5" -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 
 gtfstidy:
