@@ -24,13 +24,9 @@ func TestManager_GetAgencies(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				Env:          appconf.Test,
-				GTFSDataPath: ":memory:",
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
+
+			manager, _ := getSharedTestComponents(t)
+			assert.NotNil(t, manager)
 
 			agencies := manager.GetAgencies()
 			assert.Equal(t, 1, len(agencies))
@@ -61,12 +57,8 @@ func TestManager_RoutesForAgencyID(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				GTFSDataPath: ":memory:",
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
+			manager, _ := getSharedTestComponents(t)
+			assert.NotNil(t, manager)
 
 			routes := manager.RoutesForAgencyID("25")
 			assert.Equal(t, 13, len(routes))
@@ -107,13 +99,8 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				GTFSDataPath: ":memory:",
-				Env:          appconf.Test,
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
+			manager, _ := getSharedTestComponents(t)
+			assert.NotNil(t, manager)
 
 			// Get stops using the manager method
 			stops := manager.GetStopsForLocation(context.Background(), tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
@@ -144,13 +131,8 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 }
 
 func TestManager_GetTrips(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
 	trips := manager.GetTrips()
 	assert.NotEmpty(t, trips)
@@ -327,13 +309,9 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 }
 
 func TestManager_GetVehicleForTrip(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
+
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
 	// Set up real-time vehicle with a trip
 	trip := &gtfs.Trip{
