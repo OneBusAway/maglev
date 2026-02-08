@@ -1,7 +1,9 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,7 +130,6 @@ func TestStopsForLocationLatSpanAndLonSpan(t *testing.T) {
 	stop, ok := list[0].(map[string]interface{})
 	require.True(t, ok)
 	assert.NotEmpty(t, stop)
-
 }
 
 func TestStopsForLocationRadius(t *testing.T) {
@@ -150,19 +151,133 @@ func TestStopsForLocationLatAndLan(t *testing.T) {
 	require.True(t, ok)
 	assert.NotEmpty(t, list)
 }
+
 func TestStopsForLocationHandlerValidatesParameters(t *testing.T) {
 	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=invalid&lon=-121.74")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
 func TestStopsForLocationHandlerValidatesLatLon(t *testing.T) {
 	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=invalid&lon=invalid")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
 func TestStopsForLocationHandlerValidatesLatLonSpan(t *testing.T) {
 	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&latSpan=invalid&lonSpan=invalid")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
 func TestStopsForLocationHandlerValidatesRadius(t *testing.T) {
 	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=invalid")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestStopsForLocationHandlerRouteTypeErrorLimit(t *testing.T) {
+	invalidTypes := strings.Repeat("bad,", 14) + "bad"
+
+	url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=" + invalidTypes
+	_, resp, model := serveAndRetrieveEndpoint(t, url)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be a map")
+
+	fieldErrors, ok := data["fieldErrors"].(map[string]interface{})
+	require.True(t, ok, "data should contain fieldErrors map")
+
+	routeTypeErrors, ok := fieldErrors["routeType"].([]interface{})
+	require.True(t, ok, "fieldErrors should contain routeType errors list")
+
+	assert.Len(t, routeTypeErrors, 10, "Should cap validation errors at 10 to prevent DoS")
+
+	for _, err := range routeTypeErrors {
+		errStr, ok := err.(string)
+		require.True(t, ok)
+		assert.Contains(t, errStr, "Invalid field value for field", "Error should use standard generic message")
+	}
+}
+
+func TestStopsForLocationHandlerRouteTypeTooManyTokens(t *testing.T) {
+	tokens := make([]string, 150)
+	for i := range tokens {
+		tokens[i] = fmt.Sprintf("%d", i)
+	}
+	manyTokens := strings.Join(tokens, ",")
+
+	url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=" + manyTokens
+	_, resp, model := serveAndRetrieveEndpoint(t, url)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be a map")
+
+	fieldErrors, ok := data["fieldErrors"].(map[string]interface{})
+	require.True(t, ok, "data should contain fieldErrors map")
+
+	routeTypeErrors, ok := fieldErrors["routeType"].([]interface{})
+	require.True(t, ok, "fieldErrors should contain routeType errors list")
+
+	assert.Len(t, routeTypeErrors, 1, "Should return single error for too many tokens")
+
+	firstError, ok := routeTypeErrors[0].(string)
+	require.True(t, ok)
+	assert.Contains(t, firstError, "too many route types", "Error should mention the token limit")
+}
+
+func TestStopsForLocationHandlerRouteTypeAtLimit(t *testing.T) {
+	tokens := make([]string, 100)
+	for i := range tokens {
+		tokens[i] = fmt.Sprintf("%d", i)
+	}
+	validTypes := strings.Join(tokens, ",")
+
+	url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=" + validTypes
+	_, resp, _ := serveAndRetrieveEndpoint(t, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "100 tokens should be accepted (at the limit)")
+}
+
+func TestStopsForLocationHandlerRouteTypeMixedValidInvalid(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=1,bad,2,invalid,3")
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be a map")
+
+	fieldErrors, ok := data["fieldErrors"].(map[string]interface{})
+	require.True(t, ok, "data should contain fieldErrors map")
+
+	routeTypeErrors, ok := fieldErrors["routeType"].([]interface{})
+	require.True(t, ok, "fieldErrors should contain routeType errors list")
+
+	assert.Len(t, routeTypeErrors, 2, "Should report both invalid tokens")
+
+	for _, err := range routeTypeErrors {
+		errStr, ok := err.(string)
+		require.True(t, ok)
+		assert.Contains(t, errStr, "Invalid field value for field", "Error should use standard generic message")
+	}
+}
+
+func TestStopsForLocationHandlerRouteTypeValidMultiple(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=1,2,3")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Valid route types should be accepted")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.NotNil(t, list) 
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+	assert.NotNil(t, refs["agencies"])
+	assert.NotNil(t, refs["routes"])
 }

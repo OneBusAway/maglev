@@ -45,17 +45,32 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	var routeTypes []int
 	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
 		routeTypeStrs := strings.Split(routeTypeStr, ",")
-		for _, rtStr := range routeTypeStrs {
-			rtStr = strings.TrimSpace(rtStr)
-			if rtStr != "" {
-				var rt int
-				if _, err := fmt.Sscanf(rtStr, "%d", &rt); err != nil {
-					if fieldErrors == nil {
-						fieldErrors = make(map[string][]string)
+
+		const maxValidationErrorCount = 10
+		const maxRouteTypeTokens = 100
+
+		if len(routeTypeStrs) > maxRouteTypeTokens {
+			if fieldErrors == nil {
+				fieldErrors = make(map[string][]string)
+			}
+			fieldErrors["routeType"] = []string{
+				fmt.Sprintf("too many route types (maximum %d allowed)", maxRouteTypeTokens),
+			}
+		} else {
+			for _, rtStr := range routeTypeStrs {
+				rtStr = strings.TrimSpace(rtStr)
+				if rtStr != "" {
+					var rt int
+					if _, err := fmt.Sscanf(rtStr, "%d", &rt); err != nil {
+						if fieldErrors == nil {
+							fieldErrors = make(map[string][]string)
+						}
+						if len(fieldErrors["routeType"]) < maxValidationErrorCount {
+							fieldErrors["routeType"] = append(fieldErrors["routeType"], fmt.Sprintf("Invalid field value for field %q.", "routeType"))
+						}
+					} else {
+						routeTypes = append(routeTypes, rt)
 					}
-					fieldErrors["routeType"] = append(fieldErrors["routeType"], fmt.Sprintf("invalid route type: %s", rtStr))
-				} else {
-					routeTypes = append(routeTypes, rt)
 				}
 			}
 		}
