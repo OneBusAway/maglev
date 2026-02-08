@@ -482,10 +482,6 @@ func findClosestStopByTimeWithDelays(currentTimeSeconds int64, stopTimes []*gtfs
 	return
 }
 
-func findNextStopByTime(currentTimeSeconds int64, stopTimes []*gtfsdb.StopTime) (stopID string, offset int) {
-	return findNextStopByTimeWithDelays(currentTimeSeconds, stopTimes, nil)
-}
-
 func findNextStopByTimeWithDelays(currentTimeSeconds int64, stopTimes []*gtfsdb.StopTime, stopDelays map[string]StopDelayInfo) (stopID string, offset int) {
 	var minTimeDiff int64 = math.MaxInt64
 	var nextStopTimeSeconds int64
