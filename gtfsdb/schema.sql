@@ -330,7 +330,10 @@ CREATE INDEX IF NOT EXISTS idx_trips_service_id ON trips (service_id);
 CREATE INDEX IF NOT EXISTS idx_stop_times_trip_id ON stop_times (trip_id);
 
 -- migrate
-CREATE INDEX IF NOT EXISTS idx_stop_times_stop_id ON stop_times (stop_id);
+DROP INDEX IF EXISTS idx_stop_times_stop_id;
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_stop_times_stop_arrival ON stop_times (stop_id, arrival_time);
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_id_trip_id ON stop_times (stop_id, trip_id);
