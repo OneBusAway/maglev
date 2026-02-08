@@ -15,7 +15,7 @@ import (
 
 // initRateLimitMiddleware initializes a rate limit middleware with clock.RealClock for testing
 func initRateLimitMiddleware(ratePerSecond int, interval time.Duration) *RateLimitMiddleware {
-	return NewRateLimitMiddleware(ratePerSecond, interval, clock.RealClock{})
+	return NewRateLimitMiddleware(ratePerSecond, interval, nil, clock.RealClock{})
 }
 
 func TestNewRateLimitMiddleware(t *testing.T) {
@@ -121,7 +121,9 @@ func TestRateLimitMiddleware_PerAPIKeyLimiting(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_ExemptsOneBusAwayiPhone(t *testing.T) {
-	middleware := initRateLimitMiddleware(1, time.Second)
+	exemptKeys := []string{"org.onebusaway.iphone"}
+
+	middleware := NewRateLimitMiddleware(1, time.Second, exemptKeys, clock.RealClock{})
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -254,7 +256,7 @@ func TestRateLimitMiddleware_ConcurrentRequests(t *testing.T) {
 
 func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
-	middleware := NewRateLimitMiddleware(1, time.Second, mockClock)
+	middleware := NewRateLimitMiddleware(1, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

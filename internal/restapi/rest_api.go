@@ -15,7 +15,7 @@ type RestAPI struct {
 func NewRestAPI(app *app.Application) *RestAPI {
 	return &RestAPI{
 		Application: app,
-		rateLimiter: NewRateLimitMiddleware(app.Config.RateLimit, time.Second, app.Clock),
+		rateLimiter: NewRateLimitMiddleware(app.Config.RateLimit, time.Second, app.Config.ExemptApiKeys, app.Clock),
 	}
 }
 

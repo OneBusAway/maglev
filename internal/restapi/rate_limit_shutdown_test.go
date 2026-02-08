@@ -10,7 +10,7 @@ import (
 )
 
 func TestRateLimitMiddleware_Shutdown(t *testing.T) {
-	middleware := NewRateLimitMiddleware(10, time.Second, clock.RealClock{})
+	middleware := NewRateLimitMiddleware(10, time.Second, nil, clock.RealClock{})
 
 	assert.NotNil(t, middleware)
 	assert.NotNil(t, middleware.Handler())
@@ -29,7 +29,7 @@ func TestRateLimitMiddleware_Shutdown(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_ShutdownIdempotent(t *testing.T) {
-	middleware := NewRateLimitMiddleware(10, time.Second, clock.RealClock{})
+	middleware := NewRateLimitMiddleware(10, time.Second, nil, clock.RealClock{})
 
 	middleware.Stop()
 	middleware.Stop()
@@ -69,7 +69,7 @@ func TestRateLimitMiddleware_GoroutineActuallyExits(t *testing.T) {
 	// Get baseline goroutine count
 	initial := runtime.NumGoroutine()
 
-	middleware := NewRateLimitMiddleware(10, time.Second, clock.RealClock{})
+	middleware := NewRateLimitMiddleware(10, time.Second, nil, clock.RealClock{})
 	time.Sleep(50 * time.Millisecond) // Give goroutine time to start
 
 	afterCreate := runtime.NumGoroutine()

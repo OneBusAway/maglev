@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +36,7 @@ type RateLimitMiddleware struct {
 // NewRateLimitMiddleware creates a new rate limiting middleware
 // ratePerSecond: number of requests allowed per second per API key
 // burstSize: number of requests allowed in a burst per API key
-func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, clock clock.Clock) *RateLimitMiddleware {
+func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKeys []string, clock clock.Clock) *RateLimitMiddleware {
 	// Handle zero rate limit case
 	var rateLimit rate.Limit
 	if ratePerSecond <= 0 {
@@ -47,16 +48,22 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, clock clo
 		rateLimit = rate.Every(interval / time.Duration(ratePerSecond))
 	}
 
+	exemptMap := make(map[string]bool)
+	for _, key := range exemptKeys {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey != "" {
+			exemptMap[trimmedKey] = true
+		}
+	}
+
 	middleware := &RateLimitMiddleware{
 		limiters:    make(map[string]*rateLimitClient),
 		rateLimit:   rateLimit,
 		burstSize:   ratePerSecond,
 		cleanupTick: time.NewTicker(5 * time.Minute), // Cleanup old limiters every 5 minutes
-		exemptKeys: map[string]bool{
-			"org.onebusaway.iphone": true, // Exempt OneBusAway iPhone app
-		},
-		stopChan: make(chan struct{}),
-		clock:    clock,
+		exemptKeys:  exemptMap,
+		stopChan:    make(chan struct{}),
+		clock:       clock,
 	}
 
 	// Start cleanup goroutine
