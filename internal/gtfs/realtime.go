@@ -71,9 +71,11 @@ func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
 }
 
 // GetAlertsForTrip returns alerts matching the trip, its route, or agency.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []gtfs.Alert {
 	var routeID string
 	var agencyID string
+
 	if manager.GtfsDB != nil {
 		trip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
 		if err == nil {
