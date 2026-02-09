@@ -385,7 +385,8 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	// match against any trip in the block, not a specific trip ID.
 	for _, v := range manager.realTimeVehicles {
 		if v.Trip != nil && v.Trip.ID.ID != "" && blockTripIDs[v.Trip.ID.ID] {
-			return &v
+			vehicle := v
+			return &vehicle
 		}
 	}
 	return nil
@@ -397,7 +398,8 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 	defer manager.realTimeMutex.RUnlock()
 
 	if index, exists := manager.realTimeVehicleLookupByVehicle[vehicleID]; exists {
-		return &manager.realTimeVehicles[index], nil
+		vehicle := manager.realTimeVehicles[index]
+		return &vehicle, nil
 	}
 
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
@@ -427,7 +429,8 @@ func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 	if index, exists := manager.realTimeTripLookup[tripID]; exists {
-		return &manager.realTimeTrips[index], nil
+		trip := manager.realTimeTrips[index]
+		return &trip, nil
 	}
 	return nil, fmt.Errorf("trip with ID %s not found", tripID)
 }
