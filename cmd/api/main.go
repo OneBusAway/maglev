@@ -4,7 +4,6 @@ import (
 	"flag"
 	"log/slog"
 	"os"
-	"strings"
 
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
@@ -89,7 +88,7 @@ func main() {
 
 		// Parse Exempt API Keys
 		if exemptApiKeysFlag != "" {
-			cfg.ExemptApiKeys = strings.Split(exemptApiKeysFlag, ",")
+			cfg.ExemptApiKeys = ParseAPIKeys(exemptApiKeysFlag)
 		}
 
 		// Convert environment flag to enum

@@ -120,29 +120,84 @@ func TestRateLimitMiddleware_PerAPIKeyLimiting(t *testing.T) {
 		"API key 2 should not be affected")
 }
 
-func TestRateLimitMiddleware_ExemptsOneBusAwayiPhone(t *testing.T) {
-	exemptKeys := []string{"org.onebusaway.iphone"}
-
-	middleware := NewRateLimitMiddleware(1, time.Second, exemptKeys, clock.RealClock{})
-	defer middleware.Stop()
-
+func TestRateLimitMiddleware_ExemptsConfiguredKeys(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	limitedHandler := middleware.Handler()(handler)
+	t.Run("Exempts custom configured key", func(t *testing.T) {
+		exemptKeys := []string{"custom-admin-key"}
+		// Set limit to 1 to ensure exemption logic works (we will make >1 request)
+		middleware := NewRateLimitMiddleware(1, time.Second, exemptKeys, clock.RealClock{})
+		defer middleware.Stop()
 
-	// Make many requests with the exempted API key
-	exemptKey := "org.onebusaway.iphone"
-	for i := 0; i < 10; i++ {
-		req := httptest.NewRequest("GET", fmt.Sprintf("/test?key=%s", exemptKey), nil)
+		limitedHandler := middleware.Handler()(handler)
+
+		for i := 0; i < 5; i++ {
+			req := httptest.NewRequest("GET", "/test?key=custom-admin-key", nil)
+			w := httptest.NewRecorder()
+			limitedHandler.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code, "Configured exempt key should always be allowed")
+		}
+
+		// Non-exempt key should still be limited
+		req := httptest.NewRequest("GET", "/test?key=other-key", nil)
 		w := httptest.NewRecorder()
-
 		limitedHandler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, "First request for non-exempt key ok")
 
-		assert.Equal(t, http.StatusOK, w.Code,
-			"Exempted API key request %d should always be allowed", i+1)
-	}
+		req = httptest.NewRequest("GET", "/test?key=other-key", nil)
+		w = httptest.NewRecorder()
+		limitedHandler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusTooManyRequests, w.Code, "Second request for non-exempt key blocked")
+	})
+
+	t.Run("Exempts multiple keys", func(t *testing.T) {
+		exemptKeys := []string{"key-A", "key-B"}
+		middleware := NewRateLimitMiddleware(1, time.Second, exemptKeys, clock.RealClock{})
+		defer middleware.Stop()
+
+		limitedHandler := middleware.Handler()(handler)
+
+		// Check Key A
+		for i := 0; i < 3; i++ {
+			req := httptest.NewRequest("GET", "/test?key=key-A", nil)
+			w := httptest.NewRecorder()
+			limitedHandler.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code, "Key A should be exempt")
+		}
+
+		// Check Key B
+		for i := 0; i < 3; i++ {
+			req := httptest.NewRequest("GET", "/test?key=key-B", nil)
+			w := httptest.NewRecorder()
+			limitedHandler.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code, "Key B should be exempt")
+		}
+	})
+
+	t.Run("Handles nil exempt keys (no exemption)", func(t *testing.T) {
+		// Pass nil for exempt keys
+		middleware := NewRateLimitMiddleware(1, time.Second, nil, clock.RealClock{})
+		defer middleware.Stop()
+
+		limitedHandler := middleware.Handler()(handler)
+
+		// Try with what used to be the hardcoded exempt key
+		key := "org.onebusaway.iphone"
+
+		// First request passes
+		req := httptest.NewRequest("GET", fmt.Sprintf("/test?key=%s", key), nil)
+		w := httptest.NewRecorder()
+		limitedHandler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// Second request fails (proving it's NOT exempt when passed as nil)
+		req = httptest.NewRequest("GET", fmt.Sprintf("/test?key=%s", key), nil)
+		w = httptest.NewRecorder()
+		limitedHandler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusTooManyRequests, w.Code, "Should not be exempt if config is nil")
+	})
 }
 
 func TestRateLimitMiddleware_HandlesNoAPIKey(t *testing.T) {
