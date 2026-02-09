@@ -63,3 +63,12 @@ func CalculateBoundsFromSpan(lat, lon, latOffset, lonOffset float64) CoordinateB
 		MaxLon: lon + lonOffset,
 	}
 }
+
+// IsOutOfBounds returns true only if the inner bounds have no overlap
+// with the outer bounds.
+func IsOutOfBounds(inner, outer CoordinateBounds) bool {
+	return inner.MaxLat < outer.MinLat ||
+		inner.MinLat > outer.MaxLat ||
+		inner.MaxLon < outer.MinLon ||
+		inner.MinLon > outer.MaxLon
+}

@@ -82,7 +82,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	if len(indexIDs) == 0 && len(layoverBlocks) == 0 {
 		references := buildTripReferences(api, w, r, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{})
-		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock)
+		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -288,7 +288,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	// Pass only the result list; references function will fetch what it needs
 	references := buildTripReferences(api, w, r, ctx, includeSchedule, result, stops)
-	response := models.NewListResponseWithRange(result, references, false, api.Clock)
+	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 

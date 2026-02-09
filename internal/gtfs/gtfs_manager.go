@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -42,6 +41,7 @@ type Manager struct {
 	shutdownOnce                   sync.Once
 	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
+	isHealthy                      bool
 }
 
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
@@ -309,9 +309,11 @@ func (manager *Manager) GetStopsForLocation(
 		return candidates[i].distance < candidates[j].distance
 	})
 
-	// Limit to maxCount
+	// When isForRoutes is true, return all matching stops without applying maxCount limit.
+	// This prevents artificially limiting route results when the stop count would truncate
+	// routes that exist at stops beyond the maxCount threshold.
 	var stops []gtfsdb.Stop
-	for i := 0; i < len(candidates) && i < maxCount; i++ {
+	for i := 0; i < len(candidates) && (i < maxCount || isForRoutes); i++ {
 		stops = append(stops, candidates[i].stop)
 	}
 
@@ -346,9 +348,18 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+
 	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
-	if err != nil || !requestedTrip.BlockID.Valid {
-		fmt.Fprintf(os.Stderr, "Could not get block ID for trip %s: %v\n", tripID, err)
+	if err != nil {
+		logging.LogError(logger, "could not get trip", err,
+			slog.String("trip_id", tripID))
+		return nil
+	}
+
+	if !requestedTrip.BlockID.Valid {
+		logger.Debug("trip has no block ID, cannot find vehicle by block",
+			slog.String("trip_id", tripID))
 		return nil
 	}
 
@@ -356,7 +367,8 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get trips for block %s: %v\n", requestedBlockID, err)
+		logging.LogError(logger, "could not get trips for block", err,
+			slog.String("block_id", requestedBlockID))
 		return nil
 	}
 
@@ -373,7 +385,8 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	// match against any trip in the block, not a specific trip ID.
 	for _, v := range manager.realTimeVehicles {
 		if v.Trip != nil && v.Trip.ID.ID != "" && blockTripIDs[v.Trip.ID.ID] {
-			return &v
+			vehicle := v
+			return &vehicle
 		}
 	}
 	return nil
@@ -385,7 +398,8 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 	defer manager.realTimeMutex.RUnlock()
 
 	if index, exists := manager.realTimeVehicleLookupByVehicle[vehicleID]; exists {
-		return &manager.realTimeVehicles[index], nil
+		vehicle := manager.realTimeVehicles[index]
+		return &vehicle, nil
 	}
 
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
@@ -415,7 +429,8 @@ func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 	if index, exists := manager.realTimeTripLookup[tripID]; exists {
-		return &manager.realTimeTrips[index], nil
+		trip := manager.realTimeTrips[index]
+		return &trip, nil
 	}
 	return nil, fmt.Errorf("trip with ID %s not found", tripID)
 }
@@ -480,4 +495,25 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 	default:
 		return 0, nil
 	}
+}
+
+// IsHealthy returns true if the GTFS data is loaded and valid.
+func (manager *Manager) IsHealthy() bool {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.isHealthy
+}
+
+// MarkHealthy sets the manager status to healthy.
+func (manager *Manager) MarkHealthy() {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+	manager.isHealthy = true
+}
+
+// MarkUnhealthy sets the manager status to unhealthy.
+func (manager *Manager) MarkUnhealthy() {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+	manager.isHealthy = false
 }
