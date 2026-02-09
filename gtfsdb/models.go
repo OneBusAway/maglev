@@ -62,6 +62,35 @@ type ImportMetadatum struct {
 	FileSource string
 }
 
+type ProblemReportsStop struct {
+	ID                   int64
+	StopID               string
+	Code                 sql.NullString
+	UserComment          sql.NullString
+	UserLat              sql.NullFloat64
+	UserLon              sql.NullFloat64
+	UserLocationAccuracy sql.NullFloat64
+	CreatedAt            int64
+	SubmittedAt          int64
+}
+
+type ProblemReportsTrip struct {
+	ID                   int64
+	TripID               string
+	ServiceDate          sql.NullString
+	VehicleID            sql.NullString
+	StopID               sql.NullString
+	Code                 sql.NullString
+	UserComment          sql.NullString
+	UserLat              sql.NullFloat64
+	UserLon              sql.NullFloat64
+	UserLocationAccuracy sql.NullFloat64
+	UserOnVehicle        sql.NullInt64
+	UserVehicleNumber    sql.NullString
+	CreatedAt            int64
+	SubmittedAt          int64
+}
+
 type Route struct {
 	ID                string
 	AgencyID          string
@@ -74,6 +103,15 @@ type Route struct {
 	TextColor         sql.NullString
 	ContinuousPickup  sql.NullInt64
 	ContinuousDropOff sql.NullInt64
+}
+
+type RoutesFt struct {
+	RoutesFts string
+	Rowid     sql.NullInt64
+	AgencyID  sql.NullString
+	ShortName sql.NullString
+	LongName  sql.NullString
+	Desc      sql.NullString
 }
 
 type Shape struct {
