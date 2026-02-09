@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"math"
 	"sort"
 	"time"
@@ -450,13 +451,33 @@ func (api *RestAPI) setBlockTripSequence(ctx context.Context, tripID string, ser
 // for trips that are active on the given service date
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
-	blockID, err := api.GtfsManager.GtfsDB.Queries.GetBlockIDByTripID(ctx, tripID)
+	// Use a read-only transaction to ensure a consistent view of the data
+	// This prevents race conditions during GTFS hot-swap operations where
+	// multiple queries could read from different versions of the database
+	tx, err := api.GtfsManager.GtfsDB.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return 0
+	}
+	defer func() {
+		_ = tx.Rollback() // Safe to call even after commit
+	}()
+
+	// Use transaction-scoped queries for consistent reads
+	qtx := api.GtfsManager.GtfsDB.Queries.WithTx(tx)
+
+	return api.calculateBlockTripSequenceWithTx(ctx, qtx, tripID, serviceDate)
+}
+
+// calculateBlockTripSequenceWithTx performs the block trip sequence calculation
+// using the provided queries interface (can be regular or transaction-scoped)
+func (api *RestAPI) calculateBlockTripSequenceWithTx(ctx context.Context, queries *gtfsdb.Queries, tripID string, serviceDate time.Time) int {
+	blockID, err := queries.GetBlockIDByTripID(ctx, tripID)
 
 	if err != nil || !blockID.Valid || blockID.String == "" {
 		return 0
 	}
 
-	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, blockID)
+	blockTrips, err := queries.GetTripsByBlockID(ctx, blockID)
 	if err != nil {
 		return 0
 	}
@@ -476,7 +497,7 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 		}
 
 		// Second, get the start time for this trip
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, blockTrip.ID)
+		stopTimes, err := queries.GetStopTimesForTrip(ctx, blockTrip.ID)
 		if err != nil || len(stopTimes) == 0 {
 			continue
 		}
