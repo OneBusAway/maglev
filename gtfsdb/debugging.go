@@ -75,30 +75,42 @@ func (c *Client) TableCounts() (map[string]int, error) {
 
 	counts := make(map[string]int)
 
-	// Whitelist allowed table names to prevent SQL injection
-	allowedTables := map[string]bool{
-		"agencies":         true,
-		"routes":           true,
-		"stops":            true,
-		"trips":            true,
-		"stop_times":       true,
-		"calendar":         true,
-		"calendar_dates":   true,
-		"shapes":           true,
-		"transfers":        true,
-		"feed_info":        true,
-		"block_trip_index": true,
-		"block_trip_entry": true,
-		"import_metadata":  true,
-	}
-
 	for _, table := range tables {
-		if !allowedTables[table] {
+		var query string
+
+		// This prevents SQL injection by ensuring the query string is always a constant.
+		switch table {
+		case "agencies":
+			query = "SELECT COUNT(*) FROM agencies"
+		case "routes":
+			query = "SELECT COUNT(*) FROM routes"
+		case "stops":
+			query = "SELECT COUNT(*) FROM stops"
+		case "trips":
+			query = "SELECT COUNT(*) FROM trips"
+		case "stop_times":
+			query = "SELECT COUNT(*) FROM stop_times"
+		case "calendar":
+			query = "SELECT COUNT(*) FROM calendar"
+		case "calendar_dates":
+			query = "SELECT COUNT(*) FROM calendar_dates"
+		case "shapes":
+			query = "SELECT COUNT(*) FROM shapes"
+		case "transfers":
+			query = "SELECT COUNT(*) FROM transfers"
+		case "feed_info":
+			query = "SELECT COUNT(*) FROM feed_info"
+		case "block_trip_index":
+			query = "SELECT COUNT(*) FROM block_trip_index"
+		case "block_trip_entry":
+			query = "SELECT COUNT(*) FROM block_trip_entry"
+		case "import_metadata":
+			query = "SELECT COUNT(*) FROM import_metadata"
+		default:
 			continue
 		}
 
 		var count int
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", table)
 		err := c.DB.QueryRow(query).Scan(&count)
 		if err != nil {
 			return nil, err
