@@ -203,6 +203,20 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        "service1",
+		Monday:    1,
+		Tuesday:   1,
+		Wednesday: 1,
+		Thursday:  1,
+		Friday:    1,
+		Saturday:  1,
+		Sunday:    1,
+		StartDate: "20250101",
+		EndDate:   "20251231",
+	})
+	require.NoError(t, err)
+
 	// 4. Link them: Create Trips and StopTimes for both agencies at the shared stop
 	// Trip for Agency B (Arriving at 08:00:00 -> 28800 seconds)
 	tripB_ID := "TripB"
