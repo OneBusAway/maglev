@@ -54,7 +54,6 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	userLon := query.Get("userLon")
 	userLocationAccuracy := query.Get("userLocationAccuracy")
 
-	// TODO: Add storage logic for the problem report, I leave it as a log statement for now
 	opLogger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
 	logging.LogOperation(opLogger, "problem_report_received_for_trip",
 		slog.String("trip_id", tripID),
