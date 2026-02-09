@@ -59,6 +59,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
+
 	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(id)
 	if err != nil {
 		fieldErrors := map[string][]string{

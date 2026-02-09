@@ -24,6 +24,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
+
 	// Extract agency ID and trip ID from composite ID
 	_, tripID, err := utils.ExtractAgencyIDAndCodeID(compositeID)
 	if err != nil {
