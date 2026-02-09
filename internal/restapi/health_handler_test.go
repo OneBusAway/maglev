@@ -39,7 +39,7 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 	// Use in-memory DB to test the health check successfully
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Create a minimal Application with the DB
 	app := &app.Application{
@@ -61,7 +61,7 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/healthz")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
