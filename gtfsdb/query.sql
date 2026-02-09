@@ -1005,7 +1005,7 @@ LIMIT sqlc.arg(limit);
 
 -- Problem Report Queries
 
--- name: CreateProblemReportTrip :one
+-- name: CreateProblemReportTrip :exec
 INSERT INTO problem_reports_trip (
     trip_id,
     service_date,
@@ -1020,9 +1020,9 @@ INSERT INTO problem_reports_trip (
     user_vehicle_number,
     created_at,
     submitted_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
--- name: CreateProblemReportStop :one
+-- name: CreateProblemReportStop :exec
 INSERT INTO problem_reports_stop (
     stop_id,
     code,
@@ -1032,7 +1032,7 @@ INSERT INTO problem_reports_stop (
     user_location_accuracy,
     created_at,
     submitted_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetProblemReportsByTrip :many
 SELECT * FROM problem_reports_trip
@@ -1044,32 +1044,4 @@ SELECT * FROM problem_reports_stop
 WHERE stop_id = ?
 ORDER BY created_at DESC;
 
--- name: GetProblemReportsTripByDateRange :many
-SELECT * FROM problem_reports_trip
-WHERE created_at >= sqlc.arg(start_time) AND created_at <= sqlc.arg(end_time)
-ORDER BY created_at DESC;
 
--- name: GetProblemReportsStopByDateRange :many
-SELECT * FROM problem_reports_stop
-WHERE created_at >= sqlc.arg(start_time) AND created_at <= sqlc.arg(end_time)
-ORDER BY created_at DESC;
-
--- name: GetProblemReportsTripByCode :many
-SELECT * FROM problem_reports_trip
-WHERE code = ?
-ORDER BY created_at DESC;
-
--- name: GetProblemReportsStopByCode :many
-SELECT * FROM problem_reports_stop
-WHERE code = ?
-ORDER BY created_at DESC;
-
--- name: GetRecentProblemReportsTrip :many
-SELECT * FROM problem_reports_trip
-ORDER BY created_at DESC
-LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);
-
--- name: GetRecentProblemReportsStop :many
-SELECT * FROM problem_reports_stop
-ORDER BY created_at DESC
-LIMIT sqlc.arg(limit) OFFSET sqlc.arg(offset);

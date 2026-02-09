@@ -288,7 +288,7 @@ func (q *Queries) CreateCalendarDate(ctx context.Context, arg CreateCalendarDate
 	return i, err
 }
 
-const createProblemReportStop = `-- name: CreateProblemReportStop :one
+const createProblemReportStop = `-- name: CreateProblemReportStop :exec
 INSERT INTO problem_reports_stop (
     stop_id,
     code,
@@ -298,7 +298,7 @@ INSERT INTO problem_reports_stop (
     user_location_accuracy,
     created_at,
     submitted_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, created_at, submitted_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateProblemReportStopParams struct {
@@ -312,8 +312,8 @@ type CreateProblemReportStopParams struct {
 	SubmittedAt          int64
 }
 
-func (q *Queries) CreateProblemReportStop(ctx context.Context, arg CreateProblemReportStopParams) (ProblemReportsStop, error) {
-	row := q.queryRow(ctx, q.createProblemReportStopStmt, createProblemReportStop,
+func (q *Queries) CreateProblemReportStop(ctx context.Context, arg CreateProblemReportStopParams) error {
+	_, err := q.exec(ctx, q.createProblemReportStopStmt, createProblemReportStop,
 		arg.StopID,
 		arg.Code,
 		arg.UserComment,
@@ -323,22 +323,10 @@ func (q *Queries) CreateProblemReportStop(ctx context.Context, arg CreateProblem
 		arg.CreatedAt,
 		arg.SubmittedAt,
 	)
-	var i ProblemReportsStop
-	err := row.Scan(
-		&i.ID,
-		&i.StopID,
-		&i.Code,
-		&i.UserComment,
-		&i.UserLat,
-		&i.UserLon,
-		&i.UserLocationAccuracy,
-		&i.CreatedAt,
-		&i.SubmittedAt,
-	)
-	return i, err
+	return err
 }
 
-const createProblemReportTrip = `-- name: CreateProblemReportTrip :one
+const createProblemReportTrip = `-- name: CreateProblemReportTrip :exec
 
 INSERT INTO problem_reports_trip (
     trip_id,
@@ -354,7 +342,7 @@ INSERT INTO problem_reports_trip (
     user_vehicle_number,
     created_at,
     submitted_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, trip_id, service_date, vehicle_id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, user_on_vehicle, user_vehicle_number, created_at, submitted_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateProblemReportTripParams struct {
@@ -374,8 +362,8 @@ type CreateProblemReportTripParams struct {
 }
 
 // Problem Report Queries
-func (q *Queries) CreateProblemReportTrip(ctx context.Context, arg CreateProblemReportTripParams) (ProblemReportsTrip, error) {
-	row := q.queryRow(ctx, q.createProblemReportTripStmt, createProblemReportTrip,
+func (q *Queries) CreateProblemReportTrip(ctx context.Context, arg CreateProblemReportTripParams) error {
+	_, err := q.exec(ctx, q.createProblemReportTripStmt, createProblemReportTrip,
 		arg.TripID,
 		arg.ServiceDate,
 		arg.VehicleID,
@@ -390,24 +378,7 @@ func (q *Queries) CreateProblemReportTrip(ctx context.Context, arg CreateProblem
 		arg.CreatedAt,
 		arg.SubmittedAt,
 	)
-	var i ProblemReportsTrip
-	err := row.Scan(
-		&i.ID,
-		&i.TripID,
-		&i.ServiceDate,
-		&i.VehicleID,
-		&i.StopID,
-		&i.Code,
-		&i.UserComment,
-		&i.UserLat,
-		&i.UserLon,
-		&i.UserLocationAccuracy,
-		&i.UserOnVehicle,
-		&i.UserVehicleNumber,
-		&i.CreatedAt,
-		&i.SubmittedAt,
-	)
-	return i, err
+	return err
 }
 
 const createRoute = `-- name: CreateRoute :one
@@ -1654,275 +1625,6 @@ ORDER BY created_at DESC
 
 func (q *Queries) GetProblemReportsByTrip(ctx context.Context, tripID string) ([]ProblemReportsTrip, error) {
 	rows, err := q.query(ctx, q.getProblemReportsByTripStmt, getProblemReportsByTrip, tripID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ProblemReportsTrip
-	for rows.Next() {
-		var i ProblemReportsTrip
-		if err := rows.Scan(
-			&i.ID,
-			&i.TripID,
-			&i.ServiceDate,
-			&i.VehicleID,
-			&i.StopID,
-			&i.Code,
-			&i.UserComment,
-			&i.UserLat,
-			&i.UserLon,
-			&i.UserLocationAccuracy,
-			&i.UserOnVehicle,
-			&i.UserVehicleNumber,
-			&i.CreatedAt,
-			&i.SubmittedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getProblemReportsStopByCode = `-- name: GetProblemReportsStopByCode :many
-SELECT id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, created_at, submitted_at FROM problem_reports_stop
-WHERE code = ?
-ORDER BY created_at DESC
-`
-
-func (q *Queries) GetProblemReportsStopByCode(ctx context.Context, code sql.NullString) ([]ProblemReportsStop, error) {
-	rows, err := q.query(ctx, q.getProblemReportsStopByCodeStmt, getProblemReportsStopByCode, code)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ProblemReportsStop
-	for rows.Next() {
-		var i ProblemReportsStop
-		if err := rows.Scan(
-			&i.ID,
-			&i.StopID,
-			&i.Code,
-			&i.UserComment,
-			&i.UserLat,
-			&i.UserLon,
-			&i.UserLocationAccuracy,
-			&i.CreatedAt,
-			&i.SubmittedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getProblemReportsStopByDateRange = `-- name: GetProblemReportsStopByDateRange :many
-SELECT id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, created_at, submitted_at FROM problem_reports_stop
-WHERE created_at >= ?1 AND created_at <= ?2
-ORDER BY created_at DESC
-`
-
-type GetProblemReportsStopByDateRangeParams struct {
-	StartTime int64
-	EndTime   int64
-}
-
-func (q *Queries) GetProblemReportsStopByDateRange(ctx context.Context, arg GetProblemReportsStopByDateRangeParams) ([]ProblemReportsStop, error) {
-	rows, err := q.query(ctx, q.getProblemReportsStopByDateRangeStmt, getProblemReportsStopByDateRange, arg.StartTime, arg.EndTime)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ProblemReportsStop
-	for rows.Next() {
-		var i ProblemReportsStop
-		if err := rows.Scan(
-			&i.ID,
-			&i.StopID,
-			&i.Code,
-			&i.UserComment,
-			&i.UserLat,
-			&i.UserLon,
-			&i.UserLocationAccuracy,
-			&i.CreatedAt,
-			&i.SubmittedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getProblemReportsTripByCode = `-- name: GetProblemReportsTripByCode :many
-SELECT id, trip_id, service_date, vehicle_id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, user_on_vehicle, user_vehicle_number, created_at, submitted_at FROM problem_reports_trip
-WHERE code = ?
-ORDER BY created_at DESC
-`
-
-func (q *Queries) GetProblemReportsTripByCode(ctx context.Context, code sql.NullString) ([]ProblemReportsTrip, error) {
-	rows, err := q.query(ctx, q.getProblemReportsTripByCodeStmt, getProblemReportsTripByCode, code)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ProblemReportsTrip
-	for rows.Next() {
-		var i ProblemReportsTrip
-		if err := rows.Scan(
-			&i.ID,
-			&i.TripID,
-			&i.ServiceDate,
-			&i.VehicleID,
-			&i.StopID,
-			&i.Code,
-			&i.UserComment,
-			&i.UserLat,
-			&i.UserLon,
-			&i.UserLocationAccuracy,
-			&i.UserOnVehicle,
-			&i.UserVehicleNumber,
-			&i.CreatedAt,
-			&i.SubmittedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getProblemReportsTripByDateRange = `-- name: GetProblemReportsTripByDateRange :many
-SELECT id, trip_id, service_date, vehicle_id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, user_on_vehicle, user_vehicle_number, created_at, submitted_at FROM problem_reports_trip
-WHERE created_at >= ?1 AND created_at <= ?2
-ORDER BY created_at DESC
-`
-
-type GetProblemReportsTripByDateRangeParams struct {
-	StartTime int64
-	EndTime   int64
-}
-
-func (q *Queries) GetProblemReportsTripByDateRange(ctx context.Context, arg GetProblemReportsTripByDateRangeParams) ([]ProblemReportsTrip, error) {
-	rows, err := q.query(ctx, q.getProblemReportsTripByDateRangeStmt, getProblemReportsTripByDateRange, arg.StartTime, arg.EndTime)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ProblemReportsTrip
-	for rows.Next() {
-		var i ProblemReportsTrip
-		if err := rows.Scan(
-			&i.ID,
-			&i.TripID,
-			&i.ServiceDate,
-			&i.VehicleID,
-			&i.StopID,
-			&i.Code,
-			&i.UserComment,
-			&i.UserLat,
-			&i.UserLon,
-			&i.UserLocationAccuracy,
-			&i.UserOnVehicle,
-			&i.UserVehicleNumber,
-			&i.CreatedAt,
-			&i.SubmittedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getRecentProblemReportsStop = `-- name: GetRecentProblemReportsStop :many
-SELECT id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, created_at, submitted_at FROM problem_reports_stop
-ORDER BY created_at DESC
-LIMIT ?2 OFFSET ?1
-`
-
-type GetRecentProblemReportsStopParams struct {
-	Offset int64
-	Limit  int64
-}
-
-func (q *Queries) GetRecentProblemReportsStop(ctx context.Context, arg GetRecentProblemReportsStopParams) ([]ProblemReportsStop, error) {
-	rows, err := q.query(ctx, q.getRecentProblemReportsStopStmt, getRecentProblemReportsStop, arg.Offset, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ProblemReportsStop
-	for rows.Next() {
-		var i ProblemReportsStop
-		if err := rows.Scan(
-			&i.ID,
-			&i.StopID,
-			&i.Code,
-			&i.UserComment,
-			&i.UserLat,
-			&i.UserLon,
-			&i.UserLocationAccuracy,
-			&i.CreatedAt,
-			&i.SubmittedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getRecentProblemReportsTrip = `-- name: GetRecentProblemReportsTrip :many
-SELECT id, trip_id, service_date, vehicle_id, stop_id, code, user_comment, user_lat, user_lon, user_location_accuracy, user_on_vehicle, user_vehicle_number, created_at, submitted_at FROM problem_reports_trip
-ORDER BY created_at DESC
-LIMIT ?2 OFFSET ?1
-`
-
-type GetRecentProblemReportsTripParams struct {
-	Offset int64
-	Limit  int64
-}
-
-func (q *Queries) GetRecentProblemReportsTrip(ctx context.Context, arg GetRecentProblemReportsTripParams) ([]ProblemReportsTrip, error) {
-	rows, err := q.query(ctx, q.getRecentProblemReportsTripStmt, getRecentProblemReportsTrip, arg.Offset, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
