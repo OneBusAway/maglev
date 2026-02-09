@@ -14,3 +14,9 @@ const (
 	DefaultSearchRadiusInMeters = 600
 	QuerySearchRadiusInMeters   = 10000
 )
+
+const (
+	DefaultMaxCountForRoutes = 50
+	DefaultMaxCountForStops  = 100
+	MaxAllowedCount          = 250
+)

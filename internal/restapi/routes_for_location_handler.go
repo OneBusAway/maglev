@@ -17,6 +17,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
 	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
+	maxCount, _ := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, fieldErrors)
 	query := queryParams.Get("query")
 
 	if len(fieldErrors) > 0 {
@@ -59,7 +60,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, 50, true, nil, time.Time{})
+	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, maxCount, true, nil, time.Time{})
 
 	var results = []models.Route{}
 	routeIDs := map[string]bool{}
@@ -82,7 +83,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			Stops:      []models.Stop{},
 			Trips:      []interface{}{},
 		}
-		response := models.NewListResponseWithRange(results, references, true, api.Clock)
+		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -94,6 +95,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	isLimitExceeded := false
 	// Process routes and filter by query if provided
 	for _, routeRow := range routesForStops {
 		if query != "" && strings.ToLower(routeRow.ShortName.String) != query {
@@ -115,6 +117,10 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			))
 		}
 		routeIDs[routeRow.ID] = true
+		if len(results) >= maxCount {
+			isLimitExceeded = true
+			break
+		}
 	}
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
@@ -128,6 +134,29 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponseWithRange(results, references, len(results) == 0, api.Clock)
+	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
+}
+
+// checkIfOutOfBounds returns true if the user's search area is completely
+// outside the transit agency's region bounds (derived from shape data).
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
+	regionLat, regionLon, regionLatSpan, regionLonSpan := api.GtfsManager.GetRegionBounds()
+
+	// TODO: use stop locations data as a fallback if no shapes exists
+	// returns false if there is no shapes or there exists only one point
+	if regionLatSpan == 0 && regionLonSpan == 0 {
+		return false
+	}
+
+	innerBounds := utils.CalculateBounds(lat, lon, radius)
+
+	if latSpan > 0 && lonSpan > 0 {
+		innerBounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
+	}
+
+	outerBounds := utils.CalculateBoundsFromSpan(regionLat, regionLon, regionLatSpan/2, regionLonSpan/2)
+
+	return utils.IsOutOfBounds(innerBounds, outerBounds)
 }

@@ -142,3 +142,30 @@ func LoadLocationWithUTCFallBack(timeZone string, agencyId string) *time.Locatio
 	}
 	return loc
 }
+
+// ParseMaxCount parses the maxCount query parameter with validation.
+// It accepts a default value and enforces a maximum of 250 (matching Java's MaxCountSupport).
+// Returns an error in fieldErrors if the value is <= 0 or > 250.
+func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	maxCount := defaultCount
+	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
+		parsedMaxCount, err := strconv.Atoi(maxCountStr)
+		if err == nil {
+			maxCount = parsedMaxCount
+			if maxCount <= 0 {
+				fieldErrors["maxCount"] = []string{"must be greater than zero"}
+				maxCount = defaultCount
+			} else if maxCount > models.MaxAllowedCount {
+				fieldErrors["maxCount"] = []string{"must not exceed 250"}
+				maxCount = defaultCount
+			}
+		} else {
+			fieldErrors["maxCount"] = []string{"Invalid field value for field \"maxCount\"."}
+		}
+	}
+	return maxCount, fieldErrors
+}
