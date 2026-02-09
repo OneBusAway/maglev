@@ -184,6 +184,15 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Add the current stop
 	stopIDSet[stop.ID] = true
 
+	serviceDateMillis := params.Time.UnixMilli()
+	serviceMidnight := time.Date(
+		params.Time.Year(),
+		params.Time.Month(),
+		params.Time.Day(),
+		0, 0, 0, 0,
+		loc,
+	)
+
 	for _, st := range stopTimes {
 		var route gtfsdb.Route
 		if cachedRoute, exists := routeIDSet[st.RouteID]; exists {
@@ -216,16 +225,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			trip = fetchedTrip
 			tripIDSet[trip.ID] = &trip
 		}
-
-		serviceDateMillis := params.Time.UnixMilli()
-
-		serviceMidnight := time.Date(
-			params.Time.Year(),
-			params.Time.Month(),
-			params.Time.Day(),
-			0, 0, 0, 0,
-			loc,
-		)
 
 		scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime)).UnixMilli()
 		scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime)).UnixMilli()
@@ -318,7 +317,12 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 						// Check cache for active trip
 						if _, exists := tripIDSet[activeTripID]; !exists {
 							activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
-							if err == nil {
+							if err != nil {
+								api.Logger.Debug("skipping active trip reference: trip not found",
+									slog.String("activeTripID", activeTripID),
+									slog.String("scheduledTripID", st.TripID),
+									slog.Any("error", err))
+							} else {
 								tripIDSet[activeTrip.ID] = &activeTrip
 							}
 						}
@@ -335,6 +339,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		tripStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, st.TripID)
 		var totalStopsInTrip int
 		if err != nil {
+			api.Logger.Debug("failed to get stop times for trip",
+				slog.String("tripID", st.TripID),
+				slog.Any("error", err))
 			totalStopsInTrip = 0
 		} else {
 			totalStopsInTrip = len(tripStopTimes)
