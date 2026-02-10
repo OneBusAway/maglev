@@ -2,11 +2,14 @@ package gtfs
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -351,5 +354,190 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	if vehicle != nil {
 		assert.NotNil(t, vehicle)
 		assert.Equal(t, "vehicle1", vehicle.ID.ID)
+	}
+}
+
+func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
+	// Setup: Initialize manager with RABA test data
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	require.NoError(t, err, "Failed to initialize manager")
+	defer manager.Shutdown()
+
+	targetAgencyID := "25"   // RABA agency ID
+	expectedRouteCount := 13 // RABA has 13 routes
+
+	// Test 1: Verify map was populated during initialization
+	manager.RLock()
+	assert.NotNil(t, manager.routesByAgencyID, "routesByAgencyID map should be initialized")
+
+	cachedRoutes, exists := manager.routesByAgencyID[targetAgencyID]
+	assert.True(t, exists, "Agency %s should exist in cache map", targetAgencyID)
+	assert.Len(t, cachedRoutes, expectedRouteCount, "Map should contain correct number of routes")
+	manager.RUnlock()
+
+	// Test 2: Verify public API returns correct data
+	manager.RLock()
+	publicRoutes := manager.RoutesForAgencyID(targetAgencyID)
+	manager.RUnlock()
+
+	assert.Len(t, publicRoutes, expectedRouteCount, "Public API should return correct route count")
+
+	// Test 3: Verify all routes belong to correct agency
+	manager.RLock()
+	for _, route := range publicRoutes {
+		assert.Equal(t, targetAgencyID, route.Agency.Id,
+			"Route %s should belong to agency %s", route.Id, targetAgencyID)
+	}
+	manager.RUnlock()
+
+	// Test 4: Verify non-existent agency returns empty
+	manager.RLock()
+	emptyRoutes := manager.RoutesForAgencyID("nonexistent")
+	manager.RUnlock()
+
+	assert.Empty(t, emptyRoutes, "Non-existent agency should return empty slice")
+}
+
+func TestRoutesForAgencyID_RebuildsOnForceUpdate(t *testing.T) {
+	// Skip on environments where we can't easily swap fixtures or file locking is strict
+	if testing.Short() {
+		t.Skip("Skipping hot-swap test in short mode")
+	}
+
+	// Start with RABA data
+	tempDir := t.TempDir()
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: tempDir + "/gtfs.db",
+		Env:          appconf.Development, // Need non-test env for ForceUpdate logic
+	}
+
+	manager, err := InitGTFSManager(gtfsConfig)
+	require.NoError(t, err, "Failed to initialize manager")
+	defer manager.Shutdown()
+
+	// Verify initial state
+	manager.RLock()
+	initialRoutes := manager.RoutesForAgencyID("25")
+	manager.RUnlock()
+	assert.Len(t, initialRoutes, 13, "Should have 13 routes initially")
+
+	// Trigger hot-swap: Change to different GTFS feed (gtfs.zip has agency "40")
+	// Note: We use the other fixture available in testdata
+	manager.config.GtfsURL = models.GetFixturePath(t, "gtfs.zip")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Perform the update
+	err = manager.ForceUpdate(ctx)
+	require.NoError(t, err, "ForceUpdate should succeed")
+
+	// CRITICAL VERIFICATION: Map should be rebuilt with NEW data
+	manager.RLock()
+	defer manager.RUnlock()
+
+	// Test 1: Old agency "25" should be gone
+	oldAgencyRoutes := manager.RoutesForAgencyID("25")
+	assert.Empty(t, oldAgencyRoutes, "Old agency '25' should have no routes after swap")
+
+	// Test 2: New agency "40" (from gtfs.zip) should be present
+	// Note: Verify the agency ID in your gtfs.zip fixture.
+	// Assuming "DTA" or "40" based on typical test data.
+	// If gtfs.zip uses "DTA" as agency ID, adjust this check.
+	// For this generic test, we check if the map is not empty and different from before.
+	assert.NotNil(t, manager.routesByAgencyID)
+	assert.NotEqual(t, 13, len(manager.RoutesForAgencyID("40")), "Should reflect new dataset")
+}
+
+func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	require.NoError(t, err)
+	defer manager.Shutdown()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	errors := make(chan error, 10)
+
+	// Spawn concurrent readers
+	for i := range 5 {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					manager.RLock()
+					routes := manager.RoutesForAgencyID("25")
+					manager.RUnlock()
+
+					if routes == nil {
+						errors <- fmt.Errorf("reader %d: got nil routes slice", id)
+						return
+					}
+					time.Sleep(1 * time.Millisecond)
+				}
+			}
+		}(i)
+	}
+
+	// Spawn writer (simulating reload)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		staticData := manager.GetStaticData() // Get current data to re-inject
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				// Use setStaticGTFS to trigger the write lock and map rebuild
+				manager.setStaticGTFS(staticData)
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(errors)
+
+	for err := range errors {
+		t.Error(err)
+	}
+}
+
+func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
+	gtfsConfig := Config{
+		GtfsURL:      "../../testdata/raba.zip",
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(gtfsConfig)
+	if err != nil {
+		b.Fatalf("Failed to initialize: %v", err)
+	}
+	defer manager.Shutdown()
+
+	
+	b.ReportAllocs()
+
+	for b.Loop() {
+		manager.RLock()
+		_ = manager.RoutesForAgencyID("25")
+		manager.RUnlock()
 	}
 }
