@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -26,6 +27,7 @@ type AdvancedDirectionCalculator struct {
 	contextCache      map[string][]gtfsdb.GetStopsWithShapeContextRow   // Cache of stop shape context data
 	shapeCache        map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized       atomic.Bool                                       // Tracks whether concurrent operations have started
+	cacheMutex        sync.RWMutex                                      // Protects map access
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
@@ -51,6 +53,10 @@ func (adc *AdvancedDirectionCalculator) SetVarianceThreshold(threshold float64) 
 // IMPORTANT: This must be called before any concurrent operations begin.
 // Panics if called after CalculateStopDirection has been invoked.
 func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) {
+	// Mutex protection added for race safety
+	adc.cacheMutex.Lock()
+	defer adc.cacheMutex.Unlock()
+
 	if adc.initialized.Load() {
 		panic("SetShapeCache called after concurrent operations have started")
 	}
@@ -62,6 +68,10 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 // Panics if called after internal state has been initialized (i.e., after the first
 // fallback to shape-based calculation).
 func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) {
+	// Mutex protection added for race safety
+	adc.cacheMutex.Lock()
+	defer adc.cacheMutex.Unlock()
+
 	if adc.initialized.Load() {
 		panic("SetContextCache called after concurrent operations have started")
 	}
@@ -132,10 +142,16 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 
 	var stopTrips []gtfsdb.GetStopsWithShapeContextRow
 
-	// Use cache if available, otherwise hit DB
-	if adc.contextCache != nil {
+	// Mutex protection: Use RLock (Read Lock) for checking the cache
+	adc.cacheMutex.RLock()
+	hasCache := adc.contextCache != nil
+	if hasCache {
 		stopTrips = adc.contextCache[stopID]
-	} else {
+	}
+	adc.cacheMutex.RUnlock()
+
+	// Use cache if available, otherwise hit DB
+	if !hasCache {
 		var err error
 		stopTrips, err = adc.queries.GetStopsWithShapeContext(ctx, stopID)
 		if err != nil {
@@ -262,10 +278,17 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 	var shapePoints []gtfsdb.GetShapePointsWithDistanceRow
 	var err error
 
-	// Try cache first if available
-	if adc.shapeCache != nil {
-		var found bool
+	// Mutex protection: Use RLock for checking the cache
+	adc.cacheMutex.RLock()
+	hasCache := adc.shapeCache != nil
+	var found bool
+	if hasCache {
 		shapePoints, found = adc.shapeCache[shapeID]
+	}
+	adc.cacheMutex.RUnlock()
+
+	// Try cache first if available
+	if hasCache {
 		if !found || len(shapePoints) < 2 {
 			return 0, sql.ErrNoRows
 		}
