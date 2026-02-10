@@ -42,3 +42,16 @@ func TestReportProblemWithTripEndToEnd(t *testing.T) {
 	assert.Equal(t, 400, nullModel.Code)
 	assert.Equal(t, "tripID is required", nullModel.Text)
 }
+
+func TestReportProblemWithTrip_MinimalParams(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "1_12345"
+
+	url := fmt.Sprintf("/api/where/report-problem-with-trip/%s.json?key=TEST", tripID)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 200, model.Code)
+}

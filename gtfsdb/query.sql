@@ -1002,3 +1002,46 @@ JOIN stops_fts fts
 WHERE fts.stop_name MATCH sqlc.arg(search_query)
 ORDER BY s.name
 LIMIT sqlc.arg(limit);
+
+-- Problem Report Queries
+
+-- name: CreateProblemReportTrip :exec
+INSERT INTO problem_reports_trip (
+    trip_id,
+    service_date,
+    vehicle_id,
+    stop_id,
+    code,
+    user_comment,
+    user_lat,
+    user_lon,
+    user_location_accuracy,
+    user_on_vehicle,
+    user_vehicle_number,
+    created_at,
+    submitted_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: CreateProblemReportStop :exec
+INSERT INTO problem_reports_stop (
+    stop_id,
+    code,
+    user_comment,
+    user_lat,
+    user_lon,
+    user_location_accuracy,
+    created_at,
+    submitted_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetProblemReportsByTrip :many
+SELECT * FROM problem_reports_trip
+WHERE trip_id = ?
+ORDER BY created_at DESC;
+
+-- name: GetProblemReportsByStop :many
+SELECT * FROM problem_reports_stop
+WHERE stop_id = ?
+ORDER BY created_at DESC;
+
+

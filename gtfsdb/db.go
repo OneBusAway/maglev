@@ -66,6 +66,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createCalendarDateStmt, err = db.PrepareContext(ctx, createCalendarDate); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateCalendarDate: %w", err)
 	}
+	if q.createProblemReportStopStmt, err = db.PrepareContext(ctx, createProblemReportStop); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateProblemReportStop: %w", err)
+	}
+	if q.createProblemReportTripStmt, err = db.PrepareContext(ctx, createProblemReportTrip); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateProblemReportTrip: %w", err)
+	}
 	if q.createRouteStmt, err = db.PrepareContext(ctx, createRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateRoute: %w", err)
 	}
@@ -140,6 +146,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getOrderedStopIDsForTripStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForTrip: %w", err)
+	}
+	if q.getProblemReportsByStopStmt, err = db.PrepareContext(ctx, getProblemReportsByStop); err != nil {
+		return nil, fmt.Errorf("error preparing query GetProblemReportsByStop: %w", err)
+	}
+	if q.getProblemReportsByTripStmt, err = db.PrepareContext(ctx, getProblemReportsByTrip); err != nil {
+		return nil, fmt.Errorf("error preparing query GetProblemReportsByTrip: %w", err)
 	}
 	if q.getRouteStmt, err = db.PrepareContext(ctx, getRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRoute: %w", err)
@@ -264,14 +276,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listRoutesStmt, err = db.PrepareContext(ctx, listRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRoutes: %w", err)
 	}
-	if q.searchRoutesByFullTextStmt, err = db.PrepareContext(ctx, searchRoutesByFullText); err != nil {
-		return nil, fmt.Errorf("error preparing query SearchRoutesByFullText: %w", err)
-	}
 	if q.listStopsStmt, err = db.PrepareContext(ctx, listStops); err != nil {
 		return nil, fmt.Errorf("error preparing query ListStops: %w", err)
 	}
 	if q.listTripsStmt, err = db.PrepareContext(ctx, listTrips); err != nil {
 		return nil, fmt.Errorf("error preparing query ListTrips: %w", err)
+	}
+	if q.searchRoutesByFullTextStmt, err = db.PrepareContext(ctx, searchRoutesByFullText); err != nil {
+		return nil, fmt.Errorf("error preparing query SearchRoutesByFullText: %w", err)
 	}
 	if q.searchStopsByNameStmt, err = db.PrepareContext(ctx, searchStopsByName); err != nil {
 		return nil, fmt.Errorf("error preparing query SearchStopsByName: %w", err)
@@ -355,6 +367,16 @@ func (q *Queries) Close() error {
 	if q.createCalendarDateStmt != nil {
 		if cerr := q.createCalendarDateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createCalendarDateStmt: %w", cerr)
+		}
+	}
+	if q.createProblemReportStopStmt != nil {
+		if cerr := q.createProblemReportStopStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createProblemReportStopStmt: %w", cerr)
+		}
+	}
+	if q.createProblemReportTripStmt != nil {
+		if cerr := q.createProblemReportTripStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createProblemReportTripStmt: %w", cerr)
 		}
 	}
 	if q.createRouteStmt != nil {
@@ -480,6 +502,16 @@ func (q *Queries) Close() error {
 	if q.getOrderedStopIDsForTripStmt != nil {
 		if cerr := q.getOrderedStopIDsForTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getOrderedStopIDsForTripStmt: %w", cerr)
+		}
+	}
+	if q.getProblemReportsByStopStmt != nil {
+		if cerr := q.getProblemReportsByStopStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getProblemReportsByStopStmt: %w", cerr)
+		}
+	}
+	if q.getProblemReportsByTripStmt != nil {
+		if cerr := q.getProblemReportsByTripStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getProblemReportsByTripStmt: %w", cerr)
 		}
 	}
 	if q.getRouteStmt != nil {
@@ -687,11 +719,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listRoutesStmt: %w", cerr)
 		}
 	}
-	if q.searchRoutesByFullTextStmt != nil {
-		if cerr := q.searchRoutesByFullTextStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing searchRoutesByFullTextStmt: %w", cerr)
-		}
-	}
 	if q.listStopsStmt != nil {
 		if cerr := q.listStopsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listStopsStmt: %w", cerr)
@@ -700,6 +727,11 @@ func (q *Queries) Close() error {
 	if q.listTripsStmt != nil {
 		if cerr := q.listTripsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listTripsStmt: %w", cerr)
+		}
+	}
+	if q.searchRoutesByFullTextStmt != nil {
+		if cerr := q.searchRoutesByFullTextStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing searchRoutesByFullTextStmt: %w", cerr)
 		}
 	}
 	if q.searchStopsByNameStmt != nil {
@@ -770,6 +802,8 @@ type Queries struct {
 	createBlockTripIndexStmt                  *sql.Stmt
 	createCalendarStmt                        *sql.Stmt
 	createCalendarDateStmt                    *sql.Stmt
+	createProblemReportStopStmt               *sql.Stmt
+	createProblemReportTripStmt               *sql.Stmt
 	createRouteStmt                           *sql.Stmt
 	createShapeStmt                           *sql.Stmt
 	createStopStmt                            *sql.Stmt
@@ -795,6 +829,8 @@ type Queries struct {
 	getImportMetadataStmt                     *sql.Stmt
 	getNextStopInTripStmt                     *sql.Stmt
 	getOrderedStopIDsForTripStmt              *sql.Stmt
+	getProblemReportsByStopStmt               *sql.Stmt
+	getProblemReportsByTripStmt               *sql.Stmt
 	getRouteStmt                              *sql.Stmt
 	getRouteIDsForAgencyStmt                  *sql.Stmt
 	getRouteIDsForStopStmt                    *sql.Stmt
@@ -836,9 +872,9 @@ type Queries struct {
 	getTripsInBlockStmt                       *sql.Stmt
 	listAgenciesStmt                          *sql.Stmt
 	listRoutesStmt                            *sql.Stmt
-	searchRoutesByFullTextStmt                *sql.Stmt
 	listStopsStmt                             *sql.Stmt
 	listTripsStmt                             *sql.Stmt
+	searchRoutesByFullTextStmt                *sql.Stmt
 	searchStopsByNameStmt                     *sql.Stmt
 	updateStopDirectionStmt                   *sql.Stmt
 	upsertImportMetadataStmt                  *sql.Stmt
@@ -862,6 +898,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createBlockTripIndexStmt:                  q.createBlockTripIndexStmt,
 		createCalendarStmt:                        q.createCalendarStmt,
 		createCalendarDateStmt:                    q.createCalendarDateStmt,
+		createProblemReportStopStmt:               q.createProblemReportStopStmt,
+		createProblemReportTripStmt:               q.createProblemReportTripStmt,
 		createRouteStmt:                           q.createRouteStmt,
 		createShapeStmt:                           q.createShapeStmt,
 		createStopStmt:                            q.createStopStmt,
@@ -887,6 +925,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getImportMetadataStmt:                     q.getImportMetadataStmt,
 		getNextStopInTripStmt:                     q.getNextStopInTripStmt,
 		getOrderedStopIDsForTripStmt:              q.getOrderedStopIDsForTripStmt,
+		getProblemReportsByStopStmt:               q.getProblemReportsByStopStmt,
+		getProblemReportsByTripStmt:               q.getProblemReportsByTripStmt,
 		getRouteStmt:                              q.getRouteStmt,
 		getRouteIDsForAgencyStmt:                  q.getRouteIDsForAgencyStmt,
 		getRouteIDsForStopStmt:                    q.getRouteIDsForStopStmt,
@@ -928,9 +968,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsInBlockStmt:                       q.getTripsInBlockStmt,
 		listAgenciesStmt:                          q.listAgenciesStmt,
 		listRoutesStmt:                            q.listRoutesStmt,
-		searchRoutesByFullTextStmt:                q.searchRoutesByFullTextStmt,
 		listStopsStmt:                             q.listStopsStmt,
 		listTripsStmt:                             q.listTripsStmt,
+		searchRoutesByFullTextStmt:                q.searchRoutesByFullTextStmt,
 		searchStopsByNameStmt:                     q.searchStopsByNameStmt,
 		updateStopDirectionStmt:                   q.updateStopDirectionStmt,
 		upsertImportMetadataStmt:                  q.upsertImportMetadataStmt,

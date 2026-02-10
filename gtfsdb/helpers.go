@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -453,12 +454,45 @@ func toNullFloat64(f float64) sql.NullFloat64 {
 	return sql.NullFloat64{}
 }
 
-// toNullString converts a string to sql.NullString
+// toNullString converts a string to sql.NullString (unexported, for internal use)
 func toNullString(s string) sql.NullString {
 	return sql.NullString{
 		String: s,
 		Valid:  s != "",
 	}
+}
+
+// ToNullString converts a string to sql.NullString, with empty strings becoming NULL (exported).
+func ToNullString(s string) sql.NullString {
+	return toNullString(s)
+}
+
+// ParseNullFloat parses a string to sql.NullFloat64, with empty or invalid values becoming NULL.
+func ParseNullFloat(s string) sql.NullFloat64 {
+	if s == "" {
+		return sql.NullFloat64{Valid: false}
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return sql.NullFloat64{Valid: false}
+	}
+	return sql.NullFloat64{Float64: f, Valid: true}
+}
+
+// ParseNullBool parses a boolean string to sql.NullInt64 (0 or 1), with empty/invalid values becoming NULL.
+func ParseNullBool(s string) sql.NullInt64 {
+	if s == "" {
+		return sql.NullInt64{Valid: false}
+	}
+	// Accept "true"/"false" or "1"/"0"
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return sql.NullInt64{Valid: false}
+	}
+	if b {
+		return sql.NullInt64{Int64: 1, Valid: true}
+	}
+	return sql.NullInt64{Int64: 0, Valid: true}
 }
 
 func pickFirstAvailable(a, b string) string {

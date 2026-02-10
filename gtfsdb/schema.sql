@@ -355,3 +355,62 @@ CREATE INDEX IF NOT EXISTS idx_trips_block_id ON trips (block_id);
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_shapes_shape_id ON shapes (shape_id);
+
+-- Problem reports for trips
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS problem_reports_trip (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trip_id TEXT NOT NULL,
+        service_date TEXT,
+        vehicle_id TEXT,
+        stop_id TEXT,
+        code TEXT,
+        user_comment TEXT,
+        user_lat REAL,
+        user_lon REAL,
+        user_location_accuracy REAL,
+        user_on_vehicle INTEGER,
+        user_vehicle_number TEXT,
+        created_at INTEGER NOT NULL,
+        submitted_at INTEGER NOT NULL
+    );
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_problem_reports_trip_trip_service
+    ON problem_reports_trip (trip_id, service_date);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_problem_reports_trip_created
+    ON problem_reports_trip (created_at);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_problem_reports_trip_code
+    ON problem_reports_trip (code);
+
+-- Problem reports for stops
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS problem_reports_stop (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        stop_id TEXT NOT NULL,
+        code TEXT,
+        user_comment TEXT,
+        user_lat REAL,
+        user_lon REAL,
+        user_location_accuracy REAL,
+        created_at INTEGER NOT NULL,
+        submitted_at INTEGER NOT NULL
+    );
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_problem_reports_stop_stop
+    ON problem_reports_stop (stop_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_problem_reports_stop_created
+    ON problem_reports_stop (created_at);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_problem_reports_stop_code
+    ON problem_reports_stop (code);

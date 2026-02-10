@@ -2,7 +2,9 @@ version: "2"
 sql:
   - engine: "sqlite"
     queries: "query.sql"
-    schema: "schema.sql"
+    schema:
+      - "schema_overrides.sql"
+      - "schema.sql"
     gen:
       go:
         emit_prepared_queries: true
