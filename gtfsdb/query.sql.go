@@ -978,6 +978,36 @@ func (q *Queries) GetAllShapes(ctx context.Context) ([]Shape, error) {
 	return items, nil
 }
 
+const getAllStopIDs = `-- name: GetAllStopIDs :many
+SELECT DISTINCT
+    id
+FROM
+    stops
+`
+
+func (q *Queries) GetAllStopIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.query(ctx, q.getAllStopIDsStmt, getAllStopIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllTripsForRoute = `-- name: GetAllTripsForRoute :many
 SELECT DISTINCT id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed
 FROM trips t
@@ -3628,72 +3658,6 @@ func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
 	return items, nil
 }
 
-const searchRoutesByFullText = `-- name: SearchRoutesByFullText :many
-SELECT
-    r.id,
-    r.agency_id,
-    r.short_name,
-    r.long_name,
-    r."desc",
-    r.type,
-    r.url,
-    r.color,
-    r.text_color,
-    r.continuous_pickup,
-    r.continuous_drop_off
-FROM
-    routes_fts
-    JOIN routes r ON r.rowid = routes_fts.rowid
-WHERE
-    routes_fts MATCH ?
-ORDER BY
-    bm25(routes_fts),
-    r.agency_id,
-    r.id
-LIMIT
-    ?
-`
-
-type SearchRoutesByFullTextParams struct {
-	Query string
-	Limit int64
-}
-
-func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesByFullTextParams) ([]Route, error) {
-	rows, err := q.query(ctx, q.searchRoutesByFullTextStmt, searchRoutesByFullText, arg.Query, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Route
-	for rows.Next() {
-		var i Route
-		if err := rows.Scan(
-			&i.ID,
-			&i.AgencyID,
-			&i.ShortName,
-			&i.LongName,
-			&i.Desc,
-			&i.Type,
-			&i.Url,
-			&i.Color,
-			&i.TextColor,
-			&i.ContinuousPickup,
-			&i.ContinuousDropOff,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listStops = `-- name: ListStops :many
 SELECT
     id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
@@ -3768,6 +3732,72 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 			&i.ShapeID,
 			&i.WheelchairAccessible,
 			&i.BikesAllowed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchRoutesByFullText = `-- name: SearchRoutesByFullText :many
+SELECT
+    r.id,
+    r.agency_id,
+    r.short_name,
+    r.long_name,
+    r."desc",
+    r.type,
+    r.url,
+    r.color,
+    r.text_color,
+    r.continuous_pickup,
+    r.continuous_drop_off
+FROM
+    routes_fts
+    JOIN routes r ON r.rowid = routes_fts.rowid
+WHERE
+    routes_fts MATCH ?1
+ORDER BY
+    rank,
+    r.agency_id,
+    r.id
+LIMIT
+    ?2
+`
+
+type SearchRoutesByFullTextParams struct {
+	Query string
+	Limit int64
+}
+
+func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesByFullTextParams) ([]Route, error) {
+	rows, err := q.query(ctx, q.searchRoutesByFullTextStmt, searchRoutesByFullText, arg.Query, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Route
+	for rows.Next() {
+		var i Route
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgencyID,
+			&i.ShortName,
+			&i.LongName,
+			&i.Desc,
+			&i.Type,
+			&i.Url,
+			&i.Color,
+			&i.TextColor,
+			&i.ContinuousPickup,
+			&i.ContinuousDropOff,
 		); err != nil {
 			return nil, err
 		}

@@ -51,6 +51,11 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 		directionCalculator = gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
 	}
 
+	err = gtfs.InitializeGlobalCache(context.Background(), gtfsManager.GtfsDB.Queries, directionCalculator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize global cache: %w", err)
+	}
+
 	// Select clock implementation based on environment
 	appClock := createClock(cfg.Env)
 

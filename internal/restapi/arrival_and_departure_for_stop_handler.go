@@ -8,7 +8,6 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
-	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -423,7 +422,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			stopIDSet[closestStopID] = true
 		}
 	}
-	calc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
 	for stopID := range stopIDSet {
 		stopData, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 		if err != nil {
@@ -454,7 +452,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               stopData.Code.String,
-			Direction:          calc.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
+			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,

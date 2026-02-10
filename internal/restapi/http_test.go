@@ -3,6 +3,7 @@ package restapi
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -66,15 +67,22 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 		GTFSDataPath: testDbPath,
 	}
 
+	// Create the DirectionCalculator using the shared manager's queries
+	directionCalculator := gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
+
+	// Warm up the cache with test data
+	_ = gtfs.InitializeGlobalCache(context.Background(), testGtfsManager.GtfsDB.Queries, directionCalculator)
+
 	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
 			ApiKeys:   []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
 			RateLimit: 5, // Low rate limit for testing
 		},
-		GtfsConfig:  gtfsConfig,
-		GtfsManager: testGtfsManager,
-		Clock:       c,
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         testGtfsManager,
+		DirectionCalculator: directionCalculator,
+		Clock:               c,
 	}
 
 	api := NewRestAPI(application)
