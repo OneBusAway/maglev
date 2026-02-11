@@ -22,48 +22,63 @@ type ArrivalsStopParams struct {
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
 func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
+	const maxMinutesBefore = 60
+	const maxMinutesAfter = 240
+
 	params := ArrivalsStopParams{
-		MinutesAfter:  35, // Default
-		MinutesBefore: 5,  // Default
-		Time:          api.Clock.Now(),
+		MinutesAfter:  35,              // Default
+		MinutesBefore: 5,               // Default
+		Time:          api.Clock.Now(), // Default to current time
 	}
 
-	// Initialize errors map
-	fieldErrors := make(map[string][]string)
+	var fieldErrors map[string][]string
 
-	// Validate minutesAfter
-	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
-		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
-			params.MinutesAfter = minutesAfter
+	addError := func(field, msg string) {
+		if fieldErrors == nil {
+			fieldErrors = make(map[string][]string)
+		}
+		fieldErrors[field] = append(fieldErrors[field], msg)
+	}
+
+	query := r.URL.Query()
+
+	if val := query.Get("minutesAfter"); val != "" {
+		if minutes, err := strconv.Atoi(val); err == nil {
+			if minutes > maxMinutesAfter {
+				params.MinutesAfter = maxMinutesAfter
+			} else if minutes >= 0 {
+				params.MinutesAfter = minutes
+			} else {
+				addError("minutesAfter", "must be a non-negative integer")
+			}
 		} else {
-			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
+			addError("minutesAfter", "must be a valid integer")
 		}
 	}
 
-	// Validate minutesBefore
-	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
-		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
-			params.MinutesBefore = minutesBefore
+	if val := query.Get("minutesBefore"); val != "" {
+		if minutes, err := strconv.Atoi(val); err == nil {
+			if minutes > maxMinutesBefore {
+				params.MinutesBefore = maxMinutesBefore
+			} else if minutes >= 0 {
+				params.MinutesBefore = minutes
+			} else {
+				addError("minutesBefore", "must be a non-negative integer")
+			}
 		} else {
-			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
+			addError("minutesBefore", "must be a valid integer")
 		}
 	}
 
-	// Validate time
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
-			params.Time = time.Unix(timeMs/1000, 0)
+	if val := query.Get("time"); val != "" {
+		if timeMs, err := strconv.ParseInt(val, 10, 64); err == nil {
+			params.Time = time.Unix(timeMs/1000, (timeMs%1000)*1000000)
 		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			addError("time", "must be a valid Unix timestamp in milliseconds")
 		}
 	}
 
-	// Return all errors if any existed
-	if len(fieldErrors) > 0 {
-		return params, fieldErrors
-	}
-
-	return params, nil
+	return params, fieldErrors
 }
 
 func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +104,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	currentTime := params.Time
-
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
 		api.sendNotFound(w, r)
@@ -104,14 +117,14 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agencyID)
-	currentTime = currentTime.In(loc)
-	windowStart := currentTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
-	windowEnd := currentTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
+	params.Time = params.Time.In(loc)
+	windowStart := params.Time.Add(-time.Duration(params.MinutesBefore) * time.Minute)
+	windowEnd := params.Time.Add(time.Duration(params.MinutesAfter) * time.Minute)
 
 	windowStartNanos := convertToNanosSinceMidnight(windowStart)
 	windowEndNanos := convertToNanosSinceMidnight(windowEnd)
 
-	serviceDate := currentTime.Format("20060102")
+	serviceDate := params.Time.Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -157,22 +170,13 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	// Filter stop times to only include active trips
 	var stopTimes []gtfsdb.GetStopTimesForStopInWindowRow
-
 	for _, st := range allStopTimes {
 		if activeTripIDs[st.TripID] {
-			stopTimes = append(stopTimes, gtfsdb.GetStopTimesForStopInWindowRow{
-				TripID:        st.TripID,
-				ArrivalTime:   st.ArrivalTime,
-				DepartureTime: st.DepartureTime,
-				StopSequence:  st.StopSequence,
-				RouteID:       st.RouteID,
-				ServiceID:     st.ServiceID,
-				TripHeadsign:  st.TripHeadsign,
-				BlockID:       st.BlockID,
-			})
+			stopTimes = append(stopTimes, st)
 		}
 	}
 
+	// Maps for Caching and References
 	tripIDSet := make(map[string]*gtfsdb.Trip)
 	routeIDSet := make(map[string]*gtfsdb.Route)
 	stopIDSet := make(map[string]bool)
@@ -180,37 +184,47 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Add the current stop
 	stopIDSet[stop.ID] = true
 
+	serviceDateMillis := params.Time.UnixMilli()
+	serviceMidnight := time.Date(
+		params.Time.Year(),
+		params.Time.Month(),
+		params.Time.Day(),
+		0, 0, 0, 0,
+		loc,
+	)
+
 	for _, st := range stopTimes {
-		route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, st.RouteID)
-		if err != nil {
-			api.Logger.Debug("skipping stop time: route not found",
-				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID),
-				slog.Any("error", err))
-			continue
+		var route gtfsdb.Route
+		if cachedRoute, exists := routeIDSet[st.RouteID]; exists {
+			route = *cachedRoute
+		} else {
+			fetchedRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, st.RouteID)
+			if err != nil {
+				api.Logger.Debug("skipping stop time: route not found",
+					slog.String("routeID", st.RouteID),
+					slog.String("tripID", st.TripID),
+					slog.Any("error", err))
+				continue
+			}
+			route = fetchedRoute
+			routeIDSet[route.ID] = &route
 		}
 
-		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, st.TripID)
-		if err != nil {
-			api.Logger.Debug("skipping stop time: trip not found",
-				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID),
-				slog.Any("error", err))
-			continue
+		var trip gtfsdb.Trip
+		if cachedTrip, exists := tripIDSet[st.TripID]; exists {
+			trip = *cachedTrip
+		} else {
+			fetchedTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, st.TripID)
+			if err != nil {
+				api.Logger.Debug("skipping stop time: trip not found",
+					slog.String("tripID", st.TripID),
+					slog.String("routeID", st.RouteID),
+					slog.Any("error", err))
+				continue
+			}
+			trip = fetchedTrip
+			tripIDSet[trip.ID] = &trip
 		}
-
-		routeIDSet[route.ID] = &route
-		tripIDSet[trip.ID] = &trip
-
-		serviceDateMillis := currentTime.UnixMilli()
-
-		serviceMidnight := time.Date(
-			currentTime.Year(),
-			currentTime.Month(),
-			currentTime.Day(),
-			0, 0, 0, 0,
-			loc,
-		)
 
 		scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime)).UnixMilli()
 		scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime)).UnixMilli()
@@ -268,7 +282,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 
 		if vehicle != nil {
-			status, _ := api.BuildTripStatus(ctx, agencyID, st.TripID, currentTime, currentTime)
+			status, _ := api.BuildTripStatus(ctx, agencyID, st.TripID, params.Time, params.Time)
 			if status != nil {
 				tripStatus = status
 
@@ -286,9 +300,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				}
 
 				if vehicle.Position != nil {
-					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, currentTime)
+					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, params.Time)
 
-					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, currentTime)
+					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, params.Time)
 					if numberOfStopsAwayPtr != nil {
 						numberOfStopsAway = *numberOfStopsAwayPtr
 					} else {
@@ -300,9 +314,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				if status.ActiveTripID != "" {
 					_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 					if err == nil && activeTripID != st.TripID {
-						activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
-						if err == nil {
-							tripIDSet[activeTrip.ID] = &activeTrip
+						// Check cache for active trip
+						if _, exists := tripIDSet[activeTripID]; !exists {
+							activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+							if err != nil {
+								api.Logger.Debug("skipping active trip reference: trip not found",
+									slog.String("activeTripID", activeTripID),
+									slog.String("scheduledTripID", st.TripID),
+									slog.Any("error", err))
+							} else {
+								tripIDSet[activeTrip.ID] = &activeTrip
+							}
 						}
 					}
 				}
@@ -315,12 +337,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 
 		tripStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, st.TripID)
-		totalStopsInTrip := len(tripStopTimes)
+		var totalStopsInTrip int
 		if err != nil {
+			api.Logger.Debug("failed to get stop times for trip",
+				slog.String("tripID", st.TripID),
+				slog.Any("error", err))
 			totalStopsInTrip = 0
+		} else {
+			totalStopsInTrip = len(tripStopTimes)
 		}
 
-		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, currentTime)
+		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, params.Time)
 
 		arrival := models.NewArrivalAndDeparture(
 			utils.FormCombinedID(agencyID, route.ID),  // routeID
@@ -335,7 +362,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			scheduledDepartureTime,                    // scheduledDepartureTime
 			predictedArrivalTime,                      // predictedArrivalTime
 			predictedDepartureTime,                    // predictedDepartureTime
-			currentTime.UnixMilli(),                   // lastUpdateTime
+			params.Time.UnixMilli(),                   // lastUpdateTime
 			predicted,                                 // predicted
 			true,                                      // arrivalEnabled
 			true,                                      // departureEnabled
@@ -411,7 +438,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               stopData.Code.String,
-			Direction:          calc.CalculateStopDirection(ctx, stopID),
+			Direction:          calc.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,

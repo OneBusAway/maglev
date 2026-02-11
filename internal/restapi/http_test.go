@@ -78,6 +78,7 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 	}
 
 	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	return api
 }
