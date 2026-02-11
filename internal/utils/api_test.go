@@ -444,18 +444,28 @@ func TestParseTimeParameter(t *testing.T) {
 			expectedErrorKey: "time",
 		},
 		{
-			name:             "Future date (should fail)",
-			timeParam:        now.AddDate(0, 0, 1).Format("2006-01-02"),
-			expectedDate:     "",
-			expectError:      true,
-			expectedErrorKey: "time",
+			name:         "Future date",
+			timeParam:    now.AddDate(0, 0, 1).Format("2006-01-02"),
+			expectedDate: now.AddDate(0, 0, 1).Format("20060102"),
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				tomorrow := now.AddDate(0, 0, 1)
+				assert.Equal(t, tomorrow.Year(), parsedTime.Year())
+				assert.Equal(t, tomorrow.Month(), parsedTime.Month())
+				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
+			},
 		},
 		{
-			name:             "Future epoch (should fail)",
-			timeParam:        fmt.Sprintf("%d", now.AddDate(0, 0, 1).Unix()*1000),
-			expectedDate:     "",
-			expectError:      true,
-			expectedErrorKey: "time",
+			name:         "Future epoch",
+			timeParam:    fmt.Sprintf("%d", now.AddDate(0, 0, 1).Unix()*1000),
+			expectedDate: now.AddDate(0, 0, 1).Format("20060102"),
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				tomorrow := now.AddDate(0, 0, 1)
+				assert.Equal(t, tomorrow.Year(), parsedTime.Year())
+				assert.Equal(t, tomorrow.Month(), parsedTime.Month())
+				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
+			},
 		},
 	}
 
