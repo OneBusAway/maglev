@@ -100,7 +100,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			api.Logger.Warn(
 				"FTS5 wildcard query failed, retrying without wildcard",
 				"original_error", err,
-				"query", sanitizedQuery,
+				"fts_query", searchQuery,
+				"sanitized_input", sanitizedQuery,
 			)
 
 			searchQuery = `"` + sanitizedQuery + `"`
