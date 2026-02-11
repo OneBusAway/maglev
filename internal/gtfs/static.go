@@ -53,6 +53,10 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 			slog.Default().With(slog.String("component", "gtfs_downloader")),
 			"http_response_body")
 
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("failed to download GTFS data: received HTTP status %s", resp.Status)
+		}
+
 		b, err = io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("error reading GTFS data: %w", err)

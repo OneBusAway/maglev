@@ -22,6 +22,14 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 	id := utils.ExtractIDFromParams(r)
 
+	if err := utils.ValidateID(id); err != nil {
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	// Validate agency exists
 	agency := api.GtfsManager.FindAgency(id)
 	if agency == nil {
@@ -113,14 +121,9 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			routeIdsString = []string{}
 		}
 
-		direction := models.UnknownValue
-		if stop.Direction.Valid && stop.Direction.String != "" {
-			direction = stop.Direction.String
-		}
-
 		stopsList = append(stopsList, models.Stop{
 			Code:               stop.Code.String,
-			Direction:          direction,
+			Direction:          utils.NullStringOrEmpty(stop.Direction),
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),

@@ -152,31 +152,6 @@ ORDER BY
     agency_id,
     id;
 
--- name: SearchRoutesByFullText :many
-SELECT
-    r.id,
-    r.agency_id,
-    r.short_name,
-    r.long_name,
-    r."desc",
-    r.type,
-    r.url,
-    r.color,
-    r.text_color,
-    r.continuous_pickup,
-    r.continuous_drop_off
-FROM
-    routes_fts
-    JOIN routes r ON r.rowid = routes_fts.rowid
-WHERE
-    routes_fts MATCH @query
-ORDER BY
-    bm25(routes_fts),
-    r.agency_id,
-    r.id
-LIMIT
-    @limit;
-
 -- name: GetRouteIDsForAgency :many
 SELECT
     r.id
@@ -985,20 +960,16 @@ SELECT * FROM shapes
 WHERE shape_id IN (sqlc.slice('shape_ids'))
 ORDER BY shape_id, shape_pt_sequence;
 
--- name: SearchStopsByName :many
-SELECT
-    s.id,
-    s.code,
-    s.name,
-    s.lat,
-    s.lon,
-    s.location_type,
-    s.wheelchair_boarding,
-    s.direction,
-    s.parent_station  
-FROM stops s
-JOIN stops_fts fts
-  ON s.rowid = fts.rowid  
-WHERE fts.stop_name MATCH sqlc.arg(search_query)
-ORDER BY s.name
-LIMIT sqlc.arg(limit);
+-- name: GetStopTimesForTripIDs :many
+SELECT * FROM stop_times
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id, stop_sequence;
+
+-- name: GetTripsByBlockIDs :many
+SELECT t.*
+FROM trips t
+JOIN stop_times st ON t.id = st.trip_id
+WHERE t.block_id IN (sqlc.slice('block_ids'))
+  AND t.service_id IN (sqlc.slice('service_ids'))
+GROUP BY t.id
+ORDER BY t.block_id, MIN(st.departure_time), t.id;

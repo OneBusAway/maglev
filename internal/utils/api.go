@@ -115,18 +115,6 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		return "", time.Time{}, fieldErrors, false
 	}
 
-	// Set time to midnight for accurate comparison
-	currentTime := time.Now().In(currentLocation)
-	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	parsedTimeMidnight := time.Date(parsedTime.Year(), parsedTime.Month(), parsedTime.Day(), 0, 0, 0, 0, currentLocation)
-
-	if parsedTimeMidnight.After(todayMidnight) {
-		fieldErrors := map[string][]string{
-			"time": {"Invalid field value for field \"time\"."},
-		}
-		return "", time.Time{}, fieldErrors, false
-	}
-
 	// Valid date, use it
 	return parsedTime.Format("20060102"), parsedTime, nil, true
 }
@@ -141,4 +129,31 @@ func LoadLocationWithUTCFallBack(timeZone string, agencyId string) *time.Locatio
 		loc = time.UTC
 	}
 	return loc
+}
+
+// ParseMaxCount parses the maxCount query parameter with validation.
+// It accepts a default value and enforces a maximum of 250 (matching Java's MaxCountSupport).
+// Returns an error in fieldErrors if the value is <= 0 or > 250.
+func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	maxCount := defaultCount
+	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
+		parsedMaxCount, err := strconv.Atoi(maxCountStr)
+		if err == nil {
+			maxCount = parsedMaxCount
+			if maxCount <= 0 {
+				fieldErrors["maxCount"] = []string{"must be greater than zero"}
+				maxCount = defaultCount
+			} else if maxCount > models.MaxAllowedCount {
+				fieldErrors["maxCount"] = []string{"must not exceed 250"}
+				maxCount = defaultCount
+			}
+		} else {
+			fieldErrors["maxCount"] = []string{"Invalid field value for field \"maxCount\"."}
+		}
+	}
+	return maxCount, fieldErrors
 }

@@ -444,18 +444,28 @@ func TestParseTimeParameter(t *testing.T) {
 			expectedErrorKey: "time",
 		},
 		{
-			name:             "Future date (should fail)",
-			timeParam:        now.AddDate(0, 0, 1).Format("2006-01-02"),
-			expectedDate:     "",
-			expectError:      true,
-			expectedErrorKey: "time",
+			name:         "Future date",
+			timeParam:    now.AddDate(0, 0, 1).Format("2006-01-02"),
+			expectedDate: now.AddDate(0, 0, 1).Format("20060102"),
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				tomorrow := now.AddDate(0, 0, 1)
+				assert.Equal(t, tomorrow.Year(), parsedTime.Year())
+				assert.Equal(t, tomorrow.Month(), parsedTime.Month())
+				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
+			},
 		},
 		{
-			name:             "Future epoch (should fail)",
-			timeParam:        fmt.Sprintf("%d", now.AddDate(0, 0, 1).Unix()*1000),
-			expectedDate:     "",
-			expectError:      true,
-			expectedErrorKey: "time",
+			name:         "Future epoch",
+			timeParam:    fmt.Sprintf("%d", now.AddDate(0, 0, 1).Unix()*1000),
+			expectedDate: now.AddDate(0, 0, 1).Format("20060102"),
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				tomorrow := now.AddDate(0, 0, 1)
+				assert.Equal(t, tomorrow.Year(), parsedTime.Year())
+				assert.Equal(t, tomorrow.Month(), parsedTime.Month())
+				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
+			},
 		},
 	}
 
@@ -530,4 +540,102 @@ func TestLoadLocationWithUTCFallBack(t *testing.T) {
 		assert.NotNil(t, loc)
 		assert.Equal(t, time.UTC, loc)
 	})
+}
+
+func TestParseMaxCount(t *testing.T) {
+	tests := []struct {
+		name             string
+		expectError      bool
+		expectedErrorKey string
+		countQueryParams url.Values
+		defaultCount     int
+		expectedMaxCount int
+	}{
+		{
+			name:             "Default Value, No MaxCount Provided",
+			defaultCount:     100,
+			expectedMaxCount: 100,
+			expectError:      false,
+			countQueryParams: url.Values{},
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "Boundary Values, MaxCount is 1",
+			countQueryParams: url.Values{
+				"maxCount": []string{"1"},
+			},
+			defaultCount:     100,
+			expectedMaxCount: 1,
+			expectError:      false,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "Boundary Values, MaxCount is 250",
+			countQueryParams: url.Values{
+				"maxCount": []string{"250"},
+			},
+			defaultCount:     100,
+			expectedMaxCount: 250,
+			expectError:      false,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "Boundary Values, MaxCount is 251",
+			countQueryParams: url.Values{
+				"maxCount": []string{"251"},
+			},
+			defaultCount:     100,
+			expectError:      true,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "MaxCount is 0",
+			countQueryParams: url.Values{
+				"maxCount": []string{"0"},
+			},
+			defaultCount:     100,
+			expectError:      true,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "maxCount is float",
+			countQueryParams: url.Values{
+				"maxCount": []string{"5.9"},
+			},
+			defaultCount:     100,
+			expectError:      true,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "maxCount is non numeric",
+			countQueryParams: url.Values{
+				"maxCount": []string{"Not a number"},
+			},
+			defaultCount:     100,
+			expectError:      true,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "maxCount is negative",
+			countQueryParams: url.Values{
+				"maxCount": []string{"-1"},
+			},
+			defaultCount:     100,
+			expectError:      true,
+			expectedErrorKey: "maxCount",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resultedMaxCount, fieldErrors := ParseMaxCount(tt.countQueryParams, tt.defaultCount, nil)
+			if tt.expectError {
+				assert.Contains(t, fieldErrors, tt.expectedErrorKey)
+
+			} else {
+				assert.NotContains(t, fieldErrors, tt.expectedErrorKey)
+				assert.Equal(t, tt.expectedMaxCount, resultedMaxCount)
+			}
+		})
+	}
 }

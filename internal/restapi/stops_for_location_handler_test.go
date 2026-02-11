@@ -152,6 +152,19 @@ func TestStopsForLocationLatAndLan(t *testing.T) {
 	assert.NotEmpty(t, list)
 }
 
+func TestStopsForLocationIsLimitExceeded(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&radius=1000&maxCount=1")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, list, 1)
+	isLimitExceeded, ok := data["limitExceeded"].(bool)
+	require.True(t, ok)
+	assert.True(t, isLimitExceeded)
+}
+
 func TestStopsForLocationHandlerValidatesParameters(t *testing.T) {
 	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=invalid&lon=-121.74")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -280,4 +293,9 @@ func TestStopsForLocationHandlerRouteTypeValidMultiple(t *testing.T) {
 	require.True(t, ok)
 	assert.NotNil(t, refs["agencies"])
 	assert.NotNil(t, refs["routes"])
+}
+
+func TestStopsForLocationHandlerValidatesMaxCount(t *testing.T) {
+	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&maxCount=invalid")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

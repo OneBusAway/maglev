@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,36 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/logging"
 )
+
+// realtimeHTTPClient is a dedicated HTTP client for GTFS-RT feed fetching,
+// configured with explicit timeouts and transport limits to avoid the pitfalls
+// of http.DefaultClient (no timeout, shared global state).
+// The transport is cloned from http.DefaultTransport to preserve important
+// defaults (ProxyFromEnvironment, DialContext, HTTP/2, keepalives).
+var realtimeHTTPClient = newRealtimeHTTPClient()
+
+func newRealtimeHTTPClient() *http.Client {
+	var transport *http.Transport
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = t.Clone()
+	} else {
+		transport = &http.Transport{}
+	}
+	transport.MaxIdleConns = 50
+	transport.MaxIdleConnsPerHost = 10
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	transport.ExpectContinueTimeout = 1 * time.Second
+
+	return &http.Client{
+		// Timeout acts as an absolute safety net per request. The caller in
+		// updateGTFSRealtimePeriodically also sets a 15s context timeout;
+		// the stricter of the two wins. Keep this <= the context timeout so
+		// the client enforces the bound even if a caller forgets a context.
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+}
 
 // GetRealTimeTrips returns the real-time trip updates
 func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
@@ -36,13 +67,17 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 		req.Header.Add(key, value)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := realtimeHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer logging.SafeCloseWithLogging(resp.Body,
 		slog.Default().With(slog.String("component", "gtfs_realtime_downloader")),
 		"http_response_body")
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", source, resp.Status)
+	}
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -87,10 +87,11 @@ func TestNewListResponseWithRange(t *testing.T) {
 	itemList := []string{"item1", "item2", "item3"}
 	references := NewEmptyReferences()
 	outOfRange := true
+	isLimitExceeded := true
 
 	clock := clock.RealClock{}
 
-	response := NewListResponseWithRange(itemList, references, outOfRange, clock)
+	response := NewListResponseWithRange(itemList, references, outOfRange, clock, isLimitExceeded)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -101,7 +102,7 @@ func TestNewListResponseWithRange(t *testing.T) {
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, itemList, responseData["list"], "List in response data should match input list")
 	assert.Equal(t, references, responseData["references"], "References in response data should match input references")
-	assert.False(t, responseData["limitExceeded"].(bool), "limitExceeded should be false (hardcoded)")
+	assert.True(t, responseData["limitExceeded"].(bool), "limitExceeded should be true")
 	assert.True(t, responseData["outOfRange"].(bool), "outOfRange should be true")
 }
 
@@ -111,7 +112,7 @@ func TestNewListResponseWithRangeFalseFlag(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewListResponseWithRange(itemList, references, false, clock)
+	response := NewListResponseWithRange(itemList, references, false, clock, false)
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")

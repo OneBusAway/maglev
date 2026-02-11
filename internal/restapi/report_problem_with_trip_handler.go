@@ -17,9 +17,11 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 
 	compositeID := utils.ExtractIDFromParams(r)
 
-	if compositeID == "" {
-		logger.Warn("report problem with trip failed: missing tripID")
-		http.Error(w, `{"code":400, "text":"tripID is required"}`, http.StatusBadRequest)
+	if err := utils.ValidateID(compositeID); err != nil {
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
