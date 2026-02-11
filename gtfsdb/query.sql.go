@@ -2052,6 +2052,8 @@ FROM
     shapes
 WHERE
     shape_id = ?
+ORDER BY
+    shape_pt_sequence
 `
 
 func (q *Queries) GetShapeByID(ctx context.Context, shapeID string) ([]Shape, error) {

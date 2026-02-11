@@ -291,7 +291,9 @@ SELECT
 FROM
     shapes
 WHERE
-    shape_id = ?;
+    shape_id = ?
+ORDER BY
+    shape_pt_sequence;
 
 -- name: GetStopIDsForRoute :many
 SELECT DISTINCT
