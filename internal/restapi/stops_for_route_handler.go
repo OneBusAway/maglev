@@ -344,6 +344,12 @@ func processTripGroups(
 
 	for _, key := range keys {
 		tripsInGroup := tripGroups[key]
+
+		// Sort trips by ID to ensure we always pick the same representative trip
+		sort.Slice(tripsInGroup, func(i, j int) bool {
+			return tripsInGroup[i].ID < tripsInGroup[j].ID
+		})
+
 		representativeTrip := tripsInGroup[0]
 		stopsList, err := api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, representativeTrip.ID)
 		if err != nil {
