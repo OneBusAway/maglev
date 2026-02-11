@@ -960,3 +960,16 @@ SELECT * FROM shapes
 WHERE shape_id IN (sqlc.slice('shape_ids'))
 ORDER BY shape_id, shape_pt_sequence;
 
+-- name: GetStopTimesForTripIDs :many
+SELECT * FROM stop_times
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id, stop_sequence;
+
+-- name: GetTripsByBlockIDs :many
+SELECT t.*
+FROM trips t
+JOIN stop_times st ON t.id = st.trip_id
+WHERE t.block_id IN (sqlc.slice('block_ids'))
+  AND t.service_id IN (sqlc.slice('service_ids'))
+GROUP BY t.id
+ORDER BY t.block_id, MIN(st.departure_time), t.id;

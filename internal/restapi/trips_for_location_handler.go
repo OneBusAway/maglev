@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"time"
@@ -84,7 +85,12 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	result := api.buildTripsForLocationEntries(ctx, activeTrips, bbox, tripAgencyMap, includeSchedule, currentLocation, todayMidnight, serviceDate, w, r)
+	// Build entries from pre-fetched trip data
+	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, includeSchedule, currentLocation, todayMidnight, serviceDate, w, r)
+	if result == nil {
+		return
+	}
+
 	references := api.BuildReference(w, r, ctx, ReferenceParams{
 		IncludeTrip: includeTrip,
 		Stops:       stops,
@@ -167,10 +173,10 @@ func boundingBox(lat, lon, latSpan, lonSpan float64) boundingBoxStruct {
 	}
 }
 
+// buildTripsForLocationEntries builds trip entries from pre-fetched batch data.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
-	activeTrips map[string]gtfs.Vehicle,
-	bbox boundingBoxStruct,
+	trips []gtfsdb.Trip,
 	tripAgencyMap map[string]string,
 	includeSchedule bool,
 	currentLocation *time.Location,
@@ -179,33 +185,144 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	w http.ResponseWriter,
 	r *http.Request,
 ) []models.TripsForLocationListEntry {
+	if len(trips) == 0 {
+		return []models.TripsForLocationListEntry{}
+	}
+
+	tripsMap := make(map[string]gtfsdb.Trip)
+	var shapeIDs []string
+	uniqueBlockIDs := make(map[string]struct{})
+	var validVehicleTrips []string
+
+	for _, trip := range trips {
+		// Ensure we only process trips that have a valid agency mapping
+		if _, ok := tripAgencyMap[trip.ID]; !ok {
+			continue
+		}
+		validVehicleTrips = append(validVehicleTrips, trip.ID)
+		tripsMap[trip.ID] = trip
+		if trip.ShapeID.Valid {
+			shapeIDs = append(shapeIDs, trip.ShapeID.String)
+		}
+		if trip.BlockID.Valid {
+			uniqueBlockIDs[trip.BlockID.String] = struct{}{}
+		}
+	}
+
+	shapesMap := make(map[string][]gtfs.ShapePoint)
+	if len(shapeIDs) > 0 {
+		shapes, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs(ctx, shapeIDs)
+		if err == nil {
+			for _, sp := range shapes {
+				sid := sp.ShapeID
+				shapesMap[sid] = append(shapesMap[sid], gtfs.ShapePoint{
+					Latitude:  sp.Lat,
+					Longitude: sp.Lon,
+				})
+			}
+		} else {
+			api.Logger.Warn("failed to bulk fetch shapes", "error", err)
+		}
+	}
+
+	stopTimesMap := make(map[string][]gtfsdb.StopTime)
+	blockTripsMap := make(map[string][]gtfsdb.Trip)
+	var allStopIDs []string
+
+	if includeSchedule {
+		stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, validVehicleTrips)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return nil
+		}
+		for _, st := range stopTimesRaw {
+			stopTimesMap[st.TripID] = append(stopTimesMap[st.TripID], st)
+			allStopIDs = append(allStopIDs, st.StopID)
+		}
+
+		if len(uniqueBlockIDs) > 0 {
+			var blockIDs []string
+			for bid := range uniqueBlockIDs {
+				blockIDs = append(blockIDs, bid)
+			}
+
+			dateStr := serviceDate.Format("20060102")
+			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
+			if err != nil {
+				activeServiceIDs = []string{}
+				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
+			}
+
+			blockIDsNull := make([]sql.NullString, len(blockIDs))
+			for i, id := range blockIDs {
+				blockIDsNull[i] = sql.NullString{String: id, Valid: true}
+			}
+
+			params := gtfsdb.GetTripsByBlockIDsParams{
+				BlockIds:   blockIDsNull,
+				ServiceIds: activeServiceIDs,
+			}
+
+			blockTripsRaw, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, params)
+			if err == nil {
+				for _, bt := range blockTripsRaw {
+					if bt.BlockID.Valid {
+						bid := bt.BlockID.String
+						blockTripsMap[bid] = append(blockTripsMap[bid], bt)
+					}
+				}
+			} else {
+				api.Logger.Warn("failed to bulk fetch block trips", "error", err)
+			}
+		}
+	}
+
+	stopCoords := make(map[string]struct{ lat, lon float64 })
+	if len(allStopIDs) > 0 {
+		stopsRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, allStopIDs)
+		if err == nil {
+			for _, s := range stopsRaw {
+				stopCoords[s.ID] = struct{ lat, lon float64 }{lat: s.Lat, lon: s.Lon}
+			}
+		} else {
+			api.Logger.Warn("failed to bulk fetch stops", "error", err, "stop_count", len(allStopIDs))
+		}
+	}
+
 	var result []models.TripsForLocationListEntry
-	for _, vehicle := range activeTrips {
+
+	for _, tripID := range validVehicleTrips {
 		if ctx.Err() != nil {
 			return result
 		}
 
-		pos := vehicle.Position
-		if pos == nil {
-			continue
-		}
-		lat, lon := float64(*pos.Latitude), float64(*pos.Longitude)
-		if lat < bbox.minLat || lat > bbox.maxLat || lon < bbox.minLon || lon > bbox.maxLon {
-			continue
-		}
-		tripID := vehicle.Trip.ID.ID
-
-		agencyID, ok := tripAgencyMap[tripID]
-		if !ok {
+		agencyID := tripAgencyMap[tripID]
+		tripData, tripFound := tripsMap[tripID]
+		if !tripFound {
 			continue
 		}
 
 		var schedule *models.TripsSchedule
 		if includeSchedule {
-			schedule = api.buildScheduleForTrip(ctx, tripID, agencyID, serviceDate, currentLocation, w, r)
-			if schedule == nil {
-				continue
+			var shapePoints []gtfs.ShapePoint
+			if tripData.ShapeID.Valid {
+				shapePoints = shapesMap[tripData.ShapeID.String]
 			}
+
+			var blockTrips []gtfsdb.Trip
+			if tripData.BlockID.Valid {
+				blockTrips = blockTripsMap[tripData.BlockID.String]
+			}
+
+			schedule = api.buildScheduleFromMemory(
+				tripData,
+				agencyID,
+				currentLocation,
+				stopTimesMap[tripID],
+				shapePoints,
+				stopCoords,
+				blockTrips,
+			)
 		}
 		entry := models.TripsForLocationListEntry{
 			Frequency:    nil,
@@ -556,4 +673,75 @@ func (rb *referenceBuilder) getRoutesList() []interface{} {
 		}
 	}
 	return routes
+}
+
+// buildScheduleFromMemory constructs a TripsSchedule from pre-fetched stop times, shape points, and block trips.
+func (api *RestAPI) buildScheduleFromMemory(
+	trip gtfsdb.Trip,
+	agencyID string,
+	currentLocation *time.Location,
+	stopTimes []gtfsdb.StopTime,
+	shapePoints []gtfs.ShapePoint,
+	stopCoords map[string]struct{ lat, lon float64 },
+	blockTrips []gtfsdb.Trip,
+) *models.TripsSchedule {
+
+	// Calculate Next/Prev using in-memory block trips
+	nextTripID, previousTripID := api.calculateNextPrevFromMemory(trip, blockTrips, agencyID)
+
+	// Calculate Distances using in-memory coords
+	stopTimesList := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
+
+	return &models.TripsSchedule{
+		Frequency:      nil,
+		NextTripId:     nextTripID,
+		PreviousTripId: previousTripID,
+		StopTimes:      stopTimesList,
+		TimeZone:       currentLocation.String(),
+	}
+}
+
+// calculateNextPrevFromMemory determines the next and previous trip IDs within a block.
+func (api *RestAPI) calculateNextPrevFromMemory(currentTrip gtfsdb.Trip, blockTrips []gtfsdb.Trip, agencyID string) (string, string) {
+	if len(blockTrips) == 0 {
+		return "", ""
+	}
+
+	// Filter blockTrips to only include those that share the exact ServiceID of the current trip.
+	// This ensures we don't mix trips from different service days (e.g. Weekday vs Weekend).
+	var relevantTrips []gtfsdb.Trip
+	for _, t := range blockTrips {
+		if t.ServiceID == currentTrip.ServiceID {
+			relevantTrips = append(relevantTrips, t)
+		}
+	}
+
+	if len(relevantTrips) == 0 {
+		return "", ""
+	}
+
+	// Find index of current trip in the ordered list
+	currentIndex := -1
+	for i, t := range relevantTrips {
+		if t.ID == currentTrip.ID {
+			currentIndex = i
+			break
+		}
+	}
+
+	if currentIndex == -1 {
+		return "", ""
+	}
+
+	var next, prev string
+
+	// BlockTrips are already ordered by departure_time via the SQL query (GetTripsByBlockIDs)
+	if currentIndex < len(relevantTrips)-1 {
+		next = utils.FormCombinedID(agencyID, relevantTrips[currentIndex+1].ID)
+	}
+	if currentIndex > 0 {
+		prev = utils.FormCombinedID(agencyID, relevantTrips[currentIndex-1].ID)
+	}
+
+	return next, prev
 }
