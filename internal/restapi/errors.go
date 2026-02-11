@@ -32,6 +32,7 @@ func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter, r *http.Request
 }
 
 func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+	api.Logger.Error("internal server error", "error Message:", err.Error(), "path:", r.URL.Path)
 	// Send a 500 Internal Server Error response
 	response := struct {
 		Code        int    `json:"code"`
