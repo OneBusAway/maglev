@@ -45,6 +45,7 @@ type SearchRoutesByFullTextParams struct {
 }
 
 func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesByFullTextParams) ([]Route, error) {
+	// nil stmt: FTS queries are not prepared since they're not managed by sqlc.
 	rows, err := q.query(ctx, nil, searchRoutesByFullText, arg.Query, arg.Limit)
 	if err != nil {
 		return nil, err
@@ -116,6 +117,7 @@ type SearchStopsByNameRow struct {
 }
 
 func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNameParams) ([]SearchStopsByNameRow, error) {
+	// nil stmt: FTS queries are not prepared since they're not managed by sqlc.
 	rows, err := q.query(ctx, nil, searchStopsByName, arg.SearchQuery, arg.Limit)
 	if err != nil {
 		return nil, err
