@@ -45,6 +45,7 @@ func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesBy
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close() //nolint:errcheck // closing is also checked explicitly below
 	var items []Route
 	for rows.Next() {
 		var i Route
@@ -115,6 +116,7 @@ func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNamePa
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close() //nolint:errcheck // closing is also checked explicitly below
 	var items []SearchStopsByNameRow
 	for rows.Next() {
 		var i SearchStopsByNameRow
