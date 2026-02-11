@@ -56,11 +56,11 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 	stopData := &models.Stop{
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
-		Name:               stop.Name.String,
+		Name:               utils.NullStringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
-		Code:               stop.Code.String,
-		Direction:          "",
+		Code:               utils.NullStringOrEmpty(stop.Code),
+		Direction:          utils.NullStringOrEmpty(stop.Direction),
 		LocationType:       int(stop.LocationType.Int64),
 		WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		RouteIDs:           combinedRouteIDs,

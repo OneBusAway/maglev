@@ -121,14 +121,9 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			routeIdsString = []string{}
 		}
 
-		direction := models.UnknownValue
-		if stop.Direction.Valid && stop.Direction.String != "" {
-			direction = stop.Direction.String
-		}
-
 		stopsList = append(stopsList, models.Stop{
 			Code:               stop.Code.String,
-			Direction:          direction,
+			Direction:          utils.NullStringOrEmpty(stop.Direction),
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
