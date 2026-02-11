@@ -73,12 +73,17 @@ func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authH
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	b, err := io.ReadAll(resp.Body)
+	const maxBodySize = 200 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	err = c.processAndStoreGTFSDataWithSource(b, url)
+	if int64(len(body)) > maxBodySize {
+		return fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxBodySize)
+	}
+
+	err = c.processAndStoreGTFSDataWithSource(body, url)
 
 	return err
 }
