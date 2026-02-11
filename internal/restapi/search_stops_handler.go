@@ -94,7 +94,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
 	if err != nil {
 
-		api.Logger.Debug(
+		api.Logger.Warn(
 			"FTS5 wildcard query failed, retrying without wildcard",
 			"original_error", err,
 			"query", sanitizedQuery,
