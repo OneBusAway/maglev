@@ -17,9 +17,11 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 
 	compositeID := utils.ExtractIDFromParams(r)
 
-	if compositeID == "" {
-		logger.Warn("report problem with stop failed: missing stopID")
-		http.Error(w, `{"code":400, "text":"stopID is required"}`, http.StatusBadRequest)
+	if err := utils.ValidateID(compositeID); err != nil {
+		fieldErrors := map[string][]string{
+			"id": {err.Error()},
+		}
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
