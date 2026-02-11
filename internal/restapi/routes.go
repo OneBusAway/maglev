@@ -50,6 +50,9 @@ func registerPprofHandlers(mux *http.ServeMux) { // nolint:unused
 
 // SetRoutes registers all API endpoints with compression applied per route
 func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
+	// Health check endpoint - no authentication required
+	mux.HandleFunc("GET /healthz", api.healthHandler)
+
 	mux.Handle("GET /api/where/agencies-with-coverage.json", rateLimitAndValidateAPIKey(api, api.agenciesWithCoverageHandler))
 	mux.Handle("GET /api/where/agency/{id}", rateLimitAndValidateAPIKey(api, api.agencyHandler))
 	mux.Handle("GET /api/where/current-time.json", rateLimitAndValidateAPIKey(api, api.currentTimeHandler))
