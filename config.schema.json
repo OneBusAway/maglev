@@ -29,7 +29,7 @@
       "uniqueItems": true,
       "minItems": 1
     },
-     "exempt-api-keys": {
+    "exempt-api-keys": {
       "type": "array",
       "description": "API keys that are exempt from rate limiting",
       "items": {
