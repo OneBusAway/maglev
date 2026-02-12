@@ -12,11 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/restapi"
 	"maglev.onebusaway.org/internal/webui"
 )
@@ -54,6 +57,9 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 	// Select clock implementation based on environment
 	appClock := createClock(cfg.Env)
 
+	// Initialize metrics with logger for error reporting
+	appMetrics := metrics.NewWithLogger(logger)
+
 	coreApp := &app.Application{
 		Config:              cfg,
 		GtfsConfig:          gtfsCfg,
@@ -61,6 +67,12 @@ func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application
 		GtfsManager:         gtfsManager,
 		DirectionCalculator: directionCalculator,
 		Clock:               appClock,
+		Metrics:             appMetrics,
+	}
+
+	// Start DB stats collector if database is available
+	if gtfsManager != nil && gtfsManager.GtfsDB != nil && gtfsManager.GtfsDB.DB != nil {
+		appMetrics.StartDBStatsCollector(gtfsManager.GtfsDB.DB, 15*time.Second)
 	}
 
 	return coreApp, nil
@@ -92,13 +104,21 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	api.SetRoutes(mux)
 	webUI.SetWebUIRoutes(mux)
 
+	// Add metrics endpoint (no auth required) - uses custom registry with structured error logging
+	mux.Handle("GET /metrics", promhttp.HandlerFor(coreApp.Metrics.Registry, promhttp.HandlerOpts{
+		ErrorLog: slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
+	}))
+
 	// Wrap with security middleware
 	secureHandler := api.WithSecurityHeaders(mux)
+
+	// Add metrics middleware
+	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
 
 	// Add request logging middleware (outermost)
 	requestLogger := logging.NewStructuredLogger(os.Stdout, slog.LevelInfo)
 	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(requestLogger)
-	handler := requestLogMiddleware(secureHandler)
+	handler := requestLogMiddleware(metricsHandler)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -116,7 +136,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 // Starts the server in a goroutine, waits for shutdown signals (SIGINT, SIGTERM),
 // and performs graceful shutdown with a 30-second timeout.
 // Returns an error if the server fails to start or shutdown fails.
-func Run(srv *http.Server, gtfsManager *gtfs.Manager, api *restapi.RestAPI, logger *slog.Logger) error {
+func Run(srv *http.Server, coreApp *app.Application, api *restapi.RestAPI, logger *slog.Logger) error {
 	logger.Info("starting server", "addr", srv.Addr)
 
 	// Set up signal handling for graceful shutdown
@@ -156,9 +176,14 @@ func Run(srv *http.Server, gtfsManager *gtfs.Manager, api *restapi.RestAPI, logg
 		api.Shutdown()
 	}
 
+	// Shutdown metrics collector (blocks until goroutine exits)
+	if coreApp.Metrics != nil {
+		coreApp.Metrics.Shutdown()
+	}
+
 	// Then shutdown GTFS manager (stops data fetching - the lowest-level dependency)
-	if gtfsManager != nil {
-		gtfsManager.Shutdown()
+	if coreApp.GtfsManager != nil {
+		coreApp.GtfsManager.Shutdown()
 	}
 
 	logger.Info("server exited")
