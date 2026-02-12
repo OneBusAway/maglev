@@ -84,25 +84,10 @@ func (api *RestAPI) parseTripForVehicleParams(r *http.Request) (TripForVehiclePa
 }
 
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
-	queryParamID := utils.ExtractIDFromParams(r)
-
-	if err := utils.ValidateID(queryParamID); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	agencyID, vehicleID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
-
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	vehicleID := parsed.CodeID
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()

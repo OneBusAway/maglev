@@ -15,25 +15,10 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		logger = slog.Default()
 	}
 
-	compositeID := utils.ExtractIDFromParams(r)
-
-	if err := utils.ValidateID(compositeID); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	// Extract agency ID and trip ID from composite ID
-	_, tripID, err := utils.ExtractAgencyIDAndCodeID(compositeID)
-	if err != nil {
-		logger.Warn("report problem with trip failed: invalid tripID format",
-			slog.String("tripID", compositeID),
-			slog.Any("error", err))
-		http.Error(w, `{"code":400, "text":"tripID is required"}`, http.StatusBadRequest)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	tripID := parsed.CodeID          // The raw GTFS trip ID (e.g., "t_123")
+	compositeID := parsed.CombinedID // The API ID (e.g., "1_t_123")
 
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil {
@@ -59,6 +44,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	opLogger := logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
 	logging.LogOperation(opLogger, "problem_report_received_for_trip",
 		slog.String("trip_id", tripID),
+		slog.String("composite_id", compositeID),
 		slog.String("code", code),
 		slog.String("service_date", serviceDate),
 		slog.String("vehicle_id", vehicleID),

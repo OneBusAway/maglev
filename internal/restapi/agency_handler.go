@@ -8,19 +8,11 @@ import (
 )
 
 func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
-	id := utils.ExtractIDFromParams(r)
+	// We can ignore the bool return because middleware guarantees presence
+	id, _ := utils.GetIDFromContext(r.Context())
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
-
-	// Validate ID
-	if err := utils.ValidateID(id); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
 
 	agency := api.GtfsManager.FindAgency(id)
 

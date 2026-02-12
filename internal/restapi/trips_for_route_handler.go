@@ -19,24 +19,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	id := utils.ExtractIDFromParams(r)
-
-	if err := utils.ValidateID(id); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(id)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	routeID := parsed.CodeID
 
 	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
 	includeStatus := r.URL.Query().Get("includeStatus") != "false"

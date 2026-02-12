@@ -8,27 +8,9 @@ import (
 )
 
 func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
-	queryParamID := utils.ExtractIDFromParams(r)
-
-	// Validate ID
-	if err := utils.ValidateID(queryParamID); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	// agencyID here is specifically the *Stop's* agency.
-	// Routes serving this stop might belong to different agencies.
-	agencyID, stopID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	stopID := parsed.CodeID
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()

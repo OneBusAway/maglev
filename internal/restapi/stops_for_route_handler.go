@@ -50,24 +50,11 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		api.serverErrorResponse(w, r, ctx.Err())
 		return
 	}
-	id := utils.ExtractIDFromParams(r)
 
-	if err := utils.ValidateID(id); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(id)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	routeID := parsed.CodeID
 
 	params := api.parseStopsForRouteParams(r)
 
@@ -174,6 +161,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency)
 }
+
 func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, includePolylines bool, adc *GTFS.AdvancedDirectionCalculator) (models.RouteEntry, []models.Stop, error) {
 	allStops := make(map[string]bool)
 	allPolylines := make([]models.Polyline, 0, 100)

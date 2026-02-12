@@ -20,15 +20,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	id := utils.ExtractIDFromParams(r)
-
-	if err := utils.ValidateID(id); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	id, _ := utils.GetIDFromContext(r.Context())
 
 	// Validate agency exists
 	agency := api.GtfsManager.FindAgency(id)

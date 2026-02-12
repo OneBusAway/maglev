@@ -100,24 +100,11 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) (ArrivalAndD
 }
 
 func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *http.Request) {
-	stopID := utils.ExtractIDFromParams(r)
-
-	if err := utils.ValidateID(stopID); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	agencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(stopID)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	stopCode := parsed.CodeID
+	stopID := parsed.CombinedID
 
 	ctx := r.Context()
 
