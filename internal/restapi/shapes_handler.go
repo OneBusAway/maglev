@@ -10,7 +10,6 @@ import (
 
 func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 	id := utils.ExtractIDFromParams(r)
-
 	if err := utils.ValidateID(id); err != nil {
 		fieldErrors := map[string][]string{
 			"id": {err.Error()},
@@ -20,7 +19,6 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agencyID, shapeID, err := utils.ExtractAgencyIDAndCodeID(id)
-
 	if err != nil {
 		fieldErrors := map[string][]string{
 			"id": {err.Error()},
@@ -35,14 +33,12 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 	defer api.GtfsManager.RUnlock()
 
 	_, err = api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-
 	if err != nil {
 		api.sendNotFound(w, r)
 		return
 	}
 
 	shapes, err := api.GtfsManager.GtfsDB.Queries.GetShapeByID(ctx, shapeID)
-
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -54,6 +50,7 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lineCoords := make([][]float64, 0, len(shapes))
+	var totalPoints int
 
 	for i, point := range shapes {
 		// Filter consecutive duplicate points to avoid zero-length segments
@@ -61,13 +58,14 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		lineCoords = append(lineCoords, []float64{point.Lat, point.Lon})
+		totalPoints++
 	}
 
 	// Encode as a single continuous polyline to ensure valid delta offsets
 	encodedPoints := string(polyline.EncodeCoords(lineCoords))
 
 	shapeEntry := models.ShapeEntry{
-		Length: len(encodedPoints),
+		Length: totalPoints,
 		Levels: "",
 		Points: encodedPoints,
 	}
