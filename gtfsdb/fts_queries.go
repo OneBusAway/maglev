@@ -4,8 +4,8 @@ package gtfsdb
 // sqlc cannot handle queries that use FTS5-specific syntax (MATCH operator,
 // bm25() function), so these are maintained manually instead of in query.sql.
 //
-// IMPORTANT: If the 'routes' or 'stops' table schema changes, the SQL
-// and Go types in this file must be updated manually to match.
+// IMPORTANT: If the 'routes', 'stops', 'routes_fts', or 'stops_fts' table schemas change,
+// the SQL and Go types in this file must be updated manually to match.
 // Running 'make models' will NOT update this file.
 
 import (
@@ -45,7 +45,8 @@ type SearchRoutesByFullTextParams struct {
 }
 
 func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesByFullTextParams) ([]Route, error) {
-	// nil stmt: FTS queries are not prepared since they're not managed by sqlc.
+	// NOTE: These queries do not support transactional use via WithTx().
+	// Passing nil stmt causes q.query() to use q.db directly, bypassing any active transaction.
 	rows, err := q.query(ctx, nil, searchRoutesByFullText, arg.Query, arg.Limit)
 	if err != nil {
 		return nil, err
@@ -117,7 +118,8 @@ type SearchStopsByNameRow struct {
 }
 
 func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNameParams) ([]SearchStopsByNameRow, error) {
-	// nil stmt: FTS queries are not prepared since they're not managed by sqlc.
+	// NOTE: These queries do not support transactional use via WithTx().
+	// Passing nil stmt causes q.query() to use q.db directly, bypassing any active transaction.
 	rows, err := q.query(ctx, nil, searchStopsByName, arg.SearchQuery, arg.Limit)
 	if err != nil {
 		return nil, err
