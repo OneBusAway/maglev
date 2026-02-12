@@ -3,6 +3,7 @@
   "port": 4000,
   "env": "development",
   "api-keys": ["test"],
+  "exempt-api-keys": ["org.onebusaway.iphone"],
   "rate-limit": 100,
   "gtfs-static-feed": {
     "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",

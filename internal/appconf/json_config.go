@@ -31,6 +31,7 @@ type JSONConfig struct {
 	Port           int            `json:"port"`
 	Env            string         `json:"env"`
 	ApiKeys        []string       `json:"api-keys"`
+	ExemptApiKeys  []string       `json:"exempt-api-keys"`
 	RateLimit      int            `json:"rate-limit"`
 	GtfsStaticFeed GtfsStaticFeed `json:"gtfs-static-feed"`
 	GtfsRtFeeds    []GtfsRtFeed   `json:"gtfs-rt-feeds"`
@@ -47,6 +48,9 @@ func (j *JSONConfig) setDefaults() {
 	}
 	if len(j.ApiKeys) == 0 {
 		j.ApiKeys = []string{"test"}
+	}
+	if len(j.ExemptApiKeys) == 0 {
+		j.ExemptApiKeys = []string{"org.onebusaway.iphone"}
 	}
 	if j.RateLimit == 0 {
 		j.RateLimit = 100
@@ -166,11 +170,12 @@ func validatePath(path, fieldName string) error {
 // ToAppConfig converts JSONConfig to appconf.Config
 func (j *JSONConfig) ToAppConfig() Config {
 	return Config{
-		Port:      j.Port,
-		Env:       EnvFlagToEnvironment(j.Env),
-		ApiKeys:   j.ApiKeys,
-		Verbose:   true, // Always set to true like in main.go
-		RateLimit: j.RateLimit,
+		Port:          j.Port,
+		Env:           EnvFlagToEnvironment(j.Env),
+		ApiKeys:       j.ApiKeys,
+		ExemptApiKeys: j.ExemptApiKeys,
+		Verbose:       true, // Always set to true like in main.go
+		RateLimit:     j.RateLimit,
 	}
 }
 

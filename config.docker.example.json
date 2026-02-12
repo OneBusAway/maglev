@@ -3,6 +3,7 @@
   "port": 4000,
   "env": "production",
   "api-keys": ["test"],
+  "exempt-api-keys": ["org.onebusaway.iphone"],
   "_comment": "WARNING: Change 'api-keys' before deploying to production! The default 'test' key is for development only.",
   "rate-limit": 100,
   "gtfs-static-feed": {

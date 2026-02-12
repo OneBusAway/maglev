@@ -15,7 +15,7 @@ import (
 // TestRateLimitMiddleware_CleanupKeepsActiveClients verifies active users are not deleted.
 func TestRateLimitMiddleware_CleanupKeepsActiveClients(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
-	middleware := NewRateLimitMiddleware(10, time.Second, mockClock)
+	middleware := NewRateLimitMiddleware(10, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,7 @@ func TestRateLimitMiddleware_CleanupKeepsActiveClients(t *testing.T) {
 // TestRateLimitMiddleware_CleanupRemovesInactiveClients verifies inactive users are deleted after threshold.
 func TestRateLimitMiddleware_CleanupRemovesInactiveClients(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
-	middleware := NewRateLimitMiddleware(10, time.Second, mockClock)
+	middleware := NewRateLimitMiddleware(10, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +117,7 @@ func TestRateLimitMiddleware_CleanupRemovesInactiveClients(t *testing.T) {
 // TestRateLimitMiddleware_CleanupHandlesExhaustedLimiters verifies exhausted limiters are deleted based on time, not token count.
 func TestRateLimitMiddleware_CleanupHandlesExhaustedLimiters(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
-	middleware := NewRateLimitMiddleware(3, time.Second, mockClock)
+	middleware := NewRateLimitMiddleware(3, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +172,7 @@ func TestRateLimitMiddleware_CleanupHandlesExhaustedLimiters(t *testing.T) {
 // TestRateLimitMiddleware_CleanupMemoryLeakPrevention verifies cleanup prevents memory leaks from attack scenarios.
 func TestRateLimitMiddleware_CleanupMemoryLeakPrevention(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
-	middleware := NewRateLimitMiddleware(5, time.Second, mockClock)
+	middleware := NewRateLimitMiddleware(5, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +226,7 @@ func TestRateLimitMiddleware_CleanupMemoryLeakPrevention(t *testing.T) {
 // TestRateLimitMiddleware_CleanupPreservesExemptedKeys verifies exempted keys are never deleted.
 func TestRateLimitMiddleware_CleanupPreservesExemptedKeys(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
-	middleware := NewRateLimitMiddleware(10, time.Second, mockClock)
+	middleware := NewRateLimitMiddleware(10, time.Second, []string{"org.onebusaway.iphone"}, mockClock)
 	defer middleware.Stop()
 
 	// Manually add an exempted key to the limiters map
@@ -263,7 +263,7 @@ func TestRateLimitMiddleware_CleanupPreservesExemptedKeys(t *testing.T) {
 // TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest verifies lastSeen timestamp is updated on each request.
 func TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
-	middleware := NewRateLimitMiddleware(10, time.Second, mockClock)
+	middleware := NewRateLimitMiddleware(10, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
