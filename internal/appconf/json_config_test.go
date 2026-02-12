@@ -1,9 +1,11 @@
 package appconf
 
 import (
+	"os"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestLoadFromFile_ValidConfig(t *testing.T) {
@@ -475,4 +477,94 @@ func TestLoadFromFile_FileSizeLimit(t *testing.T) {
 	config, err := LoadFromFile("../../testdata/config_valid.json")
 	require.NoError(t, err)
 	assert.NotNil(t, config)
+}
+
+func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
+	content := `{
+        "port": 4000,
+        "env": "development",
+        "api-keys": ["file-key"],
+        "gtfs-static-feed": {
+            "url": "https://example.com/gtfs.zip",
+            "auth-header-name": "X-File-Auth",
+            "auth-header-value": "file-secret"
+        },
+        "gtfs-rt-feeds": [
+            {
+                "trip-updates-url": "https://example.com/tu",
+                "realtime-auth-header-name": "X-File-RT",
+                "realtime-auth-header-value": "file-rt-secret"
+            }
+        ]
+    }`
+
+	tmpFile, err := os.CreateTemp("", "config_test_*.json")
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = os.Remove(tmpFile.Name())
+	})
+
+	_, err = tmpFile.WriteString(content)
+	require.NoError(t, err)
+
+	err = tmpFile.Close()
+	require.NoError(t, err)
+
+	t.Run("Happy Path - Override All Secrets", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "env-key-1,env-key-2")
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "X-Env-Static")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "env-static-secret")
+		t.Setenv("GTFS_REALTIME_AUTH_NAME", "X-Env-RT")
+		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "env-rt-secret")
+
+		config, err := LoadFromFile(tmpFile.Name())
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"env-key-1", "env-key-2"}, config.ApiKeys)
+
+		assert.Equal(t, "X-Env-Static", config.GtfsStaticFeed.AuthHeaderName)
+		assert.Equal(t, "env-static-secret", config.GtfsStaticFeed.AuthHeaderValue)
+
+		require.NotEmpty(t, config.GtfsRtFeeds)
+		assert.Equal(t, "X-Env-RT", config.GtfsRtFeeds[0].RealTimeAuthHeaderName)
+		assert.Equal(t, "env-rt-secret", config.GtfsRtFeeds[0].RealTimeAuthHeaderValue)
+	})
+
+	t.Run("Parsing Edge Cases - Spaces and Empty Segments", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "key1 , key2 , , key3,   ")
+
+		config, err := LoadFromFile(tmpFile.Name())
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"key1", "key2", "key3"}, config.ApiKeys)
+	})
+
+	t.Run("Empty String Does Not Override", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "")
+
+		config, err := LoadFromFile(tmpFile.Name())
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"file-key"}, config.ApiKeys)
+	})
+
+	t.Run("Validation Still Fires - Duplicate Keys", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "duplicate,duplicate")
+
+		_, err := LoadFromFile(tmpFile.Name())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate API key")
+	})
+
+	t.Run("Full Auth via Env (Name and Value)", func(t *testing.T) {
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "Env-Name")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "Env-Value")
+
+		config, err := LoadFromFile(tmpFile.Name())
+		require.NoError(t, err)
+
+		assert.Equal(t, "Env-Name", config.GtfsStaticFeed.AuthHeaderName)
+		assert.Equal(t, "Env-Value", config.GtfsStaticFeed.AuthHeaderValue)
+	})
 }
