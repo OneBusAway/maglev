@@ -155,15 +155,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	// Get trips that serve this stop and are active today
-	activeTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByServiceID(ctx, activeServiceIDs)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
-	activeTripIDs := make(map[string]bool)
-	for _, trip := range activeTrips {
-		activeTripIDs[trip.ID] = true
+	activeServiceIDSet := make(map[string]bool, len(activeServiceIDs))
+	for _, sid := range activeServiceIDs {
+		activeServiceIDSet[sid] = true
 	}
 
 	// Get all stop times for this stop within the time window
@@ -180,7 +174,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Filter stop times to only include active trips
 	var stopTimes []gtfsdb.GetStopTimesForStopInWindowRow
 	for _, st := range allStopTimes {
-		if activeTripIDs[st.TripID] {
+		if activeServiceIDSet[st.ServiceID] {
 			stopTimes = append(stopTimes, st)
 		}
 	}
@@ -193,7 +187,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Add the current stop
 	stopIDSet[stop.ID] = true
 
-	serviceDateMillis := params.Time.UnixMilli()
 	serviceMidnight := time.Date(
 		params.Time.Year(),
 		params.Time.Month(),
@@ -201,6 +194,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		0, 0, 0, 0,
 		loc,
 	)
+	serviceDateMillis := serviceMidnight.UnixMilli()
 
 	batchRouteIDs := make(map[string]bool)
 	batchTripIDs := make(map[string]bool)
