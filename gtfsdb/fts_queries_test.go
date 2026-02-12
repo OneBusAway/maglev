@@ -47,7 +47,7 @@ func TestSearchRoutesByFullText(t *testing.T) {
 			Desc: toNullString("Express service through downtown"),
 			Type: 3, Url: toNullString("http://test.com/r1"),
 			Color: toNullString("FF0000"), TextColor: toNullString("FFFFFF"),
-			ContinuousPickup: sql.NullInt64{Int64: 1, Valid: true},
+			ContinuousPickup:  sql.NullInt64{Int64: 1, Valid: true},
 			ContinuousDropOff: sql.NullInt64{Int64: 2, Valid: true},
 		},
 		{
@@ -64,7 +64,7 @@ func TestSearchRoutesByFullText(t *testing.T) {
 		{
 			ID: "r4", AgencyID: "agency1",
 			LongName: toNullString("Riverfront Circulator"),
-			Type: 3,
+			Type:     3,
 		},
 	}
 	for _, r := range routes {
@@ -79,6 +79,19 @@ func TestSearchRoutesByFullText(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Len(t, results, 2)
+	})
+
+	t.Run("results ordered by relevance then id", func(t *testing.T) {
+		results, err := client.Queries.SearchRoutesByFullText(ctx, SearchRoutesByFullTextParams{
+			Query: "Downtown",
+			Limit: 10,
+		})
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		// Both routes share agency_id and similar bm25 scores,
+		// so tiebreaker is r.id: r1 < r3
+		assert.Equal(t, "r1", results[0].ID)
+		assert.Equal(t, "r3", results[1].ID)
 	})
 
 	t.Run("matches by short name", func(t *testing.T) {
@@ -201,7 +214,7 @@ func TestSearchStopsByName(t *testing.T) {
 		{
 			ID: "s1", Name: toNullString("Main Street Station"),
 			Code: toNullString("MS01"),
-			Lat: 40.0, Lon: -74.0,
+			Lat:  40.0, Lon: -74.0,
 			LocationType:       sql.NullInt64{Int64: 1, Valid: true},
 			WheelchairBoarding: sql.NullInt64{Int64: 1, Valid: true},
 			Direction:          toNullString("N"),
