@@ -7,6 +7,7 @@ import (
 
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi"
 )
 
 func main() {
@@ -107,6 +108,10 @@ func main() {
 
 	// Create HTTP server
 	srv, api := CreateServer(coreApp, cfg)
+
+	if srv.Handler != nil {
+		srv.Handler = restapi.RequestIDMiddleware(srv.Handler)
+	}
 
 	// Run server with graceful shutdown
 	if err := Run(srv, coreApp.GtfsManager, api, coreApp.Logger); err != nil {
