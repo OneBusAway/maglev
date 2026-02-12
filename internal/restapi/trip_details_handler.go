@@ -82,24 +82,10 @@ func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) (TripDetailsParams
 }
 
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	queryParamID := utils.ExtractIDFromParams(r)
-
-	if err := utils.ValidateID(queryParamID); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	agencyID, tripID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	tripID := parsed.CodeID
 
 	ctx := r.Context()
 

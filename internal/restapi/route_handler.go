@@ -8,25 +8,10 @@ import (
 )
 
 func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
-	queryParamID := utils.ExtractIDFromParams(r)
-
-	// Validate ID
-	if err := utils.ValidateID(queryParamID); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	routeID := parsed.CodeID // The raw GTFS route ID
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -156,4 +157,43 @@ func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[str
 		}
 	}
 	return maxCount, fieldErrors
+}
+
+// a custom type for context keys to avoid collisions
+type contextKey string
+
+const (
+	// ContextKeyID is the key for the raw validated ID
+	ContextKeyID contextKey = "validated_id"
+	// ContextKeyParsedID is the key for the split AgencyID/CodeID struct
+	ContextKeyParsedID contextKey = "parsed_id"
+)
+
+// ParsedID holds the components of a combined ID
+type ParsedID struct {
+	CombinedID string
+	AgencyID   string
+	CodeID     string
+}
+
+// WithValidatedID returns a new context with the validated ID
+func WithValidatedID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, ContextKeyID, id)
+}
+
+// GetIDFromContext retrieves the validated ID from the context
+func GetIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(ContextKeyID).(string)
+	return id, ok
+}
+
+// WithParsedID returns a new context with the parsed ID components
+func WithParsedID(ctx context.Context, parsed ParsedID) context.Context {
+	return context.WithValue(ctx, ContextKeyParsedID, parsed)
+}
+
+// GetParsedIDFromContext retrieves the parsed ID components from the context
+func GetParsedIDFromContext(ctx context.Context) (ParsedID, bool) {
+	parsed, ok := ctx.Value(ContextKeyParsedID).(ParsedID)
+	return parsed, ok
 }

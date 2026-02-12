@@ -11,25 +11,10 @@ import (
 )
 
 func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Request) {
-	queryParamID := utils.ExtractIDFromParams(r)
-
-	// Validate ID
-	if err := utils.ValidateID(queryParamID); err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	agencyID, stopID, err := utils.ExtractAgencyIDAndCodeID(queryParamID)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"id": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	// Retrieve pre-validated ID from context (Middleware handles parsing)
+	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	agencyID := parsed.AgencyID
+	stopID := parsed.CodeID
 
 	ctx := r.Context()
 
