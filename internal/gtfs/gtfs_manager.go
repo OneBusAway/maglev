@@ -24,6 +24,7 @@ const NoRadiusLimit = -1
 type Manager struct {
 	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
+	routesByAgencyID               map[string][]*gtfs.Route
 	lastUpdated                    time.Time
 	isLocalFile                    bool
 	realTimeTrips                  []gtfs.Trip
@@ -162,15 +163,12 @@ func (manager *Manager) GetRoutes() []gtfs.Route {
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) RoutesForAgencyID(agencyID string) []*gtfs.Route {
-	var agencyRoutes []*gtfs.Route
-
-	for i := range manager.gtfsData.Routes {
-		if manager.gtfsData.Routes[i].Agency.Id == agencyID {
-			agencyRoutes = append(agencyRoutes, &manager.gtfsData.Routes[i])
-		}
+	if routes, ok := manager.routesByAgencyID[agencyID]; ok {
+		return routes
 	}
-
-	return agencyRoutes
+	
+	// Return empty slice if no routes found for this agency
+	return []*gtfs.Route{}
 }
 
 type stopWithDistance struct {

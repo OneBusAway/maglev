@@ -302,13 +302,17 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.GtfsDB = client
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.stopSpatialIndex = newStopSpatialIndex
+	
+	manager.routesByAgencyID = buildRouteIndex(newStaticData)
+
 	manager.lastUpdated = time.Now()
 
 	manager.isHealthy = true
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
 		slog.String("source", manager.config.GtfsURL),
-		slog.String("db_path", finalDBPath))
+		slog.String("db_path", finalDBPath),
+		slog.Int("route_index_agencies", len(manager.routesByAgencyID)))
 
 	return nil
 }
@@ -321,6 +325,9 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.gtfsData = staticData
 	manager.lastUpdated = time.Now()
 	manager.isHealthy = true
+	
+	manager.routesByAgencyID = buildRouteIndex(staticData)
+
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
 
 	// Rebuild spatial index with updated data
@@ -339,6 +346,22 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogOperation(logger, "gtfs_data_set_successfully",
 			slog.String("source", manager.config.GtfsURL),
-			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)))
+			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)),
+			slog.Int("route_index_agencies", len(manager.routesByAgencyID)))
 	}
+}
+
+func buildRouteIndex(staticData *gtfs.Static) map[string][]*gtfs.Route {
+	// Pre-allocate based on agency count to avoid resizing
+	index := make(map[string][]*gtfs.Route, len(staticData.Agencies))
+
+	for i := range staticData.Routes {
+		// Use pointer to avoid duplication
+		route := &staticData.Routes[i]
+		agencyID := route.Agency.Id
+
+		index[agencyID] = append(index[agencyID], route)
+	}
+
+	return index
 }
