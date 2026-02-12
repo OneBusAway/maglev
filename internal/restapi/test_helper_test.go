@@ -72,11 +72,11 @@ func TestCollectAllNestedIdsFromObjectsFailures(t *testing.T) {
 			mockFatalf := &mockTestingFatalf{}
 
 			var running sync.WaitGroup
+			running.Add(1)
 			go func() {
 				defer running.Done()
 				collectAllNestedIdsFromObjects(mockFatalf, tt.data, "routes")
 			}()
-			running.Add(1)
 			running.Wait()
 
 			assert.True(t, mockFatalf.failed)
@@ -130,11 +130,11 @@ func TestCollectAllIdsFromObjectsFailures(t *testing.T) {
 			mockFatalf := &mockTestingFatalf{}
 
 			var running sync.WaitGroup
+			running.Add(1)
 			go func() {
 				defer running.Done()
 				collectAllIdsFromObjects(mockFatalf, tt.data, "id")
 			}()
-			running.Add(1)
 			running.Wait()
 
 			assert.True(t, mockFatalf.failed)
