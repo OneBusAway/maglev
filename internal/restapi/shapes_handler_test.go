@@ -268,7 +268,7 @@ func TestShapesHandlerWithConsecutiveDuplicatePoints(t *testing.T) {
 
 	decodedCoords, _, err := polyline.DecodeCoords([]byte(encodedPoints))
 	require.NoError(t, err)
-	
+
 	// Should have filtered out the duplicate point, so length should be 3
 	require.Equal(t, 3, len(decodedCoords))
 

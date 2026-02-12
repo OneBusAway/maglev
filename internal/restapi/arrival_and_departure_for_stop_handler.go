@@ -110,7 +110,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	agencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(stopID)
+	stopAgencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(stopID)
 	if err != nil {
 		fieldErrors := map[string][]string{
 			"id": {err.Error()},
@@ -162,7 +162,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	stopAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -220,7 +220,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Set current time
 	var currentTime time.Time
-	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
+	loc := utils.LoadLocationWithUTCFallBack(stopAgency.Timezone, stopAgency.ID)
 	if params.Time != nil {
 		currentTime = params.Time.In(loc)
 	} else {
@@ -288,7 +288,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predicted = true
 	}
 
-	status, _ := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, _ := api.BuildTripStatus(ctx, route.AgencyID, tripID, serviceDate, currentTime)
 	if status != nil {
 		tripStatus = status
 
@@ -326,59 +326,81 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
 
 	arrival := models.NewArrivalAndDeparture(
-		utils.FormCombinedID(agencyID, route.ID),
-		route.ShortName.String,
-		route.LongName.String,
-		utils.FormCombinedID(agencyID, tripID),
-		trip.TripHeadsign.String,
-		stopID,
-		vehicleID,
-		serviceDateMillis,
-		scheduledArrivalTimeMs,
-		scheduledDepartureTimeMs,
-		predictedArrivalTime,
-		predictedDepartureTime,
-		lastUpdateTime,
-		predicted,
-		true,                               // arrivalEnabled
-		true,                               // departureEnabled
-		int(targetStopTime.StopSequence)-1, // Zero-based index
-		totalStopsInTrip,
-		numberOfStopsAway,
-		blockTripSequence,
-		distanceFromStop,
-		"default", // status
-		"",        // occupancyStatus
-		"",        // predictedOccupancy
-		"",        // historicalOccupancy
-		tripStatus,
-		situationIDs,
+		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
+		route.ShortName.String,                         // routeShortName
+		route.LongName.String,                          // routeLongName
+		utils.FormCombinedID(route.AgencyID, tripID),   // tripID
+		trip.TripHeadsign.String,                       // tripHeadsign
+		stopID,                                         // stopID
+		vehicleID,                                      // vehicleID
+		serviceDateMillis,                              // serviceDate
+		scheduledArrivalTimeMs,                         // scheduledArrivalTime
+		scheduledDepartureTimeMs,                       // scheduledDepartureTime
+		predictedArrivalTime,                           // predictedArrivalTime
+		predictedDepartureTime,                         // predictedDepartureTime
+		lastUpdateTime,                                 // lastUpdateTime
+		predicted,                                      // predicted
+		true,                                           // arrivalEnabled
+		true,                                           // departureEnabled
+		int(targetStopTime.StopSequence)-1,             // stopSequence (Zero-based index)
+		totalStopsInTrip,                               // totalStopsInTrip
+		numberOfStopsAway,                              // numberOfStopsAway
+		blockTripSequence,                              // blockTripSequence
+		distanceFromStop,                               // distanceFromStop
+		"default",                                      // status
+		"",                                             // occupancyStatus
+		"",                                             // predictedOccupancy
+		"",                                             // historicalOccupancy
+		tripStatus,                                     // tripStatus
+		situationIDs,                                   // situationIds
 	)
 
 	references := models.NewEmptyReferences()
 
+	// Add Stop Agency Reference
 	references.Agencies = append(references.Agencies, models.NewAgencyReference(
-		agency.ID,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Lang.String,
-		agency.Phone.String,
-		agency.Email.String,
-		agency.FareUrl.String,
+		stopAgency.ID,
+		stopAgency.Name,
+		stopAgency.Url,
+		stopAgency.Timezone,
+		stopAgency.Lang.String,
+		stopAgency.Phone.String,
+		stopAgency.Email.String,
+		stopAgency.FareUrl.String,
 		"",
 		false,
 	))
 
+	// Add Route Agency Reference if different from Stop Agency
+	if route.AgencyID != stopAgency.ID {
+		routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
+		if err == nil {
+			references.Agencies = append(references.Agencies, models.NewAgencyReference(
+				routeAgency.ID,
+				routeAgency.Name,
+				routeAgency.Url,
+				routeAgency.Timezone,
+				routeAgency.Lang.String,
+				routeAgency.Phone.String,
+				routeAgency.Email.String,
+				routeAgency.FareUrl.String,
+				"",
+				false,
+			))
+		} else {
+			api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
+		}
+	}
+
 	tripRef := models.NewTripReference(
-		utils.FormCombinedID(agencyID, tripID),
-		utils.FormCombinedID(agencyID, trip.RouteID),
-		utils.FormCombinedID(agencyID, trip.ServiceID),
+		utils.FormCombinedID(route.AgencyID, tripID),
+		utils.FormCombinedID(route.AgencyID, trip.RouteID),
+		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
 		trip.TripHeadsign.String,
 		"", // trip short name
 		trip.DirectionID.Int64,
-		utils.FormCombinedID(agencyID, trip.BlockID.String),
-		utils.FormCombinedID(agencyID, trip.ShapeID.String),
+		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
+		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
 	)
 	references.Trips = append(references.Trips, tripRef)
 
@@ -388,15 +410,23 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		if err == nil && activeTripID != tripID {
 			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
 			if err == nil {
+				activeTripAgencyID := stopAgencyID // Default to stop agency
+				activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
+				if err == nil {
+					activeTripAgencyID = activeRoute.AgencyID // Use route's agency for trip/route IDs
+				} else {
+					api.Logger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
+				}
+
 				activeTripRef := models.NewTripReference(
-					utils.FormCombinedID(agencyID, activeTripID),
-					utils.FormCombinedID(agencyID, activeTrip.RouteID),
-					utils.FormCombinedID(agencyID, activeTrip.ServiceID),
+					utils.FormCombinedID(activeTripAgencyID, activeTripID),
+					utils.FormCombinedID(activeTripAgencyID, activeTrip.RouteID),
+					utils.FormCombinedID(activeTripAgencyID, activeTrip.ServiceID),
 					activeTrip.TripHeadsign.String,
 					"", // trip short name
 					activeTrip.DirectionID.Int64,
-					utils.FormCombinedID(agencyID, activeTrip.BlockID.String),
-					utils.FormCombinedID(agencyID, activeTrip.ShapeID.String),
+					utils.FormCombinedID(activeTripAgencyID, activeTrip.BlockID.String),
+					utils.FormCombinedID(activeTripAgencyID, activeTrip.ShapeID.String),
 				)
 				references.Trips = append(references.Trips, activeTripRef)
 			}
@@ -441,7 +471,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		routesForThisStop, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(agencyID, route.ID)
+			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
 			routeCopy := gtfsdb.Route{
 				ID:        route.ID,
 				AgencyID:  route.AgencyID,
@@ -457,7 +487,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 
 		stopRef := models.Stop{
-			ID:                 utils.FormCombinedID(agencyID, stopData.ID),
+			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
@@ -474,8 +504,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// Build routes references
 	for _, route := range routeIDSet {
 		routeRef := models.NewRoute(
-			utils.FormCombinedID(agencyID, route.ID),
-			agencyID,
+			utils.FormCombinedID(route.AgencyID, route.ID),
+			route.AgencyID,
 			route.ShortName.String,
 			route.LongName.String,
 			route.Desc.String,
@@ -491,7 +521,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if len(situationIDs) > 0 {
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts, agencyID)
+			situations := api.BuildSituationReferences(alerts, route.AgencyID)
 			for _, situation := range situations {
 				references.Situations = append(references.Situations, situation)
 			}
