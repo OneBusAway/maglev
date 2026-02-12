@@ -500,11 +500,16 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
 
 	tmpFile, err := os.CreateTemp("", "config_test_*.json")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+
+	t.Cleanup(func() {
+		_ = os.Remove(tmpFile.Name())
+	})
 
 	_, err = tmpFile.WriteString(content)
 	require.NoError(t, err)
-	tmpFile.Close()
+
+	err = tmpFile.Close()
+	require.NoError(t, err)
 
 	t.Run("Happy Path - Override All Secrets", func(t *testing.T) {
 		t.Setenv("GTFS_API_KEYS", "env-key-1,env-key-2")
