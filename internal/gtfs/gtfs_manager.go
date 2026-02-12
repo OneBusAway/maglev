@@ -94,6 +94,15 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	return manager, nil
 }
 
+// SetGtfsURL updates the GTFS URL in the configuration.
+// It uses a mutex to ensure thread safety.
+func (manager *Manager) SetGtfsURL(url string) {
+	manager.staticUpdateMutex.Lock()
+	defer manager.staticUpdateMutex.Unlock()
+	manager.config.GtfsURL = url
+	manager.isLocalFile = !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://")
+}
+
 // Shutdown gracefully shuts down the manager and its background goroutines
 func (manager *Manager) Shutdown() {
 	manager.shutdownOnce.Do(func() {
