@@ -631,10 +631,14 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 
 	// Feed batch indices to workers
 	go func() {
+		defer close(batchChan)
 		for i := 0; i < numBatches; i++ {
-			batchChan <- i
+			select {
+			case <-ctx.Done():
+				return
+			case batchChan <- i:
+			}
 		}
-		close(batchChan)
 	}()
 
 	// Close results channel when all workers are done
@@ -784,10 +788,14 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 
 	// Feed batch indices to workers
 	go func() {
+		defer close(batchChan)
 		for i := 0; i < numBatches; i++ {
-			batchChan <- i
+			select {
+			case <-ctx.Done():
+				return
+			case batchChan <- i:
+			}
 		}
-		close(batchChan)
 	}()
 
 	// ===== PHASE 2: COLLECT PREPARED BATCHES =====
