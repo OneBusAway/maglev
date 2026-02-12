@@ -56,10 +56,13 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("failed to download GTFS data: received HTTP status %s", resp.Status)
 		}
-
-		b, err = io.ReadAll(resp.Body)
+		const maxStaticSize = 200 * 1024 * 1024
+		b, err = io.ReadAll(io.LimitReader(resp.Body, maxStaticSize+1))
 		if err != nil {
 			return nil, fmt.Errorf("error reading GTFS data: %w", err)
+		}
+		if int64(len(b)) > maxStaticSize {
+			return nil, fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxStaticSize)
 		}
 	}
 

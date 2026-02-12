@@ -69,8 +69,9 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 
 	resp, err := realtimeHTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to execute GTFS-RT request: %w", err)
 	}
+
 	defer logging.SafeCloseWithLogging(resp.Body,
 		slog.Default().With(slog.String("component", "gtfs_realtime_downloader")),
 		"http_response_body")
@@ -79,12 +80,17 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", source, resp.Status)
 	}
 
-	b, err := io.ReadAll(resp.Body)
+	const maxBodySize = 25 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	return gtfs.ParseRealtime(b, &gtfs.ParseRealtimeOptions{})
+	if int64(len(body)) > maxBodySize {
+		return nil, fmt.Errorf("GTFS-RT response exceeds size limit of %d bytes", maxBodySize)
+	}
+
+	return gtfs.ParseRealtime(body, &gtfs.ParseRealtimeOptions{})
 }
 
 func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
