@@ -274,6 +274,26 @@ func TestSearchStopsByName(t *testing.T) {
 		assert.Equal(t, int64(1), r.LocationType.Int64)
 		assert.Equal(t, int64(1), r.WheelchairBoarding.Int64)
 		assert.Equal(t, "N", r.Direction.String)
+		assert.False(t, r.ParentStation.Valid)
+	})
+
+	t.Run("reads non-null parent_station correctly", func(t *testing.T) {
+		_, err := client.DB.ExecContext(ctx, "UPDATE stops SET parent_station = 'hub1' WHERE id = 's1'")
+		require.NoError(t, err)
+		defer func() {
+			_, err := client.DB.ExecContext(ctx, "UPDATE stops SET parent_station = NULL WHERE id = 's1'")
+			require.NoError(t, err)
+		}()
+
+		results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
+			SearchQuery: "Main Street Station",
+			Limit:       10,
+		})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		r := results[0]
+		assert.True(t, r.ParentStation.Valid)
+		assert.Equal(t, "hub1", r.ParentStation.String)
 	})
 
 	t.Run("prefix search with wildcard", func(t *testing.T) {
