@@ -202,38 +202,71 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		loc,
 	)
 
+	batchRouteIDs := make(map[string]bool)
+	batchTripIDs := make(map[string]bool)
+
 	for _, st := range stopTimes {
-		var route gtfsdb.Route
-		if cachedRoute, exists := routeIDSet[st.RouteID]; exists {
-			route = *cachedRoute
-		} else {
-			fetchedRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, st.RouteID)
-			if err != nil {
-				api.Logger.Debug("skipping stop time: route not found",
-					slog.String("routeID", st.RouteID),
-					slog.String("tripID", st.TripID),
-					slog.Any("error", err))
-				continue
-			}
-			route = fetchedRoute
-			routeIDSet[route.ID] = &route
+		if st.RouteID != "" {
+			batchRouteIDs[st.RouteID] = true
+		}
+		if st.TripID != "" {
+			batchTripIDs[st.TripID] = true
+		}
+	}
+
+	uniqueRouteIDs := make([]string, 0, len(batchRouteIDs))
+	for id := range batchRouteIDs {
+		uniqueRouteIDs = append(uniqueRouteIDs, id)
+	}
+
+	uniqueTripIDs := make([]string, 0, len(batchTripIDs))
+	for id := range batchTripIDs {
+		uniqueTripIDs = append(uniqueTripIDs, id)
+	}
+
+	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, uniqueRouteIDs)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
+	allTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
+	routesLookup := make(map[string]gtfsdb.Route)
+	for _, route := range allRoutes {
+		routesLookup[route.ID] = route
+	}
+
+	tripsLookup := make(map[string]gtfsdb.Trip)
+	for _, trip := range allTrips {
+		tripsLookup[trip.ID] = trip
+	}
+
+	for _, st := range stopTimes {
+		route, routeExists := routesLookup[st.RouteID]
+		if !routeExists {
+			api.Logger.Debug("skipping stop time: route not found in batch fetch",
+				slog.String("routeID", st.RouteID),
+				slog.String("tripID", st.TripID))
+			continue
 		}
 
-		var trip gtfsdb.Trip
-		if cachedTrip, exists := tripIDSet[st.TripID]; exists {
-			trip = *cachedTrip
-		} else {
-			fetchedTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, st.TripID)
-			if err != nil {
-				api.Logger.Debug("skipping stop time: trip not found",
-					slog.String("tripID", st.TripID),
-					slog.String("routeID", st.RouteID),
-					slog.Any("error", err))
-				continue
-			}
-			trip = fetchedTrip
-			tripIDSet[trip.ID] = &trip
+		trip, tripExists := tripsLookup[st.TripID]
+		if !tripExists {
+			api.Logger.Debug("skipping stop time: trip not found in batch fetch",
+				slog.String("tripID", st.TripID),
+				slog.String("routeID", st.RouteID))
+			continue
 		}
+
+		rCopy := route
+		routeIDSet[route.ID] = &rCopy
+		tCopy := trip
+		tripIDSet[trip.ID] = &tCopy
 
 		scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime)).UnixMilli()
 		scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime)).UnixMilli()

@@ -2,10 +2,8 @@ package restapi
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/twpayne/go-polyline"
-	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -51,45 +49,20 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var prev = gtfsdb.Shape{
-		Lat: -1,
-		Lon: -1,
-	}
-	var polylines []string
-	var currentLine [][]float64
-	edges := make(map[models.Edge]bool)
+	lineCoords := make([][]float64, 0, len(shapes))
 	var totalPoints int
 
-	for _, point := range shapes {
-		loc := []float64{point.Lat, point.Lon}
-
-		if prev.Lat != -1 && (prev.Lat != point.Lat || prev.Lon != point.Lon) {
-			prevPoint := models.CoordinatePoint{Lat: prev.Lat, Lon: prev.Lon}
-			currentPoint := models.CoordinatePoint{Lat: point.Lat, Lon: point.Lon}
-			edge := models.NewEdge(prevPoint, currentPoint)
-
-			if _, exists := edges[edge]; exists {
-				if len(currentLine) > 1 {
-					polylines = append(polylines, string(polyline.EncodeCoords(currentLine)))
-				}
-				currentLine = [][]float64{}
-			} else {
-				edges[edge] = true
-			}
+	for i, point := range shapes {
+		// Filter consecutive duplicate points to avoid zero-length segments
+		if i > 0 && point.Lat == shapes[i-1].Lat && point.Lon == shapes[i-1].Lon {
+			continue
 		}
-		if prev.Lon == -1 || prev.Lat != point.Lat || prev.Lon != point.Lon {
-			currentLine = append(currentLine, loc)
-			totalPoints++
-		}
-
-		prev = point
+		lineCoords = append(lineCoords, []float64{point.Lat, point.Lon})
+		totalPoints++
 	}
 
-	if len(currentLine) > 1 {
-		polylines = append(polylines, string(polyline.EncodeCoords(currentLine)))
-	}
-
-	encodedPoints := strings.Join(polylines, "")
+	// Encode as a single continuous polyline to ensure valid delta offsets
+	encodedPoints := string(polyline.EncodeCoords(lineCoords))
 
 	shapeEntry := models.ShapeEntry{
 		Length: totalPoints,
