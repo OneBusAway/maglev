@@ -113,14 +113,14 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 }
 
 // Run manages the server lifecycle with graceful shutdown.
-// Starts the server in a goroutine, waits for shutdown signals (SIGINT, SIGTERM),
+// Starts the server in a goroutine, waits for shutdown signals (SIGINT, SIGTERM) or context cancellation,
 // and performs graceful shutdown with a 30-second timeout.
 // Returns an error if the server fails to start or shutdown fails.
-func Run(srv *http.Server, gtfsManager *gtfs.Manager, api *restapi.RestAPI, logger *slog.Logger) error {
+func Run(ctx context.Context, srv *http.Server, gtfsManager *gtfs.Manager, api *restapi.RestAPI, logger *slog.Logger) error {
 	logger.Info("starting server", "addr", srv.Addr)
 
-	// Set up signal handling for graceful shutdown
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Set up signal handling for graceful shutdown, merging with provided context
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Channel to capture server errors
@@ -133,7 +133,7 @@ func Run(srv *http.Server, gtfsManager *gtfs.Manager, api *restapi.RestAPI, logg
 		}
 	}()
 
-	// Wait for either shutdown signal or server error
+	// Wait for either shutdown signal/context cancellation or server error
 	select {
 	case err := <-serverErrors:
 		return fmt.Errorf("server failed to start: %w", err)
