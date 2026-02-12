@@ -29,6 +29,9 @@ clean:
 	rm -f maglev
 	rm -f coverage.out
 
+coverage-report:
+	go test ./... -cover | awk '{print $$2, $$5}' | jq -R 'split(" ") | {pkg: .[0], coverage: .[1]}'
+
 coverage:
 	$(SET_ENV) go test -tags "sqlite_fts5" -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
