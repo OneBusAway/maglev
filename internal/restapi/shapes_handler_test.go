@@ -189,7 +189,6 @@ func TestShapesHandlerSinglePointReturnsNotFound(t *testing.T) {
 
 	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok)
-	t.Logf("entry point: %v", entry)
 
 	assert.Equal(t, float64(1), entry["length"])
 	assert.Equal(t, "", entry["points"])
