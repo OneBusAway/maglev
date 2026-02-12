@@ -93,18 +93,30 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	// 3. Perform Full Text Search (with logged fallback)
 	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
 	if err != nil {
+		// Check for FTS5-specific errors before retrying
+		// This prevents retries on infrastructure errors (context canceled, db locked, etc.)
+		errStr := err.Error()
+		if strings.Contains(errStr, "fts5") || strings.Contains(errStr, "syntax") {
+			api.Logger.Warn(
+				"FTS5 wildcard query failed, retrying without wildcard",
+				"original_error", err,
+				"fts_query", searchQuery,
+				"sanitized_input", sanitizedQuery,
+			)
 
-		api.Logger.Warn(
-			"FTS5 wildcard query failed, retrying without wildcard",
-			"original_error", err,
-			"query", sanitizedQuery,
-		)
+			searchQuery = `"` + sanitizedQuery + `"`
+			searchParams.SearchQuery = searchQuery
 
-		searchQuery = `"` + sanitizedQuery + `"`
-		searchParams.SearchQuery = searchQuery
-
-		stops, err = api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
-		if err != nil {
+			stops, err = api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
+			if err != nil {
+				api.serverErrorResponse(
+					w,
+					r,
+					fmt.Errorf("SearchStopsByName failed for query %q: %w", searchParams.SearchQuery, err),
+				)
+				return
+			}
+		} else {
 			api.serverErrorResponse(
 				w,
 				r,
