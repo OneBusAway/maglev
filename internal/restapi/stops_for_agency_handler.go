@@ -116,6 +116,10 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 	// Construct the stops list
 	stopsList := make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		routeIdsString := routesByStop[stop.ID]
 		if routeIdsString == nil {
 			routeIdsString = []string{}

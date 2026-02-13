@@ -38,6 +38,10 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	tripRefs := make(map[string]interface{})
 
 	for _, vehicle := range vehiclesForAgency {
+		if r.Context().Err() != nil {
+			return
+		}
+
 		vehicleStatus := models.VehicleStatus{
 			VehicleID: vehicle.ID.ID,
 		}

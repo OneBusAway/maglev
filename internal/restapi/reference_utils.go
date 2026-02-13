@@ -14,6 +14,10 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 	originalRouteIDs := make([]string, 0)
 
 	for _, stop := range stops {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		for _, routeID := range stop.StaticRouteIDs {
 			_, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
 			if err != nil {
@@ -38,6 +42,10 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 
 	modelRoutes := make([]models.Route, 0, len(routes))
 	for _, route := range routes {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		routeModel := models.Route{
 			ID:                utils.FormCombinedID(agencyID, route.ID),
 			AgencyID:          agencyID,
@@ -65,6 +73,10 @@ func (api *RestAPI) BuildRouteReferencesAsInterface(ctx context.Context, agencyI
 
 	routeRefs := make([]interface{}, len(routes))
 	for i, route := range routes {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		
 		routeRefs[i] = route
 	}
 

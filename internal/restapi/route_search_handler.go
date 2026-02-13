@@ -68,6 +68,10 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	results := make([]models.Route, 0, len(routes))
 	agencyIDs := make(map[string]bool)
 	for _, routeRow := range routes {
+		if ctx.Err() != nil {
+			return
+		}
+
 		agencyIDs[routeRow.AgencyID] = true
 
 		shortName := ""

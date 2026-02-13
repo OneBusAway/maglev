@@ -221,6 +221,10 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, calc *GT
 
 	var stops []models.Stop
 	for stopID := range stopIDs {
+		if ctx.Err() != nil {
+			return models.ReferencesModel{}, ctx.Err()
+		}
+
 		stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 		if err != nil {
 			return models.ReferencesModel{}, err
@@ -237,6 +241,10 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, calc *GT
 
 	var trips []interface{}
 	for tripID := range tripIDs {
+		if ctx.Err() != nil {
+			return models.ReferencesModel{}, ctx.Err()
+		}
+
 		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 		if err != nil {
 			return models.ReferencesModel{}, err

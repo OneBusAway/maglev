@@ -252,6 +252,9 @@ func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirect
 	stopsList := make([]models.Stop, 0, len(stops))
 
 	for _, stop := range stops {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 
 		direction := calc.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
@@ -343,6 +346,10 @@ func processTripGroups(
 	})
 
 	for _, key := range keys {
+		if ctx.Err() != nil {
+			return
+		}
+
 		tripsInGroup := tripGroups[key]
 
 		// Sort trips by ID to ensure we always pick the same representative trip

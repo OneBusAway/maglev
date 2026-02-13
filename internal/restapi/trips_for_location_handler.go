@@ -39,6 +39,10 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	visibleTripIDs := make([]string, 0, len(activeTrips))
 	for _, vehicle := range activeTrips {
+		if ctx.Err() != nil {
+			return
+		}
+
 		if vehicle.Position == nil {
 			continue
 		}
@@ -88,6 +92,10 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Build entries from pre-fetched trip data
 	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, includeSchedule, currentLocation, todayMidnight, serviceDate, w, r)
 	if result == nil {
+		return
+	}
+
+	if ctx.Err() != nil {
 		return
 	}
 
@@ -474,6 +482,10 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 	rb.stopList = make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
+		if rb.ctx.Err() != nil {
+			return
+		}
+
 		routeIds, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(rb.ctx, stop.ID)
 		if err != nil {
 			continue
@@ -620,6 +632,10 @@ func (rb *referenceBuilder) buildTripReferences() error {
 	rb.tripsRefList = make([]interface{}, 0, len(rb.presentTrips))
 
 	for _, trip := range rb.presentTrips {
+		if rb.ctx.Err() != nil {
+			return rb.ctx.Err()
+		}
+
 		tripDetails, err := rb.api.GtfsManager.GtfsDB.Queries.GetTrip(rb.ctx, trip.ID)
 		if err != nil {
 			continue

@@ -138,6 +138,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	globalStopIDSet := make(map[string]struct{})
 	var stopTimesRefs []interface{}
 	for key, groupedTrips := range groupings {
+		if ctx.Err() != nil {
+			return
+		}
+
 		stopIDSet := make(map[string]struct{})
 		tripIDs := make([]string, 0, len(groupedTrips))
 		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
