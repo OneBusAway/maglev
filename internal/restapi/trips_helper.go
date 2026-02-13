@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -185,6 +186,27 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		return "", "", nil, nil
 	}
 
+	tripIDs := make([]string, 0, len(blockTrips))
+	for _, blockTrip := range blockTrips {
+		if trip.ServiceID == blockTrip.ServiceID {
+			tripIDs = append(tripIDs, blockTrip.ID)
+		}
+	}
+
+	if len(tripIDs) == 0 {
+		return "", "", nil, nil
+	}
+
+	allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to batch fetch stop times: %w", err)
+	}
+
+	stopTimesByTrip := make(map[string][]gtfsdb.StopTime)
+	for _, st := range allStopTimes {
+		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+	}
+
 	type TripWithDetails struct {
 		TripID    string
 		StartTime int
@@ -196,15 +218,18 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 	var tripsWithDetails []TripWithDetails
 
 	for _, blockTrip := range blockTrips {
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, blockTrip.ID)
-		if err != nil || len(stopTimes) == 0 {
+		if trip.ServiceID != blockTrip.ServiceID {
 			continue
 		}
 
-		startTime := math.MaxInt // max int value
+		stopTimes, exists := stopTimesByTrip[blockTrip.ID]
+		if !exists || len(stopTimes) == 0 {
+			continue
+		}
+
+		startTime := math.MaxInt
 		endTime := 0
 
-		// Find the first stop time with a valid departure time (intentionally only the first)
 		for _, st := range stopTimes {
 			if st.DepartureTime > 0 {
 				startTime = int(st.DepartureTime)
@@ -212,7 +237,6 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 			}
 		}
 
-		// Find the last stop time with a valid arrival time
 		for i := len(stopTimes) - 1; i >= 0; i-- {
 			if stopTimes[i].ArrivalTime > 0 {
 				endTime = int(stopTimes[i].ArrivalTime)
@@ -221,11 +245,6 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		}
 
 		if startTime != math.MaxInt && endTime > 0 {
-			// Only include trips that match the service ID of the original trip
-			if trip.ServiceID != blockTrip.ServiceID {
-				continue
-			}
-
 			tripsWithDetails = append(tripsWithDetails, TripWithDetails{
 				TripID:    blockTrip.ID,
 				StartTime: startTime,
@@ -457,8 +476,23 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	}
 
 	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, blockID)
+	if err != nil || len(blockTrips) == 0 {
+		return 0
+	}
+
+	tripIDs := make([]string, len(blockTrips))
+	for i, bt := range blockTrips {
+		tripIDs[i] = bt.ID
+	}
+
+	allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
 		return 0
+	}
+
+	stopTimesByTrip := make(map[string][]gtfsdb.StopTime)
+	for _, st := range allStopTimes {
+		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
 	}
 
 	type TripWithDetails struct {
@@ -469,15 +503,13 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	activeTrips := []TripWithDetails{}
 
 	for _, blockTrip := range blockTrips {
-		// First check if trip is active on the service date
 		isActive, err := api.GtfsManager.IsServiceActiveOnDate(ctx, blockTrip.ServiceID, serviceDate)
 		if err != nil || isActive == 0 {
 			continue
 		}
 
-		// Second, get the start time for this trip
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, blockTrip.ID)
-		if err != nil || len(stopTimes) == 0 {
+		stopTimes, exists := stopTimesByTrip[blockTrip.ID]
+		if !exists || len(stopTimes) == 0 {
 			continue
 		}
 
