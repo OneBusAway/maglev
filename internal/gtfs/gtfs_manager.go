@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -42,6 +43,17 @@ type Manager struct {
 	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
 	isHealthy                      bool
+	isReady                        atomic.Bool // Added: Atomic flag to track initialization status
+}
+
+// IsReady returns true if the GTFS data is fully initialized and indexed.
+func (manager *Manager) IsReady() bool {
+	return manager.isReady.Load()
+}
+
+// MarkReady sets the manager status to ready.
+func (manager *Manager) MarkReady() {
+	manager.isReady.Store(true)
 }
 
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
@@ -78,15 +90,26 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	}
 	manager.stopSpatialIndex = spatialIndex
 
+	// STARTUP SEQUENCING:
+	// If realtime is enabled, perform the first fetch synchronously to "warm" the cache
+	// before marking the manager as ready.
+	if config.realTimeDataEnabled() {
+		initCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		manager.updateGTFSRealtime(initCtx, config)
+		cancel()
+	}
+
+	// Everything is now warm and ready for traffic
+	manager.MarkReady()
+	manager.MarkHealthy()
+
 	if !isLocalFile {
 		manager.wg.Add(1)
 		go manager.updateStaticGTFS()
 	}
 
+	// Start the periodic background updates only after the initial synchronous fetch is done
 	if config.realTimeDataEnabled() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel() // Ensure the context is canceled when done
-		manager.updateGTFSRealtime(ctx, config)
 		manager.wg.Add(1)
 		go manager.updateGTFSRealtimePeriodically(config)
 	}

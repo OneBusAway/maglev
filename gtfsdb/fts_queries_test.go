@@ -47,7 +47,7 @@ func TestSearchRoutesByFullText(t *testing.T) {
 			Desc: toNullString("Express service through downtown"),
 			Type: 3, Url: toNullString("http://test.com/r1"),
 			Color: toNullString("FF0000"), TextColor: toNullString("FFFFFF"),
-			ContinuousPickup: sql.NullInt64{Int64: 1, Valid: true},
+			ContinuousPickup:  sql.NullInt64{Int64: 1, Valid: true},
 			ContinuousDropOff: sql.NullInt64{Int64: 2, Valid: true},
 		},
 		{
@@ -64,7 +64,7 @@ func TestSearchRoutesByFullText(t *testing.T) {
 		{
 			ID: "r4", AgencyID: "agency1",
 			LongName: toNullString("Riverfront Circulator"),
-			Type: 3,
+			Type:     3,
 		},
 	}
 	for _, r := range routes {
@@ -201,7 +201,7 @@ func TestSearchStopsByName(t *testing.T) {
 		{
 			ID: "s1", Name: toNullString("Main Street Station"),
 			Code: toNullString("MS01"),
-			Lat: 40.0, Lon: -74.0,
+			Lat:  40.0, Lon: -74.0,
 			LocationType:       sql.NullInt64{Int64: 1, Valid: true},
 			WheelchairBoarding: sql.NullInt64{Int64: 1, Valid: true},
 			Direction:          toNullString("N"),

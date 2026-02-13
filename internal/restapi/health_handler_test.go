@@ -32,7 +32,7 @@ func TestHealthHandlerWithNilApplication(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, "unavailable", resp.Status)
-	assert.Equal(t, "database not initialized", resp.Detail)
+	assert.Equal(t, "manager or database not initialized", resp.Detail)
 }
 
 func TestHealthHandlerReturnsOK(t *testing.T) {
@@ -42,12 +42,17 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Create a minimal Application with the DB
-	app := &app.Application{
-		GtfsManager: &gtfs.Manager{
-			GtfsDB: &gtfsdb.Client{
-				DB: db,
-			},
+	manager := &gtfs.Manager{
+		GtfsDB: &gtfsdb.Client{
+			DB: db,
 		},
+	}
+	
+	// Mark the manager as ready (simulating completed initialization)
+	manager.MarkReady()
+	
+	app := &app.Application{
+		GtfsManager: manager,
 		Config: appconf.Config{
 			RateLimit: 100,
 		},
@@ -69,4 +74,45 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&healthResp)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", healthResp.Status)
+}
+
+func TestHealthHandlerStarting(t *testing.T) {
+	// Use in-memory DB to test the health check during startup
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	// Create a minimal Application with the DB but DON'T mark as ready
+	manager := &gtfs.Manager{
+		GtfsDB: &gtfsdb.Client{
+			DB: db,
+		},
+	}
+	
+	// Explicitly NOT calling manager.MarkReady() to simulate startup phase
+	
+	app := &app.Application{
+		GtfsManager: manager,
+		Config: appconf.Config{
+			RateLimit: 100,
+		},
+	}
+
+	api := NewRestAPI(app)
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/healthz")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	var healthResp HealthResponse
+	err = json.NewDecoder(resp.Body).Decode(&healthResp)
+	require.NoError(t, err)
+	assert.Equal(t, "starting", healthResp.Status)
+	assert.Equal(t, "GTFS data is being indexed and initialized", healthResp.Detail)
 }
