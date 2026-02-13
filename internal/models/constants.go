@@ -15,6 +15,13 @@ const (
 	QuerySearchRadiusInMeters   = 10000
 )
 
+// Cache durations (in seconds) for different API data types.
+const (
+	CacheDurationLong  = 300
+	CacheDurationShort = 30
+	CacheDurationNone  = 0
+)
+
 const (
 	DefaultMaxCountForRoutes = 50
 	DefaultMaxCountForStops  = 100
