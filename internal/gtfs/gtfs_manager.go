@@ -215,6 +215,10 @@ func (manager *Manager) GetStopsForLocation(
 	dbStops := queryStopsInBounds(manager.stopSpatialIndex, bounds)
 
 	for _, dbStop := range dbStops {
+		if ctx.Err() != nil {
+			return []gtfsdb.Stop{}
+		}
+
 		if query != "" && !isForRoutes {
 			if dbStop.Code.Valid && dbStop.Code.String == query {
 				return []gtfsdb.Stop{dbStop}
@@ -243,6 +247,10 @@ func (manager *Manager) GetStopsForLocation(
 
 				filteredCandidates := make([]stopWithDistance, 0, len(candidates))
 				for _, candidate := range candidates {
+					if ctx.Err() != nil {
+						return []gtfsdb.Stop{}
+					}
+
 					types := stopRouteTypes[candidate.stop.ID]
 					hasMatchingType := false
 					for _, rt := range types {
@@ -295,6 +303,10 @@ func (manager *Manager) GetStopsForLocation(
 
 					filteredCandidates := make([]stopWithDistance, 0, len(candidates))
 					for _, candidate := range candidates {
+						if ctx.Err() != nil {
+							return []gtfsdb.Stop{}
+						}
+
 						if stopsWithService[candidate.stop.ID] {
 							filteredCandidates = append(filteredCandidates, candidate)
 						}

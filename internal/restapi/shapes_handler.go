@@ -56,6 +56,10 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 	lineCoords := make([][]float64, 0, len(shapes))
 
 	for i, point := range shapes {
+		if ctx.Err() != nil {
+			return
+		}
+
 		// Filter consecutive duplicate points to avoid zero-length segments
 		if i > 0 && point.Lat == shapes[i-1].Lat && point.Lon == shapes[i-1].Lon {
 			continue

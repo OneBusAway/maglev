@@ -138,6 +138,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	var activeTrips []ActiveTripEntry
 
 	for blockID := range allLinkedBlocks {
+		if ctx.Err() != nil {
+			return
+		}
+
 		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
 
 		tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
@@ -235,6 +239,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var result []models.TripsForRouteListEntry
 	for _, activeEntry := range activeTrips {
+		if ctx.Err() != nil {
+			return
+		}
+
 		tripID := activeEntry.TripID
 
 		agencyID, ok := tripAgencyMap[tripID]

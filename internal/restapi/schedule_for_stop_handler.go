@@ -147,6 +147,10 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	routeHeadsignCounts := make(map[string]map[string]int)
 
 	for _, row := range scheduleRows {
+		if ctx.Err() != nil {
+			return
+		}
+
 		combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
 		combinedTripID := utils.FormCombinedID(agencyID, row.TripID)
 

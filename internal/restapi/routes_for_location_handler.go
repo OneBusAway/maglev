@@ -98,6 +98,10 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	isLimitExceeded := false
 	// Process routes and filter by query if provided
 	for _, routeRow := range routesForStops {
+		if ctx.Err() != nil {
+			return
+		}
+
 		if query != "" && strings.ToLower(routeRow.ShortName.String) != query {
 			continue
 		}
@@ -121,6 +125,10 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			isLimitExceeded = true
 			break
 		}
+	}
+
+	if ctx.Err() != nil {
+		return
 	}
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)

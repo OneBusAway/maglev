@@ -137,6 +137,10 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	routesMap := make(map[string]models.Route)
 
 	for _, row := range routesRows {
+		if ctx.Err() != nil {
+			return
+		}
+
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
 
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
@@ -210,6 +214,10 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	stopModels := make([]models.Stop, 0, len(stops))
 
 	for _, s := range stops {
+		if ctx.Err() != nil {
+			return
+		}
+
 		var agencyID string
 
 		if rts, ok := routesByStopID[s.ID]; ok && len(rts) > 0 {
