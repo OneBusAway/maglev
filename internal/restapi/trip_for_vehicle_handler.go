@@ -96,13 +96,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		currentTime = time.Now().In(loc)
 	}
 
-	var serviceDate time.Time
-	if params.ServiceDate != nil {
-		serviceDate = *params.ServiceDate
-	} else {
-		serviceDate = currentTime.Truncate(24 * time.Hour)
-	}
-	serviceDateMillis := serviceDate.Unix() * 1000
+	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
 
 	var status *models.TripStatusForTripDetails
 	if params.IncludeStatus {
