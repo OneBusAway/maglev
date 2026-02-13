@@ -105,8 +105,36 @@ func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
 	return alerts
 }
 
-// GetAlertsForTrip returns alerts matching the trip, its route, or agency.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	var alerts []gtfs.Alert
+
+	for _, alert := range manager.realTimeAlerts {
+		if alert.InformedEntities == nil {
+			continue
+		}
+		for _, entity := range alert.InformedEntities {
+			if entity.TripID != nil && entity.TripID.ID == tripID {
+				alerts = append(alerts, alert)
+				break
+			}
+			if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID {
+				alerts = append(alerts, alert)
+				break
+			}
+			if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID {
+				alerts = append(alerts, alert)
+				break
+			}
+		}
+	}
+	return alerts
+}
+
+// GetAlertsForTrip returns alerts matching the trip, its route, or agency.
 func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []gtfs.Alert {
 	var routeID string
 	var agencyID string
@@ -122,38 +150,7 @@ func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []g
 		}
 	}
 
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-
-	alertMap := make(map[string]gtfs.Alert)
-
-	for _, alert := range manager.realTimeAlerts {
-		if alert.InformedEntities != nil {
-			for _, entity := range alert.InformedEntities {
-				if entity.TripID != nil && entity.TripID.ID == tripID {
-					alertMap[alert.ID] = alert
-					break
-				}
-
-				if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID {
-					alertMap[alert.ID] = alert
-					break
-				}
-
-				if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID {
-					alertMap[alert.ID] = alert
-					break
-				}
-			}
-		}
-	}
-
-	alerts := make([]gtfs.Alert, 0, len(alertMap))
-	for _, alert := range alertMap {
-		alerts = append(alerts, alert)
-	}
-
-	return alerts
+	return manager.GetAlertsByIDs(tripID, routeID, agencyID)
 }
 
 func (manager *Manager) GetAlertsForStop(stopID string) []gtfs.Alert {
