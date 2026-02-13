@@ -60,7 +60,7 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, models.UnknownValue, entry["wheelchairBoarding"])
 	assert.Equal(t, *stops[0].Latitude, entry["lat"])
 	assert.Equal(t, *stops[0].Longitude, entry["lon"])
-	
+
 	assert.Contains(t, entry, "direction", "direction field should exist")
 
 	routeIds, ok := entry["routeIds"].([]interface{})
