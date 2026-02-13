@@ -11,6 +11,21 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+func CalculateServiceDate(currentTime time.Time) time.Time {
+	year, month, day := currentTime.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, currentTime.Location())
+}
+
+func ServiceDateMillis(explicitServiceDate *time.Time, currentTime time.Time) (time.Time, int64) {
+	var serviceDate time.Time
+	if explicitServiceDate != nil {
+		serviceDate = *explicitServiceDate
+	} else {
+		serviceDate = CalculateServiceDate(currentTime)
+	}
+	return serviceDate, serviceDate.Unix() * 1000
+}
+
 // ExtractCodeID extracts the `code_id` from a string in the format `{agency_id}_{code_id}`.
 func ExtractCodeID(combinedID string) (string, error) {
 	parts := strings.SplitN(combinedID, "_", 2)
