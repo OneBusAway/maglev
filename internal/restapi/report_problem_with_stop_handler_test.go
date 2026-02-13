@@ -42,3 +42,28 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 	assert.Equal(t, 400, nullModel.Code)
 	assert.Equal(t, "id cannot be empty", nullModel.Text)
 }
+
+func TestReportProblemWithStopSanitization(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopId := "1_75403"
+	urlInvalidGeo := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userLat=invalid&userLon=not_a_number", stopId)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, urlInvalidGeo)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Should handle invalid userLat/userLon gracefully without 500 error")
+	assert.Equal(t, 200, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	longComment := make([]byte, 1000)
+	for i := range longComment {
+		longComment[i] = 'a'
+	}
+	urlLongComment := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userComment=%s", stopId, string(longComment))
+
+	respLong, modelLong := serveApiAndRetrieveEndpoint(t, api, urlLongComment)
+
+	assert.Equal(t, http.StatusOK, respLong.StatusCode, "Should handle massive user comments gracefully")
+	assert.Equal(t, 200, modelLong.Code)
+}

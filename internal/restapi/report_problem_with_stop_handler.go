@@ -3,6 +3,7 @@ package restapi
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -45,9 +46,25 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	query := r.URL.Query()
 
 	code := query.Get("code")
-	userComment := query.Get("userComment")
-	userLat := query.Get("userLat")
-	userLon := query.Get("userLon")
+	rawComment := query.Get("userComment")
+	userComment := rawComment
+	if len(rawComment) > 500 {
+		userComment = rawComment[:500] // Truncate if too long
+	}
+	userLatStr := query.Get("userLat")
+	if userLatStr != "" {
+		if _, err := strconv.ParseFloat(userLatStr, 64); err != nil {
+			logger.Debug("invalid userLat received", slog.String("val", userLatStr))
+			userLatStr = ""
+		}
+	}
+	userLonStr := query.Get("userLon")
+	if userLonStr != "" {
+		if _, err := strconv.ParseFloat(userLonStr, 64); err != nil {
+			logger.Debug("invalid userLon received", slog.String("val", userLonStr))
+			userLonStr = ""
+		}
+	}
 	userLocationAccuracy := query.Get("userLocationAccuracy")
 
 	// TODO: Add storage logic for the problem report, I leave it as a log statement for now
@@ -56,8 +73,8 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 		slog.String("stop_id", stopID),
 		slog.String("code", code),
 		slog.String("user_comment", userComment),
-		slog.String("user_lat", userLat),
-		slog.String("user_lon", userLon),
+		slog.String("user_lat", userLatStr),
+		slog.String("user_lon", userLonStr),
 		slog.String("user_location_accuracy", userLocationAccuracy))
 
 	api.sendResponse(w, r, models.NewOKResponse(struct{}{}, api.Clock))
