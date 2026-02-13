@@ -768,27 +768,26 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
-	alerts := api.GtfsManager.GetAlertsForTrip(ctx, tripID)
-
+	var routeID string
 	var agencyID string
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
-	if err != nil {
-		return nil
-	}
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
-	if err == nil {
-		agencyID = route.AgencyID
-	}
 
-	situationIDs := make([]string, 0, len(alerts))
-	for _, alert := range alerts {
-		if alert.ID != "" {
-			if agencyID != "" {
-				situationIDs = append(situationIDs, utils.FormCombinedID(agencyID, alert.ID))
-			} else {
-				situationIDs = append(situationIDs, alert.ID)
+	if api.GtfsManager.GtfsDB != nil {
+		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+		if err == nil {
+			routeID = trip.RouteID
+			route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+			if err == nil {
+				agencyID = route.AgencyID
 			}
 		}
 	}
+
+	alerts := api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID)
+
+	situationIDs := []string{}
+	for _, alert := range alerts {
+		situationIDs = append(situationIDs, alert.ID)
+	}
+
 	return situationIDs
 }
