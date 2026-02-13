@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic" // Added: Required for atomic readiness flag
+	"sync/atomic"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
