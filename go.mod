@@ -3,7 +3,7 @@ module maglev.onebusaway.org
 go 1.24.2
 
 require (
-	github.com/OneBusAway/go-gtfs v1.1.0
+	github.com/OneBusAway/go-gtfs v1.1.1
 	github.com/davecgh/go-spew v1.1.1
 	github.com/klauspost/compress v1.18.0
 	github.com/mattn/go-sqlite3 v1.14.24
@@ -74,4 +74,5 @@ require (
 )
 
 tool github.com/sqlc-dev/sqlc/cmd/sqlc
+
 tool github.com/patrickbr/gtfstidy
