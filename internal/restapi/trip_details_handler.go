@@ -94,14 +94,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		currentTime = time.Now().In(loc)
 	}
 
-	var serviceDate time.Time
-	if params.ServiceDate != nil {
-		serviceDate = *params.ServiceDate
-	} else {
-		serviceDate = currentTime.Truncate(24 * time.Hour)
-	}
-
-	serviceDateMillis := serviceDate.Unix() * 1000
+	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
 
 	var schedule *models.Schedule
 	var status *models.TripStatusForTripDetails
@@ -289,25 +282,18 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 		stopMap[stop.ID] = stop
 	}
 
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, originalStopIDs)
+	routeIDRows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, originalStopIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	routesByStop := make(map[string][]gtfsdb.Route)
-	for _, routeRow := range allRoutes {
-		route := gtfsdb.Route{
-			ID:        routeRow.ID,
-			AgencyID:  routeRow.AgencyID,
-			ShortName: routeRow.ShortName,
-			LongName:  routeRow.LongName,
-			Desc:      routeRow.Desc,
-			Type:      routeRow.Type,
-			Url:       routeRow.Url,
-			Color:     routeRow.Color,
-			TextColor: routeRow.TextColor,
+	routeIDsByStop := make(map[string][]string)
+	for _, row := range routeIDRows {
+		routeIDStr, ok := row.RouteID.(string)
+		if !ok {
+			continue
 		}
-		routesByStop[routeRow.StopID] = append(routesByStop[routeRow.StopID], route)
+		routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], routeIDStr)
 	}
 
 	modelStops := make([]models.Stop, 0, len(stopTimes))
@@ -329,11 +315,12 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 			continue
 		}
 
-		routesForStop := routesByStop[originalStopID]
-		combinedRouteIDs := make([]string, len(routesForStop))
-		for i, rt := range routesForStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(agencyID, rt.ID)
+		direction := models.UnknownValue
+		if stop.Direction.Valid && stop.Direction.String != "" {
+			direction = stop.Direction.String
 		}
+
+		combinedRouteIDs := routeIDsByStop[originalStopID]
 
 		stopModel := models.Stop{
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
@@ -341,7 +328,7 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			Code:               stop.Code.String,
-			Direction:          api.calculateStopDirection(ctx, stop.ID),
+			Direction:          direction,
 			LocationType:       int(stop.LocationType.Int64),
 			WheelchairBoarding: models.UnknownValue,
 			RouteIDs:           combinedRouteIDs,
