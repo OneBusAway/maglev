@@ -18,9 +18,9 @@ func NewOKResponse(data interface{}, c clock.Clock) ResponseModel {
 	return NewResponse(200, data, "OK", c)
 }
 
-func NewListResponse(list interface{}, references ReferencesModel, c clock.Clock) ResponseModel {
+func NewListResponse(list interface{}, references ReferencesModel, limitExceeded bool, c clock.Clock) ResponseModel {
 	data := map[string]interface{}{
-		"limitExceeded": false,
+		"limitExceeded": limitExceeded,
 		"list":          list,
 		"references":    references,
 	}

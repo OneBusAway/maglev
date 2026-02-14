@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"testing"
 	"time"
@@ -636,6 +637,192 @@ func TestParseMaxCount(t *testing.T) {
 				assert.NotContains(t, fieldErrors, tt.expectedErrorKey)
 				assert.Equal(t, tt.expectedMaxCount, resultedMaxCount)
 			}
+		})
+	}
+}
+
+func TestParsePaginationParams(t *testing.T) {
+	tests := []struct {
+		name           string
+		urlParams      string
+		expectedOffset int
+		expectedLimit  int
+	}{
+		{
+			name:           "Default values (no limit)",
+			urlParams:      "",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+		},
+		{
+			name:           "Valid offset and limit",
+			urlParams:      "?offset=10&limit=50",
+			expectedOffset: 10,
+			expectedLimit:  50,
+		},
+		{
+			name:           "Valid offset and maxCount (maxCount takes priority)",
+			urlParams:      "?offset=10&maxCount=50",
+			expectedOffset: 10,
+			expectedLimit:  50,
+		},
+		{
+			name:           "Both limit and maxCount (maxCount wins)",
+			urlParams:      "?limit=20&maxCount=50",
+			expectedOffset: 0,
+			expectedLimit:  50,
+		},
+		{
+			name:           "Invalid offset (negative)",
+			urlParams:      "?offset=-5",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+		},
+		{
+			name:           "Invalid limit (zero)",
+			urlParams:      "?limit=0",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+		},
+		{
+			name:           "Invalid limit (negative)",
+			urlParams:      "?limit=-10",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+		},
+		{
+			name:           "Limit exceeds max",
+			urlParams:      "?limit=5000",
+			expectedOffset: 0,
+			expectedLimit:  1000,
+		},
+		{
+			name:           "maxCount exceeds max",
+			urlParams:      "?maxCount=5000",
+			expectedOffset: 0,
+			expectedLimit:  1000,
+		},
+		{
+			name:           "Non-numeric values",
+			urlParams:      "?offset=abc&limit=xyz",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+		},
+		{
+			name:           "Explicit offset zero and small limit",
+			urlParams:      "?offset=0&limit=1",
+			expectedOffset: 0,
+			expectedLimit:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest("GET", "/test"+tt.urlParams, nil)
+			offset, limit := ParsePaginationParams(req)
+
+			assert.Equal(t, tt.expectedOffset, offset)
+			assert.Equal(t, tt.expectedLimit, limit)
+		})
+	}
+}
+
+func TestPaginateSlice(t *testing.T) {
+	tests := []struct {
+		name          string
+		items         []int
+		offset        int
+		limit         int
+		expected      []int
+		limitExceeded bool
+	}{
+		{
+			name:          "No limit",
+			items:         []int{1, 2, 3},
+			offset:        0,
+			limit:         -1,
+			expected:      []int{1, 2, 3},
+			limitExceeded: false,
+		},
+		{
+			name:          "No limit with offset",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        2,
+			limit:         -1,
+			expected:      []int{3, 4, 5},
+			limitExceeded: false,
+		},
+		{
+			name:          "Limit fits exactly",
+			items:         []int{1, 2, 3},
+			offset:        0,
+			limit:         3,
+			expected:      []int{1, 2, 3},
+			limitExceeded: false,
+		},
+		{
+			name:          "Limit exceeds length",
+			items:         []int{1, 2, 3},
+			offset:        0,
+			limit:         5,
+			expected:      []int{1, 2, 3},
+			limitExceeded: false,
+		},
+		{
+			name:          "Limit causes truncation",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        0,
+			limit:         3,
+			expected:      []int{1, 2, 3},
+			limitExceeded: true,
+		},
+		{
+			name:          "Offset and limit within bounds",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        1,
+			limit:         2,
+			expected:      []int{2, 3},
+			limitExceeded: true,
+		},
+		{
+			name:          "Offset at end",
+			items:         []int{1, 2, 3},
+			offset:        3,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
+		{
+			name:          "Offset beyond end",
+			items:         []int{1, 2, 3},
+			offset:        5,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
+		{
+			name:          "Empty slice",
+			items:         []int{},
+			offset:        0,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
+		{
+			name:          "Nil slice",
+			items:         nil,
+			offset:        0,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, limitExceeded := PaginateSlice(tt.items, tt.offset, tt.limit)
+			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.limitExceeded, limitExceeded)
 		})
 	}
 }

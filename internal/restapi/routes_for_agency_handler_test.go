@@ -106,3 +106,50 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 		assert.Contains(t, id, agencyId+"_", "route id must be in {agencyId}_{routeId} format")
 	}
 }
+
+func TestRoutesForAgencyHandlerPagination(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyId := agencies[0].Id
+
+	// Case 1: Limit 5 (Should return 5 items, limitExceeded=true)
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=5")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, list, 5)
+	assert.True(t, data["limitExceeded"].(bool), "limitExceeded should be true when more items exist")
+
+	// Case 2: Offset 5, Limit 5 (Should return next 5 items)
+	resp2, model2 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&offset=5&limit=5")
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	data2, ok := model2.Data.(map[string]interface{})
+	require.True(t, ok)
+	list2, ok := data2["list"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, list2, 5)
+
+	// Verify items are different
+	firstItem1 := list[0].(map[string]interface{})
+	firstItem2 := list2[0].(map[string]interface{})
+	assert.NotEqual(t, firstItem1["id"], firstItem2["id"])
+
+	// Case 3: Limit 100 (Should return all 13 items, limitExceeded=false)
+	resp3, model3 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=100")
+	assert.Equal(t, http.StatusOK, resp3.StatusCode)
+
+	data3, ok := model3.Data.(map[string]interface{})
+	require.True(t, ok)
+	list3, ok := data3["list"].([]interface{})
+	require.True(t, ok)
+	// RABA has 13 routes
+	assert.Len(t, list3, 13)
+	assert.False(t, data3["limitExceeded"].(bool), "limitExceeded should be false when all items returned")
+}

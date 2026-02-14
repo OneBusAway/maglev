@@ -119,6 +119,6 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponse(results, references, api.Clock)
+	response := models.NewListResponse(results, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

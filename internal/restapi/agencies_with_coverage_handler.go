@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
@@ -24,9 +25,13 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Apply pagination
+	offset, limit := utils.ParsePaginationParams(r)
+	agencies, limitExceeded := utils.PaginateSlice(agencies, offset, limit)
+
 	lat, lon, latSpan, lonSpan := api.GtfsManager.GetRegionBounds()
-	var agenciesWithCoverage []models.AgencyCoverage
-	var agencyReferences []models.AgencyReference
+	agenciesWithCoverage := make([]models.AgencyCoverage, 0)
+	agencyReferences := make([]models.AgencyReference, 0)
 
 	for _, a := range agencies {
 		agenciesWithCoverage = append(
@@ -61,6 +66,6 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponse(agenciesWithCoverage, references, api.Clock)
+	response := models.NewListResponse(agenciesWithCoverage, references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

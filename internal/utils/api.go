@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -156,4 +157,63 @@ func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[str
 		}
 	}
 	return maxCount, fieldErrors
+}
+
+// ParsePaginationParams parses offset and limit from request parameters.
+// maxCount is the primary parameter for limit, falling back to limit.
+// If neither is present, limit is -1 (return all).
+// Default offset is 0.
+func ParsePaginationParams(r *http.Request) (offset int, limit int) {
+	queryParams := r.URL.Query()
+
+	offset = 0
+	if val := queryParams.Get("offset"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	limit = -1 // Default to no limit
+
+	// Check maxCount first (OBA convention)
+	if val := queryParams.Get("maxCount"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	} else if val := queryParams.Get("limit"); val != "" {
+		// Fallback to limit
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	// Cap limit at 1000 if it's set
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	return offset, limit
+}
+
+// PaginateSlice slices a slice based on offset and limit.
+// Returns the sliced items and a boolean indicating if the limit was exceeded (more items exist).
+func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
+	if offset >= len(items) {
+		return []T{}, false
+	}
+
+	// If limit is -1, return everything from offset
+	if limit == -1 {
+		return items[offset:], false
+	}
+
+	end := offset + limit
+	limitExceeded := false
+	if end < len(items) {
+		limitExceeded = true
+	} else {
+		end = len(items)
+	}
+
+	return items[offset:end], limitExceeded
 }
