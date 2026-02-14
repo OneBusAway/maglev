@@ -295,7 +295,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predictedArrivalTime = scheduledArrivalTimeMs
 		predictedDepartureTime = scheduledDepartureTimeMs
 
-		predictedArrival, predictedDeparture := api.getPredictedTimes(tripID, stopCode, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
 		if predictedArrival != 0 && predictedDeparture != 0 {
 			predictedArrivalTime = predictedArrival
@@ -505,6 +505,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 func (api *RestAPI) getPredictedTimes(
 	tripID string,
 	stopCode string,
+	targetStopSequence int64,
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
 ) (predictedArrivalTime, predictedDepartureTime int64) {
 
@@ -514,33 +515,72 @@ func (api *RestAPI) getPredictedTimes(
 	}
 
 	var arrivalOffset, departureOffset *int64
+	var propagatedDelay int64 = 0
+	var closestPriorSequence int64 = -1
+	var foundTarget bool
 
 	for _, stu := range realTimeTrip.StopTimeUpdates {
-		if stu.StopID != nil && *stu.StopID == stopCode {
+		seq := int64(-1)
+		if stu.StopSequence != nil {
+			seq = int64(*stu.StopSequence)
+		}
 
-			if stu.Arrival != nil && stu.Arrival.Time != nil {
-				offset := stu.Arrival.Time.Sub(scheduledArrivalTime).Nanoseconds()
-				arrivalOffset = &offset
+		if (stu.StopID != nil && *stu.StopID == stopCode) || (seq != -1 && seq == targetStopSequence) {
+			foundTarget = true
+			if stu.Arrival != nil {
+				if stu.Arrival.Time != nil {
+					offset := stu.Arrival.Time.Sub(scheduledArrivalTime).Nanoseconds()
+					arrivalOffset = &offset
+				} else if stu.Arrival.Delay != nil {
+					offset := int64(*stu.Arrival.Delay) * int64(time.Second)
+					arrivalOffset = &offset
+				}
 			}
-			if stu.Departure != nil && stu.Departure.Time != nil {
-				offset := stu.Departure.Time.Sub(scheduledDepartureTime).Nanoseconds()
-				departureOffset = &offset
+			if stu.Departure != nil {
+				if stu.Departure.Time != nil {
+					offset := stu.Departure.Time.Sub(scheduledDepartureTime).Nanoseconds()
+					departureOffset = &offset
+				} else if stu.Departure.Delay != nil {
+					offset := int64(*stu.Departure.Delay) * int64(time.Second)
+					departureOffset = &offset
+				}
 			}
 			break
 		}
+
+		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
+			closestPriorSequence = seq
+			if stu.Departure != nil && stu.Departure.Delay != nil {
+				propagatedDelay = int64(*stu.Departure.Delay) * int64(time.Second)
+			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
+				propagatedDelay = int64(*stu.Arrival.Delay) * int64(time.Second)
+			}
+		}
 	}
 
-	if arrivalOffset == nil && departureOffset == nil {
+	if !foundTarget && closestPriorSequence == -1 {
 		return 0, 0
 	}
 
-	// Rule 1: arrival == departure → copy whichever delay exists to both
+	if arrivalOffset == nil {
+		arrivalOffset = &propagatedDelay
+	}
+	if departureOffset == nil {
+		departureOffset = &propagatedDelay
+	}
+
+	// Rule 1: arrival == departure -> copy whichever delay exists to both
 	if scheduledArrivalTime.Equal(scheduledDepartureTime) {
 		var offset int64
+
 		if arrivalOffset != nil {
 			offset = *arrivalOffset
-		} else {
-			offset = *departureOffset
+		}
+
+		if arrivalOffset == nil || (departureOffset != nil && *departureOffset != propagatedDelay) {
+			if departureOffset != nil {
+				offset = *departureOffset
+			}
 		}
 
 		predictedArrival := scheduledArrivalTime.Add(time.Duration(offset))
@@ -549,24 +589,11 @@ func (api *RestAPI) getPredictedTimes(
 	}
 
 	// Rule 2: arrival < departure
-	var predictedArrival, predictedDeparture time.Time
-
-	if arrivalOffset != nil {
-		predictedArrival = scheduledArrivalTime.Add(time.Duration(*arrivalOffset))
-	} else {
-		predictedArrival = scheduledArrivalTime
-	}
-
-	if departureOffset != nil {
-		predictedDeparture = scheduledDepartureTime.Add(time.Duration(*departureOffset))
-	} else {
-		predictedDeparture = scheduledDepartureTime
-	}
+	predictedArrival := scheduledArrivalTime.Add(time.Duration(*arrivalOffset))
+	predictedDeparture := scheduledDepartureTime.Add(time.Duration(*departureOffset))
 
 	return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli()
 }
-
-// TODO: Improve distance calculation consistency between Java and Go.
 
 func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
 	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)

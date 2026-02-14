@@ -528,7 +528,7 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
 
 	// When there's no real-time data, should return 0, 0
-	predArrival, predDeparture := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", scheduledArrival, scheduledDeparture)
+	predArrival, predDeparture := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
 
 	assert.Equal(t, int64(0), predArrival)
 	assert.Equal(t, int64(0), predDeparture)
@@ -543,7 +543,7 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 	// Even without real-time data, test the logic path
 	// This tests that the function handles the case correctly
-	predArrival, predDeparture := api.getPredictedTimes("test_trip", "test_stop", scheduledTime, scheduledTime)
+	predArrival, predDeparture := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime)
 
 	// Without real-time data, returns 0,0
 	assert.Equal(t, int64(0), predArrival)
@@ -664,4 +664,16 @@ func TestArrivalsAndDeparturesForStopHandlerInvalidTime(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	scheduledTime := time.Now()
+
+	predArrival, predDeparture := api.getPredictedTimes("test_trip", "test_stop", 5, scheduledTime, scheduledTime)
+
+	assert.Equal(t, int64(0), predArrival)
+	assert.Equal(t, int64(0), predDeparture)
 }
