@@ -391,54 +391,95 @@ func findNextStopByTime(currentTimeSeconds int64, stopTimes []*gtfsdb.StopTime) 
 }
 
 func getDistanceAlongShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
-	if len(shape) == 0 {
-		return 0
-	}
-	var total float64
-	var closestIndex int
-	var minDist = math.MaxFloat64
-
-	for i := range shape {
-		dist := utils.Distance(lat, lon, shape[i].Latitude, shape[i].Longitude)
-		if dist < minDist {
-			minDist = dist
-			closestIndex = i
-		}
-	}
-
-	for i := 1; i <= closestIndex; i++ {
-		total += utils.Distance(shape[i-1].Latitude, shape[i-1].Longitude, shape[i].Latitude, shape[i].Longitude)
-	}
-
-	return total
-}
-
-func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, minDistTraveled, maxDistTraveled float64) float64 {
-	if len(shape) == 0 {
+	if len(shape) < 2 {
 		return 0
 	}
 
 	cumulativeDistances := preCalculateCumulativeDistances(shape)
-	var bestDist float64
-	var minPointDist = math.MaxFloat64
 
-	// If maxDistTraveled is 0, it might mean it wasn't provided or it's the start.
-	// We should probably use the whole shape if the range is invalid.
-	useRange := maxDistTraveled > minDistTraveled
+	var minDistance = math.Inf(1)
+	var closestSegmentIndex int
+	var projectionRatio float64
 
-	for i := 0; i < len(shape); i++ {
-		if useRange && (cumulativeDistances[i] < minDistTraveled-10 || cumulativeDistances[i] > maxDistTraveled+10) {
-			continue
-		}
+	for i := 0; i < len(shape)-1; i++ {
+		distance, ratio := distanceToLineSegment(
+			lat, lon,
+			shape[i].Latitude, shape[i].Longitude,
+			shape[i+1].Latitude, shape[i+1].Longitude,
+		)
 
-		dist := utils.Distance(lat, lon, shape[i].Latitude, shape[i].Longitude)
-		if dist < minPointDist {
-			minPointDist = dist
-			bestDist = cumulativeDistances[i]
+		if distance < minDistance {
+			minDistance = distance
+			closestSegmentIndex = i
+			projectionRatio = ratio
 		}
 	}
 
-	return bestDist
+	cumulativeDistance := cumulativeDistances[closestSegmentIndex]
+	if closestSegmentIndex < len(shape)-1 {
+		segmentDistance := utils.Distance(
+			shape[closestSegmentIndex].Latitude, shape[closestSegmentIndex].Longitude,
+			shape[closestSegmentIndex+1].Latitude, shape[closestSegmentIndex+1].Longitude,
+		)
+		cumulativeDistance += segmentDistance * projectionRatio
+	}
+
+	return cumulativeDistance
+}
+
+func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, minDistTraveled, maxDistTraveled float64) float64 {
+	if len(shape) < 2 {
+		return 0
+	}
+
+	cumulativeDistances := preCalculateCumulativeDistances(shape)
+	useRange := maxDistTraveled > minDistTraveled
+
+	var minDistance = math.Inf(1)
+	var closestSegmentIndex int
+	var projectionRatio float64
+	var foundInRange = false
+
+	for i := 0; i < len(shape)-1; i++ {
+		// check if this segment is within or overlaps the range
+		if useRange {
+			segmentStart := cumulativeDistances[i]
+			segmentEnd := cumulativeDistances[i+1]
+
+			if segmentEnd < minDistTraveled-50.0 || segmentStart > maxDistTraveled+50.0 {
+				continue
+			}
+		}
+
+		distance, ratio := distanceToLineSegment(
+			lat, lon,
+			shape[i].Latitude, shape[i].Longitude,
+			shape[i+1].Latitude, shape[i+1].Longitude,
+		)
+
+		if distance < minDistance {
+			minDistance = distance
+			closestSegmentIndex = i
+			projectionRatio = ratio
+			foundInRange = true
+		}
+	}
+
+	// Fallback to full shape search if nothing found in range (GPS drift edge case)
+	if useRange && !foundInRange {
+		return getDistanceAlongShape(lat, lon, shape)
+	}
+
+	cumulativeDistance := cumulativeDistances[closestSegmentIndex]
+	if closestSegmentIndex < len(shape)-1 {
+		segmentDistance := utils.Distance(
+			shape[closestSegmentIndex].Latitude, shape[closestSegmentIndex].Longitude,
+			shape[closestSegmentIndex+1].Latitude, shape[closestSegmentIndex+1].Longitude,
+		)
+		cumulativeDistance += segmentDistance * projectionRatio
+	}
+
+	return cumulativeDistance
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
