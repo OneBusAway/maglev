@@ -301,7 +301,8 @@ The GTFS Manager (`internal/gtfs/gtfs_manager.go`) maintains:
 ### GTFS Manager vs Database Access
 
 **In-Memory Data** (from `manager.gtfsData`):
-- `FindAgency(id)` - Direct agency lookup
+- `FindAgency(id)` - Direct O(1) agency lookup
+- `FindRoute(id)` - Direct O(1) route lookup
 - `RoutesForAgencyID(id)` - Routes for an agency
 - `VehiclesForAgencyID(id)` - Real-time vehicle data
 - `GetVehicleForTrip(tripID)` - Vehicle for a trip (checks block)
@@ -313,7 +314,6 @@ The GTFS Manager (`internal/gtfs/gtfs_manager.go`) maintains:
 - `GetRoute(ctx, id)` - Single route by ID
 - `GetAgency(ctx, id)` - Single agency by ID
 - Access via: `api.GtfsManager.GtfsDB.Queries.GetRoute()`, etc.
-- **Important**: No `FindRoute()` method exists - use database queries for route lookups
 
 ### Working with sqlc Models
 

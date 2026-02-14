@@ -33,6 +33,8 @@ type Manager struct {
 	realTimeTripLookup             map[string]int
 	realTimeVehicleLookupByTrip    map[string]int
 	realTimeVehicleLookupByVehicle map[string]int
+	agenciesMap                    map[string]*gtfs.Agency
+	routesMap                      map[string]*gtfs.Route
 	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
 	staticMutex                    sync.RWMutex // Protects gtfsData and lastUpdated
 	config                         Config
@@ -145,11 +147,16 @@ func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockL
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) FindAgency(id string) *gtfs.Agency {
-	for _, agency := range manager.gtfsData.Agencies {
-		if agency.Id == id {
-			agencyCopy := agency
-			return &agencyCopy
-		}
+	if agency, ok := manager.agenciesMap[id]; ok {
+		return agency
+	}
+	return nil
+}
+
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func (manager *Manager) FindRoute(id string) *gtfs.Route {
+	if route, ok := manager.routesMap[id]; ok {
+		return route
 	}
 	return nil
 }
