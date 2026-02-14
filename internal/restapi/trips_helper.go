@@ -18,78 +18,92 @@ func (api *RestAPI) BuildTripStatus(
 	currentTime time.Time,
 
 ) (*models.TripStatusForTripDetails, error) {
-	vehicle := api.GtfsManager.GetVehicleForTrip(tripID)
-
-	var occupancyStatus string
-	var vehicleID string
-
-	if vehicle != nil {
-		if vehicle.OccupancyStatus != nil {
-			occupancyStatus = vehicle.OccupancyStatus.String()
-		}
-
-		if vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
-		}
-	}
-
 	status := &models.TripStatusForTripDetails{
+		ActiveTripID:      utils.FormCombinedID(agencyID, tripID),
 		ServiceDate:       serviceDate.Unix() * 1000,
-		VehicleID:         vehicleID,
-		OccupancyStatus:   occupancyStatus,
 		SituationIDs:      api.GetSituationIDsForTrip(tripID),
 		OccupancyCapacity: -1,
 		OccupancyCount:    -1,
 	}
 
-	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status)
-	activeTripID := GetVehicleActiveTripID(vehicle)
-
-	if vehicle != nil && vehicle.OccupancyPercentage != nil {
-		status.OccupancyCapacity = int(*vehicle.OccupancyPercentage)
-	}
-
-	staleDetector := NewStaleDetector()
-	if staleDetector.Check(vehicle, currentTime) {
-		vehicle = nil
-	}
-
-	calculatedActiveTripID, blockClosestStop, blockNextStop, blockDistance, err := api.calculateBlockLevelPosition(
-		ctx, tripID, vehicle, currentTime, 0, // Start with deviation 0
-	)
-
-	if err == nil && calculatedActiveTripID != "" {
-		activeTripID = calculatedActiveTripID
-		if blockDistance > 0 {
-			status.DistanceAlongTrip = blockDistance
+	vehicle := api.GtfsManager.GetVehicleForTrip(tripID)
+	if vehicle != nil {
+		if vehicle.ID != nil {
+			status.VehicleID = vehicle.ID.ID
 		}
-		if blockClosestStop != "" {
-			status.ClosestStop = utils.FormCombinedID(agencyID, blockClosestStop)
+		if vehicle.OccupancyStatus != nil {
+			status.OccupancyStatus = vehicle.OccupancyStatus.String()
 		}
-		if blockNextStop != "" {
-			status.NextStop = utils.FormCombinedID(agencyID, blockNextStop)
+		if vehicle.OccupancyPercentage != nil {
+			status.OccupancyCapacity = int(*vehicle.OccupancyPercentage)
+		}
+		api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status)
+	}
+
+	if vehicle != nil && vehicle.ID != nil {
+		staleDetector := NewStaleDetector()
+		if !staleDetector.Check(vehicle, currentTime) {
+			vehiclePos, err := api.realtimeService.GetVehiclePosition(ctx, vehicle.ID.ID)
+			if err == nil {
+				status.ScheduleDeviation = vehiclePos.ScheduleDeviation
+				status.DistanceAlongTrip = vehiclePos.Distance
+				status.Predicted = vehiclePos.IsPredicted
+
+				if vehiclePos.ActiveTripID != "" {
+					status.ActiveTripID = utils.FormCombinedID(agencyID, vehiclePos.ActiveTripID)
+				}
+
+				if vehiclePos.CurrentStopID != "" {
+					status.ClosestStop = utils.FormCombinedID(agencyID, vehiclePos.CurrentStopID)
+				}
+
+				if vehiclePos.NextStopID != "" {
+					status.NextStop = utils.FormCombinedID(agencyID, vehiclePos.NextStopID)
+				}
+
+				status.ClosestStopTimeOffset = vehiclePos.CurrentStopTimeOffset
+				status.NextStopTimeOffset = vehiclePos.NextStopTimeOffset
+			}
+		} else {
+			status.Predicted = false
 		}
 	}
 
-	deviationTripID := tripID
-	if activeTripID != "" {
-		deviationTripID = activeTripID
+	if status.ScheduleDeviation == 0 || status.ClosestStop == "" {
+		deviation := api.calculateScheduleDeviationFromTripUpdates(tripID)
+		if deviation != 0 {
+			status.ScheduleDeviation = deviation
+			activeTripID, closestStopID, nextStopID, distance, err := api.calculateBlockLevelPosition(
+				ctx, tripID, vehicle, currentTime, deviation,
+			)
+			if err == nil {
+				if activeTripID != "" {
+					status.ActiveTripID = utils.FormCombinedID(agencyID, activeTripID)
+				}
+				if closestStopID != "" {
+					status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
+				}
+				if nextStopID != "" {
+					status.NextStop = utils.FormCombinedID(agencyID, nextStopID)
+				}
+				if distance > 0 {
+					status.DistanceAlongTrip = distance
+				}
+				status.Predicted = true
+			}
+		}
 	}
-
-	gtfsRTDeviation := api.calculateScheduleDeviationFromTripUpdates(deviationTripID)
-
-	scheduleDeviation := api.calculateScheduleDeviationFromPosition(
-		ctx, deviationTripID, vehicle, currentTime, gtfsRTDeviation,
-	)
-
-	status.ScheduleDeviation = scheduleDeviation
 
 	blockTripSequence := api.setBlockTripSequence(ctx, tripID, serviceDate, status)
 	if blockTripSequence > 0 {
 		status.BlockTripSequence = blockTripSequence
 	}
 
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, activeTripID)
+	if status.ClosestStop == "" || status.NextStop == "" {
+		api.fillStopsFromSchedule(ctx, status, tripID, currentTime, agencyID)
+	}
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, status.ActiveTripID)
 
 	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
 	if shapeErr == nil && len(shapeRows) > 1 {
@@ -109,7 +123,7 @@ func (api *RestAPI) BuildTripStatus(
 			if err == nil {
 				effectiveDistance := api.calculateEffectiveDistanceAlongTrip(
 					actualDistance,
-					scheduleDeviation,
+					status.ScheduleDeviation,
 					currentTime,
 					stopTimes,
 					cumulativeDistances,
@@ -139,42 +153,43 @@ func (api *RestAPI) BuildTripStatus(
 			}
 		}
 
-		var closestStopID, nextStopID string
-		var closestOffset, nextOffset int
+		if status.ClosestStop == "" || status.NextStop == "" {
+			var closestStopID, nextStopID string
+			var closestOffset, nextOffset int
 
-		if vehicle != nil && vehicle.Position != nil {
-			if vehicle.StopID != nil && *vehicle.StopID != "" {
-				closestStopID = *vehicle.StopID
-				closestOffset = api.calculateOffsetForStop(closestStopID, stopTimesPtrs, currentTime, scheduleDeviation)
+			if vehicle != nil && vehicle.Position != nil {
+				if vehicle.StopID != nil && *vehicle.StopID != "" {
+					closestStopID = *vehicle.StopID
+					closestOffset = api.calculateOffsetForStop(closestStopID, stopTimesPtrs, currentTime, status.ScheduleDeviation)
 
-				nextStopID, nextOffset = api.findNextStopAfter(closestStopID, stopTimesPtrs, currentTime, scheduleDeviation)
-			} else if vehicle.CurrentStopSequence != nil {
-				closestStopID, closestOffset = api.findClosestStopBySequence(
-					stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, scheduleDeviation, vehicle,
-				)
-				nextStopID, nextOffset = api.findNextStopBySequence(
-					ctx, stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, scheduleDeviation, vehicle, tripID, serviceDate,
-				)
+					nextStopID, nextOffset = api.findNextStopAfter(closestStopID, stopTimesPtrs, currentTime, status.ScheduleDeviation)
+				} else if vehicle.CurrentStopSequence != nil {
+					closestStopID, closestOffset = api.findClosestStopBySequence(
+						stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, status.ScheduleDeviation, vehicle,
+					)
+					nextStopID, nextOffset = api.findNextStopBySequence(
+						ctx, stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, status.ScheduleDeviation, vehicle, tripID, serviceDate,
+					)
+				} else {
+					closestStopID, closestOffset, nextStopID, nextOffset = api.findStopsByScheduleDeviation(
+						stopTimesPtrs, currentTime, status.ScheduleDeviation,
+					)
+				}
 			} else {
-				closestStopID, closestOffset, nextStopID, nextOffset = api.findStopsByScheduleDeviation(
-					stopTimesPtrs, currentTime, scheduleDeviation,
-				)
+				stopDelays := api.getStopDelaysFromTripUpdates(tripID)
+				currentTimeSeconds := int64(currentTime.Hour()*3600 + currentTime.Minute()*60 + currentTime.Second())
+				closestStopID, closestOffset = findClosestStopByTimeWithDelays(currentTimeSeconds, stopTimesPtrs, stopDelays)
+				nextStopID, nextOffset = findNextStopByTimeWithDelays(currentTimeSeconds, stopTimesPtrs, stopDelays)
 			}
-		} else {
-			// Use real-time delays for more accurate stop predictions
-			stopDelays := api.getStopDelaysFromTripUpdates(tripID)
-			currentTimeSeconds := int64(currentTime.Hour()*3600 + currentTime.Minute()*60 + currentTime.Second())
-			closestStopID, closestOffset = findClosestStopByTimeWithDelays(currentTimeSeconds, stopTimesPtrs, stopDelays)
-			nextStopID, nextOffset = findNextStopByTimeWithDelays(currentTimeSeconds, stopTimesPtrs, stopDelays)
-		}
 
-		if closestStopID != "" {
-			status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
-			status.ClosestStopTimeOffset = closestOffset
-		}
-		if nextStopID != "" {
-			status.NextStop = utils.FormCombinedID(agencyID, nextStopID)
-			status.NextStopTimeOffset = nextOffset
+			if closestStopID != "" {
+				status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
+				status.ClosestStopTimeOffset = closestOffset
+			}
+			if nextStopID != "" {
+				status.NextStop = utils.FormCombinedID(agencyID, nextStopID)
+				status.NextStopTimeOffset = nextOffset
+			}
 		}
 	}
 
@@ -1242,4 +1257,46 @@ func calculateTripDistance(shapeRows []gtfsdb.Shape) float64 {
 		totalDistance += dist
 	}
 	return totalDistance
+}
+
+func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatusForTripDetails, tripID string, currentTime time.Time, agencyID string) {
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil || len(stopTimes) == 0 {
+		return
+	}
+
+	currentSeconds := int64(currentTime.Hour()*3600 + currentTime.Minute()*60 + currentTime.Second())
+
+	for i, st := range stopTimes {
+		arrivalTime := st.ArrivalTime / 1e9
+		if arrivalTime == 0 {
+			arrivalTime = st.DepartureTime / 1e9
+		}
+
+		predictedArrival := arrivalTime + int64(status.ScheduleDeviation)
+
+		if predictedArrival > currentSeconds {
+			if i > 0 {
+				status.ClosestStop = utils.FormCombinedID(agencyID, stopTimes[i-1].StopID)
+				closestArrival := stopTimes[i-1].ArrivalTime / 1e9
+				if closestArrival == 0 {
+					closestArrival = stopTimes[i-1].DepartureTime / 1e9
+				}
+				status.ClosestStopTimeOffset = int(closestArrival + int64(status.ScheduleDeviation) - currentSeconds)
+			}
+			status.NextStop = utils.FormCombinedID(agencyID, st.StopID)
+			status.NextStopTimeOffset = int(predictedArrival - currentSeconds)
+			return
+		}
+	}
+
+	if len(stopTimes) > 0 {
+		lastStop := stopTimes[len(stopTimes)-1]
+		status.ClosestStop = utils.FormCombinedID(agencyID, lastStop.StopID)
+		arrivalTime := lastStop.ArrivalTime / 1e9
+		if arrivalTime == 0 {
+			arrivalTime = lastStop.DepartureTime / 1e9
+		}
+		status.ClosestStopTimeOffset = int(arrivalTime + int64(status.ScheduleDeviation) - currentSeconds)
+	}
 }
