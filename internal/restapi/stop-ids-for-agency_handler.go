@@ -49,6 +49,6 @@ func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Reque
 		response = append(response, utils.FormCombinedID(id, stopID))
 	}
 
-	api.sendResponse(w, r, models.NewListResponse(response, models.NewEmptyReferences(), api.Clock))
+	api.sendResponse(w, r, models.NewListResponse(response, models.NewEmptyReferences(), false, api.Clock))
 
 }

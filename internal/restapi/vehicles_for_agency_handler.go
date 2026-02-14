@@ -25,11 +25,15 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	agency := api.GtfsManager.FindAgency(id)
 	if agency == nil {
 		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]interface{}{}, models.ReferencesModel{}, api.Clock))
+		api.sendResponse(w, r, models.NewListResponse([]interface{}{}, models.ReferencesModel{}, false, api.Clock))
 		return
 	}
 
 	vehiclesForAgency := api.GtfsManager.VehiclesForAgencyID(id)
+
+	// Apply pagination
+	offset, limit := utils.ParsePaginationParams(r)
+	vehiclesForAgency, limitExceeded := utils.PaginateSlice(vehiclesForAgency, offset, limit)
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
 
 	// Maps to build references
@@ -169,6 +173,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		Trips:      tripRefList,
 	}
 
-	response := models.NewListResponse(vehiclesList, references, api.Clock)
+	response := models.NewListResponse(vehiclesList, references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

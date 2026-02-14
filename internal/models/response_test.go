@@ -69,7 +69,7 @@ func TestNewListResponse(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewListResponse(itemList, references, clock)
+	response := NewListResponse(itemList, references, false, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)

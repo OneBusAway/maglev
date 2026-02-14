@@ -42,5 +42,5 @@ func (api *RestAPI) routeIDsForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		response = append(response, utils.FormCombinedID(id, routeID))
 	}
 
-	api.sendResponse(w, r, models.NewListResponse(response, models.NewEmptyReferences(), api.Clock))
+	api.sendResponse(w, r, models.NewListResponse(response, models.NewEmptyReferences(), false, api.Clock))
 }

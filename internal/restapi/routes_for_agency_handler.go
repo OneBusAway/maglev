@@ -26,6 +26,10 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	routesForAgency := api.GtfsManager.RoutesForAgencyID(id)
+
+	// Apply pagination
+	offset, limit := utils.ParsePaginationParams(r)
+	routesForAgency, limitExceeded := utils.PaginateSlice(routesForAgency, offset, limit)
 	// Safe allocation logic
 	routesList := make([]models.Route, 0, len(routesForAgency))
 
@@ -52,6 +56,6 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		Trips:      []interface{}{},
 	}
 
-	response := models.NewListResponse(routesList, references, api.Clock)
+	response := models.NewListResponse(routesList, references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

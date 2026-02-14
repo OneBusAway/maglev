@@ -65,3 +65,40 @@ func TestAgenciesWithCoverageHandlerEndToEnd(t *testing.T) {
 	assert.Empty(t, refs["stops"])
 	assert.Empty(t, refs["trips"])
 }
+
+func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
+	// Test data (raba.zip) has 1 agency
+
+	// Case 1: Default (Offset 0, Limit -1) -> Should return 1
+	_, _, model1 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST")
+	data1, ok := model1.Data.(map[string]interface{})
+	require.True(t, ok, "expected Data to be map[string]interface{}")
+	list1, ok := data1["list"].([]interface{})
+	require.True(t, ok, "expected list to be []interface{}")
+	assert.Len(t, list1, 1)
+
+	// Case 2: Limit 1 -> Should return 1
+	_, _, model2 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST&limit=1")
+	data2, ok := model2.Data.(map[string]interface{})
+	require.True(t, ok, "expected Data to be map[string]interface{}")
+	list2, ok := data2["list"].([]interface{})
+	require.True(t, ok, "expected list to be []interface{}")
+	assert.Len(t, list2, 1)
+
+	// Case 3: Limit 0 (should default to -1/all) -> Should return 1
+	// Note: Our new logic treats limit=0 as invalid -> -1 (all)
+	_, _, model3 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST&limit=0")
+	data3, ok := model3.Data.(map[string]interface{})
+	require.True(t, ok, "expected Data to be map[string]interface{}")
+	list3, ok := data3["list"].([]interface{})
+	require.True(t, ok, "expected list to be []interface{}")
+	assert.Len(t, list3, 1)
+
+	// Case 4: Offset 1 -> Should return 0
+	_, _, model4 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
+	data4, ok := model4.Data.(map[string]interface{})
+	require.True(t, ok, "expected Data to be map[string]interface{}")
+	list4, ok := data4["list"].([]interface{})
+	require.True(t, ok, "expected list to be []interface{}")
+	assert.Len(t, list4, 0)
+}
