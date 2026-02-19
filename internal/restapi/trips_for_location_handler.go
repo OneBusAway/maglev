@@ -473,25 +473,36 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 
 func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 	rb.stopList = make([]models.Stop, 0, len(stops))
-	for _, stop := range stops {
-		routeIds, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(rb.ctx, stop.ID)
-		if err != nil {
-			continue
-		}
 
-		routeIdsString := rb.processRouteIds(routeIds)
+	stopIDs := make([]string, 0, len(stops))
+	for _, stop := range stops {
+		stopIDs = append(stopIDs, stop.ID)
+	}
+
+	routesForStops, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(rb.ctx, stopIDs)
+	if err != nil {
+		logging.LogError(rb.api.Logger, "failed to batch fetch routes for stops", err)
+		return
+	}
+
+	stopRouteMap := make(map[string][]string)
+
+	for _, r := range routesForStops {
+		stopRouteMap[r.StopID] = append(stopRouteMap[r.StopID], r.ID)
+	}
+	// This registers all the routes that were in stopRouteMap as present, even if they don't have a trip in the current set. This ensures that any route that has a stop in the area is included in the references, even if no active trips for that route are currently visible.
+	for _, routeIDs := range stopRouteMap {
+		for _, routeID := range routeIDs {
+			rb.presentRoutes[routeID] = models.Route{}
+		}
+	}
+	for _, stop := range stops {
+		routeIdsString := stopRouteMap[stop.ID]
+		if routeIdsString == nil {
+			routeIdsString = []string{}
+		}
 		rb.stopList = append(rb.stopList, rb.createStop(stop, routeIdsString))
 	}
-}
-
-func (rb *referenceBuilder) processRouteIds(routeIds []interface{}) []string {
-	routeIdsString := make([]string, len(routeIds))
-	for i, id := range routeIds {
-		routeId := id.(string)
-		rb.presentRoutes[routeId] = models.Route{}
-		routeIdsString[i] = routeId
-	}
-	return routeIdsString
 }
 
 func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) models.Stop {
