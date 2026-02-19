@@ -784,18 +784,14 @@ SELECT
     t.direction_id, t.block_id, t.shape_id, t.wheelchair_accessible, t.bikes_allowed
 FROM trips t
 JOIN block_trip_entry bte ON t.id = bte.trip_id
-JOIN stop_times st_first ON t.id = st_first.trip_id AND st_first.stop_sequence = (
-    SELECT MIN(stop_sequence) FROM stop_times WHERE trip_id = t.id
-)
-JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
-    SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = t.id
-)
+JOIN stop_times st ON t.id = st.trip_id
 WHERE bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
   AND t.route_id = ?2
   AND bte.service_id IN (/*SLICE:service_ids*/?)
-  AND st_first.departure_time <= ?4
-  AND st_last.arrival_time >= ?5
-ORDER BY st_first.departure_time DESC
+GROUP BY t.id
+HAVING MIN(st.departure_time) <= ?4
+   AND MAX(st.arrival_time) >= ?5
+ORDER BY MIN(st.departure_time) DESC
 LIMIT 1
 `
 
@@ -851,17 +847,13 @@ func (q *Queries) GetActiveTripForRouteAtTime(ctx context.Context, arg GetActive
 const getActiveTripInBlockAtTime = `-- name: GetActiveTripInBlockAtTime :one
 SELECT t.id
 FROM trips t
-JOIN stop_times st_first ON t.id = st_first.trip_id AND st_first.stop_sequence = (
-        SELECT MIN(stop_sequence) FROM stop_times WHERE trip_id = t.id
-)
-JOIN stop_times st_last ON t.id = st_last.trip_id AND st_last.stop_sequence = (
-        SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = t.id
-)
+JOIN stop_times st ON t.id = st.trip_id
 WHERE t.block_id = ?1
-    AND t.service_id IN (/*SLICE:service_ids*/?)
-    AND st_first.departure_time <= ?3
-    AND st_last.arrival_time >= ?3
-ORDER BY st_first.departure_time ASC
+  AND t.service_id IN (/*SLICE:service_ids*/?)
+GROUP BY t.id
+HAVING MIN(st.departure_time) <= ?3
+   AND MAX(st.arrival_time) >= ?3
+ORDER BY MIN(st.departure_time) ASC
 LIMIT 1
 `
 
