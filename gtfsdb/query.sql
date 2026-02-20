@@ -927,7 +927,7 @@ SELECT t.id
 FROM trips t
 JOIN stop_times st ON t.id = st.trip_id
 WHERE t.block_id = sqlc.arg('block_id')
-  AND t.service_id IN (sqlc.slice(' service_ids'))
+  AND t.service_id IN (sqlc.slice('service_ids'))
 GROUP BY t.id
 HAVING MIN(st.departure_time) <= sqlc.arg('current_time')
    AND MAX(st.arrival_time) >= sqlc.arg('current_time')
