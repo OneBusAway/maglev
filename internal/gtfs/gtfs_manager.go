@@ -468,12 +468,15 @@ func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) PrintStatistics() {
-	fmt.Printf("Source: %s (Local File: %v)\n", manager.config.GtfsURL, manager.isLocalFile)
-	fmt.Printf("Last Updated: %s\n", manager.lastUpdated)
-	fmt.Println("Stops Count: ", len(manager.gtfsData.Stops))
-	fmt.Println("Routes Count: ", len(manager.gtfsData.Routes))
-	fmt.Println("Trips Count: ", len(manager.gtfsData.Trips))
-	fmt.Println("Agencies Count: ", len(manager.gtfsData.Agencies))
+	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+	logger.Info("GTFS statistics",
+		slog.String("source", manager.config.GtfsURL),
+		slog.Bool("local_file", manager.isLocalFile),
+		slog.Time("last_updated", manager.lastUpdated),
+		slog.Int("stops", len(manager.gtfsData.Stops)),
+		slog.Int("routes", len(manager.gtfsData.Routes)),
+		slog.Int("trips", len(manager.gtfsData.Trips)),
+		slog.Int("agencies", len(manager.gtfsData.Agencies)))
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
