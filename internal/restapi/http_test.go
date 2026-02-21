@@ -121,6 +121,35 @@ func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*
 	return resp, response
 }
 
+// serveApiAndRetrieveEndpointWithBody performs an HTTP request with a JSON body
+// against an existing API instance. Accepts testing.TB to support both *testing.T and *testing.B.
+func serveApiAndRetrieveEndpointWithBody(t testing.TB, api *RestAPI, method string, endpoint string, body []byte) (*http.Response, models.ResponseModel) {
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	req, err := http.NewRequest(method, server.URL+endpoint, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var response models.ResponseModel
+	err = json.Unmarshal(respBody, &response)
+	if err != nil {
+		t.Fatalf("Failed to decode JSON. Body was: %s, Error: %v", string(respBody), err)
+	}
+	return resp, response
+}
+
 func TestCompressionMiddleware(t *testing.T) {
 	// Create a test handler that returns a large response
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

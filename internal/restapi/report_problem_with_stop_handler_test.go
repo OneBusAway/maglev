@@ -1,8 +1,9 @@
 package restapi
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,7 +11,20 @@ import (
 )
 
 func TestReportProblemWithStopRequiresValidApiKey(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/report-problem-with-stop/12345.json?key=invalid")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	payload := ReportProblemStop{CompositeID: "12345.json"}
+	body, _ := json.Marshal(payload)
+
+	resp, model := serveApiAndRetrieveEndpointWithBody(
+		t,
+		api,
+		http.MethodPost,
+		"/api/where/report-problem-with-stop?key=invalid",
+		body,
+	)
+
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
@@ -20,39 +34,48 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	stopId := "1_75403"
+	lat, lon, acc := 47.6097, -122.3331, 10.0
+	stopId := "1_75403.json"
 
-	url := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userComment=Test+comment&userLat=47.6097&userLon=-122.3331&userLocationAccuracy=10", stopId)
+	payload := ReportProblemStop{
+		CompositeID:          stopId,
+		Code:                 "stop_name_wrong",
+		UserComment:          "Test comment",
+		UserLat:              &lat,
+		UserLon:              &lon,
+		UserLocationAccuracy: &acc,
+	}
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	body, _ := json.Marshal(payload)
+	resp, model := serveApiAndRetrieveEndpointWithBody(t, api, http.MethodPost, "/api/where/report-problem-with-stop?key=TEST", body)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
 	data, ok := model.Data.(map[string]interface{})
-	require.True(t, ok, "Data should be a map")
+	require.True(t, ok)
+	assert.Empty(t, data)
 
-	assert.Empty(t, data, "Data should be an empty object")
+	payload.CompositeID = ""
+	bodyEmpty, _ := json.Marshal(payload)
+	respErr, modelErr := serveApiAndRetrieveEndpointWithBody(t, api, http.MethodPost, "/api/where/report-problem-with-stop?key=TEST", bodyEmpty)
 
-	nullURL := "/api/where/report-problem-with-stop/.json?key=TEST&code=stop_name_wrong"
-	nullResp, nullModel := serveApiAndRetrieveEndpoint(t, api, nullURL)
-
-	assert.Equal(t, http.StatusBadRequest, nullResp.StatusCode, "Should return 400 when ID is missing")
-	assert.Equal(t, 400, nullModel.Code)
-	assert.Equal(t, "id cannot be empty", nullModel.Text)
+	assert.Equal(t, http.StatusBadRequest, respErr.StatusCode)
+	assert.Equal(t, "id cannot be empty", modelErr.Text)
 }
 
 func TestReportProblemWithStop_MinimalParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	// Test with only stop_id (no optional params)
-	stopID := "1_75403"
+	payload := ReportProblemStop{
+		CompositeID: "1_12345.json",
+	}
 
-	url := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST", stopID)
+	body, _ := json.Marshal(payload)
+	resp, model := serveApiAndRetrieveEndpointWithBody(t, api, http.MethodPost, "/api/where/report-problem-with-stop?key=TEST", body)
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, 200, model.Code)
 }
@@ -61,23 +84,20 @@ func TestReportProblemWithStopSanitization(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	stopId := "1_75403"
-	urlInvalidGeo := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userLat=invalid&userLon=not_a_number", stopId)
+	invalidJSON := []byte(`{"composite_id": "1_75403.json", "user_lat": "invalid"}`)
+	resp, _ := serveApiAndRetrieveEndpointWithBody(t, api, http.MethodPost, "/api/where/report-problem-with-stop?key=TEST", invalidJSON)
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, urlInvalidGeo)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Should return 400 for invalid types in JSON")
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "Should handle invalid userLat/userLon gracefully without 500 error")
-	assert.Equal(t, 200, model.Code)
-	assert.Equal(t, "OK", model.Text)
-
-	longComment := make([]byte, 1000)
-	for i := range longComment {
-		longComment[i] = 'a'
+	longComment := strings.Repeat("a", 1000)
+	payload := ReportProblemStop{
+		CompositeID: "1_12345.json",
+		UserComment: longComment,
 	}
-	urlLongComment := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userComment=%s", stopId, string(longComment))
 
-	respLong, modelLong := serveApiAndRetrieveEndpoint(t, api, urlLongComment)
+	body, _ := json.Marshal(payload)
+	respLong, modelLong := serveApiAndRetrieveEndpointWithBody(t, api, http.MethodPost, "/api/where/report-problem-with-stop?key=TEST", body)
 
-	assert.Equal(t, http.StatusOK, respLong.StatusCode, "Should handle massive user comments gracefully")
+	assert.Equal(t, http.StatusOK, respLong.StatusCode)
 	assert.Equal(t, 200, modelLong.Code)
 }

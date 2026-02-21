@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -10,15 +11,33 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// ReportProblemStop represents a stop-related issue report submitted by a user.
+type ReportProblemStop struct {
+	CompositeID          string   `json:"composite_id"`
+	Code                 string   `json:"code,omitempty"`
+	UserComment          string   `json:"user_comment,omitempty"`
+	UserLat              *float64 `json:"user_lat,omitempty"`
+	UserLon              *float64 `json:"user_lon,omitempty"`
+	UserLocationAccuracy *float64 `json:"user_location_accuracy,omitempty"`
+}
+
 func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.Request) {
 	logger := api.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	compositeID := utils.ExtractIDFromParams(r)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
 
-	if err := utils.ValidateID(compositeID); err != nil {
+	var repProbStop ReportProblemStop
+	if err := dec.Decode(&repProbStop); err != nil {
+		logger.Error("report problem with stop failed: Error decoding json")
+		http.Error(w, `{"code":400, "text":"bad request"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := utils.ValidateID(repProbStop.CompositeID); err != nil {
 		fieldErrors := map[string][]string{
 			"id": {err.Error()},
 		}
@@ -27,10 +46,10 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	}
 
 	// Extract agency ID and stop ID from composite ID
-	_, stopID, err := utils.ExtractAgencyIDAndCodeID(compositeID)
+	_, stopID, err := utils.ExtractAgencyIDAndCodeID(repProbStop.CompositeID)
 	if err != nil {
 		logger.Warn("report problem with stop failed: invalid stopID format",
-			slog.String("stopID", compositeID),
+			slog.String("stopID", repProbStop.CompositeID),
 			slog.Any("error", err))
 		http.Error(w, `{"code":400, "text":"stopID is required"}`, http.StatusBadRequest)
 		return
@@ -43,32 +62,27 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	query := r.URL.Query()
-	code := query.Get("code")
-	userComment := utils.TruncateComment(query.Get("userComment"))
-	userLatStr := utils.ValidateNumericParam(query.Get("userLat"))
-	userLonStr := utils.ValidateNumericParam(query.Get("userLon"))
-	userLocationAccuracy := query.Get("userLocationAccuracy")
+	userComment := utils.TruncateComment(repProbStop.UserComment)
 
 	// Log the problem report for observability
 	logger = logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
 	logging.LogOperation(logger, "problem_report_received_for_stop",
 		slog.String("stop_id", stopID),
-		slog.String("code", code),
+		slog.String("code", repProbStop.Code),
 		slog.String("user_comment", userComment),
-		slog.String("user_lat", userLatStr),
-		slog.String("user_lon", userLonStr),
-		slog.String("user_location_accuracy", userLocationAccuracy))
+		slog.Any("user_lat", repProbStop.UserLat),
+		slog.Any("user_lon", repProbStop.UserLon),
+		slog.Any("user_location_accuracy", repProbStop.UserLocationAccuracy))
 
 	// Store the problem report in the database
 	now := api.Clock.Now().UnixMilli()
 	params := gtfsdb.CreateProblemReportStopParams{
 		StopID:               stopID,
-		Code:                 gtfsdb.ToNullString(code),
+		Code:                 gtfsdb.ToNullString(repProbStop.Code),
 		UserComment:          gtfsdb.ToNullString(userComment),
-		UserLat:              gtfsdb.ParseNullFloat(userLatStr),
-		UserLon:              gtfsdb.ParseNullFloat(userLonStr),
-		UserLocationAccuracy: gtfsdb.ParseNullFloat(userLocationAccuracy),
+		UserLat:              gtfsdb.Float64ToNull(repProbStop.UserLat),
+		UserLon:              gtfsdb.Float64ToNull(repProbStop.UserLon),
+		UserLocationAccuracy: gtfsdb.Float64ToNull(repProbStop.UserLocationAccuracy),
 		CreatedAt:            now,
 		SubmittedAt:          now,
 	}

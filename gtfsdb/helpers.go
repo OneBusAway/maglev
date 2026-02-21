@@ -172,7 +172,6 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		}
 
 		_, err := c.Queries.CreateRoute(ctx, route)
-
 		if err != nil {
 			return fmt.Errorf("unable to create route: %w", err)
 		}
@@ -494,6 +493,14 @@ func ParseNullBool(s string) sql.NullInt64 {
 		return sql.NullInt64{Int64: 1, Valid: true}
 	}
 	return sql.NullInt64{Int64: 0, Valid: true}
+}
+
+// Float64ToNull converts a *float64 to sql.NullFloat64 with nil values becoming NULL.
+func Float64ToNull(f *float64) sql.NullFloat64 {
+	if f == nil {
+		return sql.NullFloat64{Valid: false}
+	}
+	return sql.NullFloat64{Float64: *f, Valid: true}
 }
 
 func pickFirstAvailable(a, b string) string {

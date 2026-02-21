@@ -80,8 +80,8 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/where/arrival-and-departure-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.arrivalAndDepartureForStopHandler)))
 	mux.Handle("GET /api/where/trips-for-route/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.tripsForRouteHandler)))
 	mux.Handle("GET /api/where/arrivals-and-departures-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.arrivalsAndDeparturesForStopHandler)))
-	mux.Handle("GET /api/where/report-problem-with-trip/{id}", CacheControlMiddleware(models.CacheDurationNone, rateLimitAndValidateAPIKey(api, api.reportProblemWithTripHandler)))
-	mux.Handle("GET /api/where/report-problem-with-stop/{id}", CacheControlMiddleware(models.CacheDurationNone, rateLimitAndValidateAPIKey(api, api.reportProblemWithStopHandler)))
+	mux.Handle("POST /api/where/report-problem-with-trip", CacheControlMiddleware(models.CacheDurationNone, rateLimitAndValidateAPIKey(api, api.reportProblemWithTripHandler)))
+	mux.Handle("POST /api/where/report-problem-with-stop", CacheControlMiddleware(models.CacheDurationNone, rateLimitAndValidateAPIKey(api, api.reportProblemWithStopHandler)))
 }
 
 // SetupAPIRoutes creates and configures the API router with all middleware applied globally
