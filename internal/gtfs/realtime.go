@@ -140,10 +140,8 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 }
 
 // GetAlertsForTrip returns alerts matching the trip, its route, or agency.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []gtfs.Alert {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-
 	var routeID string
 	var agencyID string
 

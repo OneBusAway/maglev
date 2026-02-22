@@ -368,24 +368,21 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 // GetVehicleForTrip retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block
 // for that trip. Note we depend on getting the vehicle that may not match the trip ID exactly,
 // but is part of the same block.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 
-	manager.RLock()
-
 	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		manager.RUnlock()
 		logging.LogError(logger, "could not get trip", err,
 			slog.String("trip_id", tripID))
 		return nil
 	}
 
 	if !requestedTrip.BlockID.Valid {
-		manager.RUnlock()
 		logger.Debug("trip has no block ID, cannot find vehicle by block",
 			slog.String("trip_id", tripID))
 		return nil
@@ -394,8 +391,6 @@ func (manager *Manager) GetVehicleForTrip(tripID string) *gtfs.Vehicle {
 	requestedBlockID := requestedTrip.BlockID.String
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
-
-	manager.RUnlock()
 
 	if err != nil {
 		logging.LogError(logger, "could not get trips for block", err,
