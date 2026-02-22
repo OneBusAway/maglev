@@ -469,7 +469,7 @@ func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) PrintStatistics() {
 	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-	logger.Info("GTFS statistics",
+	logging.LogOperation(logger, "gtfs_statistics",
 		slog.String("source", manager.config.GtfsURL),
 		slog.Bool("local_file", manager.isLocalFile),
 		slog.Time("last_updated", manager.lastUpdated),
