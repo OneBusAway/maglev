@@ -13,6 +13,35 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// TestFindNextStop tests the findNextStop helper for correct next-stop lookup and edge cases.
+func TestFindNextStop(t *testing.T) {
+	seq2 := uint32(2)
+	seq3 := uint32(3)
+
+	stopTimes := []*gtfsdb.StopTime{
+		{StopID: "stop_1", StopSequence: 1},
+		{StopID: "stop_2", StopSequence: 2},
+		{StopID: "stop_3", StopSequence: 3},
+	}
+
+	t.Run("Returns the correct next stop when not at the last stop", func(t *testing.T) {
+		vehicle := &gtfs.Vehicle{CurrentStopSequence: &seq2}
+		stopID, _ := findNextStop(stopTimes, vehicle)
+		assert.Equal(t, "stop_3", stopID)
+	})
+
+	t.Run("Returns empty string when at the last stop", func(t *testing.T) {
+		vehicle := &gtfs.Vehicle{CurrentStopSequence: &seq3}
+		stopID, _ := findNextStop(stopTimes, vehicle)
+		assert.Equal(t, "", stopID)
+	})
+
+	t.Run("Returns empty string when vehicle is nil", func(t *testing.T) {
+		stopID, _ := findNextStop(stopTimes, nil)
+		assert.Equal(t, "", stopID)
+	})
+}
+
 // TestDistanceToLineSegment tests the helper function that calculates distance from a point to a line segment
 func TestDistanceToLineSegment(t *testing.T) {
 	tests := []struct {
