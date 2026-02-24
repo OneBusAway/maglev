@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -20,6 +22,12 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// Helper to hash keys for tests
+func hashKeyForTest(key string) string {
+	hash := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(hash[:])
+}
 
 func TestHandlerLockSafety(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -45,7 +53,7 @@ func TestHandlerLockSafety(t *testing.T) {
 		Port:      port,
 		RateLimit: 10000,
 		Env:       appconf.Test,
-		ApiKeys:   []string{"TEST"},
+		ApiKeys:   []string{hashKeyForTest("TEST")},
 	}
 
 	application, err := BuildApplication(appConfig, gtfsConfig)

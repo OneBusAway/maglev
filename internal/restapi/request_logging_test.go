@@ -45,7 +45,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		assert.Contains(t, output, `"level":"INFO"`)
 		assert.Contains(t, output, `"msg":"http_request"`)
 		assert.Contains(t, output, `"method":"GET"`)
-		assert.Contains(t, output, `"path":"/api/where/stops"`)
+		assert.Contains(t, output, `"path":"/api/where/stops?key=%5BREDACTED%5D"`)
 		assert.Contains(t, output, `"status":200`)
 		assert.Contains(t, output, `"user_agent":"test-client/1.0"`)
 		assert.Contains(t, output, `"duration_ms":`)
@@ -148,7 +148,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		assert.Contains(t, output, `"user_agent":""`)
 	})
 
-	t.Run("strips query parameters from logged path", func(t *testing.T) {
+	t.Run("redacts API key but keeps other query parameters in logged path", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
 
@@ -164,9 +164,14 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		handler.ServeHTTP(recorder, req)
 
 		output := buf.String()
-		assert.Contains(t, output, `"path":"/api/where/stops"`)
+
+		assert.Contains(t, output, `"/api/where/stops?`)
+
+		assert.Contains(t, output, `key=%5BREDACTED%5D`)
 		assert.NotContains(t, output, "secret")
-		assert.NotContains(t, output, "lat=39.0")
+
+		assert.Contains(t, output, `lat=39.0`)
+		assert.Contains(t, output, `lon=-77.0`)
 	})
 }
 
@@ -192,7 +197,7 @@ func TestRequestLoggingIntegration(t *testing.T) {
 
 		output := buf.String()
 		assert.Contains(t, output, `"method":"GET"`)
-		assert.Contains(t, output, `"path":"/api/where/current-time.json"`)
+		assert.Contains(t, output, `"path":"/api/where/current-time.json?key=%5BREDACTED%5D"`)
 		assert.Contains(t, output, `"status":200`)
 		assert.Contains(t, output, `"component":"http_server"`)
 

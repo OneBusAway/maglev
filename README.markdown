@@ -54,6 +54,11 @@ See the [Docker](#docker) section below for more details.
 
 Maglev supports two ways to configure the server: command-line flags or a JSON configuration file.
 
+### Security Note: API Keys
+For enhanced security, API keys are no longer stored in plaintext in the server configuration. You must store the **SHA-256 hex-encoded hash** of your API key.
+- **Example:** If your desired API key is `test`, you should add its hash `9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08` to your configuration file.
+- **Usage:** When making requests, clients will still pass the plaintext key in the URL (`key=test?`). The server will securely hash the incoming key in memory and compare it against the configured hash.
+
 ### Command-line Flags (Default)
 
 Run the server with command-line flags:

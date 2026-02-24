@@ -3,6 +3,8 @@ package restapi
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -45,6 +47,16 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// Helper to hash keys for tests to match the new security behavior
+func hashKeysForTest(keys []string) []string {
+	var hashed []string
+	for _, k := range keys {
+		hash := sha256.Sum256([]byte(k))
+		hashed = append(hashed, hex.EncodeToString(hash[:]))
+	}
+	return hashed
+}
+
 // createTestApiWithClock creates a new restAPI instance with a custom clock for deterministic testing.
 // The GTFS database is created once and reused across all tests for performance.
 func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
@@ -69,8 +81,8 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 	application := &app.Application{
 		Config: appconf.Config{
 			Env:           appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:       []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
-			RateLimit:     5, // Low rate limit for testing
+			ApiKeys:       hashKeysForTest([]string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"}),
+			RateLimit:     5,
 			ExemptApiKeys: []string{"org.onebusaway.iphone"},
 		},
 		GtfsConfig:  gtfsConfig,

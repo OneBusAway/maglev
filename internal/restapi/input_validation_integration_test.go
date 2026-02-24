@@ -41,7 +41,7 @@ func createTestApiForValidationTests(t *testing.T) *RestAPI {
 	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:   []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
+			ApiKeys:   hashKeysForTest([]string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"}),
 			RateLimit: 100, // Higher rate limit for validation tests
 		},
 		GtfsConfig:  gtfsConfig,

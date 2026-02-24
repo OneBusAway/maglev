@@ -1,17 +1,33 @@
 package app
 
 import (
-	"github.com/stretchr/testify/assert"
-	"maglev.onebusaway.org/internal/appconf"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/appconf"
 )
+
+func hashKeyForTest(key string) string {
+	hash := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(hash[:])
+}
+
+func hashKeysForTest(keys []string) []string {
+	var hashed []string
+	for _, k := range keys {
+		hashed = append(hashed, hashKeyForTest(k))
+	}
+	return hashed
+}
 
 func TestBlankKeyIsInvalid(t *testing.T) {
 	app := &Application{
 		Config: appconf.Config{
-			ApiKeys: []string{"key"},
+			ApiKeys: []string{hashKeyForTest("key")},
 		},
 	}
 	assert.True(t, app.IsInvalidAPIKey(""))
@@ -72,7 +88,7 @@ func TestIsInvalidAPIKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := &Application{
 				Config: appconf.Config{
-					ApiKeys: tt.configKeys,
+					ApiKeys: hashKeysForTest(tt.configKeys),
 				},
 			}
 			result := app.IsInvalidAPIKey(tt.testKey)
@@ -122,7 +138,7 @@ func TestRequestHasInvalidAPIKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := &Application{
 				Config: appconf.Config{
-					ApiKeys: tt.configKeys,
+					ApiKeys: hashKeysForTest(tt.configKeys),
 				},
 			}
 
@@ -142,7 +158,7 @@ func TestRequestHasInvalidAPIKey(t *testing.T) {
 func TestRequestHasInvalidAPIKeyWithNoQueryParam(t *testing.T) {
 	app := &Application{
 		Config: appconf.Config{
-			ApiKeys: []string{"test-key"},
+			ApiKeys: []string{hashKeyForTest("test-key")},
 		},
 	}
 

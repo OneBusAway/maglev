@@ -2,7 +2,8 @@
   "$schema": "./config.schema.json",
   "port": 4000,
   "env": "development",
-  "api-keys": ["test"],
+  "//": "Note: This is the SHA-256 hash of 'test'. All API keys must be hashed in the config for security.",
+  "api-keys": ["9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"],
   "exempt-api-keys": ["org.onebusaway.iphone"],
   "rate-limit": 100,
   "gtfs-static-feed": {

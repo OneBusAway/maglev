@@ -79,7 +79,7 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 	cfg := appconf.Config{
 		Port:      4000,
 		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		Verbose:   false,
 		RateLimit: 100,
 	}
@@ -111,7 +111,7 @@ func TestBuildApplicationWithTestData(t *testing.T) {
 	cfg := appconf.Config{
 		Port:      4000,
 		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		Verbose:   false,
 		RateLimit: 100,
 	}
@@ -142,7 +142,7 @@ func TestCreateServer(t *testing.T) {
 	cfg := appconf.Config{
 		Port:      8080,
 		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		Verbose:   false,
 		RateLimit: 100,
 	}
@@ -179,7 +179,7 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 	cfg := appconf.Config{
 		Port:      8080,
 		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		Verbose:   false,
 		RateLimit: 100,
 	}
@@ -223,7 +223,7 @@ func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 	cfg := appconf.Config{
 		Port:      0, // Use port 0 to get a random available port
 		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		Verbose:   false,
 		RateLimit: 100,
 	}
@@ -307,7 +307,7 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 	cfg := appconf.Config{
 		Port:      0, // Use random port to avoid conflicts
 		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		Verbose:   false,
 		RateLimit: 100,
 	}
@@ -359,7 +359,7 @@ func TestBuildApplicationErrorHandling(t *testing.T) {
 		cfg := appconf.Config{
 			Port:      4000,
 			Env:       appconf.Test,
-			ApiKeys:   []string{"test"},
+			ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 			Verbose:   false,
 			RateLimit: 100,
 		}
@@ -389,7 +389,7 @@ func TestConfigFileLoading(t *testing.T) {
 		// Verify app config
 		assert.Equal(t, 3000, appCfg.Port)
 		assert.Equal(t, appconf.Development, appCfg.Env)
-		assert.Equal(t, []string{"test"}, appCfg.ApiKeys)
+		assert.Equal(t, []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}, appCfg.ApiKeys)
 		assert.Equal(t, 100, appCfg.RateLimit)
 		assert.True(t, appCfg.Verbose)
 

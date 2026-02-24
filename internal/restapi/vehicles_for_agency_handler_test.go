@@ -343,7 +343,7 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:   []string{"TEST"},
+			ApiKeys:   hashKeysForTest([]string{"TEST"}),
 			RateLimit: 100, // Higher rate limit for this test
 		},
 		GtfsConfig:  gtfsConfig,

@@ -17,8 +17,8 @@ func TestLoadFromFile_ValidConfig(t *testing.T) {
 	assert.Equal(t, 3000, config.Port)
 	assert.Equal(t, "development", config.Env)
 
-	// Verify defaults were applied
-	assert.Equal(t, []string{"test"}, config.ApiKeys)
+	// Verify defaults were applied (Updated to expect the SHA-256 hash of "test")
+	assert.Equal(t, []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}, config.ApiKeys)
 	assert.Equal(t, 100, config.RateLimit)
 	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "./gtfs.db", config.DataPath)
@@ -86,7 +86,7 @@ func TestValidate_InvalidPort(t *testing.T) {
 			config := &JSONConfig{
 				Port:      tt.port,
 				Env:       "development",
-				ApiKeys:   []string{"test"},
+				ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 				RateLimit: 100,
 			}
 			err := config.validate()
@@ -100,7 +100,7 @@ func TestValidate_InvalidEnv(t *testing.T) {
 	config := &JSONConfig{
 		Port:      4000,
 		Env:       "staging",
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		RateLimit: 100,
 	}
 	err := config.validate()
@@ -112,7 +112,7 @@ func TestValidate_InvalidRateLimit(t *testing.T) {
 	config := &JSONConfig{
 		Port:      4000,
 		Env:       "development",
-		ApiKeys:   []string{"test"},
+		ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 		RateLimit: 0,
 	}
 	err := config.validate()
@@ -191,7 +191,7 @@ func TestToAppConfig_EnvironmentConversion(t *testing.T) {
 			jsonConfig := &JSONConfig{
 				Port:      4000,
 				Env:       tt.envString,
-				ApiKeys:   []string{"test"},
+				ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 				RateLimit: 100,
 			}
 			appConfig := jsonConfig.ToAppConfig()
@@ -270,7 +270,7 @@ func TestSetDefaults(t *testing.T) {
 
 	assert.Equal(t, 4000, config.Port)
 	assert.Equal(t, "development", config.Env)
-	assert.Equal(t, []string{"test"}, config.ApiKeys)
+	assert.Equal(t, []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}, config.ApiKeys)
 	assert.Equal(t, 100, config.RateLimit)
 	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "./gtfs.db", config.DataPath)
@@ -316,7 +316,7 @@ func TestValidate_PathTraversalDataPath(t *testing.T) {
 			config := &JSONConfig{
 				Port:      4000,
 				Env:       "development",
-				ApiKeys:   []string{"test"},
+				ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 				RateLimit: 100,
 				DataPath:  tt.dataPath,
 			}
@@ -347,7 +347,7 @@ func TestValidate_FileURLNotAllowed(t *testing.T) {
 			config := &JSONConfig{
 				Port:      4000,
 				Env:       "development",
-				ApiKeys:   []string{"test"},
+				ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 				RateLimit: 100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
@@ -382,7 +382,7 @@ func TestValidate_PathTraversalGtfsURL(t *testing.T) {
 			config := &JSONConfig{
 				Port:      4000,
 				Env:       "development",
-				ApiKeys:   []string{"test"},
+				ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 				RateLimit: 100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
@@ -415,7 +415,7 @@ func TestValidate_ValidAbsolutePaths(t *testing.T) {
 			config := &JSONConfig{
 				Port:      4000,
 				Env:       "development",
-				ApiKeys:   []string{"test"},
+				ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 				RateLimit: 100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
@@ -450,7 +450,7 @@ func TestValidate_PartialAuthHeaders(t *testing.T) {
 			config := &JSONConfig{
 				Port:      4000,
 				Env:       "development",
-				ApiKeys:   []string{"test"},
+				ApiKeys:   []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 				RateLimit: 100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL:             "https://example.com/gtfs.zip",

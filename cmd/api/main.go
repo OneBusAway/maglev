@@ -24,7 +24,8 @@ func main() {
 	flag.BoolVar(&dumpConfig, "dump-config", false, "Dump current configuration as JSON and exit")
 	flag.IntVar(&cfg.Port, "port", 4000, "API server port")
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
-	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
+	// Default to SHA-256 hash of "test"
+	flag.StringVar(&apiKeysFlag, "api-keys", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "Comma Separated API Keys (using SHA-256 hashes)")
 	flag.StringVar(&exemptApiKeysFlag, "exempt-api-keys", "org.onebusaway.iphone", "Comma separated list of API keys exempt from rate limiting")
 	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second per API key for rate limiting")
 	flag.StringVar(&gtfsCfg.GtfsURL, "gtfs-url", "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", "URL for a static GTFS zip file")

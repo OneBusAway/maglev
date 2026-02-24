@@ -43,9 +43,23 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 
 			reqID, _ := r.Context().Value(RequestIDKey).(string)
 
+			redactedURL := *r.URL
+
+			q := redactedURL.Query()
+
+			if q.Has("key") {
+				q.Set("key", "[REDACTED]")
+				redactedURL.RawQuery = q.Encode()
+			}
+
+			safePath := redactedURL.Path
+			if redactedURL.RawQuery != "" {
+				safePath = safePath + "?" + redactedURL.RawQuery
+			}
+
 			logging.LogHTTPRequest(logger,
 				r.Method,
-				r.URL.Path,
+				safePath,
 				wrapped.statusCode,
 				float64(duration.Nanoseconds())/1e6,
 				slog.String("request_id", reqID),
