@@ -383,12 +383,8 @@ func TestAgencyFilterFeedAgencyFilterPopulation(t *testing.T) {
 		realTimeTripLookup:             make(map[string]int),
 		realTimeVehicleLookupByTrip:    make(map[string]int),
 		realTimeVehicleLookupByVehicle: make(map[string]int),
-		feedTrips:                      make(map[string][]gtfs.Trip),
-		feedVehicles:                   make(map[string][]gtfs.Vehicle),
-		feedAlerts:                     make(map[string][]gtfs.Alert),
+		feedData:                       make(map[string]*FeedData),
 		feedAgencyFilter:               make(map[string]map[string]bool),
-		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
-		feedVehicleTimestamp:           make(map[string]uint64),
 	}
 
 	// Simulate what InitGTFSManager does for populating feedAgencyFilter
@@ -570,11 +566,11 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 	filteredA := manager.filterTripsByAgency(tripsA, filterA)
 	filteredB := manager.filterTripsByAgency(tripsB, filterB)
 
-	manager.realTimeMutex.Lock()
-	manager.feedTrips["feed-a"] = filteredA
-	manager.feedTrips["feed-b"] = filteredB
-	manager.rebuildMergedRealtimeLocked()
-	manager.realTimeMutex.Unlock()
+	manager.feedMapMutex.Lock()
+	manager.feedData["feed-a"] = &FeedData{Trips: filteredA, VehicleLastSeen: make(map[string]time.Time)}
+	manager.feedData["feed-b"] = &FeedData{Trips: filteredB, VehicleLastSeen: make(map[string]time.Time)}
+	manager.feedMapMutex.Unlock()
+	manager.buildMergedRealtime()
 
 	allTrips := manager.GetRealTimeTrips()
 	assert.Len(t, allTrips, 2, "merged view should have T1 (agency-A from feed-a) and T5 (agency-B from feed-b)")
@@ -717,15 +713,17 @@ func TestFeedVehicleRetentionWithAgencyFilter(t *testing.T) {
 	ts := now.Add(-1 * time.Minute)
 
 	// Seed initial vehicle data
-	manager.realTimeMutex.Lock()
-	manager.feedVehicles["feed"] = []gtfs.Vehicle{
-		{ID: vid, Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "R1"}}, Timestamp: &ts},
+	manager.feedMapMutex.Lock()
+	manager.feedData["feed"] = &FeedData{
+		Vehicles: []gtfs.Vehicle{
+			{ID: vid, Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "R1"}}, Timestamp: &ts},
+		},
+		VehicleLastSeen: map[string]time.Time{
+			"V1": now,
+		},
 	}
-	manager.feedVehicleLastSeen["feed"] = map[string]time.Time{
-		"V1": now,
-	}
-	manager.rebuildMergedRealtimeLocked()
-	manager.realTimeMutex.Unlock()
+	manager.feedMapMutex.Unlock()
+	manager.buildMergedRealtime()
 
 	vehicles := manager.GetRealTimeVehicles()
 	assert.Len(t, vehicles, 1, "seeded vehicle should be present")

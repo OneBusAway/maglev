@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -203,11 +202,7 @@ func newTestManager() *Manager {
 		realTimeTripLookup:             make(map[string]int),
 		realTimeVehicleLookupByTrip:    make(map[string]int),
 		realTimeVehicleLookupByVehicle: make(map[string]int),
-		feedTrips:                      make(map[string][]gtfs.Trip),
-		feedVehicles:                   make(map[string][]gtfs.Vehicle),
-		feedAlerts:                     make(map[string][]gtfs.Alert),
+		feedData:                       make(map[string]*FeedData),
 		feedAgencyFilter:               make(map[string]map[string]bool),
-		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
-		feedVehicleTimestamp:           make(map[string]uint64),
 	}
 }
