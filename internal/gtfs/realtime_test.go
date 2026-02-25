@@ -25,8 +25,8 @@ func TestGetAlertsForTrip(t *testing.T) {
 	tripID := gtfs.TripID{ID: "trip123"}
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID: "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{
@@ -35,10 +35,10 @@ func TestGetAlertsForTrip(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	alerts := manager.GetAlertsForTrip(context.Background(), "trip123")
 
@@ -50,8 +50,8 @@ func TestGetAlertsForStop(t *testing.T) {
 	stopID := "stop123"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID: "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{
@@ -60,10 +60,10 @@ func TestGetAlertsForStop(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	alerts := manager.GetAlertsForStop("stop123")
 
@@ -74,19 +74,21 @@ func TestGetAlertsForStop(t *testing.T) {
 func TestRebuildRealTimeTripLookup(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips: map[string][]gtfs.Trip{
-			"feed-0": {
-				{
-					ID: gtfs.TripID{ID: "trip1"},
-				},
-				{
-					ID: gtfs.TripID{ID: "trip2"},
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{
+				Trips: []gtfs.Trip{
+					{
+						ID: gtfs.TripID{ID: "trip1"},
+					},
+					{
+						ID: gtfs.TripID{ID: "trip2"},
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeTripLookup)
 	assert.Len(t, manager.realTimeTripLookup, 2)
@@ -104,19 +106,21 @@ func TestRebuildRealTimeVehicleLookupByTrip(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
-				{
-					Trip: trip1,
-				},
-				{
-					Trip: trip2,
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{
+				Vehicles: []gtfs.Vehicle{
+					{
+						Trip: trip1,
+					},
+					{
+						Trip: trip2,
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeVehicleLookupByTrip)
 	assert.Len(t, manager.realTimeVehicleLookupByTrip, 2)
@@ -130,19 +134,21 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
-				{
-					ID: vehicleID1,
-				},
-				{
-					ID: vehicleID2,
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{
+				Vehicles: []gtfs.Vehicle{
+					{
+						ID: vehicleID1,
+					},
+					{
+						ID: vehicleID2,
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeVehicleLookupByVehicle)
 	assert.Len(t, manager.realTimeVehicleLookupByVehicle, 2)
@@ -153,25 +159,27 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
-				{
-					ID: &gtfs.VehicleID{ID: "vehicle1"},
-				},
-				{
-					ID: nil,
-				},
-				{
-					ID: &gtfs.VehicleID{ID: ""},
-				},
-				{
-					ID: &gtfs.VehicleID{ID: "vehicle3"},
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{
+				Vehicles: []gtfs.Vehicle{
+					{
+						ID: &gtfs.VehicleID{ID: "vehicle1"},
+					},
+					{
+						ID: nil,
+					},
+					{
+						ID: &gtfs.VehicleID{ID: ""},
+					},
+					{
+						ID: &gtfs.VehicleID{ID: "vehicle3"},
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeVehicleLookupByVehicle)
 	assert.Len(t, manager.realTimeVehicleLookupByVehicle, 2)
@@ -283,14 +291,13 @@ func TestEnabledFeeds(t *testing.T) {
 func TestClearFeedData(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips: map[string][]gtfs.Trip{
-			"test_feed": {{ID: gtfs.TripID{ID: "trip1"}}},
-		},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"test_feed": {{ID: &gtfs.VehicleID{ID: "veh1"}}},
-		},
-		feedAlerts: map[string][]gtfs.Alert{
-			"test_feed": {{ID: "alert1"}},
+		feedData: map[string]*FeedData{
+			"test_feed": {
+				Trips:           []gtfs.Trip{{ID: gtfs.TripID{ID: "trip1"}}},
+				Vehicles:        []gtfs.Vehicle{{ID: &gtfs.VehicleID{ID: "veh1"}}},
+				Alerts:          []gtfs.Alert{{ID: "alert1"}},
+				VehicleLastSeen: make(map[string]time.Time),
+			},
 		},
 		feedLastUpdate: map[string]time.Time{
 			"test_feed": time.Now(),
@@ -298,19 +305,83 @@ func TestClearFeedData(t *testing.T) {
 	}
 
 	// Warm up realTime lookup array cache
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 	assert.Len(t, manager.GetRealTimeTrips(), 1, "Should have 1 trip initially")
 	assert.Contains(t, manager.feedLastUpdate, "test_feed", "feedLastUpdate should exist initially")
 
 	// Trigger the clearing mechanism
 	manager.clearFeedData("test_feed")
 
-	assert.Empty(t, manager.feedTrips["test_feed"], "feedTrips should be empty after clearing")
-	assert.Empty(t, manager.feedVehicles["test_feed"], "feedVehicles should be empty after clearing")
-	assert.Empty(t, manager.feedAlerts["test_feed"], "feedAlerts should be empty after clearing")
+	feed := manager.feedData["test_feed"]
+	assert.Empty(t, feed.Trips, "feedTrips should be empty after clearing")
+	assert.Empty(t, feed.Vehicles, "feedVehicles should be empty after clearing")
+	assert.Empty(t, feed.Alerts, "feedAlerts should be empty after clearing")
 	assert.NotContains(t, manager.feedLastUpdate, "test_feed", "feedLastUpdate should be removed after clearing")
 	assert.Len(t, manager.GetRealTimeTrips(), 0, "Global trip lookup should be empty")
 	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
+}
+
+// A minimal valid GTFS-RT protobuf payload containing just a GTFS Realtime version header.
+// Parsed successfully as an empty feed.
+var emptyValidGTFSRTPayload = []byte{0x0a, 0x05, 0x0a, 0x03, 0x32, 0x2e, 0x30}
+
+func TestUpdateFeedRealtime_RetainsOldDataOnError(t *testing.T) {
+	// Setup a server that always returns 500 (causes error)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		feedData:      make(map[string]*FeedData),
+		realTimeMutex: sync.RWMutex{},
+	}
+
+	oldTrips := []gtfs.Trip{{ID: gtfs.TripID{ID: "old-trip"}}}
+	manager.feedData["feed1"] = &FeedData{
+		Trips:           oldTrips,
+		VehicleLastSeen: make(map[string]time.Time),
+	}
+
+	feedCfg := RTFeedConfig{
+		ID:             "feed1",
+		TripUpdatesURL: server.URL,
+	}
+
+	manager.updateFeedRealtime(context.Background(), feedCfg)
+
+	feed := manager.feedData["feed1"]
+	assert.Len(t, feed.Trips, 1)
+	assert.Equal(t, "old-trip", feed.Trips[0].ID.ID, "Old data should be retained on error")
+}
+
+func TestUpdateFeedRealtime_SuccessReplacesOld(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(emptyValidGTFSRTPayload)
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		feedData:      make(map[string]*FeedData),
+		realTimeMutex: sync.RWMutex{},
+	}
+
+	oldTrips := []gtfs.Trip{{ID: gtfs.TripID{ID: "old-trip"}}}
+	manager.feedData["feed1"] = &FeedData{
+		Trips:           oldTrips,
+		VehicleLastSeen: make(map[string]time.Time),
+	}
+
+	feedCfg := RTFeedConfig{
+		ID:             "feed1",
+		TripUpdatesURL: server.URL, // Succeeds with empty payload
+	}
+
+	manager.updateFeedRealtime(context.Background(), feedCfg)
+
+	feed := manager.feedData["feed1"]
+	assert.Len(t, feed.Trips, 0, "Old data should be replaced by the empty feed on success")
 }
 
 func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
@@ -321,12 +392,8 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 	defer server.Close()
 
 	manager := &Manager{
-		realTimeMutex:        sync.RWMutex{},
-		feedTrips:            make(map[string][]gtfs.Trip),
-		feedVehicles:         make(map[string][]gtfs.Vehicle),
-		feedAlerts:           make(map[string][]gtfs.Alert),
-		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		realTimeMutex: sync.RWMutex{},
+		feedData:      make(map[string]*FeedData),
 	}
 
 	cfg := RTFeedConfig{
@@ -375,16 +442,16 @@ func TestStaleFeedRejected(t *testing.T) {
 	// Verify the feed has a FeedHeader timestamp — this test
 	// exercises the freshness guard, which only applies to feeds
 	// with a non-zero CreatedAt.
-	manager.realTimeMutex.RLock()
-	require.NotZero(t, manager.feedVehicleTimestamp[feed.ID],
+	manager.feedData[feed.ID].mu.RLock()
+	require.NotZero(t, manager.feedData[feed.ID].VehicleTimestamp,
 		"RABA feed must have FeedHeader timestamp for this test to be meaningful")
-	manager.realTimeMutex.RUnlock()
+	manager.feedData[feed.ID].mu.RUnlock()
 
 	// Simulate a stale feed by manually setting the stored timestamp to a very
 	// large value (future timestamp), so the next update will be rejected.
-	manager.realTimeMutex.Lock()
-	manager.feedVehicleTimestamp[feed.ID] = uint64(time.Now().Add(1 * time.Hour).UnixNano())
-	manager.realTimeMutex.Unlock()
+	manager.feedData[feed.ID].mu.Lock()
+	manager.feedData[feed.ID].VehicleTimestamp = uint64(time.Now().Add(1 * time.Hour).UnixNano())
+	manager.feedData[feed.ID].mu.Unlock()
 
 	// Second poll: attempt to update with same feed URL (same data, same timestamp)
 	// This should be rejected because the stored timestamp is in the future
@@ -720,11 +787,11 @@ func TestGetAlertsByIDs_RouteScoping(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &Manager{
 				realTimeMutex: sync.RWMutex{},
-				feedAlerts: map[string][]gtfs.Alert{
-					"feed-0": {{ID: "alert1", InformedEntities: tt.entities}},
+				feedData: map[string]*FeedData{
+					"feed-0": &FeedData{Alerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}}},
 				},
 			}
-			manager.rebuildMergedRealtimeLocked()
+			manager.buildMergedRealtime()
 			alerts := manager.GetAlertsByIDs("", routeID, "")
 			if tt.expectMatch {
 				assert.Len(t, alerts, 1)
@@ -745,16 +812,16 @@ func TestAlertIndex_RouteTripEntityIndexedUnderByTrip(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID, TripID: &tripID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	tripAlerts := manager.GetAlertsByIDs(tripID.ID, "", "")
 	assert.Len(t, tripAlerts, 1, "{routeID+tripID} entity should be indexed under byTrip")
@@ -804,11 +871,11 @@ func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &Manager{
 				realTimeMutex: sync.RWMutex{},
-				feedAlerts: map[string][]gtfs.Alert{
-					"feed-0": {{ID: "alert1", InformedEntities: tt.entities}},
+				feedData: map[string]*FeedData{
+					"feed-0": &FeedData{Alerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}}},
 				},
 			}
-			manager.rebuildMergedRealtimeLocked()
+			manager.buildMergedRealtime()
 			alerts := manager.GetAlertsByIDs("", "", agencyID)
 			if tt.expectMatch {
 				assert.Len(t, alerts, 1)
@@ -823,16 +890,16 @@ func TestAlertIndex_ByTripID(t *testing.T) {
 	tripID := gtfs.TripID{ID: "trip1"}
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{{TripID: &tripID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	alerts := manager.GetAlertsByIDs("trip1", "", "")
 
@@ -844,16 +911,16 @@ func TestAlertIndex_ByRouteID(t *testing.T) {
 	routeID := "route1"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	alerts := manager.GetAlertsByIDs("", "route1", "")
 
@@ -865,16 +932,16 @@ func TestAlertIndex_ByAgencyID(t *testing.T) {
 	agencyID := "agency1"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	alerts := manager.GetAlertsByIDs("", "", "agency1")
 
@@ -886,16 +953,16 @@ func TestAlertIndex_ByStopID(t *testing.T) {
 	stopID := "stop1"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	alerts := manager.GetAlertsForStop("stop1")
 
@@ -908,8 +975,8 @@ func TestAlertIndex_Deduplication(t *testing.T) {
 	routeID := "route1"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID: "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{
@@ -917,10 +984,10 @@ func TestAlertIndex_Deduplication(t *testing.T) {
 						{RouteID: &routeID},
 					},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	// Querying by both trip and route should return the alert exactly once.
 	alerts := manager.GetAlertsByIDs("trip1", "route1", "")
@@ -932,9 +999,9 @@ func TestAlertIndex_Deduplication(t *testing.T) {
 func TestAlertIndex_EmptyAlerts(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts:    map[string][]gtfs.Alert{},
+		feedData: map[string]*FeedData{},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.Empty(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"))
 	assert.Empty(t, manager.GetAlertsForStop("stop1"))
@@ -948,8 +1015,8 @@ func TestAlertIndex_NoDuplicatesFromRepeatedEntityKeys(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID: "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{
@@ -963,10 +1030,10 @@ func TestAlertIndex_NoDuplicatesFromRepeatedEntityKeys(t *testing.T) {
 						{AgencyID: &agencyID},
 					},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.Len(t, manager.GetAlertsForStop("stop1"), 1)
 	assert.Len(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"), 1)
@@ -978,8 +1045,8 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "",
 					InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}, {TripID: &tripID}},
@@ -988,10 +1055,10 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 					ID:               "alert-valid",
 					InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	stopAlerts := manager.GetAlertsForStop("stop1")
 	require.Len(t, stopAlerts, 1)
@@ -1010,16 +1077,16 @@ func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID, StopID: &stopID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	stopAlerts := manager.GetAlertsForStop(stopID)
 	assert.Len(t, stopAlerts, 1, "agency+stop entity should appear in byStop")
@@ -1065,13 +1132,13 @@ func TestAlertIndex_AllEmptyArgsReturnsNil(t *testing.T) {
 	stopID := "stop1"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	result := manager.GetAlertsByIDs("", "", "")
 	assert.Nil(t, result, "GetAlertsByIDs with all empty args should return nil")
@@ -1126,14 +1193,14 @@ func TestAlertIndex_NilInformedEntitiesExcludedFromAllBuckets(t *testing.T) {
 	// Both are tested here to guard against regressions in either branch.
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{ID: "alert-nil-entities", InformedEntities: nil},
 				{ID: "alert-empty-entities", InformedEntities: []gtfs.AlertInformedEntity{}},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.Empty(t, manager.GetAlertsForStop("any-stop"))
 	assert.Empty(t, manager.GetAlertsByIDs("any-trip", "any-route", "any-agency"))
@@ -1146,12 +1213,12 @@ func TestAlertIndex_CrossFeedDeduplication(t *testing.T) {
 	// regardless of how many feeds contributed the same alert.
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}}},
-			"feed-1": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}}},
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}}}},
+			"feed-1": &FeedData{Alerts: []gtfs.Alert{{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}}}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	stopAlerts := manager.GetAlertsForStop(stopID)
 	assert.Len(t, stopAlerts, 1, "GetAlertsForStop deduplicates by alert ID across feeds")
@@ -1258,12 +1325,8 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 
 	// Fully initialize all maps to prevent "assignment to entry in nil map" panics
 	manager := &Manager{
-		realTimeMutex:        sync.RWMutex{},
-		feedTrips:            make(map[string][]gtfs.Trip),
-		feedVehicles:         make(map[string][]gtfs.Vehicle),
-		feedAlerts:           make(map[string][]gtfs.Alert),
-		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		realTimeMutex: sync.RWMutex{},
+		feedData:      make(map[string]*FeedData),
 	}
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail
@@ -1508,4 +1571,53 @@ func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
 	result := manager.GetDuplicatedVehiclesForRoute("route-unknown")
 
 	assert.Empty(t, result, "route miss should return empty result")
+}
+
+func TestUpdateFeedRealtime_StaleVehicles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(emptyValidGTFSRTPayload) // Empty -> no new vehicles fetched
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		feedData:      make(map[string]*FeedData),
+		realTimeMutex: sync.RWMutex{},
+	}
+
+	now := time.Now()
+
+	// v1 seen 5 mins ago (should be kept)
+	v1 := gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "v1"}}
+
+	// v2 seen 20 mins ago (should be removed, staleVehicleTimeout = 15m)
+	v2 := gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "v2"}}
+
+	manager.feedData["feed1"] = &FeedData{
+		Vehicles: []gtfs.Vehicle{v1, v2},
+		VehicleLastSeen: map[string]time.Time{
+			"v1": now.Add(-5 * time.Minute),
+			"v2": now.Add(-20 * time.Minute),
+		},
+	}
+
+	feedCfg := RTFeedConfig{
+		ID:                  "feed1",
+		VehiclePositionsURL: server.URL,
+	}
+
+	manager.updateFeedRealtime(context.Background(), feedCfg)
+
+	feed := manager.feedData["feed1"]
+
+	assert.Len(t, feed.Vehicles, 1, "Only 1 vehicle should remain")
+	if len(feed.Vehicles) > 0 {
+		assert.Equal(t, "v1", feed.Vehicles[0].ID.ID, "Recently seen vehicle should be kept")
+	}
+
+	_, ok1 := feed.VehicleLastSeen["v1"]
+	assert.True(t, ok1, "v1 should still be in VehicleLastSeen map")
+
+	_, ok2 := feed.VehicleLastSeen["v2"]
+	assert.False(t, ok2, "v2 should be removed from VehicleLastSeen map due to staleness")
 }
