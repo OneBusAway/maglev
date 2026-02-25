@@ -58,11 +58,19 @@ type Manager struct {
 	systemETag                     string      // systemETag stores the SHA-256 hash of the currently loaded GTFS static dataset.
 	isReady                        atomic.Bool // Tracks whether initial data loading is complete
 
-	feedTrips    map[string][]gtfs.Trip
-	feedVehicles map[string][]gtfs.Vehicle
-	feedAlerts   map[string][]gtfs.Alert
-	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
-	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
+	feedMapMutex sync.RWMutex
+	feedData     map[string]*FeedData
+
+	mergeMutex sync.Mutex
+}
+
+// FeedData holds real-time data for a specific feed
+type FeedData struct {
+	mu              sync.RWMutex
+	Trips           []gtfs.Trip
+	Vehicles        []gtfs.Vehicle
+	Alerts          []gtfs.Alert
+	VehicleLastSeen map[string]time.Time
 }
 
 // IsReady returns true if the GTFS data is fully initialized and indexed.
@@ -92,10 +100,7 @@ func InitGTFSManager(config Config) (*Manager, error) {
 		realTimeTripLookup:             make(map[string]int),
 		realTimeVehicleLookupByTrip:    make(map[string]int),
 		realTimeVehicleLookupByVehicle: make(map[string]int),
-		feedTrips:                      make(map[string][]gtfs.Trip),
-		feedVehicles:                   make(map[string][]gtfs.Vehicle),
-		feedAlerts:                     make(map[string][]gtfs.Alert),
-		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
+		feedData:                       make(map[string]*FeedData),
 	}
 	manager.setStaticGTFS(staticData)
 
@@ -159,6 +164,9 @@ func (manager *Manager) SetGtfsURL(url string) {
 
 // Shutdown gracefully shuts down the manager and its background goroutines
 func (manager *Manager) Shutdown() {
+	if manager == nil {
+		return
+	}
 	manager.shutdownOnce.Do(func() {
 		close(manager.shutdownChan)
 		manager.wg.Wait()
@@ -611,9 +619,19 @@ func (manager *Manager) MarkUnhealthy() {
 // call to rebuildMergedRealtimeLocked (e.g. from a real feed update) does not
 // silently discard the injected data.
 func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
-	manager.realTimeMutex.Lock()
-	defer manager.realTimeMutex.Unlock()
+	manager.feedMapMutex.Lock()
+	feed := manager.feedData["_test"]
+	if feed == nil {
+		feed = &FeedData{
+			VehicleLastSeen: make(map[string]time.Time),
+		}
+		manager.feedData["_test"] = feed
+	}
+	manager.feedMapMutex.Unlock()
 
-	manager.feedTrips["_test"] = trips
-	manager.rebuildMergedRealtimeLocked()
+	feed.mu.Lock()
+	feed.Trips = trips
+	feed.mu.Unlock()
+
+	manager.buildMergedRealtime()
 }
