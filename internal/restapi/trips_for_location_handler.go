@@ -20,7 +20,11 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, err := api.parseAndValidateRequest(w, r)
+	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
+	if fieldErrors != nil {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -108,20 +112,19 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	api.sendResponse(w, r, response)
 }
 
-func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Request) (lat, lon, latSpan, lonSpan float64, includeTrip, includeSchedule bool, currentLocation *time.Location, todayMidnight time.Time, serviceDate time.Time, err error) {
+func (api *RestAPI) parseAndValidateRequest(r *http.Request) (lat, lon, latSpan, lonSpan float64, includeTrip, includeSchedule bool, currentLocation *time.Location, todayMidnight time.Time, serviceDate time.Time, fieldErrors map[string][]string, err error) {
 	queryParams := r.URL.Query()
-	lat, fieldErrors := utils.ParseFloatParam(queryParams, "lat", nil)
-	lon, _ = utils.ParseFloatParam(queryParams, "lon", fieldErrors)
-	latSpan, _ = utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
-	lonSpan, _ = utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
+	lat, fieldErrors = utils.ParseFloatParam(queryParams, "lat", nil)
+	lon, fieldErrors = utils.ParseFloatParam(queryParams, "lon", fieldErrors)
+	latSpan, fieldErrors = utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
+	lonSpan, fieldErrors = utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
 	agencies := api.GtfsManager.GetAgencies()
 	if len(agencies) == 0 {
 		err := errors.New("no agencies configured in GTFS manager")
-		api.serverErrorResponse(w, r, err)
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, err
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, err
 	}
 	currentAgency := agencies[0]
 	currentLocation, _ = time.LoadLocation(currentAgency.Timezone)
@@ -132,19 +135,16 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 	if ctx.Err() != nil {
-		api.serverErrorResponse(w, r, ctx.Err())
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, ctx.Err()
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, ctx.Err()
 	}
 	if !success || len(fieldErrors) > 0 {
-		api.validationErrorResponse(w, r, fieldErrors)
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, err
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, fieldErrors, nil
 	}
 	locationErrors := utils.ValidateLocationParams(lat, lon, 0, latSpan, lonSpan)
 	if len(locationErrors) > 0 {
-		api.validationErrorResponse(w, r, locationErrors)
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, err
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, locationErrors, nil
 	}
-	return lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil
+	return lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil, nil
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
