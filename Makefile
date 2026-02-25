@@ -1,5 +1,7 @@
-# Detect OS
-ifeq ($(OS),Windows_NT)
+# Detect OS (MSYS2 sets MSYSTEM; prefer Unix syntax over Windows CMD syntax)
+ifneq ($(MSYSTEM),)
+    SET_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5"
+else ifeq ($(OS),Windows_NT)
     SET_ENV := set CGO_ENABLED=1 & set CGO_CFLAGS=-DSQLITE_ENABLE_FTS5 &
 else
     SET_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5"
