@@ -76,6 +76,7 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/where/search/stop.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, api.searchStopsHandler)))
 	mux.Handle("GET /api/where/search/route.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, api.routeSearchHandler)))
 	mux.Handle("GET /api/where/config.json", rateLimitAndValidateAPIKey(api, api.configHandler))
+	mux.Handle("GET /api/where/problem-reports.json", CacheControlMiddleware(models.CacheDurationNone, rateLimitAndValidateAPIKey(api, api.problemReportsHandler)))
 
 	// Routes with simple ID validation (agency IDs)
 	mux.Handle("GET /api/where/agency/{id}", CacheControlMiddleware(models.CacheDurationLong, withID(api, api.agencyHandler)))

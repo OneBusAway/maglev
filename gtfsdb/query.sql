@@ -1026,3 +1026,37 @@ SELECT * FROM problem_reports_stop
 WHERE stop_id = ?
 ORDER BY created_at DESC;
 
+-- name: GetRecentProblemReportsTrip :many
+SELECT * FROM problem_reports_trip
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?;
+
+-- name: GetRecentProblemReportsStop :many
+SELECT * FROM problem_reports_stop
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?;
+
+-- name: GetProblemReportsTripByDateRange :many
+SELECT * FROM problem_reports_trip
+WHERE created_at >= ? AND created_at <= ?
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?;
+
+-- name: GetProblemReportsStopByDateRange :many
+SELECT * FROM problem_reports_stop
+WHERE created_at >= ? AND created_at <= ?
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?;
+
+-- name: GetProblemReportsTripByCode :many
+SELECT * FROM problem_reports_trip
+WHERE code = ?
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?;
+
+-- name: GetProblemReportsStopByCode :many
+SELECT * FROM problem_reports_stop
+WHERE code = ?
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?;
+

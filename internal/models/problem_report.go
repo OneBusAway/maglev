@@ -69,3 +69,11 @@ func NewProblemReportStop(report gtfsdb.ProblemReportsStop) ProblemReportStop {
 		SubmittedAt:          report.SubmittedAt,
 	}
 }
+
+// ProblemReportItem is a unified wrapper used by the general /api/where/problem-reports
+// endpoint to return both trip and stop reports in a single list.
+type ProblemReportItem struct {
+	ReportType string             `json:"reportType"` // "trip" or "stop"
+	TripReport *ProblemReportTrip `json:"tripReport,omitempty"`
+	StopReport *ProblemReportStop `json:"stopReport,omitempty"`
+}
