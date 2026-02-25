@@ -250,11 +250,22 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		return
 	}
 
-	manager.realTimeMutex.Lock()
-	defer manager.realTimeMutex.Unlock()
+	manager.feedMapMutex.Lock()
+	feed := manager.feedData[feedID]
+	if feed == nil {
+		feed = &FeedData{
+			VehicleLastSeen: make(map[string]time.Time),
+		}
+		manager.feedData[feedID] = feed
+	}
+	manager.feedMapMutex.Unlock()
+
+	feed.mu.Lock()
+
+	hadDataBefore := len(feed.Trips) > 0 || len(feed.Vehicles) > 0 || len(feed.Alerts) > 0
 
 	if tripData != nil && tripErr == nil {
-		manager.feedTrips[feedID] = tripData.Trips
+		feed.Trips = tripData.Trips
 	}
 
 	if vehicleData != nil && vehicleErr == nil {
@@ -266,10 +277,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		}
 
 		now := time.Now()
-		if manager.feedVehicleLastSeen[feedID] == nil {
-			manager.feedVehicleLastSeen[feedID] = make(map[string]time.Time)
-		}
-		lastSeenMap := manager.feedVehicleLastSeen[feedID]
+		lastSeenMap := feed.VehicleLastSeen
 
 		currentVehicleIDs := make(map[string]struct{}, len(validVehicles))
 		for _, v := range validVehicles {
@@ -287,7 +295,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		}
 
 		// Retain recently-disappeared vehicles whose last-seen time hasn't expired
-		prevVehicles := manager.feedVehicles[feedID]
+		prevVehicles := feed.Vehicles
 		for _, pv := range prevVehicles {
 			if pv.ID == nil {
 				continue
@@ -299,19 +307,25 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			}
 		}
 
-		manager.feedVehicles[feedID] = validVehicles
+		feed.Vehicles = validVehicles
 	}
 
 	if alertData != nil && alertErr == nil {
-		manager.feedAlerts[feedID] = alertData.Alerts
+		feed.Alerts = alertData.Alerts
 	}
 
 	tripsUpdated := tripData != nil && tripErr == nil
 	vehiclesUpdated := vehicleData != nil && vehicleErr == nil
 	alertsUpdated := alertData != nil && alertErr == nil
 
-	hadDataBefore := len(manager.feedTrips[feedID]) > 0 || len(manager.feedVehicles[feedID]) > 0 || len(manager.feedAlerts[feedID]) > 0
 	hasNewData := tripsUpdated || vehiclesUpdated || alertsUpdated
+
+	// Capture count values for logging, then unlock early
+	tripCount := len(feed.Trips)
+	vehicleCount := len(feed.Vehicles)
+	alertCount := len(feed.Alerts)
+
+	feed.mu.Unlock()
 
 	if !hasNewData {
 		if hadDataBefore {
@@ -332,47 +346,57 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	} else {
 		logger.Info("updated realtime feed",
 			slog.String("feed", feedID),
-			slog.Int("trips", len(manager.feedTrips[feedID])),
-			slog.Int("vehicles", len(manager.feedVehicles[feedID])),
-			slog.Int("alerts", len(manager.feedAlerts[feedID])),
+			slog.Int("trips", tripCount),
+			slog.Int("vehicles", vehicleCount),
+			slog.Int("alerts", alertCount),
 		)
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 }
 
-func (manager *Manager) rebuildMergedRealtimeLocked() {
-	feedIDs := make([]string, 0, len(manager.feedTrips))
-	for id := range manager.feedTrips {
+func (manager *Manager) buildMergedRealtime() {
+	manager.mergeMutex.Lock()
+	defer manager.mergeMutex.Unlock()
+
+	// Snapshot feed pointers once under a single read lock — the pointers
+	// in the map are never overwritten, only appended, so this is safe.
+	manager.feedMapMutex.RLock()
+	feedIDs := make([]string, 0, len(manager.feedData))
+	for id := range manager.feedData {
 		feedIDs = append(feedIDs, id)
 	}
+
+	// Sort feedIDs inside the read lock (very fast, usually < 10 feeds) to ensure deterministic merge order.
 	sort.Strings(feedIDs)
 
-	var allTrips []gtfs.Trip
-	for _, id := range feedIDs {
-		allTrips = append(allTrips, manager.feedTrips[id]...)
+	sortedFeeds := make([]*FeedData, len(feedIDs))
+	for i, id := range feedIDs {
+		sortedFeeds[i] = manager.feedData[id]
 	}
+	manager.feedMapMutex.RUnlock()
 
-	vehicleFeedIDs := make([]string, 0, len(manager.feedVehicles))
-	for id := range manager.feedVehicles {
-		vehicleFeedIDs = append(vehicleFeedIDs, id)
-	}
-	sort.Strings(vehicleFeedIDs)
+	// Pre-allocate capacities based on the current arrays to avoid expensive runtime growing during appends
+	manager.realTimeMutex.RLock()
+	tripCap := len(manager.realTimeTrips)
+	vehicleCap := len(manager.realTimeVehicles)
+	alertCap := len(manager.realTimeAlerts)
+	manager.realTimeMutex.RUnlock()
 
-	var allVehicles []gtfs.Vehicle
-	for _, id := range vehicleFeedIDs {
-		allVehicles = append(allVehicles, manager.feedVehicles[id]...)
-	}
+	allTrips := make([]gtfs.Trip, 0, tripCap)
+	allVehicles := make([]gtfs.Vehicle, 0, vehicleCap)
+	allAlerts := make([]gtfs.Alert, 0, alertCap)
 
-	alertFeedIDs := make([]string, 0, len(manager.feedAlerts))
-	for id := range manager.feedAlerts {
-		alertFeedIDs = append(alertFeedIDs, id)
-	}
-	sort.Strings(alertFeedIDs)
+	for _, feed := range sortedFeeds {
+		if feed == nil {
+			continue
+		}
 
-	var allAlerts []gtfs.Alert
-	for _, id := range alertFeedIDs {
-		allAlerts = append(allAlerts, manager.feedAlerts[id]...)
+		feed.mu.RLock()
+		allTrips = append(allTrips, feed.Trips...)
+		allVehicles = append(allVehicles, feed.Vehicles...)
+		allAlerts = append(allAlerts, feed.Alerts...)
+		feed.mu.RUnlock()
 	}
 
 	tripLookup := make(map[string]int, len(allTrips))
@@ -392,6 +416,9 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			vehicleLookupByVehicle[vehicle.ID.ID] = i
 		}
 	}
+
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
 
 	manager.realTimeTrips = allTrips
 	manager.realTimeVehicles = allVehicles
