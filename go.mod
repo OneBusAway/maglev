@@ -12,6 +12,10 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/rtree v1.10.0
 	github.com/twpayne/go-polyline v1.1.1
+	go.opentelemetry.io/otel v1.37.0
+	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.37.0
+	go.opentelemetry.io/otel/sdk v1.37.0
+	go.opentelemetry.io/otel/trace v1.37.0
 	golang.org/x/time v0.12.0
 )
 
@@ -24,6 +28,8 @@ require (
 	github.com/cubicdaiya/gonp v1.0.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -60,6 +66,8 @@ require (
 	github.com/valyala/fastjson v1.6.4 // indirect
 	github.com/wasilibs/go-pgquery v0.0.0-20250409022910-10ac41983c07 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect
+	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
+	go.opentelemetry.io/otel/metric v1.37.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect

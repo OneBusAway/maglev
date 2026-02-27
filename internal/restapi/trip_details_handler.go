@@ -7,6 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"maglev.onebusaway.org/gtfsdb"
 	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -83,11 +86,21 @@ func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) (TripDetailsParams
 }
 
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	ctx := r.Context()
+
+	// Start a span for this handler
+	tracer := otel.Tracer("maglev.handlers")
+	ctx, span := tracer.Start(ctx, "tripDetailsHandler")
+	defer span.End()
+
+	parsed, _ := utils.GetParsedIDFromContext(ctx)
 	agencyID := parsed.AgencyID
 	tripID := parsed.CodeID
 
-	ctx := r.Context()
+	span.SetAttributes(
+		attribute.String("trip.id", tripID),
+		attribute.String("trip.agency_id", agencyID),
+	)
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
@@ -95,6 +108,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	// Capture parsing errors
 	params, fieldErrors := api.parseTripIdDetailsParams(r)
 	if len(fieldErrors) > 0 {
+		span.SetStatus(codes.Error, "validation failed")
+		span.SetAttributes(attribute.Int("validation.error_count", len(fieldErrors)))
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}

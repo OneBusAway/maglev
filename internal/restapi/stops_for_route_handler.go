@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/twpayne/go-polyline"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"maglev.onebusaway.org/gtfsdb"
 	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -43,18 +46,30 @@ func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParam
 func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// Start a span for this handler
+	tracer := otel.Tracer("maglev.handlers")
+	ctx, span := tracer.Start(ctx, "stopsForRouteHandler")
+	defer span.End()
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
+		span.RecordError(ctx.Err())
+		span.SetStatus(codes.Error, "context cancelled")
 		api.serverErrorResponse(w, r, ctx.Err())
 		return
 	}
 
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	parsed, _ := utils.GetParsedIDFromContext(ctx)
 	agencyID := parsed.AgencyID
 	routeID := parsed.CodeID
+
+	span.SetAttributes(
+		attribute.String("route.id", routeID),
+		attribute.String("route.agency_id", agencyID),
+	)
 
 	params := api.parseStopsForRouteParams(r)
 
@@ -210,11 +225,16 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 }
 
 func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirectionCalculator, agencyID string, allStops map[string]bool) ([]models.Stop, error) {
+	tracer := otel.Tracer("maglev.handlers")
+	ctx, span := tracer.Start(ctx, "buildStopsList")
+	defer span.End()
 
 	stopIDs := make([]string, 0, len(allStops))
 	for stopID := range allStops {
 		stopIDs = append(stopIDs, stopID)
 	}
+
+	span.SetAttributes(attribute.Int("stop_count", len(stopIDs)))
 
 	// Fetch stops and routes in parallel for improved performance
 	var stops []gtfsdb.Stop
@@ -225,11 +245,27 @@ func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirect
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		_, childSpan := tracer.Start(ctx, "GetStopsByIDs")
+		defer childSpan.End()
+		childSpan.SetAttributes(attribute.Int("batch_size", len(stopIDs)))
+		
 		stops, stopsErr = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		if stopsErr != nil {
+			childSpan.RecordError(stopsErr)
+			childSpan.SetStatus(codes.Error, "failed to fetch stops")
+		}
 	}()
 	go func() {
 		defer wg.Done()
+		_, childSpan := tracer.Start(ctx, "GetRouteIDsForStops")
+		defer childSpan.End()
+		childSpan.SetAttributes(attribute.Int("batch_size", len(stopIDs)))
+		
 		routeRows, routesErr = api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+		if routesErr != nil {
+			childSpan.RecordError(routesErr)
+			childSpan.SetStatus(codes.Error, "failed to fetch route IDs")
+		}
 	}()
 	wg.Wait()
 
