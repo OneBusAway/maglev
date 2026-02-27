@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"net/url"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -11,6 +12,7 @@ import (
 
 // TracingMiddleware wraps an HTTP handler to create OpenTelemetry spans for each request.
 // It captures HTTP method, URL, status code, and records errors.
+// URLs are sanitized to prevent leaking API keys and other sensitive query parameters.
 func TracingMiddleware(next http.Handler) http.Handler {
 	tracer := otel.Tracer("maglev.http")
 
@@ -18,12 +20,22 @@ func TracingMiddleware(next http.Handler) http.Handler {
 		// Extract span context from incoming request headers (for distributed tracing)
 		ctx := r.Context()
 
+		// Use route pattern for span name to avoid high-cardinality
+		// Fall back to path if pattern is not available
+		spanName := r.URL.Path
+		if pattern := r.Pattern; pattern != "" {
+			spanName = pattern
+		}
+
+		// Sanitize URL to prevent leaking API keys
+		sanitizedURL := sanitizeURL(r.URL)
+
 		// Start a new span for this HTTP request
-		ctx, span := tracer.Start(ctx, r.URL.Path,
+		ctx, span := tracer.Start(ctx, spanName,
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
 				attribute.String("http.method", r.Method),
-				attribute.String("http.url", r.URL.String()),
+				attribute.String("http.target", sanitizedURL),
 				attribute.String("http.scheme", r.URL.Scheme),
 				attribute.String("http.host", r.Host),
 				attribute.String("http.user_agent", r.UserAgent()),
@@ -66,4 +78,30 @@ func (w *statusCapturingResponseWriter) WriteHeader(statusCode int) {
 func (w *statusCapturingResponseWriter) Write(b []byte) (int, error) {
 	// WriteHeader is called automatically by http package if not already called
 	return w.ResponseWriter.Write(b)
+}
+
+// sanitizeURL removes sensitive query parameters (like API keys) from URLs
+// to prevent leaking credentials into traces and logs.
+func sanitizeURL(u *url.URL) string {
+	if u.RawQuery == "" {
+		return u.Path
+	}
+
+	// Parse query parameters
+	query := u.Query()
+
+	// Remove sensitive parameters
+	query.Del("key")
+	query.Del("api_key")
+	query.Del("apikey")
+	query.Del("token")
+	query.Del("access_token")
+
+	// If no query parameters remain, return just the path
+	if len(query) == 0 {
+		return u.Path
+	}
+
+	// Return path with sanitized query string
+	return u.Path + "?" + query.Encode()
 }

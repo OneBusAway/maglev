@@ -156,13 +156,13 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 // and performs graceful shutdown with a 30-second timeout.
 // Returns an error if the server fails to start or shutdown fails.
 func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *restapi.RestAPI, logger *slog.Logger) error {
-	// Initialize OpenTelemetry tracing
+	// Initialize OpenTelemetry tracing (may be disabled based on environment)
 	tp, err := restapi.InitTracer("maglev", "1.0.0", string(coreApp.Config.Env), logger)
 	if err != nil {
 		logger.Warn("failed to initialize tracing", "error", err)
 		// Continue without tracing rather than failing
-	} else {
-		// Ensure tracer provider is shutdown on exit
+	} else if tp != nil {
+		// Ensure tracer provider is shutdown on exit (only if initialized)
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

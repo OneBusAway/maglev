@@ -248,7 +248,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirect
 		_, childSpan := tracer.Start(ctx, "GetStopsByIDs")
 		defer childSpan.End()
 		childSpan.SetAttributes(attribute.Int("batch_size", len(stopIDs)))
-		
+
 		stops, stopsErr = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
 		if stopsErr != nil {
 			childSpan.RecordError(stopsErr)
@@ -260,7 +260,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirect
 		_, childSpan := tracer.Start(ctx, "GetRouteIDsForStops")
 		defer childSpan.End()
 		childSpan.SetAttributes(attribute.Int("batch_size", len(stopIDs)))
-		
+
 		routeRows, routesErr = api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
 		if routesErr != nil {
 			childSpan.RecordError(routesErr)
