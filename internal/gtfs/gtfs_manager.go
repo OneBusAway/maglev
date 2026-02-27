@@ -62,6 +62,8 @@ type Manager struct {
 	feedAlerts   map[string][]gtfs.Alert
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
+	// Per-feed last successfully applied vehicle feed timestamp
+	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
 }
 
 // IsReady returns true if the GTFS data is fully initialized and indexed.
@@ -95,6 +97,7 @@ func InitGTFSManager(config Config) (*Manager, error) {
 		feedVehicles:                   make(map[string][]gtfs.Vehicle),
 		feedAlerts:                     make(map[string][]gtfs.Alert),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
+		feedVehicleTimestamp:           make(map[string]uint64),
 	}
 	manager.setStaticGTFS(staticData)
 
