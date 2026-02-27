@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestTracingMiddleware_Integration(t *testing.T) {
@@ -14,9 +13,8 @@ func TestTracingMiddleware_Integration(t *testing.T) {
 	api := createTestApi(t)
 	defer api.GtfsManager.Shutdown()
 
-	resp, httpResp, model := serveAndRetrieveEndpoint(t, api, "/api/where/agencies-with-coverage.json?key=TEST")
+	_, httpResp, model := serveAndRetrieveEndpoint(t, api, "/api/where/agencies-with-coverage.json?key=TEST")
 
-	require.NotNil(t, resp)
 	assert.Equal(t, 200, httpResp.StatusCode)
 	assert.Equal(t, 2, model.Version)
 	assert.NotNil(t, model.Data)
