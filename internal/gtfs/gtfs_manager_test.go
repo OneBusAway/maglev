@@ -178,15 +178,17 @@ func TestManager_FindAgency(t *testing.T) {
 func TestManager_GetVehicleByID(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
+		feedData: map[string]*FeedData{
 			"feed-0": {
-				{
-					ID: &gtfs.VehicleID{ID: "vehicle1"},
+				Vehicles: []gtfs.Vehicle{
+					{
+						ID: &gtfs.VehicleID{ID: "vehicle1"},
+					},
 				},
 			},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	vehicle, err := manager.GetVehicleByID("vehicle1")
 	assert.Nil(t, err)
@@ -239,15 +241,17 @@ func TestManager_GetVehicleLastUpdateTime(t *testing.T) {
 func TestManager_GetTripUpdateByID(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips: map[string][]gtfs.Trip{
+		feedData: map[string]*FeedData{
 			"feed-0": {
-				{
-					ID: gtfs.TripID{ID: "trip1"},
+				Trips: []gtfs.Trip{
+					{
+						ID: gtfs.TripID{ID: "trip1"},
+					},
 				},
 			},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	trip, err := manager.GetTripUpdateByID("trip1")
 	assert.Nil(t, err)
@@ -342,16 +346,18 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	trip := &gtfs.Trip{
 		ID: gtfs.TripID{ID: "5735633"},
 	}
-	manager.feedVehicles = map[string][]gtfs.Vehicle{
+	manager.feedData = map[string]*FeedData{
 		"feed-0": {
-			{
-				ID:   &gtfs.VehicleID{ID: "vehicle1"},
-				Trip: trip,
+			Vehicles: []gtfs.Vehicle{
+				{
+					ID:   &gtfs.VehicleID{ID: "vehicle1"},
+					Trip: trip,
+				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	vehicle := manager.GetVehicleForTrip(context.Background(), "5735633")
 	if vehicle != nil {
