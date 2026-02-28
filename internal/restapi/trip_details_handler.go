@@ -4,8 +4,12 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"maglev.onebusaway.org/gtfsdb"
 	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -82,11 +86,21 @@ func (api *RestAPI) parseTripIdDetailsParams(r *http.Request) (TripDetailsParams
 }
 
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	ctx := r.Context()
+
+	// Start a span for this handler
+	tracer := otel.Tracer("maglev.handlers")
+	ctx, span := tracer.Start(ctx, "tripDetailsHandler")
+	defer span.End()
+
+	parsed, _ := utils.GetParsedIDFromContext(ctx)
 	agencyID := parsed.AgencyID
 	tripID := parsed.CodeID
 
-	ctx := r.Context()
+	span.SetAttributes(
+		attribute.String("trip.id", tripID),
+		attribute.String("trip.agency_id", agencyID),
+	)
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
@@ -94,6 +108,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	// Capture parsing errors
 	params, fieldErrors := api.parseTripIdDetailsParams(r)
 	if len(fieldErrors) > 0 {
+		span.SetStatus(codes.Error, "validation failed")
+		span.SetAttributes(attribute.Int("validation.error_count", len(fieldErrors)))
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
@@ -309,19 +325,33 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, calc *GTFS.Advanced
 		return []models.Stop{}, nil
 	}
 
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, originalStopIDs)
-	if err != nil {
-		return nil, err
+	// Fetch stops and routes in parallel for improved performance
+	var stops []gtfsdb.Stop
+	var allRoutes []gtfsdb.GetRoutesForStopsRow
+	var stopsErr, routesErr error
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		stops, stopsErr = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, originalStopIDs)
+	}()
+	go func() {
+		defer wg.Done()
+		allRoutes, routesErr = api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, originalStopIDs)
+	}()
+	wg.Wait()
+
+	if stopsErr != nil {
+		return nil, stopsErr
+	}
+	if routesErr != nil {
+		return nil, routesErr
 	}
 
 	stopMap := make(map[string]gtfsdb.Stop)
 	for _, stop := range stops {
 		stopMap[stop.ID] = stop
-	}
-
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, originalStopIDs)
-	if err != nil {
-		return nil, err
 	}
 
 	routesByStop := make(map[string][]gtfsdb.Route)

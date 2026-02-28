@@ -9,9 +9,9 @@ import (
 
 type handlerFunc func(w http.ResponseWriter, r *http.Request)
 
-// rateLimitAndValidateAPIKey combines rate limiting, API key validation, and compression
+// rateLimitAndValidateAPIKey combines rate limiting, API key validation, tracing, and compression
 func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Handler {
-	// Create the handler chain: API key validation -> rate limiting -> compression -> final handler
+	// Create the handler chain: API key validation -> rate limiting -> tracing -> compression -> final handler
 	finalHandlerHttp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		finalHandler(w, r)
 	})
@@ -19,13 +19,16 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 	// Apply compression first (innermost)
 	compressedHandler := CompressionMiddleware(finalHandlerHttp)
 
+	// Apply tracing middleware (before rate limiting so we trace even rate-limited requests)
+	tracedHandler := TracingMiddleware(compressedHandler)
+
 	// Then rate limiting - use the shared rate limiter instance
 	var rateLimitedHandler http.Handler
 	if api.rateLimiter != nil {
-		rateLimitedHandler = api.rateLimiter.Handler()(compressedHandler)
+		rateLimitedHandler = api.rateLimiter.Handler()(tracedHandler)
 	} else {
 		// Fallback for tests that don't use NewRestAPI constructor
-		rateLimitedHandler = compressedHandler
+		rateLimitedHandler = tracedHandler
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +37,7 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 			api.invalidAPIKeyResponse(w, r)
 			return
 		}
-		// Then apply rate limiting and compression
+		// Then apply rate limiting, tracing, and compression
 		rateLimitedHandler.ServeHTTP(w, r)
 	})
 }

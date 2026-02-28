@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"maglev.onebusaway.org/gtfsdb"
 	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -100,12 +103,23 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) (ArrivalAndD
 }
 
 func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
+	ctx := r.Context()
+
+	// Start a span for this handler
+	tracer := otel.Tracer("maglev.handlers")
+	ctx, span := tracer.Start(ctx, "arrivalAndDepartureForStopHandler")
+	defer span.End()
+
+	parsed, _ := utils.GetParsedIDFromContext(ctx)
 	stopAgencyID := parsed.AgencyID
 	stopCode := parsed.CodeID
 	stopID := parsed.CombinedID
 
-	ctx := r.Context()
+	span.SetAttributes(
+		attribute.String("stop.id", stopID),
+		attribute.String("stop.agency_id", stopAgencyID),
+		attribute.String("stop.code", stopCode),
+	)
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
@@ -113,11 +127,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// Capture parsing errors
 	params, fieldErrors := api.parseArrivalAndDepartureParams(r)
 	if len(fieldErrors) > 0 {
+		span.SetStatus(codes.Error, "validation failed")
+		span.SetAttributes(attribute.Int("validation.error_count", len(fieldErrors)))
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
 
 	if params.TripID == "" {
+		span.SetStatus(codes.Error, "missing tripId parameter")
 		fieldErrors := map[string][]string{
 			"tripId": {"missingRequiredField"},
 		}
@@ -126,6 +143,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	if params.ServiceDate == nil {
+		span.SetStatus(codes.Error, "missing serviceDate parameter")
 		fieldErrors := map[string][]string{
 			"serviceDate": {"missingRequiredField"},
 		}
@@ -135,12 +153,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	_, tripID, err := utils.ExtractAgencyIDAndCodeID(params.TripID)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid tripId format")
 		fieldErrors := map[string][]string{
 			"id": {err.Error()},
 		}
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
+
+	span.SetAttributes(attribute.String("trip.id", tripID))
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
