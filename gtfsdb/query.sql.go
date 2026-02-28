@@ -2559,6 +2559,7 @@ FROM shapes s
     WHERE route_id = ?1
       AND trip_headsign = ?2
       AND shape_id IS NOT NULL
+    ORDER BY id
     LIMIT 1
 ) t ON s.shape_id = t.shape_id
 ORDER BY s.shape_pt_sequence

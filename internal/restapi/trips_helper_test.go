@@ -1720,8 +1720,8 @@ func TestGetFirstStopOfNextTripInBlock_WithBlockContinuation(t *testing.T) {
 		t.Skip("no multi-trip block found in test data; skipping block continuation test")
 	}
 
-	serviceDate := time.Now()
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	result := api.getFirstStopOfNextTripInBlock(ctx, targetTripID, serviceDate)
-	assert.NotNil(t, result, "should find the first stop of the next block trip")
+	require.NotNil(t, result, "should find the first stop of the next block trip")
 	assert.NotEmpty(t, result.StopID, "returned stop should have a non-empty StopID")
 }
