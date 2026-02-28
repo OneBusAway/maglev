@@ -97,6 +97,10 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 	assert.NotNil(t, coreApp, "Application should not be nil")
 	assert.NotNil(t, coreApp.Logger, "Logger should be initialized")
 	assert.Equal(t, cfg, coreApp.Config, "Config should match input")
+
+	// BuildApplication injects the metrics client into the config.
+	// We sync the injected Metrics over to our local copy so the assertion passes.
+	gtfsCfg.Metrics = coreApp.GtfsConfig.Metrics
 	assert.Equal(t, gtfsCfg, coreApp.GtfsConfig, "GtfsConfig should match input")
 }
 

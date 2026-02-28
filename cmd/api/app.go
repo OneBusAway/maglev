@@ -70,6 +70,9 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
+	appMetrics := metrics.NewWithLogger(logger)
+	gtfsCfg.Metrics = appMetrics
+
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
@@ -87,9 +90,6 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 
 	// Select clock implementation based on environment
 	appClock := createClock(cfg.Env)
-
-	// Initialize metrics with logger for error reporting
-	appMetrics := metrics.NewWithLogger(logger)
 
 	coreApp := &app.Application{
 		Config:              cfg,
