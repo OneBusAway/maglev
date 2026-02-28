@@ -257,7 +257,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
 		if includeStatus {
-			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, todayMidnight, currentTime)
 		}
 
 		entry := models.TripsForRouteListEntry{
