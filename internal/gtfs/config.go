@@ -1,6 +1,8 @@
 package gtfs
 
 import (
+	"time"
+
 	"maglev.onebusaway.org/internal/appconf"
 )
 
@@ -26,6 +28,7 @@ type Config struct {
 	Env                   appconf.Environment
 	Verbose               bool
 	EnableGTFSTidy        bool
+	StartupRetries        []time.Duration
 }
 
 // enabledFeeds returns only the enabled feeds that have at least one URL configured.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -78,12 +79,96 @@ func (manager *Manager) MarkReady() {
 
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
 // The source can be either a URL or a local file path
-func InitGTFSManager(config Config) (*Manager, error) {
+func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	isLocalFile := !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
 
-	staticData, err := loadGTFSData(config.GtfsURL, isLocalFile, config)
-	if err != nil {
-		return nil, err
+	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+
+	var staticData *gtfs.Static
+	var gtfsDB *gtfsdb.Client
+	var err error
+
+	// Use configurable backoffs or default to production values
+	backoffs := config.StartupRetries
+	if len(backoffs) == 0 {
+		backoffs = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
+	}
+	maxAttempts := len(backoffs) + 1
+
+	// Skip retries for local files - they will fail identically every time
+	if isLocalFile {
+		maxAttempts = 1
+	}
+
+	var attemptsMade int
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		attemptsMade = attempt
+		// Attempt to load in-memory static data if we haven't already succeeded
+		if staticData == nil {
+			staticData, err = loadGTFSData(config.GtfsURL, isLocalFile, config)
+			if err != nil {
+				if attempt < maxAttempts {
+					delay := backoffs[attempt-1]
+					logging.LogError(logger, "Failed to load GTFS static data, retrying", err,
+						slog.Int("attempt", attempt),
+						slog.Int("max_attempts", maxAttempts),
+						slog.Duration("retry_delay", delay),
+					)
+
+					// Cancellable sleep
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(delay):
+					}
+					continue
+				}
+				return nil, fmt.Errorf("failed to load GTFS data after %d attempts: %w", maxAttempts, err)
+			}
+		}
+
+		// Attempt to build the SQLite DB if we haven't already succeeded
+		if gtfsDB == nil {
+			// Clean up partial SQLite file from previous failed attempts
+			if attempt > 1 && config.GTFSDataPath != "" && config.GTFSDataPath != ":memory:" {
+				if removeErr := os.Remove(config.GTFSDataPath); removeErr != nil && !os.IsNotExist(removeErr) {
+					logging.LogError(logger, "Failed to clean up partial SQLite file before retry", removeErr,
+						slog.String("path", config.GTFSDataPath),
+						slog.Int("attempt", attempt),
+					)
+				}
+			}
+
+			gtfsDB, err = buildGtfsDB(ctx, config, isLocalFile, "")
+			if err != nil {
+				if attempt < maxAttempts {
+					delay := backoffs[attempt-1]
+					logging.LogError(logger, "Failed to build GTFS database, retrying", err,
+						slog.Int("attempt", attempt),
+						slog.Int("max_attempts", maxAttempts),
+						slog.Duration("retry_delay", delay),
+					)
+
+					// Cancellable sleep
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(delay):
+					}
+					continue
+				}
+				return nil, fmt.Errorf("failed to build GTFS database after %d attempts: %w", maxAttempts, err)
+			}
+		}
+
+		// Both loads succeeded, break out of the retry loop
+		break
+	}
+
+	// Log success if we recovered via retries
+	if attemptsMade > 1 {
+		logger.Info("GTFS data loaded after retry", slog.Int("attempts", attemptsMade))
 	}
 
 	manager := &Manager{
@@ -100,21 +185,15 @@ func InitGTFSManager(config Config) (*Manager, error) {
 		feedVehicleTimestamp:           make(map[string]uint64),
 	}
 	manager.setStaticGTFS(staticData)
-
-	gtfsDB, err := buildGtfsDB(config, isLocalFile, "")
-	if err != nil {
-		return nil, fmt.Errorf("error building GTFS database: %w", err)
-	}
 	manager.GtfsDB = gtfsDB
 
 	// Populate systemETag from import metadata
-	metadata, err := gtfsDB.Queries.GetImportMetadata(context.Background())
+	metadata, err := gtfsDB.Queries.GetImportMetadata(ctx)
 	if err == nil && metadata.FileHash != "" {
 		manager.systemETag = fmt.Sprintf(`"%s"`, metadata.FileHash)
 	}
 
 	// Build spatial index for fast stop location queries
-	ctx := context.Background()
 	spatialIndex, err := buildStopSpatialIndex(ctx, gtfsDB.Queries)
 	if err != nil {
 		_ = gtfsDB.Close()
@@ -127,7 +206,7 @@ func InitGTFSManager(config Config) (*Manager, error) {
 	// to "warm" the cache before marking the manager as ready.
 	enabledFeeds := config.enabledFeeds()
 	for _, feedCfg := range enabledFeeds {
-		initCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		manager.updateFeedRealtime(initCtx, feedCfg)
 		cancel()
 	}

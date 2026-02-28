@@ -50,6 +50,8 @@ func TestMain(m *testing.M) {
 // createTestApiWithClock creates a new restAPI instance with a custom clock for deterministic testing.
 // The GTFS database is created once and reused across all tests for performance.
 func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
+	ctx := context.Background()
+
 	// Initialize the shared GTFS manager only once
 	testDbSetupOnce.Do(func() {
 		gtfsConfig := gtfs.Config{
@@ -57,7 +59,7 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 			GTFSDataPath: testDbPath,
 		}
 		var err error
-		testGtfsManager, err = gtfs.InitGTFSManager(gtfsConfig)
+		testGtfsManager, err = gtfs.InitGTFSManager(ctx, gtfsConfig)
 		if err != nil {
 			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
 		}
@@ -66,7 +68,7 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 		testDirectionCalculator = gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
 
 		// Warm up the cache with test data
-		err = gtfs.InitializeGlobalCache(context.Background(), testGtfsManager.GtfsDB.Queries, testDirectionCalculator)
+		err = gtfs.InitializeGlobalCache(ctx, testGtfsManager.GtfsDB.Queries, testDirectionCalculator)
 		require.NoError(t, err, "Failed to initialize global cache for tests")
 	})
 
