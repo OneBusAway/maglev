@@ -13,15 +13,16 @@ func TestProblemReportsForTripRequiresValidApiKey(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/problem-reports-for-trip/12345.json?key=invalid")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
-	assert.Equal(t, "permission denied", model.Text)
+	assert.Equal(t, "Unauthorized: Valid protected API key required", model.Text)
 }
 
 func TestProblemReportsForTrip_EmptyList(t *testing.T) {
 	api := createTestApi(t)
+	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
 	defer api.Shutdown()
 
 	tripID := "1_12345"
-	url := fmt.Sprintf("/api/where/problem-reports-for-trip/%s.json?key=TEST", tripID)
+	url := fmt.Sprintf("/api/where/problem-reports-for-trip/%s.json?key=PROTECTED-TEST", tripID)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 
@@ -41,6 +42,7 @@ func TestProblemReportsForTrip_EmptyList(t *testing.T) {
 
 func TestProblemReportsForTrip_SubmitThenRetrieve(t *testing.T) {
 	api := createTestApi(t)
+	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
 	defer api.Shutdown()
 
 	tripID := "1_12345"
@@ -51,8 +53,14 @@ func TestProblemReportsForTrip_SubmitThenRetrieve(t *testing.T) {
 	require.Equal(t, http.StatusOK, submitResp.StatusCode)
 	require.Equal(t, 200, submitModel.Code)
 
-	// Now retrieve reports for this trip
-	getURL := fmt.Sprintf("/api/where/problem-reports-for-trip/%s.json?key=TEST", tripID)
+	// retrieve with standard key (should fail)
+	getURLUnauth := fmt.Sprintf("/api/where/problem-reports-for-trip/%s.json?key=TEST", tripID)
+	unauthResp, unauthModel := serveApiAndRetrieveEndpoint(t, api, getURLUnauth)
+	assert.Equal(t, http.StatusUnauthorized, unauthResp.StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, unauthModel.Code)
+
+	// retrieve reports for this trip with protected key
+	getURL := fmt.Sprintf("/api/where/problem-reports-for-trip/%s.json?key=PROTECTED-TEST", tripID)
 	resp, model := serveApiAndRetrieveEndpoint(t, api, getURL)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

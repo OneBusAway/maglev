@@ -70,6 +70,28 @@ func withCombinedID(api *RestAPI, handler http.HandlerFunc) http.Handler {
 	return rateLimitAndValidateAPIKey(api, handlerFunc(api.ValidateCombinedIDMiddleware(handler)))
 }
 
+// withProtectedCombinedID applies "Combined ID" validation and requires a protected API key
+func withProtectedCombinedID(api *RestAPI, handler http.HandlerFunc) http.Handler {
+	// First check Protected API Key -> Validate ID
+	protectedHandler := api.validateProtectedAPIKey(http.HandlerFunc(api.ValidateCombinedIDMiddleware(handler)))
+
+	// Create the handler chain -> compression -> rate limiting
+	// We skip standard validateAPIKey because we already validated the protected key
+	finalHandlerHttp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protectedHandler.ServeHTTP(w, r)
+	})
+
+	// Apply compression first (innermost)
+	compressedHandler := CompressionMiddleware(finalHandlerHttp)
+
+	// Then rate limiting
+	if api.rateLimiter != nil {
+		return api.rateLimiter.Handler()(compressedHandler)
+	}
+
+	return compressedHandler
+}
+
 func registerPprofHandlers(mux *http.ServeMux) { // nolint:unused
 	// Register pprof handlers
 	// import "net/http/pprof"
@@ -121,8 +143,8 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	// Real-time or transactional combined ID endpoints (no ETag)
 	mux.Handle("GET /api/where/report-problem-with-trip/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.reportProblemWithTripHandler)))
 	mux.Handle("GET /api/where/report-problem-with-stop/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.reportProblemWithStopHandler)))
-	mux.Handle("GET /api/where/problem-reports-for-trip/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.problemReportsForTripHandler)))
-	mux.Handle("GET /api/where/problem-reports-for-stop/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.problemReportsForStopHandler)))
+	mux.Handle("GET /api/where/problem-reports-for-trip/{id}", CacheControlMiddleware(models.CacheDurationNone, withProtectedCombinedID(api, api.problemReportsForTripHandler)))
+	mux.Handle("GET /api/where/problem-reports-for-stop/{id}", CacheControlMiddleware(models.CacheDurationNone, withProtectedCombinedID(api, api.problemReportsForStopHandler)))
 	mux.Handle("GET /api/where/trip-details/{id}", CacheControlMiddleware(models.CacheDurationShort, withCombinedID(api, api.tripDetailsHandler)))
 	mux.Handle("GET /api/where/trip-for-vehicle/{id}", CacheControlMiddleware(models.CacheDurationShort, withCombinedID(api, api.tripForVehicleHandler)))
 	mux.Handle("GET /api/where/arrival-and-departure-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, withCombinedID(api, api.arrivalAndDepartureForStopHandler)))
