@@ -334,6 +334,7 @@ FROM shapes s
     WHERE route_id = @route_id
       AND trip_headsign = @trip_headsign
       AND shape_id IS NOT NULL
+    ORDER BY id
     LIMIT 1
 ) t ON s.shape_id = t.shape_id
 ORDER BY s.shape_pt_sequence;
