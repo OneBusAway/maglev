@@ -582,7 +582,8 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 		slog.Int("count", len(stopTimes)))
 
 	// ===== PIPELINE: PARALLEL PREPARATION + SEQUENTIAL EXECUTION =====
-	batchSize := c.config.SafeBatchSize(10) // 10 fields per stop_time row
+	const stopTimeFieldsPerRow = 10 // 10 fields per stop_time row
+	batchSize := c.config.SafeBatchSize(stopTimeFieldsPerRow)
 	const baseQuery = `INSERT INTO stop_times (
 		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
 		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
@@ -630,7 +631,7 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*10)
+				args := make([]interface{}, 0, len(batch)*stopTimeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {
@@ -752,7 +753,8 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 		slog.Int("count", len(shapes)))
 
 	// ===== PHASE 1: PARALLEL STATEMENT PREPARATION =====
-	batchSize := c.config.SafeBatchSize(5) // 5 fields per shape row
+	const shapeFieldsPerRow = 5 // 5 fields per shape row
+	batchSize := c.config.SafeBatchSize(shapeFieldsPerRow)
 	const baseQuery = `INSERT INTO shapes (
 		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
 	) VALUES `
@@ -792,7 +794,7 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*5)
+				args := make([]interface{}, 0, len(batch)*shapeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {
@@ -845,7 +847,7 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	for batch := range resultsChan {
 		preparedBatches = append(preparedBatches, batch)
 
-		// Log preparation progress every 50 batches (150k records with batch size 3000)
+		// Log preparation progress every 50 batches (~327k records with batch size 6553)
 		if len(preparedBatches)-lastLoggedCount >= 50 {
 			logging.LogOperation(logger, "shapes_preparation_progress",
 				slog.Int("batches_prepared", len(preparedBatches)),
