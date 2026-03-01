@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
 )
@@ -30,7 +29,7 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("test database must use in-memory storage, got path: %s", config.DBPath)
 	}
 
-	db, err := sql.Open("sqlite3", config.DBPath)
+	db, err := sql.Open(DriverName, config.DBPath)
 	if err != nil {
 		return nil, err
 	}

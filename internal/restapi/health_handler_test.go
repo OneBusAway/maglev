@@ -37,7 +37,7 @@ func TestHealthHandlerWithNilApplication(t *testing.T) {
 
 func TestHealthHandlerReturnsOK(t *testing.T) {
 	// Use in-memory DB to test the health check successfully
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -78,7 +78,7 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 
 func TestHealthHandlerStarting(t *testing.T) {
 	// Use in-memory DB to test the health check during startup
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 

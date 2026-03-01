@@ -54,10 +54,18 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
-      - name: Run tests
+      - name: Run tests (fast mode)
+        if: matrix.os == 'ubuntu-latest'
         run: go test -v -tags=sqlite_fts5 -coverprofile=profile.cov -timeout 40m ./...
         env:
           CGO_ENABLED: 1
+        shell: bash
+
+      - name: Run tests (compatible mode)
+        if: matrix.os == 'windows-latest'
+        run: go test -v -tags=purego -coverprofile=profile.cov -timeout 40m ./...
+        env:
+          CGO_ENABLED: 0
         shell: bash
 
 # Disabling coverage reporting for now. Re-enable once the project is made public.

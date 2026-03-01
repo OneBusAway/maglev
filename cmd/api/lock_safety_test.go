@@ -18,7 +18,6 @@ import (
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 
-	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestHandlerLockSafety(t *testing.T) {
