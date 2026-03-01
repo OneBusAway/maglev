@@ -34,6 +34,7 @@ func TestLoadFromFile_FullConfig(t *testing.T) {
 	assert.Equal(t, 8080, config.Port)
 	assert.Equal(t, "production", config.Env)
 	assert.Equal(t, []string{"key1", "key2", "key3"}, config.ApiKeys)
+	assert.Equal(t, []string{"protected-key-1", "protected-key-2"}, config.ProtectedApiKeys)
 	assert.Equal(t, 50, config.RateLimit)
 	assert.Equal(t, "https://example.com/gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "Authorization", config.GtfsStaticFeed.AuthHeaderName)
@@ -84,10 +85,11 @@ func TestValidate_InvalidPort(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &JSONConfig{
-				Port:      tt.port,
-				Env:       "development",
-				ApiKeys:   []string{"test"},
-				RateLimit: 100,
+				Port:             tt.port,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
 			}
 			err := config.Validate()
 			assert.Error(t, err)
@@ -98,10 +100,11 @@ func TestValidate_InvalidPort(t *testing.T) {
 
 func TestValidate_InvalidEnv(t *testing.T) {
 	config := &JSONConfig{
-		Port:      4000,
-		Env:       "staging",
-		ApiKeys:   []string{"test"},
-		RateLimit: 100,
+		Port:             4000,
+		Env:              "staging",
+		ApiKeys:          []string{"test"},
+		ProtectedApiKeys: []string{"test"},
+		RateLimit:        100,
 	}
 	err := config.Validate()
 	assert.Error(t, err)
@@ -110,10 +113,11 @@ func TestValidate_InvalidEnv(t *testing.T) {
 
 func TestValidate_InvalidRateLimit(t *testing.T) {
 	config := &JSONConfig{
-		Port:      4000,
-		Env:       "development",
-		ApiKeys:   []string{"test"},
-		RateLimit: 0,
+		Port:             4000,
+		Env:              "development",
+		ApiKeys:          []string{"test"},
+		ProtectedApiKeys: []string{"test"},
+		RateLimit:        0,
 	}
 	err := config.Validate()
 	assert.Error(t, err)
@@ -122,10 +126,11 @@ func TestValidate_InvalidRateLimit(t *testing.T) {
 
 func TestValidate_EmptyApiKeys(t *testing.T) {
 	config := &JSONConfig{
-		Port:      4000,
-		Env:       "development",
-		ApiKeys:   []string{},
-		RateLimit: 100,
+		Port:             4000,
+		Env:              "development",
+		ApiKeys:          []string{},
+		ProtectedApiKeys: []string{"test"},
+		RateLimit:        100,
 	}
 	err := config.Validate()
 	assert.Error(t, err)
@@ -134,10 +139,11 @@ func TestValidate_EmptyApiKeys(t *testing.T) {
 
 func TestValidate_EmptyApiKeyString(t *testing.T) {
 	config := &JSONConfig{
-		Port:      4000,
-		Env:       "development",
-		ApiKeys:   []string{"key1", "", "key2"},
-		RateLimit: 100,
+		Port:             4000,
+		Env:              "development",
+		ApiKeys:          []string{"key1", "", "key2"},
+		ProtectedApiKeys: []string{"test"},
+		RateLimit:        100,
 	}
 	err := config.Validate()
 	assert.Error(t, err)
@@ -146,10 +152,11 @@ func TestValidate_EmptyApiKeyString(t *testing.T) {
 
 func TestValidate_DuplicateApiKeys(t *testing.T) {
 	config := &JSONConfig{
-		Port:      4000,
-		Env:       "development",
-		ApiKeys:   []string{"key1", "key2", "key1"},
-		RateLimit: 100,
+		Port:             4000,
+		Env:              "development",
+		ApiKeys:          []string{"key1", "key2", "key1"},
+		ProtectedApiKeys: []string{"test"},
+		RateLimit:        100,
 	}
 	err := config.Validate()
 	assert.Error(t, err)
@@ -189,10 +196,11 @@ func TestToAppConfig_EnvironmentConversion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			jsonConfig := &JSONConfig{
-				Port:      4000,
-				Env:       tt.envString,
-				ApiKeys:   []string{"test"},
-				RateLimit: 100,
+				Port:             4000,
+				Env:              tt.envString,
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
 			}
 			appConfig := jsonConfig.ToAppConfig()
 			assert.Equal(t, tt.expectedEnv, appConfig.Env)
@@ -324,11 +332,12 @@ func TestValidate_PathTraversalDataPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &JSONConfig{
-				Port:      4000,
-				Env:       "development",
-				ApiKeys:   []string{"test"},
-				RateLimit: 100,
-				DataPath:  tt.dataPath,
+				Port:             4000,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
+				DataPath:         tt.dataPath,
 			}
 			err := config.Validate()
 			if tt.shouldErr {
@@ -355,10 +364,11 @@ func TestValidate_FileURLNotAllowed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &JSONConfig{
-				Port:      4000,
-				Env:       "development",
-				ApiKeys:   []string{"test"},
-				RateLimit: 100,
+				Port:             4000,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
@@ -390,10 +400,11 @@ func TestValidate_PathTraversalGtfsURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &JSONConfig{
-				Port:      4000,
-				Env:       "development",
-				ApiKeys:   []string{"test"},
-				RateLimit: 100,
+				Port:             4000,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
@@ -423,10 +434,11 @@ func TestValidate_ValidAbsolutePaths(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &JSONConfig{
-				Port:      4000,
-				Env:       "development",
-				ApiKeys:   []string{"test"},
-				RateLimit: 100,
+				Port:             4000,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
@@ -458,10 +470,11 @@ func TestValidate_PartialAuthHeaders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &JSONConfig{
-				Port:      4000,
-				Env:       "development",
-				ApiKeys:   []string{"test"},
-				RateLimit: 100,
+				Port:             4000,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL:             "https://example.com/gtfs.zip",
 					AuthHeaderName:  tt.authName,

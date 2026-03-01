@@ -77,10 +77,11 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 
 	application := &app.Application{
 		Config: appconf.Config{
-			Env:           appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:       []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
-			RateLimit:     5, // Low rate limit for testing
-			ExemptApiKeys: []string{"org.onebusaway.iphone"},
+			Env:              appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:          []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
+			ProtectedApiKeys: []string{"PROTECTED-TEST"},
+			RateLimit:        5, // Low rate limit for testing
+			ExemptApiKeys:    []string{"org.onebusaway.iphone"},
 		},
 		GtfsConfig:          gtfsConfig,
 		GtfsManager:         testGtfsManager,
