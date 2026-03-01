@@ -295,9 +295,12 @@ func TestEnabledFeeds(t *testing.T) {
 // are rejected and vehicles from the newer feed are preserved. This tests
 // the feed-level freshness guard that prevents out-of-order feed updates.
 func TestStaleFeedRejected(t *testing.T) {
+	// Read the test data before creating the server to ensure proper error handling
+	data, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
+	require.NoError(t, err, "failed to read RABA vehicle positions test data")
+
 	// Create a test server that serves the same RABA vehicle data
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data, _ := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		_, _ = w.Write(data)
 	}))
@@ -318,6 +321,14 @@ func TestStaleFeedRejected(t *testing.T) {
 	firstPoll := manager.GetRealTimeVehicles()
 	require.NotEmpty(t, firstPoll, "first poll should load vehicles")
 	firstCount := len(firstPoll)
+
+	// Verify the feed has a FeedHeader timestamp — this test
+	// exercises the freshness guard, which only applies to feeds
+	// with a non-zero CreatedAt.
+	manager.realTimeMutex.RLock()
+	require.NotZero(t, manager.feedVehicleTimestamp[feed.ID],
+		"RABA feed must have FeedHeader timestamp for this test to be meaningful")
+	manager.realTimeMutex.RUnlock()
 
 	// Simulate a stale feed by manually setting the stored timestamp to a very
 	// large value (future timestamp), so the next update will be rejected.
