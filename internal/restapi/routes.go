@@ -3,6 +3,7 @@ package restapi
 import (
 	"net/http"
 	"net/http/pprof"
+	"os"
 
 	"maglev.onebusaway.org/internal/models"
 )
@@ -93,19 +94,33 @@ func withProtectedCombinedID(api *RestAPI, handler http.HandlerFunc) http.Handle
 	return api.validateProtectedAPIKey(rateLimitedHandler)
 }
 
-func registerPprofHandlers(mux *http.ServeMux) { // nolint:unused
-	// Register pprof handlers
-	// import "net/http/pprof"
-	// Tutorial: https://medium.com/@rahul.fiem/application-performance-optimization-how-to-effectively-analyze-and-optimize-pprof-cpu-profiles-95280b2f5bfb
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+// registerPprofHandlers registers standard pprof handlers
+func registerPprofHandlers(mux *http.ServeMux) {
+	// These endpoints trigger active data collection or symbol resolution
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("POST /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("POST /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+
+	// These all route through pprof.Index, which automatically serves
+	// the correct profile based on the URL path
+	mux.HandleFunc("GET /debug/pprof/mutex", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/block", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/heap", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/goroutine", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/allocs", pprof.Index)
 }
 
-// SetRoutes registers all API endpoints with compression applied per route
+// SetRoutes registers all API endpoints with the provided mux
 func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
+	// Gate pprof endpoints behind environment variable for security
+	if os.Getenv("MAGLEV_ENABLE_PPROF") == "1" {
+		registerPprofHandlers(mux)
+	}
+
 	// Health check endpoint - no authentication required
 	mux.HandleFunc("GET /healthz", api.healthHandler)
 

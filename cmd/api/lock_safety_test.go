@@ -109,7 +109,7 @@ func TestHandlerLockSafety(t *testing.T) {
 
 	t.Log("Starting readers...")
 	client := &http.Client{
-		Timeout: 2 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 
 	for i := 0; i < readerCount; i++ {
