@@ -298,23 +298,28 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			// Fetch the Trip Update separately
 			tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
 
-			// Use the tripUpdate for predictions
-			if tripUpdate != nil && len(tripUpdate.StopTimeUpdates) > 0 {
-				// Look for StopTimeUpdate that matches this stop
+			// Use the tripUpdate for predictions, with delay propagation from prior stops.
+			if tripUpdate != nil {
+				var (
+					propagatedDelayMs int64
+					closestPriorSeq   int64 = -1
+				)
+
 				for _, stopTimeUpdate := range tripUpdate.StopTimeUpdates {
-					// Match by stop sequence or stop ID
-					if (stopTimeUpdate.StopSequence != nil && int64(*stopTimeUpdate.StopSequence) == st.StopSequence) ||
+					seq := int64(-1)
+					if stopTimeUpdate.StopSequence != nil {
+						seq = int64(*stopTimeUpdate.StopSequence)
+					}
+
+					// Exact match: apply predicted times directly.
+					if (seq != -1 && seq == st.StopSequence) ||
 						(stopTimeUpdate.StopID != nil && *stopTimeUpdate.StopID == stopCode) {
-
 						predicted = true
-
-						// Update predicted times from GTFS-RT
 						if stopTimeUpdate.Arrival != nil && stopTimeUpdate.Arrival.Time != nil {
 							predictedArrivalTime = stopTimeUpdate.Arrival.Time.Unix() * 1000
 						} else if stopTimeUpdate.Arrival != nil && stopTimeUpdate.Arrival.Delay != nil {
 							predictedArrivalTime = scheduledArrivalTime + (stopTimeUpdate.Arrival.Delay.Nanoseconds() / 1e6)
 						}
-
 						if stopTimeUpdate.Departure != nil && stopTimeUpdate.Departure.Time != nil {
 							predictedDepartureTime = stopTimeUpdate.Departure.Time.Unix() * 1000
 						} else if stopTimeUpdate.Departure != nil && stopTimeUpdate.Departure.Delay != nil {
@@ -322,13 +327,32 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 						}
 						break
 					}
-				}
-			}
 
-			if !predicted && vehicle.Position != nil {
-				predicted = true
-				predictedArrivalTime = scheduledArrivalTime
-				predictedDepartureTime = scheduledDepartureTime
+					// Track the closest prior stop's delay for propagation.
+					if seq != -1 && seq < st.StopSequence && seq > closestPriorSeq {
+						closestPriorSeq = seq
+						propagatedDelayMs = 0 // Reset before checking this stop's delay data
+						if stopTimeUpdate.Departure != nil && stopTimeUpdate.Departure.Delay != nil {
+							propagatedDelayMs = stopTimeUpdate.Departure.Delay.Nanoseconds() / 1e6
+						} else if stopTimeUpdate.Arrival != nil && stopTimeUpdate.Arrival.Delay != nil {
+							propagatedDelayMs = stopTimeUpdate.Arrival.Delay.Nanoseconds() / 1e6
+						}
+					}
+				}
+
+				// No exact match: propagate from closest prior stop or fall back to trip-level delay.
+				if !predicted {
+					if closestPriorSeq != -1 {
+						predicted = true
+						predictedArrivalTime = scheduledArrivalTime + propagatedDelayMs
+						predictedDepartureTime = scheduledDepartureTime + propagatedDelayMs
+					} else if tripUpdate.Delay != nil {
+						delayMs := tripUpdate.Delay.Nanoseconds() / 1e6
+						predicted = true
+						predictedArrivalTime = scheduledArrivalTime + delayMs
+						predictedDepartureTime = scheduledDepartureTime + delayMs
+					}
+				}
 			}
 		}
 
