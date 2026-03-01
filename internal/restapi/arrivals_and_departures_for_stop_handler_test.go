@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -628,4 +629,246 @@ func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 	}
 
 	assert.True(t, foundResults, "Should find at least one stop with early morning arrivals near midnight boundary")
+}
+
+// setupDelayPropTestData inserts a minimal set of DB records for testing the delay
+// propagation logic. The MockClock must be at 2010-01-01 08:02:00 UTC so that
+// the default 5-min-before / 35-min-after window covers the 08:00:00 arrival.
+// stopSeq is the stop_sequence value written to the DB for the stop being queried.
+func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode, combinedStopID, tripID string, scheduledArrivalMs int64) {
+	t.Helper()
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	agencyID := "dp-agency"
+	stopCode = "dp-stop"
+	routeID := "dp-route"
+	tripID = "dp-trip"
+	serviceID := "dp-svc"
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       agencyID,
+		Name:     "Delay Prop Agency",
+		Url:      "http://example.com",
+		Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:   stopCode,
+		Name: sql.NullString{String: "Delay Test Stop", Valid: true},
+		Lat:  47.0,
+		Lon:  -122.0,
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID:        routeID,
+		AgencyID:  agencyID,
+		ShortName: sql.NullString{String: "DT", Valid: true},
+		LongName:  sql.NullString{String: "Delay Test Route", Valid: true},
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	// 2010-01-01 is a Friday; cover all days to keep setup simple.
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        serviceID,
+		Monday:    1,
+		Tuesday:   1,
+		Wednesday: 1,
+		Thursday:  1,
+		Friday:    1,
+		Saturday:  1,
+		Sunday:    1,
+		StartDate: "20100101",
+		EndDate:   "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   routeID,
+		ServiceID: serviceID,
+		BlockID:   sql.NullString{String: "dp-block", Valid: true},
+	})
+	require.NoError(t, err)
+
+	arrivalNanos := int64(28800) * 1e9 // 08:00:00 as nanoseconds since midnight
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopCode,
+		StopSequence:  stopSeq,
+		ArrivalTime:   arrivalNanos,
+		DepartureTime: arrivalNanos + int64(300)*1e9, // 08:05:00
+	})
+	require.NoError(t, err)
+
+	combinedStopID = utils.FormCombinedID(agencyID, stopCode)
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	scheduledArrivalMs = serviceMidnight.Add(time.Duration(arrivalNanos)).UnixMilli()
+	return
+}
+
+// TestPluralArrivals_ExactStopMatch verifies that a StopTimeUpdate matching the
+// queried stop (by stop ID) is applied directly and marks the arrival as predicted.
+func TestPluralArrivals_ExactStopMatch(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 2)
+
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	delay := 60 * time.Second
+	seq := uint32(2)
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{
+			StopID:       &stopCode,
+			StopSequence: &seq,
+			Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+		},
+	})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	a := arrivals[0].(map[string]interface{})
+	assert.True(t, a["predicted"].(bool), "exact stop match should be predicted")
+	assert.Equal(t, float64(scheduledArrivalMs+60000), a["predictedArrivalTime"],
+		"predicted arrival should be scheduled + 60s")
+}
+
+// TestPluralArrivals_PriorStopPropagation verifies that when no StopTimeUpdate
+// matches the queried stop, the delay is propagated from the closest prior stop.
+func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// Stop being queried is sequence 3; prior update is at sequence 2.
+	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 3)
+
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	priorSeq := uint32(2)
+	delay := 90 * time.Second
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{
+			StopSequence: &priorSeq,
+			Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+		},
+	})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	a := arrivals[0].(map[string]interface{})
+	assert.True(t, a["predicted"].(bool), "should be predicted via prior stop propagation")
+	assert.Equal(t, float64(scheduledArrivalMs+90000), a["predictedArrivalTime"],
+		"predicted arrival should be scheduled + propagated 90s delay")
+}
+
+// TestPluralArrivals_TripLevelDelayFallback verifies that when a TripUpdate has a
+// trip-level Delay but no StopTimeUpdates, that delay is applied to the arrival.
+func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
+
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	tripDelay := 120 * time.Second
+	api.GtfsManager.MockAddTripUpdate(tripID, &tripDelay, nil)
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	a := arrivals[0].(map[string]interface{})
+	assert.True(t, a["predicted"].(bool), "trip-level delay should mark arrival as predicted")
+	assert.Equal(t, float64(scheduledArrivalMs+120000), a["predictedArrivalTime"],
+		"predicted arrival should be scheduled + trip-level 120s delay")
+}
+
+// TestPluralArrivals_NoMatchingOrPriorStop verifies that a TripUpdate with a
+// StopTimeUpdate for a later stop does not mark the arrival as predicted.
+func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// Stop being queried is sequence 1; update is for sequence 5 (later stop).
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	laterSeq := uint32(5)
+	delay := 60 * time.Second
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{
+			StopSequence: &laterSeq,
+			Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+		},
+	})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	a := arrivals[0].(map[string]interface{})
+	assert.False(t, a["predicted"].(bool), "update for a later stop should not predict current stop")
+	assert.Equal(t, float64(0), a["predictedArrivalTime"],
+		"predictedArrivalTime should be 0 when not predicted")
+}
+
+// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a vehicle
+// position without any TripUpdate does NOT mark the arrival as predicted.
+// This tests the behavior change from the old code which incorrectly set predicted=true
+// whenever a vehicle existed, even without real-time delay data.
+func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+
+	// Add a vehicle but no trip update.
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	a := arrivals[0].(map[string]interface{})
+	assert.False(t, a["predicted"].(bool),
+		"vehicle position alone should not mark arrival as predicted")
+	assert.Equal(t, float64(0), a["predictedArrivalTime"],
+		"predictedArrivalTime should be 0 when only vehicle position is present")
 }
