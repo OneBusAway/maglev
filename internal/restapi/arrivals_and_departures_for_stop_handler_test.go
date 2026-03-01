@@ -1034,7 +1034,7 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 
 func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	// Use MockClock within RABA service window (calendar ends 2025-12-31).
-	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
+	mockClock := clock.NewMockClock(time.Date(2024, 10, 15, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
@@ -1044,19 +1044,14 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	// The RABA agency ID is "25".
 	rabaAgencyID := "25"
 
-	// GetStopsForLocation requires the caller to hold RLock.
-	api.GtfsManager.RLock()
 	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, stops, "precondition: RABA should have stops near Redding, CA")
 
 	currentStop := stops[0]
 
 	// Call getNearbyStopIDs with a wrong fallback agency.
 	// If batch resolution works, nearby stops should use "25", not the fallback.
-	api.GtfsManager.RLock()
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, result, "should find nearby stops")
 
 	for _, combinedID := range result {
@@ -1069,22 +1064,19 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 
 func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	// Use MockClock within RABA service window (calendar ends 2025-12-31).
-	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
+	mockClock := clock.NewMockClock(time.Date(2024, 10, 15, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
 
-	api.GtfsManager.RLock()
 	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, stops)
 
 	currentStop := stops[0]
 
-	api.GtfsManager.RLock()
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
-	api.GtfsManager.RUnlock()
+	require.NotEmpty(t, result, "should find nearby stops")
 
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
