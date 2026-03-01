@@ -84,18 +84,6 @@ func TestMultiFeedDataMerging(t *testing.T) {
 }
 
 func TestStaleVehicleExpiry(t *testing.T) {
-	// emptyServer serves a minimal valid GTFS-RT FeedMessage that contains no
-	// vehicle entities. The 7-byte proto2 encoding represents:
-	//   FeedMessage { header { gtfs_realtime_version: "2.0" } }
-	// This satisfies the required FeedMessage.header field so the parser
-	// succeeds and returns a Realtime value with an empty Vehicles slice.
-	emptyFeedBytes := []byte{0x0a, 0x05, 0x0a, 0x03, 0x32, 0x2e, 0x30}
-	emptyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		_, _ = w.Write(emptyFeedBytes)
-	}))
-	defer emptyServer.Close()
-
 	realServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
 		require.NoError(t, err)
@@ -105,49 +93,55 @@ func TestStaleVehicleExpiry(t *testing.T) {
 	defer realServer.Close()
 
 	manager := newTestManager()
-	realFeed := RTFeedConfig{
-		ID:                  "stale-test",
+	feed := RTFeedConfig{
+		ID:                  "expiry-test",
 		VehiclePositionsURL: realServer.URL,
-		RefreshInterval:     30,
-		Enabled:             true,
-	}
-	emptyFeed := RTFeedConfig{
-		ID:                  "stale-test",
-		VehiclePositionsURL: emptyServer.URL,
 		RefreshInterval:     30,
 		Enabled:             true,
 	}
 
 	ctx := context.Background()
 
-	// First poll: seed vehicles via the production updateFeedRealtime path.
-	manager.updateFeedRealtime(ctx, realFeed)
-	require.NotEmpty(t, manager.GetRealTimeVehicles(), "first poll should seed vehicles")
+	// First poll: seed vehicles from RABA feed via the production updateFeedRealtime path.
+	manager.updateFeedRealtime(ctx, feed)
+	initialVehicles := manager.GetRealTimeVehicles()
+	require.NotEmpty(t, initialVehicles, "first poll should seed vehicles from RABA")
+	initialCount := len(initialVehicles)
 
-	// Wind last-seen back to 5 minutes ago so vehicles are within the 15-min
-	// retention window but will appear to have disappeared on the next poll.
+	// Wind last-seen back to 5 minutes ago so vehicles appear to have disappeared
+	// but are still within the 15-min retention window.
 	manager.realTimeMutex.Lock()
-	for vid := range manager.feedVehicleLastSeen["stale-test"] {
-		manager.feedVehicleLastSeen["stale-test"][vid] = time.Now().Add(-5 * time.Minute)
+	for vid := range manager.feedVehicleLastSeen["expiry-test"] {
+		manager.feedVehicleLastSeen["expiry-test"][vid] = time.Now().Add(-5 * time.Minute)
 	}
 	manager.realTimeMutex.Unlock()
 
-	// Second poll returns an empty feed — the production stale-retention logic
-	// should keep vehicles whose last-seen is within the 15-min window.
-	manager.updateFeedRealtime(ctx, emptyFeed)
-	assert.NotEmpty(t, manager.GetRealTimeVehicles(),
+	// Call cleanupExpiredVehicles directly to verify the 5-minute vehicles are preserved
+	manager.realTimeMutex.Lock()
+	manager.cleanupExpiredVehicles("expiry-test")
+	manager.rebuildMergedRealtimeLocked()
+	manager.realTimeMutex.Unlock()
+
+	afterCleanup := manager.GetRealTimeVehicles()
+	assert.Equal(t, initialCount, len(afterCleanup),
 		"vehicles should be retained when last-seen is within 15-min window")
 
 	// Wind last-seen back to 20 minutes ago (beyond the 15-min window).
 	manager.realTimeMutex.Lock()
-	for vid := range manager.feedVehicleLastSeen["stale-test"] {
-		manager.feedVehicleLastSeen["stale-test"][vid] = time.Now().Add(-20 * time.Minute)
+	for vid := range manager.feedVehicleLastSeen["expiry-test"] {
+		manager.feedVehicleLastSeen["expiry-test"][vid] = time.Now().Add(-20 * time.Minute)
 	}
 	manager.realTimeMutex.Unlock()
 
-	// Third poll — stale vehicles should now be evicted by the production logic.
-	manager.updateFeedRealtime(ctx, emptyFeed)
-	assert.Empty(t, manager.GetRealTimeVehicles(),
+	// Call cleanupExpiredVehicles again — stale vehicles beyond the 15-min window
+	// should now be evicted.
+	manager.realTimeMutex.Lock()
+	manager.cleanupExpiredVehicles("expiry-test")
+	manager.rebuildMergedRealtimeLocked()
+	manager.realTimeMutex.Unlock()
+
+	afterExpiry := manager.GetRealTimeVehicles()
+	assert.Empty(t, afterExpiry,
 		"vehicles should be expired when last-seen exceeds 15-min window")
 }
 

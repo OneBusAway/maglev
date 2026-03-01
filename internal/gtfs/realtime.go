@@ -49,6 +49,50 @@ func newRealtimeHTTPClient() *http.Client {
 // staleVehicleTimeout is the duration after which a vehicle is considered stale
 const staleVehicleTimeout = 15 * time.Minute
 
+// isVehicleStale returns true if the incoming vehicle update is older
+// than the existing vehicle based on GTFS-RT timestamps.
+func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
+	if existing.Timestamp == nil || incoming.Timestamp == nil {
+		// If either timestamp is missing, we cannot safely compare
+		return false
+	}
+	return incoming.Timestamp.Before(*existing.Timestamp)
+}
+
+// cleanupExpiredVehicles removes vehicles from both the lastSeenMap and feedVehicles
+// that have exceeded the staleVehicleTimeout threshold since they were last seen.
+// This ensures a consistent retention window across feed updates.
+func (manager *Manager) cleanupExpiredVehicles(feedID string) {
+	if manager.feedVehicleLastSeen[feedID] == nil {
+		return
+	}
+
+	now := time.Now()
+	lastSeenMap := manager.feedVehicleLastSeen[feedID]
+
+	// First, delete expired entries from lastSeenMap
+	for vid, lastSeen := range lastSeenMap {
+		if now.Sub(lastSeen) > staleVehicleTimeout {
+			delete(lastSeenMap, vid)
+		}
+	}
+
+	// Then, rebuild feedVehicles to only include vehicles that are still in lastSeenMap
+	// (i.e., within the retention window)
+	currentVehicles := manager.feedVehicles[feedID]
+	validVehicles := make([]gtfs.Vehicle, 0, len(currentVehicles))
+	for _, v := range currentVehicles {
+		if v.ID == nil {
+			continue
+		}
+		// Keep the vehicle if it's still in the retention window
+		if _, ok := lastSeenMap[v.ID.ID]; ok {
+			validVehicles = append(validVehicles, v)
+		}
+	}
+	manager.feedVehicles[feedID] = validVehicles
+}
+
 func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
@@ -258,48 +302,98 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	if vehicleData != nil && vehicleErr == nil {
-		validVehicles := make([]gtfs.Vehicle, 0, len(vehicleData.Vehicles))
-		for _, v := range vehicleData.Vehicles {
-			if v.ID != nil {
+		applyVehicleUpdate := true
+
+		// Guard against zero CreatedAt from feeds without FeedHeader timestamp.
+		// When CreatedAt is zero time.Time{}, UnixNano() returns a negative value that
+		// wraps to ~11.6×10¹⁸ when cast to uint64, which would permanently block updates.
+		if vehicleData.CreatedAt.IsZero() {
+			// Feed has no FeedHeader timestamp — cannot compare freshness, always apply
+			applyVehicleUpdate = true
+		} else {
+			feedTimestamp := uint64(vehicleData.CreatedAt.UnixNano())
+			if feedTimestamp <= manager.feedVehicleTimestamp[feedID] {
+				logging.LogOperation(
+					logger,
+					"skipping_stale_vehicle_realtime_feed",
+					slog.String("feed", feedID),
+					slog.Uint64("feed_timestamp", feedTimestamp),
+					slog.Uint64("last_applied_timestamp", manager.feedVehicleTimestamp[feedID]),
+				)
+				// Skip applying vehicle updates, but still run cleanup
+				applyVehicleUpdate = false
+			} else {
+				// Record the latest applied vehicle feed timestamp
+				manager.feedVehicleTimestamp[feedID] = feedTimestamp
+			}
+		}
+
+		if applyVehicleUpdate {
+			prevVehicles := manager.feedVehicles[feedID]
+			prevByID := make(map[string]gtfs.Vehicle, len(prevVehicles))
+			for _, pv := range prevVehicles {
+				if pv.ID != nil {
+					prevByID[pv.ID.ID] = pv
+				}
+			}
+
+			validVehicles := make([]gtfs.Vehicle, 0, len(vehicleData.Vehicles))
+			for _, v := range vehicleData.Vehicles {
+				if v.ID == nil {
+					continue
+				}
+
+				if prev, exists := prevByID[v.ID.ID]; exists {
+					if isVehicleStale(prev, v) {
+						// Keep newer existing vehicle, drop stale update
+						validVehicles = append(validVehicles, prev)
+						continue
+					}
+				}
+
 				validVehicles = append(validVehicles, v)
 			}
-		}
 
-		now := time.Now()
-		if manager.feedVehicleLastSeen[feedID] == nil {
-			manager.feedVehicleLastSeen[feedID] = make(map[string]time.Time)
-		}
-		lastSeenMap := manager.feedVehicleLastSeen[feedID]
+			now := time.Now()
+			if manager.feedVehicleLastSeen[feedID] == nil {
+				manager.feedVehicleLastSeen[feedID] = make(map[string]time.Time)
+			}
+			lastSeenMap := manager.feedVehicleLastSeen[feedID]
 
-		currentVehicleIDs := make(map[string]struct{}, len(validVehicles))
-		for _, v := range validVehicles {
-			lastSeenMap[v.ID.ID] = now
-			currentVehicleIDs[v.ID.ID] = struct{}{}
-		}
+			currentVehicleIDs := make(map[string]struct{}, len(validVehicles))
+			for _, v := range validVehicles {
+				lastSeenMap[v.ID.ID] = now
+				currentVehicleIDs[v.ID.ID] = struct{}{}
+			}
 
-		// Delete stale vehicles
-		for vid, lastSeen := range lastSeenMap {
-			if _, current := currentVehicleIDs[vid]; !current {
-				if now.Sub(lastSeen) > staleVehicleTimeout {
-					delete(lastSeenMap, vid)
+			// Delete stale vehicles
+			for vid, lastSeen := range lastSeenMap {
+				if _, current := currentVehicleIDs[vid]; !current {
+					if now.Sub(lastSeen) > staleVehicleTimeout {
+						delete(lastSeenMap, vid)
+					}
 				}
 			}
-		}
 
-		// Retain recently-disappeared vehicles whose last-seen time hasn't expired
-		prevVehicles := manager.feedVehicles[feedID]
-		for _, pv := range prevVehicles {
-			if pv.ID == nil {
-				continue
-			}
-			if _, current := currentVehicleIDs[pv.ID.ID]; !current {
-				if lastSeen, ok := lastSeenMap[pv.ID.ID]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
-					validVehicles = append(validVehicles, pv)
+			// Retain recently-disappeared vehicles whose last-seen time hasn't expired
+			prevVehicles = manager.feedVehicles[feedID]
+			for _, pv := range prevVehicles {
+				if pv.ID == nil {
+					continue
+				}
+				if _, current := currentVehicleIDs[pv.ID.ID]; !current {
+					if lastSeen, ok := lastSeenMap[pv.ID.ID]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
+						validVehicles = append(validVehicles, pv)
+					}
 				}
 			}
-		}
 
-		manager.feedVehicles[feedID] = validVehicles
+			manager.feedVehicles[feedID] = validVehicles
+		} else {
+			// Even when skipping the vehicle update due to staleness, still clean up
+			// expired vehicles based on the last-seen timeout windows
+			manager.cleanupExpiredVehicles(feedID)
+		}
 	}
 
 	if alertData != nil && alertErr == nil {
