@@ -209,16 +209,14 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		})
 	}
 
-	var stops []models.Stop
-	for stopID := range stopIDs {
-		if ctx.Err() != nil {
-			return models.ReferencesModel{}, ctx.Err()
-		}
+	// batch fetch
+	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsArr)
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
 
-		stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
-			return models.ReferencesModel{}, err
-		}
+	var stops []models.Stop
+	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
 			ID:        utils.FormCombinedID(agencyID, stop.ID),
 			Name:      stop.Name.String,
@@ -229,16 +227,19 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		})
 	}
 
-	var trips []interface{}
-	for tripID := range tripIDs {
-		if ctx.Err() != nil {
-			return models.ReferencesModel{}, ctx.Err()
-		}
+	// batch fetch
+	tripIDsArr := make([]string, 0, len(tripIDs))
+	for tid := range tripIDs {
+		tripIDsArr = append(tripIDsArr, tid)
+	}
 
-		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
-		if err != nil {
-			return models.ReferencesModel{}, err
-		}
+	batchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsArr)
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
+
+	var trips []interface{}
+	for _, trip := range batchedTrips {
 		trips = append(trips, models.Trip{
 			ID:           utils.FormCombinedID(agencyID, trip.ID),
 			RouteID:      utils.FormCombinedID(agencyID, trip.RouteID),

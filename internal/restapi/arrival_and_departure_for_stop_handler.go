@@ -443,18 +443,41 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			stopIDSet[closestStopID] = true
 		}
 	}
-	for stopID := range stopIDSet {
-		stopData, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
+	// batch fetch
+	stopIDsSlice := make([]string, 0, len(stopIDSet))
+	for sid := range stopIDSet {
+		stopIDsSlice = append(stopIDsSlice, sid)
+	}
+
+	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
+	if err != nil {
+		api.Logger.Warn("failed to batch fetch stops for references", "error", err)
+		batchedStops = nil
+	}
+
+	stopDataMap := make(map[string]gtfsdb.Stop)
+	for _, s := range batchedStops {
+		stopDataMap[s.ID] = s
+	}
+
+	batchedRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
+	if err != nil {
+		api.Logger.Warn("failed to batch fetch routes for stops", "error", err)
+		batchedRoutesForStops = nil
+	}
+
+	routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
+	for _, routeRow := range batchedRoutesForStops {
+		routesByStopID[routeRow.StopID] = append(routesByStopID[routeRow.StopID], routeRow)
+	}
+
+	for _, sid := range stopIDsSlice {
+		stopData, exists := stopDataMap[sid]
+		if !exists {
 			continue
 		}
 
-		routesForThisStop, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
-		if err != nil {
-			api.Logger.Warn("failed to fetch routes for stop", "stopID", stopID, "error", err)
-			continue
-		}
-
+		routesForThisStop := routesByStopID[sid]
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)

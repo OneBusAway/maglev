@@ -258,27 +258,72 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
 	referencedTrips := []*models.Trip{}
 
-	for _, tripID := range tripsToInclude {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
+	// extract unique trip IDs for the batch fetch
+	uniqueTripIDs := make([]string, 0, len(tripsToInclude))
+	seen := make(map[string]bool)
+	type tripEntry struct {
+		combinedID string
+		refTripID  string
+	}
+	orderedEntries := make([]tripEntry, 0, len(tripsToInclude))
 
+	for _, tripID := range tripsToInclude {
 		_, refTripID, err := utils.ExtractAgencyIDAndCodeID(tripID)
 		if err != nil {
 			continue
 		}
+		orderedEntries = append(orderedEntries, tripEntry{combinedID: tripID, refTripID: refTripID})
+		if !seen[refTripID] {
+			seen[refTripID] = true
+			uniqueTripIDs = append(uniqueTripIDs, refTripID)
+		}
+	}
 
-		if refTripID == mainTrip.ID && len(referencedTrips) > 0 {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	// batch fetch
+	batchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
+	if err != nil {
+		return referencedTrips, nil
+	}
+
+	tripMap := make(map[string]gtfsdb.Trip)
+	routeIDSet := make(map[string]bool)
+	for _, t := range batchedTrips {
+		tripMap[t.ID] = t
+		routeIDSet[t.RouteID] = true
+	}
+
+	// batch fetch
+	routeIDs := make([]string, 0, len(routeIDSet))
+	for rid := range routeIDSet {
+		routeIDs = append(routeIDs, rid)
+	}
+
+	batchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
+	if err != nil {
+		return referencedTrips, nil
+	}
+
+	routeMap := make(map[string]gtfsdb.Route)
+	for _, rt := range batchedRoutes {
+		routeMap[rt.ID] = rt
+	}
+
+	for _, entry := range orderedEntries {
+		if entry.refTripID == mainTrip.ID && len(referencedTrips) > 0 {
 			continue
 		}
 
-		refTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, refTripID)
-		if err != nil {
+		refTrip, tripExists := tripMap[entry.refTripID]
+		if !tripExists {
 			continue
 		}
 
-		refRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, refTrip.RouteID)
-		if err != nil {
+		refRoute, routeExists := routeMap[refTrip.RouteID]
+		if !routeExists {
 			continue
 		}
 
@@ -288,7 +333,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 		}
 
 		refTripModel := &models.Trip{
-			ID:             tripID,
+			ID:             entry.combinedID,
 			RouteID:        utils.FormCombinedID(agencyID, refTrip.RouteID),
 			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
 			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
