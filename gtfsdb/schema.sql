@@ -421,7 +421,13 @@ CREATE INDEX IF NOT EXISTS idx_problem_reports_stop_code
 -- Missing indexes to prevent full table scans on gtfs reads
 
 -- migrate
+DROP INDEX IF EXISTS idx_trips_route_id;
+
+-- migrate
 CREATE INDEX IF NOT EXISTS idx_trips_route_service ON trips (route_id, service_id);
+
+-- migrate
+DROP INDEX IF EXISTS idx_stop_times_stop_arrival;
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_arrival ON stop_times (stop_id, arrival_time, departure_time);
