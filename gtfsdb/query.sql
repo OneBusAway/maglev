@@ -194,6 +194,12 @@ ORDER BY
 LIMIT
     1;
 
+-- name: GetAllStopIDs :many
+SELECT
+    id
+FROM
+    stops;    
+
 -- name: GetStopIDsForAgency :many
 SELECT DISTINCT
     s.id

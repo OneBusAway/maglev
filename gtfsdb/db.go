@@ -117,6 +117,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getAllShapesStmt, err = db.PrepareContext(ctx, getAllShapes); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllShapes: %w", err)
 	}
+	if q.getAllStopIDsStmt, err = db.PrepareContext(ctx, getAllStopIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAllStopIDs: %w", err)
+	}
 	if q.getAllTripsForRouteStmt, err = db.PrepareContext(ctx, getAllTripsForRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllTripsForRoute: %w", err)
 	}
@@ -458,6 +461,11 @@ func (q *Queries) Close() error {
 	if q.getAllShapesStmt != nil {
 		if cerr := q.getAllShapesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAllShapesStmt: %w", cerr)
+		}
+	}
+	if q.getAllStopIDsStmt != nil {
+		if cerr := q.getAllStopIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAllStopIDsStmt: %w", cerr)
 		}
 	}
 	if q.getAllTripsForRouteStmt != nil {
@@ -835,6 +843,7 @@ type Queries struct {
 	getAgencyStmt                             *sql.Stmt
 	getAgencyForStopStmt                      *sql.Stmt
 	getAllShapesStmt                          *sql.Stmt
+	getAllStopIDsStmt                         *sql.Stmt
 	getAllTripsForRouteStmt                   *sql.Stmt
 	getArrivalsAndDeparturesForStopStmt       *sql.Stmt
 	getBlockDetailsStmt                       *sql.Stmt
@@ -933,6 +942,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getAgencyStmt:                             q.getAgencyStmt,
 		getAgencyForStopStmt:                      q.getAgencyForStopStmt,
 		getAllShapesStmt:                          q.getAllShapesStmt,
+		getAllStopIDsStmt:                         q.getAllStopIDsStmt,
 		getAllTripsForRouteStmt:                   q.getAllTripsForRouteStmt,
 		getArrivalsAndDeparturesForStopStmt:       q.getArrivalsAndDeparturesForStopStmt,
 		getBlockDetailsStmt:                       q.getBlockDetailsStmt,

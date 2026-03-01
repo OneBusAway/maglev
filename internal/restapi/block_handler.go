@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"maglev.onebusaway.org/gtfsdb"
-	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -57,8 +56,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		Data: blockData,
 	}
 
-	calc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
-	references, err := api.getReferences(ctx, agencyID, calc, block)
+	references, err := api.getReferences(ctx, agencyID, block)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -167,7 +165,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (api *RestAPI) getReferences(ctx context.Context, agencyID string, calc *GTFS.AdvancedDirectionCalculator, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
+func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
 	routeIDs := make(map[string]struct{})
 	stopIDs := make(map[string]struct{})
 	tripIDs := make(map[string]struct{})
@@ -227,7 +225,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, calc *GT
 			Code:      stop.Code.String,
 			Lat:       stop.Lat,
 			Lon:       stop.Lon,
-			Direction: calc.CalculateStopDirection(ctx, stop.ID, stop.Direction),
+			Direction: api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 		})
 	}
 

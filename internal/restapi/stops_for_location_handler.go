@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -200,8 +199,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	isLimitExceeded := false
 
-	calc := gtfs.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
-
 	// Build results using the pre-fetched data
 	for _, stopID := range stopIDs {
 		if ctx.Err() != nil {
@@ -216,7 +213,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		direction := calc.CalculateStopDirection(ctx, stop.ID, stop.Direction)
+		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
 		results = append(results, models.NewStop(
 			utils.NullStringOrEmpty(stop.Code),

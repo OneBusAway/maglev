@@ -1136,6 +1136,36 @@ func (q *Queries) GetAllShapes(ctx context.Context) ([]Shape, error) {
 	return items, nil
 }
 
+const getAllStopIDs = `-- name: GetAllStopIDs :many
+SELECT
+    id
+FROM
+    stops
+`
+
+func (q *Queries) GetAllStopIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.query(ctx, q.getAllStopIDsStmt, getAllStopIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllTripsForRoute = `-- name: GetAllTripsForRoute :many
 SELECT DISTINCT id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed
 FROM trips t

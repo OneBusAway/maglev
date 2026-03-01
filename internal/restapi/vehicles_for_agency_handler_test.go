@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -347,15 +348,20 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 	gtfsManager, err := gtfs.InitGTFSManager(gtfsConfig)
 	require.NoError(t, err)
 
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+	err = gtfs.InitializeGlobalCache(context.Background(), gtfsManager.GtfsDB.Queries, dirCalc)
+	require.NoError(t, err)
+
 	application := &app.Application{
 		Config: appconf.Config{
 			Env:       appconf.EnvFlagToEnvironment("test"),
 			ApiKeys:   []string{"TEST"},
 			RateLimit: 100, // Higher rate limit for this test
 		},
-		GtfsConfig:  gtfsConfig,
-		GtfsManager: gtfsManager,
-		Clock:       clock.RealClock{},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               clock.RealClock{},
 	}
 
 	api := NewRestAPI(application)
