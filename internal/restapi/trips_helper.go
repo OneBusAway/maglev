@@ -518,36 +518,6 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	return 0
 }
 
-func (api *RestAPI) calculateScheduleDeviationFromTripUpdates(
-	tripID string,
-) int {
-	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
-	if len(tripUpdates) == 0 {
-		return 0
-	}
-
-	tripUpdate := tripUpdates[0]
-
-	var bestDeviation int64 = 0
-	var foundRelevantUpdate bool
-
-	for _, stopTimeUpdate := range tripUpdate.StopTimeUpdates {
-		if stopTimeUpdate.Arrival != nil && stopTimeUpdate.Arrival.Delay != nil {
-			bestDeviation = int64(stopTimeUpdate.Arrival.Delay.Seconds())
-			foundRelevantUpdate = true
-		} else if stopTimeUpdate.Departure != nil && stopTimeUpdate.Departure.Delay != nil {
-			bestDeviation = int64(stopTimeUpdate.Departure.Delay.Seconds())
-			foundRelevantUpdate = true
-		}
-
-		if foundRelevantUpdate {
-			break
-		}
-	}
-
-	return int(bestDeviation)
-}
-
 // calculatePreciseDistanceAlongTripWithCoords calculates the distance along a trip's shape to a stop
 // This optimized version accepts pre-calculated cumulative distances and stop coordinates
 func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
