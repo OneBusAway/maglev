@@ -3,6 +3,7 @@ package restapi
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -26,9 +27,10 @@ import (
 
 // Shared test database setup
 var (
-	testGtfsManager *gtfs.Manager
-	testDbSetupOnce sync.Once
-	testDbPath      = filepath.Join("../../testdata", "raba-test.db")
+	testGtfsManager         *gtfs.Manager
+	testDirectionCalculator *gtfs.AdvancedDirectionCalculator
+	testDbSetupOnce         sync.Once
+	testDbPath              = filepath.Join("../../testdata", "raba-test.db")
 )
 
 // TestMain handles setup and cleanup for all tests in this package
@@ -59,6 +61,13 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 		if err != nil {
 			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
 		}
+
+		// Create the DirectionCalculator using the shared manager's queries
+		testDirectionCalculator = gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
+
+		// Warm up the cache with test data
+		err = gtfs.InitializeGlobalCache(context.Background(), testGtfsManager.GtfsDB.Queries, testDirectionCalculator)
+		require.NoError(t, err, "Failed to initialize global cache for tests")
 	})
 
 	gtfsConfig := gtfs.Config{
@@ -73,9 +82,10 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 			RateLimit:     5, // Low rate limit for testing
 			ExemptApiKeys: []string{"org.onebusaway.iphone"},
 		},
-		GtfsConfig:  gtfsConfig,
-		GtfsManager: testGtfsManager,
-		Clock:       c,
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         testGtfsManager,
+		DirectionCalculator: testDirectionCalculator,
+		Clock:               c,
 	}
 
 	api := NewRestAPI(application)

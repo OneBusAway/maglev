@@ -15,81 +15,41 @@ import (
 )
 
 func TestManager_GetAgencies(t *testing.T) {
-	testCases := []struct {
-		name     string
-		dataPath string
-	}{
-		{
-			name:     "FromLocalFile",
-			dataPath: models.GetFixturePath(t, "raba.zip"),
-		},
-	}
+	// Use shared component to avoid reloading DB
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				Env:          appconf.Test,
-				GTFSDataPath: ":memory:",
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
-			defer manager.Shutdown()
+	agencies := manager.GetAgencies()
+	assert.Equal(t, 1, len(agencies))
 
-			agencies := manager.GetAgencies()
-			assert.Equal(t, 1, len(agencies))
-
-			agency := agencies[0]
-			assert.Equal(t, "25", agency.Id)
-			assert.Equal(t, "Redding Area Bus Authority", agency.Name)
-			assert.Equal(t, "http://www.rabaride.com/", agency.Url)
-			assert.Equal(t, "America/Los_Angeles", agency.Timezone)
-			assert.Equal(t, "en", agency.Language)
-			assert.Equal(t, "530-241-2877", agency.Phone)
-			assert.Equal(t, "", agency.FareUrl)
-			assert.Equal(t, "", agency.Email)
-		})
-	}
+	agency := agencies[0]
+	assert.Equal(t, "25", agency.Id)
+	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
+	assert.Equal(t, "http://www.rabaride.com/", agency.Url)
+	assert.Equal(t, "America/Los_Angeles", agency.Timezone)
+	assert.Equal(t, "en", agency.Language)
+	assert.Equal(t, "530-241-2877", agency.Phone)
+	assert.Equal(t, "", agency.FareUrl)
+	assert.Equal(t, "", agency.Email)
 }
 
 func TestManager_RoutesForAgencyID(t *testing.T) {
-	testCases := []struct {
-		name     string
-		dataPath string
-	}{
-		{
-			name:     "FromLocalFile",
-			dataPath: models.GetFixturePath(t, "raba.zip"),
-		},
-	}
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				GTFSDataPath: ":memory:",
-				Env:          appconf.Test,
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
-			defer manager.Shutdown()
+	manager.RLock()
+	routes := manager.RoutesForAgencyID("25")
+	manager.RUnlock()
+	assert.Equal(t, 13, len(routes))
 
-			manager.RLock()
-			routes := manager.RoutesForAgencyID("25")
-			manager.RUnlock()
-			assert.Equal(t, 13, len(routes))
-
-			route := routes[0]
-			assert.Equal(t, "1", route.ShortName)
-			assert.Equal(t, "25", route.Agency.Id)
-		})
-	}
+	route := routes[0]
+	assert.Equal(t, "1", route.ShortName)
+	assert.Equal(t, "25", route.Agency.Id)
 }
 
 func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 	testCases := []struct {
 		name          string
-		dataPath      string
 		lat           float64
 		lon           float64
 		radius        float64
@@ -97,7 +57,6 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 	}{
 		{
 			name:          "FindStopsWithinRadius",
-			dataPath:      models.GetFixturePath(t, "raba.zip"),
 			lat:           40.589123, // Near Redding, CA
 			lon:           -122.390830,
 			radius:        2000, // 2km radius
@@ -105,7 +64,6 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 		},
 		{
 			name:          "FindStopsWithinRadius",
-			dataPath:      models.GetFixturePath(t, "raba.zip"),
 			lat:           47.589123, // West Seattle
 			lon:           -122.390830,
 			radius:        2000, // 2km radius
@@ -115,14 +73,8 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				GTFSDataPath: ":memory:",
-				Env:          appconf.Test,
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
-			defer manager.Shutdown()
+			manager, _ := getSharedTestComponents(t)
+			assert.NotNil(t, manager)
 
 			// Get stops using the manager method
 			stops := manager.GetStopsForLocation(context.Background(), tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
@@ -142,14 +94,8 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 }
 
 func TestManager_GetTrips(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
 	trips := manager.GetTrips()
 	assert.NotEmpty(t, trips)
@@ -157,14 +103,7 @@ func TestManager_GetTrips(t *testing.T) {
 }
 
 func TestManager_FindAgency(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	manager, _ := getSharedTestComponents(t)
 
 	agency := manager.FindAgency("25")
 	assert.NotNil(t, agency)
@@ -260,14 +199,7 @@ func TestManager_GetTripUpdateByID(t *testing.T) {
 }
 
 func TestManager_IsServiceActiveOnDate(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	manager, _ := getSharedTestComponents(t)
 
 	// Get a trip to find a valid service ID
 	trips := manager.GetTrips()
@@ -335,6 +267,7 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
+	// We use isolated GTFSManager here instead of shared test components because we want to control the real-time vehicles for this test.
 	manager, err := InitGTFSManager(gtfsConfig)
 	assert.Nil(t, err)
 	defer manager.Shutdown()
@@ -358,6 +291,10 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 		assert.NotNil(t, vehicle)
 		assert.Equal(t, "vehicle1", vehicle.ID.ID)
 	}
+
+	// Test Not Found
+	nilVehicle := manager.GetVehicleForTrip(t.Context(), "nonexistent")
+	assert.Nil(t, nilVehicle)
 }
 
 func TestBuildLookupMaps(t *testing.T) {
@@ -389,7 +326,6 @@ func TestManager_FindAgency_UsesMap(t *testing.T) {
 	// This test proves we are using the Map, not the Slice.
 	// We populate the Map, but leave the Slice empty.
 	// If the code was still looping over the slice, this would fail.
-
 	manager := &Manager{
 		agenciesMap: map[string]*gtfs.Agency{
 			"A1": {Id: "A1", Name: "Fast Agency"},
@@ -409,7 +345,6 @@ func TestManager_FindAgency_UsesMap(t *testing.T) {
 }
 
 func TestManager_FindRoute_UsesMap(t *testing.T) {
-
 	manager := &Manager{
 		routesMap: map[string]*gtfs.Route{
 			"R1": {Id: "R1", LongName: "Express Route"},

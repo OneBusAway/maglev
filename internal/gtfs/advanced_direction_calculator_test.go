@@ -4,12 +4,52 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"os"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
+
+// This uses a Singleton pattern to load the DB and Warm the Cache exactly ONCE
+// for this test file. This prevents re-loading the ZIP file 15+ times.
+
+var (
+	sharedManager *Manager
+	sharedCalc    *AdvancedDirectionCalculator
+	setupOnce     sync.Once
+)
+
+// Helper function to get the shared instances.
+func getSharedTestComponents(t *testing.T) (*Manager, *AdvancedDirectionCalculator) {
+	setupOnce.Do(func() {
+		// Initialize the DB (In-Memory)
+		gtfsConfig := Config{
+			GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+			GTFSDataPath: ":memory:",
+		}
+
+		var err error
+		sharedManager, err = InitGTFSManager(gtfsConfig)
+		if err != nil {
+			panic("Failed to init shared GTFS manager: " + err.Error())
+		}
+
+		// Create the Calculator
+		sharedCalc = NewAdvancedDirectionCalculator(sharedManager.GtfsDB.Queries)
+
+		// Warm the Global Cache (The heavy operation)
+		// We do this only once per test suite execution.
+		err = InitializeGlobalCache(context.Background(), sharedManager.GtfsDB.Queries, sharedCalc)
+		if err != nil {
+			panic("Failed to warm global cache: " + err.Error())
+		}
+	})
+
+	return sharedManager, sharedCalc
+}
 
 func TestTranslateGtfsDirection(t *testing.T) {
 	calc := &AdvancedDirectionCalculator{}
@@ -41,7 +81,6 @@ func TestTranslateGtfsDirection(t *testing.T) {
 		{"225 degrees", "225", "SW"},
 		{"270 degrees", "270", "W"},
 		{"315 degrees", "315", "NW"},
-
 		// Invalid
 		{"invalid text", "invalid", ""},
 		{"empty string", "", ""},
@@ -158,7 +197,6 @@ func TestStatisticalFunctions(t *testing.T) {
 
 func TestStandardDeviationThreshold(t *testing.T) {
 	calc := NewAdvancedDirectionCalculator(nil)
-
 	// Test default threshold
 	assert.Equal(t, defaultStandardDeviationThreshold, calc.standardDeviationThreshold)
 
@@ -168,63 +206,33 @@ func TestStandardDeviationThreshold(t *testing.T) {
 }
 
 func TestCalculateStopDirection_WithShapeData(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	// Optimization: Reuse shared DB and Cache
+	_, calc := getSharedTestComponents(t)
 
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
-
-	// Test with a real stop from RABA data
 	direction := calc.CalculateStopDirection(context.Background(), "7000", sql.NullString{Valid: false})
-	// Should return a valid direction or empty string
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
 
 func TestComputeFromShapes_NoShapeData(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	// Optimization: Reuse shared DB and Cache
+	_, calc := getSharedTestComponents(t)
 
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
-
-	// Test with a non-existent stop
 	direction := calc.computeFromShapes(context.Background(), "nonexistent")
 	assert.Equal(t, "", direction)
 }
 
 func TestComputeFromShapes_SingleOrientation(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	// Optimization: Reuse shared DB and Cache
+	_, calc := getSharedTestComponents(t)
 
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
-
-	// Test with actual stop data - single orientation path will be taken if only one trip
 	direction := calc.computeFromShapes(context.Background(), "7000")
-	// Direction should be valid or empty
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
 
 func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	// Note: We reuse the Shared Manager (DB) but create a NEW Calculator.
+	// This is because we modify the variance threshold and don't want to break other tests.
+	manager, _ := getSharedTestComponents(t)
 
 	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
 
@@ -238,15 +246,7 @@ func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
-
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+	manager, calc := getSharedTestComponents(t)
 
 	// Get a shape ID from the database
 	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
@@ -263,15 +263,7 @@ func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
-
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+	manager, calc := getSharedTestComponents(t)
 
 	// Get a shape ID from the database
 	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
@@ -290,15 +282,7 @@ func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
-
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+	_, calc := getSharedTestComponents(t)
 
 	// Test with non-existent shape - should return error or 0 orientation
 	orientation, err := calc.calculateOrientationAtStop(context.Background(), "nonexistent", 0, 0, 0)
@@ -307,22 +291,13 @@ func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
-
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+	manager, calc := getSharedTestComponents(t)
 
 	// Test with shape that has points at the boundaries
 	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
 	if err != nil || len(shapes) < 2 {
 		t.Skip("No shape data available for testing")
 	}
-
 	// Test at the very beginning of the shape
 	if len(shapes) > 0 && shapes[0].ShapeDistTraveled.Valid {
 		orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", shapes[0].ShapeDistTraveled.Float64, 0, 0)
@@ -430,18 +405,7 @@ func TestSetContextCache_PanicAfterInit(t *testing.T) {
 }
 
 func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
-
-	// Setup in-memory DB so the calculator has a valid query interface
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
-
-	// Create the calculator using the VALID queries object
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
+	_, calc := getSharedTestComponents(t)
 
 	// Case 1: Caller provides the optimized direction (should be used instantly)
 	// We pass "North", expect "N"
@@ -456,15 +420,8 @@ func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
 }
 
 func TestSetContextCache_ConcurrentAccess(t *testing.T) {
-	// Setup
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
-
+	manager, _ := getSharedTestComponents(t)
+	// We use shared DB, but MUST use a fresh Calculator to test the race condition specifically on that instance.
 	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
 
 	// Create dummy cache
@@ -505,22 +462,10 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 
 // TestBulkQuery_GetStopsWithShapeContextByIDs verifies the bulk optimization
 func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
-	// Setup
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	if err != nil {
-		t.Fatalf("Failed to init manager: %v", err)
-	}
-	defer manager.Shutdown()
-
+	manager, _ := getSharedTestComponents(t)
 	ctx := context.Background()
-
 	// DYNAMICALLY fetch valid Stop IDs
 	rows, err := manager.GtfsDB.DB.QueryContext(ctx, "SELECT id FROM stops LIMIT 5")
-
 	if err != nil {
 		t.Fatalf("Failed to query stops: %v", err)
 	}
@@ -563,22 +508,12 @@ func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
 
 // TestBulkQuery_GetShapePointsByIDs verifies fetching shape points in bulk.
 func TestBulkQuery_GetShapePointsByIDs(t *testing.T) {
-	// Setup
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	if err != nil {
-		t.Fatalf("Failed to init manager: %v", err)
-	}
-	defer manager.Shutdown()
-
+	manager, _ := getSharedTestComponents(t)
 	ctx := context.Background()
 
 	// DYNAMICALLY fetch a real Shape ID from the DB
 	var shapeID string
-	err = manager.GtfsDB.DB.QueryRowContext(ctx, "SELECT shape_id FROM shapes LIMIT 1").Scan(&shapeID)
+	err := manager.GtfsDB.DB.QueryRowContext(ctx, "SELECT shape_id FROM shapes LIMIT 1").Scan(&shapeID)
 
 	// Stop immediately on error
 	if err != nil {
@@ -605,4 +540,18 @@ func TestBulkQuery_GetShapePointsByIDs(t *testing.T) {
 		}
 	}
 	assert.True(t, isSorted, "Shape points should be returned in sequence order")
+}
+
+func TestMain(m *testing.M) {
+	// Run all tests
+	code := m.Run()
+
+	// Global Teardown
+	// If sharedManager was initialized during tests, shut it down now.
+	if sharedManager != nil {
+		sharedManager.Shutdown()
+	}
+
+	// Exit with the test result code
+	os.Exit(code)
 }

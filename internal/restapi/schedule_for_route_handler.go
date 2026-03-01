@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -155,6 +154,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			}
 			stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, trip.ID)
 			if err != nil {
+				api.Logger.Warn("failed to fetch stop IDs for trip", "trip_id", trip.ID, "error", err)
 				continue
 			}
 			for _, stopID := range stopIDs {
@@ -163,6 +163,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			}
 			stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 			if err != nil {
+				api.Logger.Warn("failed to fetch stop times for trip", "trip_id", trip.ID, "error", err)
 				continue
 			}
 			stopTimesList := make([]models.RouteStopTime, 0, len(stopTimes))
@@ -228,37 +229,39 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 	if len(tripIDs) > 0 {
 		tripRows, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
-		if err == nil {
-			for _, t := range tripRows {
-				combinedTripID := utils.FormCombinedID(agencyID, t.ID)
-				tripRef := models.NewTripReference(
-					combinedTripID,
-					t.RouteID,
-					t.ServiceID,
-					t.TripHeadsign.String,
-					t.TripShortName.String,
-					t.DirectionID.Int64,
-					utils.FormCombinedID(agencyID, t.BlockID.String),
-					utils.FormCombinedID(agencyID, t.ShapeID.String),
-				)
-				references.Trips = append(references.Trips, tripRef)
-			}
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		for _, t := range tripRows {
+			combinedTripID := utils.FormCombinedID(agencyID, t.ID)
+			tripRef := models.NewTripReference(
+				combinedTripID,
+				t.RouteID,
+				t.ServiceID,
+				t.TripHeadsign.String,
+				t.TripShortName.String,
+				t.DirectionID.Int64,
+				utils.FormCombinedID(agencyID, t.BlockID.String),
+				utils.FormCombinedID(agencyID, t.ShapeID.String),
+			)
+			references.Trips = append(references.Trips, tripRef)
 		}
 	}
-
-	// Create a local calculator to ensure thread safety
-	calc := gtfs.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
 
 	uniqueStopIDs := make([]string, 0, len(globalStopIDSet))
 	for sid := range globalStopIDSet {
 		uniqueStopIDs = append(uniqueStopIDs, sid)
 	}
 	if len(uniqueStopIDs) > 0 {
-		// Pass the local calculator
-		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs, calc)
-		if err == nil {
-			references.Stops = append(references.Stops, modelStops...)
+
+		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
 		}
+		references.Stops = append(references.Stops, modelStops...)
 	}
 
 	for _, sref := range stopTimesRefs {
