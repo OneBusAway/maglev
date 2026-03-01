@@ -43,6 +43,9 @@ run: build
 build: gtfstidy
 	$(SET_ENV) go build -tags "sqlite_fts5" $(LDFLAGS) -o bin/maglev ./cmd/api
 
+build-pure: gtfstidy
+	CGO_ENABLED=0 go build -tags "purego" $(LDFLAGS) -o bin/maglev ./cmd/api
+
 build-debug: gtfstidy
 	$(SET_ENV) go build -tags "sqlite_fts5" $(LDFLAGS) -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 
@@ -76,6 +79,9 @@ fmt:
 
 test:
 	$(SET_ENV) go test -tags "sqlite_fts5" ./...
+
+test-pure:
+	CGO_ENABLED=0 go test -tags "purego" ./...
 
 models:
 	go tool sqlc generate -f gtfsdb/sqlc.yml

@@ -14,7 +14,6 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/tidwall/rtree"
 	"maglev.onebusaway.org/internal/logging"
 )

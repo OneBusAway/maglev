@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 )
 
 func TestNew(t *testing.T) {
@@ -38,7 +38,7 @@ func TestStartDBStatsCollector_NilDB(t *testing.T) {
 }
 
 func TestStartDBStatsCollector_Idempotent(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -56,7 +56,7 @@ func TestStartDBStatsCollector_Idempotent(t *testing.T) {
 }
 
 func TestStartDBStatsCollector_CollectsStats(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -80,7 +80,7 @@ func TestStartDBStatsCollector_CollectsStats(t *testing.T) {
 }
 
 func TestShutdown_StopsGoroutine(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 

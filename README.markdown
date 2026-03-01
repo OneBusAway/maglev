@@ -198,6 +198,18 @@ CGO_ENABLED=1 go build -tags "sqlite_fts5" ./...
 
 Ensure you have a working C toolchain when CGO is enabled.
 
+## SQLite Drivers (Fast Mode vs. Compatible Mode)
+
+Maglev uses SQLite and supports two different drivers via Go build tags to balance production performance with developer experience:
+
+1. **Fast Mode (Default)**: Uses `github.com/mattn/go-sqlite3` (CGo). This is the default for production because of its high performance and support for advanced SQLite features like FTS5 (Full-Text Search). It requires a C compiler (GCC/Clang) installed on your system.
+   - Run tests: `make test`
+   - Build: `make build`
+
+2. **Compatible Mode**: Uses `modernc.org/sqlite` (Pure Go). This mode is intended for local development and CI on platforms where CGo is difficult to configure (like Windows). It does not require a C compiler.
+   - Run tests: `make test-pure`
+   - Build: `make build-pure`
+
 ## Directory Structure
 
 * `bin`: Compiled application binaries.
