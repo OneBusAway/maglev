@@ -5,12 +5,21 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"runtime"
 
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func main() {
+	if os.Getenv("MAGLEV_PROFILE_MUTEX") == "1" {
+		runtime.SetMutexProfileFraction(1)
+		runtime.SetBlockProfileRate(1)
+
+		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+		logger.Warn("MUTEX AND BLOCK PROFILING ENABLED (Performance will be impacted)")
+	}
+
 	var cfg appconf.Config
 	var gtfsCfg gtfs.Config
 	var apiKeysFlag string
