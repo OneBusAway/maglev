@@ -728,6 +728,7 @@ func TestPluralArrivals_ExactStopMatch(t *testing.T) {
 			StopID:       &stopCode,
 			StopSequence: &seq,
 			Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+			Departure:    &gtfs.StopTimeEvent{Delay: &delay},
 		},
 	})
 
@@ -739,10 +740,14 @@ func TestPluralArrivals_ExactStopMatch(t *testing.T) {
 	arrivals := entry["arrivalsAndDepartures"].([]interface{})
 	require.NotEmpty(t, arrivals, "expected at least one arrival")
 
+	scheduledDepartureMs := scheduledArrivalMs + 300000 // departure is 5 min after arrival
+
 	a := arrivals[0].(map[string]interface{})
 	assert.True(t, a["predicted"].(bool), "exact stop match should be predicted")
 	assert.Equal(t, float64(scheduledArrivalMs+60000), a["predictedArrivalTime"],
 		"predicted arrival should be scheduled + 60s")
+	assert.Equal(t, float64(scheduledDepartureMs+60000), a["predictedDepartureTime"],
+		"predicted departure should be scheduled + 60s")
 }
 
 // TestPluralArrivals_PriorStopPropagation verifies that when no StopTimeUpdate
@@ -774,10 +779,24 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	arrivals := entry["arrivalsAndDepartures"].([]interface{})
 	require.NotEmpty(t, arrivals, "expected at least one arrival")
 
-	a := arrivals[0].(map[string]interface{})
-	assert.True(t, a["predicted"].(bool), "should be predicted via prior stop propagation")
-	assert.Equal(t, float64(scheduledArrivalMs+90000), a["predictedArrivalTime"],
+	scheduledDepartureMs := scheduledArrivalMs + 300000 // departure is 5 min after arrival
+
+	// The queried stop is at seq=3 (0-based stopSequence=2). Prior tests may have inserted
+	// a stop at seq=2 into the shared DB, so we locate the right arrival explicitly.
+	var propagatedArrival map[string]interface{}
+	for _, arriv := range arrivals {
+		arr := arriv.(map[string]interface{})
+		if int(arr["stopSequence"].(float64)) == 2 { // seq=3 → 0-based index 2
+			propagatedArrival = arr
+			break
+		}
+	}
+	require.NotNil(t, propagatedArrival, "expected to find the propagated arrival for seq=3")
+	assert.True(t, propagatedArrival["predicted"].(bool), "should be predicted via prior stop propagation")
+	assert.Equal(t, float64(scheduledArrivalMs+90000), propagatedArrival["predictedArrivalTime"],
 		"predicted arrival should be scheduled + propagated 90s delay")
+	assert.Equal(t, float64(scheduledDepartureMs+90000), propagatedArrival["predictedDepartureTime"],
+		"predicted departure should be scheduled + propagated 90s delay")
 }
 
 // TestPluralArrivals_TripLevelDelayFallback verifies that when a TripUpdate has a
@@ -802,10 +821,14 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 	arrivals := entry["arrivalsAndDepartures"].([]interface{})
 	require.NotEmpty(t, arrivals, "expected at least one arrival")
 
+	scheduledDepartureMs := scheduledArrivalMs + 300000 // departure is 5 min after arrival
+
 	a := arrivals[0].(map[string]interface{})
 	assert.True(t, a["predicted"].(bool), "trip-level delay should mark arrival as predicted")
 	assert.Equal(t, float64(scheduledArrivalMs+120000), a["predictedArrivalTime"],
 		"predicted arrival should be scheduled + trip-level 120s delay")
+	assert.Equal(t, float64(scheduledDepartureMs+120000), a["predictedDepartureTime"],
+		"predicted departure should be scheduled + trip-level 120s delay")
 }
 
 // TestPluralArrivals_NoMatchingOrPriorStop verifies that a TripUpdate with a
@@ -841,6 +864,8 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	assert.False(t, a["predicted"].(bool), "update for a later stop should not predict current stop")
 	assert.Equal(t, float64(0), a["predictedArrivalTime"],
 		"predictedArrivalTime should be 0 when not predicted")
+	assert.Equal(t, float64(0), a["predictedDepartureTime"],
+		"predictedDepartureTime should be 0 when not predicted")
 }
 
 // TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a vehicle
@@ -871,4 +896,103 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 		"vehicle position alone should not mark arrival as predicted")
 	assert.Equal(t, float64(0), a["predictedArrivalTime"],
 		"predictedArrivalTime should be 0 when only vehicle position is present")
+	assert.Equal(t, float64(0), a["predictedDepartureTime"],
+		"predictedDepartureTime should be 0 when only vehicle position is present")
+}
+
+// TestPluralArrivals_AbsoluteTimeStopEvent verifies that when a StopTimeUpdate provides
+// absolute Time values (instead of Delay offsets) for an exact stop match, the predicted
+// times are set directly from those absolute timestamps.
+func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 2)
+
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	seq := uint32(2)
+	absoluteArrival := time.Date(2010, 1, 1, 8, 1, 30, 0, time.UTC)  // 30s early
+	absoluteDeparture := time.Date(2010, 1, 1, 8, 6, 0, 0, time.UTC) // 1 min after scheduled departure
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{
+			StopID:       &stopCode,
+			StopSequence: &seq,
+			Arrival:      &gtfs.StopTimeEvent{Time: &absoluteArrival},
+			Departure:    &gtfs.StopTimeEvent{Time: &absoluteDeparture},
+		},
+	})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	a := arrivals[0].(map[string]interface{})
+	assert.True(t, a["predicted"].(bool), "absolute-time stop match should be predicted")
+	assert.Equal(t, float64(absoluteArrival.Unix()*1000), a["predictedArrivalTime"],
+		"predictedArrivalTime should equal the absolute arrival timestamp")
+	assert.Equal(t, float64(absoluteDeparture.Unix()*1000), a["predictedDepartureTime"],
+		"predictedDepartureTime should equal the absolute departure timestamp")
+}
+
+// TestPluralArrivals_StalePropagatedDelayReset verifies that when the closest prior
+// stop has only absolute Time data (no Delay), propagatedDelayMs is reset to 0 and
+// not carried forward from an earlier stop's delay.
+func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// Stop being queried is sequence 3.
+	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 3)
+
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+
+	// Sequence 1: has a 90s delay.
+	// Sequence 2 (closer): has only an absolute Time, no Delay.
+	// Expected: propagatedDelayMs is reset to 0 when seq 2 becomes the closest prior,
+	// so the predicted time should equal the scheduled time (0ms offset).
+	seq1 := uint32(1)
+	delay90s := 90 * time.Second
+	seq2 := uint32(2)
+	absoluteTime := time.Date(2010, 1, 1, 7, 59, 0, 0, time.UTC) // some absolute time
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{
+			StopSequence: &seq1,
+			Arrival:      &gtfs.StopTimeEvent{Delay: &delay90s},
+		},
+		{
+			StopSequence: &seq2,
+			Arrival:      &gtfs.StopTimeEvent{Time: &absoluteTime},
+		},
+	})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	// The queried stop is at seq=3 (0-based stopSequence=2). Prior tests may have inserted
+	// stops at seq=1 and seq=2 into the shared DB, so we locate the right arrival explicitly.
+	var targetArrival map[string]interface{}
+	for _, arriv := range arrivals {
+		arr := arriv.(map[string]interface{})
+		if int(arr["stopSequence"].(float64)) == 2 { // seq=3 → 0-based index 2
+			targetArrival = arr
+			break
+		}
+	}
+	require.NotNil(t, targetArrival, "expected to find arrival for seq=3 (stopSequence=2)")
+	assert.True(t, targetArrival["predicted"].(bool), "should be predicted via prior stop propagation")
+	assert.Equal(t, float64(scheduledArrivalMs), targetArrival["predictedArrivalTime"],
+		"propagatedDelayMs should be 0 when closest prior stop only has absolute Time data")
 }

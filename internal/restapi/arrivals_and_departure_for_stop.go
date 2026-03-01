@@ -332,6 +332,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 					// Track the closest prior stop's delay for propagation.
 					if seq != -1 && seq < st.StopSequence && seq > closestPriorSeq {
 						closestPriorSeq = seq
+						propagatedDelayMs = 0 // Reset before checking this stop's delay data
 						if stopTimeUpdate.Departure != nil && stopTimeUpdate.Departure.Delay != nil {
 							propagatedDelayMs = stopTimeUpdate.Departure.Delay.Nanoseconds() / 1e6
 						} else if stopTimeUpdate.Arrival != nil && stopTimeUpdate.Arrival.Delay != nil {
