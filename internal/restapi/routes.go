@@ -72,24 +72,25 @@ func withCombinedID(api *RestAPI, handler http.HandlerFunc) http.Handler {
 
 // withProtectedCombinedID applies "Combined ID" validation and requires a protected API key
 func withProtectedCombinedID(api *RestAPI, handler http.HandlerFunc) http.Handler {
-	// First check Protected API Key -> Validate ID
-	protectedHandler := api.validateProtectedAPIKey(http.HandlerFunc(api.ValidateCombinedIDMiddleware(handler)))
+	innerHandler := handlerFunc(api.ValidateCombinedIDMiddleware(handler))
 
-	// Create the handler chain -> compression -> rate limiting
-	// We skip standard validateAPIKey because we already validated the protected key
 	finalHandlerHttp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		protectedHandler.ServeHTTP(w, r)
+		innerHandler(w, r)
 	})
 
 	// Apply compression first (innermost)
 	compressedHandler := CompressionMiddleware(finalHandlerHttp)
 
 	// Then rate limiting
+	var rateLimitedHandler http.Handler
 	if api.rateLimiter != nil {
-		return api.rateLimiter.Handler()(compressedHandler)
+		rateLimitedHandler = api.rateLimiter.Handler()(compressedHandler)
+	} else {
+		rateLimitedHandler = compressedHandler
 	}
 
-	return compressedHandler
+	// Auth check outermost, matching rateLimitAndValidateAPIKey pattern
+	return api.validateProtectedAPIKey(rateLimitedHandler)
 }
 
 func registerPprofHandlers(mux *http.ServeMux) { // nolint:unused

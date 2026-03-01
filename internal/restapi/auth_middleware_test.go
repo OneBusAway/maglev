@@ -84,7 +84,7 @@ func TestValidateProtectedAPIKey(t *testing.T) {
 				assert.NoError(t, err)
 
 				assert.Equal(t, tc.expectedStatus, resp.Code)
-				assert.Equal(t, "Unauthorized: Valid protected API key required", resp.Text)
+				assert.Equal(t, "permission denied", resp.Text)
 				assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 			}
 		})

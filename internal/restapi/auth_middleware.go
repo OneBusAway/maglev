@@ -7,13 +7,9 @@ import (
 
 func (api *RestAPI) validateProtectedAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("X-API-Key")
-		if key == "" {
-			// fallback to query param
-			key = r.URL.Query().Get("key")
-		}
+		key := r.URL.Query().Get("key")
 		if !isProtectedAPIKey(key, api.Config.ProtectedApiKeys) {
-			api.sendError(w, r, http.StatusUnauthorized, "Unauthorized: Valid protected API key required")
+			api.invalidAPIKeyResponse(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)

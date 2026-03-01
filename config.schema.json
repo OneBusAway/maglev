@@ -36,7 +36,6 @@
         "type": "string",
         "minLength": 1
       },
-      "default": ["protected-test-key"],
       "uniqueItems": true,
       "minItems": 1
     },

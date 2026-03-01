@@ -13,7 +13,7 @@ func TestProblemReportsForTripRequiresValidApiKey(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/problem-reports-for-trip/12345.json?key=invalid")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
-	assert.Equal(t, "Unauthorized: Valid protected API key required", model.Text)
+	assert.Equal(t, "permission denied", model.Text)
 }
 
 func TestProblemReportsForTrip_EmptyList(t *testing.T) {

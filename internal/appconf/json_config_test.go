@@ -34,6 +34,7 @@ func TestLoadFromFile_FullConfig(t *testing.T) {
 	assert.Equal(t, 8080, config.Port)
 	assert.Equal(t, "production", config.Env)
 	assert.Equal(t, []string{"key1", "key2", "key3"}, config.ApiKeys)
+	assert.Equal(t, []string{"protected-key-1", "protected-key-2"}, config.ProtectedApiKeys)
 	assert.Equal(t, 50, config.RateLimit)
 	assert.Equal(t, "https://example.com/gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "Authorization", config.GtfsStaticFeed.AuthHeaderName)

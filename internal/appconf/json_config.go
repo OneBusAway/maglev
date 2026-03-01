@@ -55,7 +55,7 @@ func (j *JSONConfig) setDefaults() {
 	if len(j.ApiKeys) == 0 {
 		j.ApiKeys = []string{"test"}
 	}
-	if len(j.ProtectedApiKeys) == 0 {
+	if len(j.ProtectedApiKeys) == 0 && (j.Env == "development" || j.Env == "test") {
 		j.ProtectedApiKeys = []string{"protected-test-key"}
 	}
 	if len(j.ExemptApiKeys) == 0 {
