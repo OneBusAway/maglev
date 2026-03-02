@@ -170,12 +170,13 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	stopIDs := make(map[string]struct{})
 	tripIDs := make(map[string]struct{})
 
-	stopIDsArr := make([]string, 0, len(stopIDs))
 	for _, row := range block {
 		routeIDs[row.RouteID] = struct{}{}
 		stopIDs[row.StopID] = struct{}{}
 		tripIDs[row.TripID] = struct{}{}
 	}
+
+	stopIDsArr := make([]string, 0, len(stopIDs))
 	for stopID := range stopIDs {
 		stopIDsArr = append(stopIDsArr, stopID)
 	}

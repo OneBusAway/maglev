@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -286,7 +287,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	// batch fetch
 	batchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
 	if err != nil {
-		return referencedTrips, nil
+		return referencedTrips, fmt.Errorf("batch fetch trips: %w", err)
 	}
 
 	tripMap := make(map[string]gtfsdb.Trip)
@@ -304,7 +305,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 
 	batchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
 	if err != nil {
-		return referencedTrips, nil
+		return referencedTrips, fmt.Errorf("batch fetch routes: %w", err)
 	}
 
 	routeMap := make(map[string]gtfsdb.Route)
