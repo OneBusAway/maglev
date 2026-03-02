@@ -15,7 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error) {
+func rawGtfsData(ctx context.Context, source string, isLocalFile bool, config Config) ([]byte, error) {
 	var b []byte
 	var err error
 
@@ -27,7 +27,7 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
 		}
 	} else {
-		req, err := http.NewRequest("GET", source, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error creating GTFS request: %w", err)
 		}
@@ -115,8 +115,8 @@ func buildGtfsDB(config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client
 }
 
 // loadGTFSData loads and parses GTFS data from either a URL or a local file
-func loadGTFSData(source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
-	b, err := rawGtfsData(source, isLocalFile, config)
+func loadGTFSData(ctx context.Context, source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
+	b, err := rawGtfsData(ctx, source, isLocalFile, config)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
@@ -190,7 +190,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
-	newStaticData, err := loadGTFSData(manager.config.GtfsURL, manager.isLocalFile, manager.config)
+	newStaticData, err := loadGTFSData(ctx, manager.config.GtfsURL, manager.isLocalFile, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error updating GTFS data", err,
 			slog.String("source", manager.config.GtfsURL))
