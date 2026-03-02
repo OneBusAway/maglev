@@ -23,6 +23,13 @@ func (rw *recoveryResponseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+func (rw *recoveryResponseWriter) Write(b []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.wroteHeader = true
+	}
+	return rw.ResponseWriter.Write(b)
+}
+
 // NewRecoveryMiddleware returns middleware that recovers from panics in handlers,
 // logs the panic with stack trace, and returns HTTP 500 (JSON) if no response was sent.
 func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler) http.Handler {
@@ -32,13 +39,18 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 			defer func() {
 				if rec := recover(); rec != nil {
 					stack := debug.Stack()
+					reqID, _ := r.Context().Value(RequestIDKey).(string)
 					var err error
 					if e, ok := rec.(error); ok {
 						err = e
 					} else {
 						err = fmt.Errorf("%v", rec)
 					}
-					logging.LogError(logger, "handler panic recovered", err, slog.String("path", r.URL.Path), slog.String("stack", string(stack)))
+					logging.LogError(logger, "handler panic recovered", err,
+						slog.String("path", r.URL.Path),
+						slog.String("method", r.Method),
+						slog.String("request_id", reqID),
+						slog.String("stack", string(stack)))
 					if !rw.wroteHeader {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusInternalServerError)
@@ -53,7 +65,12 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 							Text:        "internal server error",
 							Version:     1,
 						}
-						_ = json.NewEncoder(w).Encode(response)
+						if err := json.NewEncoder(w).Encode(response); err != nil {
+							logging.LogError(logger, "failed to encode panic recovery response", err,
+								slog.String("path", r.URL.Path),
+								slog.String("method", r.Method),
+								slog.String("request_id", reqID))
+						}
 					}
 				}
 			}()
