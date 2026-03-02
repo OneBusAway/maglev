@@ -109,6 +109,28 @@ OR REPLACE INTO stop_times (
 VALUES
     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
+-- name: CreateFrequency :exec
+INSERT OR IGNORE INTO frequencies (
+    trip_id,
+    start_time,
+    end_time,
+    headway_secs,
+    exact_times
+) VALUES (?, ?, ?, ?, ?);
+
+-- name: GetFrequenciesForTrip :many
+SELECT * FROM frequencies
+WHERE trip_id = ?
+ORDER BY start_time;
+
+-- name: GetFrequenciesForTrips :many
+SELECT * FROM frequencies
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id, start_time;
+
+-- name: GetFrequencyTripIDs :many
+SELECT DISTINCT trip_id FROM frequencies;
+
 -- name: CreateTrip :one
 INSERT
 OR REPLACE INTO trips (
@@ -482,6 +504,9 @@ VALUES
 
 -- name: ClearStopTimes :exec
 DELETE FROM stop_times;
+
+-- name: ClearFrequencies :exec
+DELETE FROM frequencies;
 
 -- name: ClearShapes :exec
 DELETE FROM shapes;

@@ -56,6 +56,15 @@ func (q *Queries) ClearCalendarDates(ctx context.Context) error {
 	return err
 }
 
+const clearFrequencies = `-- name: ClearFrequencies :exec
+DELETE FROM frequencies
+`
+
+func (q *Queries) ClearFrequencies(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearFrequenciesStmt, clearFrequencies)
+	return err
+}
+
 const clearRoutes = `-- name: ClearRoutes :exec
 DELETE FROM routes
 `
@@ -295,6 +304,35 @@ func (q *Queries) CreateCalendarDate(ctx context.Context, arg CreateCalendarDate
 	var i CalendarDate
 	err := row.Scan(&i.ServiceID, &i.Date, &i.ExceptionType)
 	return i, err
+}
+
+const createFrequency = `-- name: CreateFrequency :exec
+INSERT OR IGNORE INTO frequencies (
+    trip_id,
+    start_time,
+    end_time,
+    headway_secs,
+    exact_times
+) VALUES (?, ?, ?, ?, ?)
+`
+
+type CreateFrequencyParams struct {
+	TripID      string
+	StartTime   int64
+	EndTime     int64
+	HeadwaySecs int64
+	ExactTimes  int64
+}
+
+func (q *Queries) CreateFrequency(ctx context.Context, arg CreateFrequencyParams) error {
+	_, err := q.exec(ctx, q.createFrequencyStmt, createFrequency,
+		arg.TripID,
+		arg.StartTime,
+		arg.EndTime,
+		arg.HeadwaySecs,
+		arg.ExactTimes,
+	)
+	return err
 }
 
 const createProblemReportStop = `-- name: CreateProblemReportStop :exec
@@ -1584,6 +1622,113 @@ func (q *Queries) GetCalendarDateExceptionsForServiceID(ctx context.Context, ser
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFrequenciesForTrip = `-- name: GetFrequenciesForTrip :many
+SELECT trip_id, start_time, end_time, headway_secs, exact_times FROM frequencies
+WHERE trip_id = ?
+ORDER BY start_time
+`
+
+func (q *Queries) GetFrequenciesForTrip(ctx context.Context, tripID string) ([]Frequency, error) {
+	rows, err := q.query(ctx, q.getFrequenciesForTripStmt, getFrequenciesForTrip, tripID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Frequency
+	for rows.Next() {
+		var i Frequency
+		if err := rows.Scan(
+			&i.TripID,
+			&i.StartTime,
+			&i.EndTime,
+			&i.HeadwaySecs,
+			&i.ExactTimes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFrequenciesForTrips = `-- name: GetFrequenciesForTrips :many
+SELECT trip_id, start_time, end_time, headway_secs, exact_times FROM frequencies
+WHERE trip_id IN (/*SLICE:trip_ids*/?)
+ORDER BY trip_id, start_time
+`
+
+func (q *Queries) GetFrequenciesForTrips(ctx context.Context, tripIds []string) ([]Frequency, error) {
+	query := getFrequenciesForTrips
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Frequency
+	for rows.Next() {
+		var i Frequency
+		if err := rows.Scan(
+			&i.TripID,
+			&i.StartTime,
+			&i.EndTime,
+			&i.HeadwaySecs,
+			&i.ExactTimes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFrequencyTripIDs = `-- name: GetFrequencyTripIDs :many
+SELECT DISTINCT trip_id FROM frequencies
+`
+
+func (q *Queries) GetFrequencyTripIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.query(ctx, q.getFrequencyTripIDsStmt, getFrequencyTripIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var trip_id string
+		if err := rows.Scan(&trip_id); err != nil {
+			return nil, err
+		}
+		items = append(items, trip_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

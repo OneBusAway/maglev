@@ -43,15 +43,20 @@ func PrintSimpleSchema(db *sql.DB) error { // nolint:unused
 }
 
 func (c *Client) staticDataCounts(staticData *gtfs.Static) map[string]int {
+	frequencyCount := 0
+	for _, t := range staticData.Trips {
+		frequencyCount += len(t.Frequencies)
+	}
 	return map[string]int{
-		"routes":    len(staticData.Routes),
-		"services":  len(staticData.Services),
-		"stops":     len(staticData.Stops),
-		"agencies":  len(staticData.Agencies),
-		"transfers": len(staticData.Transfers),
-		"trips":     len(staticData.Trips),
-		"calendar":  len(staticData.Services),
-		"shapes":    len(staticData.Shapes),
+		"routes":      len(staticData.Routes),
+		"services":    len(staticData.Services),
+		"stops":       len(staticData.Stops),
+		"agencies":    len(staticData.Agencies),
+		"transfers":   len(staticData.Transfers),
+		"trips":       len(staticData.Trips),
+		"calendar":    len(staticData.Services),
+		"shapes":      len(staticData.Shapes),
+		"frequencies": frequencyCount,
 	}
 }
 
@@ -89,6 +94,7 @@ func (c *Client) TableCounts() (map[string]int, error) {
 		"block_trip_index": "SELECT COUNT(*) FROM block_trip_index",
 		"block_trip_entry": "SELECT COUNT(*) FROM block_trip_entry",
 		"import_metadata":  "SELECT COUNT(*) FROM import_metadata",
+		"frequencies":      "SELECT COUNT(*) FROM frequencies",
 	}
 
 	for _, table := range tables {
