@@ -295,7 +295,7 @@ func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 }
 
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
-func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
+func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 	// Create HTTP server to serve GTFS-RT files
 	mux := http.NewServeMux()
 

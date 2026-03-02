@@ -3,82 +3,14 @@ package restapi
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
-	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/appconf"
-	"maglev.onebusaway.org/internal/clock"
-	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// createTestApiWithRealTimeDataB is createTestApiWithRealTimeData adapted for benchmarks (t → b).
-func createTestApiWithRealTimeDataB(b *testing.B) (*RestAPI, func()) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, r *http.Request) {
-		data, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
-		if err != nil {
-			b.Fatal(err)
-		}
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		_, _ = w.Write(data)
-	})
-	mux.HandleFunc("/trip-updates", func(w http.ResponseWriter, r *http.Request) {
-		data, err := os.ReadFile(filepath.Join("../../testdata", "raba-trip-updates.pb"))
-		if err != nil {
-			b.Fatal(err)
-		}
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		_, _ = w.Write(data)
-	})
-
-	server := httptest.NewServer(mux)
-
-	gtfsConfig := gtfs.Config{
-		GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
-		GTFSDataPath: ":memory:",
-		RTFeeds: []gtfs.RTFeedConfig{
-			{
-				ID:                  "test-feed",
-				TripUpdatesURL:      server.URL + "/trip-updates",
-				VehiclePositionsURL: server.URL + "/vehicle-positions",
-				RefreshInterval:     30,
-				Enabled:             true,
-			},
-		},
-	}
-
-	gtfsManager, err := gtfs.InitGTFSManager(gtfsConfig)
-	if err != nil {
-		server.Close()
-		b.Fatal(err)
-	}
-
-	application := &app.Application{
-		Config: appconf.Config{
-			Env:       appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:   []string{"TEST"},
-			RateLimit: 100,
-		},
-		GtfsConfig:  gtfsConfig,
-		GtfsManager: gtfsManager,
-		Clock:       clock.RealClock{},
-	}
-
-	api := NewRestAPI(application)
-	cleanup := func() {
-		api.Shutdown()
-		server.Close()
-		gtfsManager.Shutdown()
-	}
-	return api, cleanup
-}
-
 // Benchmark arrivals endpoint (hot path).
 func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeDataB(b)
+	api, cleanup := createTestApiWithRealTimeData(b)
 	defer cleanup()
 
 	agencies := api.GtfsManager.GetAgencies()
@@ -116,7 +48,7 @@ func BenchmarkStopsForLocation(b *testing.B) {
 
 // Benchmark vehicles-for-agency with real-time data.
 func BenchmarkVehiclesForAgency(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeDataB(b)
+	api, cleanup := createTestApiWithRealTimeData(b)
 	defer cleanup()
 
 	agencies := api.GtfsManager.GetAgencies()
@@ -138,7 +70,7 @@ func BenchmarkVehiclesForAgency(b *testing.B) {
 
 // Benchmark trip-details with real-time data.
 func BenchmarkTripDetails(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeDataB(b)
+	api, cleanup := createTestApiWithRealTimeData(b)
 	defer cleanup()
 
 	agencies := api.GtfsManager.GetAgencies()
