@@ -252,8 +252,8 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	jsonConfig := map[string]interface{}{
 		"port":             cfg.Port,
 		"env":              envStr,
-		"api-keys":         cfg.ApiKeys,
-		"exempt-api-keys":  cfg.ExemptApiKeys,
+		"api-keys":         fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
+		"exempt-api-keys":  fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
 		"rate-limit":       cfg.RateLimit,
 		"gtfs-static-feed": staticFeed,
 		"data-path":        gtfsCfg.GTFSDataPath,

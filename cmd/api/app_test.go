@@ -593,6 +593,15 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	assert.NotEqual(t, "my-secret-api-key", headersMap["X-API-Key"])
 	assert.Equal(t, "***REDACTED***", headersMap["X-API-Key"])
 
+	// Check that API keys are redacted
+	apiKeysStr, ok := parsed["api-keys"].(string)
+	require.True(t, ok, "api-keys should be a string")
+	assert.Contains(t, apiKeysStr, "REDACTED", "API keys should be redacted")
+
+	exemptApiKeysStr, ok := parsed["exempt-api-keys"].(string)
+	require.True(t, ok, "exempt-api-keys should be a string")
+	assert.Contains(t, exemptApiKeysStr, "REDACTED", "Exempt API keys should be redacted")
+
 	assert.NotEqual(t, "", rtFeed["trip-updates-url"])
 	assert.Equal(t, gtfsCfg.GTFSDataPath, parsed["data-path"])
 }
