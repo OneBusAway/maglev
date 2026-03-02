@@ -247,6 +247,19 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		tripsLookup[trip.ID] = trip
 	}
 
+	// Batch-fetch stop counts per trip to avoid per-arrival N+1 queries for totalStopsInTrip.
+	tripStopCountMap := make(map[string]int, len(uniqueTripIDs))
+	if len(uniqueTripIDs) > 0 {
+		allStopTimesForTrips, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, uniqueTripIDs)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
+		} else {
+			for _, st := range allStopTimesForTrips {
+				tripStopCountMap[st.TripID]++
+			}
+		}
+	}
+
 	for _, ast := range allActiveStopTimes {
 		st := ast.GetStopTimesForStopInWindowRow
 
@@ -419,16 +432,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			predictedDepartureTime = 0
 		}
 
-		tripStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, st.TripID)
-		var totalStopsInTrip int
-		if err != nil {
-			api.Logger.Debug("failed to get stop times for trip",
-				slog.String("tripID", st.TripID),
-				slog.Any("error", err))
-			totalStopsInTrip = 0
-		} else {
-			totalStopsInTrip = len(tripStopTimes)
-		}
+		totalStopsInTrip := tripStopCountMap[st.TripID]
 
 		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
 
@@ -501,26 +505,46 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		references.Trips = append(references.Trips, tripRef)
 	}
 
+	// Batch-fetch all stop references in one shot instead of one query per stop.
+	stopIDsSlice := make([]string, 0, len(stopIDSet))
+	for sid := range stopIDSet {
+		stopIDsSlice = append(stopIDsSlice, sid)
+	}
+
+	batchStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
+	if err != nil {
+		api.Logger.Warn("failed to batch fetch stop references", slog.Any("error", err))
+		batchStops = nil
+	}
+
+	batchRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
+	if err != nil {
+		api.Logger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
+		batchRoutesForStops = nil
+	}
+
+	stopsMap := make(map[string]gtfsdb.Stop, len(batchStops))
+	for _, s := range batchStops {
+		stopsMap[s.ID] = s
+	}
+
+	routesByStop := make(map[string][]gtfsdb.GetRoutesForStopsRow)
+	for _, row := range batchRoutesForStops {
+		routesByStop[row.StopID] = append(routesByStop[row.StopID], row)
+	}
+
 	for stopID := range stopIDSet {
 		if ctx.Err() != nil {
 			return
 		}
 
-		stopData, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
-			api.Logger.Debug("skipping stop reference: stop not found",
-				slog.String("stopID", stopID),
-				slog.Any("error", err))
+		stopData, ok := stopsMap[stopID]
+		if !ok {
+			api.Logger.Debug("skipping stop reference: stop not found", slog.String("stopID", stopID))
 			continue
 		}
 
-		routesForThisStop, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
-		if err != nil {
-			api.Logger.Debug("failed to get routes for stop",
-				slog.String("stopID", stopID),
-				slog.Any("error", err))
-			continue
-		}
+		routesForThisStop := routesByStop[stopID]
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			// Use route.AgencyID instead of stopAgencyID
