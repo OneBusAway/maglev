@@ -115,9 +115,8 @@ func serveAndRetrieveEndpoint(t testing.TB, endpoint string) (*RestAPI, *http.Re
 // serveApiAndRetrieveEndpoint performs the request against an existing API instance
 // Accepts testing.TB to support both *testing.T and *testing.B
 func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
+	// Use SetupAPIRoutes to ensure global middleware (like compression) is applied
+	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
 	resp, err := http.Get(server.URL + endpoint)
 	require.NoError(t, err)
@@ -234,10 +233,8 @@ func TestCompressionMiddlewareIntegration(t *testing.T) {
 	defer api.Shutdown()
 
 	t.Run("API responses are compressed when requested", func(t *testing.T) {
-		// Use the standard test setup approach
-		mux := http.NewServeMux()
-		api.SetRoutes(mux)
-		server := httptest.NewServer(mux)
+		// Use SetupAPIRoutes which includes the global compression middleware
+		server := httptest.NewServer(api.SetupAPIRoutes())
 		defer server.Close()
 
 		// Create request with gzip acceptance
