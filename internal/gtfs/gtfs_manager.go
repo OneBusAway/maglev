@@ -28,7 +28,14 @@ type RegionBounds struct {
 	LonSpan float64
 }
 
-// Manager manages the GTFS data and provides methods to access it
+// Manager manages the GTFS data and provides methods to access it.
+//
+// Lock ordering policy (to prevent deadlocks):
+//
+//	staticMutex → realTimeMutex
+//
+// When both locks are needed, staticMutex MUST be acquired first.
+// Never acquire staticMutex while holding realTimeMutex.
 type Manager struct {
 	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
@@ -398,20 +405,26 @@ func (manager *Manager) GetStopsForLocation(
 	return stops
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+// VehiclesForAgencyID returns all real-time vehicles serving routes that belong
+// to the given agency. It manages its own locking internally; callers must NOT
+// hold any Manager locks.
 func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
+	// Step 1: Acquire static lock, collect route IDs, then release.
+	manager.staticMutex.RLock()
 	routes := manager.RoutesForAgencyID(agencyID)
-	routeIDs := make(map[string]bool) // all route IDs for the agency.
+	routeIDs := make(map[string]bool, len(routes))
 	for _, route := range routes {
 		routeIDs[route.Id] = true
 	}
+	manager.staticMutex.RUnlock()
+
+	// Step 2: Acquire real-time lock independently to read vehicles.
+	rtVehicles := manager.GetRealTimeVehicles()
 
 	var vehicles []gtfs.Vehicle
-	for _, v := range manager.GetRealTimeVehicles() {
-		if v.Trip != nil {
-			if routeIDs[v.Trip.ID.RouteID] {
-				vehicles = append(vehicles, v)
-			}
+	for _, v := range rtVehicles {
+		if v.Trip != nil && routeIDs[v.Trip.ID.RouteID] {
+			vehicles = append(vehicles, v)
 		}
 	}
 
