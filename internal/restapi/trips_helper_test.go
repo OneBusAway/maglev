@@ -1772,7 +1772,6 @@ func TestFindClosestStopByTimeWithDelays_DSTFallback(t *testing.T) {
 	}
 
 	t.Run("first 1:30 AM (PDT, before fallback) — closest is stop-130am", func(t *testing.T) {
-		// Go picks the earlier (PDT/summer) occurrence for ambiguous times.
 		currentTime := time.Date(2024, 11, 3, 1, 30, 0, 0, la)
 		closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
 		assert.Equal(t, "stop-130am", closestID,
