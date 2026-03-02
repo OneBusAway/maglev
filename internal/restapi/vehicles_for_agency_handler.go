@@ -41,8 +41,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	routeIDs := make([]string, 0, len(routeIDSet))
-	for id := range routeIDSet {
-		routeIDs = append(routeIDs, id)
+	for routeID := range routeIDSet {
+		routeIDs = append(routeIDs, routeID)
 	}
 	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
 	if err != nil {
@@ -50,8 +50,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	routeByID := make(map[string]gtfsdb.Route, len(routes))
-	for _, r := range routes {
-		routeByID[r.ID] = r
+	for _, route := range routes {
+		routeByID[route.ID] = route
 	}
 
 	// Maps to build references
