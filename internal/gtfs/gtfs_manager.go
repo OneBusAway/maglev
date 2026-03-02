@@ -349,6 +349,10 @@ func (manager *Manager) GetStopsForLocation(
 
 			// Get active service IDs for current date
 			activeServiceIDs, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
+			if err != nil {
+				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+				logging.LogError(logger, "could not get active service IDs for date", err, slog.String("date", currentDate))
+			}
 
 			if err == nil && len(activeServiceIDs) > 0 {
 				stopIDs := make([]string, 0, len(candidates))
@@ -360,6 +364,10 @@ func (manager *Manager) GetStopsForLocation(
 					StopIds:    stopIDs,
 					ServiceIds: activeServiceIDs,
 				})
+				if err != nil {
+					logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+					logging.LogError(logger, "could not get stops with active service on date", err, slog.String("date", currentDate))
+				}
 
 				if err == nil {
 					stopsWithService := make(map[string]bool)
