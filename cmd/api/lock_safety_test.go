@@ -17,7 +17,6 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
-
 )
 
 func TestHandlerLockSafety(t *testing.T) {
