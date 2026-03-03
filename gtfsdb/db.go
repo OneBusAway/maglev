@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.bulkUpdateTripTimeBoundsStmt, err = db.PrepareContext(ctx, bulkUpdateTripTimeBounds); err != nil {
+		return nil, fmt.Errorf("error preparing query BulkUpdateTripTimeBounds: %w", err)
+	}
 	if q.clearAgenciesStmt, err = db.PrepareContext(ctx, clearAgencies); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearAgencies: %w", err)
 	}
@@ -323,6 +326,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.bulkUpdateTripTimeBoundsStmt != nil {
+		if cerr := q.bulkUpdateTripTimeBoundsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing bulkUpdateTripTimeBoundsStmt: %w", cerr)
+		}
+	}
 	if q.clearAgenciesStmt != nil {
 		if cerr := q.clearAgenciesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearAgenciesStmt: %w", cerr)
@@ -852,6 +860,7 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                        DBTX
 	tx                                        *sql.Tx
+	bulkUpdateTripTimeBoundsStmt              *sql.Stmt
 	clearAgenciesStmt                         *sql.Stmt
 	clearBlockTripEntriesStmt                 *sql.Stmt
 	clearBlockTripIndicesStmt                 *sql.Stmt
@@ -956,6 +965,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                                        tx,
 		tx:                                        tx,
+		bulkUpdateTripTimeBoundsStmt:              q.bulkUpdateTripTimeBoundsStmt,
 		clearAgenciesStmt:                         q.clearAgenciesStmt,
 		clearBlockTripEntriesStmt:                 q.clearBlockTripEntriesStmt,
 		clearBlockTripIndicesStmt:                 q.clearBlockTripIndicesStmt,

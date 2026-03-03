@@ -191,4 +191,6 @@ type Trip struct {
 	ShapeID              sql.NullString
 	WheelchairAccessible sql.NullInt64
 	BikesAllowed         sql.NullInt64
+	MinArrivalTime       sql.NullInt64
+	MaxDepartureTime     sql.NullInt64
 }

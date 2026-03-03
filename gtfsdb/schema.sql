@@ -243,6 +243,8 @@ CREATE TABLE
         shape_id TEXT,
         wheelchair_accessible INTEGER DEFAULT 0,
         bikes_allowed INTEGER DEFAULT 0,
+        min_arrival_time INTEGER,    -- Cached MIN(stop_times.arrival_time)
+        max_departure_time INTEGER,  -- Cached MAX(stop_times.departure_time)
         FOREIGN KEY (route_id) REFERENCES routes (id),
         FOREIGN KEY (service_id) REFERENCES calendar (id)
     );
@@ -449,3 +451,6 @@ CREATE INDEX IF NOT EXISTS idx_stop_times_stop_arrival ON stop_times (stop_id, a
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_trips_route_headsign ON trips (route_id, trip_headsign, shape_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_trips_time_window ON trips (max_departure_time, min_arrival_time);
