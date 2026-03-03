@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"maglev.onebusaway.org/internal/logging"
+
 	"golang.org/x/time/rate"
 	"maglev.onebusaway.org/internal/clock"
 )
@@ -182,7 +184,8 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	}
 
 	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
-		slog.Error("failed to encode rate limit response", "error", err)
+		logger := slog.Default().With(slog.String("component", "rate_limit_middleware"))
+		logging.LogError(logger, "failed to encode rate limit response", err)
 	}
 }
 

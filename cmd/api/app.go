@@ -290,7 +290,8 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	// Marshal to JSON with indentation
 	output, err := json.MarshalIndent(jsonConfig, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling config to JSON: %v\n", err)
+		logger := slog.Default().With(slog.String("component", "app"))
+		logging.LogError(logger, "Error marshaling config to JSON", err)
 		os.Exit(1)
 	}
 
