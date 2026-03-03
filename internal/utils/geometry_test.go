@@ -459,3 +459,55 @@ func BenchmarkDistance_LongRange(b *testing.B) {
 		Distance(40.7128, -74.0060, 34.0522, -118.2437)
 	}
 }
+
+// FuzzDistance throws random coordinate values at the Distance function to ensure
+// it never panics, handles edge cases gracefully, and never returns negative distances.
+func FuzzDistance(f *testing.F) {
+	// Seed the fuzzer with known valid pairs
+	f.Add(40.7128, -74.0060, 34.0522, -118.2437) // NYC to LA
+	f.Add(0.0, 0.0, 0.0, 0.0)                    // Equator
+	f.Add(90.0, 180.0, -90.0, -180.0)            // Extreme bounds
+
+	f.Fuzz(func(t *testing.T, lat1, lon1, lat2, lon2 float64) {
+		// Ignore NaN or Inf values as they naturally propagate in floats
+		if math.IsNaN(lat1) || math.IsNaN(lon1) || math.IsNaN(lat2) || math.IsNaN(lon2) {
+			return
+		}
+		if math.IsInf(lat1, 0) || math.IsInf(lon1, 0) || math.IsInf(lat2, 0) || math.IsInf(lon2, 0) {
+			return
+		}
+
+		dist := Distance(lat1, lon1, lat2, lon2)
+
+		if dist < 0 {
+			t.Errorf("Distance violated property: returned negative distance %f", dist)
+		}
+		// Half the Earth's circumference is approx 20,037,508 meters.
+		// Allow a slight buffer for floating point inaccuracies at extreme poles.
+		if dist > 20040000.0 {
+			t.Errorf("Distance violated property: exceeded half Earth circumference: %f", dist)
+		}
+	})
+}
+
+// FuzzCalculateBounds ensures the bounding box logic never panics and maintains logical min/max invariants.
+func FuzzCalculateBounds(f *testing.F) {
+	f.Add(40.7128, -74.0060, 500.0)
+	f.Add(0.0, 0.0, 0.0)
+
+	f.Fuzz(func(t *testing.T, lat, lon, radius float64) {
+		if math.IsNaN(lat) || math.IsNaN(lon) || math.IsNaN(radius) || radius < 0 ||
+			math.IsInf(lat, 0) || math.IsInf(lon, 0) || math.IsInf(radius, 0) {
+			return
+		}
+
+		bounds := CalculateBounds(lat, lon, radius)
+
+		if bounds.MinLat > bounds.MaxLat {
+			t.Errorf("Property violation: MinLat (%f) > MaxLat (%f)", bounds.MinLat, bounds.MaxLat)
+		}
+		if bounds.MinLon > bounds.MaxLon {
+			t.Errorf("Property violation: MinLon (%f) > MaxLon (%f)", bounds.MinLon, bounds.MaxLon)
+		}
+	})
+}

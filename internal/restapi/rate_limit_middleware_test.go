@@ -475,7 +475,8 @@ func TestRateLimitMiddleware_CorrectRetryAfterTime(t *testing.T) {
 
 			var last *httptest.ResponseRecorder
 
-			for i := 0; i < testCase.rateLimit+1; i++ {
+			// Fire requests until we exceed the burst and any tokens generated during the loop's execution (CI can be slow)
+			for i := 0; i < testCase.rateLimit+50; i++ {
 				req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
 				w := httptest.NewRecorder()
 				limited.ServeHTTP(w, req)
