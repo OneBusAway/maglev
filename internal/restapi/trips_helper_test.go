@@ -1725,3 +1725,131 @@ func TestGetFirstStopOfNextTripInBlock_WithBlockContinuation(t *testing.T) {
 	require.NotNil(t, result, "should find the first stop of the next block trip")
 	assert.NotEmpty(t, result.StopID, "returned stop should have a non-empty StopID")
 }
+
+// DST boundary tests
+//
+// These tests verify that closest-stop and next-stop calculations are correct
+// during Daylight Saving Time transitions, specifically the "fall back" case
+// where the same wall-clock time (e.g. 1:30 AM) occurs twice in one night.
+//
+// Root issue: GTFS stop_time values are plain wall-clock seconds since midnight.
+// CalculateSecondsSinceServiceDate must return matching wall-clock seconds, not
+// real elapsed seconds, otherwise the two values diverge by 3600 s during the
+// ambiguous DST hour.
+//
+// DST fallback reference (America/Los_Angeles, 2024-11-03):
+//
+//	Midnight PDT       = 2024-11-03 00:00 PDT  (Nov 3 07:00 UTC)
+//	First  1:30 AM PDT = 2024-11-03 01:30 PDT  (5 400 real s from midnight)
+//	Second 1:30 AM PST = 2024-11-03 01:30 PST  (9 000 real s from midnight — same wall-clock)
+//
+// Construct the second 1:30 AM by subtracting 30 min from unambiguous 2:00 AM PST:
+//
+//	twoAMAfterFallback := time.Date(2024, 11, 3, 2, 0, 0, 0, la)
+//	secondOneThirtyAM  := twoAMAfterFallback.Add(-30 * time.Minute)
+//
+// ---------------------------------------------------------------------------
+
+func makeStopTime(stopID string, wallClockSeconds int64) *gtfsdb.StopTime {
+	nanos := wallClockSeconds * int64(time.Second)
+	return &gtfsdb.StopTime{
+		StopID:        stopID,
+		ArrivalTime:   nanos,
+		DepartureTime: nanos,
+	}
+}
+
+func TestFindClosestStopByTimeWithDelays_DSTFallback(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	serviceDate := time.Date(2024, 11, 3, 0, 0, 0, 0, la)
+
+	stopTimes := []*gtfsdb.StopTime{
+		makeStopTime("stop-1am", 3600),   // 1:00 AM = 3 600 s
+		makeStopTime("stop-130am", 5400), // 1:30 AM = 5 400 s
+		makeStopTime("stop-230am", 9000), // 2:30 AM = 9 000 s
+	}
+
+	t.Run("first 1:30 AM (PDT, before fallback) — closest is stop-130am", func(t *testing.T) {
+		currentTime := time.Date(2024, 11, 3, 1, 30, 0, 0, la)
+		closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		assert.Equal(t, "stop-130am", closestID,
+			"at the first 1:30 AM the closest stop should be the 1:30 AM stop")
+	})
+
+	t.Run("second 1:30 AM (PST, after fallback) — closest is still stop-130am", func(t *testing.T) {
+		// With the old (broken) code this returned stop-230am because real elapsed
+		// seconds were 9 000 s, making stop-130am appear 3 600 s in the past.
+		// Construct second 1:30 AM via unambiguous anchor: 2:00 AM PST minus 30 min.
+		twoAMAfterFallback := time.Date(2024, 11, 3, 2, 0, 0, 0, la)
+		currentTime := twoAMAfterFallback.Add(-30 * time.Minute)
+		closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		assert.Equal(t, "stop-130am", closestID,
+			"at the second 1:30 AM the closest stop must still match the GTFS wall-clock entry")
+	})
+}
+
+func TestFindNextStopByTimeWithDelays_DSTFallback(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	serviceDate := time.Date(2024, 11, 3, 0, 0, 0, 0, la)
+
+	stopTimes := []*gtfsdb.StopTime{
+		makeStopTime("stop-1am", 3600),
+		makeStopTime("stop-130am", 5400),
+		makeStopTime("stop-230am", 9000),
+	}
+
+	t.Run("first 1:30 AM — next stop is stop-230am", func(t *testing.T) {
+		currentTime := time.Date(2024, 11, 3, 1, 30, 0, 0, la)
+		nextID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		assert.Equal(t, "stop-230am", nextID)
+	})
+
+	t.Run("second 1:30 AM — next stop is still stop-230am (not beyond)", func(t *testing.T) {
+		// Construct second 1:30 AM PST via unambiguous anchor.
+		twoAMAfterFallback := time.Date(2024, 11, 3, 2, 0, 0, 0, la)
+		currentTime := twoAMAfterFallback.Add(-30 * time.Minute)
+		nextID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		assert.Equal(t, "stop-230am", nextID,
+			"after DST fallback the next stop should be 2:30 AM, not empty or wrapped")
+	})
+}
+
+func TestFindClosestStopByTimeWithDelays_NormalDay(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	// A regular summer day — no DST transition.
+	serviceDate := time.Date(2024, 6, 15, 0, 0, 0, 0, la)
+
+	stopTimes := []*gtfsdb.StopTime{
+		makeStopTime("stop-8am", 28800),   // 8:00 AM = 28 800 s
+		makeStopTime("stop-830am", 30600), // 8:30 AM = 30 600 s
+		makeStopTime("stop-9am", 32400),   // 9:00 AM = 32 400 s
+	}
+
+	currentTime := time.Date(2024, 6, 15, 8, 31, 0, 0, la) // 8:31 AM
+	closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+	assert.Equal(t, "stop-830am", closestID)
+}
+
+func TestFindClosestStopByTimeWithDelays_OvernightTrip(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	// Service date is Jun 15; trip runs past midnight into Jun 16.
+	// GTFS encodes 1:00 AM next day as 25:00:00 = 90 000 s.
+	serviceDate := time.Date(2024, 6, 15, 0, 0, 0, 0, la)
+
+	stopTimes := []*gtfsdb.StopTime{
+		makeStopTime("stop-midnight", 86400), // 24:00:00 = midnight next day
+		makeStopTime("stop-1am-next", 90000), // 25:00:00 = 1:00 AM next day
+	}
+
+	currentTime := time.Date(2024, 6, 16, 1, 0, 0, 0, la) // 1:00 AM on Jun 16
+	closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+	assert.Equal(t, "stop-1am-next", closestID)
+}
