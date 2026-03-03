@@ -146,11 +146,14 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	// Add metrics middleware
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
 
-	// Add request logging middleware (outermost)
+	// Add request logging middleware
 	requestLogger := logging.NewStructuredLogger(os.Stdout, slog.LevelInfo)
 	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(requestLogger)
 
-	handler := restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler))
+	// Panic recovery outermost so all handler panics are caught
+	handler := restapi.NewRecoveryMiddleware(coreApp.Logger, coreApp.Clock)(
+		restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler)),
+	)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
