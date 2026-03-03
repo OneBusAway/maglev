@@ -44,6 +44,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	visibleTripIDs := make([]string, 0, len(activeTrips))
 	for _, vehicle := range activeTrips {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -100,6 +101,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if ctx.Err() != nil {
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 

@@ -61,6 +61,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	for _, vehicle := range vehiclesForAgency {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 

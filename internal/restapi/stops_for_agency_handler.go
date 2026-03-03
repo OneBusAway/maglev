@@ -16,7 +16,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		api.serverErrorResponse(w, r, ctx.Err())
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 

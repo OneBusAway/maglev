@@ -53,7 +53,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		api.serverErrorResponse(w, r, ctx.Err())
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 
@@ -99,6 +99,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	// Process routes and filter by query if provided
 	for _, routeRow := range routesForStops {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -130,6 +131,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if ctx.Err() != nil {
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 

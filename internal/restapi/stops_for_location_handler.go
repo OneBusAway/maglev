@@ -95,7 +95,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		api.serverErrorResponse(w, r, ctx.Err())
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 
@@ -141,6 +141,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	currentDate := queryTime.Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
 	if err != nil {
+		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
+			return
+		}
 		api.serverErrorResponse(w, r, err)
 		return
 	}
@@ -153,6 +157,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			ServiceIds: activeServiceIDs,
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				api.clientCanceledResponse(w, r, ctx.Err())
+				return
+			}
 			api.serverErrorResponse(w, r, err)
 			return
 		}
@@ -161,6 +169,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Batch query to get agencies for all stops
 	agenciesForStops, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
 	if err != nil {
+		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
+			return
+		}
 		api.serverErrorResponse(w, r, err)
 		return
 	}
@@ -202,6 +214,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Build results using the pre-fetched data
 	for _, stopID := range stopIDs {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -235,6 +248,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if ctx.Err() != nil {
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 

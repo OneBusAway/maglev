@@ -1,8 +1,9 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
-	"log/slog"
+	"errors"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/logging"
@@ -34,7 +35,18 @@ func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter, r *http.Request
 }
 
 func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
-	logging.LogError(api.Logger, "internal server error", err, slog.String("path", r.URL.Path))
+	// Context cancellation and deadline errors represent request lifecycle termination,
+	// not internal server failures. Delegate to the dedicated handler to correctly
+	// handle context.Canceled (no response — client disconnected) and
+	// context.DeadlineExceeded (504 Gateway Timeout).
+	//
+	// This applies both to explicit ctx.Err() checks and to downstream operations
+	// (e.g., DB queries) that propagate context errors via their return values.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		api.clientCanceledResponse(w, r, err)
+		return
+	}
+	api.Logger.Error("internal server error", "error", err, "path", r.URL.Path)
 	// Send a 500 Internal Server Error response
 	response := struct {
 		Code        int    `json:"code"`
@@ -88,6 +100,33 @@ func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusBadRequest)
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to encode validation error response", err)
+		api.Logger.Error("failed to encode validation error response", "error", err)
+	}
+}
+
+// clientCanceledResponse handles context cancellation cleanly.
+//
+// For context.Canceled (client disconnected): logs at Info level and returns without
+// writing a response body — the connection is already gone, so any write is futile.
+//
+// For context.DeadlineExceeded (server-side timeout): logs at Warn level and writes
+// 504 Gateway Timeout, which is semantically correct — the server took too long,
+// this is not a server fault (500) nor a client fault.
+func (api *RestAPI) clientCanceledResponse(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		api.Logger.Info("request canceled by client",
+			"path", r.URL.Path,
+			"method", r.Method,
+		)
+		return
+
+	case errors.Is(err, context.DeadlineExceeded):
+		api.Logger.Warn("request deadline exceeded",
+			"path", r.URL.Path,
+			"method", r.Method,
+		)
+		http.Error(w, `{"code":504,"text":"gateway timeout"}`, http.StatusGatewayTimeout)
+		return
 	}
 }

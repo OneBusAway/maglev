@@ -190,6 +190,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	for _, row := range scheduleRows {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
