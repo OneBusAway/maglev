@@ -141,8 +141,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 			BlockID:     blockIDNullStr,
 			ServiceIds:  serviceIDs,
-			CurrentTime: currentNanosSinceMidnight,
-		})
+			CurrentTime: sql.NullInt64{Int64: currentNanosSinceMidnight, Valid: true}})
 		if err != nil {
 			continue
 		}

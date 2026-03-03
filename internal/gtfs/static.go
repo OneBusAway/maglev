@@ -103,6 +103,13 @@ func buildGtfsDB(config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client
 		return nil, err
 	}
 
+	// Backfill cached time bounds for O(1) trip lookups
+	logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
+	logging.LogOperation(logger, "calculating_trip_time_bounds")
+	if err := client.Queries.BulkUpdateTripTimeBounds(ctx); err != nil {
+		return nil, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
+	}
+
 	// Precompute stop directions after GTFS data is loaded
 	precomputer := NewDirectionPrecomputer(client.Queries, client.DB)
 	if err := precomputer.PrecomputeAllDirections(ctx); err != nil {
