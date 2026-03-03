@@ -3,6 +3,7 @@ package restapi
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -152,12 +153,12 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	case rate.Inf:
 		retryAfter = time.Second // Should not happen, but fallback
 	default:
-		retryAfter = time.Duration(1) / time.Duration(rl.rateLimit)
+		retryAfter = time.Duration(float64(time.Second) / float64(rl.rateLimit))
 	}
 
 	// Set headers
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.burstSize))
 	w.Header().Set("X-RateLimit-Remaining", "0")
 	w.WriteHeader(http.StatusTooManyRequests)

@@ -3,8 +3,10 @@ package restapi
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -433,5 +435,79 @@ func TestRateLimitMiddleware_EdgeCases(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code,
 			"Empty API key should be handled gracefully")
+	})
+}
+
+func TestRateLimitMiddleware_CorrectRetryAfterTime(t *testing.T) {
+	// Testing finite rate limits
+	tests := []struct {
+		name      string
+		rateLimit int
+	}{
+		{name: "rate limit: 1", rateLimit: 1},
+		{name: "rate limit: 2", rateLimit: 2},
+		{name: "rate limit: 20", rateLimit: 20},
+		{name: "rate limit: 100", rateLimit: 100},
+		{name: "rate limit: 200", rateLimit: 200},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			middleware := initRateLimitMiddleware(testCase.rateLimit, time.Second)
+			defer middleware.Stop()
+
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			limited := middleware.Handler()(handler)
+
+			var last *httptest.ResponseRecorder
+
+			for i := 0; i < testCase.rateLimit+1; i++ {
+				req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
+				w := httptest.NewRecorder()
+				limited.ServeHTTP(w, req)
+				last = w
+			}
+
+			assert.Equal(t, http.StatusTooManyRequests, last.Code)
+
+			retryAfterStr := last.Header().Get("Retry-After")
+			assert.NotEmpty(t, retryAfterStr)
+
+			retryAfter, err := strconv.Atoi(retryAfterStr)
+			assert.NoError(t, err)
+			expected := int(math.Ceil(1.0 / float64(testCase.rateLimit)))
+			assert.Equal(t, expected, int(retryAfter))
+		})
+	}
+
+	t.Run("sub-second rate with 2s interval", func(t *testing.T) {
+		middleware := initRateLimitMiddleware(1, 2*time.Second)
+		defer middleware.Stop()
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		limited := middleware.Handler()(handler)
+
+		var last *httptest.ResponseRecorder
+
+		for i := 0; i < 2; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
+			w := httptest.NewRecorder()
+			limited.ServeHTTP(w, req)
+			last = w
+		}
+
+		assert.Equal(t, http.StatusTooManyRequests, last.Code)
+
+		retryAfterStr := last.Header().Get("Retry-After")
+		assert.NotEmpty(t, retryAfterStr)
+
+		retryAfter, err := strconv.Atoi(retryAfterStr)
+		assert.NoError(t, err)
+		expected := 2
+		assert.Equal(t, expected, int(retryAfter))
 	})
 }
