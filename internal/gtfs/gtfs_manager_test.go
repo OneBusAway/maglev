@@ -149,6 +149,10 @@ func TestManager_GetTripUpdatesForTrip(t *testing.T) {
 				ID: gtfs.TripID{ID: "trip2"},
 			},
 		},
+		realTimeTripLookup: map[string]int{
+			"trip1": 0,
+			"trip2": 1,
+		},
 	}
 
 	updates := manager.GetTripUpdatesForTrip("trip1")

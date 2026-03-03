@@ -581,10 +581,8 @@ func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	defer manager.realTimeMutex.RUnlock()
 
 	var updates []gtfs.Trip
-	for _, v := range manager.realTimeTrips {
-		if v.ID.ID == tripID {
-			updates = append(updates, v)
-		}
+	if index, exists := manager.realTimeTripLookup[tripID]; exists {
+		updates = append(updates, manager.realTimeTrips[index])
 	}
 	return updates
 }
