@@ -345,7 +345,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 				if prev, exists := prevByID[v.ID.ID]; exists {
 					if isVehicleStale(prev, v) {
-						// Keep newer existing vehicle, drop stale update
+						// Log and keep the newer existing vehicle, dropping the stale update
+						logging.LogOperation(logger, "skipping_stale_vehicle_entity",
+							slog.String("feed", feedID),
+							slog.String("vehicle_id", v.ID.ID),
+							slog.Time("existing_timestamp", *prev.Timestamp),
+							slog.Time("incoming_timestamp", *v.Timestamp),
+						)
 						validVehicles = append(validVehicles, prev)
 						continue
 					}
