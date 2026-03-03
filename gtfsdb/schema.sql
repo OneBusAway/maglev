@@ -278,6 +278,18 @@ CREATE TABLE
 
 -- migrate
 CREATE TABLE
+    IF NOT EXISTS frequencies (
+        trip_id TEXT NOT NULL,
+        start_time INTEGER NOT NULL, -- Nanoseconds since midnight (matches stop_times convention)
+        end_time INTEGER NOT NULL, -- Nanoseconds since midnight
+        headway_secs INTEGER NOT NULL, -- Headway in seconds
+        exact_times INTEGER NOT NULL DEFAULT 0, -- 0 = frequency-based, 1 = schedule-based
+        FOREIGN KEY (trip_id) REFERENCES trips (id),
+        PRIMARY KEY (trip_id, start_time)
+    );
+
+-- migrate
+CREATE TABLE
     IF NOT EXISTS calendar_dates (
         service_id TEXT NOT NULL,
         date TEXT NOT NULL,
@@ -358,6 +370,9 @@ CREATE INDEX IF NOT EXISTS idx_trips_block_id ON trips (block_id);
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_shapes_shape_id ON shapes (shape_id);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_frequencies_trip_id ON frequencies (trip_id);
 
 -- Problem reports for trips
 -- migrate
