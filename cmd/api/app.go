@@ -140,8 +140,11 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 		ErrorLog: slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
 	}))
 
+	// Apply global compression around the entire mux
+	compressedMux := restapi.CompressionMiddleware(mux)
+
 	// Wrap with security middleware
-	secureHandler := api.WithSecurityHeaders(mux)
+	secureHandler := api.WithSecurityHeaders(compressedMux)
 
 	// Add metrics middleware
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
