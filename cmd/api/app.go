@@ -67,10 +67,10 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 // BuildApplication creates and initializes the Application with all dependencies.
 // This includes creating the logger, initializing the GTFS manager, and creating the direction calculator.
 // Returns an error if GTFS manager initialization fails.
-func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
+func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	gtfsManager, err := gtfs.InitGTFSManager(gtfsCfg)
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
 	}

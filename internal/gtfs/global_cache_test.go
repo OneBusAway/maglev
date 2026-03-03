@@ -71,12 +71,14 @@ func TestInitializeGlobalCache_HappyPath(t *testing.T) {
 
 // EDGE CASE: Empty Database
 func TestInitializeGlobalCache_EmptyDatabase(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -94,12 +96,14 @@ func TestInitializeGlobalCache_EmptyDatabase(t *testing.T) {
 
 // FAILURE CASE: Database Error
 func TestInitializeGlobalCache_DatabaseError(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -120,12 +124,14 @@ func TestInitializeGlobalCache_DatabaseError(t *testing.T) {
 // Tests that the calculator handles active stops gracefully when the associated
 // trip lacks shape geometry (e.g., shape_id is NULL).
 func TestInitializeGlobalCache_StopsWithoutShapes(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -133,8 +139,6 @@ func TestInitializeGlobalCache_StopsWithoutShapes(t *testing.T) {
 
 	// Clear any existing data
 	wipeDatabase(t, manager.GtfsDB)
-
-	ctx := context.Background()
 
 	// Setup: Create a "Valid" Stop (Active, but no Shape)
 	// Link the stop to a trip, otherwise the cache loader will correctly

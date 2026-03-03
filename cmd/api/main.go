@@ -5,13 +5,20 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func main() {
+	// From fix/496-gtfs-startup-retry: Graceful shutdown context
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// From main: Mutex profiling configuration
 	if os.Getenv("MAGLEV_PROFILE_MUTEX") == "1" {
 		runtime.SetMutexProfileFraction(1)
 		runtime.SetBlockProfileRate(1)
@@ -146,7 +153,7 @@ func main() {
 	}
 
 	// Build application with dependencies
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	if err != nil {
 		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 		logger.Error("failed to build application", "error", err)
@@ -157,7 +164,7 @@ func main() {
 	srv, api := CreateServer(coreApp, cfg)
 
 	// Run server with graceful shutdown
-	if err := Run(context.Background(), srv, coreApp, api, coreApp.Logger); err != nil {
+	if err := Run(ctx, srv, coreApp, api, coreApp.Logger); err != nil {
 		coreApp.Logger.Error("server error", "error", err)
 		os.Exit(1)
 	}

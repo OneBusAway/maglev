@@ -32,7 +32,8 @@ func getSharedTestComponents(t *testing.T) (*Manager, *AdvancedDirectionCalculat
 		}
 
 		var err error
-		sharedManager, err = InitGTFSManager(gtfsConfig)
+		// Pass context.Background() here to satisfy the new cancellable startup logic
+		sharedManager, err = InitGTFSManager(context.Background(), gtfsConfig)
 		if err != nil {
 			panic("Failed to init shared GTFS manager: " + err.Error())
 		}
@@ -206,30 +207,39 @@ func TestStandardDeviationThreshold(t *testing.T) {
 }
 
 func TestCalculateStopDirection_WithShapeData(t *testing.T) {
+	ctx := context.Background()
 	// Optimization: Reuse shared DB and Cache
 	_, calc := getSharedTestComponents(t)
 
-	direction := calc.CalculateStopDirection(context.Background(), "7000", sql.NullString{Valid: false})
+	// Test with a real stop from RABA data
+	direction := calc.CalculateStopDirection(ctx, "7000", sql.NullString{Valid: false})
+	// Should return a valid direction or empty string
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
 
 func TestComputeFromShapes_NoShapeData(t *testing.T) {
+	ctx := context.Background()
 	// Optimization: Reuse shared DB and Cache
 	_, calc := getSharedTestComponents(t)
 
-	direction := calc.computeFromShapes(context.Background(), "nonexistent")
+	// Test with a non-existent stop
+	direction := calc.computeFromShapes(ctx, "nonexistent")
 	assert.Equal(t, "", direction)
 }
 
 func TestComputeFromShapes_SingleOrientation(t *testing.T) {
+	ctx := context.Background()
 	// Optimization: Reuse shared DB and Cache
 	_, calc := getSharedTestComponents(t)
 
-	direction := calc.computeFromShapes(context.Background(), "7000")
+	// Test with actual stop data - single orientation path will be taken if only one trip
+	direction := calc.computeFromShapes(ctx, "7000")
+	// Direction should be valid or empty
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
 
 func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
+	ctx := context.Background()
 	// Note: We reuse the Shared Manager (DB) but create a NEW Calculator.
 	// This is because we modify the variance threshold and don't want to break other tests.
 	manager, _ := getSharedTestComponents(t)
@@ -240,22 +250,23 @@ func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
 	calc.SetStandardDeviationThreshold(0.01)
 
 	// Test with a stop that might have multiple trips
-	direction := calc.computeFromShapes(context.Background(), "7000")
+	direction := calc.computeFromShapes(ctx, "7000")
 	// With low threshold, high variance might return empty
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
 
 func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
+	ctx := context.Background()
 	manager, calc := getSharedTestComponents(t)
 
 	// Get a shape ID from the database
-	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
+	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(ctx, "19_0_1")
 	if err != nil || len(shapes) < 2 {
 		t.Skip("No shape data available for testing")
 	}
 
 	// Test with distance traveled
-	orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", 100.0, 0, 0)
+	orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", 100.0, 0, 0)
 	if err == nil {
 		assert.GreaterOrEqual(t, orientation, -math.Pi)
 		assert.LessOrEqual(t, orientation, math.Pi)
@@ -263,10 +274,11 @@ func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
+	ctx := context.Background()
 	manager, calc := getSharedTestComponents(t)
 
 	// Get a shape ID from the database
-	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
+	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(ctx, "19_0_1")
 	if err != nil || len(shapes) < 2 {
 		t.Skip("No shape data available for testing")
 	}
@@ -274,7 +286,7 @@ func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
 	// Test with geographic matching (distTraveled < 0)
 	stopLat := shapes[0].Lat
 	stopLon := shapes[0].Lon
-	orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", -1.0, stopLat, stopLon)
+	orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", -1.0, stopLat, stopLon)
 	if err == nil {
 		assert.GreaterOrEqual(t, orientation, -math.Pi)
 		assert.LessOrEqual(t, orientation, math.Pi)
@@ -282,25 +294,27 @@ func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
+	ctx := context.Background()
 	_, calc := getSharedTestComponents(t)
 
 	// Test with non-existent shape - should return error or 0 orientation
-	orientation, err := calc.calculateOrientationAtStop(context.Background(), "nonexistent", 0, 0, 0)
+	orientation, err := calc.calculateOrientationAtStop(ctx, "nonexistent", 0, 0, 0)
 	// Either err is not nil, or orientation is 0
 	assert.True(t, err != nil || orientation == 0)
 }
 
 func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
+	ctx := context.Background()
 	manager, calc := getSharedTestComponents(t)
 
 	// Test with shape that has points at the boundaries
-	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(context.Background(), "19_0_1")
+	shapes, err := manager.GtfsDB.Queries.GetShapePointsWithDistance(ctx, "19_0_1")
 	if err != nil || len(shapes) < 2 {
 		t.Skip("No shape data available for testing")
 	}
 	// Test at the very beginning of the shape
 	if len(shapes) > 0 && shapes[0].ShapeDistTraveled.Valid {
-		orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", shapes[0].ShapeDistTraveled.Float64, 0, 0)
+		orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", shapes[0].ShapeDistTraveled.Float64, 0, 0)
 		if err == nil {
 			assert.GreaterOrEqual(t, orientation, -math.Pi)
 			assert.LessOrEqual(t, orientation, math.Pi)
@@ -309,7 +323,7 @@ func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
 
 	// Test at the very end of the shape
 	if len(shapes) > 1 && shapes[len(shapes)-1].ShapeDistTraveled.Valid {
-		orientation, err := calc.calculateOrientationAtStop(context.Background(), "19_0_1", shapes[len(shapes)-1].ShapeDistTraveled.Float64, 0, 0)
+		orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", shapes[len(shapes)-1].ShapeDistTraveled.Float64, 0, 0)
 		if err == nil {
 			assert.GreaterOrEqual(t, orientation, -math.Pi)
 			assert.LessOrEqual(t, orientation, math.Pi)
@@ -405,21 +419,23 @@ func TestSetContextCache_PanicAfterInit(t *testing.T) {
 }
 
 func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
+	ctx := context.Background()
 	_, calc := getSharedTestComponents(t)
 
 	// Case 1: Caller provides the optimized direction (should be used instantly)
 	// We pass "North", expect "N"
-	dirProvided := calc.CalculateStopDirection(context.Background(), "any_stop", sql.NullString{String: "North", Valid: true})
+	dirProvided := calc.CalculateStopDirection(ctx, "any_stop", sql.NullString{String: "North", Valid: true})
 	assert.Equal(t, "N", dirProvided, "Should use provided direction argument")
 
 	// Case 2: Caller omits the argument (should fall back to DB)
 	// The DB query will run, find nothing for "any_stop", and return "" gracefully.
 	// Crucially, it won't panic because 'queries' is initialized.
-	dirOmitted := calc.CalculateStopDirection(context.Background(), "any_stop")
+	dirOmitted := calc.CalculateStopDirection(ctx, "any_stop")
 	assert.Equal(t, "", dirOmitted, "Should fall back gracefully when argument is omitted")
 }
 
 func TestSetContextCache_ConcurrentAccess(t *testing.T) {
+	ctx := context.Background()
 	manager, _ := getSharedTestComponents(t)
 	// We use shared DB, but MUST use a fresh Calculator to test the race condition specifically on that instance.
 	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
@@ -435,7 +451,7 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 	go func() {
 		<-start // Wait for signal
 		// This triggers 'initialized.Store(true)' internally
-		calc.CalculateStopDirection(context.Background(), "7000")
+		calc.CalculateStopDirection(ctx, "7000")
 		close(done)
 	}()
 
@@ -462,8 +478,9 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 
 // TestBulkQuery_GetStopsWithShapeContextByIDs verifies the bulk optimization
 func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
-	manager, _ := getSharedTestComponents(t)
 	ctx := context.Background()
+	manager, _ := getSharedTestComponents(t)
+
 	// DYNAMICALLY fetch valid Stop IDs
 	rows, err := manager.GtfsDB.DB.QueryContext(ctx, "SELECT id FROM stops LIMIT 5")
 	if err != nil {
@@ -508,8 +525,8 @@ func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
 
 // TestBulkQuery_GetShapePointsByIDs verifies fetching shape points in bulk.
 func TestBulkQuery_GetShapePointsByIDs(t *testing.T) {
-	manager, _ := getSharedTestComponents(t)
 	ctx := context.Background()
+	manager, _ := getSharedTestComponents(t)
 
 	// DYNAMICALLY fetch a real Shape ID from the DB
 	var shapeID string

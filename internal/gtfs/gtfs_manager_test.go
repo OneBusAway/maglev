@@ -48,6 +48,8 @@ func TestManager_RoutesForAgencyID(t *testing.T) {
 }
 
 func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
+	ctx := context.Background()
+
 	testCases := []struct {
 		name          string
 		lat           float64
@@ -77,7 +79,7 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 			assert.NotNil(t, manager)
 
 			// Get stops using the manager method
-			stops := manager.GetStopsForLocation(context.Background(), tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
+			stops := manager.GetStopsForLocation(ctx, tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
 
 			// The test expects that the spatial index query is used
 			assert.GreaterOrEqual(t, len(stops), tc.expectedStops, "Should find stops within radius")
@@ -262,13 +264,15 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 }
 
 func TestManager_GetVehicleForTrip(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
 	// We use isolated GTFSManager here instead of shared test components because we want to control the real-time vehicles for this test.
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	assert.Nil(t, err)
 	defer manager.Shutdown()
 
@@ -293,7 +297,7 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	}
 
 	// Test Not Found
-	nilVehicle := manager.GetVehicleForTrip(t.Context(), "nonexistent")
+	nilVehicle := manager.GetVehicleForTrip(context.Background(), "nonexistent")
 	assert.Nil(t, nilVehicle)
 }
 
@@ -363,12 +367,14 @@ func TestManager_FindRoute_UsesMap(t *testing.T) {
 }
 
 func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err, "Failed to initialize manager")
 	defer manager.Shutdown()
 
@@ -398,12 +404,14 @@ func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
 }
 
 func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
 	defer manager.Shutdown()
 
@@ -467,12 +475,14 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 }
 
 func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(b, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		b.Fatalf("Failed to initialize: %v", err)
 	}
@@ -485,4 +495,35 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 		_ = manager.RoutesForAgencyID("25")
 		manager.RUnlock()
 	}
+}
+
+func TestInitGTFSManager_RetryLogic(t *testing.T) {
+	ctx := context.Background()
+
+	// Use an ultra-fast backoff schedule for the test to prevent it from hanging
+	backoffs := []time.Duration{
+		1 * time.Millisecond,
+		2 * time.Millisecond,
+		3 * time.Millisecond,
+	}
+
+	config := Config{
+		// Use a clearly invalid URL that will trigger failures
+		GtfsURL:        "http://invalid.url.that.will.fail.internal/gtfs.zip",
+		GTFSDataPath:   ":memory:",
+		Env:            appconf.Test,
+		StartupRetries: backoffs, // Inject test backoffs
+	}
+
+	start := time.Now()
+
+	manager, err := InitGTFSManager(ctx, config)
+
+	// It should eventually fail after trying all backoffs
+	require.Error(t, err)
+	require.Nil(t, manager)
+
+	// Verify the entire process was fast (proving it used our 1ms, 2ms, 3ms backoffs)
+	duration := time.Since(start)
+	assert.Less(t, duration, 1*time.Second, "Retry logic should respect the configured backoff schedule")
 }
