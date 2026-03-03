@@ -280,9 +280,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predictedArrivalTime = scheduledArrivalTimeMs
 		predictedDepartureTime = scheduledDepartureTimeMs
 
-		predictedArrival, predictedDeparture := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
+		// and includes trip-level Delay fallback for consistency with the plural handler
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
-		if predictedArrival != 0 && predictedDeparture != 0 {
+		if isPredicted {
 			predictedArrivalTime = predictedArrival
 			predictedDepartureTime = predictedDeparture
 			predicted = true
@@ -540,16 +542,25 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	api.sendResponse(w, r, response)
 }
 
+// getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
+// It implements a 3-tier fallback strategy matching the plural handler's behavior:
+//  1. Exact stop match — uses per-stop arrival/departure time or delay directly
+//  2. Propagated delay — uses delay from the closest prior stop in the trip
+//  3. Trip-level delay — falls back to TripUpdate.Delay when no per-stop data exists
+//
+// Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
+// Returns (0, 0, false) if no prediction can be made.
 func (api *RestAPI) getPredictedTimes(
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
-) (predictedArrivalTime, predictedDepartureTime int64) {
+) (predictedArrivalTime, predictedDepartureTime int64, predicted bool) {
 
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	if realTimeTrip == nil || len(realTimeTrip.StopTimeUpdates) == 0 {
-		return 0, 0
+	// trip-level delay exists but StopTimeUpdates is empty
+	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
+		return 0, 0, false
 	}
 
 	var arrivalOffset, departureOffset *int64
@@ -588,6 +599,7 @@ func (api *RestAPI) getPredictedTimes(
 
 		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
 			closestPriorSequence = seq
+			propagatedDelay = 0
 			if stu.Departure != nil && stu.Departure.Delay != nil {
 				propagatedDelay = int64(*stu.Departure.Delay)
 			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
@@ -596,8 +608,24 @@ func (api *RestAPI) getPredictedTimes(
 		}
 	}
 
-	if !foundTarget && closestPriorSequence == -1 {
-		return 0, 0
+	// CHANGED: Restructured fallback chain to include trip-level Delay (Tier 3)
+	// Previously this returned (0, 0) when !foundTarget && closestPriorSequence == -1,
+	// ignoring trip-level delay entirely
+	if !foundTarget {
+		if closestPriorSequence != -1 {
+			// Fallback 1: Propagated delay from closest prior stop
+			arr := propagatedDelay
+			dep := propagatedDelay
+			arrivalOffset = &arr
+			departureOffset = &dep
+		} else if realTimeTrip.Delay != nil {
+			// Fallback 2: Trip-level delay — matches plural handler behavior
+			delayNs := realTimeTrip.Delay.Nanoseconds()
+			arrivalOffset = &delayNs
+			departureOffset = &delayNs
+		} else {
+			return 0, 0, false
+		}
 	}
 
 	if arrivalOffset == nil {
@@ -611,20 +639,20 @@ func (api *RestAPI) getPredictedTimes(
 	if scheduledArrivalTime.Equal(scheduledDepartureTime) {
 		offset := *arrivalOffset
 
-		if *departureOffset != propagatedDelay {
+		if *departureOffset != propagatedDelay && *departureOffset != *arrivalOffset {
 			offset = *departureOffset
 		}
 
 		predictedArrival := scheduledArrivalTime.Add(time.Duration(offset))
 		predictedDeparture := scheduledDepartureTime.Add(time.Duration(offset))
-		return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli()
+		return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli(), true
 	}
 
 	// Rule 2: arrival < departure
 	predictedArrival := scheduledArrivalTime.Add(time.Duration(*arrivalOffset))
 	predictedDeparture := scheduledDepartureTime.Add(time.Duration(*departureOffset))
 
-	return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli()
+	return predictedArrival.UnixMilli(), predictedDeparture.UnixMilli(), true
 }
 
 func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {

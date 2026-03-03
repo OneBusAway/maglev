@@ -529,11 +529,12 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	scheduledArrival := time.Now()
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
 
-	// When there's no real-time data, should return 0, 0
-	predArrival, predDeparture := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
+	// When there's no real-time data, should return 0, 0, false
+	predArrival, predDeparture, predicted := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
 
 	assert.Equal(t, int64(0), predArrival)
 	assert.Equal(t, int64(0), predDeparture)
+	assert.False(t, predicted)
 }
 
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
@@ -545,11 +546,12 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 	// Even without real-time data, test the logic path
 	// This tests that the function handles the case correctly
-	predArrival, predDeparture := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime)
 
-	// Without real-time data, returns 0,0
+	// Without real-time data, returns 0, 0, false
 	assert.Equal(t, int64(0), predArrival)
 	assert.Equal(t, int64(0), predDeparture)
+	assert.False(t, predicted)
 }
 
 func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
@@ -831,10 +833,40 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
 	expectedTime := scheduledTime.Add(delayDuration).UnixMilli()
 
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 120s delay")
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 120s delay")
+	assert.True(t, predicted, "Should be predicted when delay propagation is available")
+}
+
+func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "test_trip_level_delay"
+	targetStopSequence := int64(5)
+
+	delayDuration := 300 * time.Second // 5 minutes
+
+	// Trip has Delay set but NO StopTimeUpdates — this is the scenario
+	// that was previously broken (returned 0, 0, false)
+	mockTrip := gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Delay:           &delayDuration,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{}, // Empty — no per-stop data
+	}
+
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
+
+	scheduledTime := time.Now()
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+
+	expectedTime := scheduledTime.Add(delayDuration).UnixMilli()
+
+	assert.True(t, predicted, "Should be predicted when trip-level delay is available")
+	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 300s trip-level delay")
+	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 300s trip-level delay")
 }

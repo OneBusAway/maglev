@@ -831,6 +831,41 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 		"predicted departure should be scheduled + trip-level 120s delay")
 }
 
+// TestPluralArrivals_TripLevelDelayWithoutVehicle verifies that when a TripUpdate has a
+// trip-level Delay but no vehicle position exists, the prediction still applies.
+// This tests the behavior change from the refactored code: prediction is no longer
+// gated on vehicle != nil, so trip-level delays work even without a vehicle.
+func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
+
+	// NO vehicle added — only a trip update with delay
+	tripDelay := 120 * time.Second
+	api.GtfsManager.MockAddTripUpdate(tripID, &tripDelay, nil)
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST")
+
+	data := model.Data.(map[string]interface{})
+	entry := data["entry"].(map[string]interface{})
+	arrivals := entry["arrivalsAndDepartures"].([]interface{})
+	require.NotEmpty(t, arrivals, "expected at least one arrival")
+
+	scheduledDepartureMs := scheduledArrivalMs + 300000
+
+	a := arrivals[0].(map[string]interface{})
+	assert.True(t, a["predicted"].(bool),
+		"trip-level delay without vehicle should still be predicted")
+	assert.Equal(t, float64(scheduledArrivalMs+120000), a["predictedArrivalTime"],
+		"predicted arrival should be scheduled + trip-level 120s delay")
+	assert.Equal(t, float64(scheduledDepartureMs+120000), a["predictedDepartureTime"],
+		"predicted departure should be scheduled + trip-level 120s delay")
+}
+
 // TestPluralArrivals_NoMatchingOrPriorStop verifies that a TripUpdate with a
 // StopTimeUpdate for a later stop does not mark the arrival as predicted.
 func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
