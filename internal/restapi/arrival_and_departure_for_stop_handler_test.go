@@ -432,7 +432,13 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripStopCombination(t *testin
 	// Verify all the important fields
 	assert.Equal(t, combinedStopID, entry["stopId"])
 	assert.Equal(t, combinedTripID, entry["tripId"])
-	assert.Equal(t, float64(serviceDate), entry["serviceDate"])
+	// serviceDate in response is midnight of the service date in the agency's timezone,
+	// not the raw input epoch. The RABA agency uses America/Los_Angeles.
+	responseSd := int64(entry["serviceDate"].(float64))
+	agencyLoc, _ := time.LoadLocation("America/Los_Angeles")
+	sdTime := time.Unix(serviceDate/1000, 0).In(agencyLoc)
+	expectedMidnight := time.Date(sdTime.Year(), sdTime.Month(), sdTime.Day(), 0, 0, 0, 0, agencyLoc)
+	assert.Equal(t, expectedMidnight.UnixMilli(), responseSd)
 	assert.NotNil(t, entry["scheduledArrivalTime"])
 	assert.NotNil(t, entry["scheduledDepartureTime"])
 	assert.Equal(t, true, entry["arrivalEnabled"])

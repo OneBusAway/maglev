@@ -21,9 +21,12 @@ func (api *RestAPI) BuildTripStatus(
 	serviceDate time.Time,
 	currentTime time.Time,
 ) (*models.TripStatusForTripDetails, error) {
+	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
+	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
+		0, 0, 0, 0, serviceDate.Location())
 	status := &models.TripStatusForTripDetails{
 		ActiveTripID:      utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:       serviceDate.Unix() * 1000,
+		ServiceDate:       sdMidnight.UnixMilli(),
 		SituationIDs:      api.GetSituationIDsForTrip(ctx, tripID),
 		OccupancyCapacity: -1,
 		OccupancyCount:    -1,

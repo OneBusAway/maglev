@@ -166,7 +166,12 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 
 	entry, ok := data["entry"].(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, float64(serviceDateMs), entry["serviceDate"])
+	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
+	agencyLoc, _ := time.LoadLocation("America/Los_Angeles")
+	sdInAgencyTz := tomorrow.In(agencyLoc)
+	expectedMidnight := time.Date(sdInAgencyTz.Year(), sdInAgencyTz.Month(), sdInAgencyTz.Day(),
+		0, 0, 0, 0, agencyLoc)
+	assert.Equal(t, float64(expectedMidnight.UnixMilli()), entry["serviceDate"])
 }
 
 func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {

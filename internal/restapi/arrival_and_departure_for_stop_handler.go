@@ -24,7 +24,7 @@ type ArrivalAndDepartureParams struct {
 
 // parseArrivalAndDepartureParams parses and validates request parameters.
 // Returns parameters and a map of validation errors if any.
-func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) (ArrivalAndDepartureParams, map[string][]string) {
+func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (ArrivalAndDepartureParams, map[string][]string) {
 	params := ArrivalAndDepartureParams{
 		MinutesAfter:  30, // Default 30 minutes after
 		MinutesBefore: 5,  // Default 5 minutes before
@@ -95,6 +95,22 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request) (ArrivalAndD
 		return params, fieldErrors
 	}
 
+	// If a timezone location was provided, localize serviceDate and time so that
+	// callers receive times in the agency's timezone by default. This prevents the
+	// bug where time.Unix(ms/1000, 0) creates a UTC time and downstream
+	// Year()/Month()/Day()/Format() calls extract the wrong calendar date for
+	// agencies in positive UTC offsets.
+	if len(loc) > 0 && loc[0] != nil {
+		if params.ServiceDate != nil {
+			localized := params.ServiceDate.In(loc[0])
+			params.ServiceDate = &localized
+		}
+		if params.Time != nil {
+			localized := params.Time.In(loc[0])
+			params.Time = &localized
+		}
+	}
+
 	return params, nil
 }
 
@@ -109,7 +125,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	// Capture parsing errors
+	// Capture parsing errors (syntax validation only — localization happens below
+	// once we know the agency timezone).
 	params, fieldErrors := api.parseArrivalAndDepartureParams(r)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
@@ -151,6 +168,18 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
+	}
+
+	// Localize serviceDate and time to the agency's timezone now that we know it.
+	// This ensures Year()/Month()/Day()/Format() extract the correct local date.
+	loc := utils.LoadLocationWithUTCFallBack(stopAgency.Timezone, stopAgency.ID)
+	if params.ServiceDate != nil {
+		localized := params.ServiceDate.In(loc)
+		params.ServiceDate = &localized
+	}
+	if params.Time != nil {
+		localized := params.Time.In(loc)
+		params.Time = &localized
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
@@ -205,18 +234,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Set current time
 	var currentTime time.Time
-	loc := utils.LoadLocationWithUTCFallBack(stopAgency.Timezone, stopAgency.ID)
 	if params.Time != nil {
-		currentTime = params.Time.In(loc)
+		currentTime = *params.Time
 	} else {
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	// Use the provided service date
+	// serviceDate is already localized above; extract midnight in agency's TZ.
 	serviceDate := *params.ServiceDate
-	serviceDateMillis := serviceDate.Unix() * 1000
-
-	// Service date is a "date" only, so get midnight in agency's TZ
 	serviceMidnight := time.Date(
 		serviceDate.Year(),
 		serviceDate.Month(),
@@ -224,6 +249,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		0, 0, 0, 0,
 		loc,
 	)
+	serviceDateMillis := serviceMidnight.UnixMilli()
 
 	// Arrival time is stored in nanoseconds since midnight → convert to duration
 	// arrival and departure time is stored in nanoseconds (sqlite)

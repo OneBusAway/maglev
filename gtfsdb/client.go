@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
 )
 
 // Client is the main entry point for the library

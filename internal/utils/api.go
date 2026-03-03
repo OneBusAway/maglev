@@ -26,7 +26,11 @@ func ServiceDateMillis(explicitServiceDate *time.Time, currentTime time.Time) (t
 	} else {
 		serviceDate = CalculateServiceDate(currentTime)
 	}
-	return serviceDate, serviceDate.Unix() * 1000
+	// Always return midnight of the service date in the date's own timezone.
+	// This ensures all endpoints return a consistent serviceDate millis value.
+	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
+		0, 0, 0, 0, serviceDate.Location())
+	return serviceDate, midnight.UnixMilli()
 }
 
 func CalculateSecondsSinceServiceDate(currentTime time.Time, serviceDate time.Time) int64 {

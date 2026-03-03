@@ -10,7 +10,6 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
-
 )
 
 func TestFilterAgencies(t *testing.T) {

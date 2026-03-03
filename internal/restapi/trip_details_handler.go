@@ -25,7 +25,7 @@ type TripParams struct {
 // parseTripParams parses and validates the common trip query params
 // includeScheduleDefault controls the default value of IncludeSchedule when the
 // parameter is not present in the request (true for trip-details, false for trip-for-vehicle).
-func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool) (TripParams, map[string][]string) {
+func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool, loc ...*time.Location) (TripParams, map[string][]string) {
 	params := TripParams{
 		IncludeTrip:     true,
 		IncludeSchedule: includeScheduleDefault,
@@ -82,6 +82,22 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 		return params, fieldErrors
 	}
 
+	// If a timezone location was provided, localize serviceDate and time so that
+	// callers receive times in the agency's timezone by default. This prevents the
+	// bug where time.Unix(ms/1000, 0) creates a UTC time and downstream
+	// Year()/Month()/Day()/Format() calls extract the wrong calendar date for
+	// agencies in positive UTC offsets.
+	if len(loc) > 0 && loc[0] != nil {
+		if params.ServiceDate != nil {
+			localized := params.ServiceDate.In(loc[0])
+			params.ServiceDate = &localized
+		}
+		if params.Time != nil {
+			localized := params.Time.In(loc[0])
+			params.Time = &localized
+		}
+	}
+
 	return params, nil
 }
 
@@ -94,13 +110,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
-
-	// Capture parsing errors
-	params, fieldErrors := api.parseTripParams(r, true)
-	if len(fieldErrors) > 0 {
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
@@ -122,9 +131,17 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 
+	// Parse query params with the agency's timezone so that serviceDate and time
+	// are localized at parse time, preventing UTC date-extraction bugs.
+	params, fieldErrors := api.parseTripParams(r, true, loc)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	var currentTime time.Time
 	if params.Time != nil {
-		currentTime = params.Time.In(loc)
+		currentTime = *params.Time
 	} else {
 		currentTime = api.Clock.Now().In(loc)
 	}
