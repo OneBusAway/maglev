@@ -23,13 +23,7 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
 
-	entryWrapper, ok := data["entry"].(map[string]interface{})
-	require.True(t, ok)
-
-	entryData, ok := entryWrapper["data"].(map[string]interface{})
-	require.True(t, ok)
-
-	entry, ok := entryData["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok)
 
 	if id, exists := entry["id"]; exists {
@@ -126,13 +120,7 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
 
-	entryWrapper, ok := data["entry"].(map[string]interface{})
-	require.True(t, ok)
-
-	entryData, ok := entryWrapper["data"].(map[string]interface{})
-	require.True(t, ok)
-
-	entry, ok := entryData["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok)
 
 	configs, ok := entry["configurations"].([]interface{})
@@ -269,15 +257,7 @@ func TestBlockHandlerResponseValidation(t *testing.T) {
 	require.Contains(t, data, "entry")
 	require.Contains(t, data, "references")
 
-	entryWrapper, ok := data["entry"].(map[string]interface{})
-	require.True(t, ok)
-	require.Contains(t, entryWrapper, "data")
-
-	entryData, ok := entryWrapper["data"].(map[string]interface{})
-	require.True(t, ok)
-	require.Contains(t, entryData, "entry")
-
-	entry, ok := entryData["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok)
 	require.Contains(t, entry, "id")
 	require.Contains(t, entry, "configurations")
@@ -419,13 +399,7 @@ func TestBlockHandlerReferencesConsistency(t *testing.T) {
 	assert.Contains(t, refs, "stopTimes")
 	assert.Contains(t, refs, "situations")
 
-	entryWrapper, ok := data["entry"].(map[string]interface{})
-	require.True(t, ok)
-
-	entryData, ok := entryWrapper["data"].(map[string]interface{})
-	require.True(t, ok)
-
-	entry, ok := entryData["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok)
 
 	configs, ok := entry["configurations"].([]interface{})

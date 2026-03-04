@@ -48,20 +48,15 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blockData := models.BlockData{
-		Entry: transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID),
-	}
-
-	blockResponse := models.BlockResponse{
-		Data: blockData,
-	}
+	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID)
 
 	references, err := api.getReferences(ctx, agencyID, block)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	response := models.NewEntryResponse(blockResponse, references, api.Clock)
+
+	response := models.NewEntryResponse(blockEntry, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
