@@ -13,7 +13,7 @@ func TestNewTripDetails(t *testing.T) {
 		RouteID:        "route_456",
 		ServiceID:      "service_789",
 		TripHeadsign:   "Downtown Terminal",
-		DirectionID:    1,
+		DirectionID:    "1",
 		BlockID:        "block_1",
 		ShapeID:        "shape_1",
 		TripShortName:  "DT",

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"sort"
+	"strconv"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -245,7 +246,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 			ID:           utils.FormCombinedID(agencyID, trip.ID),
 			RouteID:      utils.FormCombinedID(agencyID, trip.RouteID),
 			ServiceID:    utils.FormCombinedID(agencyID, trip.ServiceID),
-			DirectionID:  trip.DirectionID.Int64,
+			DirectionID:  strconv.FormatInt(trip.DirectionID.Int64, 10),
 			BlockID:      utils.FormCombinedID(agencyID, trip.BlockID.String),
 			ShapeID:      utils.FormCombinedID(agencyID, trip.ShapeID.String),
 			TripHeadsign: trip.TripHeadsign.String,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -359,7 +360,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 				ServiceID:     trip.ServiceID,
 				TripHeadsign:  trip.TripHeadsign.String,
 				TripShortName: trip.TripShortName.String,
-				DirectionID:   trip.DirectionID.Int64,
+				DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
 				BlockID:       trip.BlockID.String,
 				ShapeID:       trip.ShapeID.String,
 				PeakOffPeak:   0,

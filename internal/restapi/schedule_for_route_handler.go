@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -242,7 +243,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				t.ServiceID,
 				t.TripHeadsign.String,
 				t.TripShortName.String,
-				t.DirectionID.Int64,
+				strconv.FormatInt(t.DirectionID.Int64, 10),
 				utils.FormCombinedID(agencyID, t.BlockID.String),
 				utils.FormCombinedID(agencyID, t.ShapeID.String),
 			)
