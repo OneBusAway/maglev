@@ -205,6 +205,16 @@ func TestStandardDeviationThreshold(t *testing.T) {
 	err := calc.SetStandardDeviationThreshold(1.0)
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, calc.standardDeviationThreshold)
+
+	// Test invalid zero threshold
+	err = calc.SetStandardDeviationThreshold(0.0)
+	assert.Error(t, err)
+	assert.Equal(t, 1.0, calc.standardDeviationThreshold) // Should remain unchanged
+
+	// Test invalid negative threshold
+	err = calc.SetStandardDeviationThreshold(-1.0)
+	assert.Error(t, err)
+	assert.Equal(t, 1.0, calc.standardDeviationThreshold) // Should remain unchanged
 }
 
 func TestCalculateStopDirection_WithShapeData(t *testing.T) {
@@ -400,7 +410,7 @@ func TestSetContextCache_HappyPath(t *testing.T) {
 	assert.Equal(t, "stop1", adc.contextCache["stop1"][0].ID)
 }
 
-func TestSetContextCache_PanicAfterInit(t *testing.T) {
+func TestSetContextCache_ReturnsErrorAfterInit(t *testing.T) {
 	// Create the instance
 	adc := &AdvancedDirectionCalculator{}
 
@@ -442,6 +452,7 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 	// Channel to coordinate start
 	start := make(chan struct{})
 	done := make(chan struct{})
+	setErrCh := make(chan error, 1)
 
 	// Launch a "Reader" Goroutine (Simulating a request coming in)
 	go func() {
@@ -456,7 +467,7 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 	// but correctly returns an error if it happens too late.
 	go func() {
 		<-start // Wait for signal
-		_ = calc.SetContextCache(cache)
+		setErrCh <- calc.SetContextCache(cache)
 	}()
 
 	// Start the race
@@ -464,6 +475,12 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 
 	// Wait for reader to finish
 	<-done
+
+	// Wait for writer to finish
+	err := <-setErrCh
+	if err != nil {
+		assert.Equal(t, "SetContextCache called after concurrent operations have started", err.Error())
+	}
 
 	// If got here without the test binary crashing/deadlocking, the atomic guards did their job.
 }

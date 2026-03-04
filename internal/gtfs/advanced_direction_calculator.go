@@ -46,6 +46,9 @@ func (adc *AdvancedDirectionCalculator) SetStandardDeviationThreshold(threshold 
 	if adc.initialized.Load() {
 		return errors.New("SetStandardDeviationThreshold called after concurrent operations have started")
 	}
+	if threshold <= 0 {
+		return errors.New("standard deviation threshold must be greater than zero")
+	}
 	adc.standardDeviationThreshold = threshold
 	return nil
 }
@@ -67,8 +70,7 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 
 // SetContextCache injects the bulk-loaded context data.
 // IMPORTANT: This must be called before any concurrent calculation operations begin.
-// Returns an error if called after internal state has been initialized (i.e., after the first
-// fallback to shape-based calculation).
+// Returns an error if called after CalculateStopDirection has been invoked.
 func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) error {
 	adc.cacheMutex.Lock()
 	defer adc.cacheMutex.Unlock()
