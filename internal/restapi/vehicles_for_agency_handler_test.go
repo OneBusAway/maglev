@@ -345,7 +345,7 @@ func createTestApiWithRealTimeData(t *testing.T) (*RestAPI, func()) {
 		},
 	}
 
-	gtfsManager, err := gtfs.InitGTFSManager(gtfsConfig)
+	gtfsManager, err := gtfs.InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)
 
 	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)

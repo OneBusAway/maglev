@@ -76,7 +76,7 @@ func TestInitializeGlobalCache_EmptyDatabase(t *testing.T) {
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestInitializeGlobalCache_DatabaseError(t *testing.T) {
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestInitializeGlobalCache_StopsWithoutShapes(t *testing.T) {
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}

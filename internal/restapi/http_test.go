@@ -57,7 +57,7 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 			GTFSDataPath: testDbPath,
 		}
 		var err error
-		testGtfsManager, err = gtfs.InitGTFSManager(gtfsConfig)
+		testGtfsManager, err = gtfs.InitGTFSManager(context.Background(), gtfsConfig)
 		if err != nil {
 			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
 		}

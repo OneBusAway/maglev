@@ -70,7 +70,7 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	gtfsManager, err := gtfs.InitGTFSManager(gtfsCfg)
+	gtfsManager, err := gtfs.InitGTFSManager(context.Background(), gtfsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
 	}

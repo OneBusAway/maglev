@@ -33,7 +33,7 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)
 	defer manager.Shutdown()
 

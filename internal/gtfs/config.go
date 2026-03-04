@@ -1,6 +1,8 @@
 package gtfs
 
 import (
+	"time"
+
 	"maglev.onebusaway.org/internal/appconf"
 )
 
@@ -23,9 +25,10 @@ type Config struct {
 	StaticAuthHeaderValue string
 	RTFeeds               []RTFeedConfig
 	GTFSDataPath          string
-	Env                   appconf.Environment
-	Verbose               bool
-	EnableGTFSTidy        bool
+	Env             appconf.Environment
+	Verbose         bool
+	EnableGTFSTidy  bool
+	StartupRetries  []time.Duration // Backoff durations between startup load attempts; defaults to [5s,15s,30s,60s]
 }
 
 // enabledFeeds returns only the enabled feeds that have at least one URL configured.

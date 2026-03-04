@@ -268,7 +268,7 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 		Env:          appconf.Test,
 	}
 	// We use isolated GTFSManager here instead of shared test components because we want to control the real-time vehicles for this test.
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	assert.Nil(t, err)
 	defer manager.Shutdown()
 
@@ -368,7 +368,7 @@ func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err, "Failed to initialize manager")
 	defer manager.Shutdown()
 
@@ -403,7 +403,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)
 	defer manager.Shutdown()
 
@@ -472,7 +472,7 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	if err != nil {
 		b.Fatalf("Failed to initialize: %v", err)
 	}
