@@ -260,7 +260,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	}
 
 	stopTimesMap := make(map[string][]gtfsdb.StopTime)
-	blockTripsMap := make(map[string][]gtfsdb.Trip)
+	blockTripsMap := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
 	var allStopIDs []string
 
 	if includeSchedule {
@@ -343,7 +343,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				shapePoints = shapesMap[tripData.ShapeID.String]
 			}
 
-			var blockTrips []gtfsdb.Trip
+			var blockTrips []gtfsdb.GetTripsByBlockIDsRow
 			if tripData.BlockID.Valid {
 				blockTrips = blockTripsMap[tripData.BlockID.String]
 			}
@@ -739,7 +739,7 @@ func (api *RestAPI) buildScheduleFromMemory(
 	stopTimes []gtfsdb.StopTime,
 	shapePoints []gtfs.ShapePoint,
 	stopCoords map[string]struct{ lat, lon float64 },
-	blockTrips []gtfsdb.Trip,
+	blockTrips []gtfsdb.GetTripsByBlockIDsRow,
 ) *models.TripsSchedule {
 
 	// Calculate Next/Prev using in-memory block trips
@@ -758,14 +758,14 @@ func (api *RestAPI) buildScheduleFromMemory(
 }
 
 // calculateNextPrevFromMemory determines the next and previous trip IDs within a block.
-func (api *RestAPI) calculateNextPrevFromMemory(currentTrip gtfsdb.Trip, blockTrips []gtfsdb.Trip, agencyID string) (string, string) {
+func (api *RestAPI) calculateNextPrevFromMemory(currentTrip gtfsdb.Trip, blockTrips []gtfsdb.GetTripsByBlockIDsRow, agencyID string) (string, string) {
 	if len(blockTrips) == 0 {
 		return "", ""
 	}
 
 	// Filter blockTrips to only include those that share the exact ServiceID of the current trip.
 	// This ensures we don't mix trips from different service days (e.g. Weekday vs Weekend).
-	var relevantTrips []gtfsdb.Trip
+	var relevantTrips []gtfsdb.GetTripsByBlockIDsRow
 	for _, t := range blockTrips {
 		if t.ServiceID == currentTrip.ServiceID {
 			relevantTrips = append(relevantTrips, t)
