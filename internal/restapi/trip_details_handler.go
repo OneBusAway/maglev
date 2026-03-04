@@ -103,9 +103,10 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 }
 
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	tripID := parsed.CodeID
+	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	ctx := r.Context()
 

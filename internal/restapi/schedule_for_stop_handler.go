@@ -12,9 +12,10 @@ import (
 )
 
 func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	stopID := parsed.CodeID
+	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	ctx := r.Context()
 

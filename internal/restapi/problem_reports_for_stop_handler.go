@@ -4,12 +4,13 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 func (api *RestAPI) problemReportsForStopHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	stopID := parsed.CodeID
+	_, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
