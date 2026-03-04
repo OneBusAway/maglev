@@ -225,9 +225,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	)
 	references.Agencies = append(references.Agencies, agencyModel)
 
-	for _, r := range routeRefs {
-		references.Routes = append(references.Routes, r)
-	}
+	references.Routes = utils.MapValues(routeRefs)
 
 	tripIDs := make([]string, 0, len(tripIDsSet))
 	for tid := range tripIDsSet {

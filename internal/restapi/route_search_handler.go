@@ -113,7 +113,6 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
-
 	// Populate situation references for alerts affecting the returned routes
 	resultRawRouteIDs := make([]string, 0, len(routes))
 	for _, routeRow := range routes {
@@ -122,14 +121,9 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
 	situations := api.BuildSituationReferences(alerts)
 
-	references := models.ReferencesModel{
-		Agencies:   agencies,
-		Routes:     []models.Route{},
-		Situations: situations,
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      []models.Stop{},
-		Trips:      []models.Trip{},
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencies
+	references.Situations = situations
 
 	response := models.NewListResponse(results, references, false, api.Clock)
 	api.sendResponse(w, r, response)
