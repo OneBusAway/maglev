@@ -524,6 +524,14 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *gtfs.Vehicle {
 
+	manager.realTimeMutex.RLock()
+	if index, exists := manager.realTimeVehicleLookupByTrip[tripID]; exists {
+		vehicle := manager.realTimeVehicles[index]
+		manager.realTimeMutex.RUnlock()
+		return &vehicle
+	}
+	manager.realTimeMutex.RUnlock()
+
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
