@@ -685,8 +685,8 @@ SELECT
     t.id,
     t.block_id,
     t.service_id,
-    t.min_arrival_time AS first_departure_time,
-    t.max_departure_time AS last_arrival_time
+    t.min_arrival_time AS earliest_time,
+    t.max_departure_time AS latest_time
 FROM trips t
 WHERE t.block_id = ?
   AND t.service_id IN (sqlc.slice('service_ids'))
