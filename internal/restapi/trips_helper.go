@@ -223,35 +223,26 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		return "", "", nil, nil
 	}
 
-	orderedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+	navResult, err := api.GtfsManager.GtfsDB.Queries.GetNextAndPreviousTripsInBlock(ctx, gtfsdb.GetNextAndPreviousTripsInBlockParams{
+		TripID:     trip.ID,
 		BlockID:    trip.BlockID,
 		ServiceIds: []string{trip.ServiceID},
 	})
 	if err != nil {
-		return "", "", nil, err
-	}
-	if len(orderedTrips) == 0 {
-		return "", "", nil, nil
-	}
-
-	currentIndex := -1
-	for i, t := range orderedTrips {
-		if t.ID == trip.ID {
-			currentIndex = i
-			break
+		// Trip not found in block not an error, just no prev/next
+		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		if stopErr != nil {
+			return "", "", nil, stopErr
 		}
+		return "", "", stopTimes, nil
 	}
 
-	if currentIndex == -1 {
-		return "", "", nil, nil
+	// LAG/LEAD return interface{} (nullable); type-assert to string
+	if prev, ok := navResult.PrevTripID.(string); ok && prev != "" {
+		previousTripID = utils.FormCombinedID(agencyID, prev)
 	}
-
-	if currentIndex > 0 {
-		previousTripID = utils.FormCombinedID(agencyID, orderedTrips[currentIndex-1].ID)
-	}
-
-	if currentIndex < len(orderedTrips)-1 {
-		nextTripID = utils.FormCombinedID(agencyID, orderedTrips[currentIndex+1].ID)
+	if next, ok := navResult.NextTripID.(string); ok && next != "" {
+		nextTripID = utils.FormCombinedID(agencyID, next)
 	}
 
 	stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
@@ -489,7 +480,7 @@ func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, min
 
 // calculateBlockTripSequence calculates the index of a trip within its block's ordered trip sequence
 // for trips that are active on the given service date.
-// Uses GetTripsByBlockIDOrdered to perform a single SQL JOIN instead of N+1 queries.
+// Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
@@ -516,24 +507,21 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 		return 0
 	}
 
-	orderedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+	// Use optimized query with ROW_NUMBER() window function
+	seq, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripSequence(ctx, gtfsdb.GetBlockTripSequenceParams{
+		TripID:     tripID,
 		BlockID:    trip.BlockID,
 		ServiceIds: activeServiceIDs,
 	})
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get ordered block trips",
+		slog.Warn("calculateBlockTripSequence: failed to get block trip sequence",
 			slog.String("trip_id", tripID),
 			slog.String("block_id", trip.BlockID.String),
 			slog.String("error", err.Error()))
 		return 0
 	}
 
-	for i, t := range orderedTrips {
-		if t.ID == tripID {
-			return i
-		}
-	}
-	return 0
+	return int(seq)
 }
 
 // calculatePreciseDistanceAlongTripWithCoords calculates the distance along a trip's shape to a stop
@@ -968,6 +956,8 @@ func (api *RestAPI) findNextStopBySequence(
 	return "", 0
 }
 
+// getFirstStopOfNextTripInBlock uses LEAD() window function to find the next trip
+// in the block and directly fetches its first stop in a single SQL query.
 func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string, serviceDate time.Time) *gtfsdb.StopTime {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, currentTripID)
 	if err != nil {
@@ -980,41 +970,18 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 		return nil
 	}
 
-	orderedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+	// Use optimized query with LEAD() window function
+	stopTime, err := api.GtfsManager.GtfsDB.Queries.GetFirstStopOfNextTripInBlock(ctx, gtfsdb.GetFirstStopOfNextTripInBlockParams{
 		BlockID:    trip.BlockID,
 		ServiceIds: []string{trip.ServiceID},
+		TripID:     currentTripID,
 	})
 	if err != nil {
-		slog.Warn("getFirstStopOfNextTripInBlock: failed to get ordered block trips",
-			slog.String("trip_id", currentTripID),
-			slog.String("block_id", trip.BlockID.String),
-			slog.String("error", err.Error()))
+		// No next trip in block or query error — not necessarily an error condition
 		return nil
 	}
 
-	currentIndex := -1
-	for i, t := range orderedTrips {
-		if t.ID == currentTripID {
-			currentIndex = i
-			break
-		}
-	}
-
-	if currentIndex >= 0 && currentIndex+1 < len(orderedTrips) {
-		nextTripID := orderedTrips[currentIndex+1].ID
-		nextTripStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, nextTripID)
-		if err != nil {
-			slog.Warn("getFirstStopOfNextTripInBlock: failed to get stop times for next trip",
-				slog.String("next_trip_id", nextTripID),
-				slog.String("error", err.Error()))
-			return nil
-		}
-		if len(nextTripStopTimes) > 0 {
-			return &nextTripStopTimes[0]
-		}
-	}
-
-	return nil
+	return &stopTime
 }
 
 func (api *RestAPI) calculateEffectiveDistanceAlongTrip(
