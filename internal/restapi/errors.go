@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/logging"
@@ -46,7 +47,7 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 		api.clientCanceledResponse(w, r, err)
 		return
 	}
-	api.Logger.Error("internal server error", "error", err, "path", r.URL.Path)
+	logging.LogError(api.Logger, "internal server error", err, slog.String("path", r.URL.Path))
 	// Send a 500 Internal Server Error response
 	response := struct {
 		Code        int    `json:"code"`
@@ -100,7 +101,7 @@ func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusBadRequest)
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
-		api.Logger.Error("failed to encode validation error response", "error", err)
+		logging.LogError(api.Logger, "failed to encode validation error response", err)
 	}
 }
 
@@ -126,7 +127,30 @@ func (api *RestAPI) clientCanceledResponse(w http.ResponseWriter, r *http.Reques
 			"path", r.URL.Path,
 			"method", r.Method,
 		)
-		http.Error(w, `{"code":504,"text":"gateway timeout"}`, http.StatusGatewayTimeout)
+		response := struct {
+			Code        int    `json:"code"`
+			CurrentTime int64  `json:"currentTime"`
+			Text        string `json:"text"`
+			Version     int    `json:"version"`
+		}{
+			Code:        http.StatusGatewayTimeout,
+			CurrentTime: models.ResponseCurrentTime(api.Clock),
+			Text:        "gateway timeout",
+			Version:     2,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		err = json.NewEncoder(w).Encode(response)
+		if err != nil {
+			api.Logger.Error("failed to encode gateway timeout response", "error", err)
+		}
 		return
+
+	default:
+		api.Logger.Warn("clientCanceledResponse called with unexpected error type",
+			"error", err,
+			"path", r.URL.Path,
+			"method", r.Method,
+		)
 	}
 }
