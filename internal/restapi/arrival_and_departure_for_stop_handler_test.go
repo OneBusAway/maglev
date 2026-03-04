@@ -876,3 +876,128 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 300s trip-level delay")
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 300s trip-level delay")
 }
+
+// TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression is a
+// regression test for the serviceDate timezone localization bug.
+//
+// When a client sends serviceDate as a Unix epoch that represents midnight in a
+// positive-UTC-offset timezone, Go's time.Unix() places it in UTC. Without the
+// .In(loc) fix, .Year()/.Month()/.Day() decompose the UTC instant, which falls
+// on the PREVIOUS calendar day.
+//
+// Concrete example (Europe/Berlin, CET = UTC+1):
+//
+//	Midnight Jan 15 CET  = 2025-01-14 23:00:00 UTC
+//	.Day() in UTC        = 14 (WRONG — off by one day)
+//	.Day() in CET        = 15 (CORRECT)
+//
+// Without the fix, serviceMidnight is built from Jan 14 → scheduledArrivalTime
+// shifts by exactly -86400000 ms (one full day earlier).
+func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID  = "BerlinAgency"
+		routeID   = "BerlinRoute"
+		tripID    = "BerlinTrip"
+		stopID    = "BerlinStop"
+		serviceID = "BerlinService"
+		timezone  = "Europe/Berlin"
+	)
+
+	loc, err := time.LoadLocation(timezone)
+	require.NoError(t, err)
+
+	// Create agency in Europe/Berlin (CET, UTC+1)
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Berlin Transit", Url: "http://berlin.example.com", Timezone: timezone,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID,
+		ShortName: sql.NullString{String: "U1", Valid: true},
+		LongName:  sql.NullString{String: "Berlin U-Bahn Line 1", Valid: true},
+		Type:      1,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:   stopID,
+		Name: sql.NullString{String: "Kottbusser Tor", Valid: true},
+		Lat:  52.4990, Lon: 13.4184,
+	})
+	require.NoError(t, err)
+
+	// Calendar active all days within our target date range
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: serviceID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1,
+		Friday: 1, Saturday: 1, Sunday: 1, StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+		TripHeadsign: sql.NullString{String: "Warschauer Str.", Valid: true},
+	})
+	require.NoError(t, err)
+
+	// Stop time: arrival at 08:00:00 = 28800 seconds = 28800e9 nanoseconds
+	const arrivalSeconds = 8 * 3600
+	arrivalNs := int64(arrivalSeconds) * int64(time.Second)
+	departureNs := int64(arrivalSeconds+300) * int64(time.Second) // 08:05:00
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1,
+		ArrivalTime: arrivalNs, DepartureTime: departureNs,
+	})
+	require.NoError(t, err)
+
+	// serviceDate = midnight Jan 15 2025 CET = 2025-01-14T23:00:00Z
+	// This is the key: in UTC, .Day() returns 14 (wrong). In CET, .Day() returns 15 (correct).
+	midnightJan15CET := time.Date(2025, 1, 15, 0, 0, 0, 0, loc)
+	serviceDateMs := midnightJan15CET.UnixMilli() // 1736899200000
+
+	// Sanity checks: the UTC day must differ from the local day
+	require.Equal(t, 14, midnightJan15CET.UTC().Day(), "precondition: UTC day should be 14")
+	require.Equal(t, 15, midnightJan15CET.Day(), "precondition: CET day should be 15")
+
+	// Hit the endpoint
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	combinedTripID := utils.FormCombinedID(agencyID, tripID)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+		combinedStopID, combinedTripID, serviceDateMs,
+	)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"handler should return 200; got %d (text: %s)", resp.StatusCode, model.Text)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	// Expected: midnight Jan 15 CET + 8 hours = 2025-01-15T08:00:00+01:00
+	expectedArrivalMs := midnightJan15CET.Add(time.Duration(arrivalNs)).UnixMilli()
+
+	// Wrong value (without the fix): midnight Jan 14 CET + 8 hours (off by exactly 24h)
+	wrongMidnight := time.Date(2025, 1, 14, 0, 0, 0, 0, loc)
+	wrongArrivalMs := wrongMidnight.Add(time.Duration(arrivalNs)).UnixMilli()
+
+	actualArrivalMs := int64(entry["scheduledArrivalTime"].(float64))
+
+	assert.Equal(t, expectedArrivalMs, actualArrivalMs,
+		"scheduledArrivalTime should use local date (Jan 15 CET), not UTC date (Jan 14); "+
+			"if got %d, the handler decomposed the UTC date instead of the local date", wrongArrivalMs)
+
+	// Verify the difference would be exactly 24h if the bug existed
+	require.Equal(t, int64(86400000), expectedArrivalMs-wrongArrivalMs,
+		"sanity: correct and wrong values should differ by exactly 24 hours")
+}
