@@ -1564,6 +1564,42 @@ func (q *Queries) GetBlockTripIndexIDsForRoute(ctx context.Context, arg GetBlock
 	return items, nil
 }
 
+const getBlockTripSequence = `-- name: GetBlockTripSequence :one
+WITH BlockTrips AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY min_arrival_time) - 1 AS seq
+    FROM trips
+    WHERE block_id = ?2
+      AND service_id IN (/*SLICE:service_ids*/?)
+)
+SELECT seq FROM BlockTrips WHERE id = ?1
+`
+
+type GetBlockTripSequenceParams struct {
+	TripID     string
+	BlockID    sql.NullString
+	ServiceIds []string
+}
+
+// Calculates a trip's zero-based index within its block's ordered sequence,
+func (q *Queries) GetBlockTripSequence(ctx context.Context, arg GetBlockTripSequenceParams) (int64, error) {
+	query := getBlockTripSequence
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.TripID)
+	queryParams = append(queryParams, arg.BlockID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	row := q.queryRow(ctx, nil, query, queryParams...)
+	var seq int64
+	err := row.Scan(&seq)
+	return seq, err
+}
+
 const getBlocksForBlockTripIndexIDs = `-- name: GetBlocksForBlockTripIndexIDs :many
 SELECT DISTINCT bte.block_id
 FROM block_trip_entry bte
@@ -1694,6 +1730,58 @@ func (q *Queries) GetFeedEndDate(ctx context.Context) (interface{}, error) {
 	return feed_end_date, err
 }
 
+const getFirstStopOfNextTripInBlock = `-- name: GetFirstStopOfNextTripInBlock :one
+SELECT st.trip_id, st.arrival_time, st.departure_time, st.stop_id, st.stop_sequence, st.stop_headsign, st.pickup_type, st.drop_off_type, st.shape_dist_traveled, st.timepoint
+FROM stop_times st
+WHERE st.trip_id = (
+    SELECT next_trip_id FROM (
+        SELECT id, LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
+        FROM trips
+        WHERE block_id = ?1
+          AND service_id IN (/*SLICE:service_ids*/?)
+    ) WHERE id = ?3
+)
+ORDER BY st.stop_sequence ASC
+LIMIT 1
+`
+
+type GetFirstStopOfNextTripInBlockParams struct {
+	BlockID    sql.NullString
+	ServiceIds []string
+	TripID     string
+}
+
+// Uses LEAD() to find the next trip and directly fetches its first stop,
+func (q *Queries) GetFirstStopOfNextTripInBlock(ctx context.Context, arg GetFirstStopOfNextTripInBlockParams) (StopTime, error) {
+	query := getFirstStopOfNextTripInBlock
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.BlockID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.TripID)
+	row := q.queryRow(ctx, nil, query, queryParams...)
+	var i StopTime
+	err := row.Scan(
+		&i.TripID,
+		&i.ArrivalTime,
+		&i.DepartureTime,
+		&i.StopID,
+		&i.StopSequence,
+		&i.StopHeadsign,
+		&i.PickupType,
+		&i.DropOffType,
+		&i.ShapeDistTraveled,
+		&i.Timepoint,
+	)
+	return i, err
+}
+
 const getFrequenciesForTrip = `-- name: GetFrequenciesForTrip :many
 SELECT trip_id, start_time, end_time, headway_secs, exact_times FROM frequencies
 WHERE trip_id = ?
@@ -1819,6 +1907,52 @@ func (q *Queries) GetImportMetadata(ctx context.Context) (ImportMetadatum, error
 		&i.ImportTime,
 		&i.FileSource,
 	)
+	return i, err
+}
+
+const getNextAndPreviousTripsInBlock = `-- name: GetNextAndPreviousTripsInBlock :one
+WITH NavTrips AS (
+    SELECT
+        id,
+        LAG(id)  OVER (ORDER BY min_arrival_time) AS prev_trip_id,
+        LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
+    FROM trips
+    WHERE block_id = ?2
+      AND service_id IN (/*SLICE:service_ids*/?)
+)
+SELECT prev_trip_id, next_trip_id
+FROM NavTrips
+WHERE id = ?1
+`
+
+type GetNextAndPreviousTripsInBlockParams struct {
+	TripID     string
+	BlockID    sql.NullString
+	ServiceIds []string
+}
+
+type GetNextAndPreviousTripsInBlockRow struct {
+	PrevTripID interface{}
+	NextTripID interface{}
+}
+
+// Uses LAG/LEAD window functions to find prev/next trip IDs in one query,
+func (q *Queries) GetNextAndPreviousTripsInBlock(ctx context.Context, arg GetNextAndPreviousTripsInBlockParams) (GetNextAndPreviousTripsInBlockRow, error) {
+	query := getNextAndPreviousTripsInBlock
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.TripID)
+	queryParams = append(queryParams, arg.BlockID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	row := q.queryRow(ctx, nil, query, queryParams...)
+	var i GetNextAndPreviousTripsInBlockRow
+	err := row.Scan(&i.PrevTripID, &i.NextTripID)
 	return i, err
 }
 
@@ -3672,6 +3806,66 @@ func (q *Queries) GetStopsWithTripContext(ctx context.Context, id string) ([]Get
 		return nil, err
 	}
 	return items, nil
+}
+
+const getTargetStopTimeWithTotalStops = `-- name: GetTargetStopTimeWithTotalStops :one
+
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    st.pickup_type,
+    st.drop_off_type,
+    st.shape_dist_traveled,
+    st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = ?1) AS total_stops
+FROM stop_times st
+WHERE st.trip_id = ?1 AND st.stop_id = ?2
+ORDER BY st.stop_sequence
+LIMIT 1
+`
+
+type GetTargetStopTimeWithTotalStopsParams struct {
+	TripID string
+	StopID string
+}
+
+type GetTargetStopTimeWithTotalStopsRow struct {
+	TripID            string
+	ArrivalTime       int64
+	DepartureTime     int64
+	StopID            string
+	StopSequence      int64
+	StopHeadsign      sql.NullString
+	PickupType        sql.NullInt64
+	DropOffType       sql.NullInt64
+	ShapeDistTraveled sql.NullFloat64
+	Timepoint         sql.NullInt64
+	TotalStops        int64
+}
+
+// Optimized queries using SQLite window functions
+// Fetches a specific stop time for a trip+stop, along with the total stop count,
+func (q *Queries) GetTargetStopTimeWithTotalStops(ctx context.Context, arg GetTargetStopTimeWithTotalStopsParams) (GetTargetStopTimeWithTotalStopsRow, error) {
+	row := q.queryRow(ctx, q.getTargetStopTimeWithTotalStopsStmt, getTargetStopTimeWithTotalStops, arg.TripID, arg.StopID)
+	var i GetTargetStopTimeWithTotalStopsRow
+	err := row.Scan(
+		&i.TripID,
+		&i.ArrivalTime,
+		&i.DepartureTime,
+		&i.StopID,
+		&i.StopSequence,
+		&i.StopHeadsign,
+		&i.PickupType,
+		&i.DropOffType,
+		&i.ShapeDistTraveled,
+		&i.Timepoint,
+		&i.TotalStops,
+	)
+	return i, err
 }
 
 const getTrip = `-- name: GetTrip :one
