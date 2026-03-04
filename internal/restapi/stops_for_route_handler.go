@@ -222,14 +222,10 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	references := models.ReferencesModel{
-		Agencies:   []models.AgencyReference{agencyRef},
-		Routes:     routeRefs,
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      stopsList,
-		Trips:      []interface{}{},
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = []models.AgencyReference{agencyRef}
+	references.Routes = routeRefs
+	references.Stops = stopsList
 
 	response := models.NewEntryResponse(result, references, api.Clock)
 	api.sendResponse(w, r, response)

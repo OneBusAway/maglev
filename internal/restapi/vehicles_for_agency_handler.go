@@ -171,29 +171,10 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	)
 
 	// Convert maps to slices for references
-	agencyRefList := make([]models.AgencyReference, 0, len(agencyRefs))
-	for _, agencyRef := range agencyRefs {
-		agencyRefList = append(agencyRefList, agencyRef)
-	}
-
-	routeRefList := make([]interface{}, 0, len(routeRefs))
-	for _, routeRef := range routeRefs {
-		routeRefList = append(routeRefList, routeRef)
-	}
-
-	tripRefList := make([]interface{}, 0, len(tripRefs))
-	for _, tripRef := range tripRefs {
-		tripRefList = append(tripRefList, tripRef)
-	}
-
-	references := models.ReferencesModel{
-		Agencies:   agencyRefList,
-		Routes:     routeRefList,
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      []models.Stop{},
-		Trips:      tripRefList,
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = utils.MapValues(agencyRefs)
+	references.Routes = utils.MapValuesAsInterface(routeRefs)
+	references.Trips = utils.MapValuesAsInterface(tripRefs)
 
 	response := models.NewListResponse(vehiclesList, references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
