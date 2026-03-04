@@ -132,7 +132,20 @@ func loadGTFSData(source string, isLocalFile bool, config Config) (*gtfs.Static,
 		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
 	}
 
+	if err := validateStaticAgencyTimezones(staticData); err != nil {
+		return nil, fmt.Errorf("invalid GTFS agency timezone: %w", err)
+	}
+
 	return staticData, nil
+}
+
+func validateStaticAgencyTimezones(staticData *gtfs.Static) error {
+	for _, agency := range staticData.Agencies {
+		if _, err := time.LoadLocation(agency.Timezone); err != nil {
+			return fmt.Errorf("agency %q has invalid timezone %q: %w", agency.Id, agency.Timezone, err)
+		}
+	}
+	return nil
 }
 
 // UpdateGTFSPeriodically updates the GTFS data on a regular schedule
