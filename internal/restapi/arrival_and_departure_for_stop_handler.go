@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -199,7 +201,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		StopID: stopCode,
 	})
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -323,7 +329,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	totalStopsInTrip := int(targetRow.TotalStops)
-
 
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
 

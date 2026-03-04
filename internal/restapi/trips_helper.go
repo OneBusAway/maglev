@@ -229,7 +229,12 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		ServiceIds: []string{trip.ServiceID},
 	})
 	if err != nil {
-		// Trip not found in block not an error, just no prev/next
+		if !errors.Is(err, sql.ErrNoRows) {
+			// Real DB error (timeout, connection failure, etc.) — propagate it.
+			return "", "", nil, err
+		}
+		// ErrNoRows: trip not in block for this service date — no prev/next, but
+		// still fetch stop times so callers get the schedule for the trip itself.
 		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 		if stopErr != nil {
 			return "", "", nil, stopErr
@@ -977,7 +982,12 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 		TripID:     currentTripID,
 	})
 	if err != nil {
-		// No next trip in block or query error — not necessarily an error condition
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
+				slog.String("trip_id", currentTripID),
+				slog.String("block_id", trip.BlockID.String),
+				slog.Any("error", err))
+		}
 		return nil
 	}
 
