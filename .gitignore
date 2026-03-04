@@ -4,6 +4,8 @@ __debug_bin*
 .env
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 /cmd/api/api
 gtfsdb/tmp/main
 .claude
