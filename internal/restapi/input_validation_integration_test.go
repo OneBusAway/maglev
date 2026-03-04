@@ -21,6 +21,8 @@ import (
 
 // createTestApiForValidationTests creates a test API with higher rate limit for validation tests
 func createTestApiForValidationTests(t *testing.T) *RestAPI {
+	ctx := context.Background()
+
 	// Initialize the shared GTFS manager only once
 	testDbSetupOnce.Do(func() {
 		gtfsConfig := gtfs.Config{
@@ -28,7 +30,7 @@ func createTestApiForValidationTests(t *testing.T) *RestAPI {
 			GTFSDataPath: testDbPath,
 		}
 		var err error
-		testGtfsManager, err = gtfs.InitGTFSManager(context.Background(), gtfsConfig)
+		testGtfsManager, err = gtfs.InitGTFSManager(ctx, gtfsConfig)
 		if err != nil {
 			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
 		}

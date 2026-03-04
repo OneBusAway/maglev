@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -25,7 +26,7 @@ type TripParams struct {
 // parseTripParams parses and validates the common trip query params
 // includeScheduleDefault controls the default value of IncludeSchedule when the
 // parameter is not present in the request (true for trip-details, false for trip-for-vehicle).
-func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool) (TripParams, map[string][]string) {
+func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool, loc ...*time.Location) (TripParams, map[string][]string) {
 	params := TripParams{
 		IncludeTrip:     true,
 		IncludeSchedule: includeScheduleDefault,
@@ -82,6 +83,22 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 		return params, fieldErrors
 	}
 
+	// If a timezone location was provided, localize serviceDate and time so that
+	// callers receive times in the agency's timezone by default. This prevents the
+	// bug where time.Unix(ms/1000, 0) creates a UTC time and downstream
+	// Year()/Month()/Day()/Format() calls extract the wrong calendar date for
+	// agencies in positive UTC offsets.
+	if len(loc) > 0 && loc[0] != nil {
+		if params.ServiceDate != nil {
+			localized := params.ServiceDate.In(loc[0])
+			params.ServiceDate = &localized
+		}
+		if params.Time != nil {
+			localized := params.Time.In(loc[0])
+			params.Time = &localized
+		}
+	}
+
 	return params, nil
 }
 
@@ -94,13 +111,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
-
-	// Capture parsing errors
-	params, fieldErrors := api.parseTripParams(r, true)
-	if len(fieldErrors) > 0 {
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
@@ -122,9 +132,17 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
 
+	// Parse query params with the agency's timezone so that serviceDate and time
+	// are localized at parse time, preventing UTC date-extraction bugs.
+	params, fieldErrors := api.parseTripParams(r, true, loc)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	var currentTime time.Time
 	if params.Time != nil {
-		currentTime = params.Time.In(loc)
+		currentTime = *params.Time
 	} else {
 		currentTime = api.Clock.Now().In(loc)
 	}
@@ -258,27 +276,72 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
 	referencedTrips := []*models.Trip{}
 
-	for _, tripID := range tripsToInclude {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
+	// extract unique trip IDs for the batch fetch
+	uniqueTripIDs := make([]string, 0, len(tripsToInclude))
+	seen := make(map[string]bool)
+	type tripEntry struct {
+		combinedID string
+		refTripID  string
+	}
+	orderedEntries := make([]tripEntry, 0, len(tripsToInclude))
 
+	for _, tripID := range tripsToInclude {
 		_, refTripID, err := utils.ExtractAgencyIDAndCodeID(tripID)
 		if err != nil {
 			continue
 		}
+		orderedEntries = append(orderedEntries, tripEntry{combinedID: tripID, refTripID: refTripID})
+		if !seen[refTripID] {
+			seen[refTripID] = true
+			uniqueTripIDs = append(uniqueTripIDs, refTripID)
+		}
+	}
 
-		if refTripID == mainTrip.ID && len(referencedTrips) > 0 {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	// batch fetch
+	batchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
+	if err != nil {
+		return referencedTrips, fmt.Errorf("batch fetch trips: %w", err)
+	}
+
+	tripMap := make(map[string]gtfsdb.Trip)
+	routeIDSet := make(map[string]bool)
+	for _, t := range batchedTrips {
+		tripMap[t.ID] = t
+		routeIDSet[t.RouteID] = true
+	}
+
+	// batch fetch
+	routeIDs := make([]string, 0, len(routeIDSet))
+	for rid := range routeIDSet {
+		routeIDs = append(routeIDs, rid)
+	}
+
+	batchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
+	if err != nil {
+		return referencedTrips, fmt.Errorf("batch fetch routes: %w", err)
+	}
+
+	routeMap := make(map[string]gtfsdb.Route)
+	for _, rt := range batchedRoutes {
+		routeMap[rt.ID] = rt
+	}
+
+	for _, entry := range orderedEntries {
+		if entry.refTripID == mainTrip.ID && len(referencedTrips) > 0 {
 			continue
 		}
 
-		refTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, refTripID)
-		if err != nil {
+		refTrip, tripExists := tripMap[entry.refTripID]
+		if !tripExists {
 			continue
 		}
 
-		refRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, refTrip.RouteID)
-		if err != nil {
+		refRoute, routeExists := routeMap[refTrip.RouteID]
+		if !routeExists {
 			continue
 		}
 
@@ -288,7 +351,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 		}
 
 		refTripModel := &models.Trip{
-			ID:             tripID,
+			ID:             entry.combinedID,
 			RouteID:        utils.FormCombinedID(agencyID, refTrip.RouteID),
 			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
 			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),

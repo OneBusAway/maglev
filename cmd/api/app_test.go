@@ -67,6 +67,8 @@ func TestParseAPIKeys(t *testing.T) {
 }
 
 func TestBuildApplicationWithMemoryDB(t *testing.T) {
+	ctx := context.Background()
+
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
 
@@ -89,7 +91,7 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 		Verbose:      false,
 	}
 
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 
 	require.NoError(t, err, "BuildApplication should not return an error")
 	assert.NotNil(t, coreApp, "Application should not be nil")
@@ -99,6 +101,8 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 }
 
 func TestBuildApplicationWithTestData(t *testing.T) {
+	ctx := context.Background()
+
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
 
@@ -121,7 +125,7 @@ func TestBuildApplicationWithTestData(t *testing.T) {
 		Verbose:      false,
 	}
 
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 
 	require.NoError(t, err, "BuildApplication should not return an error with test data")
 	assert.NotNil(t, coreApp, "Application should not be nil")
@@ -130,6 +134,8 @@ func TestBuildApplicationWithTestData(t *testing.T) {
 }
 
 func TestCreateServer(t *testing.T) {
+	ctx := context.Background()
+
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
 
@@ -152,7 +158,7 @@ func TestCreateServer(t *testing.T) {
 		Verbose:      false,
 	}
 
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	require.NoError(t, err, "BuildApplication should not fail")
 
 	srv, api := CreateServer(coreApp, cfg)
@@ -167,6 +173,8 @@ func TestCreateServer(t *testing.T) {
 }
 
 func TestCreateServerHandlerResponds(t *testing.T) {
+	ctx := context.Background()
+
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
 
@@ -189,7 +197,7 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 		Verbose:      false,
 	}
 
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	require.NoError(t, err, "BuildApplication should not fail")
 
 	srv, api := CreateServer(coreApp, cfg)
@@ -208,6 +216,8 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 }
 
 func TestRunServerStartsAndStopsCleanly(t *testing.T) {
+	ctx := context.Background()
+
 	// This is a lightweight integration test to verify the Run function can start and stop
 	// We use a test HTTP server to avoid binding to real ports
 
@@ -233,7 +243,7 @@ func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 		Verbose:      false,
 	}
 
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	require.NoError(t, err, "BuildApplication should not fail")
 
 	// Create a test server that we can control
@@ -297,6 +307,8 @@ func TestParseAPIKeysEdgeCases(t *testing.T) {
 }
 
 func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
+	ctx := context.Background()
+
 	// This test verifies Run() can start and shutdown gracefully
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
 	if _, err := os.Stat(testDataPath); os.IsNotExist(err) {
@@ -317,7 +329,7 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 		Verbose:      false,
 	}
 
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	require.NoError(t, err)
 
 	srv, api := CreateServer(coreApp, cfg)
@@ -354,6 +366,8 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 }
 
 func TestBuildApplicationErrorHandling(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run("handles invalid GTFS path", func(t *testing.T) {
 		cfg := appconf.Config{
 			Port:      4000,
@@ -369,7 +383,7 @@ func TestBuildApplicationErrorHandling(t *testing.T) {
 			Verbose:      false,
 		}
 
-		_, err := BuildApplication(cfg, gtfsCfg)
+		_, err := BuildApplication(ctx, cfg, gtfsCfg)
 		assert.Error(t, err, "Should return error for invalid GTFS path")
 		assert.Contains(t, err.Error(), "failed to initialize GTFS manager")
 	})
@@ -446,6 +460,8 @@ func TestConfigFileLoading(t *testing.T) {
 }
 
 func TestBuildApplicationWithConfigFile(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run("builds app from valid config file", func(t *testing.T) {
 		// Skip if test data not available
 		testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
@@ -485,7 +501,7 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
 		gtfsCfg := gtfsConfigFromData(gtfsCfgData)
 
 		// Build application
-		coreApp, err := BuildApplication(cfg, gtfsCfg)
+		coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 		require.NoError(t, err)
 		assert.NotNil(t, coreApp)
 		assert.NotNil(t, coreApp.Logger)
@@ -592,6 +608,15 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	require.True(t, ok, "headers should be a map")
 	assert.NotEqual(t, "my-secret-api-key", headersMap["X-API-Key"])
 	assert.Equal(t, "***REDACTED***", headersMap["X-API-Key"])
+
+	// Check that API keys are redacted
+	apiKeysStr, ok := parsed["api-keys"].(string)
+	require.True(t, ok, "api-keys should be a string")
+	assert.Contains(t, apiKeysStr, "REDACTED", "API keys should be redacted")
+
+	exemptApiKeysStr, ok := parsed["exempt-api-keys"].(string)
+	require.True(t, ok, "exempt-api-keys should be a string")
+	assert.Contains(t, exemptApiKeysStr, "REDACTED", "Exempt API keys should be redacted")
 
 	assert.NotEqual(t, "", rtFeed["trip-updates-url"])
 	assert.Equal(t, gtfsCfg.GTFSDataPath, parsed["data-path"])

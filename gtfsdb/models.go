@@ -55,6 +55,14 @@ type CalendarDate struct {
 	ExceptionType int64
 }
 
+type Frequency struct {
+	TripID      string
+	StartTime   int64
+	EndTime     int64
+	HeadwaySecs int64
+	ExactTimes  int64
+}
+
 type ImportMetadatum struct {
 	ID         int64
 	FileHash   string
@@ -183,4 +191,6 @@ type Trip struct {
 	ShapeID              sql.NullString
 	WheelchairAccessible sql.NullInt64
 	BikesAllowed         sql.NullInt64
+	MinArrivalTime       sql.NullInt64
+	MaxDepartureTime     sql.NullInt64
 }

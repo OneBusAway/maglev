@@ -98,7 +98,15 @@ func buildGtfsDB(ctx context.Context, config Config, isLocalFile bool, dbPath st
 	}
 
 	if err != nil {
+		_ = client.Close() // Close the client on error to prevent connection leaks on retries
 		return nil, err
+	}
+
+	// Backfill cached time bounds for O(1) trip lookups
+	logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
+	logging.LogOperation(logger, "calculating_trip_time_bounds")
+	if err := client.Queries.BulkUpdateTripTimeBounds(ctx); err != nil {
+		return nil, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
 	// Precompute stop directions after GTFS data is loaded

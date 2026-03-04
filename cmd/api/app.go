@@ -67,10 +67,10 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 // BuildApplication creates and initializes the Application with all dependencies.
 // This includes creating the logger, initializing the GTFS manager, and creating the direction calculator.
 // Returns an error if GTFS manager initialization fails.
-func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
+func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	gtfsManager, err := gtfs.InitGTFSManager(context.Background(), gtfsCfg)
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
 	}
@@ -140,17 +140,23 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 		ErrorLog: slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
 	}))
 
+	// Apply global compression around the entire mux
+	compressedMux := restapi.CompressionMiddleware(mux)
+
 	// Wrap with security middleware
-	secureHandler := api.WithSecurityHeaders(mux)
+	secureHandler := api.WithSecurityHeaders(compressedMux)
 
 	// Add metrics middleware
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
 
-	// Add request logging middleware (outermost)
+	// Add request logging middleware
 	requestLogger := logging.NewStructuredLogger(os.Stdout, slog.LevelInfo)
 	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(requestLogger)
 
-	handler := restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler))
+	// Panic recovery outermost so all handler panics are caught
+	handler := restapi.NewRecoveryMiddleware(coreApp.Logger, coreApp.Clock)(
+		restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler)),
+	)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -252,8 +258,8 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	jsonConfig := map[string]interface{}{
 		"port":             cfg.Port,
 		"env":              envStr,
-		"api-keys":         cfg.ApiKeys,
-		"exempt-api-keys":  cfg.ExemptApiKeys,
+		"api-keys":         fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
+		"exempt-api-keys":  fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
 		"rate-limit":       cfg.RateLimit,
 		"gtfs-static-feed": staticFeed,
 		"data-path":        gtfsCfg.GTFSDataPath,
@@ -287,7 +293,8 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	// Marshal to JSON with indentation
 	output, err := json.MarshalIndent(jsonConfig, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling config to JSON: %v\n", err)
+		logger := slog.Default().With(slog.String("component", "app"))
+		logging.LogError(logger, "Error marshaling config to JSON", err)
 		os.Exit(1)
 	}
 

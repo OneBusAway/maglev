@@ -3,12 +3,15 @@ package restapi
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"maglev.onebusaway.org/internal/logging"
 
 	"golang.org/x/time/rate"
 	"maglev.onebusaway.org/internal/clock"
@@ -152,12 +155,12 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	case rate.Inf:
 		retryAfter = time.Second // Should not happen, but fallback
 	default:
-		retryAfter = time.Duration(1) / time.Duration(rl.rateLimit)
+		retryAfter = time.Duration(float64(time.Second) / float64(rl.rateLimit))
 	}
 
 	// Set headers
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.burstSize))
 	w.Header().Set("X-RateLimit-Remaining", "0")
 	w.WriteHeader(http.StatusTooManyRequests)
@@ -181,7 +184,8 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	}
 
 	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
-		slog.Error("failed to encode rate limit response", "error", err)
+		logger := slog.Default().With(slog.String("component", "rate_limit_middleware"))
+		logging.LogError(logger, "failed to encode rate limit response", err)
 	}
 }
 

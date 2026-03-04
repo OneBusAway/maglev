@@ -26,12 +26,40 @@ func ServiceDateMillis(explicitServiceDate *time.Time, currentTime time.Time) (t
 	} else {
 		serviceDate = CalculateServiceDate(currentTime)
 	}
-	return serviceDate, serviceDate.Unix() * 1000
+	// Always return midnight of the service date in the date's own timezone.
+	// This ensures all endpoints return a consistent serviceDate millis value.
+	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
+		0, 0, 0, 0, serviceDate.Location())
+	return serviceDate, midnight.UnixMilli()
 }
 
+// CalculateSecondsSinceServiceDate returns the number of wall-clock seconds elapsed
+// since the start of the service date (midnight in the agency's timezone).
+//
+// Wall-clock seconds are used intentionally: GTFS stop_time values are stored as
+// plain seconds-since-midnight offsets with no DST awareness. Using real elapsed
+// seconds (time.Sub) would diverge from GTFS by 3600 s during the DST fallback
+// ambiguous hour (e.g. when 1:30 AM occurs twice), causing wrong closest-stop
+// selections and schedule offsets. Wall-clock math keeps the two in sync.
+//
+// The day difference is computed using UTC-normalised calendar dates to avoid any
+// DST interference in the date arithmetic itself, which correctly handles overnight
+// and post-midnight trips (GTFS allows stop times > 24:00:00).
 func CalculateSecondsSinceServiceDate(currentTime time.Time, serviceDate time.Time) int64 {
-	duration := currentTime.Sub(serviceDate)
-	return int64(duration.Seconds())
+	loc := serviceDate.Location()
+	t := currentTime.In(loc)
+	h, m, s := t.Clock()
+	wallSeconds := int64(h*3600 + m*60 + s)
+
+	// Normalise both calendar dates to UTC midnight so that the subtraction is
+	// purely a date difference with no DST offset interference.
+	syear, smonth, sday := serviceDate.In(loc).Date()
+	tyear, tmonth, tday := t.Date()
+	sd := time.Date(syear, smonth, sday, 0, 0, 0, 0, time.UTC)
+	td := time.Date(tyear, tmonth, tday, 0, 0, 0, 0, time.UTC)
+	dayDiff := int64(td.Sub(sd).Hours() / 24)
+
+	return wallSeconds + dayDiff*86400
 }
 
 // Converts a GTFS stop-time value (stored as nanoseconds in db since midnight)

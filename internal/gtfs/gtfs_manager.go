@@ -29,7 +29,14 @@ type RegionBounds struct {
 	LonSpan float64
 }
 
-// Manager manages the GTFS data and provides methods to access it
+// Manager manages the GTFS data and provides methods to access it.
+//
+// Lock ordering policy (to prevent deadlocks):
+//
+//	staticMutex → realTimeMutex
+//
+// When both locks are needed, staticMutex MUST be acquired first.
+// Never acquire staticMutex while holding realTimeMutex.
 type Manager struct {
 	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
@@ -206,7 +213,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	// to "warm" the cache before marking the manager as ready.
 	enabledFeeds := config.enabledFeeds()
 	for _, feedCfg := range enabledFeeds {
-		initCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		manager.updateFeedRealtime(initCtx, feedCfg)
 		cancel()
 	}
@@ -428,6 +435,10 @@ func (manager *Manager) GetStopsForLocation(
 
 			// Get active service IDs for current date
 			activeServiceIDs, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
+			if err != nil {
+				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+				logging.LogError(logger, "could not get active service IDs for date", err, slog.String("date", currentDate))
+			}
 
 			if err == nil && len(activeServiceIDs) > 0 {
 				stopIDs := make([]string, 0, len(candidates))
@@ -439,6 +450,10 @@ func (manager *Manager) GetStopsForLocation(
 					StopIds:    stopIDs,
 					ServiceIds: activeServiceIDs,
 				})
+				if err != nil {
+					logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+					logging.LogError(logger, "could not get stops with active service on date", err, slog.String("date", currentDate))
+				}
 
 				if err == nil {
 					stopsWithService := make(map[string]bool)
@@ -477,20 +492,26 @@ func (manager *Manager) GetStopsForLocation(
 	return stops
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+// VehiclesForAgencyID returns all real-time vehicles serving routes that belong
+// to the given agency. It manages its own locking internally; callers must NOT
+// hold any Manager locks.
 func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
+	// Step 1: Acquire static lock, collect route IDs, then release.
+	manager.staticMutex.RLock()
 	routes := manager.RoutesForAgencyID(agencyID)
-	routeIDs := make(map[string]bool) // all route IDs for the agency.
+	routeIDs := make(map[string]bool, len(routes))
 	for _, route := range routes {
 		routeIDs[route.Id] = true
 	}
+	manager.staticMutex.RUnlock()
+
+	// Step 2: Acquire real-time lock independently to read vehicles.
+	rtVehicles := manager.GetRealTimeVehicles()
 
 	var vehicles []gtfs.Vehicle
-	for _, v := range manager.GetRealTimeVehicles() {
-		if v.Trip != nil {
-			if routeIDs[v.Trip.ID.RouteID] {
-				vehicles = append(vehicles, v)
-			}
+	for _, v := range rtVehicles {
+		if v.Trip != nil && routeIDs[v.Trip.ID.RouteID] {
+			vehicles = append(vehicles, v)
 		}
 	}
 
@@ -568,10 +589,8 @@ func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	defer manager.realTimeMutex.RUnlock()
 
 	var updates []gtfs.Trip
-	for _, v := range manager.realTimeTrips {
-		if v.ID.ID == tripID {
-			updates = append(updates, v)
-		}
+	if index, exists := manager.realTimeTripLookup[tripID]; exists {
+		updates = append(updates, manager.realTimeTrips[index])
 	}
 	return updates
 }

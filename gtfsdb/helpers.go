@@ -297,6 +297,27 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return fmt.Errorf("unable to create stop times: %w", err)
 	}
 
+	// Collect frequency entries from all trips
+	var allFrequencyParams []CreateFrequencyParams
+	for _, t := range staticData.Trips {
+		for _, f := range t.Frequencies {
+			params := CreateFrequencyParams{
+				TripID:      t.ID,
+				StartTime:   int64(f.StartTime),
+				EndTime:     int64(f.EndTime),
+				HeadwaySecs: int64(f.Headway.Seconds()),
+				ExactTimes:  int64(f.ExactTimes),
+			}
+			allFrequencyParams = append(allFrequencyParams, params)
+		}
+	}
+	if len(allFrequencyParams) > 0 {
+		err = c.bulkInsertFrequencies(ctx, allFrequencyParams)
+		if err != nil {
+			return fmt.Errorf("unable to create frequencies: %w", err)
+		}
+	}
+
 	var allShapeParams []CreateShapeParams
 	for _, s := range staticData.Shapes {
 		for idx, pt := range s.Points {
@@ -398,6 +419,9 @@ func (c *Client) clearAllGTFSData(ctx context.Context) error {
 	}
 	if err := c.Queries.ClearBlockTripIndices(ctx); err != nil {
 		return fmt.Errorf("error clearing block_trip_index: %w", err)
+	}
+	if err := c.Queries.ClearFrequencies(ctx); err != nil {
+		return fmt.Errorf("error clearing frequencies: %w", err)
 	}
 	if err := c.Queries.ClearStopTimes(ctx); err != nil {
 		return fmt.Errorf("error clearing stop_times: %w", err)
@@ -903,6 +927,38 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 
 	logging.LogOperation(logger, "shapes_inserted",
 		slog.Int("count", len(shapes)))
+
+	return nil
+}
+
+func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []CreateFrequencyParams) error {
+	db := c.DB
+	queries := c.Queries
+	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+
+	logging.LogOperation(logger, "inserting_frequencies",
+		slog.Int("count", len(frequencies)))
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_frequencies")
+
+	qtx := queries.WithTx(tx)
+	for _, params := range frequencies {
+		err := qtx.CreateFrequency(ctx, params)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "frequencies_inserted",
+		slog.Int("count", len(frequencies)))
 
 	return nil
 }
