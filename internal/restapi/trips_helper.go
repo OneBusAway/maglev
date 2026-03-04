@@ -144,6 +144,15 @@ func (api *RestAPI) BuildTripStatus(
 			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
 			status.DistanceAlongTrip = actualDistance
 
+			// If the feed does not provide a bearing, infer orientation from the
+			// heading of the closest shape segment at the vehicle's position.
+			if vehicle.Position.Bearing == nil {
+				if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+					status.Orientation = inferred
+					status.LastKnownOrientation = inferred
+				}
+			}
+
 			if scheduleDeviation != 0 && len(stopTimes) > 0 {
 				scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
 					ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
@@ -1086,4 +1095,42 @@ func interpolateDistance(cumulativeDistances []float64, segmentLength float64, i
 		cumulativeDistance += segmentLength * projectionRatio
 	}
 	return cumulativeDistance
+}
+
+// inferOrientationFromShape computes the OBA orientation (degrees, 0=East, 90=North)
+// for a vehicle at (lat, lon) by finding the closest shape segment and returning its
+// Returns -1 if the shape has fewer than 2 points.
+func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
+	if len(shape) < 2 {
+		return -1
+	}
+
+	var minDist = math.Inf(1)
+	bestIdx := 0
+
+	for i := 0; i < len(shape)-1; i++ {
+		d, _ := distanceToLineSegment(lat, lon,
+			shape[i].Latitude, shape[i].Longitude,
+			shape[i+1].Latitude, shape[i+1].Longitude,
+		)
+		if d < minDist {
+			minDist = d
+			bestIdx = i
+		}
+	}
+
+	latFrom := shape[bestIdx].Latitude
+	latTo := shape[bestIdx+1].Latitude
+	lonFrom := shape[bestIdx].Longitude
+	lonTo := shape[bestIdx+1].Longitude
+
+	dLat := latTo - latFrom
+	cosLat := math.Cos(latFrom * math.Pi / 180)
+	dLon := (lonTo - lonFrom) * cosLat
+
+	degrees := math.Atan2(dLat, dLon) * 180 / math.Pi
+	if degrees < 0 {
+		degrees += 360
+	}
+	return degrees
 }
