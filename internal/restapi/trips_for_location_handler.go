@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -145,7 +146,10 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, _ = time.LoadLocation(currentAgency.Timezone)
+	currentLocation, err = resolveAgencyLocation(currentAgency.Id, currentAgency.Timezone)
+	if err != nil {
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, err
+	}
 
 	timeParam := queryParams.Get("time")
 	currentTime := api.Clock.Now().In(currentLocation)
@@ -179,6 +183,14 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	return lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil, nil
+}
+
+func resolveAgencyLocation(agencyID string, timezone string) (*time.Location, error) {
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone for agency %q: %w", agencyID, err)
+	}
+	return loc, nil
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
