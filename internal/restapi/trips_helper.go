@@ -1098,7 +1098,7 @@ func interpolateDistance(cumulativeDistances []float64, segmentLength float64, i
 }
 
 // inferOrientationFromShape computes the OBA orientation (degrees, 0=East, 90=North)
-// for a vehicle at (lat, lon) by finding the closest shape segment and returning its
+// for a vehicle at (lat, lon) by finding the closest shape segment and returning its heading.
 // Returns -1 if the shape has fewer than 2 points.
 func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
 	if len(shape) < 2 {
