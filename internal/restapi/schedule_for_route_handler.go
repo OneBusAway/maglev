@@ -139,6 +139,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	var stopTimesRefs []interface{}
 	for dirID, groupedTrips := range groupings {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 

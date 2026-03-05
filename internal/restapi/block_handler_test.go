@@ -551,8 +551,8 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 		api.SetRoutes(mux)
 		mux.ServeHTTP(w, req)
 
-		assert.True(t,
-			w.Code == http.StatusInternalServerError || (w.Code == http.StatusOK && w.Body.Len() > 0),
-			"Expected explicit error or valid response, but got silent failure (200 with empty body) or unexpected code: %d", w.Code)
+		// With a 1ns timeout and 1µs sleep the context is always DeadlineExceeded
+		assert.Equal(t, http.StatusGatewayTimeout, w.Code,
+			"Expected 504 Gateway Timeout for DeadlineExceeded context, got: %d", w.Code)
 	})
 }
