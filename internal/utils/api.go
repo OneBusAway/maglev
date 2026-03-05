@@ -14,6 +14,19 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// Pointer helper functions for nullable JSON fields.
+// These are used to convert primitive values to pointers for fields that should
+// serialize as null when no data is available, matching Java OBA's nullable wrapper types.
+
+// IntPtr returns a pointer to the given int value.
+func IntPtr(v int) *int { return &v }
+
+// Int64Ptr returns a pointer to the given int64 value.
+func Int64Ptr(v int64) *int64 { return &v }
+
+// Float64Ptr returns a pointer to the given float64 value.
+func Float64Ptr(v float64) *float64 { return &v }
+
 func CalculateServiceDate(currentTime time.Time) time.Time {
 	year, month, day := currentTime.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, currentTime.Location())

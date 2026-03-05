@@ -41,7 +41,8 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 
 	arrival := NewArrivalAndDeparture(
 		routeID, routeShortName, routeLongName, tripID, tripHeadsign, stopID, vehicleID,
-		serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime, lastUpdateTime,
+		serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime,
+		&lastUpdateTime,
 		predicted, arrivalEnabled, departureEnabled,
 		stopSequence, totalStopsInTrip, numberOfStopsAway, blockTripSequence,
 		distanceFromStop,
@@ -62,7 +63,7 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 	assert.Equal(t, scheduledDepartureTime, arrival.ScheduledDepartureTime)
 	assert.Equal(t, predictedArrivalTime, arrival.PredictedArrivalTime)
 	assert.Equal(t, predictedDepartureTime, arrival.PredictedDepartureTime)
-	assert.Equal(t, lastUpdateTime, arrival.LastUpdateTime)
+	assert.Equal(t, lastUpdateTime, *arrival.LastUpdateTime)
 	assert.Equal(t, predicted, arrival.Predicted)
 	assert.Equal(t, arrivalEnabled, arrival.ArrivalEnabled)
 	assert.Equal(t, departureEnabled, arrival.DepartureEnabled)
@@ -92,6 +93,7 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 		Status:    "in_progress",
 	}
 
+	lastUpdateTime := int64(1609462700000)
 	arrival := ArrivalAndDeparture{
 		ActualTrack:                "",
 		ArrivalEnabled:             true,
@@ -100,7 +102,7 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 		DistanceFromStop:           500.75,
 		Frequency:                  nil,
 		HistoricalOccupancy:        "STANDING_ROOM_ONLY",
-		LastUpdateTime:             1609462700000,
+		LastUpdateTime:             &lastUpdateTime,
 		NumberOfStopsAway:          3,
 		OccupancyStatus:            "MANY_SEATS_AVAILABLE",
 		Predicted:                  true,
@@ -149,7 +151,8 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 func TestArrivalAndDepartureWithEmptyValues(t *testing.T) {
 	arrival := NewArrivalAndDeparture(
 		"", "", "", "", "", "", "",
-		0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0,
+		nil,
 		false, false, false,
 		0, 0, 0, 0,
 		0.0,
@@ -171,12 +174,15 @@ func TestArrivalAndDepartureWithEmptyValues(t *testing.T) {
 	assert.Equal(t, false, arrival.DepartureEnabled)
 	assert.Nil(t, arrival.TripStatus)
 	assert.Nil(t, arrival.SituationIDs)
+	assert.Nil(t, arrival.LastUpdateTime)
 }
 
 func TestArrivalAndDepartureWithNilTripStatus(t *testing.T) {
+	lastUpdateTime := int64(1609462700000)
 	arrival := NewArrivalAndDeparture(
 		"route_1", "R1", "Route One", "trip_1", "Terminal", "stop_1", "vehicle_1",
-		1609459200000, 1609462800000, 1609462900000, 1609462850000, 1609462950000, 1609462700000,
+		1609459200000, 1609462800000, 1609462900000, 1609462850000, 1609462950000,
+		&lastUpdateTime,
 		true, true, true,
 		1, 10, 2, 1,
 		250.5,

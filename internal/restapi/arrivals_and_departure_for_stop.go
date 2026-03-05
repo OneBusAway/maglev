@@ -406,17 +406,24 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
 
 		lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
+		var lastUpdateTimePtr *int64
+		if lastUpdateTime > 0 {
+			lastUpdateTimePtr = utils.Int64Ptr(lastUpdateTime)
+		}
+
 		tripAlerts := api.GtfsManager.GetAlertsForTrip(r.Context(), st.TripID)
 		situationIDs := make([]string, 0, len(tripAlerts))
 		for _, alert := range tripAlerts {
 			if alert.ID == "" {
 				continue
 			}
+
 			situationIDs = append(situationIDs, utils.FormCombinedID(route.AgencyID, alert.ID))
 			if _, seen := collectedAlerts[alert.ID]; !seen {
 				collectedAlerts[alert.ID] = alert
 			}
 		}
+
 		if alertAgencyID == "" && route.AgencyID != "" {
 			alertAgencyID = route.AgencyID
 		}
@@ -434,7 +441,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			scheduledDepartureTime,                          // scheduledDepartureTime
 			predictedArrivalTime,                            // predictedArrivalTime
 			predictedDepartureTime,                          // predictedDepartureTime
-			lastUpdateTime,                                  // lastUpdateTime
+			lastUpdateTimePtr,                               // lastUpdateTime
 			predicted,                                       // predicted
 			true,                                            // arrivalEnabled
 			true,                                            // departureEnabled

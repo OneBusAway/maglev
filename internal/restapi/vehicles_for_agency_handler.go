@@ -71,8 +71,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 		// Set timestamps
 		if vehicle.Timestamp != nil {
-			vehicleStatus.LastLocationUpdateTime = vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-			vehicleStatus.LastUpdateTime = vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
+			timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
+			vehicleStatus.LastLocationUpdateTime = &timestampMs
+			vehicleStatus.LastUpdateTime = &timestampMs
 		}
 
 		// Set location if available
@@ -112,7 +113,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				if obaOrientation < 0 {
 					obaOrientation += 360
 				}
-				tripStatus.Orientation = float32(obaOrientation)
+				tripStatus.Orientation = utils.Float64Ptr(float64(obaOrientation))
 			}
 
 			// Set service date (use current date for now)
