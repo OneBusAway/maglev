@@ -44,6 +44,7 @@ type Manager struct {
 	GtfsDB                         *gtfsdb.Client
 	routesByAgencyID               map[string][]*gtfs.Route
 	lastUpdated                    time.Time
+	lastUpdatedUnixNanos           atomic.Int64 // Lock-free freshness tracking
 	isLocalFile                    bool
 	realTimeTrips                  []gtfs.Trip
 	realTimeVehicles               []gtfs.Vehicle
@@ -85,6 +86,9 @@ type Manager struct {
 
 	// Exported metrics client dependency
 	Metrics *metrics.Metrics
+
+	// Tracks the last successful update time per feed
+	feedLastUpdate map[string]time.Time
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -98,6 +102,8 @@ func (manager *Manager) clearFeedData(feedID string) {
 
 	delete(manager.feedVehicleTimestamp, feedID)
 	delete(manager.feedVehicleLastSeen, feedID)
+
+	delete(manager.feedLastUpdate, feedID)
 
 	manager.rebuildMergedRealtimeLocked()
 }
@@ -240,6 +246,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedTrips:                      make(map[string][]gtfs.Trip),
 		feedVehicles:                   make(map[string][]gtfs.Vehicle),
 		feedAlerts:                     make(map[string][]gtfs.Alert),
+		feedLastUpdate:                 make(map[string]time.Time),
 		feedAgencyFilter:               make(map[string]map[string]bool),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
@@ -853,6 +860,50 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 
 	manager.feedTrips["_test"] = trips
 	manager.rebuildMergedRealtimeLocked()
+}
+
+// GetStaticLastUpdated returns the timestamp when static GTFS data was last loaded lock-free.
+func (manager *Manager) GetStaticLastUpdated() time.Time {
+	nanos := manager.lastUpdatedUnixNanos.Load()
+	if nanos == 0 {
+		return time.Time{}
+	}
+	// Append .UTC() here to ensure the RFC3339 string always ends in 'Z'
+	return time.Unix(0, nanos).UTC()
+}
+
+// GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.
+func (manager *Manager) GetFeedUpdateTimes() map[string]time.Time {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	// Return a copy to prevent concurrent map read/write outside the lock
+	result := make(map[string]time.Time, len(manager.feedLastUpdate))
+	for k, v := range manager.feedLastUpdate {
+		result[k] = v
+	}
+	return result
+}
+
+// SetFeedUpdateTime safely records the time a feed was successfully updated.
+func (manager *Manager) SetFeedUpdateTime(feedID string, t time.Time) {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	// Ensure map is initialized (helpful for tests)
+	if manager.feedLastUpdate == nil {
+		manager.feedLastUpdate = make(map[string]time.Time)
+	}
+
+	manager.feedLastUpdate[feedID] = t
+}
+
+// SetStaticLastUpdatedForTest manually sets the static data timestamp for testing purposes.
+func (manager *Manager) SetStaticLastUpdatedForTest(t time.Time) {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+	manager.lastUpdated = t
+	manager.lastUpdatedUnixNanos.Store(t.UnixNano())
 }
 
 // AddTestAlert is a helper method used ONLY for testing to inject mock alerts safely.
