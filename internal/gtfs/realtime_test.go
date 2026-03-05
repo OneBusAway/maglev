@@ -286,11 +286,15 @@ func TestClearFeedData(t *testing.T) {
 		feedAlerts: map[string][]gtfs.Alert{
 			"test_feed": {{ID: "alert1"}},
 		},
+		feedLastUpdate: map[string]time.Time{
+			"test_feed": time.Now(),
+		},
 	}
 
 	// Warm up realTime lookup array cache
 	manager.rebuildMergedRealtimeLocked()
 	assert.Len(t, manager.GetRealTimeTrips(), 1, "Should have 1 trip initially")
+	assert.Contains(t, manager.feedLastUpdate, "test_feed", "feedLastUpdate should exist initially")
 
 	// Trigger the clearing mechanism
 	manager.clearFeedData("test_feed")
@@ -298,6 +302,7 @@ func TestClearFeedData(t *testing.T) {
 	assert.Empty(t, manager.feedTrips["test_feed"], "feedTrips should be empty after clearing")
 	assert.Empty(t, manager.feedVehicles["test_feed"], "feedVehicles should be empty after clearing")
 	assert.Empty(t, manager.feedAlerts["test_feed"], "feedAlerts should be empty after clearing")
+	assert.NotContains(t, manager.feedLastUpdate, "test_feed", "feedLastUpdate should be removed after clearing")
 	assert.Len(t, manager.GetRealTimeTrips(), 0, "Global trip lookup should be empty")
 	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
 }
