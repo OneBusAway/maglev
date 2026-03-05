@@ -150,6 +150,26 @@ func ParseFloatParam(params url.Values, key string, fieldErrors map[string][]str
 	return f, fieldErrors
 }
 
+func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[string][]string) (float64, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
+		return 0, fieldErrors
+	}
+
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return 0, fieldErrors
+	}
+	return f, fieldErrors
+
+}
+
 func ParseTimeParameter(timeParam string, currentLocation *time.Location) (string, time.Time, map[string][]string, bool) {
 	if timeParam == "" {
 		// No time parameter, use current date

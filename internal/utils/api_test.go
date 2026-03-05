@@ -976,3 +976,37 @@ func TestValidateNumericParam(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRequiredFloatParam(t *testing.T) {
+	t.Run("missing key returns error", func(t *testing.T) {
+		params := url.Values{}
+		val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
+		assert.Equal(t, float64(0), val)
+		assert.Contains(t, fieldErrors["lat"][0], "Missing required field")
+	})
+	t.Run("present valid value is parsed correctly", func(t *testing.T) {
+		params := url.Values{"lat": []string{"40.583321"}}
+		val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
+		assert.Equal(t, 40.583321, val)
+		assert.Empty(t, fieldErrors)
+	})
+	t.Run("present invalid value adds parse error", func(t *testing.T) {
+		params := url.Values{"lat": []string{"not-a-float"}}
+		val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
+		assert.Equal(t, float64(0), val)
+		assert.Contains(t, fieldErrors["lat"][0], "Invalid field value")
+	})
+	t.Run("explicit zero is accepted (not treated as missing)", func(t *testing.T) {
+		params := url.Values{"lat": []string{"0.0"}}
+		val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
+		assert.Equal(t, float64(0), val)
+		assert.Empty(t, fieldErrors)
+	})
+	t.Run("existing fieldErrors are preserved", func(t *testing.T) {
+		params := url.Values{}
+		existing := map[string][]string{"other": {"some error"}}
+		_, fieldErrors := ParseRequiredFloatParam(params, "lat", existing)
+		assert.Contains(t, fieldErrors["lat"][0], "Missing required field")
+		assert.Equal(t, []string{"some error"}, fieldErrors["other"])
+	})
+}

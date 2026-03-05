@@ -126,8 +126,8 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 ) {
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors = utils.ParseFloatParam(queryParams, "lat", nil)
-	lon, _ = utils.ParseFloatParam(queryParams, "lon", fieldErrors)
+	lat, fieldErrors = utils.ParseRequiredFloatParam(queryParams, "lat", nil)
+	lon, _ = utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
 	latSpan, _ = utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, _ = utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
 	includeTrip = queryParams.Get("includeTrip") == "true"
@@ -145,7 +145,12 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	currentTime := api.Clock.Now().In(currentLocation)
 	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 
-	_, serviceDate, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
+	var timeFieldErrors map[string][]string
+	var success bool
+	_, serviceDate, timeFieldErrors, success = utils.ParseTimeParameter(timeParam, currentLocation)
+	for k, v := range timeFieldErrors {
+		fieldErrors[k] = append(fieldErrors[k], v...)
+	}
 
 	ctx := r.Context()
 	if ctx.Err() != nil {
@@ -159,14 +164,8 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	locationErrors := utils.ValidateLocationParams(lat, lon, 0, latSpan, lonSpan)
-	if len(locationErrors) > 0 {
-		if fieldErrors == nil {
-			fieldErrors = locationErrors
-		} else {
-			for k, v := range locationErrors {
-				fieldErrors[k] = append(fieldErrors[k], v...)
-			}
-		}
+	for k, v := range locationErrors {
+		fieldErrors[k] = append(fieldErrors[k], v...)
 	}
 
 	if len(fieldErrors) > 0 {

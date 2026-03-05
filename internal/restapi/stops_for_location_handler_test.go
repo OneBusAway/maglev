@@ -347,3 +347,21 @@ func TestStopsForLocationQueryGlobalRadius(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, list, 1, "Stop code query should find stops globally regardless of coordinates")
 }
+
+func TestStopsForLocationMissingLat(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lon=-122.426966")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestStopsForLocationMissingLon(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST&lat=40.583321")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestStopsForLocationMissingBothLatAndLon(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
