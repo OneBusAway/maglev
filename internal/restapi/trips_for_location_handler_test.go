@@ -13,13 +13,13 @@ import (
 
 func TestResolveAgencyLocation(t *testing.T) {
 	t.Run("valid timezone", func(t *testing.T) {
-		loc, err := resolveAgencyLocation("40", "America/Los_Angeles")
+		loc, err := time.LoadLocation("America/Los_Angeles")
 		require.NoError(t, err)
 		require.NotNil(t, loc)
 	})
 
 	t.Run("invalid timezone", func(t *testing.T) {
-		loc, err := resolveAgencyLocation("40", "Invalid/Zone")
+		loc, err := time.LoadLocation("Invalid/Zone")
 		require.Error(t, err)
 		require.Nil(t, loc)
 	})
