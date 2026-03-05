@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"math"
 	"sort"
@@ -40,40 +41,45 @@ func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionC
 
 // SetStandardDeviationThreshold sets the standard deviation threshold for direction variance checking.
 // IMPORTANT: This must be called before any concurrent operations begin.
-// Panics if called after CalculateStopDirection has been invoked.
-func (adc *AdvancedDirectionCalculator) SetStandardDeviationThreshold(threshold float64) {
+// Returns an error if called after CalculateStopDirection has been invoked.
+func (adc *AdvancedDirectionCalculator) SetStandardDeviationThreshold(threshold float64) error {
 	if adc.initialized.Load() {
-		panic("SetStandardDeviationThreshold called after concurrent operations have started")
+		return errors.New("SetStandardDeviationThreshold called after concurrent operations have started")
+	}
+	if threshold <= 0 {
+		return errors.New("standard deviation threshold must be greater than zero")
 	}
 	adc.standardDeviationThreshold = threshold
+	return nil
 }
 
 // SetShapeCache sets a pre-loaded cache of shape data to avoid database queries during bulk operations.
 // This significantly improves performance when calculating directions for many stops.
 // IMPORTANT: This must be called before any concurrent operations begin.
-// Panics if called after CalculateStopDirection has been invoked.
-func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) {
+// Returns an error if called after CalculateStopDirection has been invoked.
+func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) error {
 	adc.cacheMutex.Lock()
 	defer adc.cacheMutex.Unlock()
 
 	if adc.initialized.Load() {
-		panic("SetShapeCache called after concurrent operations have started")
+		return errors.New("SetShapeCache called after concurrent operations have started")
 	}
 	adc.shapeCache = cache
+	return nil
 }
 
 // SetContextCache injects the bulk-loaded context data.
 // IMPORTANT: This must be called before any concurrent calculation operations begin.
-// Panics if called after internal state has been initialized (i.e., after the first
-// fallback to shape-based calculation).
-func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) {
+// Returns an error if called after CalculateStopDirection has been invoked.
+func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) error {
 	adc.cacheMutex.Lock()
 	defer adc.cacheMutex.Unlock()
 
 	if adc.initialized.Load() {
-		panic("SetContextCache called after concurrent operations have started")
+		return errors.New("SetContextCache called after concurrent operations have started")
 	}
 	adc.contextCache = cache
+	return nil
 }
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
