@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -351,7 +352,9 @@ func (manager *Manager) GetStopsForLocation(
 	} else {
 		if radius == 0 {
 			if query != "" {
-				radius = 10000
+				// Use a global radius (20,000 km) to ensure exact stop code
+				// searches are never artificially truncated by localized bounding boxes.
+				radius = models.GlobalSearchRadiusInMeters
 			} else {
 				radius = 500
 			}
