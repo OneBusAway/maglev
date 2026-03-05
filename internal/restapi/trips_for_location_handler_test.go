@@ -237,3 +237,21 @@ func TestTripsForLocationHandler_ScheduleInclusion(t *testing.T) {
 		})
 	}
 }
+
+func TestTripsForLocationMissingLat(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trips-for-location.json?key=TEST&lon=-122.426966&latSpan=0.01&lonSpan=0.01")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestTripsForLocationMissingLon(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trips-for-location.json?key=TEST&lat=40.583321&latSpan=0.01&lonSpan=0.01")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestTripsForLocationMissingBothLatAndLon(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trips-for-location.json?key=TEST&latSpan=0.01&lonSpan=0.01")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}

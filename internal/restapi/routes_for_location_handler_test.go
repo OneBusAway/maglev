@@ -239,3 +239,21 @@ func TestRoutesForLocationHandlerInRangeWithNoResults(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 0, len(list))
 }
+
+func TestRoutesForLocationMissingLat(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lon=-122.426966")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestRoutesForLocationMissingLon(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lat=40.583321")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestRoutesForLocationMissingBothLatAndLon(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
