@@ -3751,8 +3751,8 @@ SELECT
     t.id,
     t.block_id,
     t.service_id,
-    t.min_arrival_time AS first_departure_time,
-    t.max_departure_time AS last_arrival_time
+    t.min_arrival_time AS earliest_time,
+    t.max_departure_time AS latest_time
 FROM trips t
 WHERE t.block_id = ?
   AND t.service_id IN (/*SLICE:service_ids*/?)
@@ -3765,11 +3765,11 @@ type GetTripsByBlockIDOrderedParams struct {
 }
 
 type GetTripsByBlockIDOrderedRow struct {
-	ID                 string
-	BlockID            sql.NullString
-	ServiceID          string
-	FirstDepartureTime sql.NullInt64
-	LastArrivalTime    sql.NullInt64
+	ID           string
+	BlockID      sql.NullString
+	ServiceID    string
+	EarliestTime sql.NullInt64
+	LatestTime   sql.NullInt64
 }
 
 func (q *Queries) GetTripsByBlockIDOrdered(ctx context.Context, arg GetTripsByBlockIDOrderedParams) ([]GetTripsByBlockIDOrderedRow, error) {
@@ -3796,8 +3796,8 @@ func (q *Queries) GetTripsByBlockIDOrdered(ctx context.Context, arg GetTripsByBl
 			&i.ID,
 			&i.BlockID,
 			&i.ServiceID,
-			&i.FirstDepartureTime,
-			&i.LastArrivalTime,
+			&i.EarliestTime,
+			&i.LatestTime,
 		); err != nil {
 			return nil, err
 		}
