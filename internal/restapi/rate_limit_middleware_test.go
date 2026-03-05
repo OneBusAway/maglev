@@ -28,7 +28,8 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_AllowsRequestsWithinLimit(t *testing.T) {
-	middleware := initRateLimitMiddleware(5, time.Second)
+	mockClock := clock.NewMockClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	middleware := NewRateLimitMiddleware(5, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
 	// Create a simple handler that responds with 200
@@ -54,7 +55,9 @@ func TestRateLimitMiddleware_AllowsRequestsWithinLimit(t *testing.T) {
 		assert.NotEmpty(t, remainingStr, "Should set X-RateLimit-Remaining")
 		remaining, err := strconv.Atoi(remainingStr)
 		assert.NoError(t, err)
-		assert.True(t, remaining >= 0 && remaining <= 5, "Remaining tokens should be between 0 and 5, got %d", remaining)
+
+		expectedRemaining := 5 - (i + 1)
+		assert.Equal(t, expectedRemaining, remaining, "Remaining tokens should decrease deterministically")
 	}
 }
 
@@ -343,6 +346,8 @@ func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 
 	// Check for rate limit headers
 	assert.NotEmpty(t, w.Header().Get("Retry-After"), "Should include Retry-After header")
+	assert.Equal(t, "1", w.Header().Get("X-RateLimit-Limit"), "Should include X-RateLimit-Limit header")
+	assert.Equal(t, "0", w.Header().Get("X-RateLimit-Remaining"), "Should include X-RateLimit-Remaining header")
 
 	// Check response body format
 	var responseBody map[string]interface{}
