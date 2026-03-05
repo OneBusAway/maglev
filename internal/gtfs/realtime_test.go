@@ -21,28 +21,6 @@ import (
 	logging "maglev.onebusaway.org/internal/logging"
 )
 
-func TestGetAlertsForRoute(t *testing.T) {
-	routeID := "route123"
-	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		realTimeAlerts: []gtfs.Alert{
-			{
-				ID: "alert1",
-				InformedEntities: []gtfs.AlertInformedEntity{
-					{
-						RouteID: &routeID,
-					},
-				},
-			},
-		},
-	}
-
-	alerts := manager.GetAlertsForRoute("route123")
-
-	assert.Len(t, alerts, 1)
-	assert.Equal(t, "alert1", alerts[0].ID)
-}
-
 func TestGetAlertsForTrip(t *testing.T) {
 	tripID := gtfs.TripID{ID: "trip123"}
 	manager := &Manager{
@@ -613,6 +591,116 @@ func TestIsVehicleStale(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isVehicleStale(tt.existing, tt.incoming)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestGetAlertsByIDs_RouteScoping verifies that route-level alert matching
+// only fires for entities that have routeId with no stopId restriction.
+// Entities with {routeId + stopId} are stop-specific and must NOT bleed into route level alerts.
+func TestGetAlertsByIDs_RouteScoping(t *testing.T) {
+	routeID := "route123"
+	otherRoute := "other"
+	stopID := "stop456"
+	agencyID := "agency40"
+
+	tests := []struct {
+		name        string
+		entities    []gtfs.AlertInformedEntity
+		expectMatch bool
+	}{
+		{
+			name:        "route-only entity matches",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+			expectMatch: true,
+		},
+		{
+			name:        "route+agency entity (no stop) matches",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID, AgencyID: &agencyID}},
+			expectMatch: true,
+		},
+		{
+			name:        "route+stop entity does not match route query",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID, StopID: &stopID}},
+			expectMatch: false,
+		},
+		{
+			name:        "route+agency+stop entity does not match route query",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID, AgencyID: &agencyID, StopID: &stopID}},
+			expectMatch: false,
+		},
+		{
+			name: "mixed entities: route+stop and route-only — matches via route-only",
+			entities: []gtfs.AlertInformedEntity{
+				{RouteID: &routeID, StopID: &stopID},
+				{RouteID: &routeID},
+			},
+			expectMatch: true,
+		},
+		{
+			name:        "different route does not match",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &otherRoute}},
+			expectMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := &Manager{
+				realTimeMutex:  sync.RWMutex{},
+				realTimeAlerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}},
+			}
+			alerts := manager.GetAlertsByIDs("", routeID, "")
+			if tt.expectMatch {
+				assert.Len(t, alerts, 1)
+			} else {
+				assert.Empty(t, alerts)
+			}
+		})
+	}
+}
+
+// TestGetAlertsByIDs_AgencyScoping verifies that agency-wide matching only fires
+// for entities that have agencyId with no route or trip restriction.
+func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
+	agencyID := "agency40"
+	routeID := "route123"
+	tripID := gtfs.TripID{ID: "trip456"}
+
+	tests := []struct {
+		name        string
+		entities    []gtfs.AlertInformedEntity
+		expectMatch bool
+	}{
+		{
+			name:        "agency-only entity matches",
+			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+			expectMatch: true,
+		},
+		{
+			name:        "agency+route entity does not match agency-only query",
+			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, RouteID: &routeID}},
+			expectMatch: false,
+		},
+		{
+			name:        "agency+trip entity does not match agency-only query",
+			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, TripID: &tripID}},
+			expectMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := &Manager{
+				realTimeMutex:  sync.RWMutex{},
+				realTimeAlerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}},
+			}
+			alerts := manager.GetAlertsByIDs("", "", agencyID)
+			if tt.expectMatch {
+				assert.Len(t, alerts, 1)
+			} else {
+				assert.Empty(t, alerts)
+			}
 		})
 	}
 }

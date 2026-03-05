@@ -105,24 +105,6 @@ func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 	return manager.realTimeVehicles
 }
 
-func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-
-	var alerts []gtfs.Alert
-	for _, alert := range manager.realTimeAlerts {
-		if alert.InformedEntities != nil {
-			for _, entity := range alert.InformedEntities {
-				if entity.RouteID != nil && *entity.RouteID == routeID {
-					alerts = append(alerts, alert)
-					break
-				}
-			}
-		}
-	}
-	return alerts
-}
-
 // It acquires the realTimeMutex internally; callers must NOT hold it.
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
 	manager.realTimeMutex.RLock()
@@ -138,11 +120,18 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 				alerts = append(alerts, alert)
 				break
 			}
-			if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID {
+			// Only match route-level entities that have no stop restriction.
+			// Entities with {routeId + stopId} are stop-specific alerts and should
+			// only appear when looking up a specific stop (matching Java's inverted
+			// index which files {routeId+stopId} entities in a separate bucket).
+			if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID &&
+				entity.StopID == nil {
 				alerts = append(alerts, alert)
 				break
 			}
-			if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID {
+			// Only match agency-wide alerts: entity has agencyId but no route or trip restriction.
+			if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID &&
+				entity.RouteID == nil && entity.TripID == nil {
 				alerts = append(alerts, alert)
 				break
 			}
