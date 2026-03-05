@@ -332,7 +332,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		if vehicle != nil {
 			// Use route.AgencyID instead of stopAgencyID for BuildTripStatus
-			status, _ := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, serviceMidnight, params.Time)
+			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, serviceMidnight, params.Time)
+			if statusErr != nil {
+				api.Logger.Warn("BuildTripStatus failed for arrival",
+					"tripID", st.TripID, "error", statusErr)
+			}
 			if status != nil {
 				tripStatus = status
 
@@ -577,13 +581,46 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	api.sendResponse(w, r, response)
 }
 
-func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
+func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
 	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, api.Clock.Now())
-	var nearbyStopIDs []string
+	if len(nearbyStops) == 0 {
+		return nil
+	}
+
+	// Collect nearby stop IDs (excluding the current stop) for a batch agency lookup.
+	var candidateIDs []string
 	for _, s := range nearbyStops {
 		if s.ID != stopID {
-			nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agencyID, s.ID))
+			candidateIDs = append(candidateIDs, s.ID)
 		}
+	}
+	if len(candidateIDs) == 0 {
+		return nil
+	}
+
+	// Batch-resolve the owning agency for each nearby stop so that
+	// multi-agency feeds produce correct combined IDs.
+	stopAgencyMap := make(map[string]string, len(candidateIDs))
+	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, candidateIDs)
+	if err != nil {
+		api.Logger.Warn("failed to resolve agencies for nearby stops, using fallback",
+			"error", err, "fallbackAgencyID", fallbackAgencyID)
+	} else {
+		for _, row := range agencyRows {
+			// First agency wins; a stop served by multiple agencies uses the first one found.
+			if _, exists := stopAgencyMap[row.StopID]; !exists {
+				stopAgencyMap[row.StopID] = row.ID
+			}
+		}
+	}
+
+	nearbyStopIDs := make([]string, 0, len(candidateIDs))
+	for _, sid := range candidateIDs {
+		agency := fallbackAgencyID
+		if resolved, ok := stopAgencyMap[sid]; ok {
+			agency = resolved
+		}
+		nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agency, sid))
 	}
 	return nearbyStopIDs
 }

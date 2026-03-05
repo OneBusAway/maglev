@@ -876,3 +876,94 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 300s trip-level delay")
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 300s trip-level delay")
 }
+
+func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID  = "BerlinAgency"
+		routeID   = "BerlinRoute"
+		tripID    = "BerlinTrip"
+		stopID    = "BerlinStop"
+		serviceID = "BerlinService"
+		timezone  = "Europe/Berlin"
+	)
+
+	loc, err := time.LoadLocation(timezone)
+	require.NoError(t, err)
+
+	// Insert a Berlin agency with Europe/Berlin timezone.
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Berlin Transit", Url: "https://example.com", Timezone: timezone,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Lat: 52.52, Lon: 13.405,
+	})
+	require.NoError(t, err)
+
+	// Calendar active on Jan 15 2025 (a Wednesday).
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:     serviceID,
+		Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1,
+		Saturday: 0, Sunday: 0,
+		StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+	})
+	require.NoError(t, err)
+
+	// Stop time at 08:00:00 local (8 hours from midnight as nanoseconds).
+	arrivalNs := int64(8 * time.Hour)
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1,
+		ArrivalTime: arrivalNs, DepartureTime: arrivalNs,
+	})
+	require.NoError(t, err)
+
+	// Midnight Jan 15 2025 CET = 2025-01-14T23:00:00Z.
+	// The UTC day (14) differs from the CET day (15) — this is the crux of the bug.
+	midnightJan15CET := time.Date(2025, 1, 15, 0, 0, 0, 0, loc)
+	serviceDateMs := midnightJan15CET.UnixMilli()
+	require.Equal(t, 14, midnightJan15CET.UTC().Day(), "precondition: UTC day should be 14")
+	require.Equal(t, 15, midnightJan15CET.Day(), "precondition: CET day should be 15")
+
+	// Request the singular endpoint with the Berlin service date.
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=test&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID(agencyID, tripID),
+		serviceDateMs,
+	)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "response should contain data object")
+
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok, "data should contain entry object")
+
+	// Expected: midnight Jan 15 CET + 8 hours = Jan 15 08:00 CET.
+	expectedArrivalMs := midnightJan15CET.Add(time.Duration(arrivalNs)).UnixMilli()
+	actualArrivalMs := int64(entry["scheduledArrivalTime"].(float64))
+	assert.Equal(t, expectedArrivalMs, actualArrivalMs,
+		"scheduledArrivalTime should use local date (Jan 15), not UTC date (Jan 14); "+
+			"difference of 86400000ms indicates the timezone bug")
+}
