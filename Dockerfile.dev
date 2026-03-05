@@ -32,7 +32,8 @@ WORKDIR /app
 
 # Copy dependency files first
 COPY --chown=maglev:maglev go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod,uid=1000,gid=1000 \
+    go mod download
 
 # Source code will be mounted via docker-compose volume
 # This allows live reload without rebuilding the container

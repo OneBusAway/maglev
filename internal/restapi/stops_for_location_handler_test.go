@@ -332,3 +332,18 @@ func TestStopsForLocationHandlerRouteTypeValidMultiple(t *testing.T) {
 	assert.NotNil(t, refs["agencies"])
 	assert.NotNil(t, refs["routes"])
 }
+
+func TestStopsForLocationQueryGlobalRadius(t *testing.T) {
+	clock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clock)
+	// Use coordinates far from the RABA service area to verify global stop code search
+	resp, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&query=2042")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, list, 1, "Stop code query should find stops globally regardless of coordinates")
+}

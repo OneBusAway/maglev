@@ -8,7 +8,8 @@ WORKDIR /build
 
 # Copy dependency files first for better layer caching
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Copy source code
 COPY . .
@@ -27,7 +28,9 @@ ARG BUILD_HOST=docker
 ARG GIT_COMMIT_TIME=unknown
 
 ARG TARGETARCH
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} go build -tags sqlite_fts5 \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} go build -tags sqlite_fts5 \
     -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=${GIT_COMMIT}' \
               -X 'maglev.onebusaway.org/internal/buildinfo.Branch=${GIT_BRANCH}' \
               -X 'maglev.onebusaway.org/internal/buildinfo.BuildTime=${BUILD_TIME}' \

@@ -55,7 +55,7 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	if ctx.Err() != nil {
-		api.serverErrorResponse(w, r, ctx.Err())
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 
@@ -69,6 +69,7 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	agencyIDs := make(map[string]bool)
 	for _, routeRow := range routes {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 

@@ -59,8 +59,12 @@ func InitializeGlobalCache(ctx context.Context, queries *gtfsdb.Queries, adc *Ad
 		}
 	}
 
-	adc.SetShapeCache(shapeCache)
-	adc.SetContextCache(contextCache)
+	if err := adc.SetShapeCache(shapeCache); err != nil {
+		return fmt.Errorf("failed to set shape cache: %w", err)
+	}
+	if err := adc.SetContextCache(contextCache); err != nil {
+		return fmt.Errorf("failed to set context cache: %w", err)
+	}
 
 	slog.Info("global cache warmup complete",
 		slog.Int("stops_cached", len(contextCache)),
