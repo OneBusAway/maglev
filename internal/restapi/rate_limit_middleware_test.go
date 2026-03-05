@@ -48,6 +48,13 @@ func TestRateLimitMiddleware_AllowsRequestsWithinLimit(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code,
 			"Request %d should be allowed", i+1)
+
+		assert.Equal(t, "5", w.Header().Get("X-RateLimit-Limit"), "Should set X-RateLimit-Limit")
+		remainingStr := w.Header().Get("X-RateLimit-Remaining")
+		assert.NotEmpty(t, remainingStr, "Should set X-RateLimit-Remaining")
+		remaining, err := strconv.Atoi(remainingStr)
+		assert.NoError(t, err)
+		assert.True(t, remaining >= 0 && remaining <= 5, "Remaining tokens should be between 0 and 5, got %d", remaining)
 	}
 }
 
