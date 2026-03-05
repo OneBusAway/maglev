@@ -13,6 +13,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -71,8 +72,27 @@ type Manager struct {
 	feedAlerts   map[string][]gtfs.Alert
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
+
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
+
+	// Exported metrics client dependency
+	Metrics *metrics.Metrics
+}
+
+// clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
+func (manager *Manager) clearFeedData(feedID string) {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	manager.feedTrips[feedID] = nil
+	manager.feedVehicles[feedID] = nil
+	manager.feedAlerts[feedID] = nil
+
+	delete(manager.feedVehicleTimestamp, feedID)
+	delete(manager.feedVehicleLastSeen, feedID)
+
+	manager.rebuildMergedRealtimeLocked()
 }
 
 // IsReady returns true if the GTFS data is fully initialized and indexed.
@@ -191,6 +211,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedAlerts:                     make(map[string][]gtfs.Alert),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
+		Metrics:                        config.Metrics,
 	}
 	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
@@ -215,7 +236,11 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	enabledFeeds := config.enabledFeeds()
 	for _, feedCfg := range enabledFeeds {
 		initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		manager.updateFeedRealtime(initCtx, feedCfg)
+		success := manager.updateFeedRealtime(initCtx, feedCfg)
+		if !success {
+			logger.Warn("initial realtime fetch failed; feed starting in degraded state",
+				slog.String("feed", feedCfg.ID))
+		}
 		cancel()
 	}
 

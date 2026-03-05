@@ -27,6 +27,11 @@ type Metrics struct {
 	DBConnectionsIdle  prometheus.Gauge
 	DBWaitSecondsTotal prometheus.Counter
 
+	// GTFS-RT metrics
+	FeedLastSuccessfulFetchTime *prometheus.GaugeVec
+	FeedConsecutiveErrors       *prometheus.GaugeVec
+	FeedFetchDuration           *prometheus.HistogramVec
+
 	// logger for error reporting
 	logger *slog.Logger
 
@@ -86,6 +91,31 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		Help: "Total time blocked waiting for a database connection",
 	})
 
+	feedLastSuccessfulFetchTime := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "maglev_feed_last_successful_fetch_time",
+			Help: "Timestamp of the last successful GTFS-RT fetch for a feed",
+		},
+		[]string{"feed"},
+	)
+
+	feedConsecutiveErrors := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "maglev_feed_consecutive_errors",
+			Help: "Number of consecutive errors fetching GTFS-RT data",
+		},
+		[]string{"feed"},
+	)
+
+	feedFetchDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "maglev_feed_fetch_duration_seconds",
+			Help:    "Duration of GTFS-RT fetches",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"feed"},
+	)
+
 	// Register all metrics with the custom registry
 	registry.MustRegister(
 		httpRequestsTotal,
@@ -94,17 +124,23 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		dbConnectionsInUse,
 		dbConnectionsIdle,
 		dbWaitSecondsTotal,
+		feedLastSuccessfulFetchTime,
+		feedConsecutiveErrors,
+		feedFetchDuration,
 	)
 
 	return &Metrics{
-		Registry:            registry,
-		HTTPRequestsTotal:   httpRequestsTotal,
-		HTTPRequestDuration: httpRequestDuration,
-		DBConnectionsOpen:   dbConnectionsOpen,
-		DBConnectionsInUse:  dbConnectionsInUse,
-		DBConnectionsIdle:   dbConnectionsIdle,
-		DBWaitSecondsTotal:  dbWaitSecondsTotal,
-		logger:              logger,
+		Registry:                    registry,
+		HTTPRequestsTotal:           httpRequestsTotal,
+		HTTPRequestDuration:         httpRequestDuration,
+		DBConnectionsOpen:           dbConnectionsOpen,
+		DBConnectionsInUse:          dbConnectionsInUse,
+		DBConnectionsIdle:           dbConnectionsIdle,
+		DBWaitSecondsTotal:          dbWaitSecondsTotal,
+		FeedLastSuccessfulFetchTime: feedLastSuccessfulFetchTime,
+		FeedConsecutiveErrors:       feedConsecutiveErrors,
+		FeedFetchDuration:           feedFetchDuration,
+		logger:                      logger,
 	}
 }
 

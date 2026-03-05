@@ -30,10 +30,11 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 				{Id: "route1", ShortName: "R1"},
 			},
 		},
+		staticMutex:   sync.RWMutex{},
 		realTimeMutex: sync.RWMutex{},
 	}
 
-	// Test concurrent reads
+	// Test concurrent reads — all readers hold RLock() as the API requires.
 	t.Run("Concurrent reads should not cause data races", func(t *testing.T) {
 		var wg sync.WaitGroup
 		numGoroutines := 100
@@ -43,11 +44,12 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 			wg.Add(1)
 			go func(index int) {
 				defer wg.Done()
-				// Simulate reading data multiple times
 				for j := 0; j < 10; j++ {
+					manager.RLock()
 					agencies := manager.GetAgencies()
 					results[index] = agencies
-					time.Sleep(time.Microsecond) // Small delay to increase race chance
+					manager.RUnlock()
+					time.Sleep(time.Microsecond)
 				}
 			}(i)
 		}
@@ -61,15 +63,16 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 		}
 	})
 
-	// Test concurrent read/write without protection (this test demonstrates the problem)
-	t.Run("Concurrent read/write without protection should be unsafe", func(t *testing.T) {
-		// This test demonstrates the race condition that we need to fix
-		// We'll run it with the race detector to catch issues
-
+	// Test that concurrent reads and writes are safe when the mutex is used correctly.
+	// This replaces the previous "unsafe" subtest which intentionally triggered a data
+	// race (and therefore always failed under `go test -race`). The unsafe pattern is
+	// demonstrated conceptually in the test name; the actual code uses setStaticGTFS
+	// which acquires staticMutex, making it safe.
+	t.Run("Concurrent read/write with mutex protection is safe", func(t *testing.T) {
 		var wg sync.WaitGroup
 		done := make(chan struct{})
 
-		// Start readers
+		// Start readers — each reader correctly acquires RLock before accessing data.
 		for i := 0; i < 10; i++ {
 			wg.Add(1)
 			go func() {
@@ -79,16 +82,18 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 					case <-done:
 						return
 					default:
+						manager.RLock()
 						_ = manager.GetAgencies()
 						_ = manager.GetStops()
 						_ = manager.GetStaticData()
+						manager.RUnlock()
 						time.Sleep(time.Microsecond)
 					}
 				}
 			}()
 		}
 
-		// Start writer (simulating the unsafe setStaticGTFS)
+		// Start writer — uses setStaticGTFS which acquires staticMutex internally.
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -97,7 +102,6 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 				case <-done:
 					return
 				default:
-					// This is the unsafe operation we're testing
 					newData := &gtfs.Static{
 						Agencies: []gtfs.Agency{
 							{Id: "new-agency", Name: "New Agency"},
@@ -106,13 +110,13 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 							{Id: "new-stop", Name: "New Stop"},
 						},
 					}
-					manager.unsafeSetStaticGTFS(newData)
+					// setStaticGTFS acquires staticMutex internally — this is safe.
+					manager.setStaticGTFS(newData)
 					time.Sleep(time.Millisecond)
 				}
 			}
 		}()
 
-		// Let it run for a short time
 		time.Sleep(50 * time.Millisecond)
 		close(done)
 		wg.Wait()
@@ -128,9 +132,10 @@ func TestSafeGTFSDataAccess(t *testing.T) {
 					{Id: "test-agency", Name: "Test Agency"},
 				},
 			},
+			staticMutex:   sync.RWMutex{},
 			realTimeMutex: sync.RWMutex{},
 		},
-		staticMutex: sync.RWMutex{}, // This will be added to the real Manager
+		staticMutex: sync.RWMutex{},
 	}
 
 	// Test concurrent read/write with protection
@@ -151,7 +156,7 @@ func TestSafeGTFSDataAccess(t *testing.T) {
 					case <-done:
 						return
 					default:
-						agencies := manager.safeGetAgencies() // This will be added in implementation
+						agencies := manager.safeGetAgencies()
 						if len(agencies) > 0 {
 							readMutex.Lock()
 							if readIndex < len(readResults) {
@@ -180,13 +185,12 @@ func TestSafeGTFSDataAccess(t *testing.T) {
 							{Id: "safe-agency", Name: "Safe Agency"},
 						},
 					}
-					manager.safeSetStaticGTFS(newData) // This will be added in implementation
+					manager.safeSetStaticGTFS(newData)
 					time.Sleep(time.Millisecond)
 				}
 			}
 		}()
 
-		// Let it run for a short time
 		time.Sleep(50 * time.Millisecond)
 		close(done)
 		wg.Wait()
@@ -246,7 +250,6 @@ func TestConcurrentVehicleUpdates(t *testing.T) {
 				case <-done:
 					return
 				default:
-					// Use direct assignment to realTimeVehicles for testing
 					manager.realTimeMutex.Lock()
 					testVehicleID := gtfs.VehicleID{ID: "test-vehicle"}
 					manager.realTimeVehicles = []gtfs.Vehicle{
@@ -259,7 +262,6 @@ func TestConcurrentVehicleUpdates(t *testing.T) {
 		}(i)
 	}
 
-	// Let it run for a short time
 	time.Sleep(50 * time.Millisecond)
 	close(done)
 	wg.Wait()
@@ -267,16 +269,8 @@ func TestConcurrentVehicleUpdates(t *testing.T) {
 	// Should complete without races (tested with race detector)
 }
 
-// Helper methods for testing - these simulate the unsafe operations
-func (manager *Manager) unsafeSetStaticGTFS(staticData *gtfs.Static) {
-	// This is the current unsafe implementation
-	manager.gtfsData = staticData
-	manager.lastUpdated = time.Now()
-}
-
-// Helper methods for testing - these simulate the safe operations that will be implemented
+// Helper methods for testManagerWithMutex — simulate the safe operations.
 func (tm *testManagerWithMutex) safeSetStaticGTFS(staticData *gtfs.Static) {
-	// This will be implemented with proper mutex protection
 	tm.staticMutex.Lock()
 	defer tm.staticMutex.Unlock()
 	tm.gtfsData = staticData
@@ -284,9 +278,8 @@ func (tm *testManagerWithMutex) safeSetStaticGTFS(staticData *gtfs.Static) {
 }
 
 func (tm *testManagerWithMutex) safeGetAgencies() []gtfs.Agency {
-	// This will be implemented with proper mutex protection
-	tm.RLock()
-	defer tm.RUnlock()
+	tm.staticMutex.RLock()
+	defer tm.staticMutex.RUnlock()
 	if tm.gtfsData == nil {
 		return []gtfs.Agency{}
 	}
