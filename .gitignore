@@ -17,3 +17,4 @@ tmp/
 *.log
 .DS_Store
 /api
+testdata/perf/
