@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -601,7 +602,7 @@ func (rb *referenceBuilder) createTrip(trip gtfsdb.Trip) models.Trip {
 		ServiceID:     trip.ServiceID,
 		TripHeadsign:  trip.TripHeadsign.String,
 		TripShortName: trip.TripShortName.String,
-		DirectionID:   trip.DirectionID.Int64,
+		DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
 		BlockID:       trip.BlockID.String,
 		ShapeID:       trip.ShapeID.String,
 		PeakOffPeak:   0,
@@ -696,7 +697,7 @@ func (rb *referenceBuilder) createTripReference(tripDetails gtfsdb.Trip, current
 		ServiceID:     utils.FormCombinedID(currentAgency, trip.ServiceID),
 		TripHeadsign:  tripDetails.TripHeadsign.String,
 		TripShortName: tripDetails.TripShortName.String,
-		DirectionID:   tripDetails.DirectionID.Int64,
+		DirectionID:   strconv.FormatInt(tripDetails.DirectionID.Int64, 10),
 		BlockID:       utils.FormCombinedID(currentAgency, trip.BlockID),
 		ShapeID:       utils.FormCombinedID(currentAgency, tripDetails.ShapeID.String),
 		PeakOffPeak:   0,

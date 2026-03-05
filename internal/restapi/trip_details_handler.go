@@ -357,7 +357,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
 			TripHeadsign:   refTrip.TripHeadsign.String,
 			TripShortName:  refTrip.TripShortName.String,
-			DirectionID:    refTrip.DirectionID.Int64,
+			DirectionID:    strconv.FormatInt(refTrip.DirectionID.Int64, 10),
 			BlockID:        blockID,
 			RouteShortName: refRoute.ShortName.String,
 			TimeZone:       "",

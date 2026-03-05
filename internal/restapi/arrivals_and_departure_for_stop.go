@@ -459,7 +459,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			utils.FormCombinedID(routeAgencyID, trip.ServiceID), // Use route agency for service ID
 			trip.TripHeadsign.String,
 			"",
-			trip.DirectionID.Int64,
+			strconv.FormatInt(trip.DirectionID.Int64, 10),
 			utils.FormCombinedID(routeAgencyID, trip.BlockID.String), // Use route agency for block ID
 			utils.FormCombinedID(routeAgencyID, trip.ShapeID.String), // Use route agency for shape ID
 		)

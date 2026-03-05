@@ -411,7 +411,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
 		trip.TripHeadsign.String,
 		"", // trip short name
-		trip.DirectionID.Int64,
+		strconv.FormatInt(trip.DirectionID.Int64, 10),
 		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
 		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
 	)
@@ -433,7 +433,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
 						activeTrip.TripHeadsign.String,
 						"", // trip short name
-						activeTrip.DirectionID.Int64,
+						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
 					)

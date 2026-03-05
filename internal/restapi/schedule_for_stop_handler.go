@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -280,7 +281,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			utils.FormCombinedID(agencyID, trip.ServiceID),
 			trip.TripHeadsign.String,
 			trip.TripShortName.String,
-			trip.DirectionID.Int64,
+			strconv.FormatInt(trip.DirectionID.Int64, 10),
 			utils.FormCombinedID(agencyID, trip.BlockID.String),
 			utils.FormCombinedID(agencyID, trip.ShapeID.String),
 		)

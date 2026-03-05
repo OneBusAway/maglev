@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
 
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -52,7 +53,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		ID:             utils.FormCombinedID(agencyID, trip.ID),
 		RouteID:        utils.FormCombinedID(agencyID, trip.RouteID),
 		ServiceID:      utils.FormCombinedID(agencyID, trip.ServiceID),
-		DirectionID:    trip.DirectionID.Int64,
+		DirectionID:    strconv.FormatInt(trip.DirectionID.Int64, 10),
 		BlockID:        blockID,
 		ShapeID:        shapeID,
 		TripHeadsign:   trip.TripHeadsign.String,
