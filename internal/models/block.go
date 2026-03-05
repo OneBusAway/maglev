@@ -1,13 +1,5 @@
 package models
 
-type BlockResponse struct {
-	Data BlockData `json:"data"`
-}
-
-type BlockData struct {
-	Entry BlockEntry `json:"entry"`
-}
-
 type BlockEntry struct {
 	Configurations []BlockConfiguration `json:"configurations"`
 	ID             string               `json:"id"`
