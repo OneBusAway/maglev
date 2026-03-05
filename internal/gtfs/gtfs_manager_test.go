@@ -139,6 +139,29 @@ func TestManager_GetVehicleByID(t *testing.T) {
 	assert.Nil(t, notFound)
 }
 
+func TestGetVehicleForTrip_DirectTripIDLookup(t *testing.T) {
+	tripID := "trip-direct"
+	vehicleID := "v-direct"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID:   &gtfs.VehicleID{ID: vehicleID},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{ID: tripID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	ctx := context.Background()
+	got := manager.GetVehicleForTrip(ctx, tripID)
+	require.NotNil(t, got)
+	assert.Equal(t, vehicleID, got.ID.ID)
+}
+
 func TestManager_GetTripUpdatesForTrip(t *testing.T) {
 	manager := &Manager{
 		realTimeTrips: []gtfs.Trip{
