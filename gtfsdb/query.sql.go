@@ -1678,6 +1678,22 @@ func (q *Queries) GetCalendarDateExceptionsForServiceID(ctx context.Context, ser
 	return items, nil
 }
 
+const getFeedEndDate = `-- name: GetFeedEndDate :one
+SELECT MAX(max_date) AS feed_end_date
+FROM (
+    SELECT MAX(end_date) AS max_date FROM calendar
+    UNION ALL
+    SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
+)
+`
+
+func (q *Queries) GetFeedEndDate(ctx context.Context) (interface{}, error) {
+	row := q.queryRow(ctx, q.getFeedEndDateStmt, getFeedEndDate)
+	var feed_end_date interface{}
+	err := row.Scan(&feed_end_date)
+	return feed_end_date, err
+}
+
 const getFrequenciesForTrip = `-- name: GetFrequenciesForTrip :many
 SELECT trip_id, start_time, end_time, headway_secs, exact_times FROM frequencies
 WHERE trip_id = ?

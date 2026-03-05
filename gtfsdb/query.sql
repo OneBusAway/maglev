@@ -1114,3 +1114,10 @@ SELECT * FROM problem_reports_stop
 WHERE stop_id = ?
 ORDER BY created_at DESC;
 
+-- name: GetFeedEndDate :one
+SELECT MAX(max_date) AS feed_end_date
+FROM (
+    SELECT MAX(end_date) AS max_date FROM calendar
+    UNION ALL
+    SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
+);

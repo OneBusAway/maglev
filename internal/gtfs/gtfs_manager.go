@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/metrics"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -66,6 +66,8 @@ type Manager struct {
 	isHealthy                      bool
 	systemETag                     string      // systemETag stores the SHA-256 hash of the currently loaded GTFS static dataset.
 	isReady                        atomic.Bool // Tracks whether initial data loading is complete
+
+	feedExpiresAt time.Time // Holds the max valid service date for the static feed
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -215,6 +217,8 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	}
 	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
+
+	manager.parseAndLogFeedExpiryLocked(ctx, logger)
 
 	// Populate systemETag from import metadata
 	metadata, err := gtfsDB.Queries.GetImportMetadata(ctx)
@@ -740,6 +744,13 @@ func (manager *Manager) MarkUnhealthy() {
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 	manager.isHealthy = false
+}
+
+// FeedExpiresAt returns the parsed feed expiry time.
+func (manager *Manager) FeedExpiresAt() time.Time {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.feedExpiresAt
 }
 
 // SetRealTimeTripsForTest manually sets realtime trips for testing purposes.

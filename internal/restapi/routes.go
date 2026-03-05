@@ -169,7 +169,9 @@ func (api *RestAPI) SetupAPIRoutes() http.Handler {
 	// Register all API routes
 	api.SetRoutes(mux)
 
-	// Apply global middleware chain: compression -> base routes
-	// This ensures all responses are compressed
-	return CompressionMiddleware(mux)
+	// Apply global middleware chain: expiry -> compression -> base routes
+	// This ensures all responses are compressed & have expiry headers
+	var handler http.Handler = mux
+	handler = GtfsExpiryMiddleware(api.GtfsManager)(handler)
+	return CompressionMiddleware(handler)
 }

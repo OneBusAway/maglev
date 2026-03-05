@@ -32,6 +32,9 @@ type Metrics struct {
 	FeedConsecutiveErrors       *prometheus.GaugeVec
 	FeedFetchDuration           *prometheus.HistogramVec
 
+	// Static GTFS metrics
+	FeedExpiresAt prometheus.Gauge
+
 	// logger for error reporting
 	logger *slog.Logger
 
@@ -116,6 +119,13 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		[]string{"feed"},
 	)
 
+	feedExpiresAt := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "maglev_gtfs_feed_expires_at",
+			Help: "Unix timestamp when the static GTFS feed expires",
+		},
+	)
+
 	// Register all metrics with the custom registry
 	registry.MustRegister(
 		httpRequestsTotal,
@@ -127,6 +137,7 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		feedLastSuccessfulFetchTime,
 		feedConsecutiveErrors,
 		feedFetchDuration,
+		feedExpiresAt,
 	)
 
 	return &Metrics{
@@ -140,6 +151,7 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		FeedLastSuccessfulFetchTime: feedLastSuccessfulFetchTime,
 		FeedConsecutiveErrors:       feedConsecutiveErrors,
 		FeedFetchDuration:           feedFetchDuration,
+		FeedExpiresAt:               feedExpiresAt,
 		logger:                      logger,
 	}
 }

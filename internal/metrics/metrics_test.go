@@ -21,7 +21,7 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, m.DBConnectionsInUse)
 	assert.NotNil(t, m.DBConnectionsIdle)
 	assert.NotNil(t, m.DBWaitSecondsTotal)
-	
+
 	// GTFS-RT metrics
 	assert.NotNil(t, m.FeedLastSuccessfulFetchTime)
 	assert.NotNil(t, m.FeedConsecutiveErrors)
