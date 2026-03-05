@@ -80,7 +80,7 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 	return b, nil
 }
 
-func buildGtfsDB(config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client, error) {
+func buildGtfsDB(ctx context.Context, config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client, error) {
 	// If no specific path is provided, use the one from config
 	if dbPath == "" {
 		dbPath = config.GTFSDataPath
@@ -91,8 +91,6 @@ func buildGtfsDB(config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client
 		return nil, fmt.Errorf("failed to create GTFS database client: %w", err)
 	}
 
-	ctx := context.Background()
-
 	if isLocalFile {
 		err = client.ImportFromFile(ctx, config.GtfsURL)
 	} else {
@@ -100,7 +98,15 @@ func buildGtfsDB(config Config, isLocalFile bool, dbPath string) (*gtfsdb.Client
 	}
 
 	if err != nil {
+		_ = client.Close() // Close the client on error to prevent connection leaks on retries
 		return nil, err
+	}
+
+	// Backfill cached time bounds for O(1) trip lookups
+	logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
+	logging.LogOperation(logger, "calculating_trip_time_bounds")
+	if err := client.Queries.BulkUpdateTripTimeBounds(ctx); err != nil {
+		return nil, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
 	// Precompute stop directions after GTFS data is loaded
@@ -208,7 +214,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		logging.LogError(logger, "Failed to remove existing temp DB", err)
 	}
 
-	newGtfsDB, err := buildGtfsDB(manager.config, manager.isLocalFile, tempDBPath)
+	newGtfsDB, err := buildGtfsDB(ctx, manager.config, manager.isLocalFile, tempDBPath)
 	if err != nil {
 		logging.LogError(logger, "Error building new GTFS DB", err)
 		return err

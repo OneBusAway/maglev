@@ -18,10 +18,11 @@ func TestProblemReportsForStopRequiresValidApiKey(t *testing.T) {
 
 func TestProblemReportsForStop_EmptyList(t *testing.T) {
 	api := createTestApi(t)
+	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
 	defer api.Shutdown()
 
 	stopID := "1_75403"
-	url := fmt.Sprintf("/api/where/problem-reports-for-stop/%s.json?key=TEST", stopID)
+	url := fmt.Sprintf("/api/where/problem-reports-for-stop/%s.json?key=PROTECTED-TEST", stopID)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 
@@ -41,18 +42,25 @@ func TestProblemReportsForStop_EmptyList(t *testing.T) {
 
 func TestProblemReportsForStop_SubmitThenRetrieve(t *testing.T) {
 	api := createTestApi(t)
+	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
 	defer api.Shutdown()
 
 	stopID := "1_75403"
 
-	// First, submit a problem report
+	// First, submit a problem report with standard key
 	submitURL := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userComment=Wrong+name&userLat=38.5678&userLon=-121.4321", stopID)
 	submitResp, submitModel := serveApiAndRetrieveEndpoint(t, api, submitURL)
 	require.Equal(t, http.StatusOK, submitResp.StatusCode)
 	require.Equal(t, 200, submitModel.Code)
 
-	// Now retrieve reports for this stop
-	getURL := fmt.Sprintf("/api/where/problem-reports-for-stop/%s.json?key=TEST", stopID)
+	// retrieve with standard key (should fail)
+	getURLUnauth := fmt.Sprintf("/api/where/problem-reports-for-stop/%s.json?key=TEST", stopID)
+	unauthResp, unauthModel := serveApiAndRetrieveEndpoint(t, api, getURLUnauth)
+	assert.Equal(t, http.StatusUnauthorized, unauthResp.StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, unauthModel.Code)
+
+	// retrieve reports for this stop with protected key
+	getURL := fmt.Sprintf("/api/where/problem-reports-for-stop/%s.json?key=PROTECTED-TEST", stopID)
 	resp, model := serveApiAndRetrieveEndpoint(t, api, getURL)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

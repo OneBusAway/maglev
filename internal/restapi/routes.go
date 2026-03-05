@@ -3,29 +3,26 @@ package restapi
 import (
 	"net/http"
 	"net/http/pprof"
+	"os"
 
 	"maglev.onebusaway.org/internal/models"
 )
 
 type handlerFunc func(w http.ResponseWriter, r *http.Request)
 
-// rateLimitAndValidateAPIKey combines rate limiting, API key validation, and compression
+// rateLimitAndValidateAPIKey combines rate limiting and API key validation
 func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Handler {
-	// Create the handler chain: API key validation -> rate limiting -> compression -> final handler
 	finalHandlerHttp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		finalHandler(w, r)
 	})
 
-	// Apply compression first (innermost)
-	compressedHandler := CompressionMiddleware(finalHandlerHttp)
-
-	// Then rate limiting - use the shared rate limiter instance
+	// Apply rate limiting directly to the final handler - use the shared rate limiter instance
 	var rateLimitedHandler http.Handler
 	if api.rateLimiter != nil {
-		rateLimitedHandler = api.rateLimiter.Handler()(compressedHandler)
+		rateLimitedHandler = api.rateLimiter.Handler()(finalHandlerHttp)
 	} else {
 		// Fallback for tests that don't use NewRestAPI constructor
-		rateLimitedHandler = compressedHandler
+		rateLimitedHandler = finalHandlerHttp
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +31,7 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 			api.invalidAPIKeyResponse(w, r)
 			return
 		}
-		// Then apply rate limiting and compression
+		// Then apply rate limiting
 		rateLimitedHandler.ServeHTTP(w, r)
 	})
 }
@@ -70,19 +67,53 @@ func withCombinedID(api *RestAPI, handler http.HandlerFunc) http.Handler {
 	return rateLimitAndValidateAPIKey(api, handlerFunc(api.ValidateCombinedIDMiddleware(handler)))
 }
 
-func registerPprofHandlers(mux *http.ServeMux) { // nolint:unused
-	// Register pprof handlers
-	// import "net/http/pprof"
-	// Tutorial: https://medium.com/@rahul.fiem/application-performance-optimization-how-to-effectively-analyze-and-optimize-pprof-cpu-profiles-95280b2f5bfb
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+// withProtectedCombinedID applies "Combined ID" validation and requires a protected API key
+func withProtectedCombinedID(api *RestAPI, handler http.HandlerFunc) http.Handler {
+	innerHandler := handlerFunc(api.ValidateCombinedIDMiddleware(handler))
+
+	finalHandlerHttp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		innerHandler(w, r)
+	})
+
+	// Apply rate limiting directly to the final handler
+	var rateLimitedHandler http.Handler
+	if api.rateLimiter != nil {
+		rateLimitedHandler = api.rateLimiter.Handler()(finalHandlerHttp)
+	} else {
+		rateLimitedHandler = finalHandlerHttp
+	}
+
+	// Auth check outermost, matching rateLimitAndValidateAPIKey pattern
+	return api.validateProtectedAPIKey(rateLimitedHandler)
 }
 
-// SetRoutes registers all API endpoints with compression applied per route
+// registerPprofHandlers registers standard pprof handlers
+func registerPprofHandlers(mux *http.ServeMux) {
+	// These endpoints trigger active data collection or symbol resolution
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("POST /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("POST /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+
+	// These all route through pprof.Index, which automatically serves
+	// the correct profile based on the URL path
+	mux.HandleFunc("GET /debug/pprof/mutex", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/block", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/heap", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/goroutine", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/allocs", pprof.Index)
+}
+
+// SetRoutes registers all API endpoints with the provided mux
 func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
+	// Gate pprof endpoints behind environment variable for security
+	if os.Getenv("MAGLEV_ENABLE_PPROF") == "1" {
+		registerPprofHandlers(mux)
+	}
+
 	// Health check endpoint - no authentication required
 	mux.HandleFunc("GET /healthz", api.healthHandler)
 
@@ -121,8 +152,8 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	// Real-time or transactional combined ID endpoints (no ETag)
 	mux.Handle("GET /api/where/report-problem-with-trip/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.reportProblemWithTripHandler)))
 	mux.Handle("GET /api/where/report-problem-with-stop/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.reportProblemWithStopHandler)))
-	mux.Handle("GET /api/where/problem-reports-for-trip/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.problemReportsForTripHandler)))
-	mux.Handle("GET /api/where/problem-reports-for-stop/{id}", CacheControlMiddleware(models.CacheDurationNone, withCombinedID(api, api.problemReportsForStopHandler)))
+	mux.Handle("GET /api/where/problem-reports-for-trip/{id}", CacheControlMiddleware(models.CacheDurationNone, withProtectedCombinedID(api, api.problemReportsForTripHandler)))
+	mux.Handle("GET /api/where/problem-reports-for-stop/{id}", CacheControlMiddleware(models.CacheDurationNone, withProtectedCombinedID(api, api.problemReportsForStopHandler)))
 	mux.Handle("GET /api/where/trip-details/{id}", CacheControlMiddleware(models.CacheDurationShort, withCombinedID(api, api.tripDetailsHandler)))
 	mux.Handle("GET /api/where/trip-for-vehicle/{id}", CacheControlMiddleware(models.CacheDurationShort, withCombinedID(api, api.tripForVehicleHandler)))
 	mux.Handle("GET /api/where/arrival-and-departure-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, withCombinedID(api, api.arrivalAndDepartureForStopHandler)))

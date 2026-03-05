@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -248,6 +247,19 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		tripsLookup[trip.ID] = trip
 	}
 
+	// Batch-fetch stop counts per trip to avoid per-arrival N+1 queries for totalStopsInTrip.
+	tripStopCountMap := make(map[string]int, len(uniqueTripIDs))
+	if len(uniqueTripIDs) > 0 {
+		allStopTimesForTrips, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, uniqueTripIDs)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
+		} else {
+			for _, st := range allStopTimesForTrips {
+				tripStopCountMap[st.TripID]++
+			}
+		}
+	}
+
 	for _, ast := range allActiveStopTimes {
 		st := ast.GetStopTimesForStopInWindowRow
 
@@ -291,46 +303,29 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			numberOfStopsAway      = 0
 		)
 
-		// Get real-time updates from GTFS-RT
+		// Get vehicle if available
 		vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
 		if vehicle != nil && vehicle.Trip != nil {
 			vehicleID = vehicle.ID.ID
+		}
 
-			// Fetch the Trip Update separately
-			tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
+		// Prepare scheduled times for the shared function
+		schedArrTime := serviceMidnight.Add(time.Duration(st.ArrivalTime))
+		schedDepTime := serviceMidnight.Add(time.Duration(st.DepartureTime))
 
-			// Use the tripUpdate for predictions
-			if tripUpdate != nil && len(tripUpdate.StopTimeUpdates) > 0 {
-				// Look for StopTimeUpdate that matches this stop
-				for _, stopTimeUpdate := range tripUpdate.StopTimeUpdates {
-					// Match by stop sequence or stop ID
-					if (stopTimeUpdate.StopSequence != nil && int64(*stopTimeUpdate.StopSequence) == st.StopSequence) ||
-						(stopTimeUpdate.StopID != nil && *stopTimeUpdate.StopID == stopCode) {
+		// Call unified prediction logic
+		predArr, predDep, isPredicted := api.getPredictedTimes(
+			st.TripID,
+			stopCode,
+			int64(st.StopSequence),
+			schedArrTime,
+			schedDepTime,
+		)
 
-						predicted = true
-
-						// Update predicted times from GTFS-RT
-						if stopTimeUpdate.Arrival != nil && stopTimeUpdate.Arrival.Time != nil {
-							predictedArrivalTime = stopTimeUpdate.Arrival.Time.Unix() * 1000
-						} else if stopTimeUpdate.Arrival != nil && stopTimeUpdate.Arrival.Delay != nil {
-							predictedArrivalTime = scheduledArrivalTime + (stopTimeUpdate.Arrival.Delay.Nanoseconds() / 1e6)
-						}
-
-						if stopTimeUpdate.Departure != nil && stopTimeUpdate.Departure.Time != nil {
-							predictedDepartureTime = stopTimeUpdate.Departure.Time.Unix() * 1000
-						} else if stopTimeUpdate.Departure != nil && stopTimeUpdate.Departure.Delay != nil {
-							predictedDepartureTime = scheduledDepartureTime + (stopTimeUpdate.Departure.Delay.Nanoseconds() / 1e6)
-						}
-						break
-					}
-				}
-			}
-
-			if !predicted && vehicle.Position != nil {
-				predicted = true
-				predictedArrivalTime = scheduledArrivalTime
-				predictedDepartureTime = scheduledDepartureTime
-			}
+		if isPredicted {
+			predicted = true
+			predictedArrivalTime = predArr
+			predictedDepartureTime = predDep
 		}
 
 		if vehicle != nil {
@@ -396,16 +391,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			predictedDepartureTime = 0
 		}
 
-		tripStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, st.TripID)
-		var totalStopsInTrip int
-		if err != nil {
-			api.Logger.Debug("failed to get stop times for trip",
-				slog.String("tripID", st.TripID),
-				slog.Any("error", err))
-			totalStopsInTrip = 0
-		} else {
-			totalStopsInTrip = len(tripStopTimes)
-		}
+		totalStopsInTrip := tripStopCountMap[st.TripID]
 
 		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
 
@@ -436,8 +422,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			distanceFromStop,                                // distanceFromStop
 			"default",                                       // status
 			"",                                              // occupancyStatus
-			"",                                              // predictedOccupancy
-			"",                                              // historicalOccupancy
+			"",                                              // predicted occupancy
+			"",                                              // historical occupancy
 			tripStatus,                                      // tripStatus
 			situationIDs,                                    // situationIDs
 		)
@@ -478,28 +464,46 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		references.Trips = append(references.Trips, tripRef)
 	}
 
-	calc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
+	// Batch-fetch all stop references in one shot instead of one query per stop.
+	stopIDsSlice := make([]string, 0, len(stopIDSet))
+	for sid := range stopIDSet {
+		stopIDsSlice = append(stopIDsSlice, sid)
+	}
+
+	batchStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
+	if err != nil {
+		api.Logger.Warn("failed to batch fetch stop references", slog.Any("error", err))
+		batchStops = nil
+	}
+
+	batchRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
+	if err != nil {
+		api.Logger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
+		batchRoutesForStops = nil
+	}
+
+	stopsMap := make(map[string]gtfsdb.Stop, len(batchStops))
+	for _, s := range batchStops {
+		stopsMap[s.ID] = s
+	}
+
+	routesByStop := make(map[string][]gtfsdb.GetRoutesForStopsRow)
+	for _, row := range batchRoutesForStops {
+		routesByStop[row.StopID] = append(routesByStop[row.StopID], row)
+	}
 
 	for stopID := range stopIDSet {
 		if ctx.Err() != nil {
 			return
 		}
 
-		stopData, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
-			api.Logger.Debug("skipping stop reference: stop not found",
-				slog.String("stopID", stopID),
-				slog.Any("error", err))
+		stopData, ok := stopsMap[stopID]
+		if !ok {
+			api.Logger.Debug("skipping stop reference: stop not found", slog.String("stopID", stopID))
 			continue
 		}
 
-		routesForThisStop, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, []string{stopID})
-		if err != nil {
-			api.Logger.Debug("failed to get routes for stop",
-				slog.String("stopID", stopID),
-				slog.Any("error", err))
-			continue
-		}
+		routesForThisStop := routesByStop[stopID]
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			// Use route.AgencyID instead of stopAgencyID
@@ -527,7 +531,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               stopData.Code.String,
-			Direction:          calc.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
+			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,

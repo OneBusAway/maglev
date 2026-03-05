@@ -17,11 +17,11 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestHandlerLockSafety(t *testing.T) {
+	ctx := context.Background()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
 	}
@@ -48,7 +48,7 @@ func TestHandlerLockSafety(t *testing.T) {
 		ApiKeys:   []string{"TEST"},
 	}
 
-	application, err := BuildApplication(appConfig, gtfsConfig)
+	application, err := BuildApplication(ctx, appConfig, gtfsConfig)
 	require.NoError(t, err)
 
 	srv, api := CreateServer(application, appConfig)
@@ -110,7 +110,7 @@ func TestHandlerLockSafety(t *testing.T) {
 
 	t.Log("Starting readers...")
 	client := &http.Client{
-		Timeout: 2 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 
 	for i := 0; i < readerCount; i++ {

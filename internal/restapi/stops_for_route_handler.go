@@ -10,7 +10,6 @@ import (
 
 	"github.com/twpayne/go-polyline"
 	"maglev.onebusaway.org/gtfsdb"
-	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -92,67 +91,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// This prevents nil pointer panics and ensures thread-safety.
-	adc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
-
-	// Get Stop IDs for the route to drive the bulk-loading caches
-	stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetStopIDsForRoute(ctx, routeID)
-	if err == nil && len(stopIDs) > 0 {
-
-		contextRows, err := api.GtfsManager.GtfsDB.Queries.GetStopsWithShapeContextByIDs(ctx, stopIDs)
-		if err != nil {
-			// Log error when bulk context load fails
-			slog.Warn("bulk context cache load failed, falling back to per-stop queries",
-				slog.String("routeID", routeID),
-				slog.String("error", err.Error()))
-		} else {
-			contextCache := make(map[string][]gtfsdb.GetStopsWithShapeContextRow)
-			shapeIDMap := make(map[string]bool)
-			var uniqueShapeIDs []string
-
-			for _, row := range contextRows {
-				calcRow := gtfsdb.GetStopsWithShapeContextRow{
-					ID:                row.StopID,
-					ShapeID:           row.ShapeID,
-					Lat:               row.Lat,
-					Lon:               row.Lon,
-					ShapeDistTraveled: row.ShapeDistTraveled,
-				}
-				contextCache[row.StopID] = append(contextCache[row.StopID], calcRow)
-
-				if row.ShapeID.Valid && row.ShapeID.String != "" && !shapeIDMap[row.ShapeID.String] {
-					shapeIDMap[row.ShapeID.String] = true
-					uniqueShapeIDs = append(uniqueShapeIDs, row.ShapeID.String)
-				}
-			}
-
-			// Fetch Shape Points in bulk to populate the local cache
-			if len(uniqueShapeIDs) > 0 {
-				shapePoints, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs(ctx, uniqueShapeIDs)
-				if err != nil {
-					// Log error when bulk shape load fails
-					slog.Warn("bulk shape cache load failed, falling back to per-stop queries",
-						slog.String("routeID", routeID),
-						slog.String("error", err.Error()))
-				} else {
-					shapeCache := make(map[string][]gtfsdb.GetShapePointsWithDistanceRow)
-					for _, p := range shapePoints {
-						shapeCache[p.ShapeID] = append(shapeCache[p.ShapeID], gtfsdb.GetShapePointsWithDistanceRow{
-							Lat:               p.Lat,
-							Lon:               p.Lon,
-							ShapeDistTraveled: p.ShapeDistTraveled,
-						})
-					}
-
-					// Inject caches into the LOCAL instance.
-					adc.SetShapeCache(shapeCache)
-					adc.SetContextCache(contextCache)
-				}
-			}
-		}
-	}
-
-	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, params.IncludePolylines, adc)
+	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, params.IncludePolylines)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -161,7 +100,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency)
 }
 
-func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, includePolylines bool, adc *GTFS.AdvancedDirectionCalculator) (models.RouteEntry, []models.Stop, error) {
+func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, includePolylines bool) (models.RouteEntry, []models.Stop, error) {
 	allStops := make(map[string]bool)
 	allPolylines := make([]models.Polyline, 0, 100)
 	var stopGroupings []models.StopGrouping
@@ -193,7 +132,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 	}
 
 	allStopsIds := formatStopIDs(agencyID, allStops)
-	stopsList, err := buildStopsList(ctx, api, adc, agencyID, allStops)
+	stopsList, err := buildStopsList(ctx, api, agencyID, allStops)
 	if err != nil {
 		return models.RouteEntry{}, nil, err
 	}
@@ -208,7 +147,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 	return result, stopsList, nil
 }
 
-func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirectionCalculator, agencyID string, allStops map[string]bool) ([]models.Stop, error) {
+func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops map[string]bool) ([]models.Stop, error) {
 
 	stopIDs := make([]string, 0, len(allStops))
 	for stopID := range allStops {
@@ -243,7 +182,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, calc *GTFS.AdvancedDirect
 			return nil, ctx.Err()
 		}
 
-		direction := calc.CalculateStopDirection(ctx, stop.ID, stop.Direction)
+		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
 		routeIdsString := append([]string(nil), routesMap[stop.ID]...)
 
@@ -347,6 +286,7 @@ func processTripGroups(
 		representativeTrip := tripsInGroup[0]
 		stopsList, err := api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, representativeTrip.ID)
 		if err != nil {
+			api.Logger.Warn("failed to fetch stop IDs for representative trip", "trip_id", representativeTrip.ID, "error", err)
 			continue
 		}
 
@@ -362,6 +302,7 @@ func processTripGroups(
 				TripHeadsign: representativeTrip.TripHeadsign,
 			})
 		if err != nil {
+			api.Logger.Warn("failed to fetch shapes for trip group", "route_id", routeID, "headsign", representativeTrip.TripHeadsign.String, "error", err)
 			continue
 		}
 

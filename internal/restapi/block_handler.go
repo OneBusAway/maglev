@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"maglev.onebusaway.org/gtfsdb"
-	GTFS "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -57,8 +56,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		Data: blockData,
 	}
 
-	calc := GTFS.NewAdvancedDirectionCalculator(api.GtfsManager.GtfsDB.Queries)
-	references, err := api.getReferences(ctx, agencyID, calc, block)
+	references, err := api.getReferences(ctx, agencyID, block)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -167,17 +165,18 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (api *RestAPI) getReferences(ctx context.Context, agencyID string, calc *GTFS.AdvancedDirectionCalculator, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
+func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
 	routeIDs := make(map[string]struct{})
 	stopIDs := make(map[string]struct{})
 	tripIDs := make(map[string]struct{})
 
-	stopIDsArr := make([]string, 0, len(stopIDs))
 	for _, row := range block {
 		routeIDs[row.RouteID] = struct{}{}
 		stopIDs[row.StopID] = struct{}{}
 		tripIDs[row.TripID] = struct{}{}
 	}
+
+	stopIDsArr := make([]string, 0, len(stopIDs))
 	for stopID := range stopIDs {
 		stopIDsArr = append(stopIDsArr, stopID)
 	}
@@ -211,36 +210,37 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, calc *GT
 		})
 	}
 
-	var stops []models.Stop
-	for stopID := range stopIDs {
-		if ctx.Err() != nil {
-			return models.ReferencesModel{}, ctx.Err()
-		}
+	// batch fetch
+	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsArr)
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
 
-		stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-		if err != nil {
-			return models.ReferencesModel{}, err
-		}
+	var stops []models.Stop
+	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
 			ID:        utils.FormCombinedID(agencyID, stop.ID),
 			Name:      stop.Name.String,
 			Code:      stop.Code.String,
 			Lat:       stop.Lat,
 			Lon:       stop.Lon,
-			Direction: calc.CalculateStopDirection(ctx, stop.ID, stop.Direction),
+			Direction: api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 		})
 	}
 
-	var trips []interface{}
-	for tripID := range tripIDs {
-		if ctx.Err() != nil {
-			return models.ReferencesModel{}, ctx.Err()
-		}
+	// batch fetch
+	tripIDsArr := make([]string, 0, len(tripIDs))
+	for tid := range tripIDs {
+		tripIDsArr = append(tripIDsArr, tid)
+	}
 
-		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
-		if err != nil {
-			return models.ReferencesModel{}, err
-		}
+	batchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsArr)
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
+
+	var trips []interface{}
+	for _, trip := range batchedTrips {
 		trips = append(trips, models.Trip{
 			ID:           utils.FormCombinedID(agencyID, trip.ID),
 			RouteID:      utils.FormCombinedID(agencyID, trip.RouteID),

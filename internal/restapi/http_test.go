@@ -3,6 +3,7 @@ package restapi
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -26,9 +27,10 @@ import (
 
 // Shared test database setup
 var (
-	testGtfsManager *gtfs.Manager
-	testDbSetupOnce sync.Once
-	testDbPath      = filepath.Join("../../testdata", "raba-test.db")
+	testGtfsManager         *gtfs.Manager
+	testDirectionCalculator *gtfs.AdvancedDirectionCalculator
+	testDbSetupOnce         sync.Once
+	testDbPath              = filepath.Join("../../testdata", "raba-test.db")
 )
 
 // TestMain handles setup and cleanup for all tests in this package
@@ -48,6 +50,8 @@ func TestMain(m *testing.M) {
 // createTestApiWithClock creates a new restAPI instance with a custom clock for deterministic testing.
 // The GTFS database is created once and reused across all tests for performance.
 func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
+	ctx := context.Background()
+
 	// Initialize the shared GTFS manager only once
 	testDbSetupOnce.Do(func() {
 		gtfsConfig := gtfs.Config{
@@ -55,10 +59,17 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 			GTFSDataPath: testDbPath,
 		}
 		var err error
-		testGtfsManager, err = gtfs.InitGTFSManager(gtfsConfig)
+		testGtfsManager, err = gtfs.InitGTFSManager(ctx, gtfsConfig)
 		if err != nil {
 			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
 		}
+
+		// Create the DirectionCalculator using the shared manager's queries
+		testDirectionCalculator = gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
+
+		// Warm up the cache with test data
+		err = gtfs.InitializeGlobalCache(ctx, testGtfsManager.GtfsDB.Queries, testDirectionCalculator)
+		require.NoError(t, err, "Failed to initialize global cache for tests")
 	})
 
 	gtfsConfig := gtfs.Config{
@@ -68,14 +79,16 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 
 	application := &app.Application{
 		Config: appconf.Config{
-			Env:           appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:       []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
-			RateLimit:     5, // Low rate limit for testing
-			ExemptApiKeys: []string{"org.onebusaway.iphone"},
+			Env:              appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:          []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
+			ProtectedApiKeys: []string{"PROTECTED-TEST"},
+			RateLimit:        5, // Low rate limit for testing
+			ExemptApiKeys:    []string{"org.onebusaway.iphone"},
 		},
-		GtfsConfig:  gtfsConfig,
-		GtfsManager: testGtfsManager,
-		Clock:       c,
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         testGtfsManager,
+		DirectionCalculator: testDirectionCalculator,
+		Clock:               c,
 	}
 
 	api := NewRestAPI(application)
@@ -104,9 +117,8 @@ func serveAndRetrieveEndpoint(t testing.TB, endpoint string) (*RestAPI, *http.Re
 // serveApiAndRetrieveEndpoint performs the request against an existing API instance
 // Accepts testing.TB to support both *testing.T and *testing.B
 func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
+	// Use SetupAPIRoutes to ensure global middleware (like compression) is applied
+	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
 	resp, err := http.Get(server.URL + endpoint)
 	require.NoError(t, err)
@@ -223,10 +235,8 @@ func TestCompressionMiddlewareIntegration(t *testing.T) {
 	defer api.Shutdown()
 
 	t.Run("API responses are compressed when requested", func(t *testing.T) {
-		// Use the standard test setup approach
-		mux := http.NewServeMux()
-		api.SetRoutes(mux)
-		server := httptest.NewServer(mux)
+		// Use SetupAPIRoutes which includes the global compression middleware
+		server := httptest.NewServer(api.SetupAPIRoutes())
 		defer server.Close()
 
 		// Create request with gzip acceptance

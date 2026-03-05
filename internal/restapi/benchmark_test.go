@@ -34,10 +34,17 @@ func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
 // Benchmark stops-for-location (high-traffic lookup).
 func BenchmarkStopsForLocation(b *testing.B) {
 	api := createTestApi(b)
+	defer api.Shutdown()
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
 	req := httptest.NewRequest(http.MethodGet, "/api/where/stops-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=0.05&lonSpan=0.05", nil)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		b.Fatalf("expected 200, got %d", w.Code)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

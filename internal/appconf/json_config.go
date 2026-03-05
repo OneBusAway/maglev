@@ -33,14 +33,15 @@ type GtfsRtFeed struct {
 
 // JSONConfig represents the JSON configuration file structure
 type JSONConfig struct {
-	Port           int            `json:"port"`
-	Env            string         `json:"env"`
-	ApiKeys        []string       `json:"api-keys"`
-	ExemptApiKeys  []string       `json:"exempt-api-keys"`
-	RateLimit      int            `json:"rate-limit"`
-	GtfsStaticFeed GtfsStaticFeed `json:"gtfs-static-feed"`
-	GtfsRtFeeds    []GtfsRtFeed   `json:"gtfs-rt-feeds"`
-	DataPath       string         `json:"data-path"`
+	Port             int            `json:"port"`
+	Env              string         `json:"env"`
+	ApiKeys          []string       `json:"api-keys"`
+	ProtectedApiKeys []string       `json:"protected-api-keys"`
+	ExemptApiKeys    []string       `json:"exempt-api-keys"`
+	RateLimit        int            `json:"rate-limit"`
+	GtfsStaticFeed   GtfsStaticFeed `json:"gtfs-static-feed"`
+	GtfsRtFeeds      []GtfsRtFeed   `json:"gtfs-rt-feeds"`
+	DataPath         string         `json:"data-path"`
 }
 
 // setDefaults applies default values to the JSON config if fields are missing or zero
@@ -53,6 +54,9 @@ func (j *JSONConfig) setDefaults() {
 	}
 	if len(j.ApiKeys) == 0 {
 		j.ApiKeys = []string{"test"}
+	}
+	if len(j.ProtectedApiKeys) == 0 && (j.Env == "development" || j.Env == "test") {
+		j.ProtectedApiKeys = []string{"protected-test-key"}
 	}
 	if len(j.ExemptApiKeys) == 0 {
 		j.ExemptApiKeys = []string{"org.onebusaway.iphone"}
@@ -77,7 +81,7 @@ func (j *JSONConfig) setDefaults() {
 }
 
 // validate checks that the configuration is valid
-func (j *JSONConfig) validate() error {
+func (j *JSONConfig) Validate() error {
 	if j.Port < 1 || j.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535, got %d", j.Port)
 	}
@@ -99,6 +103,10 @@ func (j *JSONConfig) validate() error {
 		return fmt.Errorf("api-keys cannot be empty")
 	}
 
+	if len(j.ProtectedApiKeys) == 0 {
+		return fmt.Errorf("protected-api-keys cannot be empty")
+	}
+
 	// Check for duplicate API keys
 	seen := make(map[string]bool)
 	for _, key := range j.ApiKeys {
@@ -109,6 +117,18 @@ func (j *JSONConfig) validate() error {
 			return fmt.Errorf("duplicate API key found: %q", key)
 		}
 		seen[key] = true
+	}
+
+	// Check for duplicate Protected API keys
+	seenProtected := make(map[string]bool)
+	for _, key := range j.ProtectedApiKeys {
+		if key == "" {
+			return fmt.Errorf("protected-api-keys cannot contain empty strings")
+		}
+		if seenProtected[key] {
+			return fmt.Errorf("duplicate protected API key found: %q", key)
+		}
+		seenProtected[key] = true
 	}
 
 	// Validate DataPath for path traversal attempts
@@ -175,12 +195,13 @@ func validatePath(path, fieldName string) error {
 // ToAppConfig converts JSONConfig to appconf.Config
 func (j *JSONConfig) ToAppConfig() Config {
 	return Config{
-		Port:          j.Port,
-		Env:           EnvFlagToEnvironment(j.Env),
-		ApiKeys:       j.ApiKeys,
-		ExemptApiKeys: j.ExemptApiKeys,
-		Verbose:       true, // Always set to true like in main.go
-		RateLimit:     j.RateLimit,
+		Port:             j.Port,
+		Env:              EnvFlagToEnvironment(j.Env),
+		ApiKeys:          j.ApiKeys,
+		ProtectedApiKeys: j.ProtectedApiKeys,
+		ExemptApiKeys:    j.ExemptApiKeys,
+		Verbose:          true, // Always set to true like in main.go
+		RateLimit:        j.RateLimit,
 	}
 }
 
@@ -330,6 +351,20 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 		}
 	}
 
+	// Override Protected API Keys
+	if envProtectedKeys := os.Getenv("GTFS_PROTECTED_API_KEYS"); envProtectedKeys != "" {
+		rawKeys := strings.Split(envProtectedKeys, ",")
+		var cleanKeys []string
+		for _, k := range rawKeys {
+			if trimmed := strings.TrimSpace(k); trimmed != "" {
+				cleanKeys = append(cleanKeys, trimmed)
+			}
+		}
+		if len(cleanKeys) > 0 {
+			config.ProtectedApiKeys = cleanKeys
+		}
+	}
+
 	// Override Static Feed Auth (Name + Value)
 	if staticName := os.Getenv("GTFS_STATIC_AUTH_NAME"); staticName != "" {
 		config.GtfsStaticFeed.AuthHeaderName = staticName
@@ -358,7 +393,7 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 	}
 
 	// Validate
-	if err := config.validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 

@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 )
 
 // Client is the main entry point for the library

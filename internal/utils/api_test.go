@@ -14,6 +14,67 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// TestCalculateSecondsSinceServiceDate verifies that the function returns wall-clock
+// seconds (matching GTFS stop_time semantics) rather than real elapsed seconds, so
+// that DST transitions do not corrupt closest-stop and schedule-offset calculations.
+func TestCalculateSecondsSinceServiceDate(t *testing.T) {
+	// America/Los_Angeles observes DST:
+	//   Spring forward: 2nd Sunday of March (2025-03-09) — 2:00 AM PST → 3:00 AM PDT
+	//   Fall back:      1st Sunday of November (2024-11-03) — 2:00 AM PDT → 1:00 AM PST
+	la, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	t.Run("normal day, same-day time", func(t *testing.T) {
+		// 2024-06-15 00:00:00 PDT (UTC-7)
+		serviceDate := time.Date(2024, 6, 15, 0, 0, 0, 0, la)
+		// 2024-06-15 08:30:00 PDT → 8*3600 + 30*60 = 30 600 wall-clock seconds
+		currentTime := time.Date(2024, 6, 15, 8, 30, 0, 0, la)
+		assert.Equal(t, int64(30600), CalculateSecondsSinceServiceDate(currentTime, serviceDate))
+	})
+
+	t.Run("DST fallback — first 1:30 AM (PDT, before clocks fall back)", func(t *testing.T) {
+		// Nov 3 2024: clocks go 2:00 AM PDT → 1:00 AM PST.
+		// Go's time.Date picks the earlier (summer/PDT) occurrence for ambiguous times.
+		serviceDate := time.Date(2024, 11, 3, 0, 0, 0, 0, la)  // midnight PDT
+		currentTime := time.Date(2024, 11, 3, 1, 30, 0, 0, la) // first 1:30 AM PDT
+		assert.Equal(t, int64(5400), CalculateSecondsSinceServiceDate(currentTime, serviceDate))
+	})
+
+	t.Run("DST fallback — second 1:30 AM (PST, after clocks fall back)", func(t *testing.T) {
+		// Construct the second 1:30 AM (PST) via an unambiguous anchor.
+		// 2:00 AM on Nov 3 only occurs once (as PST, after the fallback), so
+		// subtracting 30 minutes gives the second 1:30 AM without ambiguity.
+		// Real elapsed from midnight = 9000 s, but wall-clock is still 1:30 AM = 5400 s.
+		// GTFS only has one stop entry at 5400 s, so we must return 5400.
+		serviceDate := time.Date(2024, 11, 3, 0, 0, 0, 0, la)
+		twoAMAfterFallback := time.Date(2024, 11, 3, 2, 0, 0, 0, la) // unambiguous: 2:00 AM PST
+		currentTime := twoAMAfterFallback.Add(-30 * time.Minute)     // second 1:30 AM PST
+		assert.Equal(t, int64(5400), CalculateSecondsSinceServiceDate(currentTime, serviceDate))
+	})
+
+	t.Run("DST spring forward — time after the gap (3:30 AM PDT)", func(t *testing.T) {
+		// Mar 9 2025: clocks go 2:00 AM PST → 3:00 AM PDT.
+		// 3:30 AM PDT = 3*3600 + 30*60 = 12 600 wall-clock seconds.
+		serviceDate := time.Date(2025, 3, 9, 0, 0, 0, 0, la) // midnight PST
+		currentTime := time.Date(2025, 3, 9, 3, 30, 0, 0, la)
+		assert.Equal(t, int64(12600), CalculateSecondsSinceServiceDate(currentTime, serviceDate))
+	})
+
+	t.Run("overnight trip — 1:00 AM next day (25:00:00 in GTFS notation)", func(t *testing.T) {
+		// Service date is Jun 15; vehicle still running at 1:00 AM on Jun 16.
+		// GTFS would encode this as 25:00:00 = 90 000 s.
+		serviceDate := time.Date(2024, 6, 15, 0, 0, 0, 0, la)
+		currentTime := time.Date(2024, 6, 16, 1, 0, 0, 0, la)
+		assert.Equal(t, int64(90000), CalculateSecondsSinceServiceDate(currentTime, serviceDate))
+	})
+
+	t.Run("UTC timezone — no DST, result matches real elapsed seconds", func(t *testing.T) {
+		serviceDate := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+		currentTime := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
+		assert.Equal(t, int64(43200), CalculateSecondsSinceServiceDate(currentTime, serviceDate))
+	})
+}
+
 func TestExtractCodeID(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -143,7 +143,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	if len(routeIDsToFetch) > 0 {
 		fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDsToFetch)
 		if err != nil {
-			api.Logger.Error("Failed to batch fetch routes for schedule stop", "error", err)
 			api.serverErrorResponse(w, r, err)
 			return
 		}

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
 )
@@ -30,7 +29,7 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("test database must use in-memory storage, got path: %s", config.DBPath)
 	}
 
-	db, err := sql.Open("sqlite3", config.DBPath)
+	db, err := sql.Open(DriverName, config.DBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -298,6 +297,27 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		return fmt.Errorf("unable to create stop times: %w", err)
 	}
 
+	// Collect frequency entries from all trips
+	var allFrequencyParams []CreateFrequencyParams
+	for _, t := range staticData.Trips {
+		for _, f := range t.Frequencies {
+			params := CreateFrequencyParams{
+				TripID:      t.ID,
+				StartTime:   int64(f.StartTime),
+				EndTime:     int64(f.EndTime),
+				HeadwaySecs: int64(f.Headway.Seconds()),
+				ExactTimes:  int64(f.ExactTimes),
+			}
+			allFrequencyParams = append(allFrequencyParams, params)
+		}
+	}
+	if len(allFrequencyParams) > 0 {
+		err = c.bulkInsertFrequencies(ctx, allFrequencyParams)
+		if err != nil {
+			return fmt.Errorf("unable to create frequencies: %w", err)
+		}
+	}
+
 	var allShapeParams []CreateShapeParams
 	for _, s := range staticData.Shapes {
 		for idx, pt := range s.Points {
@@ -399,6 +419,9 @@ func (c *Client) clearAllGTFSData(ctx context.Context) error {
 	}
 	if err := c.Queries.ClearBlockTripIndices(ctx); err != nil {
 		return fmt.Errorf("error clearing block_trip_index: %w", err)
+	}
+	if err := c.Queries.ClearFrequencies(ctx); err != nil {
+		return fmt.Errorf("error clearing frequencies: %w", err)
 	}
 	if err := c.Queries.ClearStopTimes(ctx); err != nil {
 		return fmt.Errorf("error clearing stop_times: %w", err)
@@ -583,7 +606,8 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 		slog.Int("count", len(stopTimes)))
 
 	// ===== PIPELINE: PARALLEL PREPARATION + SEQUENTIAL EXECUTION =====
-	batchSize := c.config.GetBulkInsertBatchSize()
+	const stopTimeFieldsPerRow = 10 // 10 fields per stop_time row
+	batchSize := c.config.SafeBatchSize(stopTimeFieldsPerRow)
 	const baseQuery = `INSERT INTO stop_times (
 		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
 		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
@@ -631,7 +655,7 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*10)
+				args := make([]interface{}, 0, len(batch)*stopTimeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {
@@ -753,7 +777,8 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 		slog.Int("count", len(shapes)))
 
 	// ===== PHASE 1: PARALLEL STATEMENT PREPARATION =====
-	batchSize := c.config.GetBulkInsertBatchSize()
+	const shapeFieldsPerRow = 5 // 5 fields per shape row
+	batchSize := c.config.SafeBatchSize(shapeFieldsPerRow)
 	const baseQuery = `INSERT INTO shapes (
 		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
 	) VALUES `
@@ -793,7 +818,7 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*5)
+				args := make([]interface{}, 0, len(batch)*shapeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {
@@ -846,7 +871,7 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	for batch := range resultsChan {
 		preparedBatches = append(preparedBatches, batch)
 
-		// Log preparation progress every 50 batches (150k records with batch size 3000)
+		// Log preparation progress every 50 batches (~327k records with batch size 6553)
 		if len(preparedBatches)-lastLoggedCount >= 50 {
 			logging.LogOperation(logger, "shapes_preparation_progress",
 				slog.Int("batches_prepared", len(preparedBatches)),
@@ -906,6 +931,38 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	return nil
 }
 
+func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []CreateFrequencyParams) error {
+	db := c.DB
+	queries := c.Queries
+	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+
+	logging.LogOperation(logger, "inserting_frequencies",
+		slog.Int("count", len(frequencies)))
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer logging.SafeRollbackWithLogging(tx, logger, "bulk_insert_frequencies")
+
+	qtx := queries.WithTx(tx)
+	for _, params := range frequencies {
+		err := qtx.CreateFrequency(ctx, params)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "frequencies_inserted",
+		slog.Int("count", len(frequencies)))
+
+	return nil
+}
+
 func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams) error {
 	db := c.DB
 	queries := c.Queries
@@ -938,6 +995,8 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
 		// Store temp tables and indices in memory for faster operations
 		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
+		// Enable Write-Ahead Logging to allow concurrent readers and a single writer
+		{"PRAGMA journal_mode=WAL", "Enable WAL mode"},
 	}
 
 	logger := slog.Default().With(slog.String("component", "sqlite_performance"))

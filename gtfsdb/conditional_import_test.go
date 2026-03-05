@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
@@ -279,6 +278,11 @@ func TestClearAllGTFSData(t *testing.T) {
 	require.NoError(t, err, "Should be able to count calendar_dates before clear")
 	assert.Greater(t, countBefore, 0, "Should have calendar_dates before clear")
 
+	// Verify frequencies table exists and can be queried before clear
+	var freqCountBefore int
+	err = client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM frequencies").Scan(&freqCountBefore)
+	require.NoError(t, err, "Should be able to count frequencies before clear")
+
 	// Clear all data
 	err = client.clearAllGTFSData(ctx)
 	require.NoError(t, err, "Should be able to clear all GTFS data")
@@ -297,6 +301,12 @@ func TestClearAllGTFSData(t *testing.T) {
 	err = client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM calendar_dates").Scan(&countAfter)
 	require.NoError(t, err, "Should be able to count calendar_dates after clear")
 	assert.Equal(t, 0, countAfter, "Should have no calendar_dates after clear")
+
+	// Verify frequencies are cleared
+	var freqCountAfter int
+	err = client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM frequencies").Scan(&freqCountAfter)
+	require.NoError(t, err, "Should be able to count frequencies after clear")
+	assert.Equal(t, 0, freqCountAfter, "Should have no frequencies after clear")
 
 	// Note: Import metadata should NOT be cleared by clearAllGTFSData
 	metadata, err := client.Queries.GetImportMetadata(ctx)

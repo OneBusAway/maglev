@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -296,6 +297,8 @@ func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
 func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
+	ctx := context.Background()
+
 	// Create HTTP server to serve GTFS-RT files
 	mux := http.NewServeMux()
 
@@ -344,7 +347,11 @@ func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 		},
 	}
 
-	gtfsManager, err := gtfs.InitGTFSManager(gtfsConfig)
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+	err = gtfs.InitializeGlobalCache(ctx, gtfsManager.GtfsDB.Queries, dirCalc)
 	require.NoError(t, err)
 
 	application := &app.Application{
@@ -353,9 +360,10 @@ func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 			ApiKeys:   []string{"TEST"},
 			RateLimit: 100, // Higher rate limit for this test
 		},
-		GtfsConfig:  gtfsConfig,
-		GtfsManager: gtfsManager,
-		Clock:       clock.RealClock{},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               clock.RealClock{},
 	}
 
 	api := NewRestAPI(application)

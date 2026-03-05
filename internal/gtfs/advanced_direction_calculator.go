@@ -16,36 +16,36 @@ import (
 )
 
 const (
-	defaultVarianceThreshold = 0.7
-	shapePointWindow         = 5
+	defaultStandardDeviationThreshold = 0.7
+	shapePointWindow                  = 5
 )
 
 // AdvancedDirectionCalculator implements the OneBusAway Java algorithm for stop direction calculation
 type AdvancedDirectionCalculator struct {
-	queries           *gtfsdb.Queries
-	varianceThreshold float64
-	contextCache      map[string][]gtfsdb.GetStopsWithShapeContextRow   // Cache of stop shape context data
-	shapeCache        map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
-	initialized       atomic.Bool                                       // Tracks whether concurrent operations have started
-	cacheMutex        sync.RWMutex                                      // Protects map access
+	queries                    *gtfsdb.Queries
+	standardDeviationThreshold float64
+	contextCache               map[string][]gtfsdb.GetStopsWithShapeContextRow   // Cache of stop shape context data
+	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
+	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
+	cacheMutex                 sync.RWMutex                                      // Protects map access
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
 func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionCalculator {
 	return &AdvancedDirectionCalculator{
-		queries:           queries,
-		varianceThreshold: defaultVarianceThreshold,
+		queries:                    queries,
+		standardDeviationThreshold: defaultStandardDeviationThreshold,
 	}
 }
 
-// SetVarianceThreshold sets the standard deviation threshold for direction variance checking.
+// SetStandardDeviationThreshold sets the standard deviation threshold for direction variance checking.
 // IMPORTANT: This must be called before any concurrent operations begin.
 // Panics if called after CalculateStopDirection has been invoked.
-func (adc *AdvancedDirectionCalculator) SetVarianceThreshold(threshold float64) {
+func (adc *AdvancedDirectionCalculator) SetStandardDeviationThreshold(threshold float64) {
 	if adc.initialized.Load() {
-		panic("SetVarianceThreshold called after concurrent operations have started")
+		panic("SetStandardDeviationThreshold called after concurrent operations have started")
 	}
-	adc.varianceThreshold = threshold
+	adc.standardDeviationThreshold = threshold
 }
 
 // SetShapeCache sets a pre-loaded cache of shape data to avoid database queries during bulk operations.
@@ -221,27 +221,26 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	// Calculate mean orientation vector
 	var xs, ys []float64
 	for _, orientation := range orientations {
-		x := math.Cos(orientation)
-		y := math.Sin(orientation)
-		xs = append(xs, x)
-		ys = append(ys, y)
+		xs = append(xs, math.Cos(orientation))
+		ys = append(ys, math.Sin(orientation))
 	}
 
 	xMu := mean(xs)
 	yMu := mean(ys)
 
-	// Check for opposite directions (mean vector is zero)
-	if xMu == 0.0 && yMu == 0.0 {
-		return "" // Ambiguous direction
+	// Intentional improvement over Java's exact == 0.0 comparison;
+	// floating-point mean of cos/sin values is unlikely to be exactly zero.
+	if math.Abs(xMu) < 1e-6 && math.Abs(yMu) < 1e-6 {
+		return ""
 	}
 
-	// Check variance threshold
+	// Calculate standard deviation and compare against threshold
 	xVariance := variance(xs, xMu)
 	yVariance := variance(ys, yMu)
+
 	xStdDev := math.Sqrt(xVariance)
 	yStdDev := math.Sqrt(yVariance)
-
-	if xStdDev > adc.varianceThreshold || yStdDev > adc.varianceThreshold {
+	if xStdDev > adc.standardDeviationThreshold || yStdDev > adc.standardDeviationThreshold {
 		return "" // Too much variance
 	}
 
@@ -335,21 +334,19 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 		indexFrom = 0
 	}
 	indexTo := closestIdx + shapePointWindow
-	if indexTo > len(shapePoints) {
-		indexTo = len(shapePoints)
+	if indexTo >= len(shapePoints) {
+		indexTo = len(shapePoints) - 1
 	}
 
-	// Calculate orientation from the window
-	// Use the bearing from the first point to the last point in the window
-	if indexTo > indexFrom+1 {
+	// Calculate orientation from the window using flat-earth approximation
+	if indexTo > indexFrom {
 		fromPoint := shapePoints[indexFrom]
-		toPoint := shapePoints[indexTo-1]
+		toPoint := shapePoints[indexTo]
 
-		bearing := utils.BearingBetweenPoints(fromPoint.Lat, fromPoint.Lon, toPoint.Lat, toPoint.Lon)
-		// Convert bearing (0-360°, 0=North) to mathematical angle (radians, 0=East, counterclockwise)
-		// Bearing: 0°=N, 90°=E, 180°=S, 270°=W
-		// Math angle: 0=E, π/2=N, π=W, -π/2=S
-		orientation := (90.0 - bearing) * math.Pi / 180.0
+		dx := (toPoint.Lon - fromPoint.Lon) * math.Cos(fromPoint.Lat*math.Pi/180.0)
+		dy := toPoint.Lat - fromPoint.Lat
+
+		orientation := math.Atan2(dy, dx)
 		return orientation, nil
 	}
 
@@ -414,7 +411,7 @@ func variance(values []float64, mean float64) float64 {
 		diff := v - mean
 		sumSquares += diff * diff
 	}
-	return sumSquares / float64(len(values)-1) // Sample variance
+	return sumSquares / float64(len(values)-1)
 }
 
 func median(values []float64) float64 {

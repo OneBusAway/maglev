@@ -22,6 +22,8 @@ func loggerErrorf(format string, args ...interface{}) error {
 }
 
 func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
+	ctx := context.Background()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
 	}
@@ -33,7 +35,7 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -107,6 +109,7 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 }
 
 func TestHotSwap_FailureRecovery(t *testing.T) {
+	ctx := context.Background()
 
 	tempDir := t.TempDir()
 	gtfsConfig := Config{
@@ -115,7 +118,7 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -152,6 +155,8 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 }
 
 func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
+	ctx := context.Background()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
 	}
@@ -166,7 +171,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -189,10 +194,11 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
 		}
 	}
-
 }
 
 func TestHotSwap_MutexProtectedSwap(t *testing.T) {
+	ctx := context.Background()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
 	}
@@ -207,7 +213,7 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
@@ -232,7 +238,7 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	err = manager.ForceUpdate(context.Background())
 	assert.Nil(t, err, "ForceUpdate should succeed")
 
-	// 4. Verify Final State
+	// Verify Final State
 	manager.RLock()
 	assert.Equal(t, "40", manager.gtfsData.Agencies[0].Id)
 
@@ -246,10 +252,11 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	assert.NotNil(t, manager.blockLayoverIndices)
 
 	manager.RUnlock()
-
 }
 
 func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
+	ctx := context.Background()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
 	}
@@ -262,7 +269,7 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 		Env:          appconf.Development,
 	}
 
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
 	defer manager.Shutdown()
 

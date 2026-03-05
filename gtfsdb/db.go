@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.bulkUpdateTripTimeBoundsStmt, err = db.PrepareContext(ctx, bulkUpdateTripTimeBounds); err != nil {
+		return nil, fmt.Errorf("error preparing query BulkUpdateTripTimeBounds: %w", err)
+	}
 	if q.clearAgenciesStmt, err = db.PrepareContext(ctx, clearAgencies); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearAgencies: %w", err)
 	}
@@ -38,6 +41,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.clearCalendarDatesStmt, err = db.PrepareContext(ctx, clearCalendarDates); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearCalendarDates: %w", err)
+	}
+	if q.clearFrequenciesStmt, err = db.PrepareContext(ctx, clearFrequencies); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearFrequencies: %w", err)
 	}
 	if q.clearRoutesStmt, err = db.PrepareContext(ctx, clearRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearRoutes: %w", err)
@@ -68,6 +74,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.createCalendarDateStmt, err = db.PrepareContext(ctx, createCalendarDate); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateCalendarDate: %w", err)
+	}
+	if q.createFrequencyStmt, err = db.PrepareContext(ctx, createFrequency); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateFrequency: %w", err)
 	}
 	if q.createProblemReportStopStmt, err = db.PrepareContext(ctx, createProblemReportStop); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateProblemReportStop: %w", err)
@@ -117,6 +126,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getAllShapesStmt, err = db.PrepareContext(ctx, getAllShapes); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllShapes: %w", err)
 	}
+	if q.getAllStopIDsStmt, err = db.PrepareContext(ctx, getAllStopIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAllStopIDs: %w", err)
+	}
 	if q.getAllTripsForRouteStmt, err = db.PrepareContext(ctx, getAllTripsForRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllTripsForRoute: %w", err)
 	}
@@ -143,6 +155,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getCalendarDateExceptionsForServiceIDStmt, err = db.PrepareContext(ctx, getCalendarDateExceptionsForServiceID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCalendarDateExceptionsForServiceID: %w", err)
+	}
+	if q.getFrequenciesForTripStmt, err = db.PrepareContext(ctx, getFrequenciesForTrip); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFrequenciesForTrip: %w", err)
+	}
+	if q.getFrequenciesForTripsStmt, err = db.PrepareContext(ctx, getFrequenciesForTrips); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFrequenciesForTrips: %w", err)
+	}
+	if q.getFrequencyTripIDsStmt, err = db.PrepareContext(ctx, getFrequencyTripIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFrequencyTripIDs: %w", err)
 	}
 	if q.getImportMetadataStmt, err = db.PrepareContext(ctx, getImportMetadata); err != nil {
 		return nil, fmt.Errorf("error preparing query GetImportMetadata: %w", err)
@@ -305,6 +326,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.bulkUpdateTripTimeBoundsStmt != nil {
+		if cerr := q.bulkUpdateTripTimeBoundsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing bulkUpdateTripTimeBoundsStmt: %w", cerr)
+		}
+	}
 	if q.clearAgenciesStmt != nil {
 		if cerr := q.clearAgenciesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearAgenciesStmt: %w", cerr)
@@ -328,6 +354,11 @@ func (q *Queries) Close() error {
 	if q.clearCalendarDatesStmt != nil {
 		if cerr := q.clearCalendarDatesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearCalendarDatesStmt: %w", cerr)
+		}
+	}
+	if q.clearFrequenciesStmt != nil {
+		if cerr := q.clearFrequenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearFrequenciesStmt: %w", cerr)
 		}
 	}
 	if q.clearRoutesStmt != nil {
@@ -378,6 +409,11 @@ func (q *Queries) Close() error {
 	if q.createCalendarDateStmt != nil {
 		if cerr := q.createCalendarDateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createCalendarDateStmt: %w", cerr)
+		}
+	}
+	if q.createFrequencyStmt != nil {
+		if cerr := q.createFrequencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createFrequencyStmt: %w", cerr)
 		}
 	}
 	if q.createProblemReportStopStmt != nil {
@@ -460,6 +496,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getAllShapesStmt: %w", cerr)
 		}
 	}
+	if q.getAllStopIDsStmt != nil {
+		if cerr := q.getAllStopIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAllStopIDsStmt: %w", cerr)
+		}
+	}
 	if q.getAllTripsForRouteStmt != nil {
 		if cerr := q.getAllTripsForRouteStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAllTripsForRouteStmt: %w", cerr)
@@ -503,6 +544,21 @@ func (q *Queries) Close() error {
 	if q.getCalendarDateExceptionsForServiceIDStmt != nil {
 		if cerr := q.getCalendarDateExceptionsForServiceIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getCalendarDateExceptionsForServiceIDStmt: %w", cerr)
+		}
+	}
+	if q.getFrequenciesForTripStmt != nil {
+		if cerr := q.getFrequenciesForTripStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFrequenciesForTripStmt: %w", cerr)
+		}
+	}
+	if q.getFrequenciesForTripsStmt != nil {
+		if cerr := q.getFrequenciesForTripsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFrequenciesForTripsStmt: %w", cerr)
+		}
+	}
+	if q.getFrequencyTripIDsStmt != nil {
+		if cerr := q.getFrequencyTripIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFrequencyTripIDsStmt: %w", cerr)
 		}
 	}
 	if q.getImportMetadataStmt != nil {
@@ -804,11 +860,13 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                        DBTX
 	tx                                        *sql.Tx
+	bulkUpdateTripTimeBoundsStmt              *sql.Stmt
 	clearAgenciesStmt                         *sql.Stmt
 	clearBlockTripEntriesStmt                 *sql.Stmt
 	clearBlockTripIndicesStmt                 *sql.Stmt
 	clearCalendarStmt                         *sql.Stmt
 	clearCalendarDatesStmt                    *sql.Stmt
+	clearFrequenciesStmt                      *sql.Stmt
 	clearRoutesStmt                           *sql.Stmt
 	clearShapesStmt                           *sql.Stmt
 	clearStopTimesStmt                        *sql.Stmt
@@ -819,6 +877,7 @@ type Queries struct {
 	createBlockTripIndexStmt                  *sql.Stmt
 	createCalendarStmt                        *sql.Stmt
 	createCalendarDateStmt                    *sql.Stmt
+	createFrequencyStmt                       *sql.Stmt
 	createProblemReportStopStmt               *sql.Stmt
 	createProblemReportTripStmt               *sql.Stmt
 	createRouteStmt                           *sql.Stmt
@@ -835,6 +894,7 @@ type Queries struct {
 	getAgencyStmt                             *sql.Stmt
 	getAgencyForStopStmt                      *sql.Stmt
 	getAllShapesStmt                          *sql.Stmt
+	getAllStopIDsStmt                         *sql.Stmt
 	getAllTripsForRouteStmt                   *sql.Stmt
 	getArrivalsAndDeparturesForStopStmt       *sql.Stmt
 	getBlockDetailsStmt                       *sql.Stmt
@@ -844,6 +904,9 @@ type Queries struct {
 	getBlocksForBlockTripIndexIDsStmt         *sql.Stmt
 	getCalendarByServiceIDStmt                *sql.Stmt
 	getCalendarDateExceptionsForServiceIDStmt *sql.Stmt
+	getFrequenciesForTripStmt                 *sql.Stmt
+	getFrequenciesForTripsStmt                *sql.Stmt
+	getFrequencyTripIDsStmt                   *sql.Stmt
 	getImportMetadataStmt                     *sql.Stmt
 	getNextStopInTripStmt                     *sql.Stmt
 	getOrderedStopIDsForTripStmt              *sql.Stmt
@@ -902,11 +965,13 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                                        tx,
 		tx:                                        tx,
+		bulkUpdateTripTimeBoundsStmt:              q.bulkUpdateTripTimeBoundsStmt,
 		clearAgenciesStmt:                         q.clearAgenciesStmt,
 		clearBlockTripEntriesStmt:                 q.clearBlockTripEntriesStmt,
 		clearBlockTripIndicesStmt:                 q.clearBlockTripIndicesStmt,
 		clearCalendarStmt:                         q.clearCalendarStmt,
 		clearCalendarDatesStmt:                    q.clearCalendarDatesStmt,
+		clearFrequenciesStmt:                      q.clearFrequenciesStmt,
 		clearRoutesStmt:                           q.clearRoutesStmt,
 		clearShapesStmt:                           q.clearShapesStmt,
 		clearStopTimesStmt:                        q.clearStopTimesStmt,
@@ -917,6 +982,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createBlockTripIndexStmt:                  q.createBlockTripIndexStmt,
 		createCalendarStmt:                        q.createCalendarStmt,
 		createCalendarDateStmt:                    q.createCalendarDateStmt,
+		createFrequencyStmt:                       q.createFrequencyStmt,
 		createProblemReportStopStmt:               q.createProblemReportStopStmt,
 		createProblemReportTripStmt:               q.createProblemReportTripStmt,
 		createRouteStmt:                           q.createRouteStmt,
@@ -933,6 +999,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getAgencyStmt:                             q.getAgencyStmt,
 		getAgencyForStopStmt:                      q.getAgencyForStopStmt,
 		getAllShapesStmt:                          q.getAllShapesStmt,
+		getAllStopIDsStmt:                         q.getAllStopIDsStmt,
 		getAllTripsForRouteStmt:                   q.getAllTripsForRouteStmt,
 		getArrivalsAndDeparturesForStopStmt:       q.getArrivalsAndDeparturesForStopStmt,
 		getBlockDetailsStmt:                       q.getBlockDetailsStmt,
@@ -942,6 +1009,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBlocksForBlockTripIndexIDsStmt:         q.getBlocksForBlockTripIndexIDsStmt,
 		getCalendarByServiceIDStmt:                q.getCalendarByServiceIDStmt,
 		getCalendarDateExceptionsForServiceIDStmt: q.getCalendarDateExceptionsForServiceIDStmt,
+		getFrequenciesForTripStmt:                 q.getFrequenciesForTripStmt,
+		getFrequenciesForTripsStmt:                q.getFrequenciesForTripsStmt,
+		getFrequencyTripIDsStmt:                   q.getFrequencyTripIDsStmt,
 		getImportMetadataStmt:                     q.getImportMetadataStmt,
 		getNextStopInTripStmt:                     q.getNextStopInTripStmt,
 		getOrderedStopIDsForTripStmt:              q.getOrderedStopIDsForTripStmt,

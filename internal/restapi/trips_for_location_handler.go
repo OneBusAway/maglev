@@ -504,29 +504,47 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 
 func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 	rb.stopList = make([]models.Stop, 0, len(stops))
+	if len(stops) == 0 {
+		return
+	}
+
+	stopIDs := make([]string, 0, len(stops))
+	for _, stop := range stops {
+		stopIDs = append(stopIDs, stop.ID)
+	}
+
+	routesForStops, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(rb.ctx, stopIDs)
+	if err != nil {
+		logging.LogError(rb.api.Logger, "failed to batch fetch routes for stops", err)
+		return
+	}
+
+	// Build in-memory map: stopID → []combinedRouteID (e.g. "40_100479").
+	// Also register the raw route ID (e.g. "100479") in presentRoutes so that
+	// collectAgenciesAndRoutes can fetch full route details via GetRoutesByIDs,
+	// which queries WHERE routes.id IN (?), using raw IDs — not combined ones.
+	stopRouteMap := make(map[string][]string)
+	for _, r := range routesForStops {
+		combinedID, ok := r.RouteID.(string)
+		if !ok {
+			continue
+		}
+		stopRouteMap[r.StopID] = append(stopRouteMap[r.StopID], combinedID)
+		if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
+			rb.presentRoutes[rawID] = models.Route{}
+		}
+	}
+
 	for _, stop := range stops {
 		if rb.ctx.Err() != nil {
 			return
 		}
-
-		routeIds, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStop(rb.ctx, stop.ID)
-		if err != nil {
-			continue
+		combinedRouteIDs := stopRouteMap[stop.ID]
+		if combinedRouteIDs == nil {
+			combinedRouteIDs = []string{}
 		}
-
-		routeIdsString := rb.processRouteIds(routeIds)
-		rb.stopList = append(rb.stopList, rb.createStop(stop, routeIdsString))
+		rb.stopList = append(rb.stopList, rb.createStop(stop, combinedRouteIDs))
 	}
-}
-
-func (rb *referenceBuilder) processRouteIds(routeIds []interface{}) []string {
-	routeIdsString := make([]string, len(routeIds))
-	for i, id := range routeIds {
-		routeId := id.(string)
-		rb.presentRoutes[routeId] = models.Route{}
-		routeIdsString[i] = routeId
-	}
-	return routeIdsString
 }
 
 func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) models.Stop {

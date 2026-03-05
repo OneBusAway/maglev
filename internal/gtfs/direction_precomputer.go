@@ -37,11 +37,11 @@ func NewDirectionPrecomputer(queries *gtfsdb.Queries, db *sql.DB) *DirectionPrec
 	}
 }
 
-// SetVarianceThreshold sets the variance threshold for the calculator.
+// SetStandardDeviationThreshold sets the standard deviation threshold for the calculator.
 // IMPORTANT: This method is NOT thread-safe and must be called before
 // PrecomputeAllDirections, never concurrently with it.
-func (dp *DirectionPrecomputer) SetVarianceThreshold(threshold float64) {
-	dp.calculator.SetVarianceThreshold(threshold)
+func (dp *DirectionPrecomputer) SetStandardDeviationThreshold(threshold float64) {
+	dp.calculator.SetStandardDeviationThreshold(threshold)
 }
 
 // PrecomputeAllDirections computes and stores directions for all stops using parallel processing

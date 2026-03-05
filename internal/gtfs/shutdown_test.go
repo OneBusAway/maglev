@@ -1,6 +1,7 @@
 package gtfs
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestManagerShutdown(t *testing.T) {
 	}
 
 	// Initialize manager
-	manager, err := InitGTFSManager(config)
+	manager, err := InitGTFSManager(context.Background(), config)
 	require.NoError(t, err, "Failed to initialize GTFS manager")
 	require.NotNil(t, manager, "Manager should not be nil")
 
@@ -69,7 +70,7 @@ func TestManagerShutdownWithRealtime(t *testing.T) {
 	}
 
 	// Initialize manager
-	manager, err := InitGTFSManager(config)
+	manager, err := InitGTFSManager(context.Background(), config)
 	require.NoError(t, err, "Failed to initialize GTFS manager")
 	require.NotNil(t, manager, "Manager should not be nil")
 
@@ -105,7 +106,7 @@ func TestManagerShutdownIdempotent(t *testing.T) {
 	}
 
 	// Initialize manager
-	manager, err := InitGTFSManager(config)
+	manager, err := InitGTFSManager(context.Background(), config)
 	require.NoError(t, err, "Failed to initialize GTFS manager")
 
 	// Call shutdown multiple times - should not panic or hang

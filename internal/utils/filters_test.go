@@ -10,8 +10,6 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestFilterAgencies(t *testing.T) {

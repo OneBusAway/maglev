@@ -5,12 +5,28 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"os/signal"
+	"runtime"
+	"syscall"
 
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func main() {
+	// From fix/496-gtfs-startup-retry: Graceful shutdown context
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// From main: Mutex profiling configuration
+	if os.Getenv("MAGLEV_PROFILE_MUTEX") == "1" {
+		runtime.SetMutexProfileFraction(1)
+		runtime.SetBlockProfileRate(1)
+
+		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+		logger.Warn("MUTEX AND BLOCK PROFILING ENABLED (Performance will be impacted)")
+	}
+
 	var cfg appconf.Config
 	var gtfsCfg gtfs.Config
 	var apiKeysFlag string
@@ -79,40 +95,55 @@ func main() {
 
 	} else {
 		// Use command-line flags for configuration
-		// Set verbosity flags
+
+		// Pack the CLI flags into a temporary JSONConfig struct
+		// This allows us to run the exact same robust validation logic as the JSON path!
+		cliConfig := appconf.JSONConfig{
+			Port:          cfg.Port,
+			Env:           envFlag,
+			ApiKeys:       ParseAPIKeys(apiKeysFlag),
+			ExemptApiKeys: ParseAPIKeys(exemptApiKeysFlag),
+			RateLimit:     cfg.RateLimit,
+			GtfsStaticFeed: appconf.GtfsStaticFeed{
+				URL:             gtfsCfg.GtfsURL,
+				AuthHeaderName:  gtfsCfg.StaticAuthHeaderKey,
+				AuthHeaderValue: gtfsCfg.StaticAuthHeaderValue,
+			},
+			GtfsRtFeeds: []appconf.GtfsRtFeed{
+				{
+					ID:                      "feed-0",
+					TripUpdatesURL:          cliFeedTripUpdatesURL,
+					VehiclePositionsURL:     cliFeedVehiclePositionsURL,
+					ServiceAlertsURL:        cliFeedServiceAlertsURL,
+					RealTimeAuthHeaderName:  cliFeedAuthHeaderName,
+					RealTimeAuthHeaderValue: cliFeedAuthHeaderValue,
+					RefreshInterval:         30,
+				},
+			},
+			DataPath: gtfsCfg.GTFSDataPath,
+		}
+
+		// Run the shared validation logic
+		if err := cliConfig.Validate(); err != nil {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+			logger.Error("invalid command-line configuration", "error", err)
+			os.Exit(1)
+		}
+
+		// Convert to internal app configs (DRY!)
+		cfg = cliConfig.ToAppConfig()
+
+		gtfsCfgData, err := cliConfig.ToGtfsConfigData()
+		if err != nil {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+			logger.Error("failed to convert command-line config", "error", err)
+			os.Exit(1)
+		}
+		gtfsCfg = gtfsConfigFromData(gtfsCfgData)
+
+		// Set verbosity flags (CLI specific)
 		gtfsCfg.Verbose = true
 		cfg.Verbose = true
-
-		// Parse API keys
-		cfg.ApiKeys = ParseAPIKeys(apiKeysFlag)
-
-		// Parse Exempt API Keys
-		if exemptApiKeysFlag != "" {
-			cfg.ExemptApiKeys = ParseAPIKeys(exemptApiKeysFlag)
-		}
-
-		// Convert environment flag to enum
-		cfg.Env = appconf.EnvFlagToEnvironment(envFlag)
-
-		// Set GTFS config environment
-		gtfsCfg.Env = cfg.Env
-
-		// Build single-feed RTFeeds slice from CLI flags
-		headers := make(map[string]string)
-		if cliFeedAuthHeaderName != "" && cliFeedAuthHeaderValue != "" {
-			headers[cliFeedAuthHeaderName] = cliFeedAuthHeaderValue
-		}
-		gtfsCfg.RTFeeds = []gtfs.RTFeedConfig{
-			{
-				ID:                  "feed-0",
-				TripUpdatesURL:      cliFeedTripUpdatesURL,
-				VehiclePositionsURL: cliFeedVehiclePositionsURL,
-				ServiceAlertsURL:    cliFeedServiceAlertsURL,
-				Headers:             headers,
-				RefreshInterval:     30,
-				Enabled:             true,
-			},
-		}
 	}
 
 	// Handle dump-config flag
@@ -122,7 +153,7 @@ func main() {
 	}
 
 	// Build application with dependencies
-	coreApp, err := BuildApplication(cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	if err != nil {
 		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 		logger.Error("failed to build application", "error", err)
@@ -133,7 +164,7 @@ func main() {
 	srv, api := CreateServer(coreApp, cfg)
 
 	// Run server with graceful shutdown
-	if err := Run(context.Background(), srv, coreApp, api, coreApp.Logger); err != nil {
+	if err := Run(ctx, srv, coreApp, api, coreApp.Logger); err != nil {
 		coreApp.Logger.Error("server error", "error", err)
 		os.Exit(1)
 	}

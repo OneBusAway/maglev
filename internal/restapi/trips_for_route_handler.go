@@ -141,8 +141,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 			BlockID:     blockIDNullStr,
 			ServiceIds:  serviceIDs,
-			CurrentTime: currentNanosSinceMidnight,
-		})
+			CurrentTime: sql.NullInt64{Int64: currentNanosSinceMidnight, Valid: true}})
 		if err != nil {
 			continue
 		}
@@ -257,7 +256,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
 		if includeStatus {
-			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, todayMidnight, currentTime)
 		}
 
 		entry := models.TripsForRouteListEntry{

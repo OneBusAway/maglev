@@ -1,15 +1,24 @@
 package gtfs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	logging "maglev.onebusaway.org/internal/logging"
 )
 
 func TestGetAlertsForRoute(t *testing.T) {
@@ -285,4 +294,354 @@ func TestEnabledFeeds(t *testing.T) {
 			assert.Equal(t, tt.wantIDs, gotIDs)
 		})
 	}
+}
+
+// TestStaleFeedRejected verifies that feeds with stale FeedHeader timestamps
+// are rejected and vehicles from the newer feed are preserved. This tests
+// the feed-level freshness guard that prevents out-of-order feed updates.
+func TestStaleFeedRejected(t *testing.T) {
+	// Read the test data before creating the server to ensure proper error handling
+	data, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
+	require.NoError(t, err, "failed to read RABA vehicle positions test data")
+
+	// Create a test server that serves the same RABA vehicle data
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	ctx := context.Background()
+
+	feed := RTFeedConfig{
+		ID:                  "freshness-test",
+		VehiclePositionsURL: server.URL,
+		RefreshInterval:     30,
+		Enabled:             true,
+	}
+
+	// First poll: load vehicles with a FeedHeader timestamp
+	manager.updateFeedRealtime(ctx, feed)
+	firstPoll := manager.GetRealTimeVehicles()
+	require.NotEmpty(t, firstPoll, "first poll should load vehicles")
+	firstCount := len(firstPoll)
+
+	// Verify the feed has a FeedHeader timestamp — this test
+	// exercises the freshness guard, which only applies to feeds
+	// with a non-zero CreatedAt.
+	manager.realTimeMutex.RLock()
+	require.NotZero(t, manager.feedVehicleTimestamp[feed.ID],
+		"RABA feed must have FeedHeader timestamp for this test to be meaningful")
+	manager.realTimeMutex.RUnlock()
+
+	// Simulate a stale feed by manually setting the stored timestamp to a very
+	// large value (future timestamp), so the next update will be rejected.
+	manager.realTimeMutex.Lock()
+	manager.feedVehicleTimestamp[feed.ID] = uint64(time.Now().Add(1 * time.Hour).UnixNano())
+	manager.realTimeMutex.Unlock()
+
+	// Second poll: attempt to update with same feed URL (same data, same timestamp)
+	// This should be rejected because the stored timestamp is in the future
+	manager.updateFeedRealtime(ctx, feed)
+
+	// Verify vehicles from first poll are preserved (not overwritten)
+	secondPoll := manager.GetRealTimeVehicles()
+	assert.Len(t, secondPoll, firstCount, "stale feed should be rejected, preserving first poll vehicles")
+
+	// Extract vehicle IDs from both polls
+	firstIDs := make(map[string]bool)
+	for _, v := range firstPoll {
+		if v.ID != nil {
+			firstIDs[v.ID.ID] = true
+		}
+	}
+
+	// Verify all vehicles from second poll came from first poll
+	for _, v := range secondPoll {
+		if v.ID != nil {
+			assert.True(t, firstIDs[v.ID.ID], "vehicle should come from first poll, not stale feed")
+		}
+	}
+}
+
+// TestVehicleMerge_StaleIgnored ensures that when a feed update contains a
+// vehicle entity whose timestamp is older than the one already stored in the
+// manager, the older update is ignored and the existing (newer) record is
+// preserved. The feed itself is kept "fresh" so the update is applied at the
+// feed level.
+func TestVehicleMerge_StaleIgnored(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	// capture logs for verification
+	var buf bytes.Buffer
+	logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+	ctx = logging.WithLogger(ctx, logger)
+
+	// create a server whose response can be modified between polls
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{ID: "test-feed", VehiclePositionsURL: server.URL, RefreshInterval: 30, Enabled: true}
+
+	// first poll: introduce a vehicle with a recent timestamp
+	t1 := time.Now()
+	vehicle := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh1")},
+		Timestamp: proto.Uint64(uint64(t1.Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(t1, []*gtfsrt.VehiclePosition{vehicle})
+	mu.Unlock()
+	manager.updateFeedRealtime(ctx, feed)
+	first := manager.GetRealTimeVehicles()
+	require.Len(t, first, 1)
+	existing := first[0]
+	require.NotNil(t, existing.Timestamp)
+	existingTime := *existing.Timestamp
+
+	// second poll: same feed header newer, but vehicle timestamp older
+	t2 := t1.Add(time.Second)
+	stale := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh1")},
+		Timestamp: proto.Uint64(uint64(t1.Add(-time.Minute).Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(t2, []*gtfsrt.VehiclePosition{stale})
+	mu.Unlock()
+	manager.updateFeedRealtime(ctx, feed)
+
+	second := manager.GetRealTimeVehicles()
+	require.Len(t, second, 1)
+	if second[0].Timestamp == nil {
+		t.Fatalf("expected existing timestamp to be preserved, got nil")
+	}
+	assert.Equal(t, existingTime, *second[0].Timestamp, "stale incoming update should be ignored")
+
+	// log should mention a stale vehicle entity being skipped
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "skipping_stale_vehicle_entity")
+}
+
+// TestVehicleMerge_MixedFreshAndStale sends a feed that contains both a newer
+// and an older vehicle update relative to the manager's existing state. The
+// fresh entity should update while the stale one should be preserved.
+func TestVehicleMerge_MixedFreshAndStale(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{ID: "mixed-feed", VehiclePositionsURL: server.URL, RefreshInterval: 30, Enabled: true}
+
+	// initial state: only vehicle A at time tA
+	tA := time.Now()
+	vehA := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("A")},
+		Timestamp: proto.Uint64(uint64(tA.Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(tA, []*gtfsrt.VehiclePosition{vehA})
+	mu.Unlock()
+	manager.updateFeedRealtime(ctx, feed)
+
+	// second update: A arrives stale, B arrives fresh
+	tBheader := tA.Add(time.Second)
+	staleA := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("A")},
+		Timestamp: proto.Uint64(uint64(tA.Add(-time.Minute).Unix())),
+	}
+	freshB := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("B")},
+		Timestamp: proto.Uint64(uint64(tA.Add(time.Minute).Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(tBheader, []*gtfsrt.VehiclePosition{staleA, freshB})
+	mu.Unlock()
+	manager.updateFeedRealtime(ctx, feed)
+
+	vehicles := manager.GetRealTimeVehicles()
+	assert.Len(t, vehicles, 2)
+	var foundA, foundB bool
+	for _, v := range vehicles {
+		if v.ID != nil && v.ID.ID == "A" {
+			foundA = true
+			assert.Equal(t, tA.Unix(), v.Timestamp.Unix(), "A should retain original timestamp")
+		}
+		if v.ID != nil && v.ID.ID == "B" {
+			foundB = true
+			assert.Equal(t, tA.Add(time.Minute).Unix(), v.Timestamp.Unix(), "B should be updated with fresh timestamp")
+		}
+	}
+	assert.True(t, foundA && foundB, "both vehicles should be present")
+}
+
+// TestVehicleMerge_MissingTimestamp ensures that an incoming update with a
+// nil timestamp does not crash and is treated as non-stale. In other words,
+// the updated record (with nil timestamp) replaces the previous one.
+func TestVehicleMerge_MissingTimestamp(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{ID: "nil-ts-feed", VehiclePositionsURL: server.URL, RefreshInterval: 30, Enabled: true}
+
+	// initial poll with a timestamped vehicle
+	t0 := time.Now()
+	veh := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("nilveh")},
+		Timestamp: proto.Uint64(uint64(t0.Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(t0, []*gtfsrt.VehiclePosition{veh})
+	mu.Unlock()
+	manager.updateFeedRealtime(ctx, feed)
+
+	// second poll: same vehicle but timestamp field omitted
+	t1 := t0.Add(time.Second)
+	nilVeh := &gtfsrt.VehiclePosition{
+		Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String("nilveh")},
+		// Timestamp left nil
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(t1, []*gtfsrt.VehiclePosition{nilVeh})
+	mu.Unlock()
+	manager.updateFeedRealtime(ctx, feed)
+
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	assert.Nil(t, vehicles[0].Timestamp, "incoming nil timestamp should replace existing")
+}
+
+// TestIsVehicleStale verifies the isVehicleStale function correctly compares
+// vehicle timestamps to determine staleness.
+func TestIsVehicleStale(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing gtfs.Vehicle
+		incoming gtfs.Vehicle
+		want     bool
+	}{
+		{
+			name: "both timestamps present, incoming older",
+			existing: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(1000, 0)),
+			},
+			incoming: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(900, 0)),
+			},
+			want: true, // incoming is older, so it's stale
+		},
+		{
+			name: "both timestamps present, incoming newer",
+			existing: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(900, 0)),
+			},
+			incoming: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(1000, 0)),
+			},
+			want: false, // incoming is newer, not stale
+		},
+		{
+			name: "both timestamps present, equal",
+			existing: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(1000, 0)),
+			},
+			incoming: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(1000, 0)),
+			},
+			want: false, // equal timestamps are not considered stale
+		},
+		{
+			name: "existing timestamp nil",
+			existing: gtfs.Vehicle{
+				Timestamp: nil,
+			},
+			incoming: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(1000, 0)),
+			},
+			want: false, // cannot compare when existing is nil
+		},
+		{
+			name: "incoming timestamp nil",
+			existing: gtfs.Vehicle{
+				Timestamp: ptr(time.Unix(1000, 0)),
+			},
+			incoming: gtfs.Vehicle{
+				Timestamp: nil,
+			},
+			want: false, // cannot compare when incoming is nil
+		},
+		{
+			name: "both timestamps nil",
+			existing: gtfs.Vehicle{
+				Timestamp: nil,
+			},
+			incoming: gtfs.Vehicle{
+				Timestamp: nil,
+			},
+			want: false, // cannot compare when both are nil
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isVehicleStale(tt.existing, tt.incoming)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// encodeVehicleFeed constructs a GTFS-RT protobuf payload containing
+// the provided vehicle positions. The header's timestamp is set to the given
+// createdAt time (in seconds). This helper is used by multiple tests to simulate
+// feeds with controllable timestamps.
+func encodeVehicleFeed(createdAt time.Time, positions []*gtfsrt.VehiclePosition) []byte {
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(createdAt.Unix())),
+		},
+	}
+	for i, vp := range positions {
+		feed.Entity = append(feed.Entity, &gtfsrt.FeedEntity{
+			Id:      proto.String(fmt.Sprintf("e%d", i)),
+			Vehicle: vp,
+		})
+	}
+	b, err := proto.Marshal(feed)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal realtime feed: %s", err))
+	}
+	return b
+}
+
+// ptr is a helper function to create a pointer to a time.Time value.
+func ptr(t time.Time) *time.Time {
+	return &t
 }

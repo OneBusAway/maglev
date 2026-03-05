@@ -15,81 +15,43 @@ import (
 )
 
 func TestManager_GetAgencies(t *testing.T) {
-	testCases := []struct {
-		name     string
-		dataPath string
-	}{
-		{
-			name:     "FromLocalFile",
-			dataPath: models.GetFixturePath(t, "raba.zip"),
-		},
-	}
+	// Use shared component to avoid reloading DB
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				Env:          appconf.Test,
-				GTFSDataPath: ":memory:",
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
-			defer manager.Shutdown()
+	agencies := manager.GetAgencies()
+	assert.Equal(t, 1, len(agencies))
 
-			agencies := manager.GetAgencies()
-			assert.Equal(t, 1, len(agencies))
-
-			agency := agencies[0]
-			assert.Equal(t, "25", agency.Id)
-			assert.Equal(t, "Redding Area Bus Authority", agency.Name)
-			assert.Equal(t, "http://www.rabaride.com/", agency.Url)
-			assert.Equal(t, "America/Los_Angeles", agency.Timezone)
-			assert.Equal(t, "en", agency.Language)
-			assert.Equal(t, "530-241-2877", agency.Phone)
-			assert.Equal(t, "", agency.FareUrl)
-			assert.Equal(t, "", agency.Email)
-		})
-	}
+	agency := agencies[0]
+	assert.Equal(t, "25", agency.Id)
+	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
+	assert.Equal(t, "http://www.rabaride.com/", agency.Url)
+	assert.Equal(t, "America/Los_Angeles", agency.Timezone)
+	assert.Equal(t, "en", agency.Language)
+	assert.Equal(t, "530-241-2877", agency.Phone)
+	assert.Equal(t, "", agency.FareUrl)
+	assert.Equal(t, "", agency.Email)
 }
 
 func TestManager_RoutesForAgencyID(t *testing.T) {
-	testCases := []struct {
-		name     string
-		dataPath string
-	}{
-		{
-			name:     "FromLocalFile",
-			dataPath: models.GetFixturePath(t, "raba.zip"),
-		},
-	}
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				GTFSDataPath: ":memory:",
-				Env:          appconf.Test,
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
-			defer manager.Shutdown()
+	manager.RLock()
+	routes := manager.RoutesForAgencyID("25")
+	manager.RUnlock()
+	assert.Equal(t, 13, len(routes))
 
-			manager.RLock()
-			routes := manager.RoutesForAgencyID("25")
-			manager.RUnlock()
-			assert.Equal(t, 13, len(routes))
-
-			route := routes[0]
-			assert.Equal(t, "1", route.ShortName)
-			assert.Equal(t, "25", route.Agency.Id)
-		})
-	}
+	route := routes[0]
+	assert.Equal(t, "1", route.ShortName)
+	assert.Equal(t, "25", route.Agency.Id)
 }
 
 func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
+	ctx := context.Background()
+
 	testCases := []struct {
 		name          string
-		dataPath      string
 		lat           float64
 		lon           float64
 		radius        float64
@@ -97,7 +59,6 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 	}{
 		{
 			name:          "FindStopsWithinRadius",
-			dataPath:      models.GetFixturePath(t, "raba.zip"),
 			lat:           40.589123, // Near Redding, CA
 			lon:           -122.390830,
 			radius:        2000, // 2km radius
@@ -105,7 +66,6 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 		},
 		{
 			name:          "FindStopsWithinRadius",
-			dataPath:      models.GetFixturePath(t, "raba.zip"),
 			lat:           47.589123, // West Seattle
 			lon:           -122.390830,
 			radius:        2000, // 2km radius
@@ -115,17 +75,11 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			gtfsConfig := Config{
-				GtfsURL:      tc.dataPath,
-				GTFSDataPath: ":memory:",
-				Env:          appconf.Test,
-			}
-			manager, err := InitGTFSManager(gtfsConfig)
-			assert.Nil(t, err)
-			defer manager.Shutdown()
+			manager, _ := getSharedTestComponents(t)
+			assert.NotNil(t, manager)
 
 			// Get stops using the manager method
-			stops := manager.GetStopsForLocation(context.Background(), tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
+			stops := manager.GetStopsForLocation(ctx, tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
 
 			// The test expects that the spatial index query is used
 			assert.GreaterOrEqual(t, len(stops), tc.expectedStops, "Should find stops within radius")
@@ -142,14 +96,8 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 }
 
 func TestManager_GetTrips(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	manager, _ := getSharedTestComponents(t)
+	assert.NotNil(t, manager)
 
 	trips := manager.GetTrips()
 	assert.NotEmpty(t, trips)
@@ -157,14 +105,7 @@ func TestManager_GetTrips(t *testing.T) {
 }
 
 func TestManager_FindAgency(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	manager, _ := getSharedTestComponents(t)
 
 	agency := manager.FindAgency("25")
 	assert.NotNil(t, agency)
@@ -207,6 +148,10 @@ func TestManager_GetTripUpdatesForTrip(t *testing.T) {
 			{
 				ID: gtfs.TripID{ID: "trip2"},
 			},
+		},
+		realTimeTripLookup: map[string]int{
+			"trip1": 0,
+			"trip2": 1,
 		},
 	}
 
@@ -260,14 +205,7 @@ func TestManager_GetTripUpdateByID(t *testing.T) {
 }
 
 func TestManager_IsServiceActiveOnDate(t *testing.T) {
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(gtfsConfig)
-	assert.Nil(t, err)
-	defer manager.Shutdown()
+	manager, _ := getSharedTestComponents(t)
 
 	// Get a trip to find a valid service ID
 	trips := manager.GetTrips()
@@ -330,12 +268,15 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 }
 
 func TestManager_GetVehicleForTrip(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	// We use isolated GTFSManager here instead of shared test components because we want to control the real-time vehicles for this test.
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	assert.Nil(t, err)
 	defer manager.Shutdown()
 
@@ -358,6 +299,10 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 		assert.NotNil(t, vehicle)
 		assert.Equal(t, "vehicle1", vehicle.ID.ID)
 	}
+
+	// Test Not Found
+	nilVehicle := manager.GetVehicleForTrip(context.Background(), "nonexistent")
+	assert.Nil(t, nilVehicle)
 }
 
 func TestBuildLookupMaps(t *testing.T) {
@@ -389,7 +334,6 @@ func TestManager_FindAgency_UsesMap(t *testing.T) {
 	// This test proves we are using the Map, not the Slice.
 	// We populate the Map, but leave the Slice empty.
 	// If the code was still looping over the slice, this would fail.
-
 	manager := &Manager{
 		agenciesMap: map[string]*gtfs.Agency{
 			"A1": {Id: "A1", Name: "Fast Agency"},
@@ -409,7 +353,6 @@ func TestManager_FindAgency_UsesMap(t *testing.T) {
 }
 
 func TestManager_FindRoute_UsesMap(t *testing.T) {
-
 	manager := &Manager{
 		routesMap: map[string]*gtfs.Route{
 			"R1": {Id: "R1", LongName: "Express Route"},
@@ -428,12 +371,14 @@ func TestManager_FindRoute_UsesMap(t *testing.T) {
 }
 
 func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err, "Failed to initialize manager")
 	defer manager.Shutdown()
 
@@ -463,12 +408,14 @@ func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
 }
 
 func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
 	defer manager.Shutdown()
 
@@ -532,12 +479,14 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 }
 
 func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
+	ctx := context.Background()
+
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(b, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(gtfsConfig)
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	if err != nil {
 		b.Fatalf("Failed to initialize: %v", err)
 	}
@@ -550,4 +499,35 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 		_ = manager.RoutesForAgencyID("25")
 		manager.RUnlock()
 	}
+}
+
+func TestInitGTFSManager_RetryLogic(t *testing.T) {
+	ctx := context.Background()
+
+	// Use an ultra-fast backoff schedule for the test to prevent it from hanging
+	backoffs := []time.Duration{
+		1 * time.Millisecond,
+		2 * time.Millisecond,
+		3 * time.Millisecond,
+	}
+
+	config := Config{
+		// Use a clearly invalid URL that will trigger failures
+		GtfsURL:        "http://invalid.url.that.will.fail.internal/gtfs.zip",
+		GTFSDataPath:   ":memory:",
+		Env:            appconf.Test,
+		StartupRetries: backoffs, // Inject test backoffs
+	}
+
+	start := time.Now()
+
+	manager, err := InitGTFSManager(ctx, config)
+
+	// It should eventually fail after trying all backoffs
+	require.Error(t, err)
+	require.Nil(t, manager)
+
+	// Verify the entire process was fast (proving it used our 1ms, 2ms, 3ms backoffs)
+	duration := time.Since(start)
+	assert.Less(t, duration, 1*time.Second, "Retry logic should respect the configured backoff schedule")
 }

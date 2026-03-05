@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3" // CGo-based SQLite driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
@@ -38,6 +37,13 @@ func TestSQLitePerformancePragmasApplied(t *testing.T) {
 	require.NoError(t, err)
 	// 2 = MEMORY
 	assert.Equal(t, 2, tempStore, "Temp store should be set to MEMORY (2)")
+
+	// Verify journal_mode PRAGMA
+	var journalMode string
+	err = client.DB.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode)
+	require.NoError(t, err)
+	// In-memory databases don't support WAL mode, so SQLite automatically uses 'memory'
+	assert.Equal(t, "memory", journalMode, "Journal mode should be memory for :memory: databases")
 }
 
 func TestMemoryDatabaseConnectionPool(t *testing.T) {
@@ -77,6 +83,13 @@ func TestFileDatabaseConnectionPool(t *testing.T) {
 	stats := client.DB.Stats()
 	assert.Equal(t, 25, stats.MaxOpenConnections,
 		"File databases should use MaxOpenConns=25")
+
+	// Verify WAL mode is enabled for file databases
+	var journalMode string
+	err = client.DB.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&journalMode)
+	require.NoError(t, err)
+	// Should be set to 'wal' based on our performance pragmas
+	assert.Equal(t, "wal", journalMode, "File databases should have WAL journal mode enabled")
 }
 
 func TestConnectionPoolBehaviorWithFileDatabase(t *testing.T) {
@@ -218,7 +231,7 @@ func TestConfigureConnectionPoolWithDifferentConfigs(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			db, err := sql.Open("sqlite3", ":memory:")
+			db, err := sql.Open(DriverName, ":memory:")
 			require.NoError(t, err)
 			defer func() { _ = db.Close() }()
 

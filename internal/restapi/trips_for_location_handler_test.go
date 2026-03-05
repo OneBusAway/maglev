@@ -2,10 +2,11 @@ package restapi
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -102,6 +103,85 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 
 			assert.GreaterOrEqual(t, len(list), tt.minExpected)
 			assert.LessOrEqual(t, len(list), tt.maxExpected)
+		})
+	}
+}
+
+func TestTripsForLocationHandler_ReferencesContainStopsAndRoutes(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	tests := []struct {
+		name    string
+		lat     float64
+		lon     float64
+		latSpan float64
+		lonSpan float64
+	}{
+		{
+			name:    "Transit Center Area",
+			lat:     40.5865,
+			lon:     -122.3917,
+			latSpan: 1.0,
+			lonSpan: 1.0,
+		},
+		{
+			name:    "Wide Area Coverage",
+			lat:     40.5865,
+			lon:     -122.3917,
+			latSpan: 2.0,
+			lonSpan: 3.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&latSpan=%f&lonSpan=%f&includeSchedule=true",
+				tt.lat, tt.lon, tt.latSpan, tt.lonSpan)
+
+			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			data, ok := model.Data.(map[string]interface{})
+			require.True(t, ok, "response data should be a map")
+
+			refs, ok := data["references"].(map[string]interface{})
+			require.True(t, ok, "references should be present in response data")
+
+			stops, ok := refs["stops"].([]interface{})
+			require.True(t, ok, "references.stops should be a []interface{}, not null")
+
+			routes, ok := refs["routes"].([]interface{})
+			require.True(t, ok, "references.routes should be a []interface{}, not null")
+
+			if len(stops) > 0 {
+				routeIDSet := make(map[string]bool, len(routes))
+				for _, r := range routes {
+					route, ok := r.(map[string]interface{})
+					require.True(t, ok, "each route in references.routes should be a map")
+					if id, ok := route["id"].(string); ok {
+						routeIDSet[id] = true
+					}
+				}
+
+				for _, s := range stops {
+					stop, ok := s.(map[string]interface{})
+					require.True(t, ok, "each stop in references.stops should be a map")
+
+					routeIds, ok := stop["routeIds"].([]interface{})
+					assert.True(t, ok, "stop.routeIds should be a []interface{}, not null (stop: %v)", stop["id"])
+
+					for _, rid := range routeIds {
+						routeID, ok := rid.(string)
+						require.True(t, ok)
+						assert.True(t, routeIDSet[routeID],
+							"route %q referenced by stop %q must appear in references.routes",
+							routeID, stop["id"])
+					}
+				}
+			}
 		})
 	}
 }
