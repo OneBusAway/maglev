@@ -339,6 +339,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
+	var lastUpdateTimePtr *int64
+	if lastUpdateTime > 0 {
+		lastUpdateTimePtr = utils.Int64Ptr(lastUpdateTime)
+	}
 
 	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
 
@@ -355,7 +359,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		scheduledDepartureTimeMs,                       // scheduledDepartureTime
 		predictedArrivalTime,                           // predictedArrivalTime
 		predictedDepartureTime,                         // predictedDepartureTime
-		lastUpdateTime,                                 // lastUpdateTime
+		lastUpdateTimePtr,                              // lastUpdateTime
 		predicted,                                      // predicted
 		true,                                           // arrivalEnabled
 		true,                                           // departureEnabled

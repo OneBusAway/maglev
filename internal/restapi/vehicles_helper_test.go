@@ -8,6 +8,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -272,10 +273,10 @@ func TestBuildVehicleStatus_BearingConversion(t *testing.T) {
 			status := &models.TripStatusForTripDetails{}
 			api.BuildVehicleStatus(ctx, vehicle, "any-trip", "any-agency", status, now)
 
-			assert.Equal(t, tt.expectedOrientation, status.Orientation,
-				"Orientation should be (90 - bearing) with wraparound")
-			assert.Equal(t, tt.expectedOrientation, status.LastKnownOrientation,
-				"LastKnownOrientation should match Orientation")
+			require.NotNil(t, status.Orientation)
+			require.NotNil(t, status.LastKnownOrientation)
+			assert.Equal(t, tt.expectedOrientation, *status.Orientation, "Orientation should be (90 - bearing) with wraparound")
+			assert.Equal(t, tt.expectedOrientation, *status.LastKnownOrientation, "LastKnownOrientation should match Orientation")
 		})
 	}
 }

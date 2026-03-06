@@ -590,7 +590,8 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, 120, status.ScheduleDeviation, "ScheduleDeviation should reflect the trip update delay")
+	require.NotNil(t, status.ScheduleDeviation)
+	assert.Equal(t, 120, *status.ScheduleDeviation, "ScheduleDeviation should reflect the trip update delay")
 	assert.True(t, status.Predicted, "Predicted should be true when trip update exists")
 	assert.False(t, status.Scheduled, "Scheduled should be false when predicted is true")
 }
@@ -617,7 +618,7 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, 0, status.ScheduleDeviation, "ScheduleDeviation should be 0 with no real-time data")
+	assert.Nil(t, status.ScheduleDeviation, "ScheduleDeviation should be nil with no real-time data")
 	assert.False(t, status.Predicted, "Predicted should be false with no real-time data")
 	assert.True(t, status.Scheduled, "Scheduled should be true with no real-time data")
 	assert.Equal(t, "default", status.Status)
@@ -681,10 +682,11 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Greater(t, status.TotalDistanceAlongTrip, 0.0, "TotalDistanceAlongTrip should be > 0 with shape data")
-	assert.Greater(t, status.DistanceAlongTrip, 0.0, "DistanceAlongTrip should be > 0 for a vehicle mid-route")
-	assert.Less(t, status.DistanceAlongTrip, status.TotalDistanceAlongTrip,
-		"DistanceAlongTrip should be less than total for a mid-route vehicle")
+	require.NotNil(t, status.TotalDistanceAlongTrip)
+	require.NotNil(t, status.DistanceAlongTrip)
+	assert.Greater(t, *status.TotalDistanceAlongTrip, float64(0), "TotalDistanceAlongTrip should be > 0 with shape data")
+	assert.Greater(t, *status.DistanceAlongTrip, float64(0), "DistanceAlongTrip should be > 0 for a vehicle mid-route")
+	assert.Less(t, *status.DistanceAlongTrip, *status.TotalDistanceAlongTrip, "DistanceAlongTrip should be less than total for a mid-route vehicle")
 }
 
 func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {

@@ -121,7 +121,7 @@ func (api *RestAPI) BuildVehicleStatus(
 	var lastUpdateTime int64
 	if vehicle.Timestamp != nil {
 		lastUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-		status.LastUpdateTime = lastUpdateTime
+		status.LastUpdateTime = utils.Int64Ptr(lastUpdateTime)
 	}
 
 	if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
@@ -137,7 +137,7 @@ func (api *RestAPI) BuildVehicleStatus(
 		status.Position = actualPosition
 
 		if vehicle.Timestamp != nil {
-			status.LastLocationUpdateTime = lastUpdateTime
+			status.LastLocationUpdateTime = utils.Int64Ptr(lastUpdateTime)
 		}
 	}
 
@@ -146,8 +146,8 @@ func (api *RestAPI) BuildVehicleStatus(
 		if obaOrientation < 0 {
 			obaOrientation += 360
 		}
-		status.Orientation = float64(obaOrientation)
-		status.LastKnownOrientation = float64(obaOrientation)
+		status.Orientation = utils.Float64Ptr(float64(obaOrientation))
+		status.LastKnownOrientation = utils.Float64Ptr(float64(obaOrientation))
 	}
 
 	status.Status, status.Phase = GetVehicleStatusAndPhase(vehicle)
