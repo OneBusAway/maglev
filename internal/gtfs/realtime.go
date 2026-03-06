@@ -456,21 +456,6 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	manager.rebuildMergedRealtimeLocked()
 }
 
-// routeAgencyID resolves a route ID to its owning agency ID using the static
-// GTFS route map. Returns "" if the route is not found.
-// Acquires staticMutex.RLock internally.
-func (manager *Manager) routeAgencyID(routeID string) string {
-	if routeID == "" {
-		return ""
-	}
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
-	if route, ok := manager.routesMap[routeID]; ok && route.Agency != nil {
-		return route.Agency.Id
-	}
-	return ""
-}
-
 // filterTripsByAgency returns only the trips whose route belongs to one of the
 // allowed agencies. Trips with an unresolvable route are dropped.
 func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool) []gtfs.Trip {

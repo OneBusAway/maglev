@@ -211,6 +211,36 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
 
+	// Startup validation and logging for agency filtering
+	enabledFeeds := config.enabledFeeds()
+	for _, feedCfg := range enabledFeeds {
+		if len(feedCfg.AgencyIDs) > 0 {
+			logger.Info("realtime feed agency filtering active",
+				slog.String("feed", feedCfg.ID),
+				slog.Any("agency_ids", feedCfg.AgencyIDs),
+			)
+
+			manager.staticMutex.RLock()
+			for _, configuredAgencyID := range feedCfg.AgencyIDs {
+				if _, exists := manager.agenciesMap[configuredAgencyID]; !exists {
+					// Collect valid agencies for the helpful error message
+					var validAgencies []string
+					for validID := range manager.agenciesMap {
+						validAgencies = append(validAgencies, validID)
+					}
+					sort.Strings(validAgencies) // keep logs predictable
+
+					logger.Warn("configured agency-id not found in static GTFS data",
+						slog.String("feed", feedCfg.ID),
+						slog.String("invalid_agency_id", configuredAgencyID),
+						slog.Any("valid_agency_ids", validAgencies),
+					)
+				}
+			}
+			manager.staticMutex.RUnlock()
+		}
+	}
+
 	// Populate systemETag from import metadata
 	metadata, err := gtfsDB.Queries.GetImportMetadata(ctx)
 	if err == nil && metadata.FileHash != "" {
@@ -228,7 +258,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	// STARTUP SEQUENCING:
 	// If realtime is enabled, perform the first fetch synchronously for each feed
 	// to "warm" the cache before marking the manager as ready.
-	enabledFeeds := config.enabledFeeds()
 	for _, feedCfg := range enabledFeeds {
 		initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		manager.updateFeedRealtime(initCtx, feedCfg)

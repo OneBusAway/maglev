@@ -537,20 +537,6 @@ func TestAlertMatchesAgency(t *testing.T) {
 	}
 }
 
-// TestRouteAgencyID tests the routeAgencyID helper method.
-func TestRouteAgencyID(t *testing.T) {
-	routes := map[string]*gtfs.Route{
-		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "agency-A"}},
-		"R2": {Id: "R2", Agency: nil}, // no agency pointer
-	}
-	manager := newTestManagerWithRoutes(routes)
-
-	assert.Equal(t, "agency-A", manager.routeAgencyID("R1"))
-	assert.Equal(t, "", manager.routeAgencyID("R2"), "nil agency should return empty")
-	assert.Equal(t, "", manager.routeAgencyID("R999"), "unknown route should return empty")
-	assert.Equal(t, "", manager.routeAgencyID(""), "empty route ID should return empty")
-}
-
 // TestAgencyFilterMultipleFeedsIntegration verifies that when two feeds are
 // configured with different agency filters, each feed's data is filtered
 // independently and the merged view contains only the allowed data.
@@ -581,9 +567,12 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 	filterA := manager.feedAgencyFilter["feed-a"]
 	filterB := manager.feedAgencyFilter["feed-b"]
 
+	filteredA := manager.filterTripsByAgency(tripsA, filterA)
+	filteredB := manager.filterTripsByAgency(tripsB, filterB)
+
 	manager.realTimeMutex.Lock()
-	manager.feedTrips["feed-a"] = manager.filterTripsByAgency(tripsA, filterA)
-	manager.feedTrips["feed-b"] = manager.filterTripsByAgency(tripsB, filterB)
+	manager.feedTrips["feed-a"] = filteredA
+	manager.feedTrips["feed-b"] = filteredB
 	manager.rebuildMergedRealtimeLocked()
 	manager.realTimeMutex.Unlock()
 
