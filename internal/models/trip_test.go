@@ -89,6 +89,14 @@ func TestTripJSON(t *testing.T) {
 	jsonData, err := json.Marshal(trip)
 	assert.NoError(t, err)
 
+	// Ensure JSON contains correct field name
+	var m map[string]interface{}
+	err = json.Unmarshal(jsonData, &m)
+	assert.NoError(t, err)
+
+	_, ok := m["peakOffpeak"]
+	assert.True(t, ok)
+
 	var unmarshaledTrip Trip
 	err = json.Unmarshal(jsonData, &unmarshaledTrip)
 	assert.NoError(t, err)
