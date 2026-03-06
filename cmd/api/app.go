@@ -17,7 +17,6 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/restapi"
 	"maglev.onebusaway.org/internal/webui"
@@ -64,11 +63,35 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 	return keys
 }
 
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func newLogHandler(format string, level slog.Level) slog.Handler {
+	opts := &slog.HandlerOptions{Level: level}
+	if strings.EqualFold(format, "json") {
+		return slog.NewJSONHandler(os.Stdout, opts)
+	}
+	return slog.NewTextHandler(os.Stdout, opts)
+}
+
 // BuildApplication creates and initializes the Application with all dependencies.
 // This includes creating the logger, initializing the GTFS manager, and creating the direction calculator.
 // Returns an error if GTFS manager initialization fails.
 func BuildApplication(cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	level := parseLogLevel(cfg.LogLevel)
+	logger := slog.New(newLogHandler(cfg.LogFormat, level))
 
 	gtfsManager, err := gtfs.InitGTFSManager(gtfsCfg)
 	if err != nil {
@@ -142,8 +165,9 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
 
 	// Add request logging middleware (outermost)
-	requestLogger := logging.NewStructuredLogger(os.Stdout, slog.LevelInfo)
-	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(requestLogger)
+	level := parseLogLevel(cfg.LogLevel)
+	logger := slog.New(newLogHandler(cfg.LogFormat, level))
+	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(logger)
 
 	handler := restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler))
 
@@ -248,6 +272,8 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		"port":             cfg.Port,
 		"env":              envStr,
 		"api-keys":         cfg.ApiKeys,
+		"log-level":        cfg.LogLevel,
+		"log-format":       cfg.LogFormat,
 		"exempt-api-keys":  cfg.ExemptApiKeys,
 		"rate-limit":       cfg.RateLimit,
 		"gtfs-static-feed": staticFeed,

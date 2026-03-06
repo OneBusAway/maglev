@@ -29,6 +29,18 @@
       "uniqueItems": true,
       "minItems": 1
     },
+    "log-level": {
+      "type": "string",
+      "description": "Log Level (debug|info|warn|error)",
+      "enum": ["debug", "info", "warn", "error"],
+      "default": "info"
+    },
+    "log-format": {
+      "type": "string",
+      "description": "Format of logging output (text|json)",
+      "enum": ["text", "json"],
+      "default": "text"
+    },
     "exempt-api-keys": {
       "type": "array",
       "description": "API keys that are exempt from rate limiting",

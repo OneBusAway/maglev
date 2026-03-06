@@ -82,6 +82,8 @@ func main() {
 		// Set verbosity flags
 		gtfsCfg.Verbose = true
 		cfg.Verbose = true
+		cfg.LogLevel = "info"
+		cfg.LogFormat = "text"
 
 		// Parse API keys
 		cfg.ApiKeys = ParseAPIKeys(apiKeysFlag)

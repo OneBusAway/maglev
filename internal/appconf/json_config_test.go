@@ -23,6 +23,8 @@ func TestLoadFromFile_ValidConfig(t *testing.T) {
 	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "./gtfs.db", config.DataPath)
 	assert.Len(t, config.GtfsRtFeeds, 1)
+	assert.Equal(t, "info", config.LogLevel)
+	assert.Equal(t, "text", config.LogFormat)
 }
 
 func TestLoadFromFile_FullConfig(t *testing.T) {
@@ -329,6 +331,8 @@ func TestValidate_PathTraversalDataPath(t *testing.T) {
 				ApiKeys:   []string{"test"},
 				RateLimit: 100,
 				DataPath:  tt.dataPath,
+				LogLevel:  "info",
+				LogFormat: "text",
 			}
 			err := config.validate()
 			if tt.shouldErr {
@@ -362,6 +366,8 @@ func TestValidate_FileURLNotAllowed(t *testing.T) {
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
+				LogLevel:  "info",
+				LogFormat: "text",
 			}
 			err := config.validate()
 			assert.Error(t, err)
@@ -397,6 +403,8 @@ func TestValidate_PathTraversalGtfsURL(t *testing.T) {
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
+				LogLevel:  "info",
+				LogFormat: "text",
 			}
 			err := config.validate()
 			if tt.shouldErr {
@@ -430,7 +438,9 @@ func TestValidate_ValidAbsolutePaths(t *testing.T) {
 				GtfsStaticFeed: GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
-				DataPath: "./gtfs.db",
+				DataPath:  "./gtfs.db",
+				LogLevel:  "info",
+				LogFormat: "text",
 			}
 			err := config.validate()
 			if tt.valid {
@@ -467,7 +477,9 @@ func TestValidate_PartialAuthHeaders(t *testing.T) {
 					AuthHeaderName:  tt.authName,
 					AuthHeaderValue: tt.authValue,
 				},
-				DataPath: "./gtfs.db",
+				DataPath:  "./gtfs.db",
+				LogLevel:  "info",
+				LogFormat: "text",
 			}
 			err := config.validate()
 			if tt.shouldError {
@@ -530,6 +542,8 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
 		t.Setenv("GTFS_STATIC_AUTH_VALUE", "env-static-secret")
 		t.Setenv("GTFS_REALTIME_AUTH_NAME", "X-Env-RT")
 		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "env-rt-secret")
+		t.Setenv("MAGLEV_LOG_LEVEL", "debug")
+		t.Setenv("MAGLEV_LOG_FORMAT", "json")
 
 		config, err := LoadFromFile(tmpFile.Name())
 		require.NoError(t, err)
@@ -542,6 +556,8 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
 		require.NotEmpty(t, config.GtfsRtFeeds)
 		assert.Equal(t, "X-Env-RT", config.GtfsRtFeeds[0].RealTimeAuthHeaderName)
 		assert.Equal(t, "env-rt-secret", config.GtfsRtFeeds[0].RealTimeAuthHeaderValue)
+		assert.Equal(t, "debug", config.LogLevel)
+		assert.Equal(t, "json", config.LogFormat)
 	})
 
 	t.Run("Parsing Edge Cases - Spaces and Empty Segments", func(t *testing.T) {
