@@ -20,7 +20,7 @@ type GtfsStaticFeed struct {
 // GtfsRtFeed represents a single GTFS-RT feed configuration
 type GtfsRtFeed struct {
 	ID                      string            `json:"id"`
-	AgencyIDs               []string          `json:"agency-ids"` // Reserved for future use - not currently used for filtering
+	AgencyIDs               []string          `json:"agency-ids"` // When set, only realtime data for these agencies is included
 	TripUpdatesURL          string            `json:"trip-updates-url"`
 	VehiclePositionsURL     string            `json:"vehicle-positions-url"`
 	ServiceAlertsURL        string            `json:"service-alerts-url"`
@@ -208,7 +208,7 @@ func (j *JSONConfig) ToAppConfig() Config {
 // RTFeedConfigData holds per-feed GTFS-RT configuration
 type RTFeedConfigData struct {
 	ID                  string   // Note it's will be generated if missing
-	AgencyIDs           []string // Reserved for future use - not currently used for filtering
+	AgencyIDs           []string // When set, only realtime data for these agencies is included
 	TripUpdatesURL      string
 	VehiclePositionsURL string
 	ServiceAlertsURL    string

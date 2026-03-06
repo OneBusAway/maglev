@@ -163,7 +163,7 @@ Each entry in the `gtfs-rt-feeds` array supports:
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `id` | string | auto (`"feed-0"`, `"feed-1"`, …) | Unique identifier for the feed, used in logs and internal data partitioning |
-| `agency-ids` | array | `[]` | Transit agency IDs this feed provides data for |
+| `agency-ids` | array | `[]` | When set, only realtime data (trips, vehicles, alerts) belonging to the listed agency IDs is included. Data for other agencies in the same feed is filtered out. Agencies are resolved via route→agency mapping from the static GTFS data. |
 | `trip-updates-url` | string | `""` | URL for GTFS-RT trip updates protobuf |
 | `vehicle-positions-url` | string | `""` | URL for GTFS-RT vehicle positions protobuf |
 | `service-alerts-url` | string | `""` | URL for GTFS-RT service alerts protobuf |

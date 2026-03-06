@@ -68,6 +68,10 @@ type Manager struct {
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
+	// Per-feed agency filter: feedID -> set of allowed agency IDs.
+	// When the set is non-nil and non-empty, only realtime entities belonging
+	// to the listed agencies are kept after each fetch.
+	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
 	// Per-feed last successfully applied vehicle feed timestamp
@@ -188,9 +192,22 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedTrips:                      make(map[string][]gtfs.Trip),
 		feedVehicles:                   make(map[string][]gtfs.Vehicle),
 		feedAlerts:                     make(map[string][]gtfs.Alert),
+		feedAgencyFilter:               make(map[string]map[string]bool),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
 	}
+
+	// Build per-feed agency filters from config
+	for _, feedCfg := range config.RTFeeds {
+		if len(feedCfg.AgencyIDs) > 0 {
+			filter := make(map[string]bool, len(feedCfg.AgencyIDs))
+			for _, id := range feedCfg.AgencyIDs {
+				filter[id] = true
+			}
+			manager.feedAgencyFilter[feedCfg.ID] = filter
+		}
+	}
+
 	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
 
