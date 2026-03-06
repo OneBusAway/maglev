@@ -31,6 +31,9 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	includeStatus := r.URL.Query().Get("includeStatus") == "true"
+	currentTime := api.Clock.Now().In(currentLocation)
+
 	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, api.Clock.Now())
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
@@ -96,7 +99,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, includeSchedule, currentLocation, todayMidnight, serviceDate, w, r)
+	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, includeSchedule, includeStatus, currentLocation, currentTime, todayMidnight, serviceDate, w, r)
 	if result == nil {
 		return
 	}
@@ -215,7 +218,9 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	trips []gtfsdb.Trip,
 	tripAgencyMap map[string]string,
 	includeSchedule bool,
+	includeStatus bool,
 	currentLocation *time.Location,
+	currentTime time.Time,
 	todayMidnight time.Time,
 	serviceDate time.Time,
 	w http.ResponseWriter,
@@ -339,6 +344,8 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 
 		var schedule *models.TripsSchedule
+		var status *models.TripStatusForTripDetails
+
 		if includeSchedule {
 			var shapePoints []gtfs.ShapePoint
 			if tripData.ShapeID.Valid {
@@ -360,9 +367,15 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				blockTrips,
 			)
 		}
+
+		if includeStatus {
+			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, todayMidnight, currentTime)
+		}
+
 		entry := models.TripsForLocationListEntry{
 			Frequency:    nil,
 			Schedule:     schedule,
+			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(ctx, tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
@@ -501,6 +514,13 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 				rb.presentTrips[prevID] = models.Trip{}
 			}
 		}
+
+		if trip.Status != nil && trip.Status.ActiveTripID != "" {
+			if _, activeID, err := utils.ExtractAgencyIDAndCodeID(trip.Status.ActiveTripID); err == nil {
+				rb.presentTrips[activeID] = models.Trip{}
+			}
+		}
+
 	}
 }
 

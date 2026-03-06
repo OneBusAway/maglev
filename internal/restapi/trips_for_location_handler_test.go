@@ -255,3 +255,52 @@ func TestTripsForLocationMissingBothLatAndLon(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
+func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	tests := []struct {
+		name          string
+		includeStatus bool
+	}{
+		{
+			name:          "With Status",
+			includeStatus: true,
+		},
+		{
+			name:          "Without Status",
+			includeStatus: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1&includeStatus=%v",
+				tt.includeStatus)
+
+			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			data := model.Data.(map[string]interface{})
+			list := data["list"].([]interface{})
+
+			for _, item := range list {
+				trip := item.(map[string]interface{})
+				status, hasStatus := trip["status"].(map[string]interface{})
+
+				if tt.includeStatus {
+					assert.True(t, hasStatus, "expected status to be present when includeStatus=true")
+					assert.NotNil(t, status)
+					if status != nil {
+						assert.Contains(t, status, "activeTripId")
+						assert.Contains(t, status, "phase")
+					}
+				} else {
+					assert.False(t, hasStatus, "expected status to be omitted when includeStatus=false")
+				}
+			}
+		})
+	}
+}

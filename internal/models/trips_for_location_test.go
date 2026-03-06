@@ -22,12 +22,19 @@ func TestTripsForLocationListEntry_GetTripId(t *testing.T) {
 
 func TestTripsForLocationListEntryJSON(t *testing.T) {
 	frequency := int64(300)
+
+	status := &TripStatusForTripDetails{
+		ActiveTripID: "mock_active_trip_123",
+		Phase:        "in_progress",
+	}
+
 	entry := TripsForLocationListEntry{
 		TripId:       "unitrans_trip_123",
 		ServiceDate:  1609459200000,
 		Frequency:    &frequency,
 		Schedule:     nil,
 		SituationIds: []string{"situation_1", "situation_2"},
+		Status:       status,
 	}
 
 	jsonData, err := json.Marshal(entry)
@@ -42,6 +49,10 @@ func TestTripsForLocationListEntryJSON(t *testing.T) {
 	assert.NotNil(t, unmarshaledEntry.Frequency)
 	assert.Equal(t, *entry.Frequency, *unmarshaledEntry.Frequency)
 	assert.Equal(t, entry.SituationIds, unmarshaledEntry.SituationIds)
+
+	assert.NotNil(t, unmarshaledEntry.Status)
+	assert.Equal(t, entry.Status.ActiveTripID, unmarshaledEntry.Status.ActiveTripID)
+	assert.Equal(t, entry.Status.Phase, unmarshaledEntry.Status.Phase)
 }
 
 func TestTripsForLocationDataJSON(t *testing.T) {
