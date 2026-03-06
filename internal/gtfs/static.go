@@ -203,6 +203,12 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return err
 	}
 
+	// Validate the structural integrity of the in-memory data before proceeding
+	if err := gtfsdb.ValidateGTFSData(newStaticData); err != nil {
+		logging.LogError(logger, "GTFS structural validation failed during periodic update", err)
+		return fmt.Errorf("GTFS validation failed during update: %w", err)
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}

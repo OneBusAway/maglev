@@ -86,16 +86,38 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	ctx := context.Background()
 
-	// Check if we already have this data imported
+	// 1. Check if we already have this data imported
+	var hasExisting bool
 	existingMetadata, err := c.Queries.GetImportMetadata(ctx)
 	if err == nil {
+		hasExisting = true
 		// We have existing metadata, check if hash matches
 		if existingMetadata.FileHash == hashStr && existingMetadata.FileSource == source {
 			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
 				slog.String("hash", hashStr[:8]))
 			return nil
 		}
-		// Hash differs, we need to clear existing data and reimport
+	} else if err != nil && err != sql.ErrNoRows {
+		// Some other error occurred
+		return fmt.Errorf("error checking import metadata: %w", err)
+	}
+
+	// 2. Parse the new data FIRST (before deleting the old working data)
+	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
+	if err != nil {
+		return err
+	}
+
+	// 3. Perform Structural Validation
+	if err := ValidateGTFSData(staticData); err != nil {
+		logging.LogError(logger, "GTFS feed structural validation failed", err)
+		return fmt.Errorf("GTFS validation failed: %w", err)
+	}
+
+	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(staticData.Warnings)))
+
+	// 4. Clear the old data now that we know the new data is completely valid
+	if hasExisting {
 		logging.LogOperation(logger, "gtfs_data_changed_reimporting",
 			slog.String("old_hash", existingMetadata.FileHash[:8]),
 			slog.String("new_hash", hashStr[:8]))
@@ -103,22 +125,9 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		if err != nil {
 			return fmt.Errorf("error clearing existing GTFS data: %w", err)
 		}
-	} else if err != nil && err != sql.ErrNoRows {
-		// Some other error occurred
-		return fmt.Errorf("error checking import metadata: %w", err)
-	}
-	// If err == sql.ErrNoRows, this is the first import, continue normally
-
-	var staticCounts map[string]int
-
-	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
-	if err != nil {
-		return err
 	}
 
-	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(staticData.Warnings)))
-
-	staticCounts = c.staticDataCounts(staticData)
+	staticCounts := c.staticDataCounts(staticData)
 	for k, v := range staticCounts {
 		logging.LogOperation(logger, "static_data_count", slog.String("entity_type", k), slog.Int("count", v))
 	}
@@ -1163,5 +1172,71 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 		slog.Int("indices_created", len(indexGroups)),
 		slog.Int("entries_created", totalEntries))
 
+	return nil
+}
+
+// ValidateGTFSData performs structural validation on the parsed GTFS data before import.
+// It ensures that required files are present and basic foreign-key relationships hold true.
+func ValidateGTFSData(data *gtfs.Static) error {
+	if data == nil {
+		return fmt.Errorf("parsed GTFS data is nil")
+	}
+
+	// Check for required baseline entities
+	if len(data.Agencies) == 0 {
+		return fmt.Errorf("validation failed: no agencies found in feed (missing or empty agency.txt)")
+	}
+	if len(data.Routes) == 0 {
+		return fmt.Errorf("validation failed: no routes found in feed (missing or empty routes.txt)")
+	}
+	if len(data.Stops) == 0 {
+		return fmt.Errorf("validation failed: no stops found in feed (missing or empty stops.txt)")
+	}
+	if len(data.Trips) == 0 {
+		return fmt.Errorf("validation failed: no trips found in feed (missing or empty trips.txt)")
+	}
+
+	// Check for service information (Calendar or CalendarDates)
+	hasService := false
+	for _, service := range data.Services {
+		// Check for calendar.txt regular service
+		if service.Monday || service.Tuesday || service.Wednesday || service.Thursday || service.Friday || service.Saturday || service.Sunday {
+			hasService = true
+			break
+		}
+		// Check for calendar_dates.txt exception service
+		if len(service.AddedDates) > 0 || len(service.RemovedDates) > 0 {
+			hasService = true
+			break
+		}
+	}
+	if !hasService {
+		return fmt.Errorf("validation failed: no service calendars or calendar_dates found")
+	}
+
+	// Foreign Key / Relationship Checks
+	for _, trip := range data.Trips {
+		// Ensure the trip points to a valid route
+		if trip.Route == nil || trip.Route.Id == "" {
+			return fmt.Errorf("validation failed: trip %s references missing or invalid route", trip.ID)
+		}
+
+		// Ensure the trip points to a valid service (Fixes #3)
+		if trip.Service == nil || trip.Service.Id == "" {
+			return fmt.Errorf("validation failed: trip %s references missing or invalid service", trip.ID)
+		}
+
+		// Ensure the trip has stop times
+		if len(trip.StopTimes) == 0 {
+			return fmt.Errorf("validation failed: trip %s has no stop times", trip.ID)
+		}
+
+		// Ensure stop times reference valid stops
+		for _, st := range trip.StopTimes {
+			if st.Stop == nil || st.Stop.Id == "" {
+				return fmt.Errorf("validation failed: stop time for trip %s references missing stop", trip.ID)
+			}
+		}
+	}
 	return nil
 }
