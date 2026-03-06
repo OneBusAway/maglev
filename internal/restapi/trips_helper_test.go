@@ -834,7 +834,7 @@ func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := serviceDate.Add(time.Second) // 00:00:01 — before any stop
 
-	status := &models.TripStatusForTripDetails{}
+	status := &models.TripStatus{}
 	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
 
 	// When before all stops, NextStop should be the first stop
@@ -862,7 +862,7 @@ func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := serviceDate.Add(30 * time.Hour)
 
-	status := &models.TripStatusForTripDetails{}
+	status := &models.TripStatus{}
 	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
 
 	// When past all stops, ClosestStop should be the last stop
@@ -876,7 +876,7 @@ func TestFillStopsFromSchedule_InvalidTripID(t *testing.T) {
 	ctx := context.Background()
 
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	status := &models.TripStatusForTripDetails{}
+	status := &models.TripStatus{}
 
 	// Should not panic or set any stops for an invalid trip
 	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, "any-agency")

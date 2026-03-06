@@ -1,15 +1,15 @@
 package models
 
 type TripDetails struct {
-	Frequency    *Frequency                `json:"frequency"`
-	Schedule     *Schedule                 `json:"schedule"`
-	ServiceDate  int64                     `json:"serviceDate"`
-	SituationIDs []string                  `json:"situationIds"`
-	Status       *TripStatusForTripDetails `json:"status,omitempty"`
-	TripID       string                    `json:"tripId"`
+	Frequency    *Frequency  `json:"frequency"`
+	Schedule     *Schedule   `json:"schedule"`
+	ServiceDate  int64       `json:"serviceDate"`
+	SituationIDs []string    `json:"situationIds"`
+	Status       *TripStatus `json:"status,omitempty"`
+	TripID       string      `json:"tripId"`
 }
 
-func NewTripDetails(trip Trip, tripID string, serviceDate int64, frequency *Frequency, status *TripStatusForTripDetails, schedule *Schedule, situationIDs []string) *TripDetails {
+func NewTripDetails(trip Trip, tripID string, serviceDate int64, frequency *Frequency, status *TripStatus, schedule *Schedule, situationIDs []string) *TripDetails {
 	return &TripDetails{
 		TripID:       tripID,
 		ServiceDate:  serviceDate,
@@ -32,7 +32,7 @@ func NewEmptyTripDetails() *TripDetails {
 	}
 }
 
-type TripStatusForTripDetails struct {
+type TripStatus struct {
 	ActiveTripID               string     `json:"activeTripId"`
 	BlockTripSequence          int        `json:"blockTripSequence"`
 	ClosestStop                string     `json:"closestStop"`

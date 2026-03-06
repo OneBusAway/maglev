@@ -110,7 +110,7 @@ func (api *RestAPI) BuildVehicleStatus(
 	vehicle *gtfs.Vehicle,
 	tripID string,
 	agencyID string,
-	status *models.TripStatusForTripDetails,
+	status *models.TripStatus,
 	currentTime time.Time,
 ) {
 	if vehicle == nil || defaultStaleDetector.Check(vehicle, currentTime) {

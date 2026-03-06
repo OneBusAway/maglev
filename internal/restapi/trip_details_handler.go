@@ -150,7 +150,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
 
 	var schedule *models.Schedule
-	var status *models.TripStatusForTripDetails
+	var status *models.TripStatus
 
 	if params.IncludeStatus {
 		var statusErr error
