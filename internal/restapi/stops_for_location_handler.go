@@ -198,6 +198,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	isLimitExceeded := false
+	var resultRawStopIDs []string
 
 	// Build results using the pre-fetched data
 	for _, stopID := range stopIDs {
@@ -213,6 +214,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		if len(rids) == 0 || agency == nil {
 			continue
 		}
+
+		resultRawStopIDs = append(resultRawStopIDs, stopID)
 
 		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
@@ -243,10 +246,14 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
 	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
 
+	// Populate situation references for alerts affecting the returned stops
+	alerts := api.collectAlertsForStops(resultRawStopIDs)
+	situations := situationsToInterfaces(api.BuildSituationReferences(alerts, ""))
+
 	references := models.ReferencesModel{
 		Agencies:   agencies,
 		Routes:     routes,
-		Situations: []interface{}{},
+		Situations: situations,
 		StopTimes:  []interface{}{},
 		Stops:      []models.Stop{},
 		Trips:      []interface{}{},

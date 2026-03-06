@@ -300,6 +300,11 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Agencies = append(references.Agencies, a)
 	}
 
+	// Populate situation references for alerts affecting the returned stops
+	alerts := api.collectAlertsForStops(stopIDs)
+	situations := api.BuildSituationReferences(alerts, "")
+	references.Situations = append(references.Situations, situationsToInterfaces(situations)...)
+
 	data := struct {
 		LimitExceeded bool                   `json:"limitExceeded"`
 		List          []models.Stop          `json:"list"`

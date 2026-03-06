@@ -212,3 +212,57 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 		return "noImpact"
 	}
 }
+
+// deduplicateAlerts takes multiple slices of alerts and returns a single slice with unique alerts by ID.
+func deduplicateAlerts(alertSlices ...[]gtfs.Alert) []gtfs.Alert {
+	seen := make(map[string]bool)
+	var uniqueAlerts []gtfs.Alert
+
+	for _, slice := range alertSlices {
+		for _, alert := range slice {
+			if !seen[alert.ID] {
+				seen[alert.ID] = true
+				uniqueAlerts = append(uniqueAlerts, alert)
+			}
+		}
+	}
+	return uniqueAlerts
+}
+
+// These functions acquire realTimeMutex internally; no external lock is required for alert access.
+func (api *RestAPI) collectAlertsForStops(stopIDs []string) []gtfs.Alert {
+	var alerts []gtfs.Alert
+	for _, stopID := range stopIDs {
+		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
+	}
+	return alerts
+}
+
+// These functions acquire realTimeMutex internally; no external lock is required for alert access.
+func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
+	var alerts []gtfs.Alert
+	for _, routeID := range routeIDs {
+		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
+	}
+	return alerts
+}
+
+// These functions acquire realTimeMutex internally; no external lock is required for alert access.
+func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) []gtfs.Alert {
+	return deduplicateAlerts(
+		api.collectAlertsForStops(stopIDs),
+		api.collectAlertsForRoutes(routeIDs),
+	)
+}
+
+// situationsToInterfaces converts Situation models to []interface{} for ReferencesModel.
+func situationsToInterfaces(situations []models.Situation) []interface{} {
+	if len(situations) == 0 {
+		return []interface{}{}
+	}
+	result := make([]interface{}, len(situations))
+	for i, s := range situations {
+		result[i] = s
+	}
+	return result
+}

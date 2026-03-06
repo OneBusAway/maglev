@@ -96,6 +96,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	isLimitExceeded := false
+	var resultRawRouteIDs []string
 	// Process routes and filter by query if provided
 	for _, routeRow := range routesForStops {
 		if ctx.Err() != nil {
@@ -111,6 +112,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 		if !routeIDs[combinedRouteID] {
 			agencyIDs[routeRow.AgencyID] = true
+			resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
 
 			results = append(results, models.NewRoute(
 				combinedRouteID,
@@ -137,10 +139,14 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
 
+	// Populate situation references for alerts affecting the returned routes
+	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
+	situations := situationsToInterfaces(api.BuildSituationReferences(alerts, ""))
+
 	references := models.ReferencesModel{
 		Agencies:   agencies,
 		Routes:     []interface{}{},
-		Situations: []interface{}{},
+		Situations: situations,
 		StopTimes:  []interface{}{},
 		Stops:      []models.Stop{},
 		Trips:      []interface{}{},
