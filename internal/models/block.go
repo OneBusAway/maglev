@@ -12,7 +12,7 @@ type BlockConfiguration struct {
 }
 
 type TripBlock struct {
-	AccumulatedSlackTime int             `json:"accumulatedSlackTime"`
+	AccumulatedSlackTime float64         `json:"accumulatedSlackTime"`
 	BlockStopTimes       []BlockStopTime `json:"blockStopTimes"`
 	DistanceAlongBlock   float64         `json:"distanceAlongBlock"`
 	TripId               string          `json:"tripId"`
