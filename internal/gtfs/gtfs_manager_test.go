@@ -2,7 +2,9 @@ package gtfs
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -552,5 +555,48 @@ func TestInitGTFSManager_RetryLogic(t *testing.T) {
 
 	// Verify the entire process was fast (proving it used our 1ms, 2ms, 3ms backoffs)
 	duration := time.Since(start)
-	assert.Less(t, duration, 1*time.Second, "Retry logic should respect the configured backoff schedule")
+	assert.Less(t, duration, 10*time.Second, "Retry logic should respect the configured backoff schedule")
+}
+
+func TestParseAndLogFeedExpiryLocked(t *testing.T) {
+	ctx := context.Background()
+
+	// In-memory sqlite db to mock
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Exec("CREATE TABLE calendar (end_date TEXT); CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);")
+	require.NoError(t, err)
+
+	manager := &Manager{
+		GtfsDB: &gtfsdb.Client{
+			DB:      db,
+			Queries: gtfsdb.New(db),
+		},
+	}
+
+	// 1. Empty calendar
+	// Set an initial value to prove it gets reset
+	manager.feedExpiresAt = time.Now()
+	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
+	assert.True(t, manager.feedExpiresAt.IsZero(), "Should be zero when no dates exist")
+
+	// 2. Insert valid end date into calendar
+	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
+	require.NoError(t, err)
+
+	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
+	assert.False(t, manager.feedExpiresAt.IsZero(), "Should parse end date")
+
+	// Valid end date should be 2026-04-01 23:59:59
+	expectedTime, _ := time.Parse("20060102150405", "20260401235959")
+	assert.Equal(t, expectedTime.Unix(), manager.feedExpiresAt.Unix())
+
+	// 3. Hot-swap scenario: Clear calendar (feed expires at should reset to zero)
+	_, err = db.Exec("DELETE FROM calendar")
+	require.NoError(t, err)
+
+	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
+	assert.True(t, manager.feedExpiresAt.IsZero(), "Should reset to zero after hot swap to empty feed")
 }

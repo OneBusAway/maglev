@@ -753,6 +753,13 @@ func (manager *Manager) FeedExpiresAt() time.Time {
 	return manager.feedExpiresAt
 }
 
+// SetFeedExpiresAt implicitly sets the parsed feed expiry time for tests.
+func (manager *Manager) SetFeedExpiresAt(t time.Time) {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+	manager.feedExpiresAt = t
+}
+
 // SetRealTimeTripsForTest manually sets realtime trips for testing purposes.
 // It stores the trips under the synthetic feed ID "_test" so that a subsequent
 // call to rebuildMergedRealtimeLocked (e.g. from a real feed update) does not

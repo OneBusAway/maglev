@@ -1115,7 +1115,7 @@ WHERE stop_id = ?
 ORDER BY created_at DESC;
 
 -- name: GetFeedEndDate :one
-SELECT MAX(max_date) AS feed_end_date
+SELECT COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
 FROM (
     SELECT MAX(end_date) AS max_date FROM calendar
     UNION ALL

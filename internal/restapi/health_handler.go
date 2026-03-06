@@ -13,7 +13,7 @@ type HealthResponse struct {
 	Status        string `json:"status"`
 	Detail        string `json:"detail,omitempty"`
 	FeedExpiresAt string `json:"feed_expires_at,omitempty"`
-	DataExpired   bool   `json:"data_expired"`
+	DataExpired   bool   `json:"data_expired,omitempty"`
 }
 
 // healthHandler verifies database connectivity and readiness.

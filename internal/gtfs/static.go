@@ -423,6 +423,11 @@ func buildRouteIndex(staticData *gtfs.Static) map[string][]*gtfs.Route {
 // parseAndLogFeedExpiryLocked checks the GTFS calendar for the last active service date
 // NOTE: Caller must guarantee thread-safety
 func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger *slog.Logger) {
+	manager.feedExpiresAt = time.Time{}
+	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
+		manager.Metrics.FeedExpiresAt.Set(0)
+	}
+
 	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
 		return
 	}
@@ -433,7 +438,9 @@ func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger 
 		return
 	}
 
-	if strVal, ok := val.(string); ok && strVal != "" {
+	strVal, _ := val.(string)
+
+	if strVal != "" {
 		parsedTime, err := time.Parse("20060102", strVal)
 		if err != nil {
 			logging.LogError(logger, "Failed to parse feed end date", err, slog.String("date", strVal))

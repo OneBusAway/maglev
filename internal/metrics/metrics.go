@@ -126,6 +126,9 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		},
 	)
 
+	// Default to -1 so that it doesn't trigger alerts before actual feed expiry is loaded
+	feedExpiresAt.Set(-1)
+
 	// Register all metrics with the custom registry
 	registry.MustRegister(
 		httpRequestsTotal,
