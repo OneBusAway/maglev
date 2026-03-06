@@ -269,7 +269,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predictedArrivalTime, predictedDepartureTime int64
 		predicted                                    bool
 		vehicleID                                    string
-		tripStatus                                   *models.TripStatusForTripDetails
+		tripStatus                                   *models.TripStatus
 		distanceFromStop                             float64
 		numberOfStopsAway                            int
 	)

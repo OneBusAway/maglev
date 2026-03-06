@@ -14,21 +14,3 @@ type Location struct {
 	Lat float64 `json:"lat"`
 	Lon float64 `json:"lon"`
 }
-
-type TripStatus struct {
-	ActiveTripID           string   `json:"activeTripId"`
-	BlockTripSequence      int      `json:"blockTripSequence"`
-	ServiceDate            int64    `json:"serviceDate"`
-	ScheduleDeviation      *int     `json:"scheduleDeviation,omitempty"`
-	Scheduled              bool     `json:"scheduled"`
-	TotalDistanceAlongTrip *float64 `json:"totalDistanceAlongTrip,omitempty"`
-	DistanceAlongTrip      *float64 `json:"distanceAlongTrip,omitempty"`
-	Phase                  string   `json:"phase"`
-	Status                 string   `json:"status"`
-	ClosestStop            string   `json:"closestStop,omitempty"`
-	ClosestStopTimeOffset  *int     `json:"closestStopTimeOffset,omitempty"`
-	NextStop               string   `json:"nextStop,omitempty"`
-	NextStopTimeOffset     *int     `json:"nextStopTimeOffset,omitempty"`
-	Orientation            *float64 `json:"orientation,omitempty"`
-	Position               Location `json:"position"`
-}

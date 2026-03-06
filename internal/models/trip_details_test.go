@@ -32,7 +32,7 @@ func TestNewTripDetails(t *testing.T) {
 		Headway:   300,
 	}
 
-	status := &TripStatusForTripDetails{
+	status := &TripStatus{
 		VehicleID: "vehicle_789",
 		Status:    "in_progress",
 	}
@@ -76,7 +76,7 @@ func TestTripDetailsJSON(t *testing.T) {
 		Headway:   300,
 	}
 
-	status := &TripStatusForTripDetails{
+	status := &TripStatus{
 		VehicleID: "vehicle_789",
 		Status:    "in_progress",
 	}
@@ -126,7 +126,7 @@ func TestTripDetailsWithNilValues(t *testing.T) {
 	assert.Nil(t, tripDetails.SituationIDs)
 }
 
-func TestTripStatusForTripDetailsJSON(t *testing.T) {
+func TestTripStatusJSON(t *testing.T) {
 	distanceAlongTrip := 1500.5
 	lastKnownDistanceAlongTrip := 1400.0
 	lastKnownOrientation := 90.0
@@ -141,7 +141,7 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 	closestOffset := 120
 	nextOffset := 240
 
-	tripStatus := TripStatusForTripDetails{
+	tripStatus := TripStatus{
 		ActiveTripID:               "active_trip_123",
 		BlockTripSequence:          2,
 		ClosestStop:                "stop_456",
@@ -182,7 +182,7 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 	jsonData, err := json.Marshal(tripStatus)
 	assert.NoError(t, err)
 
-	var unmarshaledStatus TripStatusForTripDetails
+	var unmarshaledStatus TripStatus
 	err = json.Unmarshal(jsonData, &unmarshaledStatus)
 	assert.NoError(t, err)
 
@@ -194,8 +194,8 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 	assert.Equal(t, tripStatus.Position.Lon, unmarshaledStatus.Position.Lon)
 }
 
-func TestTripStatusForTripDetails_JSONOmitEmpty(t *testing.T) {
-	status := TripStatusForTripDetails{
+func TestTripStatus_JSONOmitEmpty(t *testing.T) {
+	status := TripStatus{
 		Status: "default",
 	}
 

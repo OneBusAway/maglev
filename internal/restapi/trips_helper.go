@@ -20,11 +20,11 @@ func (api *RestAPI) BuildTripStatus(
 	agencyID, tripID string,
 	serviceDate time.Time,
 	currentTime time.Time,
-) (*models.TripStatusForTripDetails, error) {
+) (*models.TripStatus, error) {
 	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
 	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
 		0, 0, 0, 0, serviceDate.Location())
-	status := &models.TripStatusForTripDetails{
+	status := &models.TripStatus{
 		ActiveTripID: utils.FormCombinedID(agencyID, tripID),
 		ServiceDate:  sdMidnight.UnixMilli(),
 		SituationIDs: api.GetSituationIDsForTrip(ctx, tripID),
@@ -262,7 +262,7 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 	return nextTripID, previousTripID, stopTimes, nil
 }
 
-func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatusForTripDetails, tripID string, currentTime time.Time, serviceDate time.Time, agencyID string) {
+func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatus, tripID string, currentTime time.Time, serviceDate time.Time, agencyID string) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
 		slog.Warn("fillStopsFromSchedule: failed to get stop times",

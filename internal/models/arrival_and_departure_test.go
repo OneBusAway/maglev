@@ -33,7 +33,7 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 	occupancyStatus := "MANY_SEATS_AVAILABLE"
 	predictedOccupancy := "FEW_SEATS_AVAILABLE"
 	historicalOccupancy := "STANDING_ROOM_ONLY"
-	tripStatus := &TripStatusForTripDetails{
+	tripStatus := &TripStatus{
 		VehicleID: vehicleID,
 		Status:    "in_progress",
 	}
@@ -88,7 +88,7 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 }
 
 func TestArrivalAndDepartureJSON(t *testing.T) {
-	tripStatus := &TripStatusForTripDetails{
+	tripStatus := &TripStatus{
 		VehicleID: "vehicle_789",
 		Status:    "in_progress",
 	}
