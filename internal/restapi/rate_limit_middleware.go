@@ -131,6 +131,14 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 			return
 		}
 
+		// rate limit headers for successful requests
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.burstSize))
+		remaining := int(math.Floor(limiter.Tokens()))
+		if remaining < 0 {
+			remaining = 0
+		}
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+
 		// Request is allowed, continue to next handler
 		next.ServeHTTP(w, r)
 	})
