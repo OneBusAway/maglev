@@ -306,13 +306,18 @@ func TestStopHandlerWithSituations(t *testing.T) {
 	stops := api.GtfsManager.GetStops()
 	require.NotEmpty(t, stops, "Test data should contain at least one stop")
 
+	routes := api.GtfsManager.GetRoutes()
+	require.NotEmpty(t, routes, "Test data should contain at least one route")
+
 	rawStopID := stops[0].Id
+	rawRouteID := routes[0].Id
 	combinedStopID := utils.FormCombinedID(agencies[0].Id, rawStopID)
 
 	alert := gtfs.Alert{
-		ID: "test-stop-alert-456",
+		ID: "test-cross-entity-alert-789",
 		InformedEntities: []gtfs.AlertInformedEntity{
 			{StopID: &rawStopID},
+			{RouteID: &rawRouteID},
 		},
 	}
 
@@ -330,8 +335,9 @@ func TestStopHandlerWithSituations(t *testing.T) {
 	situations, ok := references["situations"].([]interface{})
 	require.True(t, ok, "References should have a situations array")
 	require.NotEmpty(t, situations, "Situations array should NOT be empty")
-	require.Len(t, situations, 1, "Should have exactly 1 situation")
+
+	require.Len(t, situations, 1, "Should have exactly 1 deduplicated situation despite matching multiple entities")
 
 	situationMap := situations[0].(map[string]interface{})
-	assert.Equal(t, "test-stop-alert-456", situationMap["id"])
+	assert.Equal(t, "test-cross-entity-alert-789", situationMap["id"])
 }

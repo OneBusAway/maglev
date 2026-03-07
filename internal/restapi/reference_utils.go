@@ -229,30 +229,31 @@ func deduplicateAlerts(alertSlices ...[]gtfs.Alert) []gtfs.Alert {
 	return uniqueAlerts
 }
 
-// These functions acquire realTimeMutex internally; no external lock is required for alert access.
+// collectAlertsForStops returns deduplicated alerts matching any of the given stop IDs.
+// It acquires realTimeMutex internally via GetAlertsForStop; no external lock is required.
 func (api *RestAPI) collectAlertsForStops(stopIDs []string) []gtfs.Alert {
 	var alerts []gtfs.Alert
 	for _, stopID := range stopIDs {
 		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
 	}
-	return alerts
+	return deduplicateAlerts(alerts)
 }
 
-// These functions acquire realTimeMutex internally; no external lock is required for alert access.
+// collectAlertsForRoutes returns deduplicated alerts matching any of the given route IDs.
+// It acquires realTimeMutex internally via GetAlertsForRoute; no external lock is required.
 func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
 	var alerts []gtfs.Alert
 	for _, routeID := range routeIDs {
 		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
 	}
-	return alerts
+	return deduplicateAlerts(alerts)
 }
 
-// These functions acquire realTimeMutex internally; no external lock is required for alert access.
+// collectAlertsForStopsAndRoutes returns deduplicated alerts matching any of the given stop or route IDs.
 func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) []gtfs.Alert {
-	return deduplicateAlerts(
-		api.collectAlertsForStops(stopIDs),
-		api.collectAlertsForRoutes(routeIDs),
-	)
+	stopAlerts := api.collectAlertsForStops(stopIDs)
+	routeAlerts := api.collectAlertsForRoutes(routeIDs)
+	return deduplicateAlerts(stopAlerts, routeAlerts)
 }
 
 // situationsToInterfaces converts Situation models to []interface{} for ReferencesModel.
