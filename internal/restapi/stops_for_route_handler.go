@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/twpayne/go-polyline"
@@ -154,14 +155,28 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 		stopIDs = append(stopIDs, stopID)
 	}
 
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-	if err != nil {
-		return nil, err
-	}
+	// Fetch stops and routes in parallel for improved performance
+	var stops []gtfsdb.Stop
+	var routeRows []gtfsdb.GetRouteIDsForStopsRow
+	var stopsErr, routesErr error
+	var wg sync.WaitGroup
 
-	routeRows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
-	if err != nil {
-		return nil, err
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		stops, stopsErr = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	}()
+	go func() {
+		defer wg.Done()
+		routeRows, routesErr = api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+	}()
+	wg.Wait()
+
+	if stopsErr != nil {
+		return nil, stopsErr
+	}
+	if routesErr != nil {
+		return nil, routesErr
 	}
 
 	// Organize Routes in Memory
