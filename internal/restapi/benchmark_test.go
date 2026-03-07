@@ -24,6 +24,13 @@ func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
 	api.SetRoutes(mux)
 	req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST", nil)
 
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
@@ -46,6 +53,7 @@ func BenchmarkStopsForLocation(b *testing.B) {
 		b.Fatalf("expected 200, got %d", w.Code)
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
@@ -68,6 +76,13 @@ func BenchmarkVehiclesForAgency(b *testing.B) {
 	api.SetRoutes(mux)
 	req := httptest.NewRequest(http.MethodGet, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST", nil)
 
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
@@ -91,6 +106,13 @@ func BenchmarkTripDetails(b *testing.B) {
 	api.SetRoutes(mux)
 	req := httptest.NewRequest(http.MethodGet, "/api/where/trip-details/"+tripID+".json?key=TEST", nil)
 
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
