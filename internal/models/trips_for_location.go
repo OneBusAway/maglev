@@ -12,11 +12,12 @@ type TripsForLocationData struct {
 }
 
 type TripsForLocationListEntry struct {
-	Frequency    *int64         `json:"frequency"`
-	Schedule     *TripsSchedule `json:"schedule,omitempty"`
-	ServiceDate  int64          `json:"serviceDate"`
-	SituationIds []string       `json:"situationIds"`
-	TripId       string         `json:"tripId"`
+	Frequency    *int64                    `json:"frequency"`
+	Schedule     *TripsSchedule            `json:"schedule,omitempty"`
+	Status       *TripStatusForTripDetails `json:"status,omitempty"`
+	ServiceDate  int64                     `json:"serviceDate"`
+	SituationIds []string                  `json:"situationIds"`
+	TripId       string                    `json:"tripId"`
 }
 
 func (e TripsForLocationListEntry) GetTripId() string { return e.TripId }
