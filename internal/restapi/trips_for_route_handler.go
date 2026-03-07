@@ -238,7 +238,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		var schedule *models.TripsSchedule
-		var status *models.TripStatusForTripDetails
+		var status *models.TripStatus
 
 		if includeSchedule {
 			schedule = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation, w, r)

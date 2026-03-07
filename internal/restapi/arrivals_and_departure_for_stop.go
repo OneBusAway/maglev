@@ -304,7 +304,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			predictedDepartureTime = scheduledDepartureTime
 			predicted              = false
 			vehicleID              string
-			tripStatus             *models.TripStatusForTripDetails
+			tripStatus             *models.TripStatus
 			distanceFromStop       = 0.0
 			numberOfStopsAway      = 0
 		)
