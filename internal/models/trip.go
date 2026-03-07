@@ -10,7 +10,7 @@ type Trip struct {
 	TripHeadsign   string `json:"tripHeadsign"`
 	TripShortName  string `json:"tripShortName"`
 	RouteShortName string `json:"routeShortName"`
-	PeakOffPeak    int64  `json:"peakOffPeak"`
+	PeakOffPeak    int64  `json:"peakOffpeak"`
 	TimeZone       string `json:"timeZone"`
 }
 
