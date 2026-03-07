@@ -3868,6 +3868,64 @@ func (q *Queries) GetTargetStopTimeWithTotalStops(ctx context.Context, arg GetTa
 	return i, err
 }
 
+const getTargetStopTimeWithTotalStopsBySequence = `-- name: GetTargetStopTimeWithTotalStopsBySequence :one
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    st.pickup_type,
+    st.drop_off_type,
+    st.shape_dist_traveled,
+    st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = ?1) AS total_stops
+FROM stop_times st
+WHERE st.trip_id = ?1 AND st.stop_id = ?2 AND st.stop_sequence = ?3
+LIMIT 1
+`
+
+type GetTargetStopTimeWithTotalStopsBySequenceParams struct {
+	TripID       string
+	StopID       string
+	StopSequence int64
+}
+
+type GetTargetStopTimeWithTotalStopsBySequenceRow struct {
+	TripID            string
+	ArrivalTime       int64
+	DepartureTime     int64
+	StopID            string
+	StopSequence      int64
+	StopHeadsign      sql.NullString
+	PickupType        sql.NullInt64
+	DropOffType       sql.NullInt64
+	ShapeDistTraveled sql.NullFloat64
+	Timepoint         sql.NullInt64
+	TotalStops        int64
+}
+
+// Fetches a specific stop time for a trip+stop+sequence, along with the total stop count,
+func (q *Queries) GetTargetStopTimeWithTotalStopsBySequence(ctx context.Context, arg GetTargetStopTimeWithTotalStopsBySequenceParams) (GetTargetStopTimeWithTotalStopsBySequenceRow, error) {
+	row := q.queryRow(ctx, q.getTargetStopTimeWithTotalStopsBySequenceStmt, getTargetStopTimeWithTotalStopsBySequence, arg.TripID, arg.StopID, arg.StopSequence)
+	var i GetTargetStopTimeWithTotalStopsBySequenceRow
+	err := row.Scan(
+		&i.TripID,
+		&i.ArrivalTime,
+		&i.DepartureTime,
+		&i.StopID,
+		&i.StopSequence,
+		&i.StopHeadsign,
+		&i.PickupType,
+		&i.DropOffType,
+		&i.ShapeDistTraveled,
+		&i.Timepoint,
+		&i.TotalStops,
+	)
+	return i, err
+}
+
 const getTrip = `-- name: GetTrip :one
 SELECT
     id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed, min_arrival_time, max_departure_time

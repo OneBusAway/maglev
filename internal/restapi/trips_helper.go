@@ -242,12 +242,27 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		return "", "", stopTimes, nil
 	}
 
-	// LAG/LEAD return interface{} (nullable); type-assert to string
-	if prev, ok := navResult.PrevTripID.(string); ok && prev != "" {
-		previousTripID = utils.FormCombinedID(agencyID, prev)
+	// LAG/LEAD return interface{} (nullable); type-switch to handle both string and []byte
+	switch prev := navResult.PrevTripID.(type) {
+	case string:
+		if prev != "" {
+			previousTripID = utils.FormCombinedID(agencyID, prev)
+		}
+	case []byte:
+		if len(prev) > 0 {
+			previousTripID = utils.FormCombinedID(agencyID, string(prev))
+		}
 	}
-	if next, ok := navResult.NextTripID.(string); ok && next != "" {
-		nextTripID = utils.FormCombinedID(agencyID, next)
+
+	switch next := navResult.NextTripID.(type) {
+	case string:
+		if next != "" {
+			nextTripID = utils.FormCombinedID(agencyID, next)
+		}
+	case []byte:
+		if len(next) > 0 {
+			nextTripID = utils.FormCombinedID(agencyID, string(next))
+		}
 	}
 
 	stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
@@ -519,10 +534,12 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 		ServiceIds: activeServiceIDs,
 	})
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get block trip sequence",
-			slog.String("trip_id", tripID),
-			slog.String("block_id", trip.BlockID.String),
-			slog.String("error", err.Error()))
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("calculateBlockTripSequence: failed to get block trip sequence",
+				slog.String("trip_id", tripID),
+				slog.String("block_id", trip.BlockID.String),
+				slog.String("error", err.Error()))
+		}
 		return 0
 	}
 

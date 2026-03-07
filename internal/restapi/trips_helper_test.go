@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -1856,6 +1857,7 @@ func TestFindClosestStopByTimeWithDelays_OvernightTrip(t *testing.T) {
 	assert.Equal(t, "stop-1am-next", closestID)
 }
 
+
 func TestInferOrientationFromShape(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1940,3 +1942,81 @@ func TestInferOrientationFromShape(t *testing.T) {
 }
 
 func floatPtr(f float64) *float64 { return &f }
+
+func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	tripID := "trip_single_block"
+	agencyID := "RABA"
+	serviceDate := time.Date(2024, 6, 16, 0, 0, 0, 0, time.UTC)
+
+	_, _ = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "RABA", Name: "RABA", Url: "a", Timezone: "utc"})
+	_, _ = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "1", AgencyID: "RABA", Type: 3})
+	_, _ = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "1", StartDate: "20240101", EndDate: "20241231"})
+
+	_, err := queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   "1",
+		ServiceID: "1",
+		BlockID:   sql.NullString{String: "single_trip_block", Valid: true},
+	})
+	require.NoError(t, err)
+
+	trip, err := queries.GetTrip(ctx, tripID)
+	require.NoError(t, err)
+
+	indexID, err := queries.CreateBlockTripIndex(ctx, gtfsdb.CreateBlockTripIndexParams{
+		IndexKey:        "idx_single",
+		ServiceIds:      "1",
+		StopSequenceKey: "stop1",
+		CreatedAt:       time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	err = queries.CreateBlockTripEntry(ctx, gtfsdb.CreateBlockTripEntryParams{
+		BlockTripIndexID:  indexID,
+		TripID:            tripID,
+		BlockID:           sql.NullString{String: "single_trip_block", Valid: true},
+		ServiceID:         "1",
+		BlockTripSequence: 0,
+	})
+	require.NoError(t, err)
+
+	next, prev, _, err := api.GetNextAndPreviousTripIDs(ctx, &trip, agencyID, serviceDate)
+	require.NoError(t, err)
+	assert.Empty(t, next)
+	assert.Empty(t, prev)
+}
+
+func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	tripID := "trip_not_in_block"
+	agencyID := "RABA"
+	serviceDate := time.Date(2024, 6, 16, 0, 0, 0, 0, time.UTC)
+
+	_, _ = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "RABA", Name: "RABA", Url: "a", Timezone: "utc"})
+	_, _ = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "1", AgencyID: "RABA", Type: 3})
+	_, _ = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "1", StartDate: "20240101", EndDate: "20241231"})
+
+	_, err := queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   "1",
+		ServiceID: "1",
+		BlockID:   sql.NullString{String: "missing_block", Valid: true},
+	})
+	require.NoError(t, err)
+
+	trip, err := queries.GetTrip(ctx, tripID)
+	require.NoError(t, err)
+
+	next, prev, _, err := api.GetNextAndPreviousTripIDs(ctx, &trip, agencyID, serviceDate)
+	require.NoError(t, err)
+	assert.Empty(t, next)
+	assert.Empty(t, prev)
+}
+
