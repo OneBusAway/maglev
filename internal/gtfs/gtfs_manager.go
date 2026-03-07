@@ -72,6 +72,10 @@ type Manager struct {
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
+	// Per-feed agency filter: feedID -> set of allowed agency IDs.
+	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
+	// No lock is required for reads.
+	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
 
@@ -211,13 +215,56 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedTrips:                      make(map[string][]gtfs.Trip),
 		feedVehicles:                   make(map[string][]gtfs.Vehicle),
 		feedAlerts:                     make(map[string][]gtfs.Alert),
+		feedAgencyFilter:               make(map[string]map[string]bool),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
 		Metrics:                        config.Metrics,
 	}
+
+	// Build per-feed agency filters from config
+	for _, feedCfg := range config.RTFeeds {
+		if len(feedCfg.AgencyIDs) > 0 {
+			filter := make(map[string]bool, len(feedCfg.AgencyIDs))
+			for _, id := range feedCfg.AgencyIDs {
+				filter[id] = true
+			}
+			manager.feedAgencyFilter[feedCfg.ID] = filter
+		}
+	}
+
 	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
 
+	// Startup validation and logging for agency filtering
+	enabledFeeds := config.enabledFeeds()
+	for _, feedCfg := range enabledFeeds {
+		if len(feedCfg.AgencyIDs) > 0 {
+			logger.Info("realtime feed agency filtering active",
+				slog.String("feed", feedCfg.ID),
+				slog.Any("agency_ids", feedCfg.AgencyIDs),
+			)
+
+			manager.staticMutex.RLock()
+			var validAgencies []string
+			for _, configuredAgencyID := range feedCfg.AgencyIDs {
+				if _, exists := manager.agenciesMap[configuredAgencyID]; !exists {
+					if validAgencies == nil {
+						for validID := range manager.agenciesMap {
+							validAgencies = append(validAgencies, validID)
+						}
+						sort.Strings(validAgencies)
+					}
+
+					logger.Warn("configured agency-id not found in static GTFS data",
+						slog.String("feed", feedCfg.ID),
+						slog.String("invalid_agency_id", configuredAgencyID),
+						slog.Any("valid_agency_ids", validAgencies),
+					)
+				}
+			}
+			manager.staticMutex.RUnlock()
+		}
+	}
 	manager.parseAndLogFeedExpiryLocked(ctx, logger)
 
 	// Populate systemETag from import metadata
@@ -237,7 +284,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	// STARTUP SEQUENCING:
 	// If realtime is enabled, perform the first fetch synchronously for each feed
 	// to "warm" the cache before marking the manager as ready.
-	enabledFeeds := config.enabledFeeds()
 	for _, feedCfg := range enabledFeeds {
 		initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		success := manager.updateFeedRealtime(initCtx, feedCfg)
