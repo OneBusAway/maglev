@@ -6,24 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func TestResolveAgencyLocation(t *testing.T) {
-	t.Run("valid timezone", func(t *testing.T) {
-		loc, err := time.LoadLocation("America/Los_Angeles")
-		require.NoError(t, err)
-		require.NotNil(t, loc)
-	})
-
-	t.Run("invalid timezone", func(t *testing.T) {
-		loc, err := time.LoadLocation("Invalid/Zone")
-		require.Error(t, err)
-		require.Nil(t, loc)
-	})
-}
 
 func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t)
