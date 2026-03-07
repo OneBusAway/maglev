@@ -161,6 +161,30 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 				}
 				return nil, fmt.Errorf("failed to load GTFS data after %d attempts: %w", maxAttempts, err)
 			}
+
+			// Perform structural validation on the in-memory data
+			if err = gtfsdb.ValidateGTFSData(staticData); err != nil {
+				if attempt < maxAttempts {
+					delay := backoffs[attempt-1]
+					logging.LogError(logger, "GTFS static data structural validation failed, retrying", err,
+						slog.Int("attempt", attempt),
+						slog.Int("max_attempts", maxAttempts),
+						slog.Duration("retry_delay", delay),
+					)
+
+					// Reset staticData to nil so the retry loop fetches it again
+					staticData = nil
+
+					// Cancellable sleep
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(delay):
+					}
+					continue
+				}
+				return nil, fmt.Errorf("failed GTFS structural validation after %d attempts: %w", maxAttempts, err)
+			}
 		}
 
 		// Attempt to build the SQLite DB if we haven't already succeeded
