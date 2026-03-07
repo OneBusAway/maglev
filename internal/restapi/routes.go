@@ -10,9 +10,7 @@ type handlerFunc func(w http.ResponseWriter, r *http.Request)
 
 // rateLimitAndValidateAPIKey combines rate limiting and API key validation
 func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Handler {
-	finalHandlerHttp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		finalHandler(w, r)
-	})
+	finalHandlerHttp := http.HandlerFunc(finalHandler)
 
 	// Apply rate limiting directly to the final handler - use the shared rate limiter instance
 	var rateLimitedHandler http.Handler
@@ -35,8 +33,8 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 }
 
 // etagStatic applies ETag middleware at the innermost handler level.
-// By using an unnamed function type, Go allows this to be passed seamlessly into both
-// rateLimitAndValidateAPIKey (which expects handlerFunc) and withID (which expects http.HandlerFunc).
+// By using an unnamed function type, Go allows this to be passed seamlessly into
+// rateLimitAndValidateAPIKey (which expects handlerFunc).
 func etagStatic(api *RestAPI, handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	getETagFunc := func() string {
 		if api.GtfsManager != nil {
@@ -55,9 +53,7 @@ func etagStatic(api *RestAPI, handler func(http.ResponseWriter, *http.Request)) 
 
 // rateLimitAndValidateProtectedAPIKey requires a protected API key without middleware ID validation
 func rateLimitAndValidateProtectedAPIKey(api *RestAPI, finalHandler handlerFunc) http.Handler {
-	finalHandlerHttp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		finalHandler(w, r)
-	})
+	finalHandlerHttp := http.HandlerFunc(finalHandler)
 
 	// Apply rate limiting directly to the final handler
 	var rateLimitedHandler http.Handler

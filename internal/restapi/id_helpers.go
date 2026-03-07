@@ -21,11 +21,8 @@ func (api *RestAPI) extractAndValidateID(w http.ResponseWriter, r *http.Request)
 
 // extractAndValidateAgencyCodeID extracts and validates a combined agency_code ID from the URL
 func (api *RestAPI) extractAndValidateAgencyCodeID(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	id := utils.ExtractIDFromParams(r)
-
-	if err := utils.ValidateID(id); err != nil {
-		fieldErrors := map[string][]string{"id": {err.Error()}}
-		api.validationErrorResponse(w, r, fieldErrors)
+	id, ok := api.extractAndValidateID(w, r)
+	if !ok {
 		return "", "", false
 	}
 
