@@ -385,7 +385,7 @@ func (manager *Manager) GetStopsForLocation(
 				// searches are never artificially truncated by localized bounding boxes.
 				radius = models.GlobalSearchRadiusInMeters
 			} else {
-				radius = 500
+				radius = models.DefaultSearchRadiusInMeters // Standard constant for radius
 			}
 		}
 		bounds = utils.CalculateBounds(lat, lon, radius)
