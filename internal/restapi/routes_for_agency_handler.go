@@ -45,7 +45,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		},
 		Routes:     []models.Route{},
 		Situations: []models.Situation{},
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      []models.Stop{},
 		Trips:      []models.Trip{},
 	}

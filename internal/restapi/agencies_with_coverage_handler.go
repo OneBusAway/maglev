@@ -61,7 +61,7 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 		Agencies:   agencyReferences,
 		Routes:     []models.Route{},
 		Situations: []models.Situation{},
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      []models.Stop{},
 		Trips:      []models.Trip{},
 	}

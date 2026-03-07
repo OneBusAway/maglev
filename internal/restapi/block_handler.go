@@ -262,7 +262,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		Routes:     routes,
 		Stops:      stops,
 		Trips:      trips,
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Situations: []models.Situation{},
 	}, nil
 }

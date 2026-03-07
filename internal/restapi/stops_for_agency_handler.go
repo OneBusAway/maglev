@@ -69,7 +69,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		Agencies:   []models.AgencyReference{agencyRef},
 		Routes:     routeRefs,
 		Situations: []models.Situation{},
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      []models.Stop{},
 		Trips:      []models.Trip{},
 	}

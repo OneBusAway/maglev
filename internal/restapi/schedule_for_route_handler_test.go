@@ -114,14 +114,18 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		require.NotEmpty(t, stopTimesRef)
 
 		// Validate a reference stopTime contains stopId combined IDs
-        firstRefST := stopTimesRef[0].(map[string]interface{})
-        
-        refSid, ok := firstRefST["stopId"].(string)
-        require.True(t, ok, "stopId should be present and be a string")
-        require.Contains(t, refSid, "_", "stopId should be a combined ID")
-        
-        _, hasArrival := firstRefST["arrivalTime"].(float64)
-        assert.True(t, hasArrival, "arrivalTime should be present")
+		firstRefST := stopTimesRef[0].(map[string]interface{})
+
+		refTid, ok := firstRefST["tripId"].(string)
+		require.True(t, ok, "tripId should be present and be a string")
+		require.Contains(t, refTid, "_", "tripId should be a combined ID")
+
+		refSid, ok := firstRefST["stopId"].(string)
+		require.True(t, ok, "stopId should be present and be a string")
+		require.Contains(t, refSid, "_", "stopId should be a combined ID")
+
+		_, hasArrival := firstRefST["arrivalTime"].(float64)
+		assert.True(t, hasArrival, "arrivalTime should be present")
 	})
 
 	t.Run("Invalid route", func(t *testing.T) {

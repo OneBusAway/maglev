@@ -214,8 +214,8 @@ func TestFilterRoutes(t *testing.T) {
 
 			// Verify that returned routes are correct
 			for _, r := range result {
-    			route := r
-    			assert.True(t, tt.present[route.ID])
+				route := r
+				assert.True(t, tt.present[route.ID])
 			}
 		})
 	}
@@ -278,9 +278,8 @@ func TestGetAllRoutesRefs(t *testing.T) {
 
 		// Verify that all routes are returned
 		routeIDs := make(map[string]bool)
-		for _, r := range result {
-    		route := r
-    		routeIDs[route.ID] = true
+		for _, route := range result {
+			routeIDs[route.ID] = true
 		}
 
 		assert.True(t, routeIDs["agency1_route1"])
@@ -310,12 +309,11 @@ func TestGetAllRoutesRefs_VerifyFields(t *testing.T) {
 
 	// Find route1 in results
 	var route1 models.Route
-	for _, r := range result {
-    	route := r
-    	if route.AgencyID == "agency1" && route.ShortName == "R1" {
-        	route1 = route
-        	break
-    	}
+	for _, route := range result {
+		if route.AgencyID == "agency1" && route.ShortName == "R1" {
+			route1 = route
+			break
+		}
 	}
 
 	assert.Equal(t, "agency1_route1", route1.ID)

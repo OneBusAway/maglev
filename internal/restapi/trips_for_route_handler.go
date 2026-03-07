@@ -490,7 +490,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 		Agencies:   agencyList,
 		Routes:     routes,
 		Situations: []models.Situation{},
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      stopList,
 		Trips:      tripsRefList,
 	}

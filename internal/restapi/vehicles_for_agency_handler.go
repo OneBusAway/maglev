@@ -57,7 +57,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Maps to build references
 	agencyRefs := make(map[string]models.AgencyReference)
 	routeRefs := make(map[string]models.Route)
-	tripRefs := make(map[string]interface{})
+	tripRefs := make(map[string]models.Trip)
 
 	for _, vehicle := range vehiclesForAgency {
 		if ctx.Err() != nil {
@@ -122,9 +122,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			vehicleStatus.TripStatus = tripStatus
 
 			// Add trip to references (basic trip reference)
-			tripRefs[vehicle.Trip.ID.ID] = map[string]interface{}{
-				"id":      vehicle.Trip.ID.ID,
-				"routeId": vehicle.Trip.ID.RouteID,
+			tripRefs[vehicle.Trip.ID.ID] = models.Trip{
+				ID:      utils.FormCombinedID(id, vehicle.Trip.ID.ID),
+				RouteID: utils.FormCombinedID(id, vehicle.Trip.ID.RouteID),
 			}
 
 			// Add route to references (from batch-fetched map)
@@ -184,24 +184,15 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	tripRefList := make([]models.Trip, 0, len(tripRefs))
-    for _, tripRef := range tripRefs {
-        if m, ok := tripRef.(map[string]interface{}); ok {
-            tripID, _ := m["id"].(string)
-            routeID, _ := m["routeId"].(string)
-            tripRefList = append(tripRefList, models.Trip{
-                ID:      utils.FormCombinedID(id, tripID),
-                RouteID: utils.FormCombinedID(id, routeID),
-            })
-        } else if t, ok := tripRef.(models.Trip); ok {
-            tripRefList = append(tripRefList, t)
-        }
-    }
+	for _, tripRef := range tripRefs {
+		tripRefList = append(tripRefList, tripRef)
+	}
 
 	references := models.ReferencesModel{
 		Agencies:   agencyRefList,
 		Routes:     routeRefList,
 		Situations: []models.Situation{},
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      []models.Stop{},
 		Trips:      tripRefList,
 	}

@@ -141,7 +141,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 	var stopTripGroupings []models.StopTripGrouping
 	globalStopIDSet := make(map[string]struct{})
-	var stopTimesRefs []interface{}
+	var stopTimesRefs [][]models.RouteStopTime
 	for dirID, groupedTrips := range groupings {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
@@ -279,18 +279,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	for _, sref := range stopTimesRefs {
-        if v, ok := sref.([]models.RouteStopTime); ok {
-            for _, st := range v {
-                mappedStop := models.StopTime{
-                    ArrivalTime:   st.ArrivalTime,
-                    DepartureTime: st.DepartureTime,
-                    StopID:        utils.FormCombinedID(agencyID, st.StopID),
-                    StopHeadsign:  st.StopHeadsign,
-                }
-                references.StopTimes = append(references.StopTimes, mappedStop)
-            }
-        }
-    }
+		references.StopTimes = append(references.StopTimes, sref...)
+	}
 
 	entry := models.ScheduleForRouteEntry{
 		RouteID:           utils.FormCombinedID(agencyID, routeID),

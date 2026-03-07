@@ -211,14 +211,14 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
-        if err != nil {
-            api.serverErrorResponse(w, r, err)
-            return
-        }
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
-        for _, t := range referencedTrips {
-            references.Trips = append(references.Trips, *t)
-        }
+		for _, t := range referencedTrips {
+			references.Trips = append(references.Trips, *t)
+		}
 	}
 
 	agencyModel := models.NewAgencyReference(
@@ -252,12 +252,12 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Stops = stops
 
 		routes, err := api.BuildRouteReference(ctx, agencyID, stops)
-        if err != nil {
-            api.serverErrorResponse(w, r, err)
-            return
-        }
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
-        references.Routes = routes
+		references.Routes = routes
 	}
 
 	response := models.NewEntryResponse(tripDetails, references, api.Clock)

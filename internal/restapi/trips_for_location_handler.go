@@ -737,7 +737,7 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 		Agencies:   rb.getAgenciesList(),
 		Routes:     rb.getRoutesList(),
 		Situations: []models.Situation{},
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      rb.stopList,
 		Trips:      rb.tripsRefList,
 	}
