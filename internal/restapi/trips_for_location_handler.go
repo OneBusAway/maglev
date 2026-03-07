@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -145,7 +146,10 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, _ = time.LoadLocation(currentAgency.Timezone)
+	currentLocation, err = time.LoadLocation(currentAgency.Timezone)
+	if err != nil {
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, fmt.Errorf("invalid timezone for agency %q: %w", currentAgency.Id, err)
+	}
 
 	timeParam := queryParams.Get("time")
 	currentTime := api.Clock.Now().In(currentLocation)
