@@ -255,7 +255,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				utils.FormCombinedID(agencyID, t.BlockID.String),
 				utils.FormCombinedID(agencyID, t.ShapeID.String),
 			)
-			references.Trips = append(references.Trips, tripRef)
+			references.Trips = append(references.Trips, *tripRef)
 			entryTrips = append(entryTrips, *tripRef)
 		}
 	}
@@ -279,21 +279,18 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	for _, sref := range stopTimesRefs {
-		switch v := sref.(type) {
-		case []models.RouteStopTime:
-			for _, st := range v {
-				references.StopTimes = append(references.StopTimes, st)
-			}
-		case []map[string]interface{}:
-			for _, st := range v {
-				references.StopTimes = append(references.StopTimes, st)
-			}
-		case []interface{}:
-			references.StopTimes = append(references.StopTimes, v...)
-		default:
-			references.StopTimes = append(references.StopTimes, v)
-		}
-	}
+        if v, ok := sref.([]models.RouteStopTime); ok {
+            for _, st := range v {
+                mappedStop := models.StopTime{
+                    ArrivalTime:   st.ArrivalTime,
+                    DepartureTime: st.DepartureTime,
+                    StopID:        utils.FormCombinedID(agencyID, st.StopID),
+                    StopHeadsign:  st.StopHeadsign,
+                }
+                references.StopTimes = append(references.StopTimes, mappedStop)
+            }
+        }
+    }
 
 	entry := models.ScheduleForRouteEntry{
 		RouteID:           utils.FormCombinedID(agencyID, routeID),

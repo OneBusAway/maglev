@@ -77,11 +77,11 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
 		references := models.ReferencesModel{
 			Agencies:   agencies,
-			Routes:     []interface{}{},
-			Situations: []interface{}{},
-			StopTimes:  []interface{}{},
+			Routes:     []models.Route{},
+			Situations: []models.Situation{},
+			StopTimes:  []models.StopTime{},
 			Stops:      []models.Stop{},
-			Trips:      []interface{}{},
+			Trips:      []models.Trip{},
 		}
 		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
@@ -141,15 +141,15 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	// Populate situation references for alerts affecting the returned routes
 	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
-	situations := situationsToInterfaces(api.BuildSituationReferences(alerts))
+	situations := api.BuildSituationReferences(alerts)
 
 	references := models.ReferencesModel{
 		Agencies:   agencies,
-		Routes:     []interface{}{},
+		Routes:     []models.Route{},
 		Situations: situations,
-		StopTimes:  []interface{}{},
+		StopTimes:  []models.StopTime{},
 		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
+		Trips:      []models.Trip{},
 	}
 
 	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)

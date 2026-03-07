@@ -178,21 +178,30 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		agencyRefList = append(agencyRefList, agencyRef)
 	}
 
-	routeRefList := make([]interface{}, 0, len(routeRefs))
+	routeRefList := make([]models.Route, 0, len(routeRefs))
 	for _, routeRef := range routeRefs {
 		routeRefList = append(routeRefList, routeRef)
 	}
 
-	tripRefList := make([]interface{}, 0, len(tripRefs))
-	for _, tripRef := range tripRefs {
-		tripRefList = append(tripRefList, tripRef)
-	}
+	tripRefList := make([]models.Trip, 0, len(tripRefs))
+    for _, tripRef := range tripRefs {
+        if m, ok := tripRef.(map[string]interface{}); ok {
+            tripID, _ := m["id"].(string)
+            routeID, _ := m["routeId"].(string)
+            tripRefList = append(tripRefList, models.Trip{
+                ID:      utils.FormCombinedID(id, tripID),
+                RouteID: utils.FormCombinedID(id, routeID),
+            })
+        } else if t, ok := tripRef.(models.Trip); ok {
+            tripRefList = append(tripRefList, t)
+        }
+    }
 
 	references := models.ReferencesModel{
 		Agencies:   agencyRefList,
 		Routes:     routeRefList,
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
+		Situations: []models.Situation{},
+		StopTimes:  []models.StopTime{},
 		Stops:      []models.Stop{},
 		Trips:      tripRefList,
 	}

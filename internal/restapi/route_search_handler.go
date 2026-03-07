@@ -120,15 +120,15 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
 	}
 	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
-	situations := situationsToInterfaces(api.BuildSituationReferences(alerts))
+	situations := api.BuildSituationReferences(alerts)
 
 	references := models.ReferencesModel{
 		Agencies:   agencies,
-		Routes:     []interface{}{},
+		Routes:     []models.Route{},
 		Situations: situations,
-		StopTimes:  []interface{}{},
+		StopTimes:  []models.StopTime{},
 		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
+		Trips:      []models.Trip{},
 	}
 
 	response := models.NewListResponse(results, references, false, api.Clock)

@@ -214,8 +214,8 @@ func TestFilterRoutes(t *testing.T) {
 
 			// Verify that returned routes are correct
 			for _, r := range result {
-				route := r.(models.Route)
-				assert.True(t, tt.present[route.ID])
+    			route := r
+    			assert.True(t, tt.present[route.ID])
 			}
 		})
 	}
@@ -231,7 +231,7 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	result := FilterRoutes(client.Queries, ctx, present)
 
 	require.Len(t, result, 1)
-	route := result[0].(models.Route)
+	route := result[0]
 
 	assert.Equal(t, "agency1_route1", route.ID)
 	assert.Equal(t, "agency1", route.AgencyID)
@@ -279,8 +279,8 @@ func TestGetAllRoutesRefs(t *testing.T) {
 		// Verify that all routes are returned
 		routeIDs := make(map[string]bool)
 		for _, r := range result {
-			route := r.(models.Route)
-			routeIDs[route.ID] = true
+    		route := r
+    		routeIDs[route.ID] = true
 		}
 
 		assert.True(t, routeIDs["agency1_route1"])
@@ -294,7 +294,7 @@ func TestGetAllRoutesRefs(t *testing.T) {
 		require.NotEmpty(t, result)
 
 		// Check first route has combined ID
-		route := result[0].(models.Route)
+		route := result[0]
 		assert.Contains(t, route.ID, "_", "Route ID should be in combined format agency_route")
 	})
 }
@@ -311,11 +311,11 @@ func TestGetAllRoutesRefs_VerifyFields(t *testing.T) {
 	// Find route1 in results
 	var route1 models.Route
 	for _, r := range result {
-		route := r.(models.Route)
-		if route.AgencyID == "agency1" && route.ShortName == "R1" {
-			route1 = route
-			break
-		}
+    	route := r
+    	if route.AgencyID == "agency1" && route.ShortName == "R1" {
+        	route1 = route
+        	break
+    	}
 	}
 
 	assert.Equal(t, "agency1_route1", route1.ID)

@@ -285,7 +285,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			utils.FormCombinedID(agencyID, trip.BlockID.String),
 			utils.FormCombinedID(agencyID, trip.ShapeID.String),
 		)
-		references.Trips = append(references.Trips, tripRef)
+		references.Trips = append(references.Trips, *tripRef)
 	}
 
 	routeIDsWithAgency := make([]string, 0, len(routeIDs))
