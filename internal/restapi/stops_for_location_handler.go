@@ -248,7 +248,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Populate situation references for alerts affecting the returned stops
 	alerts := api.collectAlertsForStops(resultRawStopIDs)
-	situations := situationsToInterfaces(api.BuildSituationReferences(alerts, ""))
+	situations := situationsToInterfaces(api.BuildSituationReferences(alerts))
 
 	references := models.ReferencesModel{
 		Agencies:   agencies,

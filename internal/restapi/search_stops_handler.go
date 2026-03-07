@@ -302,7 +302,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Populate situation references for alerts affecting the returned stops
 	alerts := api.collectAlertsForStops(stopIDs)
-	situations := api.BuildSituationReferences(alerts, "")
+	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situationsToInterfaces(situations)...)
 
 	data := struct {

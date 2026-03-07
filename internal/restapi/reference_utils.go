@@ -79,7 +79,7 @@ func (api *RestAPI) BuildRouteReferencesAsInterface(ctx context.Context, agencyI
 	return routeRefs, nil
 }
 
-func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert, agencyID string) []models.Situation {
+func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 
 	for _, alert := range alerts {

@@ -120,7 +120,7 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
 	}
 	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
-	situations := situationsToInterfaces(api.BuildSituationReferences(alerts, ""))
+	situations := situationsToInterfaces(api.BuildSituationReferences(alerts))
 
 	references := models.ReferencesModel{
 		Agencies:   agencies,

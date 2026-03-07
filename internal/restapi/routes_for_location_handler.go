@@ -141,7 +141,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	// Populate situation references for alerts affecting the returned routes
 	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
-	situations := situationsToInterfaces(api.BuildSituationReferences(alerts, ""))
+	situations := situationsToInterfaces(api.BuildSituationReferences(alerts))
 
 	references := models.ReferencesModel{
 		Agencies:   agencies,

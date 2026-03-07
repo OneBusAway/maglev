@@ -240,7 +240,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if len(situationsIDs) > 0 {
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts, agencyID)
+			situations := api.BuildSituationReferences(alerts)
 			for _, situation := range situations {
 				references.Situations = append(references.Situations, situation)
 			}
