@@ -126,7 +126,7 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		Agencies:   agencies,
 		Routes:     []models.Route{},
 		Situations: situations,
-		StopTimes:  []models.StopTime{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      []models.Stop{},
 		Trips:      []models.Trip{},
 	}
