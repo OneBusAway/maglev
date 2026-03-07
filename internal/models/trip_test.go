@@ -13,7 +13,7 @@ func TestNewTripReference(t *testing.T) {
 	serviceID := "service_1"
 	headSign := "Downtown Terminal"
 	shortName := "FMS"
-	directionID := int64(1)
+	directionID := "1"
 	blockID := "block_1"
 	shapeID := "shape_1"
 
@@ -33,14 +33,14 @@ func TestNewTripReference(t *testing.T) {
 }
 
 func TestNewTripReferenceWithEmptyValues(t *testing.T) {
-	trip := NewTripReference("", "", "", "", "", 0, "", "")
+	trip := NewTripReference("", "", "", "", "", "0", "", "")
 
 	assert.Equal(t, "", trip.ID)
 	assert.Equal(t, "", trip.RouteID)
 	assert.Equal(t, "", trip.ServiceID)
 	assert.Equal(t, "", trip.TripHeadsign)
 	assert.Equal(t, "", trip.TripShortName)
-	assert.Equal(t, int64(0), trip.DirectionID)
+	assert.Equal(t, "0", trip.DirectionID)
 	assert.Equal(t, "", trip.BlockID)
 	assert.Equal(t, "", trip.ShapeID)
 	assert.Equal(t, "", trip.RouteShortName)
@@ -51,7 +51,7 @@ func TestNewTripReferenceWithEmptyValues(t *testing.T) {
 func TestNewTripResponse(t *testing.T) {
 	trip := &Trip{
 		BlockID:        "block_1",
-		DirectionID:    1,
+		DirectionID:    "1",
 		ID:             "unitrans_trip_1",
 		RouteID:        "unitrans_FMS",
 		ServiceID:      "service_1",
@@ -74,7 +74,7 @@ func TestNewTripResponse(t *testing.T) {
 func TestTripJSON(t *testing.T) {
 	trip := Trip{
 		BlockID:        "block_1",
-		DirectionID:    1,
+		DirectionID:    "1",
 		ID:             "unitrans_trip_1",
 		RouteID:        "unitrans_FMS",
 		ServiceID:      "service_1",
@@ -88,6 +88,14 @@ func TestTripJSON(t *testing.T) {
 
 	jsonData, err := json.Marshal(trip)
 	assert.NoError(t, err)
+
+	// Ensure JSON contains correct field name
+	var m map[string]interface{}
+	err = json.Unmarshal(jsonData, &m)
+	assert.NoError(t, err)
+
+	_, ok := m["peakOffpeak"]
+	assert.True(t, ok)
 
 	var unmarshaledTrip Trip
 	err = json.Unmarshal(jsonData, &unmarshaledTrip)
@@ -109,7 +117,7 @@ func TestTripJSON(t *testing.T) {
 func TestTripResponseJSON(t *testing.T) {
 	trip := &Trip{
 		BlockID:        "block_1",
-		DirectionID:    1,
+		DirectionID:    "1",
 		ID:             "unitrans_trip_1",
 		RouteID:        "unitrans_FMS",
 		ServiceID:      "service_1",

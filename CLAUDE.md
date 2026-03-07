@@ -28,6 +28,14 @@ All commands are managed through the Makefile:
 - `make watch` - Run with Air for live reloading during development
 - `make fmt` - Format all Go code with `go fmt`
 - `make clean` - Clean build artifacts
+- `make build-pure` - Build without CGO (pure Go SQLite driver)
+- `make test-pure` - Run tests without CGO
+
+**Build tags**: When running `go` commands directly (not via Makefile), you must pass `-tags "sqlite_fts5"` for CGO builds or `-tags "purego"` for pure Go builds.
+
+## Load Testing and Profiling
+
+See `loadtest/README.md`. Start with pprof enabled: `MAGLEV_ENABLE_PPROF=1 make run`, then run `k6 run loadtest/k6/scenarios.js`. Capture CPU profiles with `go tool pprof http://localhost:4000/debug/pprof/profile?seconds=30`.
 
 ## Docker Commands
 
@@ -542,4 +550,4 @@ The official REST API documentation is available at: https://developer.onebusawa
 
 The Open API specification is located at https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
 
-You should always fetch the latest version of the OpenAPI specification from the OneBusAway SDK Config repository before implementing new endpoints or modifying existing ones.
+**All API endpoints MUST behave identically to what is defined in this OpenAPI spec.** This is the single source of truth for request parameters, response schemas, field names, types, and status codes. Always fetch the latest version of this spec before implementing new endpoints or modifying existing ones. If the codebase diverges from the spec, the spec wins.

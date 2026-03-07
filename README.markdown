@@ -231,10 +231,30 @@ make build
 
 # Start the debugger
 dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./bin/maglev
-
 ```
 
 This allows debugging in the GoLand IDE.
+
+### Profiling (pprof)
+
+Maglev includes built-in Go `pprof` endpoints for debugging memory leaks and CPU bottlenecks. For security reasons, these are completely disabled by default and are never exposed on the public API port.
+
+To enable the profiling server, set the following environment variable:
+
+```bash
+MAGLEV_ENABLE_PPROF=1
+```
+
+When enabled, the debug server will start strictly on the local loopback interface at `127.0.0.1:6060`.
+
+**Accessing in Production:**  
+To securely access the profiles on a remote production server, do not open the port to the internet. Instead, use an SSH tunnel:
+
+```bash
+ssh -L 6060:localhost:6060 your-user@production-server
+```
+
+You can then view the profiles locally in your browser at `http://localhost:6060/debug/pprof/`.
 
 ## SQL
 

@@ -299,7 +299,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predicted = true
 	}
 
-	status, _ := api.BuildTripStatus(ctx, route.AgencyID, tripID, serviceDate, currentTime)
+	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, serviceDate, currentTime)
+	if statusErr != nil {
+		api.Logger.Warn("BuildTripStatus failed",
+			"tripID", tripID, "error", statusErr)
+	}
 	if status != nil {
 		tripStatus = status
 
@@ -335,6 +339,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
+	var lastUpdateTimePtr *int64
+	if lastUpdateTime > 0 {
+		lastUpdateTimePtr = utils.Int64Ptr(lastUpdateTime)
+	}
 
 	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
 
@@ -351,7 +359,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		scheduledDepartureTimeMs,                       // scheduledDepartureTime
 		predictedArrivalTime,                           // predictedArrivalTime
 		predictedDepartureTime,                         // predictedDepartureTime
-		lastUpdateTime,                                 // lastUpdateTime
+		lastUpdateTimePtr,                              // lastUpdateTime
 		predicted,                                      // predicted
 		true,                                           // arrivalEnabled
 		true,                                           // departureEnabled
@@ -411,7 +419,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
 		trip.TripHeadsign.String,
 		"", // trip short name
-		trip.DirectionID.Int64,
+		strconv.FormatInt(trip.DirectionID.Int64, 10),
 		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
 		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
 	)
@@ -433,7 +441,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
 						activeTrip.TripHeadsign.String,
 						"", // trip short name
-						activeTrip.DirectionID.Int64,
+						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
 					)

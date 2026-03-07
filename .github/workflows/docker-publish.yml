@@ -62,6 +62,8 @@ jobs:
           tags: |
             ghcr.io/onebusaway/maglev:latest
             ghcr.io/onebusaway/maglev:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # Push to Docker Hub on published releases (non-prerelease only)
   buildx-release:
@@ -104,3 +106,5 @@ jobs:
           tags: |
             opentransitsoftwarefoundation/maglev:${{ env.IMAGE_TAG }}
             opentransitsoftwarefoundation/maglev:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

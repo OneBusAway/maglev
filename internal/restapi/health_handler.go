@@ -3,14 +3,17 @@ package restapi
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"maglev.onebusaway.org/internal/logging"
 )
 
 // HealthResponse represents the JSON response from the health endpoint.
 type HealthResponse struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Status        string `json:"status"`
+	Detail        string `json:"detail,omitempty"`
+	FeedExpiresAt string `json:"feed_expires_at,omitempty"`
+	DataExpired   bool   `json:"data_expired,omitempty"`
 }
 
 // healthHandler verifies database connectivity and readiness.
@@ -51,8 +54,16 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// All checks passed
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(HealthResponse{
+	response := HealthResponse{
 		Status: "ok",
-	})
+	}
+
+	expiresAt := api.GtfsManager.FeedExpiresAt()
+	if !expiresAt.IsZero() {
+		response.FeedExpiresAt = expiresAt.Format(time.RFC3339)
+		response.DataExpired = time.Now().After(expiresAt)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
 }

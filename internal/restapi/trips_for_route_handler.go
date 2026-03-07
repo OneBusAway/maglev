@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -124,6 +125,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	for blockID := range allLinkedBlocks {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -224,6 +226,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	var result []models.TripsForRouteListEntry
 	for _, activeEntry := range activeTrips {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -359,7 +362,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 				ServiceID:     trip.ServiceID,
 				TripHeadsign:  trip.TripHeadsign.String,
 				TripShortName: trip.TripShortName.String,
-				DirectionID:   trip.DirectionID.Int64,
+				DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
 				BlockID:       trip.BlockID.String,
 				ShapeID:       trip.ShapeID.String,
 				PeakOffPeak:   0,

@@ -8,7 +8,7 @@ type ArrivalAndDeparture struct {
 	DistanceFromStop           float64                   `json:"distanceFromStop"`
 	Frequency                  *Frequency                `json:"frequency"`
 	HistoricalOccupancy        string                    `json:"historicalOccupancy"`
-	LastUpdateTime             int64                     `json:"lastUpdateTime"`
+	LastUpdateTime             *int64                    `json:"lastUpdateTime,omitempty"`
 	NumberOfStopsAway          int                       `json:"numberOfStopsAway"`
 	OccupancyStatus            string                    `json:"occupancyStatus"`
 	Predicted                  bool                      `json:"predicted"`
@@ -39,7 +39,8 @@ type ArrivalAndDeparture struct {
 
 func NewArrivalAndDeparture(
 	routeID, routeShortName, routeLongName, tripID, tripHeadsign, stopID, vehicleID string,
-	serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime, lastUpdateTime int64,
+	serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime int64,
+	lastUpdateTime *int64,
 	predicted, arrivalEnabled, departureEnabled bool,
 	stopSequence, totalStopsInTrip, numberOfStopsAway, blockTripSequence int,
 	distanceFromStop float64,

@@ -53,7 +53,17 @@ func CalculateBounds(lat, lon, distance float64) CoordinateBounds {
 	lonRadians := lon * math.Pi / 180
 
 	latRadius := RadiusOfEarthInMeters
-	lonRadius := math.Cos(latRadians) * RadiusOfEarthInMeters
+
+	// Use math.Abs to prevent a negative cosine (possible for out-of-range latitudes)
+	// which would invert the longitude bounds
+	cosLat := math.Abs(math.Cos(latRadians))
+
+	// Prevent division by zero (Infinity) exactly at the poles
+	if cosLat < 1e-10 {
+		cosLat = 1e-10
+	}
+
+	lonRadius := cosLat * RadiusOfEarthInMeters
 
 	latOffset := distance / latRadius
 	lonOffset := distance / lonRadius

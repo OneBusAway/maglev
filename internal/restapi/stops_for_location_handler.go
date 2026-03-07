@@ -15,8 +15,8 @@ import (
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors := utils.ParseFloatParam(queryParams, "lat", nil)
-	lon, _ := utils.ParseFloatParam(queryParams, "lon", fieldErrors)
+	lat, fieldErrors := utils.ParseRequiredFloatParam(queryParams, "lat", nil)
+	lon, _ := utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
 	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
 	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
@@ -95,7 +95,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		api.serverErrorResponse(w, r, ctx.Err())
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 
@@ -202,6 +202,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Build results using the pre-fetched data
 	for _, stopID := range stopIDs {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -235,6 +236,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if ctx.Err() != nil {
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 

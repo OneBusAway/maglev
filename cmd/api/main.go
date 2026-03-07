@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof" // Auto-registers pprof handlers to http.DefaultServeMux
 	"os"
 	"os/signal"
 	"runtime"
@@ -17,6 +19,18 @@ func main() {
 	// From fix/496-gtfs-startup-retry: Graceful shutdown context
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Start isolated pprof server on localhost only
+	if os.Getenv("MAGLEV_ENABLE_PPROF") == "1" {
+		go func() {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil)).With(slog.String("component", "pprof"))
+			logger.Warn("STARTING PPROF DEBUG SERVER ON localhost:6060 (NOT PUBLIC)")
+			// Listens ONLY on loopback interface using DefaultServeMux
+			if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
+				logger.Error("pprof debug server failed", "error", err)
+			}
+		}()
+	}
 
 	// From main: Mutex profiling configuration
 	if os.Getenv("MAGLEV_PROFILE_MUTEX") == "1" {

@@ -27,6 +27,14 @@ type Metrics struct {
 	DBConnectionsIdle  prometheus.Gauge
 	DBWaitSecondsTotal prometheus.Counter
 
+	// GTFS-RT metrics
+	FeedLastSuccessfulFetchTime *prometheus.GaugeVec
+	FeedConsecutiveErrors       *prometheus.GaugeVec
+	FeedFetchDuration           *prometheus.HistogramVec
+
+	// Static GTFS metrics
+	FeedExpiresAt prometheus.Gauge
+
 	// logger for error reporting
 	logger *slog.Logger
 
@@ -86,6 +94,41 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		Help: "Total time blocked waiting for a database connection",
 	})
 
+	feedLastSuccessfulFetchTime := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "maglev_feed_last_successful_fetch_time",
+			Help: "Timestamp of the last successful GTFS-RT fetch for a feed",
+		},
+		[]string{"feed"},
+	)
+
+	feedConsecutiveErrors := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "maglev_feed_consecutive_errors",
+			Help: "Number of consecutive errors fetching GTFS-RT data",
+		},
+		[]string{"feed"},
+	)
+
+	feedFetchDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "maglev_feed_fetch_duration_seconds",
+			Help:    "Duration of GTFS-RT fetches",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"feed"},
+	)
+
+	feedExpiresAt := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "maglev_gtfs_feed_expires_at",
+			Help: "Unix timestamp when the static GTFS feed expires",
+		},
+	)
+
+	// Default to -1 so that it doesn't trigger alerts before actual feed expiry is loaded
+	feedExpiresAt.Set(-1)
+
 	// Register all metrics with the custom registry
 	registry.MustRegister(
 		httpRequestsTotal,
@@ -94,17 +137,25 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		dbConnectionsInUse,
 		dbConnectionsIdle,
 		dbWaitSecondsTotal,
+		feedLastSuccessfulFetchTime,
+		feedConsecutiveErrors,
+		feedFetchDuration,
+		feedExpiresAt,
 	)
 
 	return &Metrics{
-		Registry:            registry,
-		HTTPRequestsTotal:   httpRequestsTotal,
-		HTTPRequestDuration: httpRequestDuration,
-		DBConnectionsOpen:   dbConnectionsOpen,
-		DBConnectionsInUse:  dbConnectionsInUse,
-		DBConnectionsIdle:   dbConnectionsIdle,
-		DBWaitSecondsTotal:  dbWaitSecondsTotal,
-		logger:              logger,
+		Registry:                    registry,
+		HTTPRequestsTotal:           httpRequestsTotal,
+		HTTPRequestDuration:         httpRequestDuration,
+		DBConnectionsOpen:           dbConnectionsOpen,
+		DBConnectionsInUse:          dbConnectionsInUse,
+		DBConnectionsIdle:           dbConnectionsIdle,
+		DBWaitSecondsTotal:          dbWaitSecondsTotal,
+		FeedLastSuccessfulFetchTime: feedLastSuccessfulFetchTime,
+		FeedConsecutiveErrors:       feedConsecutiveErrors,
+		FeedFetchDuration:           feedFetchDuration,
+		FeedExpiresAt:               feedExpiresAt,
+		logger:                      logger,
 	}
 }
 

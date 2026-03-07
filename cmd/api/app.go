@@ -70,6 +70,9 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
+	appMetrics := metrics.NewWithLogger(logger)
+	gtfsCfg.Metrics = appMetrics
+
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
@@ -87,9 +90,6 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 
 	// Select clock implementation based on environment
 	appClock := createClock(cfg.Env)
-
-	// Initialize metrics with logger for error reporting
-	appMetrics := metrics.NewWithLogger(logger)
 
 	coreApp := &app.Application{
 		Config:              cfg,
@@ -153,18 +153,21 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	requestLogger := logging.NewStructuredLogger(os.Stdout, slog.LevelInfo)
 	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(requestLogger)
 
+	sizeLimitMiddleware := restapi.SizeLimitMiddleware(1 << 20) // 1 MB limit
+
 	// Panic recovery outermost so all handler panics are caught
 	handler := restapi.NewRecoveryMiddleware(coreApp.Logger, coreApp.Clock)(
-		restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler)),
+		sizeLimitMiddleware(restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler))),
 	)
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      handler,
-		IdleTimeout:  time.Minute,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		ErrorLog:     slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
+		Addr:           fmt.Sprintf(":%d", cfg.Port),
+		Handler:        handler,
+		IdleTimeout:    time.Minute,
+		ReadTimeout:    5 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MB
+		ErrorLog:       slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
 	}
 
 	return srv, api

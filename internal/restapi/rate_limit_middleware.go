@@ -26,8 +26,7 @@ type rateLimitClient struct {
 
 // RateLimitMiddleware provides per-API-key rate limiting
 type RateLimitMiddleware struct {
-	limiters    map[string]*rateLimitClient
-	mu          sync.RWMutex
+	limiters    sync.Map
 	rateLimit   rate.Limit
 	burstSize   int
 	cleanupTick *time.Ticker
@@ -61,7 +60,6 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 	}
 
 	middleware := &RateLimitMiddleware{
-		limiters:    make(map[string]*rateLimitClient),
 		rateLimit:   rateLimit,
 		burstSize:   ratePerSecond,
 		cleanupTick: time.NewTicker(5 * time.Minute), // Cleanup old limiters every 5 minutes
@@ -84,34 +82,27 @@ func (rl *RateLimitMiddleware) Handler() func(http.Handler) http.Handler {
 // getLimiter gets or creates a rate limiter for the given API key
 // and updates the last usage timestamp.
 func (rl *RateLimitMiddleware) getLimiter(apiKey string) *rate.Limiter {
-	// If the client exists, update lastSeen and return using only a Read Lock.
-	rl.mu.RLock()
-	if client, exists := rl.limiters[apiKey]; exists {
-		client.lastSeen.Store(rl.clock.Now().UnixNano())
-		rl.mu.RUnlock()
-		return client.limiter
-	}
-	rl.mu.RUnlock()
-
-	// Client does not exist, acquire a full Write Lock to create it.
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	// Another goroutine might have created it while we were waiting for the lock.
-	if client, exists := rl.limiters[apiKey]; exists {
+	// Fast path: lock-free read
+	if val, ok := rl.limiters.Load(apiKey); ok {
+		client := val.(*rateLimitClient)
 		client.lastSeen.Store(rl.clock.Now().UnixNano())
 		return client.limiter
 	}
 
-	// Create new limiter and wrap it in our client struct
+	// Client does not exist, create it locally
 	limiter := rate.NewLimiter(rl.rateLimit, rl.burstSize)
 	newClient := &rateLimitClient{
 		limiter: limiter,
 	}
 	newClient.lastSeen.Store(rl.clock.Now().UnixNano())
-	rl.limiters[apiKey] = newClient
 
-	return limiter
+	// LoadOrStore ensures we don't overwrite if another goroutine just created it
+	actual, _ := rl.limiters.LoadOrStore(apiKey, newClient)
+	client := actual.(*rateLimitClient)
+
+	// Ensure lastSeen is updated even if we loaded an existing one from another goroutine
+	client.lastSeen.Store(rl.clock.Now().UnixNano())
+	return client.limiter
 }
 
 // rateLimitHandler is the HTTP middleware function
@@ -139,6 +130,14 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 			rl.sendRateLimitExceeded(w, r)
 			return
 		}
+
+		// rate limit headers for successful requests
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.burstSize))
+		remaining := int(math.Floor(limiter.Tokens()))
+		if remaining < 0 {
+			remaining = 0
+		}
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 
 		// Request is allowed, continue to next handler
 		next.ServeHTTP(w, r)
@@ -194,27 +193,27 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 func (rl *RateLimitMiddleware) cleanupOnce() {
 	// Define how long a client must be idle before eviction
 	threshold := 10 * time.Minute
-
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
 	now := rl.clock.Now()
 
-	for key, client := range rl.limiters {
+	// Iterate over the sync.Map without acquiring a global lock
+	rl.limiters.Range(func(key, value interface{}) bool {
+		apiKey := key.(string)
+		client := value.(*rateLimitClient)
+
 		// Skip exempted keys
-		if !rl.exemptKeys[key] {
+		if !rl.exemptKeys[apiKey] {
 			// using Time-Based Eviction (LRU)
-			// only delete if the client hasn't been seen in 10 minutes.
 			lastSeenNano := client.lastSeen.Load()
-			if lastSeenNano == 0 {
-				continue // Client just created, not yet initialized
-			}
-			lastSeenTime := time.Unix(0, lastSeenNano)
-			if now.Sub(lastSeenTime) > threshold {
-				delete(rl.limiters, key)
+			if lastSeenNano != 0 {
+				lastSeenTime := time.Unix(0, lastSeenNano)
+				if now.Sub(lastSeenTime) > threshold {
+					// Safe concurrent deletion
+					rl.limiters.Delete(apiKey)
+				}
 			}
 		}
-	}
+		return true // Return true to continue iterating
+	})
 }
 
 // cleanup periodically removes old, unused limiters to prevent memory leaks

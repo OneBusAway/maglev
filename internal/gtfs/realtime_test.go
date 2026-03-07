@@ -21,28 +21,6 @@ import (
 	logging "maglev.onebusaway.org/internal/logging"
 )
 
-func TestGetAlertsForRoute(t *testing.T) {
-	routeID := "route123"
-	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		realTimeAlerts: []gtfs.Alert{
-			{
-				ID: "alert1",
-				InformedEntities: []gtfs.AlertInformedEntity{
-					{
-						RouteID: &routeID,
-					},
-				},
-			},
-		},
-	}
-
-	alerts := manager.GetAlertsForRoute("route123")
-
-	assert.Len(t, alerts, 1)
-	assert.Equal(t, "alert1", alerts[0].ID)
-}
-
 func TestGetAlertsForTrip(t *testing.T) {
 	tripID := gtfs.TripID{ID: "trip123"}
 	manager := &Manager{
@@ -294,6 +272,62 @@ func TestEnabledFeeds(t *testing.T) {
 			assert.Equal(t, tt.wantIDs, gotIDs)
 		})
 	}
+}
+
+func TestClearFeedData(t *testing.T) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedTrips: map[string][]gtfs.Trip{
+			"test_feed": {{ID: gtfs.TripID{ID: "trip1"}}},
+		},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"test_feed": {{ID: &gtfs.VehicleID{ID: "veh1"}}},
+		},
+		feedAlerts: map[string][]gtfs.Alert{
+			"test_feed": {{ID: "alert1"}},
+		},
+	}
+
+	// Warm up realTime lookup array cache
+	manager.rebuildMergedRealtimeLocked()
+	assert.Len(t, manager.GetRealTimeTrips(), 1, "Should have 1 trip initially")
+
+	// Trigger the clearing mechanism
+	manager.clearFeedData("test_feed")
+
+	assert.Empty(t, manager.feedTrips["test_feed"], "feedTrips should be empty after clearing")
+	assert.Empty(t, manager.feedVehicles["test_feed"], "feedVehicles should be empty after clearing")
+	assert.Empty(t, manager.feedAlerts["test_feed"], "feedAlerts should be empty after clearing")
+	assert.Len(t, manager.GetRealTimeTrips(), 0, "Global trip lookup should be empty")
+	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
+}
+
+func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
+	// Setup a server that always returns 500 error simulating an outage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		realTimeMutex:        sync.RWMutex{},
+		feedTrips:            make(map[string][]gtfs.Trip),
+		feedVehicles:         make(map[string][]gtfs.Vehicle),
+		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedVehicleTimestamp: make(map[string]uint64),
+		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+	}
+
+	cfg := RTFeedConfig{
+		ID:                  "fail-feed",
+		TripUpdatesURL:      server.URL,
+		VehiclePositionsURL: server.URL,
+		ServiceAlertsURL:    server.URL,
+	}
+
+	hasNewData := manager.updateFeedRealtime(context.Background(), cfg)
+
+	assert.False(t, hasNewData, "Should return false when all fetches fail")
 }
 
 // TestStaleFeedRejected verifies that feeds with stale FeedHeader timestamps
@@ -617,6 +651,116 @@ func TestIsVehicleStale(t *testing.T) {
 	}
 }
 
+// TestGetAlertsByIDs_RouteScoping verifies that route-level alert matching
+// only fires for entities that have routeId with no stopId restriction.
+// Entities with {routeId + stopId} are stop-specific and must NOT bleed into route level alerts.
+func TestGetAlertsByIDs_RouteScoping(t *testing.T) {
+	routeID := "route123"
+	otherRoute := "other"
+	stopID := "stop456"
+	agencyID := "agency40"
+
+	tests := []struct {
+		name        string
+		entities    []gtfs.AlertInformedEntity
+		expectMatch bool
+	}{
+		{
+			name:        "route-only entity matches",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+			expectMatch: true,
+		},
+		{
+			name:        "route+agency entity (no stop) matches",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID, AgencyID: &agencyID}},
+			expectMatch: true,
+		},
+		{
+			name:        "route+stop entity does not match route query",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID, StopID: &stopID}},
+			expectMatch: false,
+		},
+		{
+			name:        "route+agency+stop entity does not match route query",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID, AgencyID: &agencyID, StopID: &stopID}},
+			expectMatch: false,
+		},
+		{
+			name: "mixed entities: route+stop and route-only — matches via route-only",
+			entities: []gtfs.AlertInformedEntity{
+				{RouteID: &routeID, StopID: &stopID},
+				{RouteID: &routeID},
+			},
+			expectMatch: true,
+		},
+		{
+			name:        "different route does not match",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &otherRoute}},
+			expectMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := &Manager{
+				realTimeMutex:  sync.RWMutex{},
+				realTimeAlerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}},
+			}
+			alerts := manager.GetAlertsByIDs("", routeID, "")
+			if tt.expectMatch {
+				assert.Len(t, alerts, 1)
+			} else {
+				assert.Empty(t, alerts)
+			}
+		})
+	}
+}
+
+// TestGetAlertsByIDs_AgencyScoping verifies that agency-wide matching only fires
+// for entities that have agencyId with no route or trip restriction.
+func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
+	agencyID := "agency40"
+	routeID := "route123"
+	tripID := gtfs.TripID{ID: "trip456"}
+
+	tests := []struct {
+		name        string
+		entities    []gtfs.AlertInformedEntity
+		expectMatch bool
+	}{
+		{
+			name:        "agency-only entity matches",
+			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+			expectMatch: true,
+		},
+		{
+			name:        "agency+route entity does not match agency-only query",
+			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, RouteID: &routeID}},
+			expectMatch: false,
+		},
+		{
+			name:        "agency+trip entity does not match agency-only query",
+			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, TripID: &tripID}},
+			expectMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := &Manager{
+				realTimeMutex:  sync.RWMutex{},
+				realTimeAlerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}},
+			}
+			alerts := manager.GetAlertsByIDs("", "", agencyID)
+			if tt.expectMatch {
+				assert.Len(t, alerts, 1)
+			} else {
+				assert.Empty(t, alerts)
+			}
+		})
+	}
+}
+
 // encodeVehicleFeed constructs a GTFS-RT protobuf payload containing
 // the provided vehicle positions. The header's timestamp is set to the given
 // createdAt time (in seconds). This helper is used by multiple tests to simulate
@@ -644,4 +788,95 @@ func encodeVehicleFeed(createdAt time.Time, positions []*gtfsrt.VehiclePosition)
 // ptr is a helper function to create a pointer to a time.Time value.
 func ptr(t time.Time) *time.Time {
 	return &t
+}
+
+func TestCalculateBackoff(t *testing.T) {
+	baseInterval := 30 * time.Second
+	maxInterval := 5 * time.Minute
+
+	tests := []struct {
+		name              string
+		consecutiveErrors int
+		expectedBase      time.Duration
+	}{
+		{"1 error (2x)", 1, 60 * time.Second},
+		{"2 errors (4x)", 2, 120 * time.Second},
+		{"3 errors (8x)", 3, 240 * time.Second},
+		{"4 errors (16x, capped at max)", 4, 300 * time.Second}, // 480s capped to 300s
+		{"10 errors (capped at max)", 10, 300 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Run a few times to account for jitter and ensure it stays in bounds
+			for i := 0; i < 50; i++ {
+				result := calculateBackoff(baseInterval, tt.consecutiveErrors, maxInterval)
+
+				// Calculate acceptable jitter bounds (+/- 10%)
+				minExpected := time.Duration(float64(tt.expectedBase) * 0.9)
+				maxExpected := time.Duration(float64(tt.expectedBase) * 1.1)
+
+				// Use GreaterOrEqual and LessOrEqual to satisfy testifylint
+				assert.GreaterOrEqual(t, result, minExpected, "Result %v below minimum bounds %v", result, minExpected)
+				assert.LessOrEqual(t, result, maxExpected, "Result %v above maximum bounds %v", result, maxExpected)
+			}
+		})
+	}
+}
+
+func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
+	// A server that returns 200 OK AND a valid GTFS-RT protobuf payload
+	goodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		// Send a minimal valid GTFS-RT feed (just the header, no entities)
+		payload := encodeVehicleFeed(time.Now(), nil)
+		_, _ = w.Write(payload)
+	}))
+	defer goodServer.Close()
+
+	// A server that returns 500 Error
+	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer badServer.Close()
+
+	// Fully initialize all maps to prevent "assignment to entry in nil map" panics
+	manager := &Manager{
+		realTimeMutex:        sync.RWMutex{},
+		feedTrips:            make(map[string][]gtfs.Trip),
+		feedVehicles:         make(map[string][]gtfs.Vehicle),
+		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedVehicleTimestamp: make(map[string]uint64),
+		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+	}
+
+	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail
+	cfg := RTFeedConfig{
+		ID:                  "partial-fail-feed",
+		TripUpdatesURL:      goodServer.URL, // Succeeds
+		VehiclePositionsURL: badServer.URL,  // Fails
+	}
+
+	hasNewData := manager.updateFeedRealtime(context.Background(), cfg)
+	assert.True(t, hasNewData, "OR check should return true if ANY configured sub-feed succeeds")
+
+	// 2. Test full failure: Both fail
+	cfgFail := RTFeedConfig{
+		ID:                  "fail-feed",
+		TripUpdatesURL:      badServer.URL,
+		VehiclePositionsURL: badServer.URL,
+	}
+
+	hasNewDataFail := manager.updateFeedRealtime(context.Background(), cfgFail)
+	assert.False(t, hasNewDataFail, "OR check should return false when ALL sub-feeds fail")
+
+	// 3. Test full success: Both succeed
+	cfgSuccess := RTFeedConfig{
+		ID:                  "success-feed",
+		TripUpdatesURL:      goodServer.URL,
+		VehiclePositionsURL: goodServer.URL,
+	}
+
+	hasNewDataSuccess := manager.updateFeedRealtime(context.Background(), cfgSuccess)
+	assert.True(t, hasNewDataSuccess, "OR check should return true when ALL sub-feeds succeed")
 }

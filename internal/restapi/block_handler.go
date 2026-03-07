@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"sort"
+	"strconv"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -14,7 +15,7 @@ import (
 func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if ctx.Err() != nil {
-		api.serverErrorResponse(w, r, ctx.Err())
+		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
 
@@ -35,7 +36,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
 	if err != nil {
 		if ctx.Err() != nil {
-			api.serverErrorResponse(w, r, ctx.Err())
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 		api.sendNotFound(w, r)
@@ -48,20 +49,15 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blockData := models.BlockData{
-		Entry: transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID),
-	}
-
-	blockResponse := models.BlockResponse{
-		Data: blockData,
-	}
+	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID)
 
 	references, err := api.getReferences(ctx, agencyID, block)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	response := models.NewEntryResponse(blockResponse, references, api.Clock)
+
+	response := models.NewEntryResponse(blockEntry, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
@@ -147,7 +143,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 			tripDistance := blockDistance - tripStartDistance
 
 			trip := models.TripBlock{
-				AccumulatedSlackTime: int(tripAccumulatedSlack),
+				AccumulatedSlackTime: tripAccumulatedSlack,
 				BlockStopTimes:       blockStopTimes,
 				DistanceAlongBlock:   tripDistance,
 				TripId:               utils.FormCombinedID(agencyID, tripID),
@@ -245,7 +241,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 			ID:           utils.FormCombinedID(agencyID, trip.ID),
 			RouteID:      utils.FormCombinedID(agencyID, trip.RouteID),
 			ServiceID:    utils.FormCombinedID(agencyID, trip.ServiceID),
-			DirectionID:  trip.DirectionID.Int64,
+			DirectionID:  strconv.FormatInt(trip.DirectionID.Int64, 10),
 			BlockID:      utils.FormCombinedID(agencyID, trip.BlockID.String),
 			ShapeID:      utils.FormCombinedID(agencyID, trip.ShapeID.String),
 			TripHeadsign: trip.TripHeadsign.String,

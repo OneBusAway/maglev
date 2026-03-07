@@ -590,7 +590,8 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, 120, status.ScheduleDeviation, "ScheduleDeviation should reflect the trip update delay")
+	require.NotNil(t, status.ScheduleDeviation)
+	assert.Equal(t, 120, *status.ScheduleDeviation, "ScheduleDeviation should reflect the trip update delay")
 	assert.True(t, status.Predicted, "Predicted should be true when trip update exists")
 	assert.False(t, status.Scheduled, "Scheduled should be false when predicted is true")
 }
@@ -617,7 +618,7 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, 0, status.ScheduleDeviation, "ScheduleDeviation should be 0 with no real-time data")
+	assert.Nil(t, status.ScheduleDeviation, "ScheduleDeviation should be nil with no real-time data")
 	assert.False(t, status.Predicted, "Predicted should be false with no real-time data")
 	assert.True(t, status.Scheduled, "Scheduled should be true with no real-time data")
 	assert.Equal(t, "default", status.Status)
@@ -681,10 +682,11 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Greater(t, status.TotalDistanceAlongTrip, 0.0, "TotalDistanceAlongTrip should be > 0 with shape data")
-	assert.Greater(t, status.DistanceAlongTrip, 0.0, "DistanceAlongTrip should be > 0 for a vehicle mid-route")
-	assert.Less(t, status.DistanceAlongTrip, status.TotalDistanceAlongTrip,
-		"DistanceAlongTrip should be less than total for a mid-route vehicle")
+	require.NotNil(t, status.TotalDistanceAlongTrip)
+	require.NotNil(t, status.DistanceAlongTrip)
+	assert.Greater(t, *status.TotalDistanceAlongTrip, float64(0), "TotalDistanceAlongTrip should be > 0 with shape data")
+	assert.Greater(t, *status.DistanceAlongTrip, float64(0), "DistanceAlongTrip should be > 0 for a vehicle mid-route")
+	assert.Less(t, *status.DistanceAlongTrip, *status.TotalDistanceAlongTrip, "DistanceAlongTrip should be less than total for a mid-route vehicle")
 }
 
 func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
@@ -1853,3 +1855,88 @@ func TestFindClosestStopByTimeWithDelays_OvernightTrip(t *testing.T) {
 	closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
 	assert.Equal(t, "stop-1am-next", closestID)
 }
+
+func TestInferOrientationFromShape(t *testing.T) {
+	tests := []struct {
+		name      string
+		lat, lon  float64
+		shape     []gtfs.ShapePoint
+		wantMin   float64
+		wantMax   float64
+		wantExact *float64
+	}{
+		{
+			name:      "fewer than 2 points returns -1",
+			lat:       40.0,
+			lon:       -122.0,
+			shape:     []gtfs.ShapePoint{{Latitude: 40.0, Longitude: -122.0}},
+			wantExact: floatPtr(-1),
+		},
+		{
+			name: "east heading (~0 degrees)",
+			lat:  40.0,
+			lon:  0.5,
+			shape: []gtfs.ShapePoint{
+				{Latitude: 40.0, Longitude: 0.0},
+				{Latitude: 40.0, Longitude: 1.0},
+			},
+			wantMin: 355.0,
+			wantMax: 5.0, // wraps through 0
+		},
+		{
+			name: "north heading (~90 degrees)",
+			lat:  0.5,
+			lon:  0.0,
+			shape: []gtfs.ShapePoint{
+				{Latitude: 0.0, Longitude: 0.0},
+				{Latitude: 1.0, Longitude: 0.0},
+			},
+			wantMin: 85.0,
+			wantMax: 95.0,
+		},
+		{
+			name: "south heading (~270 degrees)",
+			lat:  0.5,
+			lon:  0.0,
+			shape: []gtfs.ShapePoint{
+				{Latitude: 1.0, Longitude: 0.0},
+				{Latitude: 0.0, Longitude: 0.0},
+			},
+			wantMin: 265.0,
+			wantMax: 275.0,
+		},
+		{
+			name: "closest segment selection picks east segment over distant north segment",
+			lat:  40.1,
+			lon:  0.5,
+			shape: []gtfs.ShapePoint{
+				{Latitude: 40.0, Longitude: 0.0},
+				{Latitude: 40.0, Longitude: 1.0}, // east segment, vehicle is nearby
+				{Latitude: 80.0, Longitude: 0.0},
+				{Latitude: 81.0, Longitude: 0.0}, // north segment, vehicle is far away
+			},
+			wantMin: 355.0,
+			wantMax: 5.0, // east heading, wraps through 0
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inferOrientationFromShape(tc.lat, tc.lon, tc.shape)
+			if tc.wantExact != nil {
+				assert.InDelta(t, *tc.wantExact, got, 0.001)
+				return
+			}
+			// Handle ranges that wrap through 0 (e.g. east heading: 355..5)
+			if tc.wantMin > tc.wantMax {
+				assert.True(t, got >= tc.wantMin || got <= tc.wantMax,
+					"expected orientation in [%.1f, 360) or [0, %.1f], got %.2f", tc.wantMin, tc.wantMax, got)
+			} else {
+				assert.InDelta(t, (tc.wantMin+tc.wantMax)/2, got, (tc.wantMax-tc.wantMin)/2+0.001,
+					"expected orientation between %.1f and %.1f, got %.2f", tc.wantMin, tc.wantMax, got)
+			}
+		})
+	}
+}
+
+func floatPtr(f float64) *float64 { return &f }

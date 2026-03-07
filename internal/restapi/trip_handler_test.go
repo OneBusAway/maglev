@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, tripID, entry["id"])
 	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Route.Id), entry["routeId"])
 	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Service.Id), entry["serviceId"])
-	assert.Equal(t, float64(trips[0].DirectionId), entry["directionId"])
+	assert.Equal(t, fmt.Sprintf("%d", trips[0].DirectionId), entry["directionId"])
 	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].BlockID), entry["blockId"])
 	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Shape.ID), entry["shapeId"])
 	assert.Equal(t, trips[0].Headsign, entry["tripHeadsign"])

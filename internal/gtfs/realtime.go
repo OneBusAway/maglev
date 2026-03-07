@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"sort"
 	"sync"
@@ -15,6 +16,12 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/logging"
 )
+
+// staleVehicleTimeout is the duration after which a vehicle is considered stale
+const staleVehicleTimeout = 15 * time.Minute
+
+// staleFeedThreshold is the duration after which feed data is cleared if fetches keep failing
+const staleFeedThreshold = 5 * time.Minute
 
 // realtimeHTTPClient is a dedicated HTTP client for GTFS-RT feed fetching,
 // configured with explicit timeouts and transport limits to avoid the pitfalls
@@ -45,9 +52,6 @@ func newRealtimeHTTPClient() *http.Client {
 		Transport: transport,
 	}
 }
-
-// staleVehicleTimeout is the duration after which a vehicle is considered stale
-const staleVehicleTimeout = 15 * time.Minute
 
 // isVehicleStale returns true if the incoming vehicle update is older
 // than the existing vehicle based on GTFS-RT timestamps.
@@ -105,24 +109,6 @@ func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 	return manager.realTimeVehicles
 }
 
-func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-
-	var alerts []gtfs.Alert
-	for _, alert := range manager.realTimeAlerts {
-		if alert.InformedEntities != nil {
-			for _, entity := range alert.InformedEntities {
-				if entity.RouteID != nil && *entity.RouteID == routeID {
-					alerts = append(alerts, alert)
-					break
-				}
-			}
-		}
-	}
-	return alerts
-}
-
 // It acquires the realTimeMutex internally; callers must NOT hold it.
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
 	manager.realTimeMutex.RLock()
@@ -138,11 +124,18 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 				alerts = append(alerts, alert)
 				break
 			}
-			if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID {
+			// Only match route-level entities that have no stop restriction.
+			// Entities with {routeId + stopId} are stop-specific alerts and should
+			// only appear when looking up a specific stop (matching Java's inverted
+			// index which files {routeId+stopId} entities in a separate bucket).
+			if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID &&
+				entity.StopID == nil {
 				alerts = append(alerts, alert)
 				break
 			}
-			if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID {
+			// Only match agency-wide alerts: entity has agencyId but no route or trip restriction.
+			if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID &&
+				entity.RouteID == nil && entity.TripID == nil {
 				alerts = append(alerts, alert)
 				break
 			}
@@ -239,7 +232,8 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 
 // updateFeedRealtime fetches and processes realtime data for a single feed.
 // It updates the per-feed sub-maps and then calls rebuildMergedRealtimeLocked.
-func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) {
+// Returns true if new data was successfully fetched and processed.
+func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) bool {
 	logger := logging.FromContext(ctx).With(slog.String("component", "gtfs_realtime"))
 	feedID := feedCfg.ID
 
@@ -291,7 +285,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return
+		return false
 	}
 
 	// Apply agency-based filtering if configured for this feed.
@@ -425,35 +419,79 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	vehiclesUpdated := vehicleData != nil && vehicleErr == nil
 	alertsUpdated := alertData != nil && alertErr == nil
 
-	hadDataBefore := len(manager.feedTrips[feedID]) > 0 || len(manager.feedVehicles[feedID]) > 0 || len(manager.feedAlerts[feedID]) > 0
-	hasNewData := tripsUpdated || vehiclesUpdated || alertsUpdated
+	// OR logic: A feed is partially successful if ANY configured sub-feed succeeds.
+	hasNewData := false
+	hasURLs := false
 
-	if !hasNewData {
-		if hadDataBefore {
-			logger.Warn("all realtime feed sources failed - retaining stale data",
+	if feedCfg.TripUpdatesURL != "" {
+		hasURLs = true
+		if tripsUpdated {
+			hasNewData = true
+		}
+	}
+	if feedCfg.VehiclePositionsURL != "" {
+		hasURLs = true
+		if vehiclesUpdated {
+			hasNewData = true
+		}
+	}
+	if feedCfg.ServiceAlertsURL != "" {
+		hasURLs = true
+		if alertsUpdated {
+			hasNewData = true
+		}
+	}
+
+	if !hasURLs {
+		hasNewData = false
+	}
+
+	// Logging based on partial vs total success
+	if hasNewData {
+		fullSuccess := true
+		if feedCfg.TripUpdatesURL != "" && !tripsUpdated {
+			fullSuccess = false
+		}
+		if feedCfg.VehiclePositionsURL != "" && !vehiclesUpdated {
+			fullSuccess = false
+		}
+		if feedCfg.ServiceAlertsURL != "" && !alertsUpdated {
+			fullSuccess = false
+		}
+
+		if fullSuccess {
+			logger.Info("updated realtime feed successfully",
 				slog.String("feed", feedID),
-				slog.Bool("trip_updates_error", tripErr != nil),
-				slog.Bool("vehicle_positions_error", vehicleErr != nil),
-				slog.Bool("service_alerts_error", alertErr != nil),
+				slog.Int("trips", len(manager.feedTrips[feedID])),
+				slog.Int("vehicles", len(manager.feedVehicles[feedID])),
+				slog.Int("alerts", len(manager.feedAlerts[feedID])),
 			)
 		} else {
-			logger.Error("all realtime feed sources failed - no data available",
+			logger.Warn("realtime feed partially updated",
 				slog.String("feed", feedID),
-				slog.Bool("trip_updates_error", tripErr != nil),
-				slog.Bool("vehicle_positions_error", vehicleErr != nil),
-				slog.Bool("service_alerts_error", alertErr != nil),
+				slog.Bool("trip_updates_configured", feedCfg.TripUpdatesURL != ""),
+				slog.Bool("trip_updates_success", tripsUpdated),
+				slog.Bool("vehicle_positions_configured", feedCfg.VehiclePositionsURL != ""),
+				slog.Bool("vehicle_positions_success", vehiclesUpdated),
+				slog.Bool("service_alerts_configured", feedCfg.ServiceAlertsURL != ""),
+				slog.Bool("service_alerts_success", alertsUpdated),
 			)
 		}
 	} else {
-		logger.Info("updated realtime feed",
+		logger.Error("realtime feed update failed",
 			slog.String("feed", feedID),
-			slog.Int("trips", len(manager.feedTrips[feedID])),
-			slog.Int("vehicles", len(manager.feedVehicles[feedID])),
-			slog.Int("alerts", len(manager.feedAlerts[feedID])),
+			slog.Bool("trip_updates_configured", feedCfg.TripUpdatesURL != ""),
+			slog.Bool("trip_updates_error", tripErr != nil),
+			slog.Bool("vehicle_positions_configured", feedCfg.VehiclePositionsURL != ""),
+			slog.Bool("vehicle_positions_error", vehicleErr != nil),
+			slog.Bool("service_alerts_configured", feedCfg.ServiceAlertsURL != ""),
+			slog.Bool("service_alerts_error", alertErr != nil),
 		)
 	}
 
 	manager.rebuildMergedRealtimeLocked()
+
+	return hasNewData
 }
 
 // filterTripsByAgency returns only the trips whose route belongs to one of the
@@ -512,6 +550,8 @@ func (manager *Manager) filterAlertsByAgency(alerts []gtfs.Alert, allowed map[st
 
 // alertMatchesAgencyLocked assumes staticMutex is already held by the caller.
 func alertMatchesAgencyLocked(manager *Manager, alert gtfs.Alert, allowed map[string]bool) bool {
+	// NOTE: stop-only InformedEntities are not resolved to agencies.
+	// Alerts referencing only stop IDs will be dropped when agency filtering is active.
 	for _, entity := range alert.InformedEntities {
 		if entity.AgencyID != nil && allowed[*entity.AgencyID] {
 			return true
@@ -594,8 +634,29 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	manager.realTimeVehicleLookupByVehicle = vehicleLookupByVehicle
 }
 
+// calculateBackoff computes the next polling interval using exponential backoff with jitter
+func calculateBackoff(baseInterval time.Duration, consecutiveErrors int, maxInterval time.Duration) time.Duration {
+	// Cap the consecutive errors at 5 to prevent the multiplier from exceeding 32x
+	// We use an if-statement here because a package-level float64 min() shadows the Go built-in min()
+	exponent := consecutiveErrors
+	if exponent > 5 {
+		exponent = 5
+	}
+
+	// Exponential scale: 2, 4, 8, 16, 32
+	backoffMultiplier := 1 << exponent
+	nextInterval := time.Duration(float64(baseInterval) * float64(backoffMultiplier))
+	if nextInterval > maxInterval {
+		nextInterval = maxInterval
+	}
+
+	// +/- 10% Jitter prevents thundering herd behavior across failing feeds
+	jitter := time.Duration((rand.Float64() - 0.5) * 0.2 * float64(nextInterval))
+	return nextInterval + jitter
+}
+
 // pollFeed runs the polling loop for a single feed. Each feed gets its own
-// goroutine with its own ticker at the feed's configured refresh interval.
+// goroutine with exponential backoff on errors, reporting to prometheus metrics.
 func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 	defer manager.wg.Done()
 
@@ -604,17 +665,25 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 	}
 
 	logger := slog.Default().With(slog.String("component", "gtfs_realtime_updater"))
-	interval := time.Duration(feedCfg.RefreshInterval) * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	baseInterval := time.Duration(feedCfg.RefreshInterval) * time.Second
+	maxInterval := 5 * time.Minute
+
+	consecutiveErrors := 0
+	// Initialize to time.Now() to grant a 5-minute startup grace period before triggering staleness clearing
+	lastSuccessfulFetch := time.Now()
+	feedCleared := false // Track if data has already been cleared for this failure cycle
 
 	logging.LogOperation(logger, "started_realtime_feed_poller",
 		slog.String("feed", feedCfg.ID),
-		slog.Duration("interval", interval),
+		slog.Duration("interval", baseInterval),
 		slog.String("tripUpdatesURL", feedCfg.TripUpdatesURL),
 		slog.String("vehiclePositionsURL", feedCfg.VehiclePositionsURL),
 		slog.String("serviceAlertsURL", feedCfg.ServiceAlertsURL),
 	)
+
+	// Use a Timer instead of Ticker to dynamically control intervals (backoff/jitter)
+	timer := time.NewTimer(baseInterval) // Wait one interval before first poll (prevent double fetch)
+	defer timer.Stop()
 
 	for {
 		select {
@@ -622,15 +691,63 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 			logging.LogOperation(logger, "shutting_down_realtime_feed_poller",
 				slog.String("feed", feedCfg.ID))
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			func() {
+				start := time.Now()
+
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				ctx = logging.WithLogger(ctx, logger)
 
 				logging.LogOperation(logger, "updating_gtfs_realtime_data",
 					slog.String("feed", feedCfg.ID))
-				manager.updateFeedRealtime(ctx, feedCfg)
+
+				hasNewData := manager.updateFeedRealtime(ctx, feedCfg)
+				duration := time.Since(start)
+
+				if manager.Metrics != nil {
+					manager.Metrics.FeedFetchDuration.WithLabelValues(feedCfg.ID).Observe(duration.Seconds())
+				}
+
+				if hasNewData {
+					consecutiveErrors = 0
+					lastSuccessfulFetch = time.Now()
+					feedCleared = false // Reset clearing flag on success
+
+					if manager.Metrics != nil {
+						manager.Metrics.FeedLastSuccessfulFetchTime.WithLabelValues(feedCfg.ID).Set(float64(lastSuccessfulFetch.Unix()))
+						manager.Metrics.FeedConsecutiveErrors.WithLabelValues(feedCfg.ID).Set(0)
+					}
+
+					timer.Reset(baseInterval) // Reset to standard interval on success
+				} else {
+					consecutiveErrors++
+
+					if manager.Metrics != nil {
+						manager.Metrics.FeedConsecutiveErrors.WithLabelValues(feedCfg.ID).Set(float64(consecutiveErrors))
+					}
+
+					// Circuit Breaker / Staleness Protection
+					if time.Since(lastSuccessfulFetch) > staleFeedThreshold {
+						if !feedCleared { // Only clear once per extended outage
+							logger.Warn("feed data is stale due to consecutive failures, clearing",
+								slog.String("feed", feedCfg.ID),
+								slog.Duration("staleness", time.Since(lastSuccessfulFetch)))
+							manager.clearFeedData(feedCfg.ID)
+							feedCleared = true
+						}
+					}
+
+					// Use extracted, testable backoff function
+					nextInterval := calculateBackoff(baseInterval, consecutiveErrors, maxInterval)
+
+					logger.Warn("feed update failed, applying backoff",
+						slog.String("feed", feedCfg.ID),
+						slog.Int("consecutive_errors", consecutiveErrors),
+						slog.Duration("next_interval", nextInterval))
+
+					timer.Reset(nextInterval)
+				}
 			}()
 		}
 	}

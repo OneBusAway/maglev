@@ -202,8 +202,19 @@ func TestStandardDeviationThreshold(t *testing.T) {
 	assert.Equal(t, defaultStandardDeviationThreshold, calc.standardDeviationThreshold)
 
 	// Test setting custom threshold
-	calc.SetStandardDeviationThreshold(1.0)
+	err := calc.SetStandardDeviationThreshold(1.0)
+	assert.NoError(t, err)
 	assert.Equal(t, 1.0, calc.standardDeviationThreshold)
+
+	// Test invalid zero threshold
+	err = calc.SetStandardDeviationThreshold(0.0)
+	assert.Error(t, err)
+	assert.Equal(t, 1.0, calc.standardDeviationThreshold) // Should remain unchanged
+
+	// Test invalid negative threshold
+	err = calc.SetStandardDeviationThreshold(-1.0)
+	assert.Error(t, err)
+	assert.Equal(t, 1.0, calc.standardDeviationThreshold) // Should remain unchanged
 }
 
 func TestCalculateStopDirection_WithShapeData(t *testing.T) {
@@ -247,7 +258,8 @@ func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
 	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
 
 	// Set a very low standard deviation threshold to trigger variance check
-	calc.SetStandardDeviationThreshold(0.01)
+	err := calc.SetStandardDeviationThreshold(0.01)
+	assert.NoError(t, err)
 
 	// Test with a stop that might have multiple trips
 	direction := calc.computeFromShapes(ctx, "7000")
@@ -390,14 +402,15 @@ func TestSetContextCache_HappyPath(t *testing.T) {
 	}
 
 	// Set the cache
-	adc.SetContextCache(cache)
+	err := adc.SetContextCache(cache)
+	assert.NoError(t, err)
 
 	// Verify it was set correctly (accessing private field)
 	assert.Equal(t, 1, len(adc.contextCache))
 	assert.Equal(t, "stop1", adc.contextCache["stop1"][0].ID)
 }
 
-func TestSetContextCache_PanicAfterInit(t *testing.T) {
+func TestSetContextCache_ReturnsErrorAfterInit(t *testing.T) {
 	// Create the instance
 	adc := &AdvancedDirectionCalculator{}
 
@@ -405,17 +418,10 @@ func TestSetContextCache_PanicAfterInit(t *testing.T) {
 	// We manually toggle the atomic boolean to "true"
 	adc.initialized.Store(true)
 
-	// Define the recovery to catch the panic
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("SetContextCache did not panic as expected when initialized=true")
-		} else {
-			assert.Equal(t, "SetContextCache called after concurrent operations have started", r)
-		}
-	}()
-
-	// This call MUST panic now
-	adc.SetContextCache(make(map[string][]gtfsdb.GetStopsWithShapeContextRow))
+	// This call MUST return an error now
+	err := adc.SetContextCache(make(map[string][]gtfsdb.GetStopsWithShapeContextRow))
+	assert.Error(t, err)
+	assert.Equal(t, "SetContextCache called after concurrent operations have started", err.Error())
 }
 
 func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
@@ -446,6 +452,7 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 	// Channel to coordinate start
 	start := make(chan struct{})
 	done := make(chan struct{})
+	setErrCh := make(chan error, 1)
 
 	// Launch a "Reader" Goroutine (Simulating a request coming in)
 	go func() {
@@ -457,14 +464,10 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 
 	// Launch a "Writer" (Simulating the bulk loader trying to set cache late)
 	// We want to verify this doesn't crash the program with a race condition,
-	// but correctly panics if it happens too late.
+	// but correctly returns an error if it happens too late.
 	go func() {
 		<-start // Wait for signal
-		defer func() {
-			// recover if it panics (which is expected/allowed behavior for safety)
-			_ = recover()
-		}()
-		calc.SetContextCache(cache)
+		setErrCh <- calc.SetContextCache(cache)
 	}()
 
 	// Start the race
@@ -472,6 +475,12 @@ func TestSetContextCache_ConcurrentAccess(t *testing.T) {
 
 	// Wait for reader to finish
 	<-done
+
+	// Wait for writer to finish
+	err := <-setErrCh
+	if err != nil {
+		assert.Equal(t, "SetContextCache called after concurrent operations have started", err.Error())
+	}
 
 	// If got here without the test binary crashing/deadlocking, the atomic guards did their job.
 }

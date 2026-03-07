@@ -156,6 +156,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getCalendarDateExceptionsForServiceIDStmt, err = db.PrepareContext(ctx, getCalendarDateExceptionsForServiceID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCalendarDateExceptionsForServiceID: %w", err)
 	}
+	if q.getFeedEndDateStmt, err = db.PrepareContext(ctx, getFeedEndDate); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFeedEndDate: %w", err)
+	}
 	if q.getFrequenciesForTripStmt, err = db.PrepareContext(ctx, getFrequenciesForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFrequenciesForTrip: %w", err)
 	}
@@ -546,6 +549,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getCalendarDateExceptionsForServiceIDStmt: %w", cerr)
 		}
 	}
+	if q.getFeedEndDateStmt != nil {
+		if cerr := q.getFeedEndDateStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFeedEndDateStmt: %w", cerr)
+		}
+	}
 	if q.getFrequenciesForTripStmt != nil {
 		if cerr := q.getFrequenciesForTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFrequenciesForTripStmt: %w", cerr)
@@ -904,6 +912,7 @@ type Queries struct {
 	getBlocksForBlockTripIndexIDsStmt         *sql.Stmt
 	getCalendarByServiceIDStmt                *sql.Stmt
 	getCalendarDateExceptionsForServiceIDStmt *sql.Stmt
+	getFeedEndDateStmt                        *sql.Stmt
 	getFrequenciesForTripStmt                 *sql.Stmt
 	getFrequenciesForTripsStmt                *sql.Stmt
 	getFrequencyTripIDsStmt                   *sql.Stmt
@@ -1009,6 +1018,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBlocksForBlockTripIndexIDsStmt:         q.getBlocksForBlockTripIndexIDsStmt,
 		getCalendarByServiceIDStmt:                q.getCalendarByServiceIDStmt,
 		getCalendarDateExceptionsForServiceIDStmt: q.getCalendarDateExceptionsForServiceIDStmt,
+		getFeedEndDateStmt:                        q.getFeedEndDateStmt,
 		getFrequenciesForTripStmt:                 q.getFrequenciesForTripStmt,
 		getFrequenciesForTripsStmt:                q.getFrequenciesForTripsStmt,
 		getFrequencyTripIDsStmt:                   q.getFrequencyTripIDsStmt,

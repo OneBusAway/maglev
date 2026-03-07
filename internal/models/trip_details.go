@@ -36,29 +36,29 @@ type TripStatusForTripDetails struct {
 	ActiveTripID               string     `json:"activeTripId"`
 	BlockTripSequence          int        `json:"blockTripSequence"`
 	ClosestStop                string     `json:"closestStop"`
-	ClosestStopTimeOffset      int        `json:"closestStopTimeOffset"`
-	DistanceAlongTrip          float64    `json:"distanceAlongTrip"`
+	ClosestStopTimeOffset      *int       `json:"closestStopTimeOffset,omitempty"`
+	DistanceAlongTrip          *float64   `json:"distanceAlongTrip,omitempty"`
 	Frequency                  *Frequency `json:"frequency,omitempty"`
-	LastKnownDistanceAlongTrip float64    `json:"lastKnownDistanceAlongTrip"`
+	LastKnownDistanceAlongTrip *float64   `json:"lastKnownDistanceAlongTrip,omitempty"`
 	LastKnownLocation          Location   `json:"lastKnownLocation"`
-	LastKnownOrientation       float64    `json:"lastKnownOrientation"`
-	LastLocationUpdateTime     int64      `json:"lastLocationUpdateTime"`
-	LastUpdateTime             int64      `json:"lastUpdateTime"`
+	LastKnownOrientation       *float64   `json:"lastKnownOrientation,omitempty"`
+	LastLocationUpdateTime     *int64     `json:"lastLocationUpdateTime,omitempty"`
+	LastUpdateTime             *int64     `json:"lastUpdateTime,omitempty"`
 	NextStop                   string     `json:"nextStop"`
-	NextStopTimeOffset         int        `json:"nextStopTimeOffset"`
-	OccupancyCapacity          int        `json:"occupancyCapacity"`
-	OccupancyCount             int        `json:"occupancyCount"`
+	NextStopTimeOffset         *int       `json:"nextStopTimeOffset,omitempty"`
+	OccupancyCapacity          *int       `json:"occupancyCapacity,omitempty"`
+	OccupancyCount             *int       `json:"occupancyCount,omitempty"`
 	OccupancyStatus            string     `json:"occupancyStatus"`
-	Orientation                float64    `json:"orientation"`
+	Orientation                *float64   `json:"orientation,omitempty"`
 	Phase                      string     `json:"phase"`
 	Position                   Location   `json:"position"`
 	Predicted                  bool       `json:"predicted"`
-	ScheduleDeviation          int        `json:"scheduleDeviation"`
-	ScheduledDistanceAlongTrip float64    `json:"scheduledDistanceAlongTrip"`
+	ScheduleDeviation          *int       `json:"scheduleDeviation,omitempty"`
+	ScheduledDistanceAlongTrip *float64   `json:"scheduledDistanceAlongTrip,omitempty"`
 	ServiceDate                int64      `json:"serviceDate"`
 	SituationIDs               []string   `json:"situationIds"`
 	Status                     string     `json:"status"`
-	TotalDistanceAlongTrip     float64    `json:"totalDistanceAlongTrip"`
+	TotalDistanceAlongTrip     *float64   `json:"totalDistanceAlongTrip,omitempty"`
 	VehicleFeatures            []string   `json:"vehicleFeatures,omitempty"`
 	VehicleID                  string     `json:"vehicleId"`
 	Scheduled                  bool       `json:"scheduled"`

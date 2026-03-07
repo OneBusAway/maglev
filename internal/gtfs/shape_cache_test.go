@@ -111,7 +111,8 @@ func TestShapeCacheUsage(t *testing.T) {
 		},
 	}
 
-	calc.SetShapeCache(cache)
+	err = calc.SetShapeCache(cache)
+	require.NoError(t, err)
 
 	// Test that cached data is used
 	orientation, err := calc.calculateOrientationAtStop(ctx, "test_shape", 50.0, 40.005, -74.005)
@@ -168,7 +169,8 @@ func TestShapeCacheMiss(t *testing.T) {
 	// Create calculator with empty cache
 	calc := NewAdvancedDirectionCalculator(client.Queries)
 	emptyCache := make(map[string][]gtfsdb.GetShapePointsWithDistanceRow)
-	calc.SetShapeCache(emptyCache)
+	err = calc.SetShapeCache(emptyCache)
+	require.NoError(t, err)
 
 	// Should return error for shape not in cache
 	_, err = calc.calculateOrientationAtStop(ctx, "nonexistent_shape", 0.0, 40.0, -74.0)
@@ -248,7 +250,8 @@ func TestSetShapeCacheThreadSafety(t *testing.T) {
 	}
 
 	// Setting cache before any operations is safe
-	calc.SetShapeCache(cache)
+	err = calc.SetShapeCache(cache)
+	require.NoError(t, err)
 
 	// Verify cache is set
 	assert.NotNil(t, calc.shapeCache, "Cache should be set")

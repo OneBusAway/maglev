@@ -1031,3 +1031,186 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 	assert.Equal(t, float64(scheduledArrivalMs), targetArrival["predictedArrivalTime"],
 		"propagatedDelayMs should be 0 when closest prior stop only has absolute Time data")
 }
+
+func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
+	// Use MockClock within RABA service window (calendar ends 2025-12-31).
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	// RABA test data has stops near Redding, CA (~40.589, -122.39).
+	// The RABA agency ID is "25".
+	rabaAgencyID := "25"
+
+	// GetStopsForLocation requires the caller to hold RLock.
+	api.GtfsManager.RLock()
+	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
+	api.GtfsManager.RUnlock()
+	require.NotEmpty(t, stops, "precondition: RABA should have stops near Redding, CA")
+
+	currentStop := stops[0]
+
+	// Call getNearbyStopIDs with a wrong fallback agency.
+	// If batch resolution works, nearby stops should use "25", not the fallback.
+	api.GtfsManager.RLock()
+	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	api.GtfsManager.RUnlock()
+	require.NotEmpty(t, result, "should find nearby stops")
+
+	for _, combinedID := range result {
+		agencyID, _, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+		require.NoError(t, err, "combined ID should be parseable: %s", combinedID)
+		assert.Equal(t, rabaAgencyID, agencyID,
+			"nearby stop %s should use resolved agency %q, not fallback", combinedID, rabaAgencyID)
+	}
+}
+
+func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
+	// Use MockClock within RABA service window (calendar ends 2025-12-31).
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	api.GtfsManager.RLock()
+	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
+	api.GtfsManager.RUnlock()
+	require.NotEmpty(t, stops)
+
+	currentStop := stops[0]
+
+	api.GtfsManager.RLock()
+	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	api.GtfsManager.RUnlock()
+
+	for _, combinedID := range result {
+		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
+		assert.NotEqual(t, currentStop.ID, codeID,
+			"current stop should be excluded from nearby results")
+	}
+}
+
+func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
+	// Verify that trip updates produce predictions even without vehicle positions.
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
+
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	// Create custom data so we control the service dates and times.
+	agencyID := "TUAgency"
+	stopID := "TUStop"
+	routeID := "TURoute"
+	tripID := "TUTrip"
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       agencyID,
+		Name:     "Trip Update Test Agency",
+		Url:      "http://tu-agency.com",
+		Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:   stopID,
+		Name: sql.NullString{String: "Trip Update Test Stop", Valid: true},
+		Lat:  40.5865,
+		Lon:  -122.3917,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID:        routeID,
+		AgencyID:  agencyID,
+		ShortName: sql.NullString{String: "TU", Valid: true},
+		LongName:  sql.NullString{String: "Trip Update Line", Valid: true},
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        "tu_service",
+		Monday:    1,
+		Tuesday:   1,
+		Wednesday: 1,
+		Thursday:  1,
+		Friday:    1,
+		Saturday:  1,
+		Sunday:    1,
+		StartDate: "20000101",
+		EndDate:   "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:           tripID,
+		RouteID:      routeID,
+		ServiceID:    "tu_service",
+		TripHeadsign: sql.NullString{String: "Test Destination", Valid: true},
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopID,
+		StopSequence:  1,
+		ArrivalTime:   29100 * 1e9, // 08:05:00 in nanoseconds
+		DepartureTime: 29400 * 1e9, // 08:10:00 in nanoseconds
+	})
+	require.NoError(t, err)
+
+	// Add a trip update WITHOUT any vehicle position.
+	delayDuration := 120 * time.Second
+	seq := uint32(1)
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{
+			StopSequence: &seq,
+			Arrival:      &gtfs.StopTimeEvent{Delay: &delayDuration},
+			Departure:    &gtfs.StopTimeEvent{Delay: &delayDuration},
+		},
+	})
+	// Do NOT call MockAddVehicle — this is the key part of the test.
+
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	endpoint := "/api/where/arrivals-and-departures-for-stop/" + combinedStopID +
+		".json?key=TEST&minutesBefore=60&minutesAfter=60"
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	arrivalsRaw, ok := entry["arrivalsAndDepartures"].([]interface{})
+	require.True(t, ok)
+
+	// Find the arrival for our test trip.
+	var found bool
+	for _, a := range arrivalsRaw {
+		arr := a.(map[string]interface{})
+		_, arrTripID, _ := utils.ExtractAgencyIDAndCodeID(arr["tripId"].(string))
+		if arrTripID == tripID {
+			predicted, _ := arr["predicted"].(bool)
+			assert.True(t, predicted,
+				"arrival should be predicted from trip update even without vehicle position")
+			if predicted {
+				schedArr := int64(arr["scheduledArrivalTime"].(float64))
+				predArr := int64(arr["predictedArrivalTime"].(float64))
+				assert.NotEqual(t, schedArr, predArr,
+					"predicted arrival should differ from scheduled by the delay amount")
+			}
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "should find arrival for test trip %s", tripID)
+}

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/metrics"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -65,17 +67,38 @@ type Manager struct {
 	systemETag                     string      // systemETag stores the SHA-256 hash of the currently loaded GTFS static dataset.
 	isReady                        atomic.Bool // Tracks whether initial data loading is complete
 
+	feedExpiresAt time.Time // Holds the max valid service date for the static feed
+
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
-	// When the set is non-nil and non-empty, only realtime entities belonging
-	// to the listed agencies are kept after each fetch.
+	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
+	// No lock is required for reads.
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
+
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
+
+	// Exported metrics client dependency
+	Metrics *metrics.Metrics
+}
+
+// clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
+func (manager *Manager) clearFeedData(feedID string) {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	manager.feedTrips[feedID] = nil
+	manager.feedVehicles[feedID] = nil
+	manager.feedAlerts[feedID] = nil
+
+	delete(manager.feedVehicleTimestamp, feedID)
+	delete(manager.feedVehicleLastSeen, feedID)
+
+	manager.rebuildMergedRealtimeLocked()
 }
 
 // IsReady returns true if the GTFS data is fully initialized and indexed.
@@ -195,6 +218,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedAgencyFilter:               make(map[string]map[string]bool),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
+		Metrics:                        config.Metrics,
 	}
 
 	// Build per-feed agency filters from config
@@ -221,14 +245,15 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 			)
 
 			manager.staticMutex.RLock()
+			var validAgencies []string
 			for _, configuredAgencyID := range feedCfg.AgencyIDs {
 				if _, exists := manager.agenciesMap[configuredAgencyID]; !exists {
-					// Collect valid agencies for the helpful error message
-					var validAgencies []string
-					for validID := range manager.agenciesMap {
-						validAgencies = append(validAgencies, validID)
+					if validAgencies == nil {
+						for validID := range manager.agenciesMap {
+							validAgencies = append(validAgencies, validID)
+						}
+						sort.Strings(validAgencies)
 					}
-					sort.Strings(validAgencies) // keep logs predictable
 
 					logger.Warn("configured agency-id not found in static GTFS data",
 						slog.String("feed", feedCfg.ID),
@@ -240,6 +265,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 			manager.staticMutex.RUnlock()
 		}
 	}
+	manager.parseAndLogFeedExpiryLocked(ctx, logger)
 
 	// Populate systemETag from import metadata
 	metadata, err := gtfsDB.Queries.GetImportMetadata(ctx)
@@ -260,7 +286,11 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	// to "warm" the cache before marking the manager as ready.
 	for _, feedCfg := range enabledFeeds {
 		initCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		manager.updateFeedRealtime(initCtx, feedCfg)
+		success := manager.updateFeedRealtime(initCtx, feedCfg)
+		if !success {
+			logger.Warn("initial realtime fetch failed; feed starting in degraded state",
+				slog.String("feed", feedCfg.ID))
+		}
 		cancel()
 	}
 
@@ -397,9 +427,11 @@ func (manager *Manager) GetStopsForLocation(
 	} else {
 		if radius == 0 {
 			if query != "" {
-				radius = 10000
+				// Use a global radius (20,000 km) to ensure exact stop code
+				// searches are never artificially truncated by localized bounding boxes.
+				radius = models.GlobalSearchRadiusInMeters
 			} else {
-				radius = 500
+				radius = models.DefaultSearchRadiusInMeters // Standard constant for radius
 			}
 		}
 		bounds = utils.CalculateBounds(lat, lon, radius)
@@ -569,6 +601,14 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 // but is part of the same block.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *gtfs.Vehicle {
+
+	manager.realTimeMutex.RLock()
+	if index, exists := manager.realTimeVehicleLookupByTrip[tripID]; exists {
+		vehicle := manager.realTimeVehicles[index]
+		manager.realTimeMutex.RUnlock()
+		return &vehicle
+	}
+	manager.realTimeMutex.RUnlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -750,6 +790,20 @@ func (manager *Manager) MarkUnhealthy() {
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 	manager.isHealthy = false
+}
+
+// FeedExpiresAt returns the parsed feed expiry time.
+func (manager *Manager) FeedExpiresAt() time.Time {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.feedExpiresAt
+}
+
+// SetFeedExpiresAt implicitly sets the parsed feed expiry time for tests.
+func (manager *Manager) SetFeedExpiresAt(t time.Time) {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+	manager.feedExpiresAt = t
 }
 
 // SetRealTimeTripsForTest manually sets realtime trips for testing purposes.

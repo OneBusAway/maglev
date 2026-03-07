@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewTripDetails(t *testing.T) {
@@ -13,7 +14,7 @@ func TestNewTripDetails(t *testing.T) {
 		RouteID:        "route_456",
 		ServiceID:      "service_789",
 		TripHeadsign:   "Downtown Terminal",
-		DirectionID:    1,
+		DirectionID:    "1",
 		BlockID:        "block_1",
 		ShapeID:        "shape_1",
 		TripShortName:  "DT",
@@ -126,39 +127,53 @@ func TestTripDetailsWithNilValues(t *testing.T) {
 }
 
 func TestTripStatusForTripDetailsJSON(t *testing.T) {
+	distanceAlongTrip := 1500.5
+	lastKnownDistanceAlongTrip := 1400.0
+	lastKnownOrientation := 90.0
+	lastLocationUpdateTime := int64(1609462700000)
+	lastUpdateTime := int64(1609462800000)
+	occupancyCapacity := 50
+	occupancyCount := 30
+	orientation := 95.0
+	scheduleDeviation := 60
+	scheduledDistanceAlongTrip := 1450.0
+	totalDistanceAlongTrip := 5000.0
+	closestOffset := 120
+	nextOffset := 240
+
 	tripStatus := TripStatusForTripDetails{
 		ActiveTripID:               "active_trip_123",
 		BlockTripSequence:          2,
 		ClosestStop:                "stop_456",
-		ClosestStopTimeOffset:      120,
-		DistanceAlongTrip:          1500.5,
+		ClosestStopTimeOffset:      &closestOffset,
+		DistanceAlongTrip:          &distanceAlongTrip,
 		Frequency:                  nil,
-		LastKnownDistanceAlongTrip: 1400.0,
+		LastKnownDistanceAlongTrip: &lastKnownDistanceAlongTrip,
 		LastKnownLocation: Location{
 			Lat: 38.542661,
 			Lon: -121.743914,
 		},
-		LastKnownOrientation:   90.0,
-		LastLocationUpdateTime: 1609462700000,
-		LastUpdateTime:         1609462800000,
+		LastKnownOrientation:   &lastKnownOrientation,
+		LastLocationUpdateTime: &lastLocationUpdateTime,
+		LastUpdateTime:         &lastUpdateTime,
 		NextStop:               "stop_789",
-		NextStopTimeOffset:     240,
-		OccupancyCapacity:      50,
-		OccupancyCount:         30,
+		NextStopTimeOffset:     &nextOffset,
+		OccupancyCapacity:      &occupancyCapacity,
+		OccupancyCount:         &occupancyCount,
 		OccupancyStatus:        "MANY_SEATS_AVAILABLE",
-		Orientation:            95.0,
+		Orientation:            &orientation,
 		Phase:                  "in_progress",
 		Position: Location{
 			Lat: 38.543000,
 			Lon: -121.744000,
 		},
 		Predicted:                  true,
-		ScheduleDeviation:          60,
-		ScheduledDistanceAlongTrip: 1450.0,
+		ScheduleDeviation:          &scheduleDeviation,
+		ScheduledDistanceAlongTrip: &scheduledDistanceAlongTrip,
 		ServiceDate:                1609459200000,
 		SituationIDs:               []string{"situation_1"},
 		Status:                     "SCHEDULED",
-		TotalDistanceAlongTrip:     5000.0,
+		TotalDistanceAlongTrip:     &totalDistanceAlongTrip,
 		VehicleFeatures:            []string{"wifi", "bike_rack"},
 		VehicleID:                  "vehicle_789",
 		Scheduled:                  true,
@@ -177,4 +192,19 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 	assert.Equal(t, tripStatus.Predicted, unmarshaledStatus.Predicted)
 	assert.Equal(t, tripStatus.Position.Lat, unmarshaledStatus.Position.Lat)
 	assert.Equal(t, tripStatus.Position.Lon, unmarshaledStatus.Position.Lon)
+}
+
+func TestTripStatusForTripDetails_JSONOmitEmpty(t *testing.T) {
+	status := TripStatusForTripDetails{
+		Status: "default",
+	}
+
+	data, err := json.Marshal(status)
+	require.NoError(t, err)
+	jsonStr := string(data)
+
+	assert.NotContains(t, jsonStr, `"scheduleDeviation"`, "scheduleDeviation should be omitted when nil")
+	assert.NotContains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip should be omitted when nil")
+	assert.NotContains(t, jsonStr, `"closestStopTimeOffset"`, "closestStopTimeOffset should be omitted when nil")
+	assert.NotContains(t, jsonStr, `"orientation"`, "orientation should be omitted when nil")
 }

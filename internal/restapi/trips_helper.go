@@ -25,11 +25,11 @@ func (api *RestAPI) BuildTripStatus(
 	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
 		0, 0, 0, 0, serviceDate.Location())
 	status := &models.TripStatusForTripDetails{
-		ActiveTripID:      utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:       sdMidnight.UnixMilli(),
-		SituationIDs:      api.GetSituationIDsForTrip(ctx, tripID),
-		OccupancyCapacity: -1,
-		OccupancyCount:    -1,
+		ActiveTripID: utils.FormCombinedID(agencyID, tripID),
+		ServiceDate:  sdMidnight.UnixMilli(),
+		SituationIDs: api.GetSituationIDsForTrip(ctx, tripID),
+		// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
+		// Java OBA uses nullable Integer types that serialize conditionally.
 	}
 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
@@ -44,7 +44,7 @@ func (api *RestAPI) BuildTripStatus(
 		// NOTE: GTFS-RT OccupancyPercentage (0-100%) has no direct equivalent in the
 		// OBA TripStatus schema. The Java OBA server populates occupancyCapacity from
 		// agency-provided vehicle capacity data, not from GTFS-RT percentages.
-		// We intentionally leave OccupancyCapacity at its default (-1) here.
+		// We intentionally leave OccupancyCapacity as nil here.
 		// See: TripStatusBeanServiceImpl.java in onebusaway-transit-data-federation.
 	}
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status, currentTime)
@@ -57,7 +57,7 @@ func (api *RestAPI) BuildTripStatus(
 	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviation(activeTripRawID)
 
 	if hasRealtimeTripUpdate {
-		status.ScheduleDeviation = scheduleDeviation
+		status.ScheduleDeviation = utils.IntPtr(scheduleDeviation)
 	}
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
@@ -110,11 +110,11 @@ func (api *RestAPI) BuildTripStatus(
 
 		if closestStopID != "" {
 			status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
-			status.ClosestStopTimeOffset = closestOffset
+			status.ClosestStopTimeOffset = utils.IntPtr(closestOffset)
 		}
 		if nextStopID != "" {
 			status.NextStop = utils.FormCombinedID(agencyID, nextStopID)
-			status.NextStopTimeOffset = nextOffset
+			status.NextStopTimeOffset = utils.IntPtr(nextOffset)
 		}
 	}
 
@@ -131,7 +131,7 @@ func (api *RestAPI) BuildTripStatus(
 	if shapeErr == nil && len(shapeRows) > 1 {
 		shapePoints := shapeRowsToPoints(shapeRows)
 		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
+		status.TotalDistanceAlongTrip = utils.Float64Ptr(cumulativeDistances[len(cumulativeDistances)-1])
 
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
@@ -142,14 +142,23 @@ func (api *RestAPI) BuildTripStatus(
 			}
 
 			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
-			status.DistanceAlongTrip = actualDistance
+			status.DistanceAlongTrip = utils.Float64Ptr(actualDistance)
+
+			// If the feed does not provide a bearing, infer orientation from the
+			// heading of the closest shape segment at the vehicle's position.
+			if vehicle.Position.Bearing == nil {
+				if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+					status.Orientation = utils.Float64Ptr(inferred)
+					status.LastKnownOrientation = utils.Float64Ptr(inferred)
+				}
+			}
 
 			if scheduleDeviation != 0 && len(stopTimes) > 0 {
 				scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
 					ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
 					stopTimes, shapePoints, cumulativeDistances,
 				)
-				status.ScheduledDistanceAlongTrip = scheduledDistance
+				status.ScheduledDistanceAlongTrip = utils.Float64Ptr(scheduledDistance)
 			}
 		}
 	}
@@ -267,19 +276,25 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 
+	// Dereference schedule deviation safely, default to 0 if not set
+	schedDev := int64(0)
+	if status.ScheduleDeviation != nil {
+		schedDev = int64(*status.ScheduleDeviation)
+	}
+
 	for i, st := range stopTimes {
 		arrivalTime := utils.EffectiveStopTimeSeconds(st.ArrivalTime, st.DepartureTime)
-		predictedArrival := arrivalTime + int64(status.ScheduleDeviation)
+		predictedArrival := arrivalTime + schedDev
 
 		if predictedArrival > currentSeconds {
 			if i > 0 && status.ClosestStop == "" {
 				status.ClosestStop = utils.FormCombinedID(agencyID, stopTimes[i-1].StopID)
 				closestArrival := utils.EffectiveStopTimeSeconds(stopTimes[i-1].ArrivalTime, stopTimes[i-1].DepartureTime)
-				status.ClosestStopTimeOffset = int(closestArrival + int64(status.ScheduleDeviation) - currentSeconds)
+				status.ClosestStopTimeOffset = utils.IntPtr(int(closestArrival + schedDev - currentSeconds))
 			}
 			if status.NextStop == "" {
 				status.NextStop = utils.FormCombinedID(agencyID, st.StopID)
-				status.NextStopTimeOffset = int(predictedArrival - currentSeconds)
+				status.NextStopTimeOffset = utils.IntPtr(int(predictedArrival - currentSeconds))
 			}
 			return
 		}
@@ -289,7 +304,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 		lastStop := stopTimes[len(stopTimes)-1]
 		status.ClosestStop = utils.FormCombinedID(agencyID, lastStop.StopID)
 		arrivalTime := utils.EffectiveStopTimeSeconds(lastStop.ArrivalTime, lastStop.DepartureTime)
-		status.ClosestStopTimeOffset = int(arrivalTime + int64(status.ScheduleDeviation) - currentSeconds)
+		status.ClosestStopTimeOffset = utils.IntPtr(int(arrivalTime + schedDev - currentSeconds))
 	}
 }
 
@@ -1086,4 +1101,42 @@ func interpolateDistance(cumulativeDistances []float64, segmentLength float64, i
 		cumulativeDistance += segmentLength * projectionRatio
 	}
 	return cumulativeDistance
+}
+
+// inferOrientationFromShape computes the OBA orientation (degrees, 0=East, 90=North)
+// for a vehicle at (lat, lon) by finding the closest shape segment and returning its heading.
+// Returns -1 if the shape has fewer than 2 points.
+func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
+	if len(shape) < 2 {
+		return -1
+	}
+
+	var minDist = math.Inf(1)
+	bestIdx := 0
+
+	for i := 0; i < len(shape)-1; i++ {
+		d, _ := distanceToLineSegment(lat, lon,
+			shape[i].Latitude, shape[i].Longitude,
+			shape[i+1].Latitude, shape[i+1].Longitude,
+		)
+		if d < minDist {
+			minDist = d
+			bestIdx = i
+		}
+	}
+
+	latFrom := shape[bestIdx].Latitude
+	latTo := shape[bestIdx+1].Latitude
+	lonFrom := shape[bestIdx].Longitude
+	lonTo := shape[bestIdx+1].Longitude
+
+	dLat := latTo - latFrom
+	cosLat := math.Cos(latFrom * math.Pi / 180)
+	dLon := (lonTo - lonFrom) * cosLat
+
+	degrees := math.Atan2(dLat, dLon) * 180 / math.Pi
+	if degrees < 0 {
+		degrees += 360
+	}
+	return degrees
 }

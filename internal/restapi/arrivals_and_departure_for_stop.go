@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -128,6 +129,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	addedAgencyIDs := make(map[string]bool)
 	addedAgencyIDs[agency.ID] = true
 
+	collectedAlerts := make(map[string]gtfs.Alert)
+	alertAgencyID := stopAgencyID
+
 	type activeStopTime struct {
 		gtfsdb.GetStopTimesForStopInWindowRow
 		ServiceDate time.Time
@@ -136,6 +140,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -266,6 +271,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		serviceMidnight := ast.ServiceDate
 		serviceDateMillis := serviceMidnight.UnixMilli()
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -330,7 +336,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		if vehicle != nil {
 			// Use route.AgencyID instead of stopAgencyID for BuildTripStatus
-			status, _ := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, serviceMidnight, params.Time)
+			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, serviceMidnight, params.Time)
+			if statusErr != nil {
+				api.Logger.Warn("BuildTripStatus failed for arrival",
+					"tripID", st.TripID, "error", statusErr)
+			}
 			if status != nil {
 				tripStatus = status
 
@@ -396,7 +406,27 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
 
 		lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-		situationIDs := api.GetSituationIDsForTrip(r.Context(), st.TripID)
+		var lastUpdateTimePtr *int64
+		if lastUpdateTime > 0 {
+			lastUpdateTimePtr = utils.Int64Ptr(lastUpdateTime)
+		}
+
+		tripAlerts := api.GtfsManager.GetAlertsForTrip(r.Context(), st.TripID)
+		situationIDs := make([]string, 0, len(tripAlerts))
+		for _, alert := range tripAlerts {
+			if alert.ID == "" {
+				continue
+			}
+
+			situationIDs = append(situationIDs, utils.FormCombinedID(route.AgencyID, alert.ID))
+			if _, seen := collectedAlerts[alert.ID]; !seen {
+				collectedAlerts[alert.ID] = alert
+			}
+		}
+
+		if alertAgencyID == "" && route.AgencyID != "" {
+			alertAgencyID = route.AgencyID
+		}
 
 		arrival := models.NewArrivalAndDeparture(
 			utils.FormCombinedID(route.AgencyID, route.ID),  // routeID
@@ -411,7 +441,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			scheduledDepartureTime,                          // scheduledDepartureTime
 			predictedArrivalTime,                            // predictedArrivalTime
 			predictedDepartureTime,                          // predictedDepartureTime
-			lastUpdateTime,                                  // lastUpdateTime
+			lastUpdateTimePtr,                               // lastUpdateTime
 			predicted,                                       // predicted
 			true,                                            // arrivalEnabled
 			true,                                            // departureEnabled
@@ -457,7 +487,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			utils.FormCombinedID(routeAgencyID, trip.ServiceID), // Use route agency for service ID
 			trip.TripHeadsign.String,
 			"",
-			trip.DirectionID.Int64,
+			strconv.FormatInt(trip.DirectionID.Int64, 10),
 			utils.FormCombinedID(routeAgencyID, trip.BlockID.String), // Use route agency for block ID
 			utils.FormCombinedID(routeAgencyID, trip.ShapeID.String), // Use route agency for shape ID
 		)
@@ -494,6 +524,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	for stopID := range stopIDSet {
 		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
@@ -569,18 +600,79 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 	}
 
+	for _, alert := range api.GtfsManager.GetAlertsForStop(stopCode) {
+		if alert.ID != "" {
+			if _, seen := collectedAlerts[alert.ID]; !seen {
+				collectedAlerts[alert.ID] = alert
+			}
+		}
+	}
+
+	if len(collectedAlerts) > 0 {
+		alertSlice := make([]gtfs.Alert, 0, len(collectedAlerts))
+		for _, a := range collectedAlerts {
+			alertSlice = append(alertSlice, a)
+		}
+		situations := api.BuildSituationReferences(alertSlice, alertAgencyID)
+		for _, s := range situations {
+			references.Situations = append(references.Situations, s)
+		}
+	}
+
+	topLevelSituationIDSet := make(map[string]struct{}, len(collectedAlerts))
+	for alertID := range collectedAlerts {
+		topLevelSituationIDSet[utils.FormCombinedID(alertAgencyID, alertID)] = struct{}{}
+	}
+	topLevelSituationIDs := make([]string, 0, len(topLevelSituationIDSet))
+	for id := range topLevelSituationIDSet {
+		topLevelSituationIDs = append(topLevelSituationIDs, id)
+	}
+
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
-	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, []string{}, stopID, api.Clock)
+	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
-func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, agencyID string) []string {
+func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
 	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, api.Clock.Now())
-	var nearbyStopIDs []string
+	if len(nearbyStops) == 0 {
+		return nil
+	}
+
+	// Collect nearby stop IDs (excluding the current stop) for a batch agency lookup.
+	var candidateIDs []string
 	for _, s := range nearbyStops {
 		if s.ID != stopID {
-			nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agencyID, s.ID))
+			candidateIDs = append(candidateIDs, s.ID)
 		}
+	}
+	if len(candidateIDs) == 0 {
+		return nil
+	}
+
+	// Batch-resolve the owning agency for each nearby stop so that
+	// multi-agency feeds produce correct combined IDs.
+	stopAgencyMap := make(map[string]string, len(candidateIDs))
+	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, candidateIDs)
+	if err != nil {
+		api.Logger.Warn("failed to resolve agencies for nearby stops, using fallback",
+			"error", err, "fallbackAgencyID", fallbackAgencyID)
+	} else {
+		for _, row := range agencyRows {
+			// First agency wins; a stop served by multiple agencies uses the first one found.
+			if _, exists := stopAgencyMap[row.StopID]; !exists {
+				stopAgencyMap[row.StopID] = row.ID
+			}
+		}
+	}
+
+	nearbyStopIDs := make([]string, 0, len(candidateIDs))
+	for _, sid := range candidateIDs {
+		agency := fallbackAgencyID
+		if resolved, ok := stopAgencyMap[sid]; ok {
+			agency = resolved
+		}
+		nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agency, sid))
 	}
 	return nearbyStopIDs
 }
