@@ -66,10 +66,6 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 
 		// Create the DirectionCalculator using the shared manager's queries
 		testDirectionCalculator = gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
-
-		// Warm up the cache with test data
-		err = gtfs.InitializeGlobalCache(ctx, testGtfsManager.GtfsDB.Queries, testDirectionCalculator)
-		require.NoError(t, err, "Failed to initialize global cache for tests")
 	})
 
 	gtfsConfig := gtfs.Config{

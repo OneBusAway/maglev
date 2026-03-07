@@ -351,8 +351,6 @@ func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 	require.NoError(t, err)
 
 	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
-	err = gtfs.InitializeGlobalCache(ctx, gtfsManager.GtfsDB.Queries, dirCalc)
-	require.NoError(t, err)
 
 	application := &app.Application{
 		Config: appconf.Config{

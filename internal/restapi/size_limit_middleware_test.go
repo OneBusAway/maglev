@@ -36,7 +36,7 @@ func TestSizeLimitMiddleware_ExceedsLimit(t *testing.T) {
 		// io.ReadAll should return an error when the limit is exceeded
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "request body too large")
-		
+
 	})
 
 	limit := int64(10)

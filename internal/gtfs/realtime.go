@@ -576,34 +576,40 @@ func alertMatchesAgencyLocked(manager *Manager, alert gtfs.Alert, allowed map[st
 
 func (manager *Manager) rebuildMergedRealtimeLocked() {
 	feedIDs := make([]string, 0, len(manager.feedTrips))
-	for id := range manager.feedTrips {
+	totalTrips := 0
+	for id, trips := range manager.feedTrips {
 		feedIDs = append(feedIDs, id)
+		totalTrips += len(trips)
 	}
 	sort.Strings(feedIDs)
 
-	var allTrips []gtfs.Trip
+	allTrips := make([]gtfs.Trip, 0, totalTrips)
 	for _, id := range feedIDs {
 		allTrips = append(allTrips, manager.feedTrips[id]...)
 	}
 
 	vehicleFeedIDs := make([]string, 0, len(manager.feedVehicles))
-	for id := range manager.feedVehicles {
+	totalVehicles := 0
+	for id, vehicles := range manager.feedVehicles {
 		vehicleFeedIDs = append(vehicleFeedIDs, id)
+		totalVehicles += len(vehicles)
 	}
 	sort.Strings(vehicleFeedIDs)
 
-	var allVehicles []gtfs.Vehicle
+	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
 	for _, id := range vehicleFeedIDs {
 		allVehicles = append(allVehicles, manager.feedVehicles[id]...)
 	}
 
 	alertFeedIDs := make([]string, 0, len(manager.feedAlerts))
-	for id := range manager.feedAlerts {
+	totalAlerts := 0
+	for id, alerts := range manager.feedAlerts {
 		alertFeedIDs = append(alertFeedIDs, id)
+		totalAlerts += len(alerts)
 	}
 	sort.Strings(alertFeedIDs)
 
-	var allAlerts []gtfs.Alert
+	allAlerts := make([]gtfs.Alert, 0, totalAlerts)
 	for _, id := range alertFeedIDs {
 		allAlerts = append(allAlerts, manager.feedAlerts[id]...)
 	}
