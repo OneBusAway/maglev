@@ -13,7 +13,7 @@ type ScheduleStopTime struct {
 
 // StopRouteDirectionSchedule represents schedule for a specific direction of a route
 type StopRouteDirectionSchedule struct {
-	ScheduleFrequencies []interface{}      `json:"scheduleFrequencies"`
+	ScheduleFrequencies []Frequency        `json:"scheduleFrequencies"`
 	ScheduleStopTimes   []ScheduleStopTime `json:"scheduleStopTimes"`
 	TripHeadsign        string             `json:"tripHeadsign"`
 }
@@ -45,9 +45,12 @@ func NewScheduleStopTime(arrivalTime, departureTime int64, serviceID, stopHeadsi
 }
 
 // NewStopRouteDirectionSchedule creates a new StopRouteDirectionSchedule
-func NewStopRouteDirectionSchedule(tripHeadsign string, stopTimes []ScheduleStopTime) StopRouteDirectionSchedule {
+func NewStopRouteDirectionSchedule(tripHeadsign string, stopTimes []ScheduleStopTime, frequencies []Frequency) StopRouteDirectionSchedule {
+	if frequencies == nil {
+		frequencies = []Frequency{}
+	}
 	return StopRouteDirectionSchedule{
-		ScheduleFrequencies: []interface{}{}, // Always empty array in the API
+		ScheduleFrequencies: frequencies,
 		ScheduleStopTimes:   stopTimes,
 		TripHeadsign:        tripHeadsign,
 	}

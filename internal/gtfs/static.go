@@ -318,6 +318,12 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	manager.routesByAgencyID = buildRouteIndex(newStaticData)
 
+	if newCache, freqErr := buildFrequencyCache(ctx, client.Queries); freqErr == nil {
+		manager.frequencyTripIDs = newCache
+	} else {
+		logging.LogError(logger, "failed to reload frequency trip IDs during hot-swap; retaining previous cache", freqErr)
+	}
+
 	manager.lastUpdated = time.Now()
 
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
@@ -362,6 +368,8 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 
 	// Rebuild spatial index with updated data
 	ctx := context.Background()
+
+	// GtfsDB may be nil during initial construction; frequency cache is populated by InitGTFSManager directly
 	if manager.GtfsDB != nil && manager.GtfsDB.Queries != nil {
 		spatialIndex, err := buildStopSpatialIndex(ctx, manager.GtfsDB.Queries)
 		if err == nil {
@@ -369,6 +377,13 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 		} else if manager.config.Verbose {
 			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 			logging.LogError(logger, "Failed to rebuild spatial index", err)
+		}
+
+		if newCache, freqErr := buildFrequencyCache(ctx, manager.GtfsDB.Queries); freqErr == nil {
+			manager.frequencyTripIDs = newCache
+		} else {
+			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+			logging.LogError(logger, "failed to load frequency trip IDs during initial load; retaining previous cache", freqErr)
 		}
 
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
@@ -418,6 +433,22 @@ func buildRouteIndex(staticData *gtfs.Static) map[string][]*gtfs.Route {
 	}
 
 	return index
+}
+
+// buildFrequencyCache queries the DB for frequency trip IDs and returns a set.
+// It returns an error if the query fails, allowing the caller to retain the previous cache.
+func buildFrequencyCache(ctx context.Context, queries *gtfsdb.Queries) (map[string]struct{}, error) {
+	ids, err := queries.GetFrequencyTripIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		cache[id] = struct{}{}
+	}
+
+	return cache, nil
 }
 
 // parseAndLogFeedExpiryLocked checks the GTFS calendar for the last active service date

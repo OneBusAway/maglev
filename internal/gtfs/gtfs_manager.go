@@ -54,6 +54,7 @@ type Manager struct {
 	realTimeVehicleLookupByVehicle map[string]int
 	agenciesMap                    map[string]*gtfs.Agency
 	routesMap                      map[string]*gtfs.Route
+	frequencyTripIDs               map[string]struct{}
 	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
 	staticMutex                    sync.RWMutex // Protects gtfsData and lastUpdated
 	config                         Config
@@ -218,6 +219,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedAgencyFilter:               make(map[string]map[string]bool),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
+		frequencyTripIDs:               make(map[string]struct{}),
 		Metrics:                        config.Metrics,
 	}
 
@@ -280,6 +282,17 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		return nil, fmt.Errorf("error building spatial index: %w", err)
 	}
 	manager.stopSpatialIndex = spatialIndex
+
+	freqTripIDs := make(map[string]struct{})
+	ids, err := gtfsDB.Queries.GetFrequencyTripIDs(ctx)
+	if err == nil {
+		for _, id := range ids {
+			freqTripIDs[id] = struct{}{}
+		}
+	} else {
+		logger.Error("failed to load frequency trip IDs", "error", err)
+	}
+	manager.frequencyTripIDs = freqTripIDs
 
 	// STARTUP SEQUENCING:
 	// If realtime is enabled, perform the first fetch synchronously for each feed

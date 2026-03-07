@@ -211,7 +211,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
 		TimeZone:       loc.String(),
-		Frequency:      0,
+		Frequency:      nil,
 		NextTripID:     nextTripID,
 		PreviousTripID: previousTripID,
 	}, nil

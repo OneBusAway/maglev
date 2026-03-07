@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewSchedule(t *testing.T) {
-	frequency := int64(300)
+	freq := &Frequency{StartTime: 1000, EndTime: 2000, Headway: 300, ExactTimes: 0}
 	nextTripID := "next_trip_123"
 	previousTripID := "prev_trip_456"
 	stopTime1 := NewStopTime(28800, 28900, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
@@ -16,9 +16,9 @@ func TestNewSchedule(t *testing.T) {
 	stopTimes := []StopTime{stopTime1, stopTime2}
 	timeZone := "America/Los_Angeles"
 
-	schedule := NewSchedule(frequency, nextTripID, previousTripID, stopTimes, timeZone)
+	schedule := NewSchedule(freq, nextTripID, previousTripID, stopTimes, timeZone)
 
-	assert.Equal(t, frequency, schedule.Frequency)
+	assert.Equal(t, freq, schedule.Frequency)
 	assert.Equal(t, nextTripID, schedule.NextTripID)
 	assert.Equal(t, previousTripID, schedule.PreviousTripID)
 	assert.Equal(t, stopTimes, schedule.StopTimes)
@@ -30,7 +30,7 @@ func TestScheduleJSON(t *testing.T) {
 	stopTime := NewStopTime(28800, 28900, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
 
 	schedule := Schedule{
-		Frequency:      300,
+		Frequency:      nil,
 		NextTripID:     "next_trip",
 		PreviousTripID: "prev_trip",
 		StopTimes:      []StopTime{stopTime},
@@ -44,7 +44,7 @@ func TestScheduleJSON(t *testing.T) {
 	err = json.Unmarshal(jsonData, &unmarshaledSchedule)
 	assert.NoError(t, err)
 
-	assert.Equal(t, schedule.Frequency, unmarshaledSchedule.Frequency)
+	assert.Nil(t, unmarshaledSchedule.Frequency)
 	assert.Equal(t, schedule.NextTripID, unmarshaledSchedule.NextTripID)
 	assert.Equal(t, schedule.PreviousTripID, unmarshaledSchedule.PreviousTripID)
 	assert.Equal(t, schedule.TimeZone, unmarshaledSchedule.TimeZone)
@@ -53,9 +53,9 @@ func TestScheduleJSON(t *testing.T) {
 }
 
 func TestScheduleWithEmptyValues(t *testing.T) {
-	schedule := NewSchedule(0, "", "", []StopTime{}, "")
+	schedule := NewSchedule(nil, "", "", []StopTime{}, "")
 
-	assert.Equal(t, int64(0), schedule.Frequency)
+	assert.Nil(t, schedule.Frequency)
 	assert.Equal(t, "", schedule.NextTripID)
 	assert.Equal(t, "", schedule.PreviousTripID)
 	assert.Empty(t, schedule.StopTimes)
@@ -69,7 +69,7 @@ func TestScheduleWithMultipleStopTimes(t *testing.T) {
 		NewStopTime(29200, 29300, "stop_3", "Midtown", 300.0, "STANDING_ROOM_ONLY"),
 	}
 
-	schedule := NewSchedule(600, "trip_next", "trip_prev", stopTimes, "America/New_York")
+	schedule := NewSchedule(nil, "trip_next", "trip_prev", stopTimes, "America/New_York")
 
 	assert.Equal(t, 3, len(schedule.StopTimes))
 	assert.Equal(t, "stop_1", schedule.StopTimes[0].StopID)
