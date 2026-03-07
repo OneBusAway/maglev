@@ -89,13 +89,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 		// Build trip status if trip is available
 		if vehicle.Trip != nil {
-			tripStatus := &models.TripStatus{
-				ActiveTripID:      vehicle.Trip.ID.ID,
-				BlockTripSequence: 0,
-				Scheduled:         true,
-				Phase:             vehicleStatus.Phase,
-				Status:            vehicleStatus.Status,
-			}
+			tripStatus := models.NewTripStatus()
+			tripStatus.ActiveTripID = vehicle.Trip.ID.ID
+			tripStatus.BlockTripSequence = 0
+			tripStatus.Scheduled = true
+			tripStatus.Phase = vehicleStatus.Phase
+			tripStatus.Status = vehicleStatus.Status
 
 			// Add position information to trip status
 			if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {

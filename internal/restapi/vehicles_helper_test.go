@@ -142,7 +142,7 @@ func TestBuildVehicleStatus_NilVehicleSetsDefaultStatus(t *testing.T) {
 	ctx := context.Background()
 
 	now := time.Now()
-	status := &models.TripStatus{}
+	status := models.NewTripStatus()
 	api.BuildVehicleStatus(ctx, nil, "any-trip", "any-agency", status, now)
 
 	assert.Equal(t, "default", status.Status)
@@ -162,7 +162,7 @@ func TestBuildVehicleStatus_StaleVehicleSetsDefaultStatus(t *testing.T) {
 		Timestamp: &old,
 	}
 
-	status := &models.TripStatus{}
+	status := models.NewTripStatus()
 	api.BuildVehicleStatus(ctx, vehicle, "any-trip", "any-agency", status, now)
 
 	assert.Equal(t, "default", status.Status)
@@ -186,7 +186,7 @@ func TestBuildVehicleStatus_FreshVehicleWithPosition_SetsLocationAndPhase(t *tes
 		},
 	}
 
-	status := &models.TripStatus{}
+	status := models.NewTripStatus()
 	api.BuildVehicleStatus(ctx, vehicle, "any-trip", "any-agency", status, now)
 
 	assert.False(t, status.Predicted, "BuildVehicleStatus must not set Predicted")
@@ -206,7 +206,7 @@ func TestBuildVehicleStatus_FreshVehicleNoPosition_DoesNotSetPredicted(t *testin
 		// No Position
 	}
 
-	status := &models.TripStatus{}
+	status := models.NewTripStatus()
 	api.BuildVehicleStatus(ctx, vehicle, "any-trip", "any-agency", status, now)
 
 	assert.False(t, status.Predicted, "BuildVehicleStatus must not set Predicted")
@@ -270,7 +270,7 @@ func TestBuildVehicleStatus_BearingConversion(t *testing.T) {
 				},
 			}
 
-			status := &models.TripStatus{}
+			status := models.NewTripStatus()
 			api.BuildVehicleStatus(ctx, vehicle, "any-trip", "any-agency", status, now)
 
 			require.NotNil(t, status.Orientation)

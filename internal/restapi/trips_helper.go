@@ -24,13 +24,12 @@ func (api *RestAPI) BuildTripStatus(
 	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
 	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
 		0, 0, 0, 0, serviceDate.Location())
-	status := &models.TripStatus{
-		ActiveTripID: utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:  sdMidnight.UnixMilli(),
-		SituationIDs: api.GetSituationIDsForTrip(ctx, tripID),
-		// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
-		// Java OBA uses nullable Integer types that serialize conditionally.
-	}
+	status := models.NewTripStatus()
+	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
+	status.ServiceDate = sdMidnight.UnixMilli()
+	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
+	// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
+	// Java OBA uses nullable Integer types that serialize conditionally.
 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 
@@ -137,8 +136,10 @@ func (api *RestAPI) BuildTripStatus(
 			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
 			// it onto the route shape. Reuses the already-fetched shapePoints.
 			actualPosition := status.LastKnownLocation
-			if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
-				status.Position = *projected
+			if actualPosition != nil {
+				if projected := projectPositionWithShapePoints(shapePoints, *actualPosition); projected != nil {
+					status.Position = *projected
+				}
 			}
 
 			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
@@ -146,7 +147,7 @@ func (api *RestAPI) BuildTripStatus(
 
 			// If the feed does not provide a bearing, infer orientation from the
 			// heading of the closest shape segment at the vehicle's position.
-			if vehicle.Position.Bearing == nil {
+			if vehicle.Position.Bearing == nil && actualPosition != nil {
 				if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
 					status.Orientation = utils.Float64Ptr(inferred)
 					status.LastKnownOrientation = utils.Float64Ptr(inferred)

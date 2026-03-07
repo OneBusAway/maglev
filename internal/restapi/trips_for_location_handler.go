@@ -347,7 +347,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 
 		var schedule *models.TripsSchedule
-		var status *models.TripStatusForTripDetails
+		var status *models.TripStatus
 
 		if includeSchedule {
 			var shapePoints []gtfs.ShapePoint

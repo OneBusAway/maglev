@@ -557,6 +557,7 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 	// Vehicle is fresh, so status should reflect real-time data
 	assert.Equal(t, "SCHEDULED", status.Status)
 	assert.Equal(t, "in_progress", status.Phase)
+	require.NotNil(t, status.LastKnownLocation, "LastKnownLocation should be set from vehicle position")
 	assert.NotZero(t, status.LastKnownLocation.Lat, "LastKnownLocation should be set from vehicle position")
 }
 
@@ -834,7 +835,7 @@ func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := serviceDate.Add(time.Second) // 00:00:01 — before any stop
 
-	status := &models.TripStatus{}
+	status := models.NewTripStatus()
 	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
 
 	// When before all stops, NextStop should be the first stop
@@ -862,7 +863,7 @@ func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := serviceDate.Add(30 * time.Hour)
 
-	status := &models.TripStatus{}
+	status := models.NewTripStatus()
 	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
 
 	// When past all stops, ClosestStop should be the last stop
@@ -876,7 +877,7 @@ func TestFillStopsFromSchedule_InvalidTripID(t *testing.T) {
 	ctx := context.Background()
 
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	status := &models.TripStatus{}
+	status := models.NewTripStatus()
 
 	// Should not panic or set any stops for an invalid trip
 	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, "any-agency")
@@ -1096,6 +1097,7 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	// not CurrentStatus. CurrentStatus only affects the stop-finding branch, not GetVehicleStatusAndPhase.
 	assert.Equal(t, "SCHEDULED", status.Status)
 	assert.Equal(t, "in_progress", status.Phase)
+	require.NotNil(t, status.LastKnownLocation, "LastKnownLocation should be set from vehicle position")
 	assert.NotZero(t, status.LastKnownLocation.Lat, "LastKnownLocation should be set from vehicle position")
 }
 

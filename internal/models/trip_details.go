@@ -35,20 +35,20 @@ func NewEmptyTripDetails() *TripDetails {
 type TripStatus struct {
 	ActiveTripID               string     `json:"activeTripId"`
 	BlockTripSequence          int        `json:"blockTripSequence"`
-	ClosestStop                string     `json:"closestStop"`
+	ClosestStop                string     `json:"closestStop,omitempty"`
 	ClosestStopTimeOffset      *int       `json:"closestStopTimeOffset,omitempty"`
 	DistanceAlongTrip          *float64   `json:"distanceAlongTrip,omitempty"`
 	Frequency                  *Frequency `json:"frequency,omitempty"`
 	LastKnownDistanceAlongTrip *float64   `json:"lastKnownDistanceAlongTrip,omitempty"`
-	LastKnownLocation          Location   `json:"lastKnownLocation"`
+	LastKnownLocation          *Location  `json:"lastKnownLocation,omitempty"`
 	LastKnownOrientation       *float64   `json:"lastKnownOrientation,omitempty"`
 	LastLocationUpdateTime     *int64     `json:"lastLocationUpdateTime,omitempty"`
 	LastUpdateTime             *int64     `json:"lastUpdateTime,omitempty"`
-	NextStop                   string     `json:"nextStop"`
+	NextStop                   string     `json:"nextStop,omitempty"`
 	NextStopTimeOffset         *int       `json:"nextStopTimeOffset,omitempty"`
 	OccupancyCapacity          *int       `json:"occupancyCapacity,omitempty"`
 	OccupancyCount             *int       `json:"occupancyCount,omitempty"`
-	OccupancyStatus            string     `json:"occupancyStatus"`
+	OccupancyStatus            string     `json:"occupancyStatus,omitempty"`
 	Orientation                *float64   `json:"orientation,omitempty"`
 	Phase                      string     `json:"phase"`
 	Position                   Location   `json:"position"`
@@ -56,10 +56,19 @@ type TripStatus struct {
 	ScheduleDeviation          *int       `json:"scheduleDeviation,omitempty"`
 	ScheduledDistanceAlongTrip *float64   `json:"scheduledDistanceAlongTrip,omitempty"`
 	ServiceDate                int64      `json:"serviceDate"`
-	SituationIDs               []string   `json:"situationIds"`
+	SituationIDs               []string   `json:"situationIds,omitempty"`
 	Status                     string     `json:"status"`
 	TotalDistanceAlongTrip     *float64   `json:"totalDistanceAlongTrip,omitempty"`
 	VehicleFeatures            []string   `json:"vehicleFeatures,omitempty"`
-	VehicleID                  string     `json:"vehicleId"`
-	Scheduled                  bool       `json:"scheduled"`
+	VehicleID                  string     `json:"vehicleId,omitempty"`
+	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. Tracked as a known spec deviation.
+}
+
+// NewTripStatus returns a TripStatus with safe zero-value defaults.
+// Always use this instead of &TripStatus{} to ensure SituationIDs is
+// initialized to []string{} (never nil), avoiding null vs [] inconsistency in JSON.
+func NewTripStatus() *TripStatus {
+	return &TripStatus{
+		SituationIDs: []string{},
+	}
 }

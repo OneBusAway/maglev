@@ -23,7 +23,7 @@ func TestTripsForLocationListEntry_GetTripId(t *testing.T) {
 func TestTripsForLocationListEntryJSON(t *testing.T) {
 	frequency := int64(300)
 
-	status := &TripStatusForTripDetails{
+	status := &TripStatus{
 		ActiveTripID: "mock_active_trip_123",
 		Phase:        "in_progress",
 	}

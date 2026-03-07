@@ -149,7 +149,7 @@ func TestTripStatusJSON(t *testing.T) {
 		DistanceAlongTrip:          &distanceAlongTrip,
 		Frequency:                  nil,
 		LastKnownDistanceAlongTrip: &lastKnownDistanceAlongTrip,
-		LastKnownLocation: Location{
+		LastKnownLocation: &Location{
 			Lat: 38.542661,
 			Lon: -121.743914,
 		},
