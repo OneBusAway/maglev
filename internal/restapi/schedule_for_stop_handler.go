@@ -255,7 +255,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes)
+		directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, nil)
 		routeSchedule := models.NewStopRouteSchedule(routeID, []models.StopRouteDirectionSchedule{directionSchedule})
 		routeSchedules = append(routeSchedules, routeSchedule)
 	}

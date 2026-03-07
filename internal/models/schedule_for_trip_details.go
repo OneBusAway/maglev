@@ -1,14 +1,14 @@
 package models
 
 type Schedule struct {
-	Frequency      int64      `json:"frequency"`
+	Frequency      *Frequency `json:"frequency"`
 	NextTripID     string     `json:"nextTripId"`
 	PreviousTripID string     `json:"previousTripId"`
 	StopTimes      []StopTime `json:"stopTimes"`
 	TimeZone       string     `json:"timeZone"`
 }
 
-func NewSchedule(frequency int64, nextTripID, previousTripID string, stopTimes []StopTime, timeZone string) *Schedule {
+func NewSchedule(frequency *Frequency, nextTripID, previousTripID string, stopTimes []StopTime, timeZone string) *Schedule {
 	return &Schedule{
 		Frequency:      frequency,
 		NextTripID:     nextTripID,

@@ -38,7 +38,7 @@ func TestNewTripDetails(t *testing.T) {
 	}
 
 	schedule := &Schedule{
-		Frequency:      600,
+		Frequency:      nil,
 		NextTripID:     "next_trip",
 		PreviousTripID: "prev_trip",
 		StopTimes:      []StopTime{},
@@ -82,7 +82,7 @@ func TestTripDetailsJSON(t *testing.T) {
 	}
 
 	schedule := &Schedule{
-		Frequency:      600,
+		Frequency:      nil,
 		NextTripID:     "next_trip",
 		PreviousTripID: "prev_trip",
 		StopTimes:      []StopTime{},
