@@ -187,7 +187,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		return models.ReferencesModel{}, err
 	}
 	routeSet := make(map[string]struct{})
-	var routes []interface{}
+	var routes []models.Route
 	for _, route := range routesArr {
 		routeID := utils.FormCombinedID(agencyID, route.ID)
 		if _, exists := routeSet[routeID]; exists {
@@ -235,7 +235,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		return models.ReferencesModel{}, err
 	}
 
-	var trips []interface{}
+	var trips []models.Trip
 	for _, trip := range batchedTrips {
 		trips = append(trips, models.Trip{
 			ID:           utils.FormCombinedID(agencyID, trip.ID),
@@ -252,18 +252,18 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		stops = []models.Stop{}
 	}
 	if routes == nil {
-		routes = []interface{}{}
+		routes = []models.Route{}
 	}
 	if trips == nil {
-		trips = []interface{}{}
+		trips = []models.Trip{}
 	}
 	return models.ReferencesModel{
 		Agencies:   []models.AgencyReference{{ID: agency.ID, Name: agency.Name, URL: agency.Url, Timezone: agency.Timezone}},
 		Routes:     routes,
 		Stops:      stops,
 		Trips:      trips,
-		StopTimes:  []interface{}{},
-		Situations: []interface{}{},
+		StopTimes:  []models.RouteStopTime{},
+		Situations: []models.Situation{},
 	}, nil
 }
 

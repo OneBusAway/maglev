@@ -3,21 +3,21 @@ package models
 // ReferencesModel References model for related data
 type ReferencesModel struct {
 	Agencies   []AgencyReference `json:"agencies"`
-	Routes     []interface{}     `json:"routes"`
-	Situations []interface{}     `json:"situations"`
-	StopTimes  []interface{}     `json:"stopTimes"`
+	Routes     []Route           `json:"routes"`
+	Situations []Situation       `json:"situations"`
+	StopTimes  []RouteStopTime   `json:"stopTimes"`
 	Stops      []Stop            `json:"stops"`
-	Trips      []interface{}     `json:"trips"`
+	Trips      []Trip            `json:"trips"`
 }
 
 // NewEmptyReferences creates a new empty References model with initialized empty slices
 func NewEmptyReferences() ReferencesModel {
 	return ReferencesModel{
 		Agencies:   []AgencyReference{},
-		Routes:     []interface{}{},
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
+		Routes:     []Route{},
+		Situations: []Situation{},
+		StopTimes:  []RouteStopTime{},
 		Stops:      []Stop{},
-		Trips:      []interface{}{},
+		Trips:      []Trip{},
 	}
 }

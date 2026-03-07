@@ -255,15 +255,3 @@ func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) [
 	routeAlerts := api.collectAlertsForRoutes(routeIDs)
 	return deduplicateAlerts(stopAlerts, routeAlerts)
 }
-
-// situationsToInterfaces converts Situation models to []interface{} for ReferencesModel.
-func situationsToInterfaces(situations []models.Situation) []interface{} {
-	if len(situations) == 0 {
-		return []interface{}{}
-	}
-	result := make([]interface{}, len(situations))
-	for i, s := range situations {
-		result[i] = s
-	}
-	return result
-}

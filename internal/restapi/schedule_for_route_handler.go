@@ -141,7 +141,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 	var stopTripGroupings []models.StopTripGrouping
 	globalStopIDSet := make(map[string]struct{})
-	var stopTimesRefs []interface{}
+	var stopTimesRefs [][]models.RouteStopTime
 	for dirID, groupedTrips := range groupings {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
@@ -255,7 +255,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				utils.FormCombinedID(agencyID, t.BlockID.String),
 				utils.FormCombinedID(agencyID, t.ShapeID.String),
 			)
-			references.Trips = append(references.Trips, tripRef)
+			references.Trips = append(references.Trips, *tripRef)
 			entryTrips = append(entryTrips, *tripRef)
 		}
 	}
@@ -279,20 +279,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	for _, sref := range stopTimesRefs {
-		switch v := sref.(type) {
-		case []models.RouteStopTime:
-			for _, st := range v {
-				references.StopTimes = append(references.StopTimes, st)
-			}
-		case []map[string]interface{}:
-			for _, st := range v {
-				references.StopTimes = append(references.StopTimes, st)
-			}
-		case []interface{}:
-			references.StopTimes = append(references.StopTimes, v...)
-		default:
-			references.StopTimes = append(references.StopTimes, v)
-		}
+		references.StopTimes = append(references.StopTimes, sref...)
 	}
 
 	entry := models.ScheduleForRouteEntry{

@@ -129,11 +129,11 @@ func TestRouteResponseJSON(t *testing.T) {
 		Agencies: []AgencyReference{
 			NewAgencyReference("agency-1", "Agency Name", "http://agency.org", "America/New_York", "en", "555-1234", "info@agency.org", "http://fares.org", "", false),
 		},
-		Routes:     []interface{}{},
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
+		Routes:     []Route{},
+		Situations: []Situation{},
+		StopTimes:  []RouteStopTime{},
 		Stops:      []Stop{},
-		Trips:      []interface{}{},
+		Trips:      []Trip{},
 	}
 
 	routeData := RouteData{
