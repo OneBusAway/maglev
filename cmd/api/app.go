@@ -165,9 +165,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
 
 	// Add request logging middleware (outermost)
-	level := parseLogLevel(cfg.LogLevel)
-	logger := slog.New(newLogHandler(cfg.LogFormat, level))
-	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(logger)
+	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(coreApp.Logger)
 
 	handler := restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler))
 

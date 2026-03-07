@@ -136,6 +136,7 @@ func (j *JSONConfig) validate() error {
 	if !validLogFormats[j.LogFormat] {
 		return fmt.Errorf("log format must be one of [text, json], got %q", j.LogFormat)
 	}
+
 	// Validate DataPath for path traversal attempts
 	if err := validatePath(j.DataPath, "data-path"); err != nil {
 		return err

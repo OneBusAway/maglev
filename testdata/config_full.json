@@ -9,6 +9,8 @@
     "auth-header-name": "Authorization",
     "auth-header-value": "Bearer token456"
   },
+  "log-level": "debug",
+  "log-format": "json",
   "gtfs-rt-feeds": [
     {
       "trip-updates-url": "https://api.example.com/trip-updates.pb",

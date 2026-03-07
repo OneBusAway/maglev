@@ -37,6 +37,8 @@ func TestLoadFromFile_FullConfig(t *testing.T) {
 	assert.Equal(t, "production", config.Env)
 	assert.Equal(t, []string{"key1", "key2", "key3"}, config.ApiKeys)
 	assert.Equal(t, 50, config.RateLimit)
+	assert.Equal(t, "debug", config.LogLevel)
+	assert.Equal(t, "json", config.LogFormat)
 	assert.Equal(t, "https://example.com/gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "Authorization", config.GtfsStaticFeed.AuthHeaderName)
 	assert.Equal(t, "Bearer token456", config.GtfsStaticFeed.AuthHeaderValue)
@@ -120,6 +122,38 @@ func TestValidate_InvalidRateLimit(t *testing.T) {
 	err := config.validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "rate-limit must be at least 1")
+}
+
+func TestValidate_InvalidLogLevel(t *testing.T) {
+	config := &JSONConfig{
+		Port:      4000,
+		Env:       "development",
+		ApiKeys:   []string{"test"},
+		RateLimit: 1,
+		LogLevel:  "other",
+		LogFormat: "text",
+		DataPath:  "./gtfs.db",
+	}
+
+	err := config.validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "log level must be one of")
+}
+
+func TestValidate_InvalidLogFormat(t *testing.T) {
+	config := &JSONConfig{
+		Port:      4000,
+		Env:       "development",
+		ApiKeys:   []string{"test"},
+		RateLimit: 1,
+		LogLevel:  "info",
+		LogFormat: "other",
+		DataPath:  "./gtfs.db",
+	}
+
+	err := config.validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "log format must be one of")
 }
 
 func TestValidate_EmptyApiKeys(t *testing.T) {
