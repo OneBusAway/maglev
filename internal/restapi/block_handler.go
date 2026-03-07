@@ -143,7 +143,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 			tripDistance := blockDistance - tripStartDistance
 
 			trip := models.TripBlock{
-				AccumulatedSlackTime: int(tripAccumulatedSlack),
+				AccumulatedSlackTime: tripAccumulatedSlack,
 				BlockStopTimes:       blockStopTimes,
 				DistanceAlongBlock:   tripDistance,
 				TripId:               utils.FormCombinedID(agencyID, tripID),
