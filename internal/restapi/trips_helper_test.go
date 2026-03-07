@@ -1858,11 +1858,11 @@ func TestFindClosestStopByTimeWithDelays_OvernightTrip(t *testing.T) {
 
 func TestInferOrientationFromShape(t *testing.T) {
 	tests := []struct {
-		name     string
-		lat, lon float64
-		shape    []gtfs.ShapePoint
-		wantMin  float64
-		wantMax  float64
+		name      string
+		lat, lon  float64
+		shape     []gtfs.ShapePoint
+		wantMin   float64
+		wantMax   float64
 		wantExact *float64
 	}{
 		{

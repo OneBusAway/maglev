@@ -34,8 +34,8 @@ func createLargeAgencyApi(tb testing.TB) *RestAPI {
 	}
 	application := &app.Application{
 		Config: appconf.Config{
-			Env:      appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:  []string{"TEST"},
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
 			RateLimit: 100,
 		},
 		GtfsConfig:  cfg,
