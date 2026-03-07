@@ -474,24 +474,16 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	}
 
 	// Convert maps to slices for response
-	routes := make([]interface{}, 0, len(presentRoutes))
-	for _, route := range presentRoutes {
-		if route.ID != "" {
-			routes = append(routes, route)
-		}
-	}
+	routes := utils.MapValuesFiltered(presentRoutes, func(route models.Route) bool {
+		return route.ID != ""
+	})
 
-	agencyList := make([]models.AgencyReference, 0, len(presentAgencies))
-	for _, agency := range presentAgencies {
-		agencyList = append(agencyList, agency)
-	}
+	agencyList := utils.MapValues(presentAgencies)
 
-	return models.ReferencesModel{
-		Agencies:   agencyList,
-		Routes:     routes,
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      stopList,
-		Trips:      tripsRefList,
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencyList
+	references.Routes = routes
+	references.Stops = stopList
+	references.Trips = tripsRefList
+	return references
 }

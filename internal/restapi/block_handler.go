@@ -248,23 +248,18 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		})
 	}
 
-	if stops == nil {
-		stops = []models.Stop{}
+	references := models.NewEmptyReferences()
+	references.Agencies = []models.AgencyReference{{ID: agency.ID, Name: agency.Name, URL: agency.Url, Timezone: agency.Timezone}}
+	if routes != nil {
+		references.Routes = routes
 	}
-	if routes == nil {
-		routes = []interface{}{}
+	if stops != nil {
+		references.Stops = stops
 	}
-	if trips == nil {
-		trips = []interface{}{}
+	if trips != nil {
+		references.Trips = trips
 	}
-	return models.ReferencesModel{
-		Agencies:   []models.AgencyReference{{ID: agency.ID, Name: agency.Name, URL: agency.Url, Timezone: agency.Timezone}},
-		Routes:     routes,
-		Stops:      stops,
-		Trips:      trips,
-		StopTimes:  []interface{}{},
-		Situations: []interface{}{},
-	}, nil
+	return references, nil
 }
 
 func calculateBlockSlackTimes(blockStopTimes []models.BlockStopTime) []models.BlockStopTime {

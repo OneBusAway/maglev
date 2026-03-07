@@ -266,12 +266,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	// Convert reference maps to slices
 	references := models.NewEmptyReferences()
-	for _, agencyRef := range agencyRefs {
-		references.Agencies = append(references.Agencies, agencyRef)
-	}
-	for _, routeRef := range routeRefs {
-		references.Routes = append(references.Routes, routeRef)
-	}
+	references.Agencies = utils.MapValues(agencyRefs)
+	references.Routes = utils.MapValuesAsInterface(routeRefs)
 
 	for _, trip := range trips {
 		combinedTripID := utils.FormCombinedID(agencyID, trip.ID)

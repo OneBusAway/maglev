@@ -705,32 +705,14 @@ func (rb *referenceBuilder) createTripReference(tripDetails gtfsdb.Trip, current
 }
 
 func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
-	return models.ReferencesModel{
-		Agencies:   rb.getAgenciesList(),
-		Routes:     rb.getRoutesList(),
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      rb.stopList,
-		Trips:      rb.tripsRefList,
-	}
-}
-
-func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
-	agencies := make([]models.AgencyReference, 0, len(rb.presentAgencies))
-	for _, agency := range rb.presentAgencies {
-		agencies = append(agencies, agency)
-	}
-	return agencies
-}
-
-func (rb *referenceBuilder) getRoutesList() []interface{} {
-	routes := make([]interface{}, 0, len(rb.presentRoutes))
-	for _, route := range rb.presentRoutes {
-		if route.ID != "" {
-			routes = append(routes, route)
-		}
-	}
-	return routes
+	references := models.NewEmptyReferences()
+	references.Agencies = utils.MapValues(rb.presentAgencies)
+	references.Routes = utils.MapValuesFiltered(rb.presentRoutes, func(route models.Route) bool {
+		return route.ID != ""
+	})
+	references.Stops = rb.stopList
+	references.Trips = rb.tripsRefList
+	return references
 }
 
 // buildScheduleFromMemory constructs a TripsSchedule from pre-fetched stop times, shape points, and block trips.

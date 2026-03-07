@@ -35,19 +35,13 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 			route.Url, route.Color, route.TextColor))
 	}
 
-	references := models.ReferencesModel{
-		Agencies: []models.AgencyReference{
-			models.NewAgencyReference(
-				agency.Id, agency.Name, agency.Url, agency.Timezone,
-				agency.Language, agency.Phone, agency.Email,
-				agency.FareUrl, "", false,
-			),
-		},
-		Routes:     []interface{}{},
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
+	references := models.NewEmptyReferences()
+	references.Agencies = []models.AgencyReference{
+		models.NewAgencyReference(
+			agency.Id, agency.Name, agency.Url, agency.Timezone,
+			agency.Language, agency.Phone, agency.Email,
+			agency.FareUrl, "", false,
+		),
 	}
 
 	response := models.NewListResponse(routesList, references, limitExceeded, api.Clock)

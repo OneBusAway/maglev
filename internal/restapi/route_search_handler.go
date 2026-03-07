@@ -113,14 +113,8 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
-	references := models.ReferencesModel{
-		Agencies:   agencies,
-		Routes:     []interface{}{},
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencies
 
 	response := models.NewListResponse(results, references, false, api.Clock)
 	api.sendResponse(w, r, response)

@@ -75,14 +75,8 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
 		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
-		references := models.ReferencesModel{
-			Agencies:   agencies,
-			Routes:     []interface{}{},
-			Situations: []interface{}{},
-			StopTimes:  []interface{}{},
-			Stops:      []models.Stop{},
-			Trips:      []interface{}{},
-		}
+		references := models.NewEmptyReferences()
+		references.Agencies = agencies
 		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
@@ -137,14 +131,8 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
 
-	references := models.ReferencesModel{
-		Agencies:   agencies,
-		Routes:     []interface{}{},
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
-		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencies
 
 	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
