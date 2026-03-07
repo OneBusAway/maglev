@@ -3,14 +3,22 @@ package restapi
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"maglev.onebusaway.org/internal/logging"
 )
 
+// DataFreshness represents the last update timestamps for GTFS data.
+type DataFreshness struct {
+	StaticGtfsLastUpdated time.Time            `json:"staticGtfsLastUpdated"`
+	RealtimeFeeds         map[string]time.Time `json:"realtimeFeeds,omitempty"`
+}
+
 // HealthResponse represents the JSON response from the health endpoint.
 type HealthResponse struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Status        string         `json:"status"`
+	Detail        string         `json:"detail,omitempty"`
+	DataFreshness *DataFreshness `json:"dataFreshness,omitempty"`
 }
 
 // healthHandler verifies database connectivity and readiness.
@@ -50,9 +58,19 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch data freshness from the manager only if verbose=true is passed
+	var freshness *DataFreshness
+	if r.URL.Query().Get("verbose") == "true" {
+		freshness = &DataFreshness{
+			StaticGtfsLastUpdated: api.GtfsManager.GetStaticLastUpdated(),
+			RealtimeFeeds:         api.GtfsManager.GetFeedUpdateTimes(),
+		}
+	}
+
 	// All checks passed
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(HealthResponse{
-		Status: "ok",
+		Status:        "ok",
+		DataFreshness: freshness,
 	})
 }

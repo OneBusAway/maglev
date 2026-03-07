@@ -90,6 +90,9 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	// Health check endpoint - no authentication required
 	mux.HandleFunc("GET /healthz", api.healthHandler)
 
+	// --- Metadata Endpoint (Special v2 exception) ---
+	mux.Handle("GET /api/v2/metadata.json", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.metadataHandler)))
+
 	// --- Routes without ID validation ---
 	mux.Handle("GET /api/where/agencies-with-coverage.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.agenciesWithCoverageHandler))))
 	mux.Handle("GET /api/where/search/stop.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.searchStopsHandler))))
@@ -142,7 +145,10 @@ func (api *RestAPI) SetupAPIRoutes() http.Handler {
 	// Register all API routes
 	api.SetRoutes(mux)
 
-	// Apply global middleware chain: compression -> base routes
-	// This ensures all responses are compressed
-	return CompressionMiddleware(mux)
+	// Apply global middleware chain: compression -> freshness -> base routes
+	var handler http.Handler = mux
+	handler = api.FreshnessMiddleware(handler)
+	handler = CompressionMiddleware(handler)
+
+	return handler
 }

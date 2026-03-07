@@ -318,7 +318,9 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	manager.routesByAgencyID = buildRouteIndex(newStaticData)
 
-	manager.lastUpdated = time.Now()
+	now := time.Now()
+	manager.lastUpdated = now
+	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
 
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil {
@@ -348,7 +350,11 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	defer manager.staticMutex.Unlock()
 
 	manager.gtfsData = staticData
-	manager.lastUpdated = time.Now()
+
+	now := time.Now()
+	manager.lastUpdated = now
+	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
+
 	manager.isHealthy = true
 
 	manager.agenciesMap, manager.routesMap = buildLookupMaps(staticData)

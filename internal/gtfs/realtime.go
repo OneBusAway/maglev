@@ -619,6 +619,9 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 					lastSuccessfulFetch = time.Now()
 					feedCleared = false // Reset clearing flag on success
 
+					// Record the timestamp for the API endpoints
+					manager.SetFeedUpdateTime(feedCfg.ID, lastSuccessfulFetch)
+
 					if manager.Metrics != nil {
 						manager.Metrics.FeedLastSuccessfulFetchTime.WithLabelValues(feedCfg.ID).Set(float64(lastSuccessfulFetch.Unix()))
 						manager.Metrics.FeedConsecutiveErrors.WithLabelValues(feedCfg.ID).Set(0)
