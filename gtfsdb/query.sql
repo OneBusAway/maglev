@@ -1114,6 +1114,7 @@ SELECT * FROM problem_reports_stop
 WHERE stop_id = ?
 ORDER BY created_at DESC;
 
+
 -- name: GetFeedEndDate :one
 SELECT COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
 FROM (
@@ -1121,3 +1122,84 @@ FROM (
     UNION ALL
     SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
 );
+
+-- Optimized queries using SQLite window functions
+
+-- name: GetTargetStopTimeWithTotalStops :one
+-- Fetches a specific stop time for a trip+stop, along with the total stop count,
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    st.pickup_type,
+    st.drop_off_type,
+    st.shape_dist_traveled,
+    st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = @trip_id) AS total_stops
+FROM stop_times st
+WHERE st.trip_id = @trip_id AND st.stop_id = @stop_id
+ORDER BY st.stop_sequence
+LIMIT 1;
+
+-- name: GetTargetStopTimeWithTotalStopsBySequence :one
+-- Fetches a specific stop time for a trip+stop+sequence, along with the total stop count,
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    st.pickup_type,
+    st.drop_off_type,
+    st.shape_dist_traveled,
+    st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = @trip_id) AS total_stops
+FROM stop_times st
+WHERE st.trip_id = @trip_id AND st.stop_id = @stop_id AND st.stop_sequence = @stop_sequence
+LIMIT 1;
+
+-- name: GetBlockTripSequence :one
+-- Calculates a trip's zero-based index within its block's ordered sequence,
+WITH BlockTrips AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY min_arrival_time) - 1 AS seq
+    FROM trips
+    WHERE block_id = @block_id
+      AND service_id IN (sqlc.slice('service_ids'))
+)
+SELECT seq FROM BlockTrips WHERE id = @trip_id;
+
+-- name: GetNextAndPreviousTripsInBlock :one
+-- Uses LAG/LEAD window functions to find prev/next trip IDs in one query,
+WITH NavTrips AS (
+    SELECT
+        id,
+        LAG(id)  OVER (ORDER BY min_arrival_time) AS prev_trip_id,
+        LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
+    FROM trips
+    WHERE block_id = @block_id
+      AND service_id IN (sqlc.slice('service_ids'))
+)
+SELECT prev_trip_id, next_trip_id
+FROM NavTrips
+WHERE id = @trip_id;
+
+-- name: GetFirstStopOfNextTripInBlock :one
+-- Uses LEAD() to find the next trip and directly fetches its first stop,
+SELECT st.*
+FROM stop_times st
+WHERE st.trip_id = (
+    SELECT next_trip_id FROM (
+        SELECT id, LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
+        FROM trips
+        WHERE block_id = @block_id
+          AND service_id IN (sqlc.slice('service_ids'))
+    ) WHERE id = @trip_id
+)
+ORDER BY st.stop_sequence ASC
+LIMIT 1;
+
+
