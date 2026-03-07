@@ -565,7 +565,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if len(situationIDs) > 0 {
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts, route.AgencyID)
+			situations := api.BuildSituationReferences(alerts)
 			for _, situation := range situations {
 				references.Situations = append(references.Situations, situation)
 			}

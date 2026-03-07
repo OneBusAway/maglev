@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/utils"
@@ -125,4 +126,47 @@ func TestRouteHandlerWithMalformedID(t *testing.T) {
 	malformedID := "1-SHUTTLE"
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+malformedID+".json?key=TEST")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
+
+func TestRouteHandlerWithSituations(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	routes := api.GtfsManager.GetRoutes()
+	require.NotEmpty(t, routes, "Test data should contain at least one route")
+
+	routeID := routes[0].Id
+	agencyID := routes[0].Agency.Id
+	combinedRouteID := utils.FormCombinedID(agencyID, routeID)
+
+	alert := gtfs.Alert{
+		ID: "test-alert-123",
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{RouteID: &routeID},
+		},
+		Header: []gtfs.AlertText{
+			{Text: "Test Route Alert", Language: "en"},
+		},
+	}
+
+	api.GtfsManager.AddTestAlert(alert)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+combinedRouteID+".json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "Response should have a data object")
+
+	references, ok := data["references"].(map[string]interface{})
+	require.True(t, ok, "Data should have a references object")
+
+	situations, ok := references["situations"].([]interface{})
+	require.True(t, ok, "References should have a situations array")
+
+	require.NotEmpty(t, situations, "Situations array should NOT be empty when alerts exist")
+	require.Len(t, situations, 1, "Should have exactly 1 situation")
+
+	situationMap := situations[0].(map[string]interface{})
+	assert.Equal(t, "test-alert-123", situationMap["id"], "The alert ID should match our mocked alert")
 }

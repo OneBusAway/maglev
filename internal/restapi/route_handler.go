@@ -53,6 +53,11 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		references.Agencies = append(references.Agencies, agencyModel)
 	}
 
+	// Populate situation references for alerts affecting this route
+	alerts := api.GtfsManager.GetAlertsForRoute(routeID)
+	situations := api.BuildSituationReferences(alerts)
+	references.Situations = append(references.Situations, situationsToInterfaces(situations)...)
+
 	response := models.NewEntryResponse(routeData, references, api.Clock)
 	api.sendResponse(w, r, response)
 }

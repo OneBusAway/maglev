@@ -79,7 +79,7 @@ func (api *RestAPI) BuildRouteReferencesAsInterface(ctx context.Context, agencyI
 	return routeRefs, nil
 }
 
-func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert, agencyID string) []models.Situation {
+func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 
 	for _, alert := range alerts {
@@ -211,4 +211,59 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 	default:
 		return "noImpact"
 	}
+}
+
+// deduplicateAlerts takes multiple slices of alerts and returns a single slice with unique alerts by ID.
+func deduplicateAlerts(alertSlices ...[]gtfs.Alert) []gtfs.Alert {
+	seen := make(map[string]bool)
+	var uniqueAlerts []gtfs.Alert
+
+	for _, slice := range alertSlices {
+		for _, alert := range slice {
+			if !seen[alert.ID] {
+				seen[alert.ID] = true
+				uniqueAlerts = append(uniqueAlerts, alert)
+			}
+		}
+	}
+	return uniqueAlerts
+}
+
+// collectAlertsForStops returns deduplicated alerts matching any of the given stop IDs.
+// It acquires realTimeMutex internally via GetAlertsForStop; no external lock is required.
+func (api *RestAPI) collectAlertsForStops(stopIDs []string) []gtfs.Alert {
+	var alerts []gtfs.Alert
+	for _, stopID := range stopIDs {
+		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
+	}
+	return deduplicateAlerts(alerts)
+}
+
+// collectAlertsForRoutes returns deduplicated alerts matching any of the given route IDs.
+// It acquires realTimeMutex internally via GetAlertsForRoute; no external lock is required.
+func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
+	var alerts []gtfs.Alert
+	for _, routeID := range routeIDs {
+		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
+	}
+	return deduplicateAlerts(alerts)
+}
+
+// collectAlertsForStopsAndRoutes returns deduplicated alerts matching any of the given stop or route IDs.
+func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) []gtfs.Alert {
+	stopAlerts := api.collectAlertsForStops(stopIDs)
+	routeAlerts := api.collectAlertsForRoutes(routeIDs)
+	return deduplicateAlerts(stopAlerts, routeAlerts)
+}
+
+// situationsToInterfaces converts Situation models to []interface{} for ReferencesModel.
+func situationsToInterfaces(situations []models.Situation) []interface{} {
+	if len(situations) == 0 {
+		return []interface{}{}
+	}
+	result := make([]interface{}, len(situations))
+	for i, s := range situations {
+		result[i] = s
+	}
+	return result
 }

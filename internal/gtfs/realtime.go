@@ -625,7 +625,6 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			vehicleLookupByVehicle[vehicle.ID.ID] = i
 		}
 	}
-
 	manager.realTimeTrips = allTrips
 	manager.realTimeVehicles = allVehicles
 	manager.realTimeAlerts = allAlerts
@@ -751,4 +750,9 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 			}()
 		}
 	}
+}
+
+// GetAlertsForRoute returns alerts matching the given route ID.
+func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
+	return manager.GetAlertsByIDs("", routeID, "")
 }

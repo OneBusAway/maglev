@@ -613,7 +613,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		for _, a := range collectedAlerts {
 			alertSlice = append(alertSlice, a)
 		}
-		situations := api.BuildSituationReferences(alertSlice, alertAgencyID)
+		situations := api.BuildSituationReferences(alertSlice)
 		for _, s := range situations {
 			references.Situations = append(references.Situations, s)
 		}

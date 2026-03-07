@@ -830,3 +830,15 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 	manager.feedTrips["_test"] = trips
 	manager.rebuildMergedRealtimeLocked()
 }
+
+// AddTestAlert is a helper method used ONLY for testing to inject mock alerts safely.
+func (m *Manager) AddTestAlert(alert gtfs.Alert) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+	// Initialize the map if it doesn't exist
+	if m.feedAlerts == nil {
+		m.feedAlerts = make(map[string][]gtfs.Alert)
+	}
+	m.feedAlerts["_test"] = append(m.feedAlerts["_test"], alert)
+	m.rebuildMergedRealtimeLocked()
+}

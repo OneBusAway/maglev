@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -293,4 +294,50 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 	}
 	assert.True(t, foundA, "Agency A should be in references")
 	assert.True(t, foundB, "Agency B should be in references")
+}
+
+func TestStopHandlerWithSituations(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies, "Test data should contain at least one agency")
+
+	stops := api.GtfsManager.GetStops()
+	require.NotEmpty(t, stops, "Test data should contain at least one stop")
+
+	routes := api.GtfsManager.GetRoutes()
+	require.NotEmpty(t, routes, "Test data should contain at least one route")
+
+	rawStopID := stops[0].Id
+	rawRouteID := routes[0].Id
+	combinedStopID := utils.FormCombinedID(agencies[0].Id, rawStopID)
+
+	alert := gtfs.Alert{
+		ID: "test-cross-entity-alert-789",
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{StopID: &rawStopID},
+			{RouteID: &rawRouteID},
+		},
+	}
+
+	api.GtfsManager.AddTestAlert(alert)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+combinedStopID+".json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "Response should have a data object")
+
+	references, ok := data["references"].(map[string]interface{})
+	require.True(t, ok, "Data should have a references object")
+
+	situations, ok := references["situations"].([]interface{})
+	require.True(t, ok, "References should have a situations array")
+	require.NotEmpty(t, situations, "Situations array should NOT be empty")
+
+	require.Len(t, situations, 1, "Should have exactly 1 deduplicated situation despite matching multiple entities")
+
+	situationMap := situations[0].(map[string]interface{})
+	assert.Equal(t, "test-cross-entity-alert-789", situationMap["id"])
 }
