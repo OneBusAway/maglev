@@ -40,13 +40,6 @@ func getSharedTestComponents(t *testing.T) (*Manager, *AdvancedDirectionCalculat
 
 		// Create the Calculator
 		sharedCalc = NewAdvancedDirectionCalculator(sharedManager.GtfsDB.Queries)
-
-		// Warm the Global Cache (The heavy operation)
-		// We do this only once per test suite execution.
-		err = InitializeGlobalCache(context.Background(), sharedManager.GtfsDB.Queries, sharedCalc)
-		if err != nil {
-			panic("Failed to warm global cache: " + err.Error())
-		}
 	})
 
 	return sharedManager, sharedCalc
@@ -82,6 +75,22 @@ func TestTranslateGtfsDirection(t *testing.T) {
 		{"225 degrees", "225", "SW"},
 		{"270 degrees", "270", "W"},
 		{"315 degrees", "315", "NW"},
+		// Compass abbreviations (as written by DirectionPrecomputer)
+		{"abbreviation N", "N", "N"},
+		{"abbreviation NE", "NE", "NE"},
+		{"abbreviation E", "E", "E"},
+		{"abbreviation SE", "SE", "SE"},
+		{"abbreviation S", "S", "S"},
+		{"abbreviation SW", "SW", "SW"},
+		{"abbreviation W", "W", "W"},
+		{"abbreviation NW", "NW", "NW"},
+
+		// Mixed case abbreviations
+		{"abbreviation n lowercase", "n", "N"},
+		{"abbreviation ne lowercase", "ne", "NE"},
+		{"abbreviation Ne mixed", "Ne", "NE"},
+		{"abbreviation sW mixed", "sW", "SW"},
+
 		// Invalid
 		{"invalid text", "invalid", ""},
 		{"empty string", "", ""},
@@ -91,6 +100,52 @@ func TestTranslateGtfsDirection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := calc.translateGtfsDirection(tt.input)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCalculateStopDirectionResultCache(t *testing.T) {
+	calc := &AdvancedDirectionCalculator{}
+	// Set an empty context cache so computeFromShapes doesn't try to hit the DB
+	_ = calc.SetContextCache(make(map[string][]gtfsdb.GetStopsWithShapeContextRow))
+
+	// First call: precomputed direction "NE" from DB should be recognized
+	result := calc.CalculateStopDirection(context.Background(), "stop-1", sql.NullString{String: "NE", Valid: true})
+	assert.Equal(t, "NE", result, "should recognize compass abbreviation NE from precomputed direction")
+
+	// Verify that a stop with no GTFS direction falls through to computeFromShapes,
+	// gets an empty result (no data in cache), and caches the empty result.
+	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{Valid: false})
+	assert.Equal(t, "", result, "should return empty for stop with no direction data")
+
+	// The empty result should be cached (negative cache) — verify via sync.Map
+	cached, ok := calc.directionResults.Load("nonexistent-stop")
+	assert.True(t, ok, "empty result should be cached in directionResults")
+	assert.Equal(t, "", cached.(string), "cached value should be empty string")
+
+	// Second call for same stop should return from cache without recomputation
+	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{Valid: false})
+	assert.Equal(t, "", result, "second call should return cached empty result")
+}
+
+func TestCalculateStopDirectionPrecomputedAbbreviations(t *testing.T) {
+	// Verify all compass abbreviations that DirectionPrecomputer writes to SQLite
+	// are correctly recognized by CalculateStopDirection via translateGtfsDirection.
+	calc := &AdvancedDirectionCalculator{}
+
+	abbreviations := map[string]string{
+		"N": "N", "NE": "NE", "E": "E", "SE": "SE",
+		"S": "S", "SW": "SW", "W": "W", "NW": "NW",
+	}
+
+	for abbr, expected := range abbreviations {
+		t.Run("precomputed_"+abbr, func(t *testing.T) {
+			result := calc.CalculateStopDirection(
+				context.Background(),
+				"stop-"+abbr,
+				sql.NullString{String: abbr, Valid: true},
+			)
+			assert.Equal(t, expected, result)
 		})
 	}
 }

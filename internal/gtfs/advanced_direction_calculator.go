@@ -29,6 +29,7 @@ type AdvancedDirectionCalculator struct {
 	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
 	cacheMutex                 sync.RWMutex                                      // Protects map access
+	directionResults           sync.Map                                          // Cached direction results (stopID -> string), includes negative cache
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
@@ -90,33 +91,43 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 		}
 	}
 
+	// Check the in-memory result cache (includes negative cache for empty results)
+	if cached, ok := adc.directionResults.Load(stopID); ok {
+		return cached.(string)
+	}
+
 	// Mark as initialized for concurrency safety
 	adc.initialized.Store(true)
 
-	return adc.computeFromShapes(ctx, stopID)
+	result := adc.computeFromShapes(ctx, stopID)
+
+	// Cache the result (even empty strings) to avoid recomputation
+	adc.directionResults.Store(stopID, result)
+
+	return result
 }
 
 // translateGtfsDirection converts GTFS direction field to compass direction
 func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string) string {
 	direction = strings.TrimSpace(strings.ToLower(direction))
 
-	// Try text-based directions
+	// Try text-based directions and compass abbreviations
 	switch direction {
-	case "north":
+	case "north", "n":
 		return "N"
-	case "northeast":
+	case "northeast", "ne":
 		return "NE"
-	case "east":
+	case "east", "e":
 		return "E"
-	case "southeast":
+	case "southeast", "se":
 		return "SE"
-	case "south":
+	case "south", "s":
 		return "S"
-	case "southwest":
+	case "southwest", "sw":
 		return "SW"
-	case "west":
+	case "west", "w":
 		return "W"
-	case "northwest":
+	case "northwest", "nw":
 		return "NW"
 	}
 
