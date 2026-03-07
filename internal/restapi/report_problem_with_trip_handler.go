@@ -16,9 +16,12 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		logger = slog.Default()
 	}
 
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	tripID := parsed.CodeID          // The raw GTFS trip ID (e.g., "t_123")
-	compositeID := parsed.CombinedID // The API ID (e.g., "1_t_123")
+	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
+	// The raw GTFS trip ID (e.g., "t_123")
+	compositeID := utils.FormCombinedID(agencyID, tripID) // The API ID (e.g., "1_t_123")
 
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
