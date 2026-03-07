@@ -255,6 +255,7 @@ func TestTripsForLocationMissingBothLatAndLon(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
+
 func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t)
 	defer cleanup()
@@ -285,6 +286,8 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 
 			data := model.Data.(map[string]interface{})
 			list := data["list"].([]interface{})
+
+			assert.NotEmpty(t, list, "expected at least one trip in the response to verify status behavior")
 
 			for _, item := range list {
 				trip := item.(map[string]interface{})

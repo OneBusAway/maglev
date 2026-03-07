@@ -31,6 +31,8 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Intentionally defaulting includeStatus to false to align with includeSchedule
+	// behavior for this endpoint, even though trips-for-route defaults to true.
 	includeStatus := r.URL.Query().Get("includeStatus") == "true"
 	currentTime := api.Clock.Now().In(currentLocation)
 
@@ -369,7 +371,11 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 
 		if includeStatus {
-			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, todayMidnight, currentTime)
+    		var statusErr error
+    		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, todayMidnight, currentTime)
+    		if statusErr != nil {
+        		api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
+    		}
 		}
 
 		entry := models.TripsForLocationListEntry{
@@ -502,7 +508,7 @@ func (rb *referenceBuilder) build(params ReferenceParams) error {
 func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEntry) {
 	for _, trip := range trips {
 		_, tripID, err := utils.ExtractAgencyIDAndCodeID(trip.TripId)
-		if err != nil {
+		if err == nil {
 			rb.presentTrips[tripID] = models.Trip{}
 		}
 
