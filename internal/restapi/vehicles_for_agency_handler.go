@@ -25,7 +25,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	if agency == nil {
 		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]interface{}{}, models.ReferencesModel{}, false, api.Clock))
+		api.sendResponse(w, r, models.NewListResponse([]any{}, models.NewEmptyReferences(), false, api.Clock))
 		return
 	}
 
@@ -191,14 +191,10 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		tripRefList = append(tripRefList, tripRef)
 	}
 
-	references := models.ReferencesModel{
-		Agencies:   agencyRefList,
-		Routes:     routeRefList,
-		Situations: []models.Situation{},
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      []models.Stop{},
-		Trips:      tripRefList,
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencyRefList
+	references.Routes = routeRefList
+	references.Trips = tripRefList
 
 	response := models.NewListResponse(vehiclesList, references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)

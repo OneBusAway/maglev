@@ -169,8 +169,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	references.Stops = stops
 
-	for _, route := range uniqueRouteMap {
-		routeModel := models.NewRoute(
+	routeRefs := make(map[string]models.Route, len(uniqueRouteMap))
+	for combinedID, route := range uniqueRouteMap {
+		routeRefs[combinedID] = models.NewRoute(
 			utils.FormCombinedID(agencyID, route.ID),
 			agencyID,
 			route.ShortName.String,
@@ -180,9 +181,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 			route.Url.String,
 			route.Color.String,
 			route.TextColor.String)
-
-		references.Routes = append(references.Routes, routeModel)
 	}
+	references.Routes = utils.MapValues(routeRefs)
 
 	references.Agencies = append(references.Agencies, agencyModel)
 

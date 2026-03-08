@@ -482,17 +482,12 @@ func buildTripReferences[T interface{ GetTripId() string }](
 		}
 	}
 
-	agencyList := make([]models.AgencyReference, 0, len(presentAgencies))
-	for _, agency := range presentAgencies {
-		agencyList = append(agencyList, agency)
-	}
+	agencyList := utils.MapValues(presentAgencies)
 
-	return models.ReferencesModel{
-		Agencies:   agencyList,
-		Routes:     routes,
-		Situations: []models.Situation{},
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      stopList,
-		Trips:      tripsRefList,
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencyList
+	references.Routes = routes
+	references.Stops = stopList
+	references.Trips = tripsRefList
+	return references
 }

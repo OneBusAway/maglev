@@ -68,14 +68,9 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Build references
-	references := models.ReferencesModel{
-		Agencies:   []models.AgencyReference{agencyRef},
-		Routes:     routeRefs,
-		Situations: []models.Situation{},
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      []models.Stop{},
-		Trips:      []models.Trip{},
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = []models.AgencyReference{agencyRef}
+	references.Routes = routeRefs
 
 	response := models.NewListResponse(stopsList, references, false, api.Clock)
 	api.sendResponse(w, r, response)

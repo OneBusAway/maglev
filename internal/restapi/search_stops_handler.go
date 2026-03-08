@@ -293,12 +293,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 7. Build References
 	references := models.NewEmptyReferences()
-	for _, r := range routesMap {
-		references.Routes = append(references.Routes, r)
-	}
-	for _, a := range agenciesMap {
-		references.Agencies = append(references.Agencies, a)
-	}
+	references.Routes = utils.MapValues(routesMap)
+	references.Agencies = utils.MapValues(agenciesMap)
 
 	// Populate situation references for alerts affecting the returned stops
 	alerts := api.collectAlertsForStops(stopIDs)
