@@ -314,7 +314,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 			freqTripIDs[id] = struct{}{}
 		}
 	} else {
-		logger.Error("failed to load frequency trip IDs", "error", err)
+		logging.LogError(logger, "failed to load frequency trip IDs", err)
 	}
 	manager.frequencyTripIDs = freqTripIDs
 
