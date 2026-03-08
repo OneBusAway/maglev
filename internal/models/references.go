@@ -10,14 +10,13 @@ type ReferencesModel struct {
 	Trips      []Trip            `json:"trips"`
 }
 
-// NewEmptyReferences creates a new empty References model with initialized empty slices
-func NewEmptyReferences() ReferencesModel {
-	return ReferencesModel{
+func NewEmptyReferences() *ReferencesModel {
+	return &ReferencesModel{
 		Agencies:   []AgencyReference{},
 		Routes:     []Route{},
-		Situations: []Situation{},
-		StopTimes:  []RouteStopTime{},
 		Stops:      []Stop{},
 		Trips:      []Trip{},
+		Situations: []Situation{},
+		StopTimes:  []RouteStopTime{},
 	}
 }

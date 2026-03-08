@@ -8,9 +8,10 @@ import (
 )
 
 func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	routeID := parsed.CodeID // The raw GTFS route ID
+	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
@@ -58,6 +59,6 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situations...)
 
-	response := models.NewEntryResponse(routeData, references, api.Clock)
+	response := models.NewEntryResponse(routeData, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }

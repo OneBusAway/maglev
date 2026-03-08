@@ -103,9 +103,10 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 }
 
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	tripID := parsed.CodeID
+	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	ctx := r.Context()
 
@@ -150,7 +151,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
 
 	var schedule *models.Schedule
-	var status *models.TripStatusForTripDetails
+	var status *models.TripStatus
 
 	if params.IncludeStatus {
 		var statusErr error
@@ -260,7 +261,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Routes = routes
 	}
 
-	response := models.NewEntryResponse(tripDetails, references, api.Clock)
+	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

@@ -122,15 +122,21 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
-		references := models.ReferencesModel{
-			Agencies:   []models.AgencyReference{},
-			Routes:     []models.Route{},
-			Situations: []models.Situation{},
-			StopTimes:  []models.RouteStopTime{},
-			Stops:      []models.Stop{},
-			Trips:      []models.Trip{},
+		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+		if agencies == nil {
+			agencies = []models.AgencyReference{}
 		}
-		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
+
+		routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+		if routes == nil {
+			routes = []models.Route{}
+		}
+
+		references := models.NewEmptyReferences()
+		references.Agencies = agencies
+		references.Routes = routes
+
+		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -255,15 +261,11 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	alerts := api.collectAlertsForStops(resultRawStopIDs)
 	situations := api.BuildSituationReferences(alerts)
 
-	references := models.ReferencesModel{
-		Agencies:   agencies,
-		Routes:     routes,
-		Situations: situations,
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      []models.Stop{},
-		Trips:      []models.Trip{},
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencies
+	references.Routes = routes
+	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

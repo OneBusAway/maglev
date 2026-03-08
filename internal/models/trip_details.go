@@ -1,15 +1,15 @@
 package models
 
 type TripDetails struct {
-	Frequency    *Frequency                `json:"frequency"`
-	Schedule     *Schedule                 `json:"schedule"`
-	ServiceDate  int64                     `json:"serviceDate"`
-	SituationIDs []string                  `json:"situationIds"`
-	Status       *TripStatusForTripDetails `json:"status,omitempty"`
-	TripID       string                    `json:"tripId"`
+	Frequency    *Frequency  `json:"frequency"`
+	Schedule     *Schedule   `json:"schedule"`
+	ServiceDate  int64       `json:"serviceDate"`
+	SituationIDs []string    `json:"situationIds"`
+	Status       *TripStatus `json:"status,omitempty"`
+	TripID       string      `json:"tripId"`
 }
 
-func NewTripDetails(trip Trip, tripID string, serviceDate int64, frequency *Frequency, status *TripStatusForTripDetails, schedule *Schedule, situationIDs []string) *TripDetails {
+func NewTripDetails(trip Trip, tripID string, serviceDate int64, frequency *Frequency, status *TripStatus, schedule *Schedule, situationIDs []string) *TripDetails {
 	return &TripDetails{
 		TripID:       tripID,
 		ServiceDate:  serviceDate,
@@ -32,7 +32,7 @@ func NewEmptyTripDetails() *TripDetails {
 	}
 }
 
-type TripStatusForTripDetails struct {
+type TripStatus struct {
 	ActiveTripID               string     `json:"activeTripId"`
 	BlockTripSequence          int        `json:"blockTripSequence"`
 	ClosestStop                string     `json:"closestStop"`
@@ -40,7 +40,7 @@ type TripStatusForTripDetails struct {
 	DistanceAlongTrip          float64    `json:"distanceAlongTrip"`
 	Frequency                  *Frequency `json:"frequency,omitempty"`
 	LastKnownDistanceAlongTrip float64    `json:"lastKnownDistanceAlongTrip"`
-	LastKnownLocation          Location   `json:"lastKnownLocation"`
+	LastKnownLocation          *Location  `json:"lastKnownLocation"`
 	LastKnownOrientation       *float64   `json:"lastKnownOrientation,omitempty"`
 	LastLocationUpdateTime     int64      `json:"lastLocationUpdateTime"`
 	LastUpdateTime             int64      `json:"lastUpdateTime"`
@@ -56,10 +56,18 @@ type TripStatusForTripDetails struct {
 	ScheduleDeviation          int        `json:"scheduleDeviation"`
 	ScheduledDistanceAlongTrip *float64   `json:"scheduledDistanceAlongTrip,omitempty"`
 	ServiceDate                int64      `json:"serviceDate"`
-	SituationIDs               []string   `json:"situationIds"`
+	SituationIDs               []string   `json:"situationIds,omitempty"`
 	Status                     string     `json:"status"`
 	TotalDistanceAlongTrip     float64    `json:"totalDistanceAlongTrip"`
 	VehicleFeatures            []string   `json:"vehicleFeatures,omitempty"`
-	VehicleID                  string     `json:"vehicleId"`
-	Scheduled                  bool       `json:"scheduled"`
+	VehicleID                  string     `json:"vehicleId,omitempty"`
+	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. Tracked as a known spec deviation.
+}
+
+// SituationIDs initialized to []string{} for Go-side convenience.
+// JSON output is unaffected because omitempty omits both nil and empty slices.
+func NewTripStatus() *TripStatus {
+	return &TripStatus{
+		SituationIDs: []string{},
+	}
 }

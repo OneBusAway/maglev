@@ -57,15 +57,9 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Create references with the agency
-	references := models.ReferencesModel{
-		Agencies:   agencyReferences,
-		Routes:     []models.Route{},
-		Situations: []models.Situation{},
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      []models.Stop{},
-		Trips:      []models.Trip{},
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencyReferences
 
-	response := models.NewListResponse(agenciesWithCoverage, references, limitExceeded, api.Clock)
+	response := models.NewListResponse(agenciesWithCoverage, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

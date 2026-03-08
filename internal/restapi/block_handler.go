@@ -19,9 +19,10 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	blockID := parsed.CodeID
+	agencyID, blockID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	//  Return JSON 400 response for invalid block IDs
 	// We use an explicit struct here to ensure the text is exactly "invalid block id"
@@ -187,7 +188,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		return models.ReferencesModel{}, err
 	}
 	routeSet := make(map[string]struct{})
-	var routes []models.Route
+	routes := make([]models.Route, 0)
 	for _, route := range routesArr {
 		routeID := utils.FormCombinedID(agencyID, route.ID)
 		if _, exists := routeSet[routeID]; exists {
@@ -212,7 +213,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		return models.ReferencesModel{}, err
 	}
 
-	var stops []models.Stop
+	stops := make([]models.Stop, 0)
 	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
 			ID:             utils.FormCombinedID(agencyID, stop.ID),
@@ -237,7 +238,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		return models.ReferencesModel{}, err
 	}
 
-	var trips []models.Trip
+	trips := make([]models.Trip, 0)
 	for _, trip := range batchedTrips {
 		trips = append(trips, models.Trip{
 			ID:           utils.FormCombinedID(agencyID, trip.ID),
@@ -250,23 +251,12 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		})
 	}
 
-	if stops == nil {
-		stops = []models.Stop{}
-	}
-	if routes == nil {
-		routes = []models.Route{}
-	}
-	if trips == nil {
-		trips = []models.Trip{}
-	}
-	return models.ReferencesModel{
-		Agencies:   []models.AgencyReference{{ID: agency.ID, Name: agency.Name, URL: agency.Url, Timezone: agency.Timezone}},
-		Routes:     routes,
-		Stops:      stops,
-		Trips:      trips,
-		StopTimes:  []models.RouteStopTime{},
-		Situations: []models.Situation{},
-	}, nil
+	references := models.NewEmptyReferences()
+	references.Agencies = []models.AgencyReference{{ID: agency.ID, Name: agency.Name, URL: agency.Url, Timezone: agency.Timezone}}
+	references.Routes = routes
+	references.Stops = stops
+	references.Trips = trips
+	return *references, nil
 }
 
 func calculateBlockSlackTimes(blockStopTimes []models.BlockStopTime) []models.BlockStopTime {

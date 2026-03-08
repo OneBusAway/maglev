@@ -16,9 +16,12 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 		logger = slog.Default()
 	}
 
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	stopID := parsed.CodeID          // The raw GTFS stop ID
-	compositeID := parsed.CombinedID // The API ID (e.g., "1_stop123")
+	agencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
+	stopID := stopCode                                      // The raw GTFS stop ID
+	compositeID := utils.FormCombinedID(agencyID, stopCode) // The API ID (e.g., "1_stop123")
 
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {

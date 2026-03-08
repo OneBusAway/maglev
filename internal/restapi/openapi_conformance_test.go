@@ -83,7 +83,7 @@ func serveAndCaptureRawJSON(t *testing.T, api *RestAPI, endpoint string) (int, m
 	client := &http.Client{}
 	resp, err := client.Get(server.URL + endpoint)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)

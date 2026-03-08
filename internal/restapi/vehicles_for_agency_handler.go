@@ -10,7 +10,10 @@ import (
 )
 
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
-	id, _ := utils.GetIDFromContext(r.Context())
+	id, ok := api.extractAndValidateID(w, r)
+	if !ok {
+		return
+	}
 
 	ctx := r.Context()
 
@@ -22,7 +25,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	if agency == nil {
 		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]interface{}{}, models.ReferencesModel{}, false, api.Clock))
+		api.sendResponse(w, r, models.NewListResponse([]any{}, *models.NewEmptyReferences(), false, api.Clock))
 		return
 	}
 
@@ -72,13 +75,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		// Set timestamps
 		if vehicle.Timestamp != nil {
 			timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-			vehicleStatus.LastLocationUpdateTime = timestampMs
-			vehicleStatus.LastUpdateTime = timestampMs
+			vehicleStatus.LastLocationUpdateTime = &timestampMs
+			vehicleStatus.LastUpdateTime = &timestampMs
 		}
 
 		// Set location if available
 		if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-			vehicleStatus.Location = models.Location{
+			vehicleStatus.Location = &models.Location{
 				Lat: float64(*vehicle.Position.Latitude),
 				Lon: float64(*vehicle.Position.Longitude),
 			}
@@ -91,13 +94,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		if vehicle.Trip != nil {
 			vehicleStatus.TripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
 
-			tripStatus := models.TripStatus{
-				ActiveTripID:      utils.FormCombinedID(id, vehicle.Trip.ID.ID),
-				BlockTripSequence: 0,
-				Scheduled:         true,
-				Phase:             vehicleStatus.Phase,
-				Status:            vehicleStatus.Status,
-			}
+			tripStatus := models.NewTripStatus()
+			tripStatus.ActiveTripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
+			tripStatus.BlockTripSequence = 0
+			tripStatus.Scheduled = true
+			tripStatus.Phase = vehicleStatus.Phase
+			tripStatus.Status = vehicleStatus.Status
 
 			// Add position information to trip status
 			if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
@@ -169,6 +171,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					url, color, textColor)
 
 			}
+		} else {
+			defaultTripStatus := models.NewTripStatus()
+			defaultTripStatus.Status = "default"
+			defaultTripStatus.Phase = "scheduled"
+			vehicleStatus.TripStatus = defaultTripStatus
 		}
 
 		vehiclesList = append(vehiclesList, vehicleStatus)
@@ -197,15 +204,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		tripRefList = append(tripRefList, tripRef)
 	}
 
-	references := models.ReferencesModel{
-		Agencies:   agencyRefList,
-		Routes:     routeRefList,
-		Situations: []models.Situation{},
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      []models.Stop{},
-		Trips:      tripRefList,
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencyRefList
+	references.Routes = routeRefList
+	references.Trips = tripRefList
 
-	response := models.NewListResponse(vehiclesList, references, limitExceeded, api.Clock)
+	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

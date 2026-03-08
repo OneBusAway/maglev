@@ -20,9 +20,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	routeID := parsed.CodeID
+	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
 	includeStatus := r.URL.Query().Get("includeStatus") != "false"
@@ -238,7 +239,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		var schedule *models.TripsSchedule
-		var status *models.TripStatusForTripDetails
+		var status *models.TripStatus
 
 		if includeSchedule {
 			schedule = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation, w, r)
@@ -481,17 +482,12 @@ func buildTripReferences[T interface{ GetTripId() string }](
 		}
 	}
 
-	agencyList := make([]models.AgencyReference, 0, len(presentAgencies))
-	for _, agency := range presentAgencies {
-		agencyList = append(agencyList, agency)
-	}
+	agencyList := utils.MapValues(presentAgencies)
 
-	return models.ReferencesModel{
-		Agencies:   agencyList,
-		Routes:     routes,
-		Situations: []models.Situation{},
-		StopTimes:  []models.RouteStopTime{},
-		Stops:      stopList,
-		Trips:      tripsRefList,
-	}
+	references := models.NewEmptyReferences()
+	references.Agencies = agencyList
+	references.Routes = routes
+	references.Stops = stopList
+	references.Trips = tripsRefList
+	return *references
 }

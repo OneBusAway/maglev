@@ -2077,6 +2077,7 @@ components:
           description: Last known distance along the trip received in real-time from the transit vehicle.
         lastKnownLocation:
           type: object
+          nullable: true
           properties:
             lat:
               type: number

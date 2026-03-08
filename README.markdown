@@ -89,6 +89,8 @@ Example `config.json`:
   "env": "production",
   "api-keys": ["key1", "key2", "key3"],
   "rate-limit": 50,
+  "log-level": "info",
+  "log-format": "json",
   "gtfs-static-feed": {
     "url": "https://example.com/gtfs.zip",
     "auth-header-name": "Authorization",
@@ -116,7 +118,6 @@ Example `config.json`:
   ],
   "data-path": "/data/gtfs.db"
 }
-
 ```
 
 **Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will error if you try to use both.
@@ -146,30 +147,32 @@ A JSON schema file is provided at `config.schema.json` for IDE autocomplete and 
 
 ### Configuration Options
 
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `port` | integer | 4000 | API server port |
-| `env` | string | "development" | Environment (development, test, production) |
-| `api-keys` | array | ["test"] | API keys for authentication |
-| `rate-limit` | integer | 100 | Requests per second per API key |
-| `gtfs-static-feed` | object | (Sound Transit) | Static GTFS feed configuration |
-| `gtfs-rt-feeds` | array | (Sound Transit) | GTFS-RT feed configurations (see below) |
-| `data-path` | string | "./gtfs.db" | Path to SQLite database |
+| Option             | Type    | Default         | Description                                 |
+| ------------------ | ------- | --------------- | ------------------------------------------- |
+| `port`             | integer | 4000            | API server port                             |
+| `env`              | string  | "development"   | Environment (development, test, production) |
+| `api-keys`         | array   | ["test"]        | API keys for authentication                 |
+| `log-level`        | string  | "info"          | Log level (debug, info, warn, error)        |
+| `log-format`       | string  | "text"          | Log format (text, json)                     |
+| `rate-limit`       | integer | 100             | Requests per second per API key             |
+| `gtfs-static-feed` | object  | (Sound Transit) | Static GTFS feed configuration              |
+| `gtfs-rt-feeds`    | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
+| `data-path`        | string  | "./gtfs.db"     | Path to SQLite database                     |
 
 #### GTFS-RT Feed Options
 
 Each entry in the `gtfs-rt-feeds` array supports:
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `id` | string | auto (`"feed-0"`, `"feed-1"`, …) | Unique identifier for the feed, used in logs and internal data partitioning |
-| `agency-ids` | array | `[]` | When set, only realtime data (trips, vehicles, alerts) belonging to the listed agency IDs is included. Data for other agencies in the same feed is filtered out. Agencies are resolved via route→agency mapping from the static GTFS data. |
-| `trip-updates-url` | string | `""` | URL for GTFS-RT trip updates protobuf |
-| `vehicle-positions-url` | string | `""` | URL for GTFS-RT vehicle positions protobuf |
-| `service-alerts-url` | string | `""` | URL for GTFS-RT service alerts protobuf |
-| `headers` | object | `{}` | HTTP headers sent with every request to this feed |
-| `refresh-interval` | integer | `30` | Polling interval in seconds |
-| `enabled` | boolean | `true` | Set to `false` to disable polling without removing the entry |
+| Field                   | Type    | Default                          | Description                                                                                                                                                                                                                                |
+| ----------------------- | ------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                    | string  | auto (`"feed-0"`, `"feed-1"`, …) | Unique identifier for the feed, used in logs and internal data partitioning                                                                                                                                                                |
+| `agency-ids`            | array   | `[]`                             | When set, only realtime data (trips, vehicles, alerts) belonging to the listed agency IDs is included. Data for other agencies in the same feed is filtered out. Agencies are resolved via route→agency mapping from the static GTFS data. |
+| `trip-updates-url`      | string  | `""`                             | URL for GTFS-RT trip updates protobuf                                                                                                                                                                                                      |
+| `vehicle-positions-url` | string  | `""`                             | URL for GTFS-RT vehicle positions protobuf                                                                                                                                                                                                 |
+| `service-alerts-url`    | string  | `""`                             | URL for GTFS-RT service alerts protobuf                                                                                                                                                                                                    |
+| `headers`               | object  | `{}`                             | HTTP headers sent with every request to this feed                                                                                                                                                                                          |
+| `refresh-interval`      | integer | `30`                             | Polling interval in seconds                                                                                                                                                                                                                |
+| `enabled`               | boolean | `true`                           | Set to `false` to disable polling without removing the entry                                                                                                                                                                               |
 
 A feed must have at least one URL (`trip-updates-url`, `vehicle-positions-url`, or `service-alerts-url`) to be activated. Each feed runs its own independent polling goroutine. Data from all enabled feeds is merged into a single unified view for the API.
 
@@ -331,15 +334,15 @@ make docker-compose-dev
 
 ### Docker Make Targets
 
-| Command | Description |
-| --- | --- |
-| `make docker-build` | Build the Docker image |
-| `make docker-run` | Build and run the container |
-| `make docker-stop` | Stop and remove the container |
-| `make docker-compose-up` | Start with Docker Compose |
-| `make docker-compose-down` | Stop Docker Compose services |
-| `make docker-compose-dev` | Start development environment |
-| `make docker-clean` | Remove all Docker artifacts |
+| Command                    | Description                   |
+| -------------------------- | ----------------------------- |
+| `make docker-build`        | Build the Docker image        |
+| `make docker-run`          | Build and run the container   |
+| `make docker-stop`         | Stop and remove the container |
+| `make docker-compose-up`   | Start with Docker Compose     |
+| `make docker-compose-down` | Stop Docker Compose services  |
+| `make docker-compose-dev`  | Start development environment |
+| `make docker-clean`        | Remove all Docker artifacts   |
 
 ### Data Persistence
 
@@ -438,15 +441,14 @@ docker inspect --format='{{.State.Health.Status}}' maglev
 # In docker-compose.yml or docker-compose.dev.yml
 environment:
   - HEALTH_CHECK_KEY=your-api-key
-
 ```
 
 ### Environment Variables
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `TZ` | Timezone for the container | `UTC` |
-| `HEALTH_CHECK_KEY` | API key used for health check endpoint | `test` |
+| Variable           | Description                            | Default |
+| ------------------ | -------------------------------------- | ------- |
+| `TZ`               | Timezone for the container             | `UTC`   |
+| `HEALTH_CHECK_KEY` | API key used for health check endpoint | `test`  |
 
 ### Troubleshooting
 

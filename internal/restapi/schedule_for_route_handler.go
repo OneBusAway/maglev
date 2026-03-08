@@ -11,9 +11,10 @@ import (
 )
 
 func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	routeID := parsed.CodeID
+	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	dateParam := r.URL.Query().Get("date")
 	if err := utils.ValidateDate(dateParam); err != nil {
@@ -79,7 +80,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			Stops:             []models.Stop{},
 			Trips:             []models.Trip{},
 		}
-		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
 	}
 
@@ -108,7 +109,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			Stops:             []models.Stop{},
 			Trips:             []models.Trip{},
 		}
-		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
 	}
 
@@ -225,9 +226,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	)
 	references.Agencies = append(references.Agencies, agencyModel)
 
-	for _, r := range routeRefs {
-		references.Routes = append(references.Routes, r)
-	}
+	references.Routes = utils.MapValues(routeRefs)
 
 	tripIDs := make([]string, 0, len(tripIDsSet))
 	for tid := range tripIDsSet {
@@ -290,5 +289,5 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		Stops:             entryStops,
 		Trips:             entryTrips,
 	}
-	api.sendResponse(w, r, models.NewEntryResponse(entry, references, api.Clock))
+	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }

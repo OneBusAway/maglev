@@ -23,10 +23,9 @@ func TestTripsForLocationListEntry_GetTripId(t *testing.T) {
 func TestTripsForLocationListEntryJSON(t *testing.T) {
 	frequency := int64(300)
 
-	status := &TripStatusForTripDetails{
-		ActiveTripID: "mock_active_trip_123",
-		Phase:        "in_progress",
-	}
+	status := NewTripStatus()
+	status.ActiveTripID = "mock_active_trip_123"
+	status.Phase = "in_progress"
 
 	entry := TripsForLocationListEntry{
 		TripId:       "unitrans_trip_123",

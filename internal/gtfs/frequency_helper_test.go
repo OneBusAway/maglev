@@ -112,19 +112,27 @@ func TestExpandFrequencyTrips_Basic(t *testing.T) {
 
 	// First departure: 06:00 (no shift since base arrival == window start)
 	assert.Equal(t, int64(6*time.Hour), expanded[0].ArrivalTime)
+	assert.Equal(t, int64(6*time.Hour+1*time.Minute), expanded[0].DepartureTime)
 	assert.Equal(t, "A", expanded[0].StopID)
 	assert.Equal(t, int64(6*time.Hour+10*time.Minute), expanded[1].ArrivalTime)
+	assert.Equal(t, int64(6*time.Hour+11*time.Minute), expanded[1].DepartureTime)
 	assert.Equal(t, "B", expanded[1].StopID)
 
 	// Second departure: 06:20
 	assert.Equal(t, int64(6*time.Hour+20*time.Minute), expanded[2].ArrivalTime)
+	assert.Equal(t, int64(6*time.Hour+21*time.Minute), expanded[2].DepartureTime)
 	assert.Equal(t, "A", expanded[2].StopID)
 	assert.Equal(t, int64(6*time.Hour+30*time.Minute), expanded[3].ArrivalTime)
+	assert.Equal(t, int64(6*time.Hour+31*time.Minute), expanded[3].DepartureTime)
 	assert.Equal(t, "B", expanded[3].StopID)
 
 	// Third departure: 06:40
 	assert.Equal(t, int64(6*time.Hour+40*time.Minute), expanded[4].ArrivalTime)
+	assert.Equal(t, int64(6*time.Hour+41*time.Minute), expanded[4].DepartureTime)
 	assert.Equal(t, "A", expanded[4].StopID)
+	assert.Equal(t, int64(6*time.Hour+50*time.Minute), expanded[5].ArrivalTime)
+	assert.Equal(t, int64(6*time.Hour+51*time.Minute), expanded[5].DepartureTime)
+	assert.Equal(t, "B", expanded[5].StopID)
 }
 
 func TestExpandFrequencyTrips_PreservesFields(t *testing.T) {
@@ -197,6 +205,23 @@ func TestExpandFrequencyTrips_ZeroHeadway(t *testing.T) {
 
 	result := ExpandFrequencyTrips(baseStopTimes, freq)
 	assert.Nil(t, result)
+}
+
+func TestExpandFrequencyTrips_NegativeHeadway(t *testing.T) {
+	baseStopTimes := []gtfsdb.StopTime{
+		{TripID: "t1", ArrivalTime: int64(6 * time.Hour), DepartureTime: int64(6 * time.Hour), StopID: "A", StopSequence: 1},
+	}
+
+	freq := gtfsdb.Frequency{
+		TripID:      "t1",
+		StartTime:   int64(6 * time.Hour),
+		EndTime:     int64(9 * time.Hour),
+		HeadwaySecs: -600,
+		ExactTimes:  1,
+	}
+
+	result := ExpandFrequencyTrips(baseStopTimes, freq)
+	assert.Nil(t, result, "Should return nil and avoid infinite loop on negative headway")
 }
 
 func TestExpandFrequencyTrips_BaseOffsetDiffersFromWindowStart(t *testing.T) {

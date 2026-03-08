@@ -42,6 +42,8 @@ type JSONConfig struct {
 	GtfsStaticFeed   GtfsStaticFeed `json:"gtfs-static-feed"`
 	GtfsRtFeeds      []GtfsRtFeed   `json:"gtfs-rt-feeds"`
 	DataPath         string         `json:"data-path"`
+	LogLevel         string         `json:"log-level"`
+	LogFormat        string         `json:"log-format"`
 }
 
 // setDefaults applies default values to the JSON config if fields are missing or zero
@@ -77,6 +79,12 @@ func (j *JSONConfig) setDefaults() {
 	}
 	if j.DataPath == "" {
 		j.DataPath = "./gtfs.db"
+	}
+	if j.LogLevel == "" {
+		j.LogLevel = "info"
+	}
+	if j.LogFormat == "" {
+		j.LogFormat = "text"
 	}
 }
 
@@ -129,6 +137,24 @@ func (j *JSONConfig) Validate() error {
 			return fmt.Errorf("duplicate protected API key found: %q", key)
 		}
 		seenProtected[key] = true
+	}
+
+	validLogLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	if !validLogLevels[j.LogLevel] {
+		return fmt.Errorf("log level must be one of [debug, info, warn, error], got %q", j.LogLevel)
+	}
+
+	validLogFormats := map[string]bool{
+		"text": true,
+		"json": true,
+	}
+	if !validLogFormats[j.LogFormat] {
+		return fmt.Errorf("log format must be one of [text, json], got %q", j.LogFormat)
 	}
 
 	// Validate DataPath for path traversal attempts
@@ -202,6 +228,8 @@ func (j *JSONConfig) ToAppConfig() Config {
 		ExemptApiKeys:    j.ExemptApiKeys,
 		Verbose:          true, // Always set to true like in main.go
 		RateLimit:        j.RateLimit,
+		LogLevel:         j.LogLevel,
+		LogFormat:        j.LogFormat,
 	}
 }
 
@@ -351,6 +379,14 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 		}
 	}
 
+	// Override logging level and format
+	if logLevel := strings.TrimSpace(os.Getenv("MAGLEV_LOG_LEVEL")); logLevel != "" {
+		config.LogLevel = strings.ToLower(logLevel)
+	}
+	if logFormat := strings.TrimSpace(os.Getenv("MAGLEV_LOG_FORMAT")); logFormat != "" {
+		config.LogFormat = strings.ToLower(logFormat)
+	}
+
 	// Override Protected API Keys
 	if envProtectedKeys := os.Getenv("GTFS_PROTECTED_API_KEYS"); envProtectedKeys != "" {
 		rawKeys := strings.Split(envProtectedKeys, ",")
@@ -401,7 +437,9 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 		"port", config.Port,
 		"env", config.Env,
 		"api_keys_count", len(config.ApiKeys),
-		"rate_limit", config.RateLimit)
+		"rate_limit", config.RateLimit,
+		"log_level", config.LogLevel,
+		"log_format", config.LogFormat)
 
 	return &config, nil
 }

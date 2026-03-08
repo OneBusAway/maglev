@@ -13,6 +13,8 @@ type Config struct {
 	ExemptApiKeys    []string
 	Verbose          bool
 	RateLimit        int // Requests per second per API key for rate limiting
+	LogLevel         string
+	LogFormat        string
 }
 
 // Environment is an enumerated type representing various stages or configurations in the system's lifecycle.

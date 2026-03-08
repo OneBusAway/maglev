@@ -82,10 +82,11 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 }
 
 func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	stopAgencyID := parsed.AgencyID
-	stopCode := parsed.CodeID
-	stopID := parsed.CombinedID
+	stopAgencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
+	stopID := utils.FormCombinedID(stopAgencyID, stopCode)
 
 	ctx := r.Context()
 
@@ -194,7 +195,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	if len(allActiveStopTimes) == 0 {
-		response := models.NewArrivalsAndDepartureResponse(arrivals, references, []string{}, []string{}, stopID, api.Clock)
+		response := models.NewArrivalsAndDepartureResponse(arrivals, *references, []string{}, []string{}, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -304,7 +305,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			predictedDepartureTime = scheduledDepartureTime
 			predicted              = false
 			vehicleID              string
-			tripStatus             *models.TripStatusForTripDetails
+			tripStatus             *models.TripStatus
 			distanceFromStop       = 0.0
 			numberOfStopsAway      = 0
 		)
@@ -627,7 +628,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
-	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
+	response := models.NewArrivalsAndDepartureResponse(arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

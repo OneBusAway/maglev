@@ -4,12 +4,13 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 func (api *RestAPI) problemReportsForTripHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	tripID := parsed.CodeID
+	_, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
@@ -30,6 +31,6 @@ func (api *RestAPI) problemReportsForTripHandler(w http.ResponseWriter, r *http.
 	}
 
 	references := models.NewEmptyReferences()
-	response := models.NewListResponse(reportList, references, false, api.Clock)
+	response := models.NewListResponse(reportList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

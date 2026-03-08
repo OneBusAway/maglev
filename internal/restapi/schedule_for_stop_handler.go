@@ -12,9 +12,10 @@ import (
 )
 
 func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	stopID := parsed.CodeID
+	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	ctx := r.Context()
 
@@ -87,7 +88,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	if len(routeIDs) == 0 {
 		api.sendResponse(w, r, models.NewEntryResponse(
 			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), date, nil),
-			models.NewEmptyReferences(),
+			*models.NewEmptyReferences(),
 			api.Clock,
 		))
 		return
@@ -266,12 +267,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	// Convert reference maps to slices
 	references := models.NewEmptyReferences()
-	for _, agencyRef := range agencyRefs {
-		references.Agencies = append(references.Agencies, agencyRef)
-	}
-	for _, routeRef := range routeRefs {
-		references.Routes = append(references.Routes, routeRef)
-	}
+	references.Agencies = utils.MapValues(agencyRefs)
+	references.Routes = utils.MapValues(routeRefs)
 
 	for _, trip := range trips {
 		combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
@@ -309,6 +306,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	references.Stops = append(references.Stops, stopRef)
 	// Create and send response
-	response := models.NewEntryResponse(entry, references, api.Clock)
+	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
