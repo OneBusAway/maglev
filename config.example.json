@@ -12,6 +12,8 @@
     "org.onebusaway.iphone"
   ],
   "rate-limit": 100,
+  "log-level": "info",
+  "log-format": "text",
   "gtfs-static-feed": {
     "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
     "enable-gtfs-tidy": false
