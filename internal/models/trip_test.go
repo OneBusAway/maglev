@@ -144,7 +144,7 @@ func TestTripResponseJSON(t *testing.T) {
 }
 
 func TestTripsScheduleJSON(t *testing.T) {
-	frequency := int64(300)
+	frequency := Frequency{}
 	schedule := TripsSchedule{
 		Frequency:      &frequency,
 		NextTripId:     "next_trip",
