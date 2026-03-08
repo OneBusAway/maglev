@@ -2,12 +2,16 @@ package models
 
 type VehicleStatus struct {
 	VehicleID              string      `json:"vehicleId"`
-	LastLocationUpdateTime *int64      `json:"lastLocationUpdateTime,omitempty"`
-	LastUpdateTime         *int64      `json:"lastUpdateTime,omitempty"`
-	Location               *Location   `json:"location,omitempty"`
-	Status                 string      `json:"status,omitempty"`
+	LastLocationUpdateTime *int64      `json:"lastLocationUpdateTime"`
+	LastUpdateTime         *int64      `json:"lastUpdateTime"`
+	Location               *Location   `json:"location"`
+	TripID                 string      `json:"tripId"`
+	TripStatus             *TripStatus `json:"tripStatus"`
+	OccupancyCapacity      *int        `json:"occupancyCapacity,omitempty"`
+	OccupancyCount         *int        `json:"occupancyCount,omitempty"`
+	OccupancyStatus        string      `json:"occupancyStatus,omitempty"`
 	Phase                  string      `json:"phase,omitempty"`
-	TripStatus             *TripStatus `json:"tripStatus,omitempty"`
+	Status                 string      `json:"status,omitempty"`
 }
 
 type Location struct {

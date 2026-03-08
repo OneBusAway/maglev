@@ -437,10 +437,15 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 			// Test first vehicle in detail
 			vehicle := vehiclesList[0].(map[string]interface{})
 
-			// Test required fields
-			assert.NotEmpty(t, vehicle["vehicleId"], "Vehicle should have ID")
+			// Required fields per OpenAPI spec — must always be present
+			assert.Contains(t, vehicle, "vehicleId", "vehicleId is required")
+			assert.Contains(t, vehicle, "lastLocationUpdateTime", "lastLocationUpdateTime is required")
+			assert.Contains(t, vehicle, "lastUpdateTime", "lastUpdateTime is required")
+			assert.Contains(t, vehicle, "location", "location is required")
+			assert.Contains(t, vehicle, "tripId", "tripId is required")
+			assert.Contains(t, vehicle, "tripStatus", "tripStatus is required")
 
-			// Test timestamp fields
+			// Test timestamp fields (present but may be null when no position data)
 			if vehicle["lastLocationUpdateTime"] != nil {
 				assert.IsType(t, float64(0), vehicle["lastLocationUpdateTime"])
 				assert.Greater(t, vehicle["lastLocationUpdateTime"].(float64), float64(0))
@@ -450,13 +455,18 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 				assert.Greater(t, vehicle["lastUpdateTime"].(float64), float64(0))
 			}
 
-			// Test location fields
+			// Test location fields (present but may be null when no position data)
 			if vehicle["location"] != nil {
 				location := vehicle["location"].(map[string]interface{})
 				assert.Contains(t, location, "lat")
 				assert.Contains(t, location, "lon")
 				assert.IsType(t, float64(0), location["lat"])
 				assert.IsType(t, float64(0), location["lon"])
+			}
+
+			// Test tripId populated when trip is available
+			if vehicle["tripStatus"] != nil {
+				assert.NotEmpty(t, vehicle["tripId"], "tripId should be non-empty when tripStatus is present")
 			}
 
 			// Test status mapping
@@ -472,7 +482,7 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 				assert.Contains(t, validPhases, phase, "Phase should be valid")
 			}
 
-			// Test trip status
+			// Test trip status (present but may be null when vehicle has no trip)
 			if vehicle["tripStatus"] != nil {
 				tripStatus := vehicle["tripStatus"].(map[string]interface{})
 
