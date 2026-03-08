@@ -158,6 +158,8 @@ func main() {
 		// Set verbosity flags (CLI specific)
 		gtfsCfg.Verbose = true
 		cfg.Verbose = true
+		cfg.LogLevel = "info"
+		cfg.LogFormat = "text"
 	}
 
 	// Handle dump-config flag

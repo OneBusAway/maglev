@@ -64,11 +64,35 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 	return keys
 }
 
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func newLogHandler(format string, level slog.Level) slog.Handler {
+	opts := &slog.HandlerOptions{Level: level}
+	if strings.EqualFold(format, "json") {
+		return slog.NewJSONHandler(os.Stdout, opts)
+	}
+	return slog.NewTextHandler(os.Stdout, opts)
+}
+
 // BuildApplication creates and initializes the Application with all dependencies.
 // This includes creating the logger, initializing the GTFS manager, and creating the direction calculator.
 // Returns an error if GTFS manager initialization fails.
 func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	level := parseLogLevel(cfg.LogLevel)
+	logger := slog.New(newLogHandler(cfg.LogFormat, level))
 
 	appMetrics := metrics.NewWithLogger(logger)
 	gtfsCfg.Metrics = appMetrics
@@ -144,9 +168,8 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	// Add metrics middleware
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
 
-	// Add request logging middleware
-	requestLogger := logging.NewStructuredLogger(os.Stdout, slog.LevelInfo)
-	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(requestLogger)
+	// Add request logging middleware (outermost)
+	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(coreApp.Logger)
 
 	sizeLimitMiddleware := restapi.SizeLimitMiddleware(1 << 20) // 1 MB limit
 
