@@ -32,7 +32,7 @@ func TestNewTripDetails(t *testing.T) {
 		Headway:   300,
 	}
 
-	status := &TripStatusForTripDetails{
+	status := &TripStatus{
 		VehicleID: "vehicle_789",
 		Status:    "in_progress",
 	}
@@ -76,10 +76,9 @@ func TestTripDetailsJSON(t *testing.T) {
 		Headway:   300,
 	}
 
-	status := &TripStatusForTripDetails{
-		VehicleID: "vehicle_789",
-		Status:    "in_progress",
-	}
+	status := NewTripStatus()
+	status.VehicleID = "vehicle_789"
+	status.Status = "in_progress"
 
 	schedule := &Schedule{
 		Frequency:      nil,
@@ -126,7 +125,7 @@ func TestTripDetailsWithNilValues(t *testing.T) {
 	assert.Nil(t, tripDetails.SituationIDs)
 }
 
-func TestTripStatusForTripDetailsJSON(t *testing.T) {
+func TestTripStatusJSON(t *testing.T) {
 	distanceAlongTrip := 1500.5
 	lastKnownDistanceAlongTrip := 1400.0
 	lastKnownOrientation := 90.0
@@ -141,7 +140,7 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 	closestOffset := 120
 	nextOffset := 240
 
-	tripStatus := TripStatusForTripDetails{
+	tripStatus := TripStatus{
 		ActiveTripID:               "active_trip_123",
 		BlockTripSequence:          2,
 		ClosestStop:                "stop_456",
@@ -149,7 +148,7 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 		DistanceAlongTrip:          &distanceAlongTrip,
 		Frequency:                  nil,
 		LastKnownDistanceAlongTrip: &lastKnownDistanceAlongTrip,
-		LastKnownLocation: Location{
+		LastKnownLocation: &Location{
 			Lat: 38.542661,
 			Lon: -121.743914,
 		},
@@ -182,7 +181,7 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 	jsonData, err := json.Marshal(tripStatus)
 	assert.NoError(t, err)
 
-	var unmarshaledStatus TripStatusForTripDetails
+	var unmarshaledStatus TripStatus
 	err = json.Unmarshal(jsonData, &unmarshaledStatus)
 	assert.NoError(t, err)
 
@@ -194,10 +193,9 @@ func TestTripStatusForTripDetailsJSON(t *testing.T) {
 	assert.Equal(t, tripStatus.Position.Lon, unmarshaledStatus.Position.Lon)
 }
 
-func TestTripStatusForTripDetails_JSONOmitEmpty(t *testing.T) {
-	status := TripStatusForTripDetails{
-		Status: "default",
-	}
+func TestTripStatus_JSONOmitEmpty(t *testing.T) {
+	status := *NewTripStatus()
+	status.Status = "default"
 
 	data, err := json.Marshal(status)
 	require.NoError(t, err)
@@ -207,4 +205,8 @@ func TestTripStatusForTripDetails_JSONOmitEmpty(t *testing.T) {
 	assert.NotContains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip should be omitted when nil")
 	assert.NotContains(t, jsonStr, `"closestStopTimeOffset"`, "closestStopTimeOffset should be omitted when nil")
 	assert.NotContains(t, jsonStr, `"orientation"`, "orientation should be omitted when nil")
+
+	// These are required fields per the OpenAPI spec — must always appear, even when empty string
+	assert.Contains(t, jsonStr, `"closestStop":""`, "closestStop is required by OpenAPI spec and must always be present")
+	assert.Contains(t, jsonStr, `"occupancyStatus":""`, "occupancyStatus is required by OpenAPI spec and must always be present")
 }

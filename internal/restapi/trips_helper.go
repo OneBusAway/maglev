@@ -20,17 +20,16 @@ func (api *RestAPI) BuildTripStatus(
 	agencyID, tripID string,
 	serviceDate time.Time,
 	currentTime time.Time,
-) (*models.TripStatusForTripDetails, error) {
+) (*models.TripStatus, error) {
 	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
 	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
 		0, 0, 0, 0, serviceDate.Location())
-	status := &models.TripStatusForTripDetails{
-		ActiveTripID: utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:  sdMidnight.UnixMilli(),
-		SituationIDs: api.GetSituationIDsForTrip(ctx, tripID),
-		// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
-		// Java OBA uses nullable Integer types that serialize conditionally.
-	}
+	status := models.NewTripStatus()
+	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
+	status.ServiceDate = sdMidnight.UnixMilli()
+	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
+	// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
+	// Java OBA uses nullable Integer types that serialize conditionally.
 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 
@@ -137,8 +136,10 @@ func (api *RestAPI) BuildTripStatus(
 			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
 			// it onto the route shape. Reuses the already-fetched shapePoints.
 			actualPosition := status.LastKnownLocation
-			if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
-				status.Position = *projected
+			if actualPosition != nil {
+				if projected := projectPositionWithShapePoints(shapePoints, *actualPosition); projected != nil {
+					status.Position = *projected
+				}
 			}
 
 			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
@@ -146,7 +147,7 @@ func (api *RestAPI) BuildTripStatus(
 
 			// If the feed does not provide a bearing, infer orientation from the
 			// heading of the closest shape segment at the vehicle's position.
-			if vehicle.Position.Bearing == nil {
+			if vehicle.Position.Bearing == nil && actualPosition != nil {
 				if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
 					status.Orientation = utils.Float64Ptr(inferred)
 					status.LastKnownOrientation = utils.Float64Ptr(inferred)
@@ -262,7 +263,7 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 	return nextTripID, previousTripID, stopTimes, nil
 }
 
-func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatusForTripDetails, tripID string, currentTime time.Time, serviceDate time.Time, agencyID string) {
+func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatus, tripID string, currentTime time.Time, serviceDate time.Time, agencyID string) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
 		slog.Warn("fillStopsFromSchedule: failed to get stop times",

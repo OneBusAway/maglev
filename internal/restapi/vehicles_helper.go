@@ -110,7 +110,7 @@ func (api *RestAPI) BuildVehicleStatus(
 	vehicle *gtfs.Vehicle,
 	tripID string,
 	agencyID string,
-	status *models.TripStatusForTripDetails,
+	status *models.TripStatus,
 	currentTime time.Time,
 ) {
 	if vehicle == nil || defaultStaleDetector.Check(vehicle, currentTime) {
@@ -129,7 +129,7 @@ func (api *RestAPI) BuildVehicleStatus(
 			Lat: float64(*vehicle.Position.Latitude),
 			Lon: float64(*vehicle.Position.Longitude),
 		}
-		status.LastKnownLocation = actualPosition
+		status.LastKnownLocation = &actualPosition
 		// Position is initially set to the raw GPS position.
 		// BuildTripStatus will refine this by projecting it onto the route shape
 		// after fetching shape data. Note: getVehicleDistanceAlongShapeContextual
