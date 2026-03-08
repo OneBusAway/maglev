@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
@@ -364,4 +365,62 @@ func TestStopsForLocationMissingBothLatAndLon(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-location.json?key=TEST")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestStopsForLocationHandlerWithSituations(t *testing.T) {
+	// Setup Mock Clock
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+
+	// Add a test alert targeting a SPECIFIC STOP (Stop 2042) using the correct gtfs.Alert structure
+	stopID := "2042"
+	mockAlert := gtfs.Alert{
+		ID: "test-alert-stop-2042",
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{StopID: &stopID},
+		},
+		Description: []gtfs.AlertText{
+			{Text: "Stop 2042 is closed today", Language: "en"},
+		},
+	}
+	api.GtfsManager.AddTestAlert(mockAlert)
+
+	// Call the API and force it to find Stop 2042 using the query parameter
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	// Verify we got the stop back
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.NotEmpty(t, list, "Expected to find Stop 2042 in the location query")
+
+	// Verify references contain the situation we added
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+
+	situations, ok := refs["situations"].([]interface{})
+	require.True(t, ok, "Expected situations array in references")
+	require.NotEmpty(t, situations, "Expected at least one situation to be returned for Stop 2042")
+
+	// Find our specific test alert in the returned situations
+	foundOurAlert := false
+	for _, sRaw := range situations {
+		sit, ok := sRaw.(map[string]interface{})
+		require.True(t, ok)
+
+		descMap, ok := sit["description"].(map[string]interface{})
+		if ok {
+			descText, ok := descMap["value"].(string)
+			if ok && strings.Contains(descText, "Stop 2042 is closed today") {
+				foundOurAlert = true
+				break
+			}
+		}
+	}
+
+	assert.True(t, foundOurAlert, "Expected to find our mock alert in the references.situations")
 }
