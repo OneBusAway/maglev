@@ -19,9 +19,10 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	blockID := parsed.CodeID
+	agencyID, blockID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	//  Return JSON 400 response for invalid block IDs
 	// We use an explicit struct here to ensure the text is exactly "invalid block id"

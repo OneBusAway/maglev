@@ -4,12 +4,13 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
-	// We can ignore the bool return because middleware guarantees presence
-	id, _ := utils.GetIDFromContext(r.Context())
+	id, ok := api.extractAndValidateID(w, r)
+	if !ok {
+		return
+	}
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()

@@ -82,10 +82,11 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 }
 
 func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	stopAgencyID := parsed.AgencyID
-	stopCode := parsed.CodeID
-	stopID := parsed.CombinedID
+	stopAgencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
+	stopID := utils.FormCombinedID(stopAgencyID, stopCode)
 
 	ctx := r.Context()
 

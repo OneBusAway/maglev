@@ -9,7 +9,10 @@ import (
 
 func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 
-	id, _ := utils.GetIDFromContext(r.Context())
+	id, ok := api.extractAndValidateID(w, r)
+	if !ok {
+		return
+	}
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()

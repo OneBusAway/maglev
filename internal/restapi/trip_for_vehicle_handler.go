@@ -14,9 +14,10 @@ import (
 )
 
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	vehicleID := parsed.CodeID
+	agencyID, vehicleID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()

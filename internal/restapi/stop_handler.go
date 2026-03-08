@@ -8,12 +8,10 @@ import (
 )
 
 func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	stopID := parsed.CodeID // The raw GTFS stop ID
-
-	// agencyID here is specifically the *Stop's* agency.
-	// Routes serving this stop might belong to different agencies.
-	agencyID := parsed.AgencyID
+	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()

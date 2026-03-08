@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -24,14 +23,6 @@ func TestTimeAndContextCoverage(t *testing.T) {
 	assert.Equal(t, int64(5), NanosToSeconds(5000000000))
 	assert.Equal(t, int64(5), EffectiveStopTimeSeconds(5000000000, 0))
 
-	ctx := WithValidatedID(context.Background(), "id1")
-	id, _ := GetIDFromContext(ctx)
-	assert.Equal(t, "id1", id)
-
-	parsed := ParsedID{CombinedID: "c", AgencyID: "a", CodeID: "b"}
-	ctx = WithParsedID(ctx, parsed)
-	p, _ := GetParsedIDFromContext(ctx)
-	assert.Equal(t, parsed, p)
 }
 
 func TestValidationCoverage(t *testing.T) {

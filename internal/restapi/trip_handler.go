@@ -9,9 +9,10 @@ import (
 )
 
 func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
-	parsed, _ := utils.GetParsedIDFromContext(r.Context())
-	agencyID := parsed.AgencyID
-	id := parsed.CodeID // The raw GTFS trip ID
+	agencyID, id, ok := api.extractAndValidateAgencyCodeID(w, r)
+	if !ok {
+		return
+	}
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
