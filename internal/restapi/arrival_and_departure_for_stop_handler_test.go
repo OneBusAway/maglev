@@ -967,3 +967,112 @@ func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *t
 		"scheduledArrivalTime should use local date (Jan 15), not UTC date (Jan 14); "+
 			"difference of 86400000ms indicates the timezone bug")
 }
+
+// Regression test for loop routes where the same stop appears multiple times in a trip.
+// Ensures that stopSequence correctly selects among multiple occurrences of the same stop.
+func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID  = "LoopAgency"
+		routeID   = "LoopRoute"
+		tripID    = "LoopTrip"
+		stopID    = "LoopStop"
+		serviceID = "LoopService"
+	)
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Loop Transit", Url: "https://loop.example.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID,
+		Name: sql.NullString{
+			String: "Loop Stop",
+			Valid:  true,
+		},
+		Lat: 47.0,
+		Lon: -122.0,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        serviceID,
+		Monday:    1,
+		Tuesday:   1,
+		Wednesday: 1,
+		Thursday:  1,
+		Friday:    1,
+		Saturday:  1,
+		Sunday:    1,
+		StartDate: "20200101",
+		EndDate:   "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   routeID,
+		ServiceID: serviceID,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopID,
+		StopSequence:  2,
+		ArrivalTime:   int64(8 * time.Hour), // 08:00
+		DepartureTime: int64(8 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopID,
+		StopSequence:  15,
+		ArrivalTime:   int64(9 * time.Hour), // 09:00
+		DepartureTime: int64(9 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	combinedTripID := utils.FormCombinedID(agencyID, tripID)
+	serviceDateMs := time.Now().UnixMilli()
+
+	baseEndpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+		combinedStopID,
+		combinedTripID,
+		serviceDateMs,
+	)
+
+	resp1, model1 := serveApiAndRetrieveEndpoint(t, api, baseEndpoint+"&stopSequence=2")
+	require.Equal(t, http.StatusOK, resp1.StatusCode)
+	require.Equal(t, http.StatusOK, model1.Code)
+
+	data1, ok := model1.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry1, ok := data1["entry"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(1), entry1["stopSequence"], "expected zero-based index for stop_sequence=2")
+
+	resp2, model2 := serveApiAndRetrieveEndpoint(t, api, baseEndpoint+"&stopSequence=15")
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+	require.Equal(t, http.StatusOK, model2.Code)
+
+	data2, ok := model2.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry2, ok := data2["entry"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(14), entry2["stopSequence"], "expected zero-based index for stop_sequence=15")
+}

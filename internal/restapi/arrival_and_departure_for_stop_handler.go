@@ -196,17 +196,49 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	targetRow, err := api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStops(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsParams{
-		TripID: tripID,
-		StopID: stopCode,
-	})
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
+	var targetRow gtfsdb.GetTargetStopTimeWithTotalStopsRow
+
+	if params.StopSequence != nil {
+		seqRow, seqErr := api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
+			TripID:       tripID,
+			StopID:       stopCode,
+			StopSequence: int64(*params.StopSequence),
+		})
+		if seqErr != nil {
+			if errors.Is(seqErr, sql.ErrNoRows) {
+				api.sendNotFound(w, r)
+			} else {
+				api.serverErrorResponse(w, r, seqErr)
+			}
+			return
 		}
-		return
+
+		targetRow = gtfsdb.GetTargetStopTimeWithTotalStopsRow{
+			TripID:            seqRow.TripID,
+			ArrivalTime:       seqRow.ArrivalTime,
+			DepartureTime:     seqRow.DepartureTime,
+			StopID:            seqRow.StopID,
+			StopSequence:      seqRow.StopSequence,
+			StopHeadsign:      seqRow.StopHeadsign,
+			PickupType:        seqRow.PickupType,
+			DropOffType:       seqRow.DropOffType,
+			ShapeDistTraveled: seqRow.ShapeDistTraveled,
+			Timepoint:         seqRow.Timepoint,
+			TotalStops:        seqRow.TotalStops,
+		}
+	} else {
+		targetRow, err = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStops(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsParams{
+			TripID: tripID,
+			StopID: stopCode,
+		})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				api.sendNotFound(w, r)
+			} else {
+				api.serverErrorResponse(w, r, err)
+			}
+			return
+		}
 	}
 
 	if params.StopSequence != nil && int64(*params.StopSequence) != targetRow.StopSequence {

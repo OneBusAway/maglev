@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"time"
@@ -252,6 +253,12 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		if len(prev) > 0 {
 			previousTripID = utils.FormCombinedID(agencyID, string(prev))
 		}
+	case nil:
+		// Expected for the first trip in the block.
+	default:
+		slog.Warn("GetNextAndPreviousTripIDs: unexpected type for prev_trip_id",
+			slog.String("type", fmt.Sprintf("%T", prev)),
+			slog.String("trip_id", trip.ID))
 	}
 
 	switch next := navResult.NextTripID.(type) {
@@ -263,6 +270,12 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		if len(next) > 0 {
 			nextTripID = utils.FormCombinedID(agencyID, string(next))
 		}
+	case nil:
+		// Expected for the last trip in the block.
+	default:
+		slog.Warn("GetNextAndPreviousTripIDs: unexpected type for next_trip_id",
+			slog.String("type", fmt.Sprintf("%T", next)),
+			slog.String("trip_id", trip.ID))
 	}
 
 	stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
