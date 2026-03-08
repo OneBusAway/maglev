@@ -76,10 +76,9 @@ func TestTripDetailsJSON(t *testing.T) {
 		Headway:   300,
 	}
 
-	status := &TripStatus{
-		VehicleID: "vehicle_789",
-		Status:    "in_progress",
-	}
+	status := NewTripStatus()
+	status.VehicleID = "vehicle_789"
+	status.Status = "in_progress"
 
 	schedule := &Schedule{
 		Frequency:      nil,
@@ -195,9 +194,8 @@ func TestTripStatusJSON(t *testing.T) {
 }
 
 func TestTripStatus_JSONOmitEmpty(t *testing.T) {
-	status := TripStatus{
-		Status: "default",
-	}
+	status := *NewTripStatus()
+	status.Status = "default"
 
 	data, err := json.Marshal(status)
 	require.NoError(t, err)
@@ -207,4 +205,8 @@ func TestTripStatus_JSONOmitEmpty(t *testing.T) {
 	assert.NotContains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip should be omitted when nil")
 	assert.NotContains(t, jsonStr, `"closestStopTimeOffset"`, "closestStopTimeOffset should be omitted when nil")
 	assert.NotContains(t, jsonStr, `"orientation"`, "orientation should be omitted when nil")
+
+	// These are required fields per the OpenAPI spec — must always appear, even when empty string
+	assert.Contains(t, jsonStr, `"closestStop":""`, "closestStop is required by OpenAPI spec and must always be present")
+	assert.Contains(t, jsonStr, `"occupancyStatus":""`, "occupancyStatus is required by OpenAPI spec and must always be present")
 }

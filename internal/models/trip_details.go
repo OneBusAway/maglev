@@ -35,7 +35,7 @@ func NewEmptyTripDetails() *TripDetails {
 type TripStatus struct {
 	ActiveTripID               string     `json:"activeTripId"`
 	BlockTripSequence          int        `json:"blockTripSequence"`
-	ClosestStop                string     `json:"closestStop,omitempty"`
+	ClosestStop                string     `json:"closestStop"`
 	ClosestStopTimeOffset      *int       `json:"closestStopTimeOffset,omitempty"`
 	DistanceAlongTrip          *float64   `json:"distanceAlongTrip,omitempty"`
 	Frequency                  *Frequency `json:"frequency,omitempty"`
@@ -48,7 +48,7 @@ type TripStatus struct {
 	NextStopTimeOffset         *int       `json:"nextStopTimeOffset,omitempty"`
 	OccupancyCapacity          *int       `json:"occupancyCapacity,omitempty"`
 	OccupancyCount             *int       `json:"occupancyCount,omitempty"`
-	OccupancyStatus            string     `json:"occupancyStatus,omitempty"`
+	OccupancyStatus            string     `json:"occupancyStatus"`
 	Orientation                *float64   `json:"orientation,omitempty"`
 	Phase                      string     `json:"phase"`
 	Position                   Location   `json:"position"`
@@ -64,9 +64,8 @@ type TripStatus struct {
 	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. Tracked as a known spec deviation.
 }
 
-// NewTripStatus returns a TripStatus with safe zero-value defaults.
-// Always use this instead of &TripStatus{} to ensure SituationIDs is
-// initialized to []string{} (never nil), avoiding null vs [] inconsistency in JSON.
+// SituationIDs initialized to []string{} for Go-side convenience.
+// JSON output is unaffected because omitempty omits both nil and empty slices.
 func NewTripStatus() *TripStatus {
 	return &TripStatus{
 		SituationIDs: []string{},
