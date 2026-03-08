@@ -216,11 +216,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		referencedTripsIface := make([]interface{}, len(referencedTrips))
-		for i, t := range referencedTrips {
-			referencedTripsIface[i] = t
+		for _, t := range referencedTrips {
+			references.Trips = append(references.Trips, *t)
 		}
-		references.Trips = referencedTripsIface
 	}
 
 	agencyModel := models.NewAgencyReference(
@@ -241,9 +239,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
 			situations := api.BuildSituationReferences(alerts)
-			for _, situation := range situations {
-				references.Situations = append(references.Situations, situation)
-			}
+			references.Situations = append(references.Situations, situations...)
 		}
 	}
 
@@ -261,11 +257,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		routesIface := make([]interface{}, len(routes))
-		for i, route := range routes {
-			routesIface[i] = route
-		}
-		references.Routes = routesIface
+		references.Routes = routes
 	}
 
 	response := models.NewEntryResponse(tripDetails, references, api.Clock)

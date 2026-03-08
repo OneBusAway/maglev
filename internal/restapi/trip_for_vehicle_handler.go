@@ -196,7 +196,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 			utils.FormCombinedID(agencyID, trip.BlockID.String),
 			utils.FormCombinedID(agencyID, trip.ShapeID.String),
 		)
-		references.Trips = append(references.Trips, tripRef)
+		references.Trips = append(references.Trips, *tripRef)
 	}
 
 	response := models.NewEntryResponse(entry, references, api.Clock)

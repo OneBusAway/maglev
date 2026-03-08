@@ -491,7 +491,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			utils.FormCombinedID(routeAgencyID, trip.BlockID.String), // Use route agency for block ID
 			utils.FormCombinedID(routeAgencyID, trip.ShapeID.String), // Use route agency for shape ID
 		)
-		references.Trips = append(references.Trips, tripRef)
+		references.Trips = append(references.Trips, *tripRef)
 	}
 
 	// Batch-fetch all stop references in one shot instead of one query per stop.
@@ -614,9 +614,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			alertSlice = append(alertSlice, a)
 		}
 		situations := api.BuildSituationReferences(alertSlice)
-		for _, s := range situations {
-			references.Situations = append(references.Situations, s)
-		}
+		references.Situations = append(references.Situations, situations...)
 	}
 
 	topLevelSituationIDSet := make(map[string]struct{}, len(collectedAlerts))

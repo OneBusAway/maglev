@@ -485,7 +485,7 @@ type referenceBuilder struct {
 	presentRoutes   map[string]models.Route
 	presentAgencies map[string]models.AgencyReference
 	stopList        []models.Stop
-	tripsRefList    []interface{}
+	tripsRefList    []models.Trip
 }
 
 func (rb *referenceBuilder) build(params ReferenceParams) error {
@@ -699,7 +699,7 @@ func (rb *referenceBuilder) addAgency(agencyID string) error {
 }
 
 func (rb *referenceBuilder) buildTripReferences() error {
-	rb.tripsRefList = make([]interface{}, 0, len(rb.presentTrips))
+	rb.tripsRefList = make([]models.Trip, 0, len(rb.presentTrips))
 
 	for _, trip := range rb.presentTrips {
 		if rb.ctx.Err() != nil {
@@ -736,8 +736,8 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 	return models.ReferencesModel{
 		Agencies:   rb.getAgenciesList(),
 		Routes:     rb.getRoutesList(),
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
+		Situations: []models.Situation{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      rb.stopList,
 		Trips:      rb.tripsRefList,
 	}
@@ -751,8 +751,8 @@ func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
 	return agencies
 }
 
-func (rb *referenceBuilder) getRoutesList() []interface{} {
-	routes := make([]interface{}, 0, len(rb.presentRoutes))
+func (rb *referenceBuilder) getRoutesList() []models.Route {
+	routes := make([]models.Route, 0, len(rb.presentRoutes))
 	for _, route := range rb.presentRoutes {
 		if route.ID != "" {
 			routes = append(routes, route)

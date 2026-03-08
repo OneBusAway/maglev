@@ -451,7 +451,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 		})
 	}
 
-	tripsRefList := make([]interface{}, 0, len(presentTrips))
+	tripsRefList := make([]models.Trip, 0, len(presentTrips))
 	if includeTrip {
 		for _, trip := range presentTrips {
 			// Ensure we have the route to get the Agency ID
@@ -474,7 +474,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	}
 
 	// Convert maps to slices for response
-	routes := make([]interface{}, 0, len(presentRoutes))
+	routes := make([]models.Route, 0, len(presentRoutes))
 	for _, route := range presentRoutes {
 		if route.ID != "" {
 			routes = append(routes, route)
@@ -489,8 +489,8 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	return models.ReferencesModel{
 		Agencies:   agencyList,
 		Routes:     routes,
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
+		Situations: []models.Situation{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      stopList,
 		Trips:      tripsRefList,
 	}

@@ -53,7 +53,7 @@ func TestNewEmptyReferences(t *testing.T) {
 func TestReferencesModelJSON(t *testing.T) {
 	refs := NewEmptyReferences()
 	refs.Agencies = append(refs.Agencies, AgencyReference{ID: "agency1"})
-	refs.Routes = append(refs.Routes, map[string]string{"id": "route1"})
+	refs.Routes = append(refs.Routes, Route{ID: "route1"})
 
 	// Marshal to JSON
 	jsonData, err := json.Marshal(refs)

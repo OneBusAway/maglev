@@ -43,11 +43,11 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 				agency.FareUrl, "", false,
 			),
 		},
-		Routes:     []interface{}{},
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
+		Routes:     []models.Route{},
+		Situations: []models.Situation{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
+		Trips:      []models.Trip{},
 	}
 
 	response := models.NewListResponse(routesList, references, limitExceeded, api.Clock)

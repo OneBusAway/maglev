@@ -216,7 +216,7 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 		false,
 	)
 
-	routeRefs, err := api.BuildRouteReferencesAsInterface(ctx, currentAgency.ID, stopsList)
+	routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -224,11 +224,11 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 
 	references := models.ReferencesModel{
 		Agencies:   []models.AgencyReference{agencyRef},
-		Routes:     routeRefs,
-		Situations: []interface{}{},
-		StopTimes:  []interface{}{},
+		Routes:     routes,
+		Situations: []models.Situation{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      stopsList,
-		Trips:      []interface{}{},
+		Trips:      []models.Trip{},
 	}
 
 	response := models.NewEntryResponse(result, references, api.Clock)

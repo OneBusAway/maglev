@@ -423,7 +423,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
 		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
 	)
-	references.Trips = append(references.Trips, tripRef)
+	references.Trips = append(references.Trips, *tripRef)
 
 	// Include active trip if it's different from the parameter trip and trip status is not null
 	if tripStatus != nil && tripStatus.ActiveTripID != "" {
@@ -445,7 +445,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
 					)
-					references.Trips = append(references.Trips, activeTripRef)
+					references.Trips = append(references.Trips, *activeTripRef)
 				}
 			}
 		}
@@ -566,9 +566,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
 			situations := api.BuildSituationReferences(alerts)
-			for _, situation := range situations {
-				references.Situations = append(references.Situations, situation)
-			}
+			references.Situations = append(references.Situations, situations...)
 		}
 	}
 

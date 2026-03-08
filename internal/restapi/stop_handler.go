@@ -99,7 +99,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	alerts := api.collectAlertsForStopsAndRoutes([]string{stopID}, rawRouteIDs)
 	situations := api.BuildSituationReferences(alerts)
-	references.Situations = append(references.Situations, situationsToInterfaces(situations)...)
+	references.Situations = append(references.Situations, situations...)
 
 	response := models.NewEntryResponse(stopData, references, api.Clock)
 	api.sendResponse(w, r, response)

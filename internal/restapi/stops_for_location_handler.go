@@ -127,10 +127,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		references := models.ReferencesModel{
 			Agencies:   agencies,
 			Routes:     routes,
-			Situations: []interface{}{},
-			StopTimes:  []interface{}{},
+			Situations: []models.Situation{},
+			StopTimes:  []models.RouteStopTime{},
 			Stops:      []models.Stop{},
-			Trips:      []interface{}{},
+			Trips:      []models.Trip{},
 		}
 		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
@@ -248,15 +248,15 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Populate situation references for alerts affecting the returned stops
 	alerts := api.collectAlertsForStops(resultRawStopIDs)
-	situations := situationsToInterfaces(api.BuildSituationReferences(alerts))
+	situations := api.BuildSituationReferences(alerts)
 
 	references := models.ReferencesModel{
 		Agencies:   agencies,
 		Routes:     routes,
 		Situations: situations,
-		StopTimes:  []interface{}{},
+		StopTimes:  []models.RouteStopTime{},
 		Stops:      []models.Stop{},
-		Trips:      []interface{}{},
+		Trips:      []models.Trip{},
 	}
 
 	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
