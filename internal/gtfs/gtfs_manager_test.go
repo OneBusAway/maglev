@@ -538,8 +538,8 @@ func TestInitGTFSManager_RetryLogic(t *testing.T) {
 	}
 
 	config := Config{
-		// Use a clearly invalid URL that will trigger failures
-		GtfsURL:        "http://invalid.url.that.will.fail.internal/gtfs.zip",
+		// Use a clearly invalid local URL that will trigger immediate connection refused
+		GtfsURL:        "http://127.0.0.1:9099/gtfs.zip",
 		GTFSDataPath:   ":memory:",
 		Env:            appconf.Test,
 		StartupRetries: backoffs, // Inject test backoffs
@@ -555,7 +555,7 @@ func TestInitGTFSManager_RetryLogic(t *testing.T) {
 
 	// Verify the entire process was fast (proving it used our 1ms, 2ms, 3ms backoffs)
 	duration := time.Since(start)
-	assert.Less(t, duration, 10*time.Second, "Retry logic should respect the configured backoff schedule")
+	assert.Less(t, duration, 2*time.Second, "Retry logic should respect the configured backoff schedule")
 }
 
 func TestParseAndLogFeedExpiryLocked(t *testing.T) {
@@ -599,4 +599,23 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 
 	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
 	assert.True(t, manager.feedExpiresAt.IsZero(), "Should reset to zero after hot swap to empty feed")
+
+	// 4. Test calendar_dates exception_type = 1 branch
+	// Insert a valid calendar date
+	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
+	require.NoError(t, err)
+
+	// Insert an extra service day via calendar_dates (exception_type = 1) that is LATER than calendar end_date
+	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260405', 1)")
+	require.NoError(t, err)
+	// Insert a removed service day (exception_type = 2) that is later than the added day, which should be ignored by the query calculation
+	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260410', 2)")
+	require.NoError(t, err)
+
+	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
+	assert.False(t, manager.feedExpiresAt.IsZero(), "Should parse end date")
+
+	// Valid end date should be 2026-04-05 23:59:59 (from calendar_dates exception_type = 1)
+	expectedTime2, _ := time.Parse("20060102150405", "20260405235959")
+	assert.Equal(t, expectedTime2.Unix(), manager.feedExpiresAt.Unix())
 }
