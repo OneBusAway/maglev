@@ -324,7 +324,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	manager.routesByAgencyID = buildRouteIndex(newStaticData)
 
-  if newCache, freqErr := buildFrequencyCache(ctx, client.Queries); freqErr == nil {
+	if newCache, freqErr := buildFrequencyCache(ctx, client.Queries); freqErr == nil {
 		manager.frequencyTripIDs = newCache
 	} else {
 		logging.LogError(logger, "failed to reload frequency trip IDs during hot-swap; retaining previous cache", freqErr)

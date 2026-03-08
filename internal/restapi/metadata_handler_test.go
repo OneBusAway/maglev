@@ -42,11 +42,11 @@ func TestMetadataHandler(t *testing.T) {
 	// Manually set some dummy update times
 	now := time.Now().UTC()
 	api.GtfsManager.MarkReady() // Mock initialization
-	
+
 	// Set static last updated
 	staticTime := now.Add(-1 * time.Hour)
 	api.GtfsManager.SetStaticLastUpdatedForTest(staticTime)
-	
+
 	// Ensure the map is initialized since we mock the Manager
 	api.GtfsManager.SetFeedUpdateTime("trip_updates", now)
 
@@ -76,7 +76,7 @@ func TestMetadataHandler(t *testing.T) {
 	if _, exists := response.RealtimeFeeds["trip_updates"]; !exists {
 		t.Errorf("Expected trip_updates feed in response")
 	}
-	
+
 	if response.StaticGtfsLastUpdated.Unix() != staticTime.Unix() {
 		t.Errorf("Expected StaticGtfsLastUpdated to match set time")
 	}
