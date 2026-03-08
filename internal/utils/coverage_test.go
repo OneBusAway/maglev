@@ -23,7 +23,6 @@ func TestTimeAndContextCoverage(t *testing.T) {
 	assert.Equal(t, int64(5), NanosToSeconds(5000000000))
 	assert.Equal(t, int64(5), EffectiveStopTimeSeconds(5000000000, 0))
 
-
 }
 
 func TestValidationCoverage(t *testing.T) {

@@ -45,7 +45,6 @@ func TestExtractAndValidateID(t *testing.T) {
 			expectedOk:     false,
 			expectedStatus: http.StatusBadRequest,
 		},
-
 	}
 
 	for _, tt := range tests {

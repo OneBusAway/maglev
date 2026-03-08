@@ -257,8 +257,6 @@ func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[str
 	return maxCount, fieldErrors
 }
 
-
-
 // ParsePaginationParams parses offset and limit from request parameters.
 // maxCount is the primary parameter for limit, falling back to limit.
 // If neither is present, limit is -1 (return all).

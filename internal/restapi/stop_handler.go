@@ -13,10 +13,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The raw GTFS stop ID
-	// agencyID here is specifically the *Stop's* agency.
-	// Routes serving this stop might belong to different agencies.
-
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
