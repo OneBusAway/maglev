@@ -140,7 +140,7 @@ func loadGTFSData(source string, isLocalFile bool, config Config) (*gtfs.Static,
 }
 
 func validateStaticAgencyTimezones(staticData *gtfs.Static) error {
-	for _, agency := range staticData.Agencies {
+	for i, agency := range staticData.Agencies {
 		tz := strings.TrimSpace(agency.Timezone)
 		// Go treats LoadLocation("") as UTC, so we consider this an error for GTFS validation purposes
 		if tz == "" {
@@ -149,6 +149,8 @@ func validateStaticAgencyTimezones(staticData *gtfs.Static) error {
 		if _, err := time.LoadLocation(tz); err != nil {
 			return fmt.Errorf("agency %q has invalid timezone %q: %w", agency.Id, tz, err)
 		}
+		// Write the trimmed value back so downstream LoadLocation calls use the clean string
+		staticData.Agencies[i].Timezone = tz
 	}
 	return nil
 }
