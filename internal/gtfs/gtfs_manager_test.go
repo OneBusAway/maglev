@@ -619,3 +619,31 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 	expectedTime2, _ := time.Parse("20060102150405", "20260405235959")
 	assert.Equal(t, expectedTime2.Unix(), manager.feedExpiresAt.Unix())
 }
+
+func TestManager_DataFreshnessTracking(t *testing.T) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+	}
+
+	// Test GetStaticLastUpdated logic (zero case)
+	zeroStatic := manager.GetStaticLastUpdated()
+	assert.True(t, zeroStatic.IsZero())
+
+	// Set and test StaticLastUpdated (verify normalization to UTC & atomic persistence)
+	now := time.Now().UTC()
+	manager.SetStaticLastUpdatedForTest(now)
+	gotStatic := manager.GetStaticLastUpdated()
+	assert.Equal(t, now.UnixNano(), gotStatic.UnixNano())
+	assert.Equal(t, "UTC", gotStatic.Location().String())
+
+	// Test GetFeedUpdateTimes returns defensive map copy
+	manager.SetFeedUpdateTime("feed-1", now)
+	feedTimes := manager.GetFeedUpdateTimes()
+	assert.Contains(t, feedTimes, "feed-1")
+	assert.Equal(t, now, feedTimes["feed-1"])
+
+	// Modify the copy and ensure the original map state is safe
+	feedTimes["feed-1"] = time.Now().Add(time.Hour)
+	feedTimes2 := manager.GetFeedUpdateTimes()
+	assert.Equal(t, now, feedTimes2["feed-1"])
+}
