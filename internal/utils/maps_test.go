@@ -6,9 +6,23 @@ import (
 )
 
 func TestMapValues(t *testing.T) {
+	t.Run("nil map", func(t *testing.T) {
+		var m map[string]int
+		result := MapValues(m)
+		if result == nil {
+			t.Errorf("expected non-nil empty slice, got nil")
+		}
+		if len(result) != 0 {
+			t.Errorf("expected empty slice, got %v", result)
+		}
+	})
+
 	t.Run("empty map", func(t *testing.T) {
 		m := map[string]int{}
 		result := MapValues(m)
+		if result == nil {
+			t.Errorf("expected non-nil empty slice, got nil")
+		}
 		if len(result) != 0 {
 			t.Errorf("expected empty slice, got %v", result)
 		}
@@ -38,18 +52,32 @@ func TestMapValues(t *testing.T) {
 	})
 }
 
-func TestMapValuesAsInterface(t *testing.T) {
-	t.Run("empty map", func(t *testing.T) {
-		m := map[string]int{}
-		result := MapValuesAsInterface(m)
+func TestMapValuesAs(t *testing.T) {
+	t.Run("nil map", func(t *testing.T) {
+		var m map[string]int
+		result := MapValuesAs(m)
+		if result == nil {
+			t.Errorf("expected non-nil empty slice, got nil")
+		}
 		if len(result) != 0 {
 			t.Errorf("expected empty slice, got %v", result)
 		}
 	})
 
-	t.Run("returns all values as interface", func(t *testing.T) {
+	t.Run("empty map", func(t *testing.T) {
+		m := map[string]int{}
+		result := MapValuesAs(m)
+		if result == nil {
+			t.Errorf("expected non-nil empty slice, got nil")
+		}
+		if len(result) != 0 {
+			t.Errorf("expected empty slice, got %v", result)
+		}
+	})
+
+	t.Run("returns all values as any", func(t *testing.T) {
 		m := map[string]string{"a": "hello", "b": "world"}
-		result := MapValuesAsInterface(m)
+		result := MapValuesAs(m)
 		if len(result) != 2 {
 			t.Errorf("expected 2 elements, got %d", len(result))
 		}
@@ -65,9 +93,23 @@ func TestMapValuesAsInterface(t *testing.T) {
 }
 
 func TestMapValuesFiltered(t *testing.T) {
+	t.Run("nil map", func(t *testing.T) {
+		var m map[string]int
+		result := MapValuesFiltered(m, func(v int) bool { return v > 0 })
+		if result == nil {
+			t.Errorf("expected non-nil empty slice, got nil")
+		}
+		if len(result) != 0 {
+			t.Errorf("expected empty slice, got %v", result)
+		}
+	})
+
 	t.Run("empty map", func(t *testing.T) {
 		m := map[string]int{}
 		result := MapValuesFiltered(m, func(v int) bool { return v > 0 })
+		if result == nil {
+			t.Errorf("expected non-nil empty slice, got nil")
+		}
 		if len(result) != 0 {
 			t.Errorf("expected empty slice, got %v", result)
 		}

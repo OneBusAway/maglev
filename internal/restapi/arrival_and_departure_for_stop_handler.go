@@ -547,9 +547,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	// Build routes references
+	routeRefs := make(map[string]models.Route, len(routeIDSet))
 	for _, route := range routeIDSet {
-		routeRef := models.NewRoute(
-			utils.FormCombinedID(route.AgencyID, route.ID),
+		combinedID := utils.FormCombinedID(route.AgencyID, route.ID)
+		routeRefs[combinedID] = models.NewRoute(
+			combinedID,
 			route.AgencyID,
 			route.ShortName.String,
 			route.LongName.String,
@@ -558,9 +560,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			route.Url.String,
 			route.Color.String,
 			route.TextColor.String)
-
-		references.Routes = append(references.Routes, routeRef)
 	}
+	references.Routes = utils.MapValues(routeRefs)
 
 	if len(situationIDs) > 0 {
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)

@@ -22,7 +22,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	if agency == nil {
 		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]interface{}{}, models.ReferencesModel{}, false, api.Clock))
+		api.sendResponse(w, r, models.NewListResponse([]any{}, models.NewEmptyReferences(), false, api.Clock))
 		return
 	}
 
