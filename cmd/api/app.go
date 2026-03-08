@@ -184,7 +184,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 		IdleTimeout:    time.Minute,
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 20, // 1 MB
+		MaxHeaderBytes: 1 << 20, // 1 MB (explicit; matches Go's default)
 		ErrorLog:       slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
 	}
 
