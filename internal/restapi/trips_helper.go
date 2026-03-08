@@ -57,7 +57,7 @@ func (api *RestAPI) BuildTripStatus(
 	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviation(activeTripRawID)
 
 	if hasRealtimeTripUpdate {
-		status.ScheduleDeviation = utils.IntPtr(scheduleDeviation)
+		status.ScheduleDeviation = scheduleDeviation
 	}
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
@@ -131,7 +131,7 @@ func (api *RestAPI) BuildTripStatus(
 	if shapeErr == nil && len(shapeRows) > 1 {
 		shapePoints := shapeRowsToPoints(shapeRows)
 		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-		status.TotalDistanceAlongTrip = utils.Float64Ptr(cumulativeDistances[len(cumulativeDistances)-1])
+		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
 
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
@@ -142,7 +142,7 @@ func (api *RestAPI) BuildTripStatus(
 			}
 
 			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
-			status.DistanceAlongTrip = utils.Float64Ptr(actualDistance)
+			status.DistanceAlongTrip = actualDistance
 
 			// If the feed does not provide a bearing, infer orientation from the
 			// heading of the closest shape segment at the vehicle's position.
@@ -277,10 +277,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 
 	// Dereference schedule deviation safely, default to 0 if not set
-	schedDev := int64(0)
-	if status.ScheduleDeviation != nil {
-		schedDev = int64(*status.ScheduleDeviation)
-	}
+	schedDev := int64(status.ScheduleDeviation)
 
 	for i, st := range stopTimes {
 		arrivalTime := utils.EffectiveStopTimeSeconds(st.ArrivalTime, st.DepartureTime)

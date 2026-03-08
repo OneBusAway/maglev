@@ -733,13 +733,21 @@ func (rb *referenceBuilder) createTripReference(tripDetails gtfsdb.Trip, current
 }
 
 func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
+	trips := rb.tripsRefList
+	if trips == nil {
+		trips = []models.Trip{}
+	}
+	stops := rb.stopList
+	if stops == nil {
+		stops = []models.Stop{}
+	}
 	return models.ReferencesModel{
 		Agencies:   rb.getAgenciesList(),
 		Routes:     rb.getRoutesList(),
 		Situations: []models.Situation{},
 		StopTimes:  []models.RouteStopTime{},
-		Stops:      rb.stopList,
-		Trips:      rb.tripsRefList,
+		Stops:      stops,
+		Trips:      trips,
 	}
 }
 

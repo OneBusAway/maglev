@@ -72,13 +72,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		// Set timestamps
 		if vehicle.Timestamp != nil {
 			timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-			vehicleStatus.LastLocationUpdateTime = &timestampMs
-			vehicleStatus.LastUpdateTime = &timestampMs
+			vehicleStatus.LastLocationUpdateTime = timestampMs
+			vehicleStatus.LastUpdateTime = timestampMs
 		}
 
 		// Set location if available
 		if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-			vehicleStatus.Location = &models.Location{
+			vehicleStatus.Location = models.Location{
 				Lat: float64(*vehicle.Position.Latitude),
 				Lon: float64(*vehicle.Position.Longitude),
 			}
@@ -89,8 +89,10 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 		// Build trip status if trip is available
 		if vehicle.Trip != nil {
-			tripStatus := &models.TripStatus{
-				ActiveTripID:      vehicle.Trip.ID.ID,
+			vehicleStatus.TripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
+
+			tripStatus := models.TripStatus{
+				ActiveTripID:      utils.FormCombinedID(id, vehicle.Trip.ID.ID),
 				BlockTripSequence: 0,
 				Scheduled:         true,
 				Phase:             vehicleStatus.Phase,
@@ -114,6 +116,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					obaOrientation += 360
 				}
 				tripStatus.Orientation = utils.Float64Ptr(float64(obaOrientation))
+			}
+
+			// Set timestamps on trip status to match vehicle timestamps
+			if vehicle.Timestamp != nil {
+				timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
+				tripStatus.LastUpdateTime = timestampMs
+				tripStatus.LastLocationUpdateTime = timestampMs
 			}
 
 			// Set service date (use current date for now)

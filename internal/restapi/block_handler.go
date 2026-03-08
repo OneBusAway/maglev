@@ -215,12 +215,14 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	var stops []models.Stop
 	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
-			ID:        utils.FormCombinedID(agencyID, stop.ID),
-			Name:      stop.Name.String,
-			Code:      stop.Code.String,
-			Lat:       stop.Lat,
-			Lon:       stop.Lon,
-			Direction: api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
+			ID:             utils.FormCombinedID(agencyID, stop.ID),
+			Name:           stop.Name.String,
+			Code:           stop.Code.String,
+			Lat:            stop.Lat,
+			Lon:            stop.Lon,
+			Direction:      api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
+			RouteIDs:       []string{},
+			StaticRouteIDs: []string{},
 		})
 	}
 

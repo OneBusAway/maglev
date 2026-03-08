@@ -121,7 +121,7 @@ func (api *RestAPI) BuildVehicleStatus(
 	var lastUpdateTime int64
 	if vehicle.Timestamp != nil {
 		lastUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-		status.LastUpdateTime = utils.Int64Ptr(lastUpdateTime)
+		status.LastUpdateTime = lastUpdateTime
 	}
 
 	if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
@@ -137,7 +137,7 @@ func (api *RestAPI) BuildVehicleStatus(
 		status.Position = actualPosition
 
 		if vehicle.Timestamp != nil {
-			status.LastLocationUpdateTime = utils.Int64Ptr(lastUpdateTime)
+			status.LastLocationUpdateTime = lastUpdateTime
 		}
 	}
 
