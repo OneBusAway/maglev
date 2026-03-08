@@ -213,19 +213,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			return
 		}
 
-		targetRow = gtfsdb.GetTargetStopTimeWithTotalStopsRow{
-			TripID:            seqRow.TripID,
-			ArrivalTime:       seqRow.ArrivalTime,
-			DepartureTime:     seqRow.DepartureTime,
-			StopID:            seqRow.StopID,
-			StopSequence:      seqRow.StopSequence,
-			StopHeadsign:      seqRow.StopHeadsign,
-			PickupType:        seqRow.PickupType,
-			DropOffType:       seqRow.DropOffType,
-			ShapeDistTraveled: seqRow.ShapeDistTraveled,
-			Timepoint:         seqRow.Timepoint,
-			TotalStops:        seqRow.TotalStops,
-		}
+		targetRow = gtfsdb.GetTargetStopTimeWithTotalStopsRow(seqRow)
 	} else {
 		targetRow, err = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStops(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsParams{
 			TripID: tripID,
