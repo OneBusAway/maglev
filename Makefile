@@ -35,6 +35,7 @@ LDFLAGS := -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=$(G
 
 .PHONY: build build-debug clean coverage-report check-jq coverage test run lint watch fmt \
         gtfstidy models check-golangci-lint \
+        test-latency bench-sqlite-all bench-sqlite-perftest \
         docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all
 
 run: build

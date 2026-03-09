@@ -1,3 +1,5 @@
+//go:build perftest
+
 package gtfsdb
 
 // Large-dataset benchmarks against the TriMet GTFS feed.
