@@ -19,9 +19,6 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(w, r)
 	if fieldErrors != nil {
 		api.validationErrorResponse(w, r, fieldErrors)
@@ -31,6 +28,9 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
 
 	// Intentionally defaulting includeStatus to false to align with includeSchedule
 	// behavior for this endpoint, even though trips-for-route defaults to true.
@@ -133,7 +133,7 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 ) {
 	loc := api.parseLocationParams(w, r)
 	if loc == nil {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, nil
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("location validation failed")
 	}
 
 	lat = loc.Lat
@@ -162,8 +162,7 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 
 	var timeFieldErrors map[string][]string
-	var success bool
-	_, serviceDate, timeFieldErrors, success = utils.ParseTimeParameter(timeParam, currentLocation)
+	_, serviceDate, timeFieldErrors, _ = utils.ParseTimeParameter(timeParam, currentLocation)
 	if len(timeFieldErrors) > 0 {
 		if fieldErrors == nil {
 			fieldErrors = make(map[string][]string)
@@ -176,12 +175,6 @@ func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	if ctx.Err() != nil {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, ctx.Err()
-	}
-
-	if !success {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
 	}
 
 	if len(fieldErrors) > 0 {

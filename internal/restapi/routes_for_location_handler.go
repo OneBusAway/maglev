@@ -17,7 +17,11 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	maxCount, _ := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, nil)
+	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, nil)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 	query := queryParams.Get("query")
 
 	// Validate and sanitize query
