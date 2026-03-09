@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
@@ -295,6 +296,91 @@ func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 	assert.IsType(t, []interface{}{}, refTrips)
 }
 
+// TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
+// has OccupancyStatus set, the value is propagated to both vehicleStatus.occupancyStatus
+// and tripStatus.occupancyStatus. Tested here with an injected mock vehicle,since RABA fixtures lack occupancy data.
+func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+
+	rawRouteID := trips[0].Route.Id
+	tripID := trips[0].ID
+
+	occ := gtfsrt.VehiclePosition_OccupancyStatus(gtfsrt.VehiclePosition_MANY_SEATS_AVAILABLE)
+	api.GtfsManager.MockAddVehicleWithOptions("v_occ_test", tripID, rawRouteID, gtfs.MockVehicleOptions{
+		OccupancyStatus: &occ,
+	})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "response data must be a map")
+
+	vehiclesList, ok := data["list"].([]interface{})
+	require.True(t, ok, "list must be a slice")
+	require.NotEmpty(t, vehiclesList, "expected at least one vehicle — occupancy mock vehicle not returned by VehiclesForAgencyID")
+
+	vehicle, ok := vehiclesList[0].(map[string]interface{})
+	require.True(t, ok, "vehicle entry must be a map")
+
+	// VehicleStatus.occupancyStatus must be propagated from GTFS-RT
+	assert.Equal(t, "MANY_SEATS_AVAILABLE", vehicle["occupancyStatus"],
+		"vehicleStatus.occupancyStatus must receive the GTFS-RT value")
+
+	// TripStatus.occupancyStatus must also be propagated (the handler sets both)
+	tripStatus, ok := vehicle["tripStatus"].(map[string]interface{})
+	require.True(t, ok, "tripStatus must be present when vehicle has a trip")
+	assert.Equal(t, "MANY_SEATS_AVAILABLE", tripStatus["occupancyStatus"],
+		"tripStatus.occupancyStatus must receive the same GTFS-RT value")
+}
+
+// TestVehiclesForAgencyHandler_VehicleWithoutTrip verifies the invariant that vehicles
+// with Trip == nil are excluded from the vehicles-for-agency response.
+func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+	rawRouteID := trips[0].Route.Id
+
+	// Inject a vehicle with Trip == nil. It shares a routeID with static data so that
+	// if the nil-Trip filter is removed, the vehicle would propagate to the handler.
+	const noTripVehicleID = "v_no_trip_regression"
+	api.GtfsManager.MockAddVehicleWithOptions(noTripVehicleID, "", rawRouteID, gtfs.MockVehicleOptions{
+		NoTrip: true,
+	})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "response data must be a map")
+
+	vehiclesList, ok := data["list"].([]interface{})
+	require.True(t, ok, "list must be a slice")
+
+	// The nil-Trip vehicle must never appear in the response.
+	for _, item := range vehiclesList {
+		v, ok := item.(map[string]interface{})
+		require.True(t, ok)
+		assert.NotEqual(t, noTripVehicleID, v["vehicleId"],
+			"vehicle with Trip==nil must be excluded by VehiclesForAgencyID before reaching the handler")
+	}
+}
+
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
 func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 	ctx := context.Background()
@@ -474,12 +560,16 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 				status := vehicle["status"].(string)
 				validStatuses := []string{"INCOMING_AT", "STOPPED_AT", "IN_TRANSIT_TO", "SCHEDULED"}
 				assert.Contains(t, validStatuses, status, "Status should be valid")
+			} else {
+				t.Log("status field is absent — optional field omitempty, skipping status assertions")
 			}
 
 			if vehicle["phase"] != nil {
 				phase := vehicle["phase"].(string)
 				validPhases := []string{"approaching", "stopped", "in_progress", "scheduled"}
 				assert.Contains(t, validPhases, phase, "Phase should be valid")
+			} else {
+				t.Log("phase field is absent — optional field omitempty, skipping phase assertions")
 			}
 
 			// Test trip status (present but may be null when vehicle has no trip)
@@ -497,6 +587,8 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 					position := tripStatus["position"].(map[string]interface{})
 					assert.Contains(t, position, "lat")
 					assert.Contains(t, position, "lon")
+				} else {
+					t.Log("tripStatus.position is null — no GPS fix in fixture, skipping position assertions")
 				}
 
 				if tripStatus["orientation"] != nil {
