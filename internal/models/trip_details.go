@@ -44,7 +44,7 @@ type TripStatus struct {
 	LastKnownOrientation       *float64   `json:"lastKnownOrientation,omitempty"`
 	LastLocationUpdateTime     int64      `json:"lastLocationUpdateTime"`
 	LastUpdateTime             int64      `json:"lastUpdateTime"`
-	NextStop                   string     `json:"nextStop"`
+	NextStop                   string     `json:"nextStop,omitempty"`
 	NextStopTimeOffset         *int       `json:"nextStopTimeOffset,omitempty"`
 	OccupancyCapacity          int        `json:"occupancyCapacity"`
 	OccupancyCount             int        `json:"occupancyCount"`

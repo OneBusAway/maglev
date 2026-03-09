@@ -74,14 +74,11 @@ func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue interface{}) [
 
 // serveAndCaptureRawJSON makes an HTTP request to the test server and returns
 // the status code and parsed JSON body.
-func serveAndCaptureRawJSON(t *testing.T, api *RestAPI, endpoint string) (int, map[string]interface{}) {
+func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (int, map[string]interface{}) {
 	t.Helper()
-	// Create a fresh server for each request to avoid connection reuse issues
-	server := httptest.NewServer(api.SetupAPIRoutes())
-	defer server.Close()
 
 	client := &http.Client{}
-	resp, err := client.Get(server.URL + endpoint)
+	resp, err := client.Get(serverURL + endpoint)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
@@ -98,10 +95,10 @@ func serveAndCaptureRawJSON(t *testing.T, api *RestAPI, endpoint string) (int, m
 // assertConformance is the core validation helper. It makes a request to the given endpoint,
 // validates the response against the OpenAPI spec schema for the specPath, and reports
 // any schema violations as test failures.
-func assertConformance(t *testing.T, api *RestAPI, doc *openapi3.T, endpointURL string, specEndpointPath string) {
+func assertConformance(t *testing.T, serverURL string, doc *openapi3.T, endpointURL string, specEndpointPath string) {
 	t.Helper()
 
-	statusCode, jsonBody := serveAndCaptureRawJSON(t, api, endpointURL)
+	statusCode, jsonBody := serveAndCaptureRawJSON(t, serverURL, endpointURL)
 	require.Equal(t, http.StatusOK, statusCode, "Expected 200 OK for %s, got %d", endpointURL, statusCode)
 
 	schema := getResponseSchema(t, doc, specEndpointPath)
@@ -160,6 +157,9 @@ func createConformanceTestApi(t *testing.T) *RestAPI {
 func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 	api := createConformanceTestApi(t)
 	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
 
 	doc := loadOpenAPISpec(t)
 
@@ -325,7 +325,7 @@ func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertConformance(t, api, doc, tt.endpoint, tt.specPath)
+			assertConformance(t, server.URL, doc, tt.endpoint, tt.specPath)
 		})
 	}
 }
@@ -334,6 +334,9 @@ func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 func TestOpenAPIConformance_LocationEndpoints(t *testing.T) {
 	api := createConformanceTestApi(t)
 	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
 
 	doc := loadOpenAPISpec(t)
 
@@ -362,7 +365,7 @@ func TestOpenAPIConformance_LocationEndpoints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertConformance(t, api, doc, tt.endpoint, tt.specPath)
+			assertConformance(t, server.URL, doc, tt.endpoint, tt.specPath)
 		})
 	}
 }
@@ -371,6 +374,9 @@ func TestOpenAPIConformance_LocationEndpoints(t *testing.T) {
 func TestOpenAPIConformance_SearchEndpoints(t *testing.T) {
 	api := createConformanceTestApi(t)
 	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
 
 	doc := loadOpenAPISpec(t)
 
@@ -393,7 +399,7 @@ func TestOpenAPIConformance_SearchEndpoints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertConformance(t, api, doc, tt.endpoint, tt.specPath)
+			assertConformance(t, server.URL, doc, tt.endpoint, tt.specPath)
 		})
 	}
 }
@@ -460,14 +466,20 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 	api := NewRestAPI(application)
 	defer api.Shutdown()
 
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
 	doc := loadOpenAPISpec(t)
 
 	agencies := api.GtfsManager.GetAgencies()
 	require.NotEmpty(t, agencies)
 	agencyID := agencies[0].Id
 
+	vehicles := api.GtfsManager.VehiclesForAgencyID(agencyID)
+	require.NotEmpty(t, vehicles, "Real-time vehicles must be loaded for conformance testing")
+
 	t.Run("vehicles-for-agency", func(t *testing.T) {
-		assertConformance(t, api, doc,
+		assertConformance(t, server.URL, doc,
 			"/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST",
 			"/api/where/vehicles-for-agency/{agencyID}.json",
 		)
@@ -478,6 +490,9 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 func TestOpenAPIConformance_ErrorResponses(t *testing.T) {
 	api := createConformanceTestApi(t)
 	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
 
 	doc := loadOpenAPISpec(t)
 
@@ -505,7 +520,7 @@ func TestOpenAPIConformance_ErrorResponses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			statusCode, jsonBody := serveAndCaptureRawJSON(t, api, tt.endpoint)
+			statusCode, jsonBody := serveAndCaptureRawJSON(t, server.URL, tt.endpoint)
 			assert.Equal(t, tt.expectedStatus, statusCode)
 
 			errs := validateJSONAgainstSchema(wrapperSchema, jsonBody)

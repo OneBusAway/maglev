@@ -73,10 +73,14 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Set timestamps
+		currentTime := api.Clock.NowUnixMilli()
+		vehicleStatus.LastLocationUpdateTime = currentTime
+		vehicleStatus.LastUpdateTime = currentTime
+
 		if vehicle.Timestamp != nil {
 			timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-			vehicleStatus.LastLocationUpdateTime = &timestampMs
-			vehicleStatus.LastUpdateTime = &timestampMs
+			vehicleStatus.LastLocationUpdateTime = timestampMs
+			vehicleStatus.LastUpdateTime = timestampMs
 		}
 
 		// Set location if available
@@ -121,6 +125,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			}
 
 			// Set timestamps on trip status to match vehicle timestamps
+			tripStatus.LastUpdateTime = currentTime
+			tripStatus.LastLocationUpdateTime = currentTime
+
 			if vehicle.Timestamp != nil {
 				timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
 				tripStatus.LastUpdateTime = timestampMs
@@ -175,6 +182,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
 			defaultTripStatus.Phase = "scheduled"
+			defaultTripStatus.LastUpdateTime = currentTime
+			defaultTripStatus.LastLocationUpdateTime = currentTime
 			vehicleStatus.TripStatus = defaultTripStatus
 		}
 
