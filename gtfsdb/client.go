@@ -28,7 +28,13 @@ func NewClient(config Config) (*Client, error) {
 		log.Println("Successfully created tables")
 	}
 
-	queries := New(db)
+	// Wrap DB with slow-query logging. Using New() ensures
+	// queries go through slowQueryDB for interception and logging.
+	var dbtx DBTX = db
+	if slowQueryThreshold > 0 {
+		dbtx = newSlowQueryDB(db, slowQueryThreshold)
+	}
+	queries := New(dbtx)
 
 	client := &Client{
 		config:  config,

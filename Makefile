@@ -80,6 +80,15 @@ fmt:
 test:
 	$(SET_ENV) go test -tags "sqlite_fts5" ./...
 
+test-latency:
+	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -run "TestQueryLatency|TestExplainQueryPlans|TestConnectionPoolTuning" -v -count=1 -timeout 300s
+
+bench-sqlite-all:
+	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -bench=. -benchmem -benchtime=5s -run=^$
+
+bench-sqlite-perftest:
+	$(SET_ENV) go test -tags "sqlite_fts5 perftest" ./gtfsdb/ -bench=BenchmarkLargeDataset -benchmem -benchtime=10s -run=^$
+
 test-pure:
 	CGO_ENABLED=0 go test -tags "purego" ./...
 
