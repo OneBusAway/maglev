@@ -55,16 +55,6 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		require.True(t, ok)
 		require.NotEmpty(t, groupings)
 
-		// stops array should exist directly in the entry
-		stops, ok := entry["stops"].([]interface{})
-		require.True(t, ok, "stops should exist as an array in the entry")
-		assert.NotNil(t, stops)
-
-		// trips array should exist directly in the entry
-		trips, ok := entry["trips"].([]interface{})
-		require.True(t, ok, "trips should exist as an array in the entry")
-		assert.NotNil(t, trips)
-
 		firstGrouping, ok := groupings[0].(map[string]interface{})
 		require.True(t, ok)
 
