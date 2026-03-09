@@ -1017,7 +1017,7 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
 				slog.String("trip_id", currentTripID),
 				slog.String("block_id", trip.BlockID.String),
-				slog.Any("error", err))
+				slog.String("error", err.Error()))
 		}
 		return nil
 	}
