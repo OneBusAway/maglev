@@ -41,6 +41,15 @@ type slowQueryDB struct {
 	db        *sql.DB
 	threshold time.Duration
 	logger    *slog.Logger
+	now       func() time.Time // now returns the current time (defaults to time.Now),Overridden in tests to avoid OS timer resolution issues.
+}
+
+// nowOrReal returns s.now() when set, otherwise time.Now().
+func (s *slowQueryDB) nowOrReal() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 func newSlowQueryDB(db *sql.DB, threshold time.Duration) *slowQueryDB {
@@ -52,9 +61,9 @@ func newSlowQueryDB(db *sql.DB, threshold time.Duration) *slowQueryDB {
 }
 
 func (s *slowQueryDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	start := time.Now()
+	start := s.nowOrReal()
 	res, err := s.db.ExecContext(ctx, query, args...)
-	s.maybeLog("ExecContext", query, time.Since(start), err)
+	s.maybeLog("ExecContext", query, s.nowOrReal().Sub(start), err)
 	return res, err
 }
 
@@ -63,17 +72,17 @@ func (s *slowQueryDB) PrepareContext(ctx context.Context, query string) (*sql.St
 }
 
 func (s *slowQueryDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	start := time.Now()
+	start := s.nowOrReal()
 	rows, err := s.db.QueryContext(ctx, query, args...)
-	s.maybeLog("QueryContext", query, time.Since(start), err)
+	s.maybeLog("QueryContext", query, s.nowOrReal().Sub(start), err)
 	return rows, err
 }
 
 func (s *slowQueryDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	start := time.Now()
+	start := s.nowOrReal()
 	row := s.db.QueryRowContext(ctx, query, args...)
 	// *sql.Row defers errors until Scan; elapsed measures the driver round-trip only.
-	elapsed := time.Since(start)
+	elapsed := s.nowOrReal().Sub(start)
 	if s.threshold > 0 && elapsed >= s.threshold {
 		s.logger.Warn("slow_query",
 			slog.String("op", "QueryRowContext"),

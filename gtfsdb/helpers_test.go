@@ -158,7 +158,14 @@ func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
 	_, _ = wrapper.QueryContext(ctx, "SELECT 1")
 	assert.Empty(t, captured, "threshold=0 must not emit any log records")
 
-	// Threshold below actual query time → record expected.
+	// Use a fake clock advancing 10 ms per call to ensure the query exceeds
+	// the threshold and avoid Windows timer resolution issues.
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
 	wrapper.threshold = 1 * time.Nanosecond
 	_, _ = wrapper.QueryContext(ctx, "SELECT 1")
 	assert.NotEmpty(t, captured, "threshold=1ns must emit a slow_query record")
