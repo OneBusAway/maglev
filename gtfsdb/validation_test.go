@@ -36,15 +36,15 @@ func createValidGTFS() *gtfs.Static {
 	}
 }
 
-func TestValidateGTFSData_Valid(t *testing.T) {
+func TestValidateAndFilterGTFSData_Valid(t *testing.T) {
 	data := createValidGTFS()
-	err := ValidateGTFSData(data, nil)
+	err := ValidateAndFilterGTFSData(data, nil)
 	if err != nil {
 		t.Fatalf("expected valid GTFS data to pass validation, got error: %v", err)
 	}
 }
 
-func TestValidateGTFSData_MissingEntities(t *testing.T) {
+func TestValidateAndFilterGTFSData_MissingEntities(t *testing.T) {
 	tests := []struct {
 		name        string
 		startNil    bool
@@ -92,7 +92,7 @@ func TestValidateGTFSData_MissingEntities(t *testing.T) {
 			}
 			data = tc.mutate(data)
 
-			err := ValidateGTFSData(data, nil)
+			err := ValidateAndFilterGTFSData(data, nil)
 			if err == nil {
 				t.Fatalf("expected error for %s, got nil", tc.name)
 			}
@@ -103,7 +103,7 @@ func TestValidateGTFSData_MissingEntities(t *testing.T) {
 	}
 }
 
-func TestValidateGTFSData_CalendarDatesOnly(t *testing.T) {
+func TestValidateAndFilterGTFSData_CalendarDatesOnly(t *testing.T) {
 	data := createValidGTFS()
 
 	// Turn off all regular weekly service
@@ -120,13 +120,13 @@ func TestValidateGTFSData_CalendarDatesOnly(t *testing.T) {
 		time.Now(),
 	}
 
-	err := ValidateGTFSData(data, nil)
+	err := ValidateAndFilterGTFSData(data, nil)
 	if err != nil {
 		t.Fatalf("expected valid GTFS data with only calendar_dates to pass validation, got error: %v", err)
 	}
 }
 
-func TestValidateGTFSData_ForeignKeys_Filtering(t *testing.T) {
+func TestValidateAndFilterGTFSData_ForeignKeys_Filtering(t *testing.T) {
 	tests := []struct {
 		name          string
 		mutate        func(*gtfs.Static)
@@ -143,10 +143,28 @@ func TestValidateGTFSData_ForeignKeys_Filtering(t *testing.T) {
 			expectError:   false,
 		},
 		{
+			name: "trip with empty route ID - filters invalid",
+			mutate: func(d *gtfs.Static) {
+				d.Trips = append(d.Trips, d.Trips[0])
+				d.Trips[0].Route = &gtfs.Route{Id: ""}
+			},
+			expectedTrips: 1,
+			expectError:   false,
+		},
+		{
 			name: "one valid and one missing service trip - filters invalid",
 			mutate: func(d *gtfs.Static) {
 				d.Trips = append(d.Trips, d.Trips[0])
 				d.Trips[0].Service = nil
+			},
+			expectedTrips: 1,
+			expectError:   false,
+		},
+		{
+			name: "trip with empty service ID - filters invalid",
+			mutate: func(d *gtfs.Static) {
+				d.Trips = append(d.Trips, d.Trips[0])
+				d.Trips[0].Service = &gtfs.Service{Id: ""}
 			},
 			expectedTrips: 1,
 			expectError:   false,
@@ -173,6 +191,18 @@ func TestValidateGTFSData_ForeignKeys_Filtering(t *testing.T) {
 			expectError:   false,
 		},
 		{
+			name: "stop time with empty stop ID - filters invalid",
+			mutate: func(d *gtfs.Static) {
+				d.Trips = append(d.Trips, d.Trips[0])
+				// Give the broken trip its own fresh StopTimes slice
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{
+					{Stop: &gtfs.Stop{Id: ""}, StopSequence: 1},
+				}
+			},
+			expectedTrips: 1,
+			expectError:   false,
+		},
+		{
 			name: "all trips invalid returns error",
 			mutate: func(d *gtfs.Static) {
 				d.Trips[0].StopTimes = nil
@@ -187,7 +217,7 @@ func TestValidateGTFSData_ForeignKeys_Filtering(t *testing.T) {
 			data := createValidGTFS()
 			tc.mutate(data)
 
-			err := ValidateGTFSData(data, nil)
+			err := ValidateAndFilterGTFSData(data, nil)
 			if tc.expectError {
 				if err == nil {
 					t.Fatalf("expected error since all trips are filtered, got nil")

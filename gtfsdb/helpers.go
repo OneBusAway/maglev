@@ -109,7 +109,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	}
 
 	// 3. Perform Structural Validation
-	if err := ValidateGTFSData(staticData, logger); err != nil {
+	if err := ValidateAndFilterGTFSData(staticData, logger); err != nil {
 		logging.LogError(logger, "GTFS feed structural validation failed", err)
 		return fmt.Errorf("GTFS validation failed: %w", err)
 	}
@@ -1175,9 +1175,10 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 	return nil
 }
 
-// ValidateGTFSData performs structural validation on the parsed GTFS data before import.
+// ValidateAndFilterGTFSData performs structural validation on the parsed GTFS data before import.
 // It ensures that required files are present and filters out structurally invalid trips.
-func ValidateGTFSData(data *gtfs.Static, logger *slog.Logger) error {
+// Note: Orphaned entities (routes/stops/services with no remaining trips) are retained.
+func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 	if data == nil {
 		return fmt.Errorf("parsed GTFS data is nil")
 	}
@@ -1223,19 +1224,19 @@ func ValidateGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 	for _, trip := range data.Trips {
 		// Ensure the trip points to a valid route
 		if trip.Route == nil || trip.Route.Id == "" {
-			logger.Warn("validation warning: trip references missing or invalid route, skipping trip", slog.String("trip_id", trip.ID))
+			logger.Warn("trip references missing or invalid route, skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
 
 		// Ensure the trip points to a valid service
 		if trip.Service == nil || trip.Service.Id == "" {
-			logger.Warn("validation warning: trip references missing or invalid service, skipping trip", slog.String("trip_id", trip.ID))
+			logger.Warn("trip references missing or invalid service, skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
 
 		// Ensure the trip has stop times
 		if len(trip.StopTimes) == 0 {
-			logger.Warn("validation warning: trip has no stop times, skipping trip", slog.String("trip_id", trip.ID))
+			logger.Warn("trip has no stop times, skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
 
@@ -1243,7 +1244,7 @@ func ValidateGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 		hasInvalidStop := false
 		for _, st := range trip.StopTimes {
 			if st.Stop == nil || st.Stop.Id == "" {
-				logger.Warn("validation warning: stop time for trip references missing stop, skipping trip", slog.String("trip_id", trip.ID))
+				logger.Warn("stop time for trip references missing stop, skipping trip", slog.String("trip_id", trip.ID))
 				hasInvalidStop = true
 				break
 			}
@@ -1255,6 +1256,17 @@ func ValidateGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 
 		// Keep the trip if it passes all checks
 		validTrips = append(validTrips, trip)
+	}
+
+	filteredCount := len(data.Trips) - len(validTrips)
+	if filteredCount > 0 {
+		filteredPct := float64(filteredCount) / float64(len(data.Trips)) * 100
+		logger.Warn("GTFS validation filtered invalid trips",
+			slog.Int("original_count", len(data.Trips)),
+			slog.Int("valid_count", len(validTrips)),
+			slog.Int("filtered_count", filteredCount),
+			slog.Float64("filtered_percent", filteredPct),
+		)
 	}
 
 	data.Trips = validTrips
