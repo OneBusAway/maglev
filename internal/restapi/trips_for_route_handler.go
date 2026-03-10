@@ -34,7 +34,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	currentLocation, err := time.LoadLocation(currentAgency.Timezone)
+	currentLocation, err := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return

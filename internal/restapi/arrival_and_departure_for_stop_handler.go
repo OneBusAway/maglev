@@ -175,7 +175,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Localize serviceDate and time to the agency's timezone now that we know it.
 	// This ensures Year()/Month()/Day()/Format() extract the correct local date.
-	loc := utils.LoadLocationWithUTCFallBack(stopAgency.Timezone, stopAgency.ID)
+	loc, err := loadAgencyLocation(stopAgency.ID, stopAgency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if params.ServiceDate != nil {
 		localized := params.ServiceDate.In(loc)
 		params.ServiceDate = &localized
