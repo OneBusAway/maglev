@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -138,6 +140,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		})
 
 		if err != nil {
+			logging.LogError(api.Logger, "failed to fetch trips in block", err, slog.String("block_id", blockID))
 			continue
 		}
 
@@ -146,6 +149,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			ServiceIds:  serviceIDs,
 			CurrentTime: sql.NullInt64{Int64: currentNanosSinceMidnight, Valid: true}})
 		if err != nil {
+			logging.LogError(api.Logger, "failed to fetch active trip in block", err, slog.String("block_id", blockID))
 			continue
 		}
 
