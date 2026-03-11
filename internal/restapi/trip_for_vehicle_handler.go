@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -109,6 +111,35 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Look up frequency data for this trip
+	var tripFrequency *models.Frequency
+	frequencies, freqErr := api.GtfsManager.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr != nil {
+		slog.Warn("tripForVehicleHandler: failed to get frequencies",
+			slog.String("trip_id", tripID),
+			slog.String("error", freqErr.Error()))
+	}
+	if len(frequencies) > 0 {
+		active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, currentTime)
+		if active != nil {
+			freq := models.NewFrequencyFromDB(*active, serviceDate)
+			tripFrequency = &freq
+		} else {
+			freq := models.NewFrequencyFromDB(frequencies[0], serviceDate)
+			tripFrequency = &freq
+		}
+	}
+
+	// Propagate frequency to status and schedule
+	if tripFrequency != nil {
+		if status != nil {
+			status.Frequency = tripFrequency
+		}
+		if schedule != nil {
+			schedule.Frequency = tripFrequency
+		}
+	}
+
 	var situationIDs []string
 	if status != nil && len(status.SituationIDs) > 0 {
 		situationIDs = status.SituationIDs
@@ -119,7 +150,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
 		ServiceDate:  serviceDateMillis,
-		Frequency:    nil,
+		Frequency:    tripFrequency,
 		Status:       status,
 		Schedule:     schedule,
 		SituationIDs: situationIDs,

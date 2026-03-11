@@ -10,6 +10,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -385,6 +386,21 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		tripStatus,                                     // tripStatus
 		situationIDs,                                   // situationIds
 	)
+
+	// Populate frequency for frequency-based trips
+	tripFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr != nil {
+		api.Logger.Warn("failed to fetch frequencies for arrival trip", "tripID", tripID, "error", freqErr)
+	}
+	if len(tripFreqs) > 0 {
+		if activeFreq := gtfsInternal.GetActiveHeadwayForTime(tripFreqs, serviceMidnight, currentTime); activeFreq != nil {
+			freq := models.NewFrequencyFromDB(*activeFreq, serviceMidnight)
+			arrival.Frequency = &freq
+		} else {
+			freq := models.NewFrequencyFromDB(tripFreqs[0], serviceMidnight)
+			arrival.Frequency = &freq
+		}
+	}
 
 	references := models.NewEmptyReferences()
 

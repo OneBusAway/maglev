@@ -9,6 +9,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -253,6 +254,14 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		tripsLookup[trip.ID] = trip
 	}
 
+	// Batch-fetch frequencies for all trips to populate arrival.Frequency
+	allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, uniqueTripIDs)
+	if freqErr != nil {
+		api.Logger.Warn("failed to batch fetch frequencies for arrivals", slog.Any("error", freqErr))
+		allFreqs = nil
+	}
+	freqsByTrip := gtfsInternal.GroupFrequenciesByTrip(allFreqs)
+
 	// Batch-fetch stop counts per trip to avoid per-arrival N+1 queries for totalStopsInTrip.
 	tripStopCountMap := make(map[string]int, len(uniqueTripIDs))
 	if len(uniqueTripIDs) > 0 {
@@ -458,6 +467,18 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			tripStatus,                                      // tripStatus
 			situationIDs,                                    // situationIDs
 		)
+
+		// Populate frequency for frequency-based trips
+		if tripFreqs, found := freqsByTrip[st.TripID]; found && len(tripFreqs) > 0 {
+			serviceDate := ast.ServiceDate
+			if activeFreq := gtfsInternal.GetActiveHeadwayForTime(tripFreqs, serviceDate, params.Time); activeFreq != nil {
+				freq := models.NewFrequencyFromDB(*activeFreq, serviceDate)
+				arrival.Frequency = &freq
+			} else {
+				freq := models.NewFrequencyFromDB(tripFreqs[0], serviceDate)
+				arrival.Frequency = &freq
+			}
+		}
 
 		arrivals = append(arrivals, *arrival)
 	}

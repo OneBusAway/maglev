@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -174,6 +175,37 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Look up frequency data for this trip
+	var tripFrequency *models.Frequency
+	frequencies, freqErr := api.GtfsManager.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr != nil {
+		slog.Warn("tripDetailsHandler: failed to get frequencies",
+			slog.String("trip_id", tripID),
+			slog.String("error", freqErr.Error()))
+	}
+	if len(frequencies) > 0 {
+		// Try to find the currently-active frequency window
+		active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, currentTime)
+		if active != nil {
+			freq := models.NewFrequencyFromDB(*active, serviceDate)
+			tripFrequency = &freq
+		} else {
+			// Fallback: use the first frequency entry
+			freq := models.NewFrequencyFromDB(frequencies[0], serviceDate)
+			tripFrequency = &freq
+		}
+	}
+
+	// Propagate frequency to status and schedule
+	if tripFrequency != nil {
+		if status != nil {
+			status.Frequency = tripFrequency
+		}
+		if schedule != nil {
+			schedule.Frequency = tripFrequency
+		}
+	}
+
 	var situationsIDs []string
 	if status != nil && len(status.SituationIDs) > 0 {
 		situationsIDs = status.SituationIDs
@@ -185,7 +217,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
-		Frequency:    nil,
+		Frequency:    tripFrequency,
 		SituationIDs: situationsIDs,
 	}
 
