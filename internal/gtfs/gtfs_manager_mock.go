@@ -63,6 +63,8 @@ type MockVehicleOptions struct {
 	CurrentStopSequence *uint32
 	StopID              *string
 	CurrentStatus       *gtfs.CurrentStatus
+	OccupancyStatus     *gtfs.OccupancyStatus
+	NoTrip              bool // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle.with no current trip assignment, which VehiclesForAgencyID filters out.
 }
 
 func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
@@ -75,19 +77,26 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 		}
 	}
 	now := time.Now()
-	v := gtfs.Vehicle{
-		ID:        &gtfs.VehicleID{ID: vehicleID},
-		Timestamp: &now,
-		Trip: &gtfs.Trip{
+
+	var trip *gtfs.Trip
+	if !opts.NoTrip {
+		trip = &gtfs.Trip{
 			ID: gtfs.TripID{
 				ID:      tripID,
 				RouteID: routeID,
 			},
-		},
+		}
+	}
+
+	v := gtfs.Vehicle{
+		ID:                  &gtfs.VehicleID{ID: vehicleID},
+		Timestamp:           &now,
+		Trip:                trip,
 		Position:            opts.Position,
 		CurrentStopSequence: opts.CurrentStopSequence,
 		StopID:              opts.StopID,
 		CurrentStatus:       opts.CurrentStatus,
+		OccupancyStatus:     opts.OccupancyStatus,
 	}
 	m.realTimeVehicles = append(m.realTimeVehicles, v)
 
