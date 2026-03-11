@@ -350,7 +350,9 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		logging.LogError(logger, "failed to reload frequency trip IDs during hot-swap; retaining previous cache", freqErr)
 	}
 
-	manager.lastUpdated = time.Now()
+	now := time.Now()
+	manager.lastUpdated = now
+	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
 
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil {
@@ -382,7 +384,11 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	defer manager.staticMutex.Unlock()
 
 	manager.gtfsData = staticData
-	manager.lastUpdated = time.Now()
+
+	now := time.Now()
+	manager.lastUpdated = now
+	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
+
 	manager.isHealthy = true
 
 	manager.agenciesMap, manager.routesMap = buildLookupMaps(staticData)
@@ -482,7 +488,7 @@ func buildFrequencyCache(ctx context.Context, queries *gtfsdb.Queries) (map[stri
 func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger *slog.Logger) {
 	manager.feedExpiresAt = time.Time{}
 	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
-		manager.Metrics.FeedExpiresAt.Set(0)
+		manager.Metrics.FeedExpiresAt.Set(-1)
 	}
 
 	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
@@ -495,7 +501,16 @@ func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger 
 		return
 	}
 
-	strVal, _ := val.(string)
+	var strVal string
+	switch v := val.(type) {
+	case string:
+		strVal = v
+	case []byte:
+		strVal = string(v)
+	default:
+		logging.LogError(logger, "Unexpected type from GetFeedEndDate", fmt.Errorf("expected string, got %T", val))
+		return
+	}
 
 	if strVal != "" {
 		parsedTime, err := time.Parse("20060102", strVal)

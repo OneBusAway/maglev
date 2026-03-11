@@ -215,13 +215,13 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 
 // deduplicateAlerts takes multiple slices of alerts and returns a single slice with unique alerts by ID.
 func deduplicateAlerts(alertSlices ...[]gtfs.Alert) []gtfs.Alert {
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	var uniqueAlerts []gtfs.Alert
 
 	for _, slice := range alertSlices {
 		for _, alert := range slice {
-			if !seen[alert.ID] {
-				seen[alert.ID] = true
+			if _, exists := seen[alert.ID]; !exists {
+				seen[alert.ID] = struct{}{}
 				uniqueAlerts = append(uniqueAlerts, alert)
 			}
 		}
@@ -251,7 +251,12 @@ func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
 
 // collectAlertsForStopsAndRoutes returns deduplicated alerts matching any of the given stop or route IDs.
 func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) []gtfs.Alert {
-	stopAlerts := api.collectAlertsForStops(stopIDs)
-	routeAlerts := api.collectAlertsForRoutes(routeIDs)
-	return deduplicateAlerts(stopAlerts, routeAlerts)
+	var alerts []gtfs.Alert
+	for _, stopID := range stopIDs {
+		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
+	}
+	for _, routeID := range routeIDs {
+		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
+	}
+	return deduplicateAlerts(alerts)
 }

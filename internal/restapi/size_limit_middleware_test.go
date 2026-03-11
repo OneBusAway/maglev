@@ -34,9 +34,12 @@ func TestSizeLimitMiddleware_ExceedsLimit(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, err := io.ReadAll(r.Body)
 		// io.ReadAll should return an error when the limit is exceeded
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "request body too large")
-
+		if err != nil {
+			assert.Contains(t, err.Error(), "request body too large")
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
 
 	limit := int64(10)
@@ -52,4 +55,6 @@ func TestSizeLimitMiddleware_ExceedsLimit(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	wrappedHandler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 }

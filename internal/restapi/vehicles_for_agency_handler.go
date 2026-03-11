@@ -137,6 +137,15 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			// Set service date (use current date for now)
 			tripStatus.ServiceDate = api.Clock.NowUnixMilli()
 
+			// Propagate occupancy status from GTFS-RT to both TripStatus and VehicleStatus.
+			// There is no source for occupancyCapacity or occupancyCount anywhere in maglev — not in the SQLite DB,
+			// not in GTFS-RT. Those fields will remain omitted.
+			if vehicle.OccupancyStatus != nil {
+				occupancy := vehicle.OccupancyStatus.String()
+				tripStatus.OccupancyStatus = occupancy
+				vehicleStatus.OccupancyStatus = occupancy
+			}
+
 			vehicleStatus.TripStatus = tripStatus
 
 			// Add trip to references (basic trip reference)

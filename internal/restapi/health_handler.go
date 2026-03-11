@@ -8,12 +8,19 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
+// DataFreshness represents the last update timestamps for GTFS data.
+type DataFreshness struct {
+	StaticGtfsLastUpdated *time.Time           `json:"staticGtfsLastUpdated,omitempty"`
+	RealtimeFeeds         map[string]time.Time `json:"realtimeFeeds,omitempty"`
+}
+
 // HealthResponse represents the JSON response from the health endpoint.
 type HealthResponse struct {
-	Status        string `json:"status"`
-	Detail        string `json:"detail,omitempty"`
-	FeedExpiresAt string `json:"feed_expires_at,omitempty"`
-	DataExpired   bool   `json:"data_expired,omitempty"`
+	Status        string         `json:"status"`
+	Detail        string         `json:"detail,omitempty"`
+	FeedExpiresAt string         `json:"feed_expires_at,omitempty"`
+	DataExpired   bool           `json:"data_expired,omitempty"`
+	DataFreshness *DataFreshness `json:"dataFreshness,omitempty"`
 }
 
 // healthHandler verifies database connectivity and readiness.
@@ -53,9 +60,24 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch data freshness from the manager only if verbose=true is passed
+	var freshness *DataFreshness
+	if r.URL.Query().Get("verbose") == "true" {
+		t := api.GtfsManager.GetStaticLastUpdated()
+		var staticTime *time.Time
+		if !t.IsZero() {
+			staticTime = &t
+		}
+		freshness = &DataFreshness{
+			StaticGtfsLastUpdated: staticTime,
+			RealtimeFeeds:         api.GtfsManager.GetFeedUpdateTimes(),
+		}
+	}
+
 	// All checks passed
 	response := HealthResponse{
-		Status: "ok",
+		Status:        "ok",
+		DataFreshness: freshness,
 	}
 
 	expiresAt := api.GtfsManager.FeedExpiresAt()

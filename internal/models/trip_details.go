@@ -61,11 +61,10 @@ type TripStatus struct {
 	TotalDistanceAlongTrip     float64    `json:"totalDistanceAlongTrip"`
 	VehicleFeatures            []string   `json:"vehicleFeatures,omitempty"`
 	VehicleID                  string     `json:"vehicleId,omitempty"`
-	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. Tracked as a known spec deviation.
+	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. This is a known deviation from the OpenAPI spec.
 }
 
 // SituationIDs initialized to []string{} for Go-side convenience.
-// JSON output is unaffected because omitempty omits both nil and empty slices.
 func NewTripStatus() *TripStatus {
 	return &TripStatus{
 		SituationIDs: []string{},

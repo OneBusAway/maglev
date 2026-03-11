@@ -162,8 +162,11 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	// Apply global compression around the entire mux
 	compressedMux := restapi.CompressionMiddleware(mux)
 
+	// Add freshness middleware
+	freshnessHandler := api.FreshnessMiddleware(compressedMux)
+
 	// Wrap with security middleware
-	secureHandler := api.WithSecurityHeaders(compressedMux)
+	secureHandler := api.WithSecurityHeaders(freshnessHandler)
 
 	// Add metrics middleware
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
@@ -184,7 +187,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 		IdleTimeout:    time.Minute,
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 20, // 1 MB
+		MaxHeaderBytes: 1 << 20, // 1 MB (explicit; matches Go's default)
 		ErrorLog:       slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
 	}
 

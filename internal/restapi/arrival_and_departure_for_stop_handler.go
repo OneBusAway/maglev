@@ -230,11 +230,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	if params.StopSequence != nil && int64(*params.StopSequence) != targetRow.StopSequence {
-		api.sendNotFound(w, r)
-		return
-	}
-
 	targetStopTime := struct {
 		ArrivalTime   int64
 		DepartureTime int64

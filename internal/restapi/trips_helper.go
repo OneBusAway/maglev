@@ -29,8 +29,7 @@ func (api *RestAPI) BuildTripStatus(
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	status.ServiceDate = sdMidnight.UnixMilli()
 	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
-	// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
-	// Java OBA uses nullable Integer types that serialize conditionally.
+	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 
@@ -44,7 +43,7 @@ func (api *RestAPI) BuildTripStatus(
 		// NOTE: GTFS-RT OccupancyPercentage (0-100%) has no direct equivalent in the
 		// OBA TripStatus schema. The Java OBA server populates occupancyCapacity from
 		// agency-provided vehicle capacity data, not from GTFS-RT percentages.
-		// We intentionally leave OccupancyCapacity as nil here.
+		// We intentionally leave OccupancyCapacity at its zero value (0) here, as GTFS-RT OccupancyPercentage has no direct mapping to OBA's capacity-based model.
 		// See: TripStatusBeanServiceImpl.java in onebusaway-transit-data-federation.
 	}
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status, currentTime)
@@ -1015,7 +1014,7 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
 				slog.String("trip_id", currentTripID),
 				slog.String("block_id", trip.BlockID.String),
-				slog.Any("error", err))
+				slog.String("error", err.Error()))
 		}
 		return nil
 	}
