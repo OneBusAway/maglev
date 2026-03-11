@@ -1859,7 +1859,6 @@ func TestFindClosestStopByTimeWithDelays_OvernightTrip(t *testing.T) {
 	assert.Equal(t, "stop-1am-next", closestID)
 }
 
-
 func TestInferOrientationFromShape(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -2021,4 +2020,3 @@ func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
 	assert.Empty(t, next)
 	assert.Empty(t, prev)
 }
-
