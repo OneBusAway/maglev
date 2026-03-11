@@ -76,7 +76,6 @@ func TestRateLimitMiddleware_GoroutineActuallyExits(t *testing.T) {
 	assert.Greater(t, afterCreate, initial, "cleanup goroutine should have started")
 
 	middleware.Stop()
-	time.Sleep(50 * time.Millisecond) // Give goroutine time to exit
 
 	afterStop := runtime.NumGoroutine()
 	assert.LessOrEqual(t, afterStop, initial, "cleanup goroutine should have exited")

@@ -33,6 +33,7 @@ type RateLimitMiddleware struct {
 	exemptKeys  map[string]bool
 	stopChan    chan struct{}
 	stopOnce    sync.Once
+	wg          sync.WaitGroup
 	clock       clock.Clock
 }
 
@@ -69,6 +70,7 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 	}
 
 	// Start cleanup goroutine
+	middleware.wg.Add(1)
 	go middleware.cleanup()
 
 	return middleware
@@ -216,8 +218,10 @@ func (rl *RateLimitMiddleware) cleanupOnce() {
 	})
 }
 
-// cleanup periodically removes old, unused limiters to prevent memory leaks
+// cleanup periodically removes old, unused limiters to prevent memory leaks.
+// It decrements the WaitGroup when it exits so that Stop can await completion.
 func (rl *RateLimitMiddleware) cleanup() {
+	defer rl.wg.Done()
 	for {
 		select {
 		case <-rl.cleanupTick.C:
@@ -228,7 +232,7 @@ func (rl *RateLimitMiddleware) cleanup() {
 	}
 }
 
-// Stop stops the cleanup goroutine. It is safe to call multiple times.
+// Stop stops the cleanup goroutine and waits for it to exit. It is safe to call multiple times.
 // Note: This does not affect in-flight requests - it only stops the
 // background cleanup goroutine.
 func (rl *RateLimitMiddleware) Stop() {
@@ -238,4 +242,5 @@ func (rl *RateLimitMiddleware) Stop() {
 			rl.cleanupTick.Stop()
 		}
 	})
+	rl.wg.Wait()
 }
