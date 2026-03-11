@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -120,9 +121,16 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 		Metrics:             appMetrics,
 	}
 
-	// Start DB stats collector if database is available
-	if gtfsManager != nil && gtfsManager.GtfsDB != nil && gtfsManager.GtfsDB.DB != nil {
-		appMetrics.StartDBStatsCollector(gtfsManager.GtfsDB.DB, 15*time.Second)
+	// Start DB stats collector using a provider so metrics follow DB hot-swap.
+	if gtfsManager != nil {
+		appMetrics.StartDBStatsCollector(func() *sql.DB {
+			gtfsManager.RLock()
+			defer gtfsManager.RUnlock()
+			if gtfsManager.GtfsDB == nil {
+				return nil
+			}
+			return gtfsManager.GtfsDB.DB
+		}, 15*time.Second)
 	}
 
 	return coreApp, nil
