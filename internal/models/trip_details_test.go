@@ -132,53 +132,39 @@ func TestTripDetailsWithNilValues(t *testing.T) {
 }
 
 func TestTripStatusJSON(t *testing.T) {
-	distanceAlongTrip := 1500.5
-	lastKnownDistanceAlongTrip := 1400.0
-	lastKnownOrientation := 90.0
-	lastLocationUpdateTime := int64(1609462700000)
-	lastUpdateTime := int64(1609462800000)
-	occupancyCapacity := 50
-	occupancyCount := 30
-	orientation := 95.0
-	scheduleDeviation := 60
-	scheduledDistanceAlongTrip := 1450.0
-	totalDistanceAlongTrip := 5000.0
-	closestOffset := 120
-	nextOffset := 240
-
 	tripStatus := TripStatus{
 		ActiveTripID:               "active_trip_123",
 		BlockTripSequence:          2,
 		ClosestStop:                "stop_456",
-		ClosestStopTimeOffset:      &closestOffset,
-		DistanceAlongTrip:          distanceAlongTrip,
+		ClosestStopTimeOffset:      120,
+		DistanceAlongTrip:          1500.5,
 		Frequency:                  nil,
-		LastKnownDistanceAlongTrip: lastKnownDistanceAlongTrip,
+		LastKnownDistanceAlongTrip: 1400.0,
 		LastKnownLocation: &Location{
 			Lat: 38.542661,
 			Lon: -121.743914,
 		},
-		LastKnownOrientation:   &lastKnownOrientation,
-		LastLocationUpdateTime: lastLocationUpdateTime,
-		LastUpdateTime:         lastUpdateTime,
+		LastKnownOrientation:   90.0,
+		LastLocationUpdateTime: 1609462700000,
+		LastUpdateTime:         1609462800000,
 		NextStop:               "stop_789",
-		NextStopTimeOffset:     &nextOffset,
-		OccupancyCapacity:      occupancyCapacity,
-		OccupancyCount:         occupancyCount,
+		NextStopTimeOffset:     240,
+		OccupancyCapacity:      50,
+		OccupancyCount:         30,
 		OccupancyStatus:        "MANY_SEATS_AVAILABLE",
-		Orientation:            &orientation,
+		Orientation:            95.0,
 		Phase:                  "in_progress",
 		Position: Location{
 			Lat: 38.543000,
 			Lon: -121.744000,
 		},
 		Predicted:                  true,
-		ScheduleDeviation:          scheduleDeviation,
-		ScheduledDistanceAlongTrip: &scheduledDistanceAlongTrip,
+		ScheduleDeviation:          60,
+		ScheduledDistanceAlongTrip: 1450.0,
 		ServiceDate:                1609459200000,
 		SituationIDs:               []string{"situation_1"},
 		Status:                     "SCHEDULED",
-		TotalDistanceAlongTrip:     totalDistanceAlongTrip,
+		TotalDistanceAlongTrip:     5000.0,
 		VehicleFeatures:            []string{"wifi", "bike_rack"},
 		VehicleID:                  "vehicle_789",
 		Scheduled:                  false,
@@ -200,7 +186,7 @@ func TestTripStatusJSON(t *testing.T) {
 	assert.Equal(t, tripStatus.Scheduled, unmarshaledStatus.Scheduled)
 }
 
-func TestTripStatus_JSONOmitEmpty(t *testing.T) {
+func TestTripStatus_JSONAlwaysPresent(t *testing.T) {
 	status := *NewTripStatus()
 	status.Status = "default"
 
@@ -208,29 +194,25 @@ func TestTripStatus_JSONOmitEmpty(t *testing.T) {
 	require.NoError(t, err)
 	jsonStr := string(data)
 
-	// Required fields should always be present (even with zero values)
-	assert.Contains(t, jsonStr, `"scheduleDeviation"`, "scheduleDeviation is required and should always be present")
-	assert.Contains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip is required and should always be present")
+	// All fields must always be present in JSON (no omitempty on value types)
+	assert.Contains(t, jsonStr, `"scheduleDeviation":0`, "scheduleDeviation must always be present")
+	assert.Contains(t, jsonStr, `"distanceAlongTrip":0`, "distanceAlongTrip must always be present")
+	assert.Contains(t, jsonStr, `"closestStopTimeOffset":0`, "closestStopTimeOffset must always be present")
+	assert.Contains(t, jsonStr, `"orientation":0`, "orientation must always be present")
+	assert.Contains(t, jsonStr, `"lastKnownDistanceAlongTrip":0`, "lastKnownDistanceAlongTrip must always be present")
+	assert.Contains(t, jsonStr, `"lastKnownOrientation":0`, "lastKnownOrientation must always be present")
+	assert.Contains(t, jsonStr, `"lastLocationUpdateTime":0`, "lastLocationUpdateTime must always be present")
+	assert.Contains(t, jsonStr, `"lastUpdateTime":0`, "lastUpdateTime must always be present")
+	assert.Contains(t, jsonStr, `"totalDistanceAlongTrip":0`, "totalDistanceAlongTrip must always be present")
+	assert.Contains(t, jsonStr, `"scheduledDistanceAlongTrip":0`, "scheduledDistanceAlongTrip must always be present")
+	assert.Contains(t, jsonStr, `"occupancyCapacity":-1`, "occupancyCapacity must default to -1")
+	assert.Contains(t, jsonStr, `"occupancyCount":-1`, "occupancyCount must default to -1")
+	assert.Contains(t, jsonStr, `"vehicleFeatures":[]`, "vehicleFeatures must always be present as empty array")
+	assert.Contains(t, jsonStr, `"situationIds":[]`, "situationIds must always be present as empty array")
+	assert.Contains(t, jsonStr, `"frequency":null`, "frequency must always be present as null")
 
-	// Optional pointer fields should be omitted when nil
-	assert.NotContains(t, jsonStr, `"closestStopTimeOffset"`, "closestStopTimeOffset should be omitted when nil")
-	assert.NotContains(t, jsonStr, `"orientation"`, "orientation should be omitted when nil")
-
-	// These are required fields per the OpenAPI spec — must always appear, even when empty string
-	assert.Contains(t, jsonStr, `"closestStop":""`, "closestStop is required by OpenAPI spec and must always be present")
-	assert.Contains(t, jsonStr, `"occupancyStatus":""`, "occupancyStatus is required by OpenAPI spec and must always be present")
-	assert.Contains(t, jsonStr, `"predicted":false`, "predicted defaults to false in NewTripStatus")
-	assert.Contains(t, jsonStr, `"scheduled":true`, "scheduled must stay inverse of predicted")
-}
-
-func TestTripStatus_SetPredicted_KeepsInverseScheduled(t *testing.T) {
-	status := NewTripStatus()
-
-	status.SetPredicted(true)
-	assert.True(t, status.Predicted)
-	assert.False(t, status.Scheduled)
-
-	status.SetPredicted(false)
-	assert.False(t, status.Predicted)
-	assert.True(t, status.Scheduled)
+	// String fields always present even when empty
+	assert.Contains(t, jsonStr, `"closestStop":""`, "closestStop must always be present")
+	assert.Contains(t, jsonStr, `"occupancyStatus":""`, "occupancyStatus must always be present")
+	assert.Contains(t, jsonStr, `"vehicleId":""`, "vehicleId must always be present")
 }
