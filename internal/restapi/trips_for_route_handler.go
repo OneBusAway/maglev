@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -147,8 +148,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 			BlockID:     blockIDNullStr,
 			ServiceIds:  serviceIDs,
-			CurrentTime: sql.NullInt64{Int64: currentNanosSinceMidnight, Valid: true}})
+			CurrentTime: sql.NullInt64{Int64: currentNanosSinceMidnight, Valid: true},
+		})
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
 			logging.LogError(api.Logger, "failed to fetch active trip in block", err, slog.String("block_id", blockID))
 			continue
 		}
