@@ -168,37 +168,17 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			if trip.TripHeadsign.String != "" {
 				headsignSet[trip.TripHeadsign.String] = struct{}{}
 			}
-		}
-
-		if len(rawTripIDs) == 0 {
-			continue
-		}
-
-		allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, rawTripIDs)
-		if err != nil {
-			api.Logger.Warn("failed to fetch stop times for trips", "error", err)
-			continue
-		}
-
-		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(rawTripIDs))
-		for _, st := range allStopTimes {
-			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
-		}
-
-		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
-
-		for _, trip := range groupedTrips {
-			tripStopTimes := stopTimesByTrip[trip.ID]
-			if len(tripStopTimes) == 0 {
+			stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+			if err != nil {
+				api.Logger.Warn("failed to fetch stop times for trip", "trip_id", trip.ID, "error", err)
 				continue
 			}
-
-			sort.Slice(tripStopTimes, func(i, j int) bool {
-				return tripStopTimes[i].StopSequence < tripStopTimes[j].StopSequence
-			})
-
-			stopTimesList := make([]models.RouteStopTime, 0, len(tripStopTimes))
-			for _, st := range tripStopTimes {
+			for _, st := range stopTimes {
+				stopIDSet[st.StopID] = struct{}{}
+				globalStopIDSet[st.StopID] = struct{}{}
+			}
+			stopTimesList := make([]models.RouteStopTime, 0, len(stopTimes))
+			for _, st := range stopTimes {
 				arrivalSec := int(utils.NanosToSeconds(st.ArrivalTime))
 				departureSec := int(utils.NanosToSeconds(st.DepartureTime))
 
