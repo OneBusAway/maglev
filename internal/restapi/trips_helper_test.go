@@ -547,7 +547,7 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -588,7 +588,7 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
 	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -616,11 +616,11 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	currentTime := serviceDate.Add(8 * time.Hour)
 
 	// No vehicle, no trip updates — purely scheduled
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, 0, status.ScheduleDeviation, "ScheduleDeviation should be zero with no real-time data")
+	assert.Equal(t, 0, status.ScheduleDeviation, "ScheduleDeviation should be 0 with no real-time data")
 	assert.False(t, status.Predicted, "Predicted should be false with no real-time data")
 	assert.True(t, status.Scheduled, "Scheduled should be true with no real-time data")
 	assert.Equal(t, "default", status.Status)
@@ -680,7 +680,7 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -711,7 +711,7 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 	ctx := context.Background()
 
 	currentTime := time.Now()
-	model, err := api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+	model, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, currentTime, currentTime)
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, model)
@@ -837,7 +837,7 @@ func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 	currentTime := serviceDate.Add(time.Second) // 00:00:01 — before any stop
 
 	status := models.NewTripStatus()
-	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
+	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID, nil)
 
 	// When before all stops, NextStop should be the first stop
 	assert.NotEmpty(t, status.NextStop, "NextStop should be set when currentTime is before all stops")
@@ -865,7 +865,7 @@ func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 	currentTime := serviceDate.Add(30 * time.Hour)
 
 	status := models.NewTripStatus()
-	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
+	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID, nil)
 
 	// When past all stops, ClosestStop should be the last stop
 	assert.NotEmpty(t, status.ClosestStop, "ClosestStop should be set to last stop when past all stops")
@@ -881,7 +881,7 @@ func TestFillStopsFromSchedule_InvalidTripID(t *testing.T) {
 	status := models.NewTripStatus()
 
 	// Should not panic or set any stops for an invalid trip
-	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, "any-agency")
+	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, "any-agency", nil)
 
 	assert.Empty(t, status.ClosestStop)
 	assert.Empty(t, status.NextStop)
@@ -1078,7 +1078,7 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 

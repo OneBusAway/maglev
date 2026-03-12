@@ -121,7 +121,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				if obaOrientation < 0 {
 					obaOrientation += 360
 				}
-				tripStatus.Orientation = utils.Float64Ptr(float64(obaOrientation))
+				tripStatus.Orientation = float64(obaOrientation)
 			}
 
 			// Set timestamps on trip status to match vehicle timestamps
