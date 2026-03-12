@@ -17,6 +17,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/tidwall/rtree"
 	"maglev.onebusaway.org/internal/logging"
 )
@@ -638,6 +639,34 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 	}
 
 	return vehicles
+}
+
+// GetDuplicatedVehiclesForRoute returns real-time vehicles serving DUPLICATED trips
+// (GTFS-RT schedule_relationship=DUPLICATED) for the given route ID.
+// DUPLICATED trips are extra runs of a scheduled trip, each assigned to a different
+// vehicle. They only exist in real-time data and have no static DB entry.
+func (manager *Manager) GetDuplicatedVehiclesForRoute(routeID string) []gtfs.Vehicle {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	var result []gtfs.Vehicle
+	for _, v := range manager.realTimeVehicles {
+		if v.Trip == nil || v.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+			continue
+		}
+		vRouteID := v.Trip.ID.RouteID
+		// Some feeds omit route_id in VehiclePosition trip descriptors.
+		// Fall back to the corresponding TripUpdate to resolve the route.
+		if vRouteID == "" {
+			if index, exists := manager.realTimeTripLookup[v.Trip.ID.ID]; exists {
+				vRouteID = manager.realTimeTrips[index].ID.RouteID
+			}
+		}
+		if vRouteID == routeID {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 // GetVehicleForTrip retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block
