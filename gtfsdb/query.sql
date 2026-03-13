@@ -1045,8 +1045,8 @@ WHERE block_id = sqlc.arg('block_id')
 
 -- name: GetActiveTripsWithNullBlockForRoute :many
 -- Returns null-block trips whose service window overlaps [time_range_start, time_range_end].
--- Use time_range_start = now - 10 min and time_range_end = now + 30 min to include
--- recently-completed trips and upcoming trips, matching Java OBA behavior.
+-- Use time_range_start = now - 30 min and time_range_end = now + 10 min to include
+-- recently-completed (running late) trips and upcoming trips, matching Java OBA behavior.
 SELECT t.id
 FROM trips t
 WHERE t.route_id = sqlc.arg('route_id')
