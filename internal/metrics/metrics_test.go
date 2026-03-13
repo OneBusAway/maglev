@@ -1,7 +1,9 @@
 package metrics
 
 import (
+	"context"
 	"database/sql"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,12 +36,27 @@ func TestNewWithLogger(t *testing.T) {
 	assert.Nil(t, m.logger)
 }
 
-func TestStartDBStatsCollector_NilDB(t *testing.T) {
+func TestStartDBStatsCollector_NilProvider(t *testing.T) {
 	m := New()
-	// Should not panic with nil DB
+	// Should not panic with nil provider
 	m.StartDBStatsCollector(nil, time.Second)
 	// Collector should not be marked as started
 	assert.False(t, m.collectorStarted.Load())
+}
+
+func TestStartDBStatsCollector_ProviderCanReturnNilDB(t *testing.T) {
+	m := New()
+	m.StartDBStatsCollector(func() *sql.DB { return nil }, 20*time.Millisecond)
+	defer m.Shutdown()
+
+	assert.True(t, m.collectorStarted.Load())
+
+	require.Eventually(t, func() bool {
+		openConns := testutil.ToFloat64(m.DBConnectionsOpen)
+		inUse := testutil.ToFloat64(m.DBConnectionsInUse)
+		idle := testutil.ToFloat64(m.DBConnectionsIdle)
+		return openConns == 0 && inUse == 0 && idle == 0
+	}, time.Second, 20*time.Millisecond)
 }
 
 func TestStartDBStatsCollector_Idempotent(t *testing.T) {
@@ -50,11 +67,11 @@ func TestStartDBStatsCollector_Idempotent(t *testing.T) {
 	m := New()
 
 	// Start collector first time
-	m.StartDBStatsCollector(db, 100*time.Millisecond)
+	m.StartDBStatsCollector(func() *sql.DB { return db }, 100*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load())
 
 	// Second call should be no-op
-	m.StartDBStatsCollector(db, 100*time.Millisecond)
+	m.StartDBStatsCollector(func() *sql.DB { return db }, 100*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load())
 
 	m.Shutdown()
@@ -66,7 +83,7 @@ func TestStartDBStatsCollector_CollectsStats(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	m := New()
-	m.StartDBStatsCollector(db, 50*time.Millisecond)
+	m.StartDBStatsCollector(func() *sql.DB { return db }, 50*time.Millisecond)
 
 	// Wait for at least one collection cycle
 	time.Sleep(100 * time.Millisecond)
@@ -90,7 +107,7 @@ func TestShutdown_StopsGoroutine(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	m := New()
-	m.StartDBStatsCollector(db, 50*time.Millisecond)
+	m.StartDBStatsCollector(func() *sql.DB { return db }, 50*time.Millisecond)
 
 	// Shutdown should block until goroutine exits
 	done := make(chan struct{})
@@ -105,6 +122,38 @@ func TestShutdown_StopsGoroutine(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Shutdown did not complete within timeout")
 	}
+}
+
+func TestStartDBStatsCollector_FollowsDBSwap(t *testing.T) {
+	db1, err := sql.Open(gtfsdb.DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db1.Close() }()
+
+	db2, err := sql.Open(gtfsdb.DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db2.Close() }()
+
+	// Hold one active transaction so db2 reports an in-use connection.
+	tx, err := db2.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	var dbPtr atomic.Pointer[sql.DB]
+	dbPtr.Store(db1)
+
+	m := New()
+	m.StartDBStatsCollector(func() *sql.DB { return dbPtr.Load() }, 20*time.Millisecond)
+	defer m.Shutdown()
+
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(m.DBConnectionsInUse) == 0
+	}, time.Second, 20*time.Millisecond)
+
+	dbPtr.Store(db2)
+
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(m.DBConnectionsInUse) >= 1
+	}, time.Second, 20*time.Millisecond)
 }
 
 func TestShutdown_SafeToCallMultipleTimes(t *testing.T) {
