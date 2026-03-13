@@ -33,6 +33,7 @@ func NewClient(config Config) (*Client, error) {
 	var dbtx DBTX = db
 	if slowQueryThreshold > 0 {
 		dbtx = newSlowQueryDB(db, slowQueryThreshold)
+		log.Printf("Slow query logging enabled (threshold: %s)", slowQueryThreshold)
 	}
 	queries := New(dbtx)
 

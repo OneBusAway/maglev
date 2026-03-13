@@ -154,7 +154,8 @@ func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
 	ctx := context.Background()
 
 	// Threshold of 0 → logging disabled; no records should be emitted.
-	wrapper := &slowQueryDB{db: db, threshold: 0, logger: logger}
+	wrapper := newSlowQueryDB(db, 0)
+	wrapper.logger = logger
 	_, _ = wrapper.QueryContext(ctx, "SELECT 1")
 	assert.Empty(t, captured, "threshold=0 must not emit any log records")
 
@@ -171,6 +172,36 @@ func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
 	assert.NotEmpty(t, captured, "threshold=1ns must emit a slow_query record")
 	assert.Equal(t, "slow_query", captured[0].msg)
 	assert.Equal(t, slog.LevelWarn, captured[0].level)
+}
+
+func TestParseSlowQueryThreshold(t *testing.T) {
+	t.Run("empty value disables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("", func(string, ...any) { warned = true })
+		assert.Equal(t, time.Duration(0), got)
+		assert.False(t, warned)
+	})
+
+	t.Run("valid positive integer enables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("25", func(string, ...any) { warned = true })
+		assert.Equal(t, 25*time.Millisecond, got)
+		assert.False(t, warned)
+	})
+
+	t.Run("invalid value logs warning and disables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("50ms", func(string, ...any) { warned = true })
+		assert.Equal(t, time.Duration(0), got)
+		assert.True(t, warned)
+	})
+
+	t.Run("non-positive value logs warning and disables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("-5", func(string, ...any) { warned = true })
+		assert.Equal(t, time.Duration(0), got)
+		assert.True(t, warned)
+	})
 }
 
 // TestTrimQuery verifies whitespace collapse and truncation.

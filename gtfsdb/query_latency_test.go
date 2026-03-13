@@ -71,7 +71,7 @@ func loadLatencyFixture(tb testing.TB) (*Client, string, string) {
 	ctx := context.Background()
 
 	// GTFS import is skipped when the stops table is non-empty.
-	if latencyIsEmpty(ctx, client.DB) {
+	if latencyIsEmpty(ctx, tb, client.DB) {
 		data, readErr := os.ReadFile(zipPath)
 		if readErr != nil {
 			tb.Fatalf("reading %s: %v", filepath.Base(zipPath), readErr)
@@ -91,9 +91,12 @@ func latencyFileExists(path string) bool {
 	return err == nil
 }
 
-func latencyIsEmpty(ctx context.Context, db *sql.DB) bool {
+func latencyIsEmpty(ctx context.Context, tb testing.TB, db *sql.DB) bool {
+	tb.Helper()
 	var n int
-	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM stops").Scan(&n)
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM stops").Scan(&n); err != nil {
+		tb.Fatalf("counting stops table: %v", err)
+	}
 	return n == 0
 }
 
@@ -124,6 +127,7 @@ func latencyFetchRouteIDsForStop(ctx context.Context, tb testing.TB, q *Queries,
 	tb.Helper()
 	routes, err := q.GetRoutesForStop(ctx, stopID)
 	if err != nil {
+		tb.Logf("WARNING: GetRoutesForStop failed for stopID=%s: %v", stopID, err)
 		return nil
 	}
 	ids := make([]string, 0, len(routes))
@@ -133,11 +137,13 @@ func latencyFetchRouteIDsForStop(ctx context.Context, tb testing.TB, q *Queries,
 	return ids
 }
 
-func latencyFetchActiveServiceIDs(ctx context.Context, q *Queries, dateStr string) []string {
+func latencyFetchActiveServiceIDs(ctx context.Context, tb testing.TB, q *Queries, dateStr string) []string {
+	tb.Helper()
 	// Use the production query: includes weekday filtering and calendar_dates
 	// exception/addition handling — identical to what the API layer calls.
 	ids, err := q.GetActiveServiceIDsForDate(ctx, dateStr)
 	if err != nil {
+		tb.Logf("WARNING: GetActiveServiceIDsForDate failed for date=%s: %v", dateStr, err)
 		return nil
 	}
 	return ids
@@ -209,7 +215,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 	weekday := strings.ToLower(now.Weekday().String())
 
 	routeIDs := latencyFetchRouteIDsForStop(ctx, t, client.Queries, stopID)
-	svcIDs := latencyFetchActiveServiceIDs(ctx, client.Queries, dateStr)
+	svcIDs := latencyFetchActiveServiceIDs(ctx, t, client.Queries, dateStr)
 
 	type querySpec struct {
 		name string
@@ -682,7 +688,7 @@ func BenchmarkQueryGetActiveRouteIDsForStopsOnDate(b *testing.B) {
 
 	ctx := context.Background()
 	dateStr := time.Now().Format("20060102")
-	svcIDs := latencyFetchActiveServiceIDs(ctx, client.Queries, dateStr)
+	svcIDs := latencyFetchActiveServiceIDs(ctx, b, client.Queries, dateStr)
 	if len(svcIDs) == 0 {
 		b.Skip("no active service IDs for today")
 	}
@@ -737,7 +743,7 @@ func BenchmarkQueryConcurrentMixed(b *testing.B) {
 	windowStart := int64(5 * time.Hour)
 	windowEnd := int64(23 * time.Hour)
 	routeIDs := latencyFetchRouteIDsForStop(ctx, b, client.Queries, stopID)
-	svcIDs := latencyFetchActiveServiceIDs(ctx, client.Queries, dateStr)
+	svcIDs := latencyFetchActiveServiceIDs(ctx, b, client.Queries, dateStr)
 
 	b.ResetTimer()
 	b.ReportAllocs()

@@ -158,7 +158,7 @@ func BenchmarkLargeDatasetGetActiveRouteIDsForStopsOnDate(b *testing.B) {
 
 	stopID := latencyPickFirstStop(ctx, b, client.DB)
 	dateStr := time.Now().Format("20060102")
-	svcIDs := latencyFetchActiveServiceIDs(ctx, client.Queries, dateStr)
+	svcIDs := latencyFetchActiveServiceIDs(ctx, b, client.Queries, dateStr)
 	if len(svcIDs) == 0 {
 		b.Skip("no active service IDs for today in TriMet data")
 	}
@@ -191,7 +191,7 @@ func BenchmarkLargeDatasetConcurrentMixed(b *testing.B) {
 	windowStart := int64(5 * time.Hour)
 	windowEnd := int64(23 * time.Hour)
 	routeIDs := latencyFetchRouteIDsForStop(ctx, b, client.Queries, stopID)
-	svcIDs := latencyFetchActiveServiceIDs(ctx, client.Queries, dateStr)
+	svcIDs := latencyFetchActiveServiceIDs(ctx, b, client.Queries, dateStr)
 
 	b.ReportAllocs()
 	b.ResetTimer()
