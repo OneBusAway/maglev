@@ -12,17 +12,25 @@ import (
 func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 
-	loc := api.parseLocationParams(w, r)
-	if loc == nil {
-		return
-	}
+	lat, fieldErrors := utils.ParseRequiredFloatParam(queryParams, "lat", nil)
+	lon, _ := utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
+	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
+	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
+	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
+	maxCount, _ := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, fieldErrors)
+	query := queryParams.Get("query")
 
-	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, nil)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
-	query := queryParams.Get("query")
+
+	// Validate location parameters
+	locationErrors := utils.ValidateLocationParams(lat, lon, radius, latSpan, lonSpan)
+	if len(locationErrors) > 0 {
+		api.validationErrorResponse(w, r, locationErrors)
+		return
+	}
 
 	// Validate and sanitize query
 	sanitizedQuery, err := utils.ValidateAndSanitizeQuery(query)
@@ -34,7 +42,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	query = strings.ToLower(sanitizedQuery)
-	radius := loc.Radius
 	if radius == 0 {
 		radius = models.DefaultSearchRadiusInMeters
 		if query != "" {
@@ -53,7 +60,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, radius, loc.LatSpan, loc.LonSpan, query, maxCount, true, nil, time.Time{})
+	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, maxCount, true, nil, time.Time{})
 
 	var results = []models.Route{}
 	routeIDs := map[string]bool{}
@@ -70,7 +77,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
-		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, false)
+		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -134,7 +141,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	references.Agencies = agencies
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
 
