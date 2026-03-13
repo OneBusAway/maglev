@@ -64,9 +64,18 @@ type TripStatus struct {
 	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. This is a known deviation from the OpenAPI spec.
 }
 
+// SetPredicted keeps Predicted and Scheduled logically consistent.
+func (ts *TripStatus) SetPredicted(predicted bool) {
+	ts.Predicted = predicted
+	ts.Scheduled = !predicted
+}
+
 // SituationIDs initialized to []string{} for Go-side convenience.
 func NewTripStatus() *TripStatus {
-	return &TripStatus{
+	status := &TripStatus{
 		SituationIDs: []string{},
 	}
+	status.SetPredicted(false)
+
+	return status
 }

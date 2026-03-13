@@ -175,7 +175,7 @@ func TestTripStatusJSON(t *testing.T) {
 		TotalDistanceAlongTrip:     totalDistanceAlongTrip,
 		VehicleFeatures:            []string{"wifi", "bike_rack"},
 		VehicleID:                  "vehicle_789",
-		Scheduled:                  true,
+		Scheduled:                  false,
 	}
 
 	jsonData, err := json.Marshal(tripStatus)
@@ -191,6 +191,7 @@ func TestTripStatusJSON(t *testing.T) {
 	assert.Equal(t, tripStatus.Predicted, unmarshaledStatus.Predicted)
 	assert.Equal(t, tripStatus.Position.Lat, unmarshaledStatus.Position.Lat)
 	assert.Equal(t, tripStatus.Position.Lon, unmarshaledStatus.Position.Lon)
+	assert.Equal(t, tripStatus.Scheduled, unmarshaledStatus.Scheduled)
 }
 
 func TestTripStatus_JSONOmitEmpty(t *testing.T) {
@@ -212,4 +213,18 @@ func TestTripStatus_JSONOmitEmpty(t *testing.T) {
 	// These are required fields per the OpenAPI spec — must always appear, even when empty string
 	assert.Contains(t, jsonStr, `"closestStop":""`, "closestStop is required by OpenAPI spec and must always be present")
 	assert.Contains(t, jsonStr, `"occupancyStatus":""`, "occupancyStatus is required by OpenAPI spec and must always be present")
+	assert.Contains(t, jsonStr, `"predicted":false`, "predicted defaults to false in NewTripStatus")
+	assert.Contains(t, jsonStr, `"scheduled":true`, "scheduled must stay inverse of predicted")
+}
+
+func TestTripStatus_SetPredicted_KeepsInverseScheduled(t *testing.T) {
+	status := NewTripStatus()
+
+	status.SetPredicted(true)
+	assert.True(t, status.Predicted)
+	assert.False(t, status.Scheduled)
+
+	status.SetPredicted(false)
+	assert.False(t, status.Predicted)
+	assert.True(t, status.Scheduled)
 }
