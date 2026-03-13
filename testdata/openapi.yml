@@ -1810,21 +1810,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/StopTripGrouping'
-        stops:
-          type: array
-          items:
-            $ref: '#/components/schemas/Stop'
-        trips:
-          type: array
-          items:
-            $ref: '#/components/schemas/Trip'
       required:
         - routeId
         - scheduleDate
         - serviceIds
         - stopTripGroupings
-        - stops
-        - trips
 
     StopTripGrouping:
       type: object
