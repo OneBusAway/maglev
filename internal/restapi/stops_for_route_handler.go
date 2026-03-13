@@ -3,7 +3,6 @@ package restapi
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -63,14 +62,10 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	currentLocation, err := time.LoadLocation(currentAgency.Timezone)
-	// Fallback to UTC on error
+	currentLocation, err := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if err != nil {
-		slog.Warn("failed to load agency timezone, defaulting to UTC",
-			slog.String("agencyID", agencyID),
-			slog.String("timezone", currentAgency.Timezone),
-			slog.String("error", err.Error()))
-		currentLocation = time.UTC
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
 	timeParam := r.URL.Query().Get("time")

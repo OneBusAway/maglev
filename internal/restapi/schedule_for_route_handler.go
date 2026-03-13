@@ -40,7 +40,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		api.sendNotFound(w, r)
 		return
 	}
-	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
+	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	var targetDate string
 	var scheduleDate int64

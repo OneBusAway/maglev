@@ -18,6 +18,15 @@ func TestValidateStaticAgencyTimezones(t *testing.T) {
 		require.NoError(t, validateStaticAgencyTimezones(staticData))
 	})
 
+	t.Run("explicit UTC timezone is valid", func(t *testing.T) {
+		staticData := &gtfs.Static{
+			Agencies: []gtfs.Agency{
+				{Id: "a1", Timezone: "UTC"},
+			},
+		}
+		require.NoError(t, validateStaticAgencyTimezones(staticData))
+	})
+
 	t.Run("empty timezone string", func(t *testing.T) {
 		// Go treats LoadLocation("") as UTC, so we consider this an error for GTFS validation purposes
 		staticData := &gtfs.Static{
@@ -35,7 +44,9 @@ func TestValidateStaticAgencyTimezones(t *testing.T) {
 				{Id: "a1", Timezone: "Invalid/Zone"},
 			},
 		}
-		require.Error(t, validateStaticAgencyTimezones(staticData))
+		err := validateStaticAgencyTimezones(staticData)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "a1")
 	})
 
 	t.Run("whitespace-padded timezone is normalized and valid", func(t *testing.T) {

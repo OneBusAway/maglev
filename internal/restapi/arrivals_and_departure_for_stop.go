@@ -112,7 +112,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, stopAgencyID)
+	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	params.Time = params.Time.In(loc)
 	windowStart := params.Time.Add(-time.Duration(params.MinutesBefore) * time.Minute)
 	windowEnd := params.Time.Add(time.Duration(params.MinutesAfter) * time.Minute)
