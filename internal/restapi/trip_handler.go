@@ -8,6 +8,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripHandler returns details for a single trip, including its route, stop times, and shape.
 func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, id, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

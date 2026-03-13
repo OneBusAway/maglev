@@ -17,6 +17,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripsForRouteHandler returns all active trips for a route, including their real-time
+// status, schedule, and vehicle positions when available.
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

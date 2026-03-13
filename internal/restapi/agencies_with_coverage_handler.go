@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// agenciesWithCoverageHandler returns all transit agencies along with their geographic coverage areas.
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

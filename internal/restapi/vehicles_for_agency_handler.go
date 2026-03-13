@@ -9,6 +9,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// vehiclesForAgencyHandler returns real-time vehicle positions for all vehicles operated by a given agency.
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {

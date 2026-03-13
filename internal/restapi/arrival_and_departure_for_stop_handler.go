@@ -116,6 +116,9 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request, loc ...*time
 	return params, nil
 }
 
+// arrivalAndDepartureForStopHandler returns arrival and departure information for a stop.
+// It handles both the single arrival-and-departure and the list arrivals-and-departures endpoints,
+// merging scheduled stop times with real-time predictions when available.
 func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *http.Request) {
 	stopAgencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

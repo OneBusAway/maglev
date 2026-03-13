@@ -10,6 +10,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// reportProblemWithStopHandler accepts a user-submitted problem report for a specific stop
+// and persists it to the database.
 func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.Request) {
 	logger := api.Logger
 	if logger == nil {

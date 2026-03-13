@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripForVehicleHandler returns trip details for the trip currently being served by a given vehicle.
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, vehicleID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

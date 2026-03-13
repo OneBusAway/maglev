@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// stopIDsForAgencyHandler returns a list of stop IDs belonging to a given agency.
 func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 
 	id, ok := api.extractAndValidateID(w, r)

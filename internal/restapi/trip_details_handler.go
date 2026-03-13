@@ -102,6 +102,8 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 	return params, nil
 }
 
+// tripDetailsHandler returns extended information for a trip, including its schedule,
+// real-time status, and optionally the full stop time sequence.
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

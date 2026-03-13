@@ -11,6 +11,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// scheduleForRouteHandler returns the full schedule for a route on a given date,
+// organized by stop-trip groupings with associated service IDs.
 func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

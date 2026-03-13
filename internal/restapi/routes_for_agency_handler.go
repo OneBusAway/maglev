@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// routesForAgencyHandler returns all routes operated by a given agency.
 func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
