@@ -988,8 +988,6 @@ func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []Create
 // bulkInsertCalendarDates inserts calendar dates. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
 func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams, tx *sql.Tx) error {
 	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
 	if err := c.withTransaction(ctx, tx, "bulk_insert_calendar_dates", func(tx *sql.Tx) error {
 		qtx := queries.WithTx(tx)
 		for _, params := range calendarDates {
