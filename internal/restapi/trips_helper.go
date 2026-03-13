@@ -81,7 +81,7 @@ func (api *RestAPI) BuildTripStatus(
 	// activeTripRawID may be a synthetic ID not in the DB, so fall back to tripID.
 	dbTripID := activeTripRawID
 	if activeTripRawID != tripID {
-		if _, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID); lookupErr != nil {
+		if _, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID); errors.Is(lookupErr, sql.ErrNoRows) {
 			dbTripID = tripID
 		}
 	}
