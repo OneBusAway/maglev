@@ -19,10 +19,7 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
-	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
+	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(w, r)
 	if fieldErrors != nil {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -31,6 +28,9 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
 
 	// Intentionally defaulting includeStatus to false to align with includeSchedule
 	// behavior for this endpoint, even though trips-for-route defaults to true.
@@ -122,21 +122,27 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	api.sendResponse(w, r, response)
 }
 
-func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
+func (api *RestAPI) parseAndValidateRequest(w http.ResponseWriter, r *http.Request) (
 	lat, lon, latSpan, lonSpan float64,
 	includeTrip, includeSchedule bool,
 	currentLocation *time.Location,
 	todayMidnight time.Time,
 	serviceDate time.Time,
 	fieldErrors map[string][]string,
-	err error,
+	serverErr error,
 ) {
+	loc := api.parseLocationParams(w, r)
+	if loc == nil {
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("location validation failed")
+	}
+
+	lat = loc.Lat
+	lon = loc.Lon
+	latSpan = loc.LatSpan
+	lonSpan = loc.LonSpan
+
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors = utils.ParseRequiredFloatParam(queryParams, "lat", nil)
-	lon, _ = utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
-	latSpan, _ = utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
-	lonSpan, _ = utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
@@ -146,9 +152,9 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, err = time.LoadLocation(currentAgency.Timezone)
-	if err != nil {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, fmt.Errorf("invalid timezone for agency %q: %w", currentAgency.Id, err)
+	currentLocation, serverErr = time.LoadLocation(currentAgency.Timezone)
+	if serverErr != nil {
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, fmt.Errorf("invalid timezone for agency %q: %w", currentAgency.Id, serverErr)
 	}
 
 	timeParam := queryParams.Get("time")
@@ -156,26 +162,19 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 
 	var timeFieldErrors map[string][]string
-	var success bool
-	_, serviceDate, timeFieldErrors, success = utils.ParseTimeParameter(timeParam, currentLocation)
-	for k, v := range timeFieldErrors {
-		fieldErrors[k] = append(fieldErrors[k], v...)
+	_, serviceDate, timeFieldErrors, _ = utils.ParseTimeParameter(timeParam, currentLocation)
+	if len(timeFieldErrors) > 0 {
+		if fieldErrors == nil {
+			fieldErrors = make(map[string][]string)
+		}
+		for k, v := range timeFieldErrors {
+			fieldErrors[k] = append(fieldErrors[k], v...)
+		}
 	}
 
 	ctx := r.Context()
 	if ctx.Err() != nil {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, ctx.Err()
-	}
-
-	if !success {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
-	}
-
-	locationErrors := utils.ValidateLocationParams(lat, lon, 0, latSpan, lonSpan)
-	for k, v := range locationErrors {
-		fieldErrors[k] = append(fieldErrors[k], v...)
 	}
 
 	if len(fieldErrors) > 0 {
