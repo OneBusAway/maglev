@@ -1101,6 +1101,63 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	require.NotNil(t, status.LastKnownLocation, "LastKnownLocation should be set from vehicle position")
 	assert.NotZero(t, status.LastKnownLocation.Lat, "LastKnownLocation should be set from vehicle position")
 }
+func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+
+	var tripID string
+	var stopTimes []gtfsdb.StopTime
+	for _, trip := range trips {
+		st, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		if err == nil && len(st) >= 2 {
+			tripID = trip.ID
+			stopTimes = st
+			break
+		}
+	}
+	require.NotEmpty(t, tripID, "Need a trip with at least 2 stop times")
+
+	lat := float32(37.3)
+	lon := float32(-121.9)
+	vehicleID := "PRE_RESOLVED_VEHICLE"
+
+	vehicle := &gtfs.Vehicle{
+		ID: &gtfs.VehicleID{ID: vehicleID},
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{ID: tripID},
+		},
+		Position: &gtfs.Position{
+			Latitude:  &lat,
+			Longitude: &lon,
+		},
+	}
+
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+
+	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), status.VehicleID,
+		"VehicleID should be set from the pre-resolved vehicle")
+
+	require.NotNil(t, status.LastKnownLocation)
+	assert.InDelta(t, float64(lat), status.LastKnownLocation.Lat, 0.001)
+	assert.InDelta(t, float64(lon), status.LastKnownLocation.Lon, 0.001)
+
+	assert.Equal(t, utils.FormCombinedID(agencyID, tripID), status.ActiveTripID)
+}
 
 // BenchmarkDistanceToLineSegment benchmarks the line segment distance calculation
 func BenchmarkDistanceToLineSegment(b *testing.B) {
