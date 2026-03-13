@@ -77,7 +77,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	)
 	prevDay := currentTime.AddDate(0, 0, -1)
 	prevFormattedDate := prevDay.Format("20060102")
-	prevServiceIDs, _ := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, prevFormattedDate)
+	prevServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, prevFormattedDate)
+	if err != nil {
+		api.Logger.Warn("trips-for-route: failed to fetch previous-day service IDs", "date", prevFormattedDate, "error", err)
+		prevServiceIDs = nil
+	}
 	prevDayNanosSinceMidnight := currentNanosSinceMidnight + oneDayNanos
 
 	indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
@@ -126,12 +130,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			RouteID:    routeID,
 			ServiceIds: prevServiceIDs,
 		})
-		if err == nil && len(prevIndexIDs) > 0 {
+		if err != nil {
+			api.Logger.Warn("trips-for-route: failed to fetch previous-day block index IDs", "error", err)
+		} else if len(prevIndexIDs) > 0 {
 			prevBlocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
 				IndexIds:   prevIndexIDs,
 				ServiceIds: prevServiceIDs,
 			})
-			if err == nil {
+			if err != nil {
+				api.Logger.Warn("trips-for-route: failed to fetch previous-day blocks", "error", err)
+			} else {
 				for _, b := range prevBlocks {
 					if b.Valid {
 						allLinkedBlocks[b.String] = true
@@ -159,7 +167,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			TimeRangeStart: sql.NullInt64{Int64: prevDayNanosSinceMidnight + timeRangeStart - currentNanosSinceMidnight, Valid: true},
 			TimeRangeEnd:   sql.NullInt64{Int64: prevDayNanosSinceMidnight + timeRangeEnd - currentNanosSinceMidnight, Valid: true},
 		})
-		if err == nil {
+		if err != nil {
+			api.Logger.Warn("trips-for-route: failed to fetch previous-day null-block trips", "error", err)
+		} else {
 			nullBlockTrips = append(nullBlockTrips, prevNullBlockTrips...)
 		}
 	}
@@ -203,7 +213,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				BlockID:    blockIDNullStr,
 				ServiceIds: sd.serviceIDs,
 			})
-			if err != nil || len(tripsInBlock) == 0 {
+			if err != nil {
+				api.Logger.Warn("trips-for-route: failed to fetch trips in block", "block_id", blockID, "error", err)
+				continue
+			}
+			if len(tripsInBlock) == 0 {
 				continue
 			}
 
