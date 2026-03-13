@@ -53,6 +53,13 @@ func TestGtfsExpiryMiddleware(t *testing.T) {
 			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAt(time.Now().Add(-24 * time.Hour)) },
 			expectedHeader: "",
 		},
+		{
+			name:           "Non-API path /api (without trailing slash) is intentionally excluded",
+			path:           "/api",
+			manager:        &gtfs.Manager{},
+			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAt(time.Now().Add(-24 * time.Hour)) },
+			expectedHeader: "",
+		},
 	}
 
 	for _, tc := range tests {

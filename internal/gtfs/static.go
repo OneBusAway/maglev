@@ -503,6 +503,9 @@ func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger 
 
 	var strVal string
 	switch v := val.(type) {
+	case nil:
+		// No calendar data; strVal remains "" and falls through
+		// to the "no active calendar dates" warning below.
 	case string:
 		strVal = v
 	case []byte:
