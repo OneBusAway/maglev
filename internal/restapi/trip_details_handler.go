@@ -161,7 +161,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		var statusErr error
 		status, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, serviceDate, currentTime)
 		if statusErr != nil {
-			slog.Warn("BuildTripStatus failed",
+			api.Logger.Warn("BuildTripStatus failed",
 				slog.String("trip_id", trip.ID),
 				slog.String("error", statusErr.Error()))
 			status = nil
@@ -171,7 +171,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if params.IncludeSchedule {
 		schedule, err = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, loc)
 		if err != nil {
-			slog.Warn("BuildTripSchedule failed",
+			api.Logger.Warn("BuildTripSchedule failed",
 				slog.String("trip_id", trip.ID),
 				slog.String("error", err.Error()))
 			schedule = nil
