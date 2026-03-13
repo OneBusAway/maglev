@@ -17,12 +17,9 @@ import (
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors := utils.ParseRequiredFloatParam(queryParams, "lat", nil)
-	lon, _ := utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
-	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
-	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
-	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
-	maxCount, _ := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForStops, fieldErrors)
+	var fieldErrors map[string][]string
+	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
+	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
 
 	var routeTypes []int
@@ -76,12 +73,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	locationErrors := utils.ValidateLocationParams(lat, lon, radius, latSpan, lonSpan)
-	if len(locationErrors) > 0 {
-		api.validationErrorResponse(w, r, locationErrors)
-		return
-	}
-
 	// Validate and sanitize query
 	sanitizedQuery, err := utils.ValidateAndSanitizeQuery(query)
 	if err != nil {
@@ -104,7 +95,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, maxCount, false, routeTypes, queryTime)
+	stops := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, loc.Radius, loc.LatSpan, loc.LonSpan, query, maxCount, false, routeTypes, queryTime)
 
 	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"
 	sort.SliceStable(stops, func(i, j int) bool {
@@ -137,8 +128,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
 		references.Routes = routes
-
-		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
+		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, loc.Radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -268,6 +258,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	references.Routes = routes
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, loc.Radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
