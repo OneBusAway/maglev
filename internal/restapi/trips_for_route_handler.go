@@ -156,7 +156,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		TimeRangeEnd:   sql.NullInt64{Int64: timeRangeEnd, Valid: true},
 	})
 	if err != nil {
-		api.Logger.Warn("failed to fetch null-block trips", "error", err)
+		api.Logger.Warn("trips-for-route: failed to fetch null-block trips", "route_id", routeID, "error", err)
 		nullBlockTrips = nil
 	}
 
@@ -225,7 +225,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				BlockID:     blockIDNullStr,
 				ServiceIds:  sd.serviceIDs,
 				CurrentTime: sql.NullInt64{Int64: sd.nanosSinceMidnight, Valid: true}})
-			if err != nil {
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				api.Logger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
+				continue
+			}
+			if errors.Is(err, sql.ErrNoRows) {
 				// No currently-running trip; pick the best candidate (most recently
 				// completed or next upcoming) so that blocks are never skipped.
 				candidates, qErr := api.GtfsManager.GtfsDB.Queries.GetTripsInBlockWithTimeBounds(ctx, gtfsdb.GetTripsInBlockWithTimeBoundsParams{
@@ -648,18 +652,11 @@ func buildTripReferences[T interface{ GetTripId() string }](
 }
 
 // selectBestTripInBlock picks the most relevant trip from a block when no trip
-// is currently running. Priority:
-//  1. Currently running (min_arrival <= now <= max_departure)
-//  2. Most recently completed (max_departure < now → highest max_departure)
-//  3. Next upcoming    (min_arrival > now  → lowest  min_arrival)
-//  4. Fallback: first row
+// is currently running (GetActiveTripInBlockAtTime returned ErrNoRows). Priority:
+//  1. Most recently completed (max_departure < now → highest max_departure)
+//  2. Next upcoming    (min_arrival > now  → lowest  min_arrival)
+//  3. Fallback: first row
 func selectBestTripInBlock(rows []gtfsdb.GetTripsInBlockWithTimeBoundsRow, nowNanos int64) string {
-	for _, r := range rows {
-		if r.MinArrivalTime.Valid && r.MaxDepartureTime.Valid &&
-			r.MinArrivalTime.Int64 <= nowNanos && nowNanos <= r.MaxDepartureTime.Int64 {
-			return r.ID
-		}
-	}
 	bestID := ""
 	bestDep := int64(-1)
 	for _, r := range rows {
