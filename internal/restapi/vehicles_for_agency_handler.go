@@ -102,7 +102,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			tripStatus := models.NewTripStatus()
 			tripStatus.ActiveTripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
 			tripStatus.BlockTripSequence = 0
-			tripStatus.SetPredicted(false)
 			tripStatus.Phase = vehicleStatus.Phase
 			tripStatus.Status = vehicleStatus.Status
 
