@@ -27,9 +27,12 @@ func TestNewTripDetails(t *testing.T) {
 	serviceDate := int64(1609459200000)
 
 	frequency := &Frequency{
-		StartTime: 28800,
-		EndTime:   32400,
-		Headway:   300,
+		StartTime:   28800,
+		EndTime:     32400,
+		Headway:     300,
+		ServiceDate: serviceDate,
+		ServiceID:   "service_789",
+		TripID:      tripID,
 	}
 
 	status := &TripStatus{
@@ -71,9 +74,12 @@ func TestNewEmptyTripDetails(t *testing.T) {
 
 func TestTripDetailsJSON(t *testing.T) {
 	frequency := &Frequency{
-		StartTime: 28800,
-		EndTime:   32400,
-		Headway:   300,
+		StartTime:   28800,
+		EndTime:     32400,
+		Headway:     300,
+		ServiceDate: 1609459200000,
+		ServiceID:   "service_789",
+		TripID:      "trip_123",
 	}
 
 	status := NewTripStatus()

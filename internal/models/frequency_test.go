@@ -99,10 +99,13 @@ func TestNewFrequency(t *testing.T) {
 
 func TestFrequencyJSON(t *testing.T) {
 	freq := Frequency{
-		StartTime:  1705305600000,
-		EndTime:    1705316400000,
-		Headway:    600,
-		ExactTimes: 1, // This shouldn't be serialized to API clients
+		StartTime:   1705305600000,
+		EndTime:     1705316400000,
+		Headway:     600,
+		ExactTimes:  1, // This shouldn't be serialized to API clients
+		ServiceDate: 1705305600000,
+		ServiceID:   "service_123",
+		TripID:      "trip_67",
 	}
 
 	jsonData, err := json.Marshal(freq)
@@ -124,6 +127,9 @@ func TestFrequencyJSON(t *testing.T) {
 	assert.Contains(t, raw, "startTime")
 	assert.Contains(t, raw, "endTime")
 	assert.Contains(t, raw, "headway")
+	assert.Contains(t, raw, "serviceDate")
+	assert.Contains(t, raw, "serviceId")
+	assert.Contains(t, raw, "tripId")
 
 	// IMPORTANT: Verify exactTimes is NOT in the JSON (API Backward Compatibility)
 	assert.NotContains(t, raw, "exactTimes")
