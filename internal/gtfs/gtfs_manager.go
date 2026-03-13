@@ -169,7 +169,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 			}
 
 			// Perform structural validation on the in-memory data
-			if err = gtfsdb.ValidateGTFSData(staticData); err != nil {
+			if err = gtfsdb.ValidateAndFilterGTFSData(staticData, logger); err != nil {
 				if attempt < maxAttempts {
 					delay := backoffs[attempt-1]
 					logging.LogError(logger, "GTFS static data structural validation failed, retrying", err,
