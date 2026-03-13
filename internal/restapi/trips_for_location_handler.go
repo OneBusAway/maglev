@@ -15,6 +15,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripsForLocationHandler returns active trips near a geographic location, specified by
+// lat/lon coordinates with latSpan/lonSpan bounds, including real-time status and schedule data.
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

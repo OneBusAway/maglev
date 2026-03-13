@@ -12,6 +12,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// blockHandler returns the block configuration for a given block ID, including
+// the ordered sequence of trips and their stop times within the block.
 func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if ctx.Err() != nil {

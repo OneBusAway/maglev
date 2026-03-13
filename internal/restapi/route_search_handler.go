@@ -8,6 +8,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// routeSearchHandler searches for routes matching a user-provided query string,
+// with optional geographic bounds filtering via lat, lon, and radius parameters.
 func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 

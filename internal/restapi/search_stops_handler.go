@@ -35,6 +35,8 @@ func sanitizeFTS5Query(input string) string {
 	return sanitized
 }
 
+// searchStopsHandler searches for stops matching a user-provided query string
+// using full-text search, with optional geographic bounds filtering.
 func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

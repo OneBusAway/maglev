@@ -12,6 +12,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// stopsForLocationHandler returns stops near a geographic location, specified by
+// lat/lon coordinates with an optional radius or latSpan/lonSpan bounding box.
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 

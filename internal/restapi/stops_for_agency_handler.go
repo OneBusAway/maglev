@@ -8,6 +8,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// stopsForAgencyHandler returns all stops belonging to a given agency with full stop details.
 func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

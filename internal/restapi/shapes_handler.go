@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// shapesHandler returns the encoded polyline shape for a route's geographic path.
 func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, shapeCode, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
