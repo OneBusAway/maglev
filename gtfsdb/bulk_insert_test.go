@@ -106,7 +106,7 @@ func TestBulkInsertStopTimes(t *testing.T) {
 			}
 
 			// Perform bulk insert
-			err = client.bulkInsertStopTimes(ctx, stopTimes)
+			err = client.bulkInsertStopTimes(ctx, stopTimes, nil)
 			require.NoError(t, err, "Bulk insert should succeed")
 
 			// Verify all records were inserted
@@ -176,7 +176,7 @@ func TestBulkInsertShapes(t *testing.T) {
 			}
 
 			// Perform bulk insert
-			err = client.bulkInsertShapes(ctx, shapes)
+			err = client.bulkInsertShapes(ctx, shapes, nil)
 			require.NoError(t, err, "Bulk insert should succeed")
 
 			// Verify all records were inserted
@@ -234,7 +234,7 @@ func TestBulkInsertWithNullValues(t *testing.T) {
 		},
 	}
 
-	err = client.bulkInsertShapes(ctx, shapes)
+	err = client.bulkInsertShapes(ctx, shapes, nil)
 	require.NoError(t, err, "Should handle NULL values")
 
 	// Verify NULL was inserted correctly
@@ -333,7 +333,7 @@ func TestBulkInsertPerformance(t *testing.T) {
 
 	// Measure bulk insert performance
 	start := time.Now()
-	err = client.bulkInsertStopTimes(ctx, stopTimes)
+	err = client.bulkInsertStopTimes(ctx, stopTimes, nil)
 	duration := time.Since(start)
 
 	require.NoError(t, err, "Bulk insert should succeed")

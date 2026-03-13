@@ -135,7 +135,7 @@ func TestBulkInsertFrequencies(t *testing.T) {
 				}
 			}
 
-			err := client.bulkInsertFrequencies(ctx, frequencies)
+			err := client.bulkInsertFrequencies(ctx, frequencies, nil)
 			require.NoError(t, err)
 
 			if tc.count == 0 {
@@ -181,7 +181,7 @@ func TestBulkInsertFrequencies_MultipleTrips(t *testing.T) {
 		{TripID: "trip_3", StartTime: int64(8 * 3600 * 1e9), EndTime: int64(12 * 3600 * 1e9), HeadwaySecs: 1200, ExactTimes: 0},
 	}
 
-	err := client.bulkInsertFrequencies(ctx, frequencies)
+	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
 	require.NoError(t, err)
 
 	rows1, err := client.Queries.GetFrequenciesForTrip(ctx, "trip_1")
@@ -215,7 +215,7 @@ func TestBulkInsertFrequencies_DuplicatePrimaryKey(t *testing.T) {
 		{TripID: "trip_1", StartTime: startTime, EndTime: int64(10 * 3600 * 1e9), HeadwaySecs: 900, ExactTimes: 1},
 	}
 
-	err := client.bulkInsertFrequencies(ctx, frequencies)
+	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
 	require.NoError(t, err)
 
 	rows, err := client.Queries.GetFrequenciesForTrip(ctx, "trip_1")
@@ -237,7 +237,7 @@ func TestGetFrequencyTripIDs(t *testing.T) {
 		{TripID: "trip_3", StartTime: int64(8 * 3600 * 1e9), EndTime: int64(12 * 3600 * 1e9), HeadwaySecs: 1200, ExactTimes: 0},
 	}
 
-	err := client.bulkInsertFrequencies(ctx, frequencies)
+	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
 	require.NoError(t, err)
 
 	tripIDs, err := client.Queries.GetFrequencyTripIDs(ctx)
@@ -258,7 +258,7 @@ func TestClearFrequencies(t *testing.T) {
 		{TripID: "trip_2", StartTime: int64(7 * 3600 * 1e9), EndTime: int64(10 * 3600 * 1e9), HeadwaySecs: 300, ExactTimes: 1},
 	}
 
-	err := client.bulkInsertFrequencies(ctx, frequencies)
+	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
 	require.NoError(t, err)
 
 	rows, err := client.Queries.GetFrequenciesForTrip(ctx, "trip_1")
@@ -289,7 +289,7 @@ func TestGetFrequenciesForTrips(t *testing.T) {
 		{TripID: "trip_3", StartTime: int64(8 * 3600 * 1e9), EndTime: int64(12 * 3600 * 1e9), HeadwaySecs: 1200, ExactTimes: 0},
 	}
 
-	err := client.bulkInsertFrequencies(ctx, frequencies)
+	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
 	require.NoError(t, err)
 
 	rows, err := client.Queries.GetFrequenciesForTrips(ctx, []string{"trip_1", "trip_2"})

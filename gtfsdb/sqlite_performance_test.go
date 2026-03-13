@@ -329,7 +329,7 @@ func TestSQLitePerformanceWithBulkOperations(t *testing.T) {
 	}
 
 	// This should complete quickly with proper pragmas
-	err = client.bulkInsertStopTimes(ctx, stopTimes)
+	err = client.bulkInsertStopTimes(ctx, stopTimes, nil)
 	require.NoError(t, err, "Bulk insert should succeed with performance pragmas")
 
 	// Verify all inserted
