@@ -11,6 +11,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -209,10 +210,30 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
+	// Look up frequency data for this trip
+	var scheduleFrequency *models.Frequency
+	frequencies, freqErr := api.GtfsManager.GetFrequenciesForTrip(ctx, trip.ID)
+	if freqErr != nil {
+		slog.Warn("BuildTripSchedule: failed to get frequencies",
+			slog.String("trip_id", trip.ID),
+			slog.String("error", freqErr.Error()))
+	}
+	if len(frequencies) > 0 {
+		active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, time.Now().In(serviceDate.Location()))
+		if active != nil {
+			f := models.NewFrequencyFromDB(*active, serviceDate)
+			scheduleFrequency = &f
+		} else {
+			// No window is currently active; use the first frequency entry as fallback
+			f := models.NewFrequencyFromDB(frequencies[0], serviceDate)
+			scheduleFrequency = &f
+		}
+	}
+
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
 		TimeZone:       loc.String(),
-		Frequency:      nil,
+		Frequency:      scheduleFrequency,
 		NextTripID:     nextTripID,
 		PreviousTripID: previousTripID,
 	}, nil

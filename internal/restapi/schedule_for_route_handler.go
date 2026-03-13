@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -100,6 +101,18 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	// Batch-fetch frequencies for all trips on this route
+	rawTripIDs := make([]string, 0, len(trips))
+	for _, trip := range trips {
+		rawTripIDs = append(rawTripIDs, trip.ID)
+	}
+	allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, rawTripIDs)
+	if freqErr != nil {
+		api.Logger.Warn("failed to fetch frequencies for route trips", "error", freqErr)
+		allFreqs = nil
+	}
+	freqsByTrip := gtfsInternal.GroupFrequenciesByTrip(allFreqs)
 
 	// Handle case where service exists but this route has no trips today.
 	// Return 200 OK with empty data.
@@ -216,6 +229,42 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				StopTimes: stopTimesList,
 			})
 			stopTimesRefs = append(stopTimesRefs, stopTimesList)
+
+			// Expand frequency-based stop times for exact_times=1 trips
+			if tripFreqs, found := freqsByTrip[trip.ID]; found && len(stopTimesList) > 0 {
+				var expandedTripStopTimes []models.TripStopTimes
+				var expandedStopTimesRefs []models.RouteStopTime
+				for _, freq := range tripFreqs {
+					if freq.ExactTimes == 1 {
+						baseArrival := int64(stopTimesList[0].ArrivalTime)
+						headwaySec := freq.HeadwaySecs
+						startSec := freq.StartTime / int64(time.Second)
+						endSec := freq.EndTime / int64(time.Second)
+
+						for depTime := startSec; depTime < endSec; depTime += headwaySec {
+							offset := int(depTime - baseArrival)
+							if offset == 0 {
+								continue // original times already included above
+							}
+							expanded := make([]models.RouteStopTime, len(stopTimesList))
+							for i, st := range stopTimesList {
+								expanded[i] = st
+								expanded[i].ArrivalTime += offset
+								expanded[i].DepartureTime += offset
+							}
+							expandedTripStopTimes = append(expandedTripStopTimes, models.TripStopTimes{
+								TripID:    utils.FormCombinedID(agencyID, trip.ID),
+								StopTimes: expanded,
+							})
+							expandedStopTimesRefs = append(expandedStopTimesRefs, expanded...)
+						}
+					}
+				}
+				if len(expandedTripStopTimes) > 0 {
+					tripsWithStopTimes = append(tripsWithStopTimes, expandedTripStopTimes...)
+					stopTimesRefs = append(stopTimesRefs, expandedStopTimesRefs)
+				}
+			}
 		}
 		stopIDsOrdered := make([]string, 0, len(stopIDSet))
 		for stopID := range stopIDSet {

@@ -70,7 +70,7 @@ func TestStopRouteDirectionScheduleJSON(t *testing.T) {
 	stopTime := NewScheduleStopTime(1609462800000, 1609462900000, "service_1", "Downtown", "trip_1")
 
 	directionSchedule := StopRouteDirectionSchedule{
-		ScheduleFrequencies: []Frequency{},
+		ScheduleFrequencies: []ScheduleFrequency{},
 		ScheduleStopTimes:   []ScheduleStopTime{stopTime},
 		TripHeadsign:        "Northbound to Terminal",
 	}
@@ -198,8 +198,8 @@ func TestScheduleForStopEntryWithEmptyRouteSchedules(t *testing.T) {
 
 func TestNewStopRouteDirectionSchedule_WithFrequencies(t *testing.T) {
 	schedule := []ScheduleStopTime{}
-	frequencies := []Frequency{
-		{StartTime: 28800, EndTime: 32400, Headway: 600, ExactTimes: 0},
+	frequencies := []ScheduleFrequency{
+		{ServiceDate: 1609459200000, StartTime: 28800, EndTime: 32400, Headway: 600, ServiceID: "svc1", TripID: "trip1"},
 	}
 
 	directionSchedule := NewStopRouteDirectionSchedule("trip1", schedule, frequencies)
@@ -207,4 +207,6 @@ func TestNewStopRouteDirectionSchedule_WithFrequencies(t *testing.T) {
 	assert.NotNil(t, directionSchedule.ScheduleFrequencies)
 	assert.Len(t, directionSchedule.ScheduleFrequencies, 1)
 	assert.Equal(t, 600, directionSchedule.ScheduleFrequencies[0].Headway)
+	assert.Equal(t, "svc1", directionSchedule.ScheduleFrequencies[0].ServiceID)
+	assert.Equal(t, "trip1", directionSchedule.ScheduleFrequencies[0].TripID)
 }
