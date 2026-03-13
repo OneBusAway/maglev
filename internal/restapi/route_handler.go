@@ -59,6 +59,6 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situations...)
 
-	response := models.NewEntryResponse(routeData, references, api.Clock)
+	response := models.NewEntryResponse(routeData, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }

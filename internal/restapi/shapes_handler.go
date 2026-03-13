@@ -55,5 +55,5 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 		Points: encodedPoints,
 	}
 
-	api.sendResponse(w, r, models.NewEntryResponse(shapeEntry, models.NewEmptyReferences(), api.Clock))
+	api.sendResponse(w, r, models.NewEntryResponse(shapeEntry, *models.NewEmptyReferences(), api.Clock))
 }

@@ -36,7 +36,7 @@ func TestNewEntryResponse(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewEntryResponse(entryData, references, clock)
+	response := NewEntryResponse(entryData, *references, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -46,7 +46,8 @@ func TestNewEntryResponse(t *testing.T) {
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, entryData, responseData["entry"], "Entry in response data should match input entry")
-	assert.Equal(t, references, responseData["references"], "References in response data should match input references")
+	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
+	assert.Equal(t, false, responseData["limitExceeded"], "limitExceeded should be false for entry responses")
 }
 
 func TestNewOKResponse(t *testing.T) {
@@ -69,7 +70,7 @@ func TestNewListResponse(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewListResponse(itemList, references, false, clock)
+	response := NewListResponse(itemList, *references, false, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -79,7 +80,7 @@ func TestNewListResponse(t *testing.T) {
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, itemList, responseData["list"], "List in response data should match input list")
-	assert.Equal(t, references, responseData["references"], "References in response data should match input references")
+	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
 	assert.False(t, responseData["limitExceeded"].(bool), "limitExceeded should be false")
 }
 
@@ -91,7 +92,7 @@ func TestNewListResponseWithRange(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewListResponseWithRange(itemList, references, outOfRange, clock, isLimitExceeded)
+	response := NewListResponseWithRange(itemList, *references, outOfRange, clock, isLimitExceeded)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -101,7 +102,7 @@ func TestNewListResponseWithRange(t *testing.T) {
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, itemList, responseData["list"], "List in response data should match input list")
-	assert.Equal(t, references, responseData["references"], "References in response data should match input references")
+	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
 	assert.True(t, responseData["limitExceeded"].(bool), "limitExceeded should be true")
 	assert.True(t, responseData["outOfRange"].(bool), "outOfRange should be true")
 }
@@ -112,7 +113,7 @@ func TestNewListResponseWithRangeFalseFlag(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewListResponseWithRange(itemList, references, false, clock, false)
+	response := NewListResponseWithRange(itemList, *references, false, clock, false)
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")
@@ -140,7 +141,7 @@ func TestNewArrivalsAndDepartureResponse(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, references, nearbyStopIDs, situationIDs, stopID, clock)
+	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, *references, nearbyStopIDs, situationIDs, stopID, clock)
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
@@ -149,7 +150,7 @@ func TestNewArrivalsAndDepartureResponse(t *testing.T) {
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")
-	assert.Equal(t, references, responseData["references"], "References in response data should match input references")
+	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
 
 	entryData, ok := responseData["entry"].(map[string]interface{})
 	assert.True(t, ok, "Entry should be a map")
@@ -168,7 +169,7 @@ func TestNewArrivalsAndDepartureResponseEmptyArrays(t *testing.T) {
 
 	clock := clock.RealClock{}
 
-	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, references, nearbyStopIDs, situationIDs, stopID, clock)
+	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, *references, nearbyStopIDs, situationIDs, stopID, clock)
 
 	responseData, ok := response.Data.(map[string]interface{})
 	assert.True(t, ok, "Response data should be a map")

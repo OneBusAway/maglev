@@ -51,7 +51,7 @@ func TestCurrentTimeData(t *testing.T) {
 
 	timeData := CurrentTimeData{
 		Entry:      entry,
-		References: references,
+		References: *references,
 	}
 
 	// Test JSON marshaling

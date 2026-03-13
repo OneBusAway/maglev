@@ -228,7 +228,7 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 	references.Routes = routes
 	references.Stops = stopsList
 
-	response := models.NewEntryResponse(result, references, api.Clock)
+	response := models.NewEntryResponse(result, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

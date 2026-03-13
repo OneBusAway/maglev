@@ -145,20 +145,20 @@ func TestTripStatusJSON(t *testing.T) {
 		BlockTripSequence:          2,
 		ClosestStop:                "stop_456",
 		ClosestStopTimeOffset:      &closestOffset,
-		DistanceAlongTrip:          &distanceAlongTrip,
+		DistanceAlongTrip:          distanceAlongTrip,
 		Frequency:                  nil,
-		LastKnownDistanceAlongTrip: &lastKnownDistanceAlongTrip,
+		LastKnownDistanceAlongTrip: lastKnownDistanceAlongTrip,
 		LastKnownLocation: &Location{
 			Lat: 38.542661,
 			Lon: -121.743914,
 		},
 		LastKnownOrientation:   &lastKnownOrientation,
-		LastLocationUpdateTime: &lastLocationUpdateTime,
-		LastUpdateTime:         &lastUpdateTime,
+		LastLocationUpdateTime: lastLocationUpdateTime,
+		LastUpdateTime:         lastUpdateTime,
 		NextStop:               "stop_789",
 		NextStopTimeOffset:     &nextOffset,
-		OccupancyCapacity:      &occupancyCapacity,
-		OccupancyCount:         &occupancyCount,
+		OccupancyCapacity:      occupancyCapacity,
+		OccupancyCount:         occupancyCount,
 		OccupancyStatus:        "MANY_SEATS_AVAILABLE",
 		Orientation:            &orientation,
 		Phase:                  "in_progress",
@@ -167,12 +167,12 @@ func TestTripStatusJSON(t *testing.T) {
 			Lon: -121.744000,
 		},
 		Predicted:                  true,
-		ScheduleDeviation:          &scheduleDeviation,
+		ScheduleDeviation:          scheduleDeviation,
 		ScheduledDistanceAlongTrip: &scheduledDistanceAlongTrip,
 		ServiceDate:                1609459200000,
 		SituationIDs:               []string{"situation_1"},
 		Status:                     "SCHEDULED",
-		TotalDistanceAlongTrip:     &totalDistanceAlongTrip,
+		TotalDistanceAlongTrip:     totalDistanceAlongTrip,
 		VehicleFeatures:            []string{"wifi", "bike_rack"},
 		VehicleID:                  "vehicle_789",
 		Scheduled:                  true,
@@ -201,8 +201,11 @@ func TestTripStatus_JSONOmitEmpty(t *testing.T) {
 	require.NoError(t, err)
 	jsonStr := string(data)
 
-	assert.NotContains(t, jsonStr, `"scheduleDeviation"`, "scheduleDeviation should be omitted when nil")
-	assert.NotContains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip should be omitted when nil")
+	// Required fields should always be present (even with zero values)
+	assert.Contains(t, jsonStr, `"scheduleDeviation"`, "scheduleDeviation is required and should always be present")
+	assert.Contains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip is required and should always be present")
+
+	// Optional pointer fields should be omitted when nil
 	assert.NotContains(t, jsonStr, `"closestStopTimeOffset"`, "closestStopTimeOffset should be omitted when nil")
 	assert.NotContains(t, jsonStr, `"orientation"`, "orientation should be omitted when nil")
 

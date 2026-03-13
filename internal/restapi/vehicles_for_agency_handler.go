@@ -25,7 +25,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	if agency == nil {
 		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]any{}, models.NewEmptyReferences(), false, api.Clock))
+		api.sendResponse(w, r, models.NewListResponse([]any{}, *models.NewEmptyReferences(), false, api.Clock))
 		return
 	}
 
@@ -73,10 +73,14 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Set timestamps
+		currentTime := api.Clock.NowUnixMilli()
+		vehicleStatus.LastLocationUpdateTime = currentTime
+		vehicleStatus.LastUpdateTime = currentTime
+
 		if vehicle.Timestamp != nil {
 			timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-			vehicleStatus.LastLocationUpdateTime = &timestampMs
-			vehicleStatus.LastUpdateTime = &timestampMs
+			vehicleStatus.LastLocationUpdateTime = timestampMs
+			vehicleStatus.LastUpdateTime = timestampMs
 		}
 
 		// Set location if available
@@ -95,7 +99,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			vehicleStatus.TripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
 
 			tripStatus := models.NewTripStatus()
-			tripStatus.ActiveTripID = vehicle.Trip.ID.ID
+			tripStatus.ActiveTripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
 			tripStatus.BlockTripSequence = 0
 			tripStatus.Scheduled = true
 			tripStatus.Phase = vehicleStatus.Phase
@@ -118,6 +122,16 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					obaOrientation += 360
 				}
 				tripStatus.Orientation = utils.Float64Ptr(float64(obaOrientation))
+			}
+
+			// Set timestamps on trip status to match vehicle timestamps
+			tripStatus.LastUpdateTime = currentTime
+			tripStatus.LastLocationUpdateTime = currentTime
+
+			if vehicle.Timestamp != nil {
+				timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
+				tripStatus.LastUpdateTime = timestampMs
+				tripStatus.LastLocationUpdateTime = timestampMs
 			}
 
 			// Set service date (use current date for now)
@@ -173,6 +187,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					url, color, textColor)
 
 			}
+		} else {
+			defaultTripStatus := models.NewTripStatus()
+			defaultTripStatus.Status = "default"
+			defaultTripStatus.Phase = "scheduled"
+			defaultTripStatus.LastUpdateTime = currentTime
+			defaultTripStatus.LastLocationUpdateTime = currentTime
+			vehicleStatus.TripStatus = defaultTripStatus
 		}
 
 		vehiclesList = append(vehiclesList, vehicleStatus)
@@ -206,6 +227,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	references.Routes = routeRefList
 	references.Trips = tripRefList
 
-	response := models.NewListResponse(vehiclesList, references, limitExceeded, api.Clock)
+	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

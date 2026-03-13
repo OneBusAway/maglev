@@ -195,7 +195,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	if len(allActiveStopTimes) == 0 {
-		response := models.NewArrivalsAndDepartureResponse(arrivals, references, []string{}, []string{}, stopID, api.Clock)
+		response := models.NewArrivalsAndDepartureResponse(arrivals, *references, []string{}, []string{}, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -628,7 +628,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
-	response := models.NewArrivalsAndDepartureResponse(arrivals, references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
+	response := models.NewArrivalsAndDepartureResponse(arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

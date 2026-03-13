@@ -47,6 +47,6 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		),
 	}
 
-	response := models.NewListResponse(routesList, references, limitExceeded, api.Clock)
+	response := models.NewListResponse(routesList, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

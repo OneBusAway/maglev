@@ -39,8 +39,9 @@ func NewListResponseWithRange(list interface{}, references ReferencesModel, outO
 
 func NewEntryResponse(entry interface{}, references ReferencesModel, c clock.Clock) ResponseModel {
 	data := map[string]interface{}{
-		"entry":      entry,
-		"references": references,
+		"entry":         entry,
+		"limitExceeded": false,
+		"references":    references,
 	}
 	return NewOKResponse(data, c)
 }

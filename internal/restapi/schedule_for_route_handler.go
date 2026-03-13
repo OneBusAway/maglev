@@ -78,7 +78,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			ServiceIDs:        []string{},
 			StopTripGroupings: []models.StopTripGrouping{},
 		}
-		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
 	}
 
@@ -105,7 +105,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			ServiceIDs:        combinedServiceIDs,
 			StopTripGroupings: []models.StopTripGrouping{},
 		}
-		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
 	}
 
@@ -276,5 +276,5 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
 	}
-	api.sendResponse(w, r, models.NewEntryResponse(entry, references, api.Clock))
+	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }

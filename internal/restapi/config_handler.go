@@ -43,7 +43,7 @@ func (api *RestAPI) configHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewEntryResponse(
 		configEntry,
-		models.NewEmptyReferences(),
+		*models.NewEmptyReferences(),
 		api.Clock,
 	)
 

@@ -93,5 +93,5 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		false,
 	))
 
-	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, references, api.Clock))
+	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, *references, api.Clock))
 }

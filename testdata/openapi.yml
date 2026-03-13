@@ -1,0 +1,2653 @@
+# Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
+# Fetched: 2026-03-08
+# Local modifications: Added 'nullable: true' to optional fields (location, tripStatus) and resolved wrapper inconsistencies to pass Go strict validation.
+openapi: 3.0.0
+info:
+  title: OneBusAway
+  description: The OneBusAway REST API. For use with servers like https://api.pugetsound.onebusaway.org
+  version: 0.0.2
+servers:
+  - url: https://api.pugetsound.onebusaway.org
+
+security:
+  - ApiKeyAuth: []
+paths:
+  /api/where/agencies-with-coverage.json:
+    get:
+      tags:
+        - default
+      summary: Returns a list of all transit agencies currently supported by OneBusAway along with the center of their coverage area.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CoverageResponse'
+                    required:
+                      - data
+
+  /api/where/agency/{agencyID}.json:
+    get:
+      summary: Retrieve info for a specific transit agency identified by ID
+      description: Retrieve information for a specific transit agency identified by its unique ID.
+      parameters:
+        - name: agencyID
+          in: path
+          required: true
+          description: The ID of the transit agency.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AgencyResponse'
+                    required:
+                      - data
+
+  /api/where/route/{routeID}.json:
+    get:
+      summary: Retrieve info for a specific route identified by ID
+      description: Retrieve information for a specific route identified by its unique ID.
+      parameters:
+        - name: routeID
+          in: path
+          required: true
+          description: The ID of the route.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RouteResponse'
+                    required:
+                      - data
+
+  /api/where/route-ids-for-agency/{agencyID}.json:
+    parameters:
+      - name: agencyID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the agency
+    get:
+      summary: Get route IDs for a specific agency
+      responses:
+        '200':
+          description: List of routeIDs for the agency
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RouteIDsForAgencyResponse'
+                    required:
+                      - data
+
+  /api/where/schedule-for-route/{routeID}.json:
+    get:
+      tags:
+        - default
+      summary: Retrieve the full schedule for a route on a particular day
+      parameters:
+        - name: routeID
+          in: path
+          description: The route id to request the schedule for
+          schema:
+            type: string
+          example: '1_100223'
+          required: true
+        - name: date
+          in: query
+          description: The date for which you want to request a schedule in the format YYYY-MM-DD (optional, defaults to current date)
+          schema:
+            type: string
+            format: date
+          example: '2024-08-12'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ScheduleForRouteResponse'
+                    required:
+                      - data
+
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/where/routes-for-location.json:
+    get:
+      tags:
+        - default
+      summary: routes-for-location
+      parameters:
+        - name: lat
+          in: query
+          schema:
+            type: number
+          example: 47.653435
+          required: true
+        - name: lon
+          in: query
+          schema:
+            type: number
+          example: -122.305641
+          required: true
+        - name: radius
+          in: query
+          schema:
+            type: number
+          required: false
+        - name: latSpan
+          in: query
+          schema:
+            type: number
+          required: false
+        - name: lonSpan
+          in: query
+          schema:
+            type: number
+
+          required: false
+        - name: query
+          in: query
+          schema:
+            type: string
+          required: false
+
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RoutesForLocationResponse'
+                    required:
+                      - data
+
+  /api/where/routes-for-agency/{agencyID}.json:
+    get:
+      tags:
+        - default
+      summary: Retrieve the list of all routes for a particular agency by id
+      parameters:
+        - name: agencyID
+          in: path
+          required: true
+          description: The id of the agency
+          schema:
+            type: string
+          example: '40'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RoutesForAgencyResponse'
+                    required:
+                      - data
+
+  /api/where/config.json:
+    get:
+      tags:
+        - default
+      summary: config
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ConfigResponse'
+                    required:
+                      - data
+
+  /api/where/current-time.json:
+    get:
+      tags:
+        - default
+      summary: current-time
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CurrentTimeResponse'
+                    required:
+                      - data
+
+  /api/where/stops-for-location.json:
+    get:
+      tags:
+        - default
+      summary: stops-for-location
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+          example: 47.656422
+        - name: lon
+          in: query
+          required: true
+          schema:
+            type: number
+          example: -122.305641
+        - name: radius
+          in: query
+          required: false
+          description: The radius in meters to search within
+          schema:
+            type: number
+          example: 1000
+        - name: latSpan
+          in: query
+          required: false
+          description: An alternative to radius to set the search bounding box (optional)
+          schema:
+            type: number
+          example: 0.01
+        - name: lonSpan
+          in: query
+          required: false
+          description: An alternative to radius to set the search bounding box (optional)
+          schema:
+            type: number
+          example: 0.01
+        - name: query
+          in: query
+          required: false
+          description: A search query string to filter the results
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/StopsForLocationResponse'
+                    required:
+                      - data
+
+  /api/where/arrival-and-departure-for-stop/{stopID}.json:
+    get:
+      tags:
+        - default
+      summary: arrival-and-departure-for-stop
+      parameters:
+        - name: stopID
+          in: path
+          required: true
+          schema:
+            type: string
+          example: '1_75403'
+        - name: tripId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: '1_604670535'
+        - name: serviceDate
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 1710918000000
+        - name: vehicleId
+          in: query
+          schema:
+            type: string
+          example: '1_6936'
+        - name: stopSequence
+          in: query
+          schema:
+            type: integer
+          example: 39
+        - name: time
+          in: query
+          schema:
+            type: integer
+          example: 1710979086000
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ArrivalDepartureForStopResponse'
+                    required:
+                      - data
+
+  /api/where/vehicles-for-agency/{agencyID}.json:
+    parameters:
+      - name: agencyID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the agency
+      - name: time
+        in: query
+        required: false
+        schema:
+          type: string
+          description: Specific time for querying the status (timestamp format)
+    get:
+      summary: Get vehicles for a specific agency
+      responses:
+        '200':
+          description: List of vehicles for the agency
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/VehiclesForAgencyResponse'
+                    required:
+                      - data
+
+  /api/where/arrivals-and-departures-for-stop/{stopID}.json:
+    get:
+      tags:
+        - default
+      summary: arrivals-and-departures-for-stop
+      parameters:
+        - name: stopID
+          in: path
+          required: true
+          schema:
+            type: string
+          example: '1_75403'
+        - name: minutesBefore
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 5
+          description: Include vehicles having arrived or departed in the previous n minutes.
+        - name: minutesAfter
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 35
+          description: Include vehicles arriving or departing in the next n minutes.
+        - name: time
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: The specific time for querying the system status.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ArrivalsDeparturesForStopResponse'
+                    required:
+                      - data
+
+  /api/where/trip/{tripID}.json:
+    parameters:
+      - name: tripID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the trip
+    get:
+      summary: Get details of a specific trip
+      responses:
+        '200':
+          description: Details of the trip
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TripResponse'
+                    required:
+                      - data
+
+  /api/where/trips-for-route/{routeID}.json:
+    get:
+      tags:
+        - default
+      summary: Search for active trips for a specific route.
+      parameters:
+        - name: routeID
+          in: path
+          required: true
+          description: The ID of the route.
+          schema:
+            type: string
+        - name: includeStatus
+          in: query
+          required: false
+          description: Determine whether full tripStatus elements with real-time information are included. Defaults to false.
+          schema:
+            type: boolean
+        - name: includeSchedule
+          in: query
+          required: false
+          description: Determine whether full schedule elements are included. Defaults to false.
+          schema:
+            type: boolean
+        - name: time
+          in: query
+          required: false
+          description: Query the system at a specific time. Useful for testing.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          limitExceeded:
+                            type: boolean
+                          list:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/TripDetails'
+                          references:
+                            $ref: '#/components/schemas/Reference'
+                        required:
+                          - list
+                          - limitExceeded
+                          - references
+                    required:
+                      - data
+
+  /api/where/trips-for-location.json:
+    get:
+      summary: Retrieve trips for a given location
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: float
+          description: The latitude coordinate of the search center
+        - name: lon
+          in: query
+          required: true
+          schema:
+            type: number
+            format: float
+          description: The longitude coordinate of the search center
+        - name: latSpan
+          in: query
+          required: true
+          schema:
+            type: number
+            format: float
+          description: Latitude span of the search bounding box
+        - name: lonSpan
+          in: query
+          required: true
+          schema:
+            type: number
+            format: float
+          description: Longitude span of the search bounding box
+        - name: includeTrip
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Whether to include full trip elements in the references section. Defaults to false.
+        - name: includeSchedule
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Whether to include full schedule elements in the tripDetails section. Defaults to false.
+        - name: time
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Specific time for the query. Defaults to the current time.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TripsForLocationResponse'
+                    required:
+                      - data
+
+  /api/where/trip-details/{tripID}.json:
+    get:
+      tags:
+        - default
+      summary: Retrieve Trip Details
+      parameters:
+        - in: path
+          name: tripID
+          required: true
+          schema:
+            type: string
+          description: ID of the trip to retrieve details for.
+        - in: query
+          name: serviceDate
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Service date for the trip as Unix time in milliseconds (optional).
+        - in: query
+          name: includeTrip
+          required: false
+          schema:
+            type: boolean
+          description: Whether to include the full trip element in the references section (defaults to true).
+        - in: query
+          name: includeSchedule
+          required: false
+          schema:
+            type: boolean
+          description: Whether to include the full schedule element in the tripDetails section (defaults to true).
+        - in: query
+          name: includeStatus
+          required: false
+          schema:
+            type: boolean
+          description: Whether to include the full status element in the tripDetails section (defaults to true).
+        - in: query
+          name: time
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Time parameter to query the system at a specific time (optional).
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TripDetailsResponse'
+                    required:
+                      - data
+
+  /api/where/trip-for-vehicle/{vehicleID}.json:
+    get:
+      tags:
+        - default
+      summary: Retrieve trip for a specific vehicle
+      parameters:
+        - in: path
+          name: vehicleID
+          required: true
+          schema:
+            type: string
+          description: ID of the vehicle to retrieve trip details for.
+        - in: query
+          name: time
+          schema:
+            type: integer
+            format: int64
+          description: Time parameter to query the system at a specific time (optional).
+        - in: query
+          name: includeTrip
+          schema:
+            type: boolean
+          description: Determines whether full <trip/> element is included in the <references/> section. Defaults to false.
+        - in: query
+          name: includeSchedule
+          schema:
+            type: boolean
+          description: Determines whether full <schedule/> element is included in the <tripDetails/> section. Defaults to false.
+        - in: query
+          name: includeStatus
+          schema:
+            type: boolean
+          description: Determines whether the full <status/> element is included in the <tripDetails/> section. Defaults to true.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TripVehicleResponse'
+                    required:
+                      - data
+
+  /api/where/stops-for-route/{routeID}.json:
+    parameters:
+      - name: routeID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the route
+      - name: includePolylines
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: Include polyline elements in the response (default true)
+      - name: time
+        required: false
+        in: query
+        schema:
+          type: string
+        description: Specify service date (YYYY-MM-DD or epoch) (default today)
+    get:
+      summary: Get stops for a specific route
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - $ref: '#/components/schemas/StopsForRouteResponse'
+
+  /api/where/stops-for-agency/{agencyID}.json:
+    parameters:
+      - name: agencyID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the agency
+    get:
+      summary: Get stops for a specific agency
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/StopsForAgencyResponse'
+                    required:
+                      - data
+
+  /api/where/stop/{stopID}.json:
+    parameters:
+      - name: stopID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the stop
+    get:
+      summary: Get details of a specific stop
+      responses:
+        '200':
+          description: Details of the stop
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/StopResponse'
+
+                    required:
+                      - data
+
+  /api/where/schedule-for-stop/{stopID}.json:
+    get:
+      summary: Get schedule for a specific stop
+      parameters:
+        - name: stopID
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The stop id to request the schedule for, encoded directly in the URL
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: The date for which you want to request a schedule in the format YYYY-MM-DD (optional, defaults to the current date)
+      responses:
+        '200':
+          description: Schedule information for the stop
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ScheduleForStopResponse'
+                    required:
+                      - data
+
+  /api/where/stop-ids-for-agency/{agencyID}.json:
+    parameters:
+      - name: agencyID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the agency
+    get:
+      summary: Get stop IDs for a specific agency
+      responses:
+        '200':
+          description: List of stop IDs for the agency
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/StopIDsForAgencyResponse'
+                    required:
+                      - data
+
+  /api/where/report-problem-with-stop/{stopID}.json:
+    get:
+      summary: Submit a user-generated problem report for a stop
+      operationId: reportProblemWithStop
+      parameters:
+        - name: stopID
+          in: path
+          required: true
+          description: The ID of the stop
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: false
+          description: A string code identifying the nature of the problem
+          schema:
+            type: string
+            enum:
+              - stop_name_wrong
+              - stop_number_wrong
+              - stop_location_wrong
+              - route_or_trip_missing
+              - other
+        - name: userComment
+          in: query
+          required: false
+          description: Additional comment text supplied by the user describing the problem
+          schema:
+            type: string
+        - name: userLat
+          in: query
+          required: false
+          description: The reporting user’s current latitude
+          schema:
+            type: number
+            format: float
+        - name: userLon
+          in: query
+          required: false
+          description: The reporting user’s current longitude
+          schema:
+            type: number
+            format: float
+        - name: userLocationAccuracy
+          in: query
+          required: false
+          description: The reporting user’s location accuracy, in meters
+          schema:
+            type: number
+            format: float
+      responses:
+        '200':
+          description: Problem report successfully submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+
+  /api/where/report-problem-with-trip/{tripID}.json:
+    get:
+      summary: Submit a user-generated problem report for a particular trip.
+      operationId: reportProblemWithTrip
+      parameters:
+        - name: tripID
+          in: path
+          required: true
+          description: The ID of the trip
+          schema:
+            type: string
+        - name: serviceDate
+          in: query
+          required: false
+          description: The service date of the trip
+          schema:
+            type: integer
+            format: int64
+        - name: vehicleID
+          in: query
+          required: false
+          description: The vehicle actively serving the trip
+          schema:
+            type: string
+        - name: stopID
+          in: query
+          required: false
+          description: A stop ID indicating where the user is experiencing the problem
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: false
+          description: A string code identifying the nature of the problem
+          schema:
+            type: string
+            enum:
+              - vehicle_never_came
+              - vehicle_came_early
+              - vehicle_came_late
+              - wrong_headsign
+              - vehicle_does_not_stop_here
+              - other
+        - name: userComment
+          in: query
+          required: false
+          description: Additional comment text supplied by the user describing the problem
+          schema:
+            type: string
+        - name: userOnVehicle
+          in: query
+          required: false
+          description: Indicator if the user is on the transit vehicle experiencing the problem
+          schema:
+            type: boolean
+        - name: userVehicleNumber
+          in: query
+          required: false
+          description: The vehicle number, as reported by the user
+          schema:
+            type: string
+        - name: userLat
+          in: query
+          required: false
+          description: The reporting user’s current latitude
+          schema:
+            type: number
+            format: float
+        - name: userLon
+          in: query
+          required: false
+          description: The reporting user’s current longitude
+          schema:
+            type: number
+            format: float
+        - name: userLocationAccuracy
+          in: query
+          required: false
+          description: The reporting user’s location accuracy, in meters
+          schema:
+            type: number
+            format: float
+      responses:
+        '200':
+          description: Problem report successfully submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+
+  # Search endpoints
+  /api/where/search/stop.json:
+    get:
+      summary: Search for a stop based on its name.
+      operationId: searchStop
+      parameters:
+        - name: input
+          in: query
+          description: The string to search for.
+          required: true
+          schema:
+            type: string
+        - name: maxCount
+          in: query
+          description: The max number of results to return. Defaults to 20.
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful stop search.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SearchStopResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/where/search/route.json:
+    get:
+      summary: Search for a route based on its name.
+      operationId: searchRoute
+      parameters:
+        - name: input
+          in: query
+          description: The string to search for.
+          required: true
+          schema:
+            type: string
+        - name: maxCount
+          in: query
+          description: The max number of results to return. Defaults to 20.
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful route search.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SearchRouteResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/where/block/{blockID}.json:
+    parameters:
+      - name: blockID
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ID of the block
+    get:
+      summary: Get details of a specific block by ID
+      responses:
+        '200':
+          description: Details of the block
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/BlockResponse'
+                    required:
+                      - data
+
+  /api/where/shape/{shapeID}.json:
+    get:
+      summary: Retrieve a shape by ID
+      description: 'Retrieve a shape (the path traveled by a transit vehicle) by ID.'
+      parameters:
+        - name: shapeID
+          in: path
+          required: true
+          description: The shape ID, encoded directly in the URL
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The shape of the path traveled by the transit vehicle
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ShapeResponse'
+                    required:
+                      - data
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: key
+  schemas:
+    Agency:
+      type: object
+      properties:
+        disclaimer:
+          type: string
+        email:
+          type: string
+        fareUrl:
+          type: string
+        id:
+          type: string
+        lang:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        privateService:
+          type: boolean
+        timezone:
+          type: string
+        url:
+          type: string
+      required:
+        - id
+        - name
+        - timezone
+        - url
+
+    VehicleStatus:
+      type: object
+      properties:
+        vehicleId:
+          type: string
+        lastUpdateTime:
+          type: integer
+          format: int64
+        lastLocationUpdateTime:
+          type: integer
+          format: int64
+        location:
+          $ref: '#/components/schemas/Location'
+        tripId:
+          type: string
+        tripStatus:
+          $ref: '#/components/schemas/TripStatus'
+        occupancyCapacity:
+          type: integer
+        occupancyCount:
+          type: integer
+        occupancyStatus:
+          type: string
+        phase:
+          type: string
+        status:
+          type: string
+      required:
+        - vehicleId
+        - lastUpdateTime
+        - lastLocationUpdateTime
+        - location
+        - tripId
+        - tripStatus
+
+    VehiclesForAgencyResponse:
+      type: object
+      properties:
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/VehicleStatus'
+        limitExceeded:
+          type: boolean
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - list
+        - limitExceeded
+        - references
+
+    Coverage:
+      type: object
+      properties:
+        agencyId:
+          type: string
+        lat:
+          type: number
+        latSpan:
+          type: number
+        lon:
+          type: number
+        lonSpan:
+          type: number
+      required:
+        - agencyId
+        - lat
+        - latSpan
+        - lon
+        - lonSpan
+
+    AgencyResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        entry:
+          $ref: '#/components/schemas/Agency'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - limitExceeded
+        - references
+    CoverageResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Coverage'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - list
+        - limitExceeded
+        - references
+
+    CurrentTime:
+      type: object
+      properties:
+        readableTime:
+          type: string
+        time:
+          type: integer
+
+    CurrentTimeResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/CurrentTime'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    ResponseWrapper:
+      type: object
+      properties:
+        code:
+          type: integer
+        currentTime:
+          type: integer
+        text:
+          type: string
+        version:
+          type: integer
+      required:
+        - code
+        - currentTime
+        - text
+        - version
+
+    Reference:
+      type: object
+      properties:
+        agencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agency'
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        situations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Situation'
+        stopTimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/StopTime'
+        stops:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stop'
+        trips:
+          type: array
+          items:
+            $ref: '#/components/schemas/Trip'
+      required:
+        - agencies
+        - routes
+        - situations
+        - stopTimes
+        - stops
+        - trips
+
+    Route:
+      type: object
+      properties:
+        agencyId:
+          type: string
+        color:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        longName:
+          type: string
+        nullSafeShortName:
+          type: string
+        shortName:
+          type: string
+        textColor:
+          type: string
+        type:
+          type: integer
+        url:
+          type: string
+
+      required:
+        - id
+        - type
+        - agencyId
+
+    Situation:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the situation.
+        creationTime:
+          type: integer
+          format: int64
+          description: Unix timestamp of when this situation was created.
+        reason:
+          type: string
+          description: Reason for the service alert, taken from TPEG codes.
+          enum:
+            - equipmentReason
+            - environmentReason
+            - personnelReason
+            - miscellaneousReason
+            - securityAlert
+        summary:
+          type: object
+          properties:
+            lang:
+              type: string
+              description: Language of the summary.
+            value:
+              type: string
+              description: Short summary of the situation.
+        description:
+          type: object
+          properties:
+            lang:
+              type: string
+              description: Language of the description.
+            value:
+              type: string
+              description: Longer description of the situation.
+        url:
+          type: object
+          properties:
+            lang:
+              type: string
+              description: Language of the URL.
+            value:
+              type: string
+              description: URL for more information about the situation.
+        activeWindows:
+          type: array
+          items:
+            type: object
+            properties:
+              from:
+                type: integer
+                format: int64
+                description: Start time of the active window as a Unix timestamp.
+              to:
+                type: integer
+                format: int64
+                description: End time of the active window as a Unix timestamp.
+        allAffects:
+          type: array
+          items:
+            type: object
+            properties:
+              agencyId:
+                type: string
+                description: Identifier for the agency.
+              applicationId:
+                type: string
+                description: Identifier for the application.
+              directionId:
+                type: string
+                description: Identifier for the direction.
+              routeId:
+                type: string
+                description: Identifier for the route.
+              stopId:
+                type: string
+                description: Identifier for the stop.
+              tripId:
+                type: string
+                description: Identifier for the trip.
+        consequences:
+          type: array
+          items:
+            type: object
+            properties:
+              condition:
+                type: string
+                description: Condition of the consequence.
+              conditionDetails:
+                type: object
+                properties:
+                  diversionPath:
+                    type: object
+                    properties:
+                      length:
+                        type: integer
+                        description: Length of the diversion path.
+                      levels:
+                        type: string
+                        description: Levels of the diversion path.
+                      points:
+                        type: string
+                        description: Points of the diversion path.
+                  diversionStopIds:
+                    type: array
+                    items:
+                      type: string
+                      description: List of stop IDs affected by the diversion.
+        publicationWindows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeWindow'
+        severity:
+          type: string
+          description: Severity of the situation.
+        consequenceMessage:
+          type: string
+          description: Message regarding the consequence of the situation.
+      required:
+        - id
+        - creationTime
+
+    TimeWindow:
+      type: object
+      properties:
+        from:
+          type: integer
+          format: int64
+          description: Start time of the time window as a Unix timestamp.
+        to:
+          type: integer
+          format: int64
+          description: End time of the time window as a Unix timestamp.
+      required:
+        - from
+        - to
+
+    Stop:
+      type: object
+      properties:
+        code:
+          type: string
+        direction:
+          type: string
+        id:
+          type: string
+        lat:
+          type: number
+        locationType:
+          type: integer
+        lon:
+          type: number
+        name:
+          type: string
+        parent:
+          type: string
+        routeIds:
+          type: array
+          items:
+            type: string
+        staticRouteIds:
+          type: array
+          items:
+            type: string
+        wheelchairBoarding:
+          type: string
+      required:
+        - id
+        - lat
+        - lon
+        - name
+        - parent
+        - routeIds
+        - staticRouteIds
+        - locationType
+
+    Trip:
+      type: object
+      properties:
+        blockId:
+          type: string
+        directionId:
+          type: string
+        id:
+          type: string
+        peakOffpeak:
+          type: integer
+        routeId:
+          type: string
+        routeShortName:
+          type: string
+        serviceId:
+          type: string
+        shapeId:
+          type: string
+        timeZone:
+          type: string
+        tripHeadsign:
+          type: string
+        tripShortName:
+          type: string
+      required:
+        - id
+        - routeId
+        - serviceId
+
+    Config:
+      type: object
+      properties:
+        gitProperties:
+          type: object
+          properties:
+            git.branch:
+              type: string
+            git.build.host:
+              type: string
+            git.build.time:
+              type: string
+            git.build.user.email:
+              type: string
+            git.build.user.name:
+              type: string
+            git.build.version:
+              type: string
+            git.closest.tag.commit.count:
+              type: string
+            git.closest.tag.name:
+              type: string
+            git.commit.id:
+              type: string
+            git.commit.id.abbrev:
+              type: string
+            git.commit.id.describe:
+              type: string
+            git.commit.id.describe-short:
+              type: string
+            git.commit.message.full:
+              type: string
+            git.commit.message.short:
+              type: string
+            git.commit.time:
+              type: string
+            git.commit.user.email:
+              type: string
+            git.commit.user.name:
+              type: string
+            git.dirty:
+              type: string
+            git.remote.origin.url:
+              type: string
+            git.tags:
+              type: string
+        id:
+          type: string
+        name:
+          type: string
+        serviceDateFrom:
+          type: string
+        serviceDateTo:
+          type: string
+
+    ConfigResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/Config'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    StopsForLocationResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        outOfRange:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stop'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - list
+        - references
+        - limitExceeded
+
+    StopsForAgencyResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        outOfRange:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stop'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - list
+        - references
+        - limitExceeded
+
+    ArrivalDepartureForStop:
+      type: object
+      properties:
+        actualTrack:
+          type: string
+          description: The actual track information of the arriving transit vehicle.
+        arrivalEnabled:
+          type: boolean
+          description: Indicates if riders can arrive on this transit vehicle.
+        blockTripSequence:
+          type: integer
+          description: Index of this arrival’s trip into the sequence of trips for the active block.
+        departureEnabled:
+          type: boolean
+          description: Indicates if riders can depart from this transit vehicle.
+        distanceFromStop:
+          type: number
+          description: Distance of the arriving transit vehicle from the stop, in meters.
+        frequency:
+          type: string
+          description: Information about frequency-based scheduling, if applicable to the trip.
+        historicalOccupancy:
+          type: string
+          description: Historical occupancy information of the transit vehicle.
+        lastUpdateTime:
+          type: integer
+          description: Timestamp of the last update time for this arrival.
+        numberOfStopsAway:
+          type: integer
+          description: Number of stops between the arriving transit vehicle and the current stop (excluding the current stop).
+        occupancyStatus:
+          type: string
+          description: Current occupancy status of the transit vehicle.
+        predicted:
+          type: boolean
+          description: Indicates if real-time arrival info is available for this trip.
+        predictedArrivalInterval:
+          type: string
+          description: Interval for predicted arrival time, if available.
+        predictedArrivalTime:
+          type: integer
+          description: Predicted arrival time, in milliseconds since Unix epoch (zero if no real-time available).
+        predictedDepartureInterval:
+          type: string
+          description: Interval for predicted departure time, if available.
+        predictedDepartureTime:
+          type: integer
+          description: Predicted departure time, in milliseconds since Unix epoch (zero if no real-time available).
+        predictedOccupancy:
+          type: string
+          description: Predicted occupancy status of the transit vehicle.
+        routeId:
+          type: string
+          description: The ID of the route for the arriving vehicle.
+        routeLongName:
+          type: string
+          description: Optional route long name that potentially overrides the route long name in the referenced route element.
+        routeShortName:
+          type: string
+          description: Optional route short name that potentially overrides the route short name in the referenced route element.
+        scheduledArrivalInterval:
+          type: string
+          description: Interval for scheduled arrival time.
+        scheduledArrivalTime:
+          type: integer
+          description: Scheduled arrival time, in milliseconds since Unix epoch.
+        scheduledDepartureInterval:
+          type: string
+          description: Interval for scheduled departure time.
+        scheduledDepartureTime:
+          type: integer
+          description: Scheduled departure time, in milliseconds since Unix epoch.
+        scheduledTrack:
+          type: string
+          description: Scheduled track information of the arriving transit vehicle.
+        serviceDate:
+          type: integer
+          description: Time, in milliseconds since the Unix epoch, of midnight for the start of the service date for the trip.
+        situationIds:
+          type: array
+          items:
+            type: string
+          description: References to situation elements (if any) applicable to this arrival.
+        status:
+          type: string
+          description: Current status of the arrival.
+        stopId:
+          type: string
+          description: The ID of the stop the vehicle is arriving at.
+        stopSequence:
+          type: integer
+          description: Index of the stop into the sequence of stops that make up the trip for this arrival.
+        totalStopsInTrip:
+          type: integer
+          description: Total number of stops visited on the trip for this arrival.
+        tripHeadsign:
+          type: string
+          description: Optional trip headsign that potentially overrides the trip headsign in the referenced trip element.
+        tripId:
+          type: string
+          description: The ID of the trip for the arriving vehicle.
+        tripStatus:
+          $ref: '#/components/schemas/TripStatus'
+          description: Trip-specific status for the arriving transit vehicle.
+        vehicleId:
+          type: string
+          description: ID of the transit vehicle serving this trip.
+      required:
+        - stopId
+        - tripId
+        - serviceDate
+        - routeId
+        - scheduledArrivalTime
+        - scheduledDepartureTime
+        - predictedArrivalTime
+        - predictedDepartureTime
+        - stopSequence
+        - totalStopsInTrip
+        - tripHeadsign
+        - vehicleId
+        - blockTripSequence
+        - arrivalEnabled
+        - departureEnabled
+        - numberOfStopsAway
+
+    ScheduleEntry:
+      type: object
+      properties:
+        routeId:
+          type: string
+        scheduleDate:
+          type: integer
+        serviceIds:
+          type: array
+          items:
+            type: string
+        stopTripGroupings:
+          type: array
+          items:
+            $ref: '#/components/schemas/StopTripGrouping'
+        stops:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stop'
+        trips:
+          type: array
+          items:
+            $ref: '#/components/schemas/Trip'
+      required:
+        - routeId
+        - scheduleDate
+        - serviceIds
+        - stopTripGroupings
+        - stops
+        - trips
+
+    StopTripGrouping:
+      type: object
+      properties:
+        directionId:
+          type: string
+        stopIds:
+          type: array
+          items:
+            type: string
+        tripHeadsigns:
+          type: array
+          items:
+            type: string
+        tripIds:
+          type: array
+          items:
+            type: string
+        tripsWithStopTimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TripWithStopTimes'
+      required:
+        - directionId
+        - stopIds
+        - tripHeadsigns
+        - tripIds
+
+    TripWithStopTimes:
+      type: object
+      properties:
+        tripId:
+          type: string
+        stopTimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DetailedScheduleStopTime'
+      required:
+        - tripId
+        - stopTimes
+
+    ArrivalDepartureForStopResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/ArrivalDepartureForStop'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    RoutesForLocationResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        outOfRange:
+          type: boolean
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - list
+        - references
+        - limitExceeded
+        - outOfRange
+
+    ScheduleForRouteResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/ScheduleEntry'
+      required:
+        - entry
+
+    ArrivalsDeparturesForStopResponse:
+      type: object
+      properties:
+        entry:
+          type: object
+          properties:
+            arrivalsAndDepartures:
+              type: array
+              items:
+                $ref: '#/components/schemas/ArrivalDepartureForStop'
+          required:
+            - arrivalsAndDepartures
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    RouteResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/Route'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    RouteIDsForAgencyResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            type: string
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - list
+        - limitExceeded
+        - references
+
+    RoutesForAgencyResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - list
+        - references
+        - limitExceeded
+
+    Polylines:
+      type: object
+      properties:
+        length:
+          type: integer
+        levels:
+          type: string
+        points:
+          type: string
+
+    StopGrouping:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: object
+          properties:
+            name:
+              type: string
+            names:
+              type: array
+              items:
+                type: string
+            type:
+              type: string
+        polylines:
+          type: array
+          items:
+            $ref: '#/components/schemas/Polylines'
+        stopIds:
+          type: array
+          items:
+            type: string
+
+    StopsForRouteResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            entry:
+              type: object
+              properties:
+                polylines:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Polylines'
+                routeId:
+                  type: string
+                  example: '1_100224'
+                stopGroupings:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/StopGrouping'
+                stopIds:
+                  type: array
+                  items:
+                    type: string
+                    example: '1_10911'
+            references:
+              $ref: '#/components/schemas/Reference'
+          required:
+            - entry
+            - references
+      required:
+        - data
+    # Trip Components
+    TripEntry:
+      type: object
+      properties:
+        frequency:
+          type: string
+          nullable: true
+        schedule:
+          $ref: '#/components/schemas/TripSchedule'
+        serviceDate:
+          type: integer
+        situationIds:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: '#/components/schemas/TripStatus'
+        tripId:
+          type: string
+      required:
+        - tripId
+
+    TripStatus:
+      type: object
+      properties:
+        activeTripId:
+          type: string
+          description: Trip ID of the trip the vehicle is actively serving.
+        blockTripSequence:
+          type: integer
+          description: Index of the active trip into the sequence of trips for the active block.
+        closestStop:
+          type: string
+          description: ID of the closest stop to the current location of the transit vehicle.
+        closestStopTimeOffset:
+          type: integer
+          description: Time offset from the closest stop to the current position of the transit vehicle (in seconds).
+        distanceAlongTrip:
+          type: number
+          description: Distance, in meters, the transit vehicle has progressed along the active trip.
+        frequency:
+          type: string
+          description: Information about frequency-based scheduling, if applicable to the trip.
+        lastKnownDistanceAlongTrip:
+          type: number
+          description: Last known distance along the trip received in real-time from the transit vehicle.
+        lastKnownLocation:
+          type: object
+          nullable: true
+          properties:
+            lat:
+              type: number
+              description: Latitude of the last known location of the transit vehicle.
+            lon:
+              type: number
+              description: Longitude of the last known location of the transit vehicle.
+          description: Last known location of the transit vehicle.
+        lastKnownOrientation:
+          type: number
+          description: Last known orientation value received in real-time from the transit vehicle.
+        lastLocationUpdateTime:
+          type: integer
+          description: Timestamp of the last known real-time location update from the transit vehicle.
+        lastUpdateTime:
+          type: integer
+          description: Timestamp of the last known real-time update from the transit vehicle.
+        nextStop:
+          type: string
+          description: ID of the next stop the transit vehicle is scheduled to arrive at.
+        nextStopTimeOffset:
+          type: integer
+          description: Time offset from the next stop to the current position of the transit vehicle (in seconds).
+        occupancyCapacity:
+          type: integer
+          description: Capacity of the transit vehicle in terms of occupancy.
+        occupancyCount:
+          type: integer
+          description: Current count of occupants in the transit vehicle.
+        occupancyStatus:
+          type: string
+          description: Current occupancy status of the transit vehicle.
+        orientation:
+          type: number
+          description: Orientation of the transit vehicle, represented as an angle in degrees.
+        phase:
+          type: string
+          description: Current journey phase of the trip.
+        position:
+          type: object
+          properties:
+            lat:
+              type: number
+              description: Latitude of the current position of the transit vehicle.
+            lon:
+              type: number
+              description: Longitude of the current position of the transit vehicle.
+          description: Current position of the transit vehicle.
+        predicted:
+          type: boolean
+          description: Indicates if real-time arrival info is available for this trip.
+        scheduleDeviation:
+          type: integer
+          description: Deviation from the schedule in seconds (positive for late, negative for early).
+        scheduledDistanceAlongTrip:
+          type: number
+          description: Distance, in meters, the transit vehicle is scheduled to have progressed along the active trip.
+        serviceDate:
+          type: integer
+          description: Time, in milliseconds since the Unix epoch, of midnight for the start of the service date for the trip.
+        situationIds:
+          type: array
+          items:
+            type: string
+          description: References to situation elements (if any) applicable to this trip.
+        status:
+          type: string
+          description: Current status modifiers for the trip.
+        totalDistanceAlongTrip:
+          type: number
+          description: Total length of the trip, in meters.
+        vehicleId:
+          type: string
+          description: ID of the transit vehicle currently serving the trip.
+      required:
+        - activeTripId
+        - blockTripSequence
+        - closestStop
+        - distanceAlongTrip
+        - lastKnownDistanceAlongTrip
+        - lastLocationUpdateTime
+        - lastUpdateTime
+        - occupancyCapacity
+        - occupancyCount
+        - occupancyStatus
+        - phase
+        - predicted
+        - scheduleDeviation
+        - serviceDate
+        - status
+        - totalDistanceAlongTrip
+
+    TripDetails:
+      type: object
+      properties:
+        frequency:
+          type: string
+          nullable: true
+        serviceDate:
+          type: integer
+          format: int64
+        situationIds:
+          type: array
+          items:
+            type: string
+        tripId:
+          type: string
+        schedule:
+          $ref: '#/components/schemas/TripSchedule'
+        status:
+          $ref: '#/components/schemas/TripStatus'
+
+      required:
+        - tripId
+        - schedule
+        - status
+
+    TripSchedule:
+      type: object
+      properties:
+        frequency:
+          type: string
+          nullable: true
+        nextTripId:
+          type: string
+        previousTripId:
+          type: string
+        stopTimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/StopTime'
+        timeZone:
+          type: string
+      required:
+        - stopTimes
+        - timeZone
+        - nextTripId
+        - previousTripId
+
+    StopTime:
+      type: object
+      properties:
+        arrivalTime:
+          type: integer
+        departureTime:
+          type: integer
+        distanceAlongTrip:
+          type: number
+        historicalOccupancy:
+          type: string
+        stopHeadsign:
+          type: string
+        stopId:
+          type: string
+
+    Location:
+      type: object
+      properties:
+        lat:
+          type: number
+        lon:
+          type: number
+
+    TripResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/Trip'
+        references:
+          $ref: '#/components/schemas/Reference'
+
+      required:
+        - entry
+        - references
+
+    TripsForLocationResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+          description: Indicates if the limit of trips has been exceeded
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/TripDetails'
+        outOfRange:
+          type: boolean
+          description: Indicates if the search location is out of range
+        references:
+          $ref: '#/components/schemas/Reference'
+
+      required:
+        - limitExceeded
+        - list
+        - references
+
+    TripDetailsResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/TripEntry'
+        references:
+          $ref: '#/components/schemas/Reference'
+
+      required:
+        - entry
+        - references
+
+    TripVehicleResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/TripEntry'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    StopResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/Stop'
+        references:
+          $ref: '#/components/schemas/Reference'
+
+      required:
+        - entry
+        - references
+
+    StopIDsForAgencyResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            type: string
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - limitExceeded
+        - list
+        - references
+
+    ScheduleFrequency:
+      type: object
+      properties:
+        serviceDate:
+          type: integer
+          format: int64
+        startTime:
+          type: integer
+          format: int64
+        endTime:
+          type: integer
+          format: int64
+        headway:
+          type: integer
+          format: int32
+        serviceId:
+          type: string
+        tripId:
+          type: string
+      required:
+        - serviceDate
+        - startTime
+        - endTime
+        - headway
+        - serviceId
+        - tripId
+
+    StopRouteDirectionSchedule:
+      type: object
+      properties:
+        scheduleFrequencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduleFrequency'
+        scheduleStopTimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduleStopTime'
+        tripHeadsign:
+          type: string
+      required:
+        - scheduleStopTimes
+        - tripHeadsign
+
+    ScheduleStopTime:
+      type: object
+      properties:
+        arrivalEnabled:
+          type: boolean
+        arrivalTime:
+          type: integer
+          format: int64
+        departureEnabled:
+          type: boolean
+        departureTime:
+          type: integer
+          format: int64
+        serviceId:
+          type: string
+        stopHeadsign:
+          type: string
+        tripId:
+          type: string
+      required:
+        - arrivalEnabled
+        - arrivalTime
+        - departureEnabled
+        - departureTime
+        - serviceId
+        - tripId
+
+    DetailedScheduleStopTime:
+      type: object
+      properties:
+        arrivalEnabled:
+          type: boolean
+        arrivalTime:
+          type: integer
+        departureEnabled:
+          type: boolean
+        departureTime:
+          type: integer
+        serviceId:
+          type: string
+        stopHeadsign:
+          type: string
+        stopId:
+          type: string
+        tripId:
+          type: string
+      required:
+        - arrivalEnabled
+        - arrivalTime
+        - departureEnabled
+        - departureTime
+        - stopId
+        - tripId
+
+    StopRouteSchedule:
+      type: object
+      properties:
+        routeId:
+          type: string
+        stopRouteDirectionSchedules:
+          type: array
+          items:
+            $ref: '#/components/schemas/StopRouteDirectionSchedule'
+      required:
+        - routeId
+        - stopRouteDirectionSchedules
+
+    ScheduleForStopEntry:
+      type: object
+      properties:
+        date:
+          type: integer
+          format: int64
+        stopId:
+          type: string
+        stopRouteSchedules:
+          type: array
+          items:
+            $ref: '#/components/schemas/StopRouteSchedule'
+      required:
+        - date
+        - stopId
+        - stopRouteSchedules
+
+    ScheduleForStopResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/ScheduleForStopEntry'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    SearchStopResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stop'
+        outOfRange:
+          type: boolean
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - limitExceeded
+        - list
+        - outOfRange
+        - references
+
+    BlockResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/BlockEntry'
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    BlockEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        configurations:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlockConfiguration'
+      required:
+        - id
+        - configurations
+
+    BlockConfiguration:
+      type: object
+      properties:
+        activeServiceIds:
+          type: array
+          items:
+            type: string
+        inactiveServiceIds:
+          type: array
+          items:
+            type: string
+        trips:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlockTrip'
+      required:
+        - activeServiceIds
+        - trips
+
+    BlockTrip:
+      type: object
+      properties:
+        tripId:
+          type: string
+        distanceAlongBlock:
+          type: number
+          format: float
+        accumulatedSlackTime:
+          type: number
+          format: float
+        blockStopTimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlockStopTime'
+      required:
+        - tripId
+        - blockStopTimes
+        - distanceAlongBlock
+        - accumulatedSlackTime
+
+    BlockStopTime:
+      type: object
+      properties:
+        blockSequence:
+          type: integer
+        distanceAlongBlock:
+          type: number
+          format: float
+        accumulatedSlackTime:
+          type: number
+          format: float
+        stopTime:
+          type: object
+          properties:
+            stopId:
+              type: string
+            arrivalTime:
+              type: integer
+            departureTime:
+              type: integer
+            pickupType:
+              type: integer
+            dropOffType:
+              type: integer
+          required:
+            - stopId
+            - arrivalTime
+            - departureTime
+      required:
+        - blockSequence
+        - stopTime
+        - distanceAlongBlock
+        - accumulatedSlackTime
+
+    ShapeResponse:
+      type: object
+      properties:
+        entry:
+          type: object
+          properties:
+            length:
+              type: integer
+            levels:
+              type: string
+            points:
+              type: string
+              description: Encoded polyline format representing the shape of the path
+          required:
+            - length
+            - points
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    SearchRouteResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        outOfRange:
+          type: boolean
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - limitExceeded
+        - list
+        - outOfRange
+        - references
+
+  responses:
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ResponseWrapper'
+          example:
+            code: 404
+            currentTime: 1723054063108
+            text: 'resource not found'
+            version: 2
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ResponseWrapper'
+          examples:
+            rateLimitExceeded:
+              value:
+                code: 429
+                currentTime: 1724179666673
+                text: 'rate limit exceeded'
+                version: 1

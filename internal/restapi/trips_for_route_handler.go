@@ -489,5 +489,5 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	references.Routes = routes
 	references.Stops = stopList
 	references.Trips = tripsRefList
-	return references
+	return *references
 }

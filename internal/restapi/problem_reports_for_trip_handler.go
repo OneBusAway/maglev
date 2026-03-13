@@ -31,6 +31,6 @@ func (api *RestAPI) problemReportsForTripHandler(w http.ResponseWriter, r *http.
 	}
 
 	references := models.NewEmptyReferences()
-	response := models.NewListResponse(reportList, references, false, api.Clock)
+	response := models.NewListResponse(reportList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

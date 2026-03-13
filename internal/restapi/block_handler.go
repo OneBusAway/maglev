@@ -216,12 +216,14 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	stops := make([]models.Stop, 0)
 	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
-			ID:        utils.FormCombinedID(agencyID, stop.ID),
-			Name:      stop.Name.String,
-			Code:      stop.Code.String,
-			Lat:       stop.Lat,
-			Lon:       stop.Lon,
-			Direction: api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
+			ID:             utils.FormCombinedID(agencyID, stop.ID),
+			Name:           stop.Name.String,
+			Code:           stop.Code.String,
+			Lat:            stop.Lat,
+			Lon:            stop.Lon,
+			Direction:      api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
+			RouteIDs:       []string{},
+			StaticRouteIDs: []string{},
 		})
 	}
 
@@ -254,7 +256,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	references.Routes = routes
 	references.Stops = stops
 	references.Trips = trips
-	return references, nil
+	return *references, nil
 }
 
 func calculateBlockSlackTimes(blockStopTimes []models.BlockStopTime) []models.BlockStopTime {

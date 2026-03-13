@@ -29,8 +29,7 @@ func (api *RestAPI) BuildTripStatus(
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	status.ServiceDate = sdMidnight.UnixMilli()
 	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
-	// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
-	// Java OBA uses nullable Integer types that serialize conditionally.
+	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 
@@ -44,7 +43,7 @@ func (api *RestAPI) BuildTripStatus(
 		// NOTE: GTFS-RT OccupancyPercentage (0-100%) has no direct equivalent in the
 		// OBA TripStatus schema. The Java OBA server populates occupancyCapacity from
 		// agency-provided vehicle capacity data, not from GTFS-RT percentages.
-		// We intentionally leave OccupancyCapacity as nil here.
+		// We intentionally leave OccupancyCapacity at its zero value (0) here, as GTFS-RT OccupancyPercentage has no direct mapping to OBA's capacity-based model.
 		// See: TripStatusBeanServiceImpl.java in onebusaway-transit-data-federation.
 	}
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status, currentTime)
@@ -57,7 +56,7 @@ func (api *RestAPI) BuildTripStatus(
 	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviation(activeTripRawID)
 
 	if hasRealtimeTripUpdate {
-		status.ScheduleDeviation = utils.IntPtr(scheduleDeviation)
+		status.ScheduleDeviation = scheduleDeviation
 	}
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
@@ -131,27 +130,28 @@ func (api *RestAPI) BuildTripStatus(
 	if shapeErr == nil && len(shapeRows) > 1 {
 		shapePoints := shapeRowsToPoints(shapeRows)
 		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-		status.TotalDistanceAlongTrip = utils.Float64Ptr(cumulativeDistances[len(cumulativeDistances)-1])
+		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
 
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
 			// it onto the route shape. Reuses the already-fetched shapePoints.
-			actualPosition := status.LastKnownLocation
-			if actualPosition != nil {
-				if projected := projectPositionWithShapePoints(shapePoints, *actualPosition); projected != nil {
+			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
+			status.DistanceAlongTrip = actualDistance
+
+			if status.LastKnownLocation != nil {
+				actualPosition := *status.LastKnownLocation
+
+				if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
 					status.Position = *projected
 				}
-			}
 
-			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
-			status.DistanceAlongTrip = utils.Float64Ptr(actualDistance)
-
-			// If the feed does not provide a bearing, infer orientation from the
-			// heading of the closest shape segment at the vehicle's position.
-			if vehicle.Position.Bearing == nil && actualPosition != nil {
-				if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
-					status.Orientation = utils.Float64Ptr(inferred)
-					status.LastKnownOrientation = utils.Float64Ptr(inferred)
+				// If the feed does not provide a bearing, infer orientation from the
+				// heading of the closest shape segment at the vehicle's position.
+				if vehicle.Position.Bearing == nil {
+					if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+						status.Orientation = utils.Float64Ptr(inferred)
+						status.LastKnownOrientation = utils.Float64Ptr(inferred)
+					}
 				}
 			}
 
@@ -302,10 +302,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 
 	// Dereference schedule deviation safely, default to 0 if not set
-	schedDev := int64(0)
-	if status.ScheduleDeviation != nil {
-		schedDev = int64(*status.ScheduleDeviation)
-	}
+	schedDev := int64(status.ScheduleDeviation)
 
 	for i, st := range stopTimes {
 		arrivalTime := utils.EffectiveStopTimeSeconds(st.ArrivalTime, st.DepartureTime)

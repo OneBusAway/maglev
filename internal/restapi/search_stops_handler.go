@@ -68,7 +68,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			LimitExceeded: false,
 			List:          []models.Stop{},
 			OutOfRange:    false,
-			References:    models.NewEmptyReferences(),
+			References:    *models.NewEmptyReferences(),
 		}
 
 		response := models.ResponseModel{
@@ -310,7 +310,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		LimitExceeded: len(stops) >= limit,
 		List:          stopModels,
 		OutOfRange:    false,
-		References:    references,
+		References:    *references,
 	}
 
 	response := models.ResponseModel{
