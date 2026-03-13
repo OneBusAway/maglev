@@ -11,13 +11,11 @@ Security updates are applied to the latest supported release of the project.
 
 ## Reporting a Vulnerability
 
-If you believe you have discovered a security vulnerability in this project, please report it privately.
-
 **Do not open public GitHub issues, discussions, or pull requests for security vulnerabilities.**
 
-Instead, please report vulnerabilities by emailing:
+**Preferred:** Use GitHub's built-in private vulnerability reporting by navigating to the **Security** tab of this repository and clicking **"Report a vulnerability"**.
 
-info@onebusaway.org
+**Alternative:** If you prefer email, send your report to info@onebusaway.org.
 
 Please include as much information as possible to help us understand and reproduce the issue:
 
@@ -31,7 +29,7 @@ Please include as much information as possible to help us understand and reprodu
 
 ## Response Process
 
-We aim to acknowledge vulnerability reports as soon as possible.
+We aim to acknowledge vulnerability reports within **7 business days**.
 
 If the report is accepted, maintainers will work on a fix and coordinate disclosure with the reporter.
 
