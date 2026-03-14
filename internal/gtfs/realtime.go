@@ -481,12 +481,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	manager.buildMergedRealtime()
 
-	// Update timestamp within the same lock
+	// Update timestamp safely
 	if hasNewData {
-		if manager.feedLastUpdate == nil {
-			manager.feedLastUpdate = make(map[string]time.Time)
-		}
-		manager.feedLastUpdate[feedID] = time.Now()
+		manager.SetFeedUpdateTime(feedID, time.Now())
 	}
 
 	return hasNewData
