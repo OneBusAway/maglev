@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1213,4 +1214,32 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "should find arrival for test trip %s", tripID)
+}
+
+func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	stops := api.GtfsManager.GetStops()
+	require.NotEmpty(t, stops)
+	combinedStopID := utils.FormCombinedID(agencyID, stops[0].Id)
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+	rawRouteID := trips[0].Route.Id
+
+	api.GtfsManager.MockAddVehicleWithOptions("", trips[0].ID, rawRouteID, internalgtfs.MockVehicleOptions{
+		NoID: true,
+	})
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST&minutesBefore=60&minutesAfter=60")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
 }

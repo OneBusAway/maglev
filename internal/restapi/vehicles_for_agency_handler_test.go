@@ -381,6 +381,30 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 	}
 }
 
+func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+	rawRouteID := trips[0].Route.Id
+
+	api.GtfsManager.MockAddVehicleWithOptions("", trips[0].ID, rawRouteID, gtfs.MockVehicleOptions{
+		NoID: true,
+	})
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+}
+
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
 func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 	ctx := context.Background()
