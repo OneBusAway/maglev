@@ -54,12 +54,8 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
-      - name: Fetch latest upstream OpenAPI spec
-        run: |
-          curl -sSfL "https://raw.githubusercontent.com/OneBusAway/sdk-config/main/openapi.yml" \
-            -o /tmp/openapi.latest.yml
-          printf '# Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml\n# Fetched: %s\n# Auto-synced by .github/workflows/go.yml on every CI run\n' "$(date +%Y-%m-%d)" > testdata/openapi.yml
-          cat /tmp/openapi.latest.yml >> testdata/openapi.yml
+      - name: Check OpenAPI spec is up to date with upstream
+        run: make check-openapi
         shell: bash
 
       - name: Run tests (fast mode)
