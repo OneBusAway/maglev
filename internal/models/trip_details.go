@@ -1,7 +1,7 @@
 package models
 
 type TripDetails struct {
-	Frequency    *Frequency  `json:"frequency"`
+	Frequency    *Frequency  `json:"frequency,omitempty"`
 	Schedule     *Schedule   `json:"schedule"`
 	ServiceDate  int64       `json:"serviceDate"`
 	SituationIDs []string    `json:"situationIds"`
@@ -38,7 +38,7 @@ type TripStatus struct {
 	ClosestStop                string     `json:"closestStop"`
 	ClosestStopTimeOffset      int        `json:"closestStopTimeOffset"`
 	DistanceAlongTrip          float64    `json:"distanceAlongTrip"`
-	Frequency                  *Frequency `json:"frequency"`
+	Frequency                  *Frequency `json:"frequency,omitempty"`
 	LastKnownDistanceAlongTrip float64    `json:"lastKnownDistanceAlongTrip"`
 	LastKnownLocation          *Location  `json:"lastKnownLocation,omitempty"`
 	LastKnownOrientation       float64    `json:"lastKnownOrientation"`
