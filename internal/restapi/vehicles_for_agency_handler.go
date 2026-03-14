@@ -69,8 +69,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
+		var vid string
+		if vehicle.ID != nil {
+			vid = vehicle.ID.ID
+		}
 		vehicleStatus := models.VehicleStatus{
-			VehicleID: vehicle.ID.ID,
+			VehicleID: vid,
 		}
 
 		// Set timestamps

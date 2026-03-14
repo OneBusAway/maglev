@@ -316,7 +316,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		// Get vehicle if available
 		vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
-		if vehicle != nil && vehicle.Trip != nil {
+		if vehicle != nil && vehicle.Trip != nil && vehicle.ID != nil {
 			vehicleID = vehicle.ID.ID
 		}
 

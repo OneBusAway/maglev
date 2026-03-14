@@ -312,7 +312,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	if vehicle != nil && vehicle.Trip != nil {
-		vehicleID = vehicle.ID.ID
+		if vehicle.ID != nil {
+			vehicleID = vehicle.ID.ID
+		}
 		predicted = true
 	}
 
