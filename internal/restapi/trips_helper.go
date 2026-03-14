@@ -177,15 +177,13 @@ func (api *RestAPI) BuildTripStatus(
 					status.Position = *projected
 				}
 
-			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, dbTripID, vehicle)
-			status.DistanceAlongTrip = actualDistance
-
-			// If the feed does not provide a bearing, infer orientation from the
-			// heading of the closest shape segment at the vehicle's position.
-			if vehicle.Position.Bearing == nil && actualPosition != nil {
-				if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
-					status.Orientation = inferred
-					status.LastKnownOrientation = inferred
+				// If the feed does not provide a bearing, infer orientation from the
+				// heading of the closest shape segment at the vehicle's position.
+				if vehicle.Position.Bearing == nil {
+					if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+						status.Orientation = inferred
+						status.LastKnownOrientation = inferred
+					}
 				}
 			}
 
