@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"golang.org/x/sync/singleflight"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -29,7 +30,13 @@ type AdvancedDirectionCalculator struct {
 	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
 	cacheMutex                 sync.RWMutex                                      // Protects map access
-	directionResults           sync.Map                                          // Cached direction results (stopID -> string), includes negative cache
+
+	// directionResults caches computed stop directions.
+	// Lifecycle note: This map grows indefinitely for the lifetime of the application.
+	// Unbounded growth is acceptable here because it is strictly bounded by the finite
+	// number of valid real-world stops, and computed directions remain stable across GTFS reloads.
+	directionResults sync.Map           // Cached direction results (stopID -> string), includes negative cache
+	requestGroup     singleflight.Group // Prevents duplicate concurrent computations for the same stop
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
@@ -54,8 +61,9 @@ func (adc *AdvancedDirectionCalculator) SetStandardDeviationThreshold(threshold 
 	return nil
 }
 
-// SetShapeCache sets a pre-loaded cache of shape data to avoid database queries during bulk operations.
-// This significantly improves performance when calculating directions for many stops.
+// SetShapeCache is retained exclusively for use by the DirectionPrecomputer during startup.
+// It sets a pre-loaded cache of shape data to avoid thousands of database queries during
+// the precomputation phase, significantly improving startup performance.
 // IMPORTANT: This must be called before any concurrent operations begin.
 // Returns an error if called after CalculateStopDirection has been invoked.
 func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) error {
@@ -66,20 +74,6 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 		return errors.New("SetShapeCache called after concurrent operations have started")
 	}
 	adc.shapeCache = cache
-	return nil
-}
-
-// SetContextCache injects the bulk-loaded context data.
-// IMPORTANT: This must be called before any concurrent calculation operations begin.
-// Returns an error if called after CalculateStopDirection has been invoked.
-func (adc *AdvancedDirectionCalculator) SetContextCache(cache map[string][]gtfsdb.GetStopsWithShapeContextRow) error {
-	adc.cacheMutex.Lock()
-	defer adc.cacheMutex.Unlock()
-
-	if adc.initialized.Load() {
-		return errors.New("SetContextCache called after concurrent operations have started")
-	}
-	adc.contextCache = cache
 	return nil
 }
 
@@ -99,12 +93,24 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 	// Mark as initialized for concurrency safety
 	adc.initialized.Store(true)
 
-	result := adc.computeFromShapes(ctx, stopID)
+	// Fall back to computing from shapes, protected by singleflight
+	// This ensures concurrent requests for the SAME stopID don't hit the DB multiple times.
+	v, _, _ := adc.requestGroup.Do(stopID, func() (interface{}, error) {
+		// Double-check cache inside the singleflight in case another goroutine just finished it
+		if cached, ok := adc.directionResults.Load(stopID); ok {
+			return cached.(string), nil
+		}
 
-	// Cache the result (even empty strings) to avoid recomputation
-	adc.directionResults.Store(stopID, result)
+		// Actually compute it (Hits the DB)
+		computedDir := adc.computeFromShapes(ctx, stopID)
 
-	return result
+		// Store in sync.Map for all future requests
+		adc.directionResults.Store(stopID, computedDir)
+
+		return computedDir, nil
+	})
+
+	return v.(string)
 }
 
 // translateGtfsDirection converts GTFS direction field to compass direction
