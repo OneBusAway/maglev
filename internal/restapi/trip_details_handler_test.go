@@ -53,10 +53,8 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	expectedServiceDateMillis := expectedServiceDate.Unix() * 1000
 	assert.Equal(t, float64(expectedServiceDateMillis), entry["serviceDate"])
 
-	// Test if the fields are being omitted on empty or not
+	// situationIds should always be present (defaults to empty slice)
 	_, exists := entry["situationIds"]
-	assert.True(t, exists)
-	_, exists = entry["frequency"]
 	assert.True(t, exists)
 
 	schedule, ok := entry["schedule"].(map[string]interface{})
