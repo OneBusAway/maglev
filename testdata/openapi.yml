@@ -1,6 +1,5 @@
 # Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
 # Fetched: 2026-03-13
-# Auto-synced by .github/workflows/go.yml on every CI run
 openapi: 3.0.0
 info:
   title: OneBusAway
