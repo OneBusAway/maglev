@@ -59,6 +59,26 @@ func TestStartDBStatsCollector_ProviderCanReturnNilDB(t *testing.T) {
 	}, time.Second, 20*time.Millisecond)
 }
 
+func TestStartDBStatsCollector_NonPositiveInterval(t *testing.T) {
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	m := New()
+
+	m.StartDBStatsCollector(func() *sql.DB { return db }, 0)
+	assert.False(t, m.collectorStarted.Load(), "collector should not start with zero interval")
+
+	m.StartDBStatsCollector(func() *sql.DB { return db }, -time.Second)
+	assert.False(t, m.collectorStarted.Load(), "collector should not start with negative interval")
+
+	// A later valid start must still work.
+	m.StartDBStatsCollector(func() *sql.DB { return db }, 20*time.Millisecond)
+	assert.True(t, m.collectorStarted.Load(), "collector should start with a positive interval")
+
+	m.Shutdown()
+}
+
 func TestStartDBStatsCollector_Idempotent(t *testing.T) {
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)

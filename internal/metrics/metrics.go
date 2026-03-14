@@ -168,6 +168,12 @@ func (m *Metrics) StartDBStatsCollector(dbProvider func() *sql.DB, interval time
 	if dbProvider == nil {
 		return
 	}
+	if interval <= 0 {
+		if m.logger != nil {
+			m.logger.Error("invalid DB stats collector interval", "interval", interval)
+		}
+		return
+	}
 
 	// Prevent spawning multiple collectors
 	if !m.collectorStarted.CompareAndSwap(false, true) {
