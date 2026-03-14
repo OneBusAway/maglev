@@ -144,10 +144,16 @@ func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
 	type logRecord struct {
 		msg   string
 		level slog.Level
+		attrs map[string]any
 	}
 	var captured []logRecord
 	handler := &captureHandler{fn: func(r slog.Record) {
-		captured = append(captured, logRecord{msg: r.Message, level: r.Level})
+		attrs := make(map[string]any)
+		r.Attrs(func(a slog.Attr) bool {
+			attrs[a.Key] = a.Value.Any()
+			return true
+		})
+		captured = append(captured, logRecord{msg: r.Message, level: r.Level, attrs: attrs})
 	}}
 	logger := slog.New(handler)
 
@@ -156,7 +162,9 @@ func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
 	// Threshold of 0 → logging disabled; no records should be emitted.
 	wrapper := newSlowQueryDB(db, 0)
 	wrapper.logger = logger
-	_, _ = wrapper.QueryContext(ctx, "SELECT 1")
+	rows, err := wrapper.QueryContext(ctx, "SELECT 1")
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
 	assert.Empty(t, captured, "threshold=0 must not emit any log records")
 
 	// Use a fake clock advancing 10 ms per call to ensure the query exceeds
@@ -168,10 +176,132 @@ func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
 		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
 	}
 	wrapper.threshold = 1 * time.Nanosecond
-	_, _ = wrapper.QueryContext(ctx, "SELECT 1")
-	assert.NotEmpty(t, captured, "threshold=1ns must emit a slow_query record")
+	rows, err = wrapper.QueryContext(ctx, "SELECT 1")
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
+	require.NotEmpty(t, captured, "threshold=1ns must emit a slow_query record")
 	assert.Equal(t, "slow_query", captured[0].msg)
 	assert.Equal(t, slog.LevelWarn, captured[0].level)
+	assert.Equal(t, "QueryContext", captured[0].attrs["op"])
+}
+
+func TestSlowQueryDB_LogsSlowExecContext(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+	require.NoError(t, err)
+
+	type logRecord struct {
+		msg   string
+		level slog.Level
+		attrs map[string]any
+	}
+	var captured []logRecord
+	handler := &captureHandler{fn: func(r slog.Record) {
+		attrs := make(map[string]any)
+		r.Attrs(func(a slog.Attr) bool {
+			attrs[a.Key] = a.Value.Any()
+			return true
+		})
+		captured = append(captured, logRecord{msg: r.Message, level: r.Level, attrs: attrs})
+	}}
+	logger := slog.New(handler)
+
+	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
+	wrapper.logger = logger
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+
+	_, err = wrapper.ExecContext(context.Background(), "INSERT INTO t(v) VALUES (1)")
+	require.NoError(t, err)
+	require.Len(t, captured, 1)
+	assert.Equal(t, "slow_query", captured[0].msg)
+	assert.Equal(t, "ExecContext", captured[0].attrs["op"])
+}
+
+func TestSlowQueryDB_LogsSlowQueryRowContext(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	type logRecord struct {
+		msg   string
+		level slog.Level
+		attrs map[string]any
+	}
+	var captured []logRecord
+	handler := &captureHandler{fn: func(r slog.Record) {
+		attrs := make(map[string]any)
+		r.Attrs(func(a slog.Attr) bool {
+			attrs[a.Key] = a.Value.Any()
+			return true
+		})
+		captured = append(captured, logRecord{msg: r.Message, level: r.Level, attrs: attrs})
+	}}
+	logger := slog.New(handler)
+
+	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
+	wrapper.logger = logger
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+
+	var v int
+	err = wrapper.QueryRowContext(context.Background(), "SELECT 1").Scan(&v)
+	require.NoError(t, err)
+	assert.Equal(t, 1, v)
+	require.Len(t, captured, 1)
+	assert.Equal(t, "slow_query", captured[0].msg)
+	assert.Equal(t, "QueryRowContext", captured[0].attrs["op"])
+}
+
+func TestSlowQueryDB_LogsSlowErrorsWithErrorAttribute(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	type logRecord struct {
+		msg   string
+		level slog.Level
+		attrs map[string]any
+	}
+	var captured []logRecord
+	handler := &captureHandler{fn: func(r slog.Record) {
+		attrs := make(map[string]any)
+		r.Attrs(func(a slog.Attr) bool {
+			attrs[a.Key] = a.Value.Any()
+			return true
+		})
+		captured = append(captured, logRecord{msg: r.Message, level: r.Level, attrs: attrs})
+	}}
+	logger := slog.New(handler)
+
+	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
+	wrapper.logger = logger
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+
+	_, err = wrapper.QueryContext(context.Background(), "SELECT * FROM missing_table")
+	require.Error(t, err)
+	require.Len(t, captured, 1)
+	assert.Equal(t, "slow_query", captured[0].msg)
+	assert.Equal(t, "QueryContext", captured[0].attrs["op"])
+	errAttr, ok := captured[0].attrs["error"].(string)
+	require.True(t, ok)
+	assert.Contains(t, errAttr, "no such table")
 }
 
 func TestParseSlowQueryThreshold(t *testing.T) {
