@@ -11,7 +11,6 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
