@@ -158,11 +158,9 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		stopIDSet := make(map[string]struct{})
 		headsignSet := make(map[string]struct{})
 		tripIDs := make([]string, 0, len(groupedTrips))
-		rawTripIDs := make([]string, 0, len(groupedTrips))
 		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
 
 		for _, trip := range groupedTrips {
-			rawTripIDs = append(rawTripIDs, trip.ID)
 			combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
 			tripIDs = append(tripIDs, combinedTripID)
 			if trip.TripHeadsign.String != "" {
