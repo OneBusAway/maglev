@@ -40,6 +40,7 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		entry, ok := data["entry"].(map[string]interface{})
 		require.True(t, ok)
 
+		// ScheduleForRouteEntry has only: routeId, scheduleDate, serviceIds, stopTripGroupings (no top-level stops/trips)
 		assert.Equal(t, routeID, entry["routeId"])
 		scheduleDate, ok := entry["scheduleDate"].(float64)
 		require.True(t, ok, "scheduleDate should be a numeric Unix millisecond timestamp")
@@ -77,14 +78,6 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		tripsWithStopTimes, hasT := firstGrouping["tripsWithStopTimes"].([]interface{})
 		assert.True(t, hasT)
 		require.NotEmpty(t, tripsWithStopTimes)
-
-		entryStops, hasEntryStops := entry["stops"].([]interface{})
-		assert.True(t, hasEntryStops, "entry.stops should be present")
-		require.NotEmpty(t, entryStops)
-
-		entryTrips, hasEntryTrips := entry["trips"].([]interface{})
-		assert.True(t, hasEntryTrips, "entry.trips should be present")
-		require.NotEmpty(t, entryTrips)
 
 		firstTripWithStops := tripsWithStopTimes[0].(map[string]interface{})
 		tid, ok := firstTripWithStops["tripId"].(string)
