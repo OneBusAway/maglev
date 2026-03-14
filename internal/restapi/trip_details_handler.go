@@ -102,6 +102,8 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 	return params, nil
 }
 
+// tripDetailsHandler returns extended information for a trip, including its schedule,
+// real-time status, and optionally the full stop time sequence.
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -185,11 +187,31 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		situationsIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
 	}
 
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil {
+		slog.Warn("GetFrequenciesForTrip failed",
+			slog.String("trip_id", tripID),
+			slog.String("error", err.Error()))
+		freqRows = nil
+	}
+
+	var frequency *models.Frequency
+	if len(freqRows) > 0 {
+		// TripDetails has only one frequency field, but GetFrequenciesForTrip query can return multiple rows
+		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
+		// we take the first row which gives us the frequency with the earliest start_time
+		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		converted.ServiceDate = serviceDateMillis
+		converted.ServiceID = utils.FormCombinedID(agencyID, trip.ServiceID)
+		converted.TripID = utils.FormCombinedID(agencyID, trip.ID)
+		frequency = &converted
+	}
+
 	tripDetails := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
-		Frequency:    nil,
+		Frequency:    frequency,
 		SituationIDs: situationsIDs,
 	}
 

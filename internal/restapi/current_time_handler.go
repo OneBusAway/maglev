@@ -6,8 +6,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
-// Declare a handler which writes a JSON response with information about the
-// current time.
+// currentTimeHandler returns the server's current time as a JSON response.
 func (api *RestAPI) currentTimeHandler(w http.ResponseWriter, r *http.Request) {
 	// Health Check: fail if GTFS data is invalid
 	if !api.GtfsManager.IsHealthy() {

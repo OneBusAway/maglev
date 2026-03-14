@@ -37,6 +37,8 @@ func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParam
 	return params
 }
 
+// stopsForRouteHandler returns all stops served by a route, grouped by direction
+// with optional encoded polyline shapes.
 func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

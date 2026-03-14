@@ -78,6 +78,14 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		assert.True(t, hasT)
 		require.NotEmpty(t, tripsWithStopTimes)
 
+		entryStops, hasEntryStops := entry["stops"].([]interface{})
+		assert.True(t, hasEntryStops, "entry.stops should be present")
+		require.NotEmpty(t, entryStops)
+
+		entryTrips, hasEntryTrips := entry["trips"].([]interface{})
+		assert.True(t, hasEntryTrips, "entry.trips should be present")
+		require.NotEmpty(t, entryTrips)
+
 		firstTripWithStops := tripsWithStopTimes[0].(map[string]interface{})
 		tid, ok := firstTripWithStops["tripId"].(string)
 		require.True(t, ok)

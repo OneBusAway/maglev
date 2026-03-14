@@ -35,7 +35,9 @@ LDFLAGS := -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=$(G
 
 .PHONY: build build-debug clean coverage-report check-jq coverage test run lint watch fmt \
         gtfstidy models check-golangci-lint \
-        docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all
+        test-latency bench-sqlite-all bench-sqlite-perftest \
+        docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all \
+        update-openapi check-openapi
 
 run: build
 	bin/maglev -f config.json
@@ -80,11 +82,29 @@ fmt:
 test:
 	$(SET_ENV) go test -tags "sqlite_fts5" ./...
 
+test-latency:
+	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -run "TestQueryLatency|TestExplainQueryPlans|TestConnectionPoolTuning" -v -count=1 -timeout 300s
+
+bench-sqlite-all:
+	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -bench=. -benchmem -benchtime=5s -run=^$
+
+bench-sqlite-perftest:
+	$(SET_ENV) go test -tags "sqlite_fts5 perftest" ./gtfsdb/ -bench=BenchmarkLargeDataset -benchmem -benchtime=10s -run=^$
+
 test-pure:
 	CGO_ENABLED=0 go test -tags "purego" ./...
 
 models:
 	go tool sqlc generate -f gtfsdb/sqlc.yml
+
+# Fetch the latest upstream OpenAPI spec and overwrite testdata/openapi.yml.
+update-openapi:
+	bash scripts/update-openapi.sh
+
+# Check whether testdata/openapi.yml matches the live upstream (skipping header).
+# Exits 1 if out of date (useful for CI checks).
+check-openapi:
+	bash scripts/check-openapi.sh
 
 watch:
 	air

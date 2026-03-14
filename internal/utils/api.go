@@ -198,7 +198,7 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
 		// Assume YYYY-MM-DD format
-		parsedTime, err = time.Parse("2006-01-02", timeParam)
+		parsedTime, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
 		if err == nil {
 			validFormat = true
 		}

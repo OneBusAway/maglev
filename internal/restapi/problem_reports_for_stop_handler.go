@@ -6,6 +6,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// problemReportsForStopHandler returns all user-submitted problem reports for a given stop.
 func (api *RestAPI) problemReportsForStopHandler(w http.ResponseWriter, r *http.Request) {
 	_, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

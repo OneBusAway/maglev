@@ -11,6 +11,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// scheduleForRouteHandler returns the full schedule for a route on a given date,
+// organized by stop-trip groupings with associated service IDs.
 func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -83,6 +85,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			ServiceIDs:        []string{},
 			Stops:             []string{},
 			StopTripGroupings: []models.StopTripGrouping{},
+			Stops:             []models.Stop{},
+			Trips:             []models.Trip{},
 		}
 		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
@@ -111,6 +115,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			ServiceIDs:        combinedServiceIDs,
 			Stops:             []string{},
 			StopTripGroupings: []models.StopTripGrouping{},
+			Stops:             []models.Stop{},
+			Trips:             []models.Trip{},
 		}
 		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
@@ -311,6 +317,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ServiceIDs:        combinedServiceIDs,
 		Stops:             combinedStopIDs,
 		StopTripGroupings: stopTripGroupings,
+		Stops:             references.Stops,
+		Trips:             references.Trips,
 	}
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }

@@ -6,6 +6,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// agencyHandler returns details for a single transit agency identified by its path ID.
 func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {

@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// routeHandler returns details for a single transit route identified by its combined agency_routeID.
 func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

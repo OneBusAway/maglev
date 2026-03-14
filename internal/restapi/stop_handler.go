@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// stopHandler returns details for a single stop, including its location and the routes that serve it.
 func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

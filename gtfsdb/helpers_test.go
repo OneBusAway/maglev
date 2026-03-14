@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 )
 
@@ -126,3 +129,96 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, originalRouteCount, countsAfter["routes"], "Database should remain intact after validation failure")
 }
+
+// TestSlowQueryDB_LogsSlowQueries verifies that slowQueryDB emits a log record
+// when a query exceeds the threshold, and is silent when it does not.
+func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+	require.NoError(t, err)
+
+	// Capture slog output via a custom handler.
+	type logRecord struct {
+		msg   string
+		level slog.Level
+	}
+	var captured []logRecord
+	handler := &captureHandler{fn: func(r slog.Record) {
+		captured = append(captured, logRecord{msg: r.Message, level: r.Level})
+	}}
+	logger := slog.New(handler)
+
+	ctx := context.Background()
+
+	// Threshold of 0 → logging disabled; no records should be emitted.
+	wrapper := newSlowQueryDB(db, 0)
+	wrapper.logger = logger
+	_, _ = wrapper.QueryContext(ctx, "SELECT 1")
+	assert.Empty(t, captured, "threshold=0 must not emit any log records")
+
+	// Use a fake clock advancing 10 ms per call to ensure the query exceeds
+	// the threshold and avoid Windows timer resolution issues.
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+	wrapper.threshold = 1 * time.Nanosecond
+	_, _ = wrapper.QueryContext(ctx, "SELECT 1")
+	assert.NotEmpty(t, captured, "threshold=1ns must emit a slow_query record")
+	assert.Equal(t, "slow_query", captured[0].msg)
+	assert.Equal(t, slog.LevelWarn, captured[0].level)
+}
+
+func TestParseSlowQueryThreshold(t *testing.T) {
+	t.Run("empty value disables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("", func(string, ...any) { warned = true })
+		assert.Equal(t, time.Duration(0), got)
+		assert.False(t, warned)
+	})
+
+	t.Run("valid positive integer enables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("25", func(string, ...any) { warned = true })
+		assert.Equal(t, 25*time.Millisecond, got)
+		assert.False(t, warned)
+	})
+
+	t.Run("invalid value logs warning and disables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("50ms", func(string, ...any) { warned = true })
+		assert.Equal(t, time.Duration(0), got)
+		assert.True(t, warned)
+	})
+
+	t.Run("non-positive value logs warning and disables logging", func(t *testing.T) {
+		warned := false
+		got := parseSlowQueryThreshold("-5", func(string, ...any) { warned = true })
+		assert.Equal(t, time.Duration(0), got)
+		assert.True(t, warned)
+	})
+}
+
+// TestTrimQuery verifies whitespace collapse and truncation.
+func TestTrimQuery(t *testing.T) {
+	long := "SELECT " + string(make([]byte, 200))
+	result := trimQuery(long)
+	assert.LessOrEqual(t, len(result), 124, "trimQuery must truncate to ≤120 chars + ellipsis")
+	assert.True(t, len(trimQuery("  SELECT\n  1  ")) < len("  SELECT\n  1  "),
+		"trimQuery must collapse whitespace")
+}
+
+// captureHandler is a minimal slog.Handler that calls fn for every record.
+type captureHandler struct {
+	fn func(slog.Record)
+}
+
+func (h *captureHandler) Enabled(_ context.Context, _ slog.Level) bool  { return true }
+func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler          { return h }
+func (h *captureHandler) WithGroup(_ string) slog.Handler               { return h }
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error { h.fn(r); return nil }

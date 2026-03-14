@@ -589,6 +589,21 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 	})
 }
 
+func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12", loc)
+
+	require.True(t, valid)
+	require.Nil(t, fieldErrors)
+	assert.Equal(t, "20260312", dateStr)
+
+	expected := time.Date(2026, 3, 12, 0, 0, 0, 0, loc)
+	assert.True(t, parsedTime.Equal(expected), "parsed time should represent midnight in the provided location")
+	assert.Equal(t, loc.String(), parsedTime.Location().String())
+}
+
 func TestParseMaxCount(t *testing.T) {
 	tests := []struct {
 		name             string
