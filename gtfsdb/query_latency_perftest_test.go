@@ -51,6 +51,9 @@ func loadPerfFixture(b *testing.B) *Client {
 	if importErr := client.processAndStoreGTFSDataWithSource(zipData, zipPath); importErr != nil {
 		// A duplicate import fails the hash-match check; the error is non-fatal.
 		b.Logf("GTFS import: %v", importErr)
+		if latencyIsEmpty(context.Background(), b, client.DB) {
+			b.Fatalf("GTFS import failed and database is empty: %v", importErr)
+		}
 	}
 
 	return client
