@@ -36,7 +36,8 @@ LDFLAGS := -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=$(G
 .PHONY: build build-debug clean coverage-report check-jq coverage test run lint watch fmt \
         gtfstidy models check-golangci-lint \
         test-latency bench-sqlite-all bench-sqlite-perftest \
-        docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all
+        docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all \
+        update-openapi check-openapi
 
 run: build
 	bin/maglev -f config.json
@@ -95,6 +96,29 @@ test-pure:
 
 models:
 	go tool sqlc generate -f gtfsdb/sqlc.yml
+
+# Fetch the latest upstream OpenAPI spec and overwrite testdata/openapi.yml.
+update-openapi:
+	@echo "Fetching upstream OpenAPI spec from sdk-config..."
+	curl -sSfL "https://raw.githubusercontent.com/OneBusAway/sdk-config/main/openapi.yml" \
+		-o /tmp/openapi.latest.yml
+	@printf '# Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml\n# Fetched: %s\n' "$$(date +%Y-%m-%d)" > testdata/openapi.yml
+	cat /tmp/openapi.latest.yml >> testdata/openapi.yml
+	@echo "Updated testdata/openapi.yml"
+
+# Check whether testdata/openapi.yml matches the live upstream (skipping header).
+# Exits 1 if out of date (useful for CI checks).
+check-openapi:
+	@echo "Checking upstream OpenAPI spec for changes..."
+	@curl -sSfL "https://raw.githubusercontent.com/OneBusAway/sdk-config/main/openapi.yml" \
+		-o /tmp/openapi.check.yml
+	@if tail -n +3 testdata/openapi.yml | cmp -s /tmp/openapi.check.yml -; then \
+		echo "openapi.yml is up to date with upstream"; \
+	else \
+		echo "WARNING: upstream openapi.yml has changed. Run 'make update-openapi' to update."; \
+		echo "If you find issues in the upstream spec, please open an issue at: https://github.com/OneBusAway/sdk-config/issues"; \
+		exit 1; \
+	fi
 
 watch:
 	air

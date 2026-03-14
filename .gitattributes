@@ -1,0 +1,2 @@
+# Force LF line endings for files that must be byte-compared against upstream downloads
+testdata/openapi.yml text eol=lf

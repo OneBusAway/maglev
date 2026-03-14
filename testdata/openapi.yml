@@ -1,6 +1,5 @@
 # Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
-# Fetched: 2026-03-08
-# Local modifications: Added 'nullable: true' to optional fields (location, tripStatus) and resolved wrapper inconsistencies to pass Go strict validation.
+# Fetched: 2026-03-13
 openapi: 3.0.0
 info:
   title: OneBusAway
@@ -543,7 +542,6 @@ paths:
                             $ref: '#/components/schemas/Reference'
                         required:
                           - list
-                          - limitExceeded
                           - references
                     required:
                       - data
@@ -751,7 +749,12 @@ paths:
               schema:
                 allOf:
                   - $ref: '#/components/schemas/ResponseWrapper'
-                  - $ref: '#/components/schemas/StopsForRouteResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/StopsForRouteResponse'
+                    required:
+                      - data
 
   /api/where/stops-for-agency/{agencyID}.json:
     parameters:
@@ -1191,9 +1194,6 @@ components:
         - vehicleId
         - lastUpdateTime
         - lastLocationUpdateTime
-        - location
-        - tripId
-        - tripStatus
 
     VehiclesForAgencyResponse:
       type: object
@@ -1208,7 +1208,6 @@ components:
           $ref: '#/components/schemas/Reference'
       required:
         - list
-        - limitExceeded
         - references
 
     Coverage:
@@ -1234,15 +1233,12 @@ components:
     AgencyResponse:
       type: object
       properties:
-        limitExceeded:
-          type: boolean
         entry:
           $ref: '#/components/schemas/Agency'
         references:
           $ref: '#/components/schemas/Reference'
       required:
         - entry
-        - limitExceeded
         - references
     CoverageResponse:
       type: object
@@ -1257,7 +1253,6 @@ components:
           $ref: '#/components/schemas/Reference'
       required:
         - list
-        - limitExceeded
         - references
 
     CurrentTime:
@@ -1373,12 +1368,6 @@ components:
         reason:
           type: string
           description: Reason for the service alert, taken from TPEG codes.
-          enum:
-            - equipmentReason
-            - environmentReason
-            - personnelReason
-            - miscellaneousReason
-            - securityAlert
         summary:
           type: object
           properties:
@@ -1650,7 +1639,6 @@ components:
       required:
         - list
         - references
-        - limitExceeded
 
     StopsForAgencyResponse:
       type: object
@@ -1668,7 +1656,6 @@ components:
       required:
         - list
         - references
-        - limitExceeded
 
     ArrivalDepartureForStop:
       type: object
@@ -1883,7 +1870,6 @@ components:
       required:
         - list
         - references
-        - limitExceeded
         - outOfRange
 
     ScheduleForRouteResponse:
@@ -1936,7 +1922,6 @@ components:
           $ref: '#/components/schemas/Reference'
       required:
         - list
-        - limitExceeded
         - references
 
     RoutesForAgencyResponse:
@@ -1953,7 +1938,6 @@ components:
       required:
         - list
         - references
-        - limitExceeded
 
     Polylines:
       type: object
@@ -1993,35 +1977,30 @@ components:
     StopsForRouteResponse:
       type: object
       properties:
-        data:
+        entry:
           type: object
           properties:
-            entry:
-              type: object
-              properties:
-                polylines:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/Polylines'
-                routeId:
-                  type: string
-                  example: '1_100224'
-                stopGroupings:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/StopGrouping'
-                stopIds:
-                  type: array
-                  items:
-                    type: string
-                    example: '1_10911'
-            references:
-              $ref: '#/components/schemas/Reference'
-          required:
-            - entry
-            - references
+            polylines:
+              type: array
+              items:
+                $ref: '#/components/schemas/Polylines'
+            routeId:
+              type: string
+              example: '1_100224'
+            stopGroupings:
+              type: array
+              items:
+                $ref: '#/components/schemas/StopGrouping'
+            stopIds:
+              type: array
+              items:
+                type: string
+                example: '1_10911'
+        references:
+          $ref: '#/components/schemas/Reference'
       required:
-        - data
+        - entry
+        - references
     # Trip Components
     TripEntry:
       type: object
@@ -2078,7 +2057,7 @@ components:
             lon:
               type: number
               description: Longitude of the last known location of the transit vehicle.
-          description: Last known location of the transit vehicle.
+          description: Last known location of the transit vehicle (optional).
         lastKnownOrientation:
           type: number
           description: Last known orientation value received in real-time from the transit vehicle.
@@ -2263,7 +2242,6 @@ components:
           $ref: '#/components/schemas/Reference'
 
       required:
-        - limitExceeded
         - list
         - references
 
@@ -2314,7 +2292,6 @@ components:
         references:
           $ref: '#/components/schemas/Reference'
       required:
-        - limitExceeded
         - list
         - references
 
@@ -2471,7 +2448,6 @@ components:
         references:
           $ref: '#/components/schemas/Reference'
       required:
-        - limitExceeded
         - list
         - outOfRange
         - references
@@ -2610,7 +2586,6 @@ components:
         references:
           $ref: '#/components/schemas/Reference'
       required:
-        - limitExceeded
         - list
         - outOfRange
         - references
