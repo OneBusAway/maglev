@@ -1,0 +1,158 @@
+name: Performance Smoke Test
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  loadtest-smoke:
+    name: k6 Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build Maglev
+        run: make build
+
+      - name: Create CI config
+        run: |
+          cat > config.ci.json << 'EOF'
+          {
+            "port": 4000,
+            "env": "development",
+            "api-keys": ["test"],
+            "rate-limit": 100,
+            "log-level": "info",
+            "log-format": "json",
+            "gtfs-static-feed": {
+              "url": "testdata/raba.zip",
+              "enable-gtfs-tidy": false
+            },
+            "gtfs-rt-feeds": [],
+            "data-path": "./ci-gtfs.db"
+          }
+          EOF
+
+      - name: Start Maglev server
+        run: |
+          ./bin/maglev -f config.ci.json > maglev.log 2>&1 &
+          echo "MAGLEV_PID=$!" >> $GITHUB_ENV
+
+      - name: Wait for server to be ready
+        run: |
+          echo "Waiting for Maglev to be ready..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4000/healthz > /dev/null 2>&1; then
+              echo "Server is ready after ${i} attempts."
+              exit 0
+            fi
+            echo "  Attempt $i/60 — not ready yet, waiting 5s..."
+            tail -1 maglev.log 2>/dev/null || true
+            sleep 5
+          done
+          echo "ERROR: Server did not become ready in time. Dumping logs:"
+          cat maglev.log
+          exit 1
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+
+      - name: Run k6 smoke test
+        run: |
+          k6 run \
+            --vus 5 \
+            --duration 30s \
+            loadtest/k6/smoke.js
+        continue-on-error: true
+        id: k6_smoke
+
+      - name: Stop Maglev server
+        if: always()
+        run: |
+          kill $MAGLEV_PID 2>/dev/null || true
+
+      - name: Post smoke test summary to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let body = '## Performance Smoke Test Results\n\n';
+
+            try {
+              const raw = fs.readFileSync('loadtest/k6/smoke-summary.json', 'utf8');
+              const summary = JSON.parse(raw);
+              const metrics = summary.metrics || {};
+
+              const p95 = metrics.http_req_duration?.values?.['p(95)'];
+              const p99 = metrics.http_req_duration?.values?.['p(99)'];
+              const failRate = metrics.http_req_failed?.values?.rate;
+              const reqCount = metrics.http_reqs?.values?.count;
+              const rps = metrics.http_reqs?.values?.rate;
+
+              const smokeStatus = '${{ steps.k6_smoke.outcome }}';
+
+              body += `**Status:** ${smokeStatus === 'success' ? 'PASSED' : 'FAILED - thresholds exceeded'}\n\n`;
+              body += `| Metric | Value |\n|--------|-------|\n`;
+              if (p95 != null) body += `| p(95) latency | ${p95.toFixed(1)} ms |\n`;
+              if (p99 != null) body += `| p(99) latency | ${p99.toFixed(1)} ms |\n`;
+              if (failRate != null) body += `| Error rate | ${(failRate * 100).toFixed(2)}% |\n`;
+              if (reqCount != null) body += `| Total requests | ${reqCount} |\n`;
+              if (rps != null) body += `| Req/sec | ${rps.toFixed(1)} |\n`;
+
+              body += `\n_Smoke test config: 5 VUs x 30s. Thresholds: p(95) < 300ms, error rate < 1%._\n`;
+              body += `\nFull results uploaded as workflow artifact: k6-smoke-summary.`;
+            } catch (e) {
+              body += 'Could not parse smoke test results. Check the workflow logs for details.\n';
+              body += `\nError: ${e.message}`;
+            }
+
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            } catch (e) {
+              console.log('Could not post PR comment (likely a fork PR permission issue):', e.message);
+              console.log('Smoke test summary:\n', body);
+            }
+
+      - name: Upload smoke test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-smoke-summary
+          path: |
+            loadtest/k6/smoke-summary.json
+            maglev.log
+
+      - name: Fail job if k6 thresholds were exceeded
+        if: steps.k6_smoke.outcome == 'failure'
+        run: |
+          echo "k6 smoke test thresholds were exceeded. See the k6-smoke-summary artifact for details."
+          exit 1

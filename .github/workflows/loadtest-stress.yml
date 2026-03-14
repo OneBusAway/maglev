@@ -1,0 +1,132 @@
+name: Performance Stress Test (Nightly)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Runs at 02:00 UTC every night
+    - cron: '0 2 * * *'
+  # Allow manual triggering from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  loadtest-stress:
+    name: k6 Full Stress Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build Maglev
+        run: make build
+
+      - name: Create CI config
+        run: |
+          cat > config.ci.json << 'EOF'
+          {
+            "port": 4000,
+            "env": "development",
+            "api-keys": ["test"],
+            "rate-limit": 1000,
+            "log-level": "warn",
+            "log-format": "json",
+            "gtfs-static-feed": {
+              "url": "testdata/raba.zip",
+              "enable-gtfs-tidy": false
+            },
+            "gtfs-rt-feeds": [],
+            "data-path": "./ci-gtfs.db"
+          }
+          EOF
+
+      - name: Start Maglev server (with pprof enabled)
+        run: |
+          MAGLEV_ENABLE_PPROF=1 ./bin/maglev -f config.ci.json > maglev.log 2>&1 &
+          echo "MAGLEV_PID=$!" >> $GITHUB_ENV
+
+      - name: Wait for server to be ready
+        run: |
+          echo "Waiting for Maglev to be ready..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4000/healthz > /dev/null 2>&1; then
+              echo "Server is ready after ${i} attempts."
+              exit 0
+            fi
+            echo "  Attempt $i/60 — not ready yet, waiting 5s..."
+            tail -1 maglev.log 2>/dev/null || true
+            sleep 5
+          done
+          echo "ERROR: Server did not become ready in time. Dumping logs:"
+          cat maglev.log
+          exit 1
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+
+      - name: Capture pprof baseline (before load)
+        run: |
+          mkdir -p loadtest/profiles
+          curl -sf "http://localhost:6060/debug/pprof/heap" -o loadtest/profiles/heap-before.pprof || true
+          curl -sf "http://localhost:6060/debug/pprof/goroutine" -o loadtest/profiles/goroutine-before.pprof || true
+
+      - name: Run k6 full stress test
+        run: |
+          # Wait 60s for ramp-up, then capture 30s CPU profile during peak load
+          (sleep 60 && curl -sf "http://localhost:6060/debug/pprof/profile?seconds=30" -o loadtest/profiles/cpu.pprof) &
+
+          k6 run \
+            -e USE_FALLBACKS=true \
+            --summary-export=loadtest/k6/stress-summary.json \
+            loadtest/k6/scenarios.js
+        continue-on-error: true
+        id: k6_stress
+
+      - name: Capture pprof profiles (after load)
+        if: always()
+        run: |
+          curl -sf "http://localhost:6060/debug/pprof/heap" -o loadtest/profiles/heap-after.pprof || true
+          curl -sf "http://localhost:6060/debug/pprof/goroutine" -o loadtest/profiles/goroutine-after.pprof || true
+          curl -sf "http://localhost:6060/debug/pprof/mutex" -o loadtest/profiles/mutex-after.pprof || true
+          # Note: CPU profile is captured concurrently during the test above
+
+      - name: Stop Maglev server
+        if: always()
+        run: |
+          kill $MAGLEV_PID 2>/dev/null || true
+
+      - name: Upload stress test results and profiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-stress-results-${{ github.sha }}
+          path: |
+            loadtest/k6/stress-summary.json
+            loadtest/profiles/
+            maglev.log
+
+      - name: Fail job if k6 thresholds were exceeded
+        if: steps.k6_stress.outcome == 'failure'
+        run: |
+          echo "k6 stress test thresholds were exceeded. Download the k6-stress-results artifact for pprof profiles."
+          exit 1

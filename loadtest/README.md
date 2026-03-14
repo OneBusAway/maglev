@@ -30,3 +30,5 @@ go tool pprof http://localhost:4000/debug/pprof/profile?seconds=30
 go tool pprof http://localhost:4000/debug/pprof/mutex
 ```
 
+## Note on Test Data
+The pre-existing k6 data CSV files (`loadtest/k6/data/*.csv`) currently contain specific dataset IDs (e.g., Seattle-area data). When running against a different GTFS feed (like RABA in CI), you may need to regenerate these CSV files with IDs and coordinates appropriate for the target dataset to ensure the load test exercises actual data serving paths rather than just 404 paths.
