@@ -28,8 +28,5 @@ type ScheduleForRouteEntry struct {
 	RouteID           string             `json:"routeId"`
 	ScheduleDate      int64              `json:"scheduleDate"`
 	ServiceIDs        []string           `json:"serviceIds"`
-	Stops             []string           `json:"stops"`
 	StopTripGroupings []StopTripGrouping `json:"stopTripGroupings"`
-	Stops             []Stop             `json:"stops"`
-	Trips             []Trip             `json:"trips"`
 }

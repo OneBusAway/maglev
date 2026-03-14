@@ -83,10 +83,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			RouteID:           utils.FormCombinedID(agencyID, routeID),
 			ScheduleDate:      scheduleDate,
 			ServiceIDs:        []string{},
-			Stops:             []string{},
 			StopTripGroupings: []models.StopTripGrouping{},
-			Stops:             []models.Stop{},
-			Trips:             []models.Trip{},
 		}
 		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
@@ -113,10 +110,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			RouteID:           utils.FormCombinedID(agencyID, routeID),
 			ScheduleDate:      scheduleDate,
 			ServiceIDs:        combinedServiceIDs,
-			Stops:             []string{},
 			StopTripGroupings: []models.StopTripGrouping{},
-			Stops:             []models.Stop{},
-			Trips:             []models.Trip{},
 		}
 		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
@@ -292,8 +286,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		uniqueStopIDs = append(uniqueStopIDs, sid)
 	}
 
-	combinedStopIDs := make([]string, 0, len(uniqueStopIDs))
-
 	if len(uniqueStopIDs) > 0 {
 		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
@@ -301,10 +293,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		references.Stops = append(references.Stops, modelStops...)
-
-		for _, sid := range uniqueStopIDs {
-			combinedStopIDs = append(combinedStopIDs, utils.FormCombinedID(agencyID, sid))
-		}
 	}
 
 	for _, sref := range stopTimesRefs {
@@ -315,10 +303,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		RouteID:           utils.FormCombinedID(agencyID, routeID),
 		ScheduleDate:      scheduleDate,
 		ServiceIDs:        combinedServiceIDs,
-		Stops:             combinedStopIDs,
 		StopTripGroupings: stopTripGroupings,
-		Stops:             references.Stops,
-		Trips:             references.Trips,
 	}
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }

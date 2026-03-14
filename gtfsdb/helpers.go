@@ -162,6 +162,7 @@ func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
 
 // withTransaction executes the given function within a transaction.
 // If tx is non-nil, it uses the provided transaction and does not commit.
+// When tx is non-nil, the caller is responsible for committing or rolling back the transaction on error.
 // If tx is nil, it starts a new transaction, ensures rollback on error, and commits on success.
 func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, fn func(*sql.Tx) error) error {
 	if tx != nil {
@@ -170,7 +171,7 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 
 	newTx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to begin transaction for %s: %w", label, err)
 	}
 
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
@@ -180,7 +181,10 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 		return err
 	}
 
-	return newTx.Commit()
+	if err := newTx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction for %s: %w", label, err)
+	}
+	return nil
 }
 
 func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) error {
@@ -1082,6 +1086,11 @@ func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []Create
 // bulkInsertCalendarDates inserts calendar dates. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
 func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams, tx *sql.Tx) error {
 	queries := c.Queries
+	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+
+	logging.LogOperation(logger, "inserting_calendar_dates",
+		slog.Int("count", len(calendarDates)))
+
 	if err := c.withTransaction(ctx, tx, "bulk_insert_calendar_dates", func(tx *sql.Tx) error {
 		qtx := queries.WithTx(tx)
 		for _, params := range calendarDates {
@@ -1094,6 +1103,9 @@ func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []Cr
 	}); err != nil {
 		return err
 	}
+
+	logging.LogOperation(logger, "calendar_dates_inserted",
+		slog.Int("count", len(calendarDates)))
 
 	return nil
 }
