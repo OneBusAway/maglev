@@ -190,7 +190,7 @@ All basic commands are managed by our Makefile:
 * `make update-openapi` - Fetch the latest upstream OpenAPI spec and overwrite `testdata/openapi.yml`.
 * `make check-openapi` - Check whether `testdata/openapi.yml` is in sync with upstream (exits 1 if out of date).
 
-CI checks that `testdata/openapi.yml` is in sync with [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every push and PR. If the upstream spec has changed, CI will fail with a message to run `make update-openapi` and commit the result.
+CI checks that `testdata/openapi.yml` is in sync with [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every push and PR. If the upstream spec has changed, CI will fail with a message to run `make update-openapi` and commit the result. If you find issues in the upstream spec, open an issue at [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/issues).
 
 ### FTS5 (SQLite) builds and tests
 
