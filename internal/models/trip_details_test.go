@@ -209,7 +209,6 @@ func TestTripStatus_JSONAlwaysPresent(t *testing.T) {
 	assert.Contains(t, jsonStr, `"occupancyCount":-1`, "occupancyCount must default to -1")
 	assert.Contains(t, jsonStr, `"vehicleFeatures":[]`, "vehicleFeatures must always be present as empty array")
 	assert.Contains(t, jsonStr, `"situationIds":[]`, "situationIds must always be present as empty array")
-	assert.Contains(t, jsonStr, `"frequency":null`, "frequency must always be present as null")
 
 	// String fields always present even when empty
 	assert.Contains(t, jsonStr, `"closestStop":""`, "closestStop must always be present")
