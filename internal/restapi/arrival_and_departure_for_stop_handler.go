@@ -316,7 +316,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predicted = true
 	}
 
-	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, serviceDate, currentTime)
+	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceDate, currentTime)
 	if statusErr != nil {
 		api.Logger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)

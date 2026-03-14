@@ -114,6 +114,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getActiveTripInBlockAtTimeStmt, err = db.PrepareContext(ctx, getActiveTripInBlockAtTime); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveTripInBlockAtTime: %w", err)
 	}
+	if q.getActiveTripsWithNullBlockForRouteStmt, err = db.PrepareContext(ctx, getActiveTripsWithNullBlockForRoute); err != nil {
+		return nil, fmt.Errorf("error preparing query GetActiveTripsWithNullBlockForRoute: %w", err)
+	}
 	if q.getAgenciesForStopsStmt, err = db.PrepareContext(ctx, getAgenciesForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAgenciesForStops: %w", err)
 	}
@@ -321,6 +324,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getTripsInBlockStmt, err = db.PrepareContext(ctx, getTripsInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsInBlock: %w", err)
 	}
+	if q.getTripsInBlockWithTimeBoundsStmt, err = db.PrepareContext(ctx, getTripsInBlockWithTimeBounds); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTripsInBlockWithTimeBounds: %w", err)
+	}
 	if q.listAgenciesStmt, err = db.PrepareContext(ctx, listAgencies); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAgencies: %w", err)
 	}
@@ -492,6 +498,11 @@ func (q *Queries) Close() error {
 	if q.getActiveTripInBlockAtTimeStmt != nil {
 		if cerr := q.getActiveTripInBlockAtTimeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getActiveTripInBlockAtTimeStmt: %w", cerr)
+		}
+	}
+	if q.getActiveTripsWithNullBlockForRouteStmt != nil {
+		if cerr := q.getActiveTripsWithNullBlockForRouteStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getActiveTripsWithNullBlockForRouteStmt: %w", cerr)
 		}
 	}
 	if q.getAgenciesForStopsStmt != nil {
@@ -839,6 +850,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getTripsInBlockStmt: %w", cerr)
 		}
 	}
+	if q.getTripsInBlockWithTimeBoundsStmt != nil {
+		if cerr := q.getTripsInBlockWithTimeBoundsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTripsInBlockWithTimeBoundsStmt: %w", cerr)
+		}
+	}
 	if q.listAgenciesStmt != nil {
 		if cerr := q.listAgenciesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listAgenciesStmt: %w", cerr)
@@ -938,6 +954,7 @@ type Queries struct {
 	getActiveStopsStmt                            *sql.Stmt
 	getActiveTripForRouteAtTimeStmt               *sql.Stmt
 	getActiveTripInBlockAtTimeStmt                *sql.Stmt
+	getActiveTripsWithNullBlockForRouteStmt       *sql.Stmt
 	getAgenciesForStopsStmt                       *sql.Stmt
 	getAgencyStmt                                 *sql.Stmt
 	getAgencyForStopStmt                          *sql.Stmt
@@ -1007,6 +1024,7 @@ type Queries struct {
 	getTripsByServiceIDStmt                       *sql.Stmt
 	getTripsForRouteInActiveServiceIDsStmt        *sql.Stmt
 	getTripsInBlockStmt                           *sql.Stmt
+	getTripsInBlockWithTimeBoundsStmt             *sql.Stmt
 	listAgenciesStmt                              *sql.Stmt
 	listRoutesStmt                                *sql.Stmt
 	listStopsStmt                                 *sql.Stmt
@@ -1049,6 +1067,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getActiveStopsStmt:                            q.getActiveStopsStmt,
 		getActiveTripForRouteAtTimeStmt:               q.getActiveTripForRouteAtTimeStmt,
 		getActiveTripInBlockAtTimeStmt:                q.getActiveTripInBlockAtTimeStmt,
+		getActiveTripsWithNullBlockForRouteStmt:       q.getActiveTripsWithNullBlockForRouteStmt,
 		getAgenciesForStopsStmt:                       q.getAgenciesForStopsStmt,
 		getAgencyStmt:                                 q.getAgencyStmt,
 		getAgencyForStopStmt:                          q.getAgencyForStopStmt,
@@ -1118,6 +1137,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsByServiceIDStmt:                       q.getTripsByServiceIDStmt,
 		getTripsForRouteInActiveServiceIDsStmt:        q.getTripsForRouteInActiveServiceIDsStmt,
 		getTripsInBlockStmt:                           q.getTripsInBlockStmt,
+		getTripsInBlockWithTimeBoundsStmt:             q.getTripsInBlockWithTimeBoundsStmt,
 		listAgenciesStmt:                              q.listAgenciesStmt,
 		listRoutesStmt:                                q.listRoutesStmt,
 		listStopsStmt:                                 q.listStopsStmt,

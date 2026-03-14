@@ -564,7 +564,7 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 	// In-memory sqlite db to mock
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec("CREATE TABLE calendar (end_date TEXT); CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);")
 	require.NoError(t, err)

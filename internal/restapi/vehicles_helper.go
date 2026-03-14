@@ -146,8 +146,8 @@ func (api *RestAPI) BuildVehicleStatus(
 		if obaOrientation < 0 {
 			obaOrientation += 360
 		}
-		status.Orientation = utils.Float64Ptr(float64(obaOrientation))
-		status.LastKnownOrientation = utils.Float64Ptr(float64(obaOrientation))
+		status.Orientation = float64(obaOrientation)
+		status.LastKnownOrientation = float64(obaOrientation)
 	}
 
 	status.Status, status.Phase = GetVehicleStatusAndPhase(vehicle)
