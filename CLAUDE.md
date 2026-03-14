@@ -30,8 +30,12 @@ All commands are managed through the Makefile:
 - `make clean` - Clean build artifacts
 - `make build-pure` - Build without CGO (pure Go SQLite driver)
 - `make test-pure` - Run tests without CGO
+- `make update-openapi` - Fetch latest upstream OpenAPI spec and overwrite `testdata/openapi.yml`
+- `make check-openapi` - Verify `testdata/openapi.yml` matches upstream (exits 1 if out of date)
 
 **Build tags**: When running `go` commands directly (not via Makefile), you must pass `-tags "sqlite_fts5"` for CGO builds or `-tags "purego"` for pure Go builds.
+
+**OpenAPI spec**: `testdata/openapi.yml` is auto-fetched from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every CI run, so conformance tests always validate against the latest upstream spec.
 
 ## Load Testing and Profiling
 

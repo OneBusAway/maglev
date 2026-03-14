@@ -187,6 +187,10 @@ All basic commands are managed by our Makefile:
 * `make test` - Run tests.
 * `make models` - Generate Go code from SQL queries using sqlc.
 * `make watch` - Build and run the app with Air for live reloading.
+* `make update-openapi` - Fetch the latest upstream OpenAPI spec and overwrite `testdata/openapi.yml`.
+* `make check-openapi` - Check whether `testdata/openapi.yml` is in sync with upstream (exits 1 if out of date).
+
+The OpenAPI spec (`testdata/openapi.yml`) is auto-fetched from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every CI run, so conformance tests always validate against the latest upstream spec.
 
 ### FTS5 (SQLite) builds and tests
 
