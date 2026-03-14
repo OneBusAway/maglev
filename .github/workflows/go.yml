@@ -55,6 +55,7 @@ jobs:
         run: go mod verify
 
       - name: Check OpenAPI spec is up to date with upstream
+        if: matrix.os == 'ubuntu-latest'
         run: make check-openapi
         shell: bash
 
