@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestMultiFeedDataMerging verifies that rebuildMergedRealtimeLocked correctly
+// TestMultiFeedDataMerging verifies that buildMergedRealtime correctly
 // concatenates vehicles from distinct feeds and that per-feed lookup maps work.
 // Feed A uses RABA vehicle positions; feed B uses Unitrans vehicle positions so
 // that each feed contributes genuinely different vehicle IDs.
@@ -53,8 +54,16 @@ func TestMultiFeedDataMerging(t *testing.T) {
 	manager.updateFeedRealtime(ctx, feedA)
 	manager.updateFeedRealtime(ctx, feedB)
 
-	feedAVehicles := manager.feedVehicles["feed-a"]
-	feedBVehicles := manager.feedVehicles["feed-b"]
+	manager.feedData["feed-a"].mu.RLock()
+	feedAVehicles := make([]gtfs.Vehicle, len(manager.feedData["feed-a"].Vehicles))
+	copy(feedAVehicles, manager.feedData["feed-a"].Vehicles)
+	manager.feedData["feed-a"].mu.RUnlock()
+
+	manager.feedData["feed-b"].mu.RLock()
+	feedBVehicles := make([]gtfs.Vehicle, len(manager.feedData["feed-b"].Vehicles))
+	copy(feedBVehicles, manager.feedData["feed-b"].Vehicles)
+	manager.feedData["feed-b"].mu.RUnlock()
+
 	require.NotEmpty(t, feedAVehicles, "Feed A should have vehicles")
 	require.NotEmpty(t, feedBVehicles, "Feed B should have vehicles")
 
@@ -110,35 +119,35 @@ func TestStaleVehicleExpiry(t *testing.T) {
 
 	// Wind last-seen back to 5 minutes ago so vehicles appear to have disappeared
 	// but are still within the 15-min retention window.
-	manager.realTimeMutex.Lock()
-	for vid := range manager.feedVehicleLastSeen["expiry-test"] {
-		manager.feedVehicleLastSeen["expiry-test"][vid] = time.Now().Add(-5 * time.Minute)
+	manager.feedData["expiry-test"].mu.Lock()
+	for vid := range manager.feedData["expiry-test"].VehicleLastSeen {
+		manager.feedData["expiry-test"].VehicleLastSeen[vid] = time.Now().Add(-5 * time.Minute)
 	}
-	manager.realTimeMutex.Unlock()
+	manager.feedData["expiry-test"].mu.Unlock()
 
 	// Call cleanupExpiredVehicles directly to verify the 5-minute vehicles are preserved
-	manager.realTimeMutex.Lock()
-	manager.cleanupExpiredVehicles("expiry-test")
-	manager.rebuildMergedRealtimeLocked()
-	manager.realTimeMutex.Unlock()
+	manager.feedData["expiry-test"].mu.Lock()
+	manager.cleanupExpiredVehicles(manager.feedData["expiry-test"])
+	manager.feedData["expiry-test"].mu.Unlock()
+	manager.buildMergedRealtime()
 
 	afterCleanup := manager.GetRealTimeVehicles()
 	assert.Equal(t, initialCount, len(afterCleanup),
 		"vehicles should be retained when last-seen is within 15-min window")
 
 	// Wind last-seen back to 20 minutes ago (beyond the 15-min window).
-	manager.realTimeMutex.Lock()
-	for vid := range manager.feedVehicleLastSeen["expiry-test"] {
-		manager.feedVehicleLastSeen["expiry-test"][vid] = time.Now().Add(-20 * time.Minute)
+	manager.feedData["expiry-test"].mu.Lock()
+	for vid := range manager.feedData["expiry-test"].VehicleLastSeen {
+		manager.feedData["expiry-test"].VehicleLastSeen[vid] = time.Now().Add(-20 * time.Minute)
 	}
-	manager.realTimeMutex.Unlock()
+	manager.feedData["expiry-test"].mu.Unlock()
 
 	// Call cleanupExpiredVehicles again — stale vehicles beyond the 15-min window
 	// should now be evicted.
-	manager.realTimeMutex.Lock()
-	manager.cleanupExpiredVehicles("expiry-test")
-	manager.rebuildMergedRealtimeLocked()
-	manager.realTimeMutex.Unlock()
+	manager.feedData["expiry-test"].mu.Lock()
+	manager.cleanupExpiredVehicles(manager.feedData["expiry-test"])
+	manager.feedData["expiry-test"].mu.Unlock()
+	manager.buildMergedRealtime()
 
 	afterExpiry := manager.GetRealTimeVehicles()
 	assert.Empty(t, afterExpiry,
@@ -168,7 +177,7 @@ func TestFeedIsolation(t *testing.T) {
 	}
 	manager.updateFeedRealtime(ctx, feedB)
 
-	feedBCount := len(manager.feedVehicles["feed-b"])
+	feedBCount := len(manager.feedData["feed-b"].Vehicles)
 	require.Positive(t, feedBCount, "Feed B should have vehicles loaded")
 
 	// Now update feed-A with a failing URL (no vehicles)
@@ -186,13 +195,13 @@ func TestFeedIsolation(t *testing.T) {
 		"Merged vehicles should still contain all feed-B vehicles after feed-A update failure")
 
 	// Verify feed-B sub-map is unchanged
-	assert.Equal(t, feedBCount, len(manager.feedVehicles["feed-b"]),
+	assert.Equal(t, feedBCount, len(manager.feedData["feed-b"].Vehicles),
 		"Feed-B sub-map should be unaffected by feed-A update")
 }
 
 // TestConcurrentFeedUpdates verifies data isolation when two feeds update
 // simultaneously. Both goroutines race to write their per-feed sub-maps and
-// trigger rebuildMergedRealtimeLocked; the final merged view must contain
+// trigger buildMergedRealtime; the final merged view must contain
 // vehicles from both feeds with no data corruption.
 func TestConcurrentFeedUpdates(t *testing.T) {
 	mux := http.NewServeMux()
@@ -241,7 +250,7 @@ func TestConcurrentFeedUpdates(t *testing.T) {
 	// After all goroutines have finished, both per-feed sub-maps must be
 	// populated and the merged view must be non-empty. The -race detector
 	// validates that no unsynchronised access occurred during the updates.
-	assert.NotEmpty(t, manager.feedVehicles["feed-a"], "feed-a should have vehicles after concurrent updates")
-	assert.NotEmpty(t, manager.feedVehicles["feed-b"], "feed-b should have vehicles after concurrent updates")
+	assert.NotEmpty(t, manager.feedData["feed-a"].Vehicles, "feed-a should have vehicles after concurrent updates")
+	assert.NotEmpty(t, manager.feedData["feed-b"].Vehicles, "feed-b should have vehicles after concurrent updates")
 	assert.NotEmpty(t, manager.GetRealTimeVehicles(), "merged view should be non-empty after concurrent updates")
 }

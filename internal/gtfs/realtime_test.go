@@ -68,19 +68,21 @@ func TestGetAlertsForStop(t *testing.T) {
 func TestRebuildRealTimeTripLookup(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips: map[string][]gtfs.Trip{
+		feedData: map[string]*FeedData{
 			"feed-0": {
-				{
-					ID: gtfs.TripID{ID: "trip1"},
-				},
-				{
-					ID: gtfs.TripID{ID: "trip2"},
+				Trips: []gtfs.Trip{
+					{
+						ID: gtfs.TripID{ID: "trip1"},
+					},
+					{
+						ID: gtfs.TripID{ID: "trip2"},
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeTripLookup)
 	assert.Len(t, manager.realTimeTripLookup, 2)
@@ -98,19 +100,21 @@ func TestRebuildRealTimeVehicleLookupByTrip(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
+		feedData: map[string]*FeedData{
 			"feed-0": {
-				{
-					Trip: trip1,
-				},
-				{
-					Trip: trip2,
+				Vehicles: []gtfs.Vehicle{
+					{
+						Trip: trip1,
+					},
+					{
+						Trip: trip2,
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeVehicleLookupByTrip)
 	assert.Len(t, manager.realTimeVehicleLookupByTrip, 2)
@@ -124,19 +128,21 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
+		feedData: map[string]*FeedData{
 			"feed-0": {
-				{
-					ID: vehicleID1,
-				},
-				{
-					ID: vehicleID2,
+				Vehicles: []gtfs.Vehicle{
+					{
+						ID: vehicleID1,
+					},
+					{
+						ID: vehicleID2,
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeVehicleLookupByVehicle)
 	assert.Len(t, manager.realTimeVehicleLookupByVehicle, 2)
@@ -147,25 +153,27 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
+		feedData: map[string]*FeedData{
 			"feed-0": {
-				{
-					ID: &gtfs.VehicleID{ID: "vehicle1"},
-				},
-				{
-					ID: nil,
-				},
-				{
-					ID: &gtfs.VehicleID{ID: ""},
-				},
-				{
-					ID: &gtfs.VehicleID{ID: "vehicle3"},
+				Vehicles: []gtfs.Vehicle{
+					{
+						ID: &gtfs.VehicleID{ID: "vehicle1"},
+					},
+					{
+						ID: nil,
+					},
+					{
+						ID: &gtfs.VehicleID{ID: ""},
+					},
+					{
+						ID: &gtfs.VehicleID{ID: "vehicle3"},
+					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	assert.NotNil(t, manager.realTimeVehicleLookupByVehicle)
 	assert.Len(t, manager.realTimeVehicleLookupByVehicle, 2)
@@ -277,14 +285,13 @@ func TestEnabledFeeds(t *testing.T) {
 func TestClearFeedData(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips: map[string][]gtfs.Trip{
-			"test_feed": {{ID: gtfs.TripID{ID: "trip1"}}},
-		},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"test_feed": {{ID: &gtfs.VehicleID{ID: "veh1"}}},
-		},
-		feedAlerts: map[string][]gtfs.Alert{
-			"test_feed": {{ID: "alert1"}},
+		feedData: map[string]*FeedData{
+			"test_feed": {
+				Trips:           []gtfs.Trip{{ID: gtfs.TripID{ID: "trip1"}}},
+				Vehicles:        []gtfs.Vehicle{{ID: &gtfs.VehicleID{ID: "veh1"}}},
+				Alerts:          []gtfs.Alert{{ID: "alert1"}},
+				VehicleLastSeen: make(map[string]time.Time),
+			},
 		},
 		feedLastUpdate: map[string]time.Time{
 			"test_feed": time.Now(),
@@ -292,19 +299,83 @@ func TestClearFeedData(t *testing.T) {
 	}
 
 	// Warm up realTime lookup array cache
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 	assert.Len(t, manager.GetRealTimeTrips(), 1, "Should have 1 trip initially")
 	assert.Contains(t, manager.feedLastUpdate, "test_feed", "feedLastUpdate should exist initially")
 
 	// Trigger the clearing mechanism
 	manager.clearFeedData("test_feed")
 
-	assert.Empty(t, manager.feedTrips["test_feed"], "feedTrips should be empty after clearing")
-	assert.Empty(t, manager.feedVehicles["test_feed"], "feedVehicles should be empty after clearing")
-	assert.Empty(t, manager.feedAlerts["test_feed"], "feedAlerts should be empty after clearing")
+	feed := manager.feedData["test_feed"]
+	assert.Empty(t, feed.Trips, "feedTrips should be empty after clearing")
+	assert.Empty(t, feed.Vehicles, "feedVehicles should be empty after clearing")
+	assert.Empty(t, feed.Alerts, "feedAlerts should be empty after clearing")
 	assert.NotContains(t, manager.feedLastUpdate, "test_feed", "feedLastUpdate should be removed after clearing")
 	assert.Len(t, manager.GetRealTimeTrips(), 0, "Global trip lookup should be empty")
 	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
+}
+
+// A minimal valid GTFS-RT protobuf payload containing just a GTFS Realtime version header.
+// Parsed successfully as an empty feed.
+var emptyValidGTFSRTPayload = []byte{0x0a, 0x05, 0x0a, 0x03, 0x32, 0x2e, 0x30}
+
+func TestUpdateFeedRealtime_RetainsOldDataOnError(t *testing.T) {
+	// Setup a server that always returns 500 (causes error)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		feedData:      make(map[string]*FeedData),
+		realTimeMutex: sync.RWMutex{},
+	}
+
+	oldTrips := []gtfs.Trip{{ID: gtfs.TripID{ID: "old-trip"}}}
+	manager.feedData["feed1"] = &FeedData{
+		Trips:           oldTrips,
+		VehicleLastSeen: make(map[string]time.Time),
+	}
+
+	feedCfg := RTFeedConfig{
+		ID:             "feed1",
+		TripUpdatesURL: server.URL,
+	}
+
+	manager.updateFeedRealtime(context.Background(), feedCfg)
+
+	feed := manager.feedData["feed1"]
+	assert.Len(t, feed.Trips, 1)
+	assert.Equal(t, "old-trip", feed.Trips[0].ID.ID, "Old data should be retained on error")
+}
+
+func TestUpdateFeedRealtime_SuccessReplacesOld(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(emptyValidGTFSRTPayload)
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		feedData:      make(map[string]*FeedData),
+		realTimeMutex: sync.RWMutex{},
+	}
+
+	oldTrips := []gtfs.Trip{{ID: gtfs.TripID{ID: "old-trip"}}}
+	manager.feedData["feed1"] = &FeedData{
+		Trips:           oldTrips,
+		VehicleLastSeen: make(map[string]time.Time),
+	}
+
+	feedCfg := RTFeedConfig{
+		ID:             "feed1",
+		TripUpdatesURL: server.URL, // Succeeds with empty payload
+	}
+
+	manager.updateFeedRealtime(context.Background(), feedCfg)
+
+	feed := manager.feedData["feed1"]
+	assert.Len(t, feed.Trips, 0, "Old data should be replaced by the empty feed on success")
 }
 
 func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
@@ -315,12 +386,8 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 	defer server.Close()
 
 	manager := &Manager{
-		realTimeMutex:        sync.RWMutex{},
-		feedTrips:            make(map[string][]gtfs.Trip),
-		feedVehicles:         make(map[string][]gtfs.Vehicle),
-		feedAlerts:           make(map[string][]gtfs.Alert),
-		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		realTimeMutex: sync.RWMutex{},
+		feedData:      make(map[string]*FeedData),
 	}
 
 	cfg := RTFeedConfig{
@@ -369,16 +436,16 @@ func TestStaleFeedRejected(t *testing.T) {
 	// Verify the feed has a FeedHeader timestamp — this test
 	// exercises the freshness guard, which only applies to feeds
 	// with a non-zero CreatedAt.
-	manager.realTimeMutex.RLock()
-	require.NotZero(t, manager.feedVehicleTimestamp[feed.ID],
+	manager.feedData[feed.ID].mu.RLock()
+	require.NotZero(t, manager.feedData[feed.ID].VehicleTimestamp,
 		"RABA feed must have FeedHeader timestamp for this test to be meaningful")
-	manager.realTimeMutex.RUnlock()
+	manager.feedData[feed.ID].mu.RUnlock()
 
 	// Simulate a stale feed by manually setting the stored timestamp to a very
 	// large value (future timestamp), so the next update will be rejected.
-	manager.realTimeMutex.Lock()
-	manager.feedVehicleTimestamp[feed.ID] = uint64(time.Now().Add(1 * time.Hour).UnixNano())
-	manager.realTimeMutex.Unlock()
+	manager.feedData[feed.ID].mu.Lock()
+	manager.feedData[feed.ID].VehicleTimestamp = uint64(time.Now().Add(1 * time.Hour).UnixNano())
+	manager.feedData[feed.ID].mu.Unlock()
 
 	// Second poll: attempt to update with same feed URL (same data, same timestamp)
 	// This should be rejected because the stored timestamp is in the future
@@ -847,12 +914,8 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 
 	// Fully initialize all maps to prevent "assignment to entry in nil map" panics
 	manager := &Manager{
-		realTimeMutex:        sync.RWMutex{},
-		feedTrips:            make(map[string][]gtfs.Trip),
-		feedVehicles:         make(map[string][]gtfs.Vehicle),
-		feedAlerts:           make(map[string][]gtfs.Alert),
-		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		realTimeMutex: sync.RWMutex{},
+		feedData:      make(map[string]*FeedData),
 	}
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail
@@ -884,4 +947,53 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 
 	hasNewDataSuccess := manager.updateFeedRealtime(context.Background(), cfgSuccess)
 	assert.True(t, hasNewDataSuccess, "OR check should return true when ALL sub-feeds succeed")
+}
+
+func TestUpdateFeedRealtime_StaleVehicles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(emptyValidGTFSRTPayload) // Empty -> no new vehicles fetched
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		feedData:      make(map[string]*FeedData),
+		realTimeMutex: sync.RWMutex{},
+	}
+
+	now := time.Now()
+
+	// v1 seen 5 mins ago (should be kept)
+	v1 := gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "v1"}}
+
+	// v2 seen 20 mins ago (should be removed, staleVehicleTimeout = 15m)
+	v2 := gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "v2"}}
+
+	manager.feedData["feed1"] = &FeedData{
+		Vehicles: []gtfs.Vehicle{v1, v2},
+		VehicleLastSeen: map[string]time.Time{
+			"v1": now.Add(-5 * time.Minute),
+			"v2": now.Add(-20 * time.Minute),
+		},
+	}
+
+	feedCfg := RTFeedConfig{
+		ID:                  "feed1",
+		VehiclePositionsURL: server.URL,
+	}
+
+	manager.updateFeedRealtime(context.Background(), feedCfg)
+
+	feed := manager.feedData["feed1"]
+
+	assert.Len(t, feed.Vehicles, 1, "Only 1 vehicle should remain")
+	if len(feed.Vehicles) > 0 {
+		assert.Equal(t, "v1", feed.Vehicles[0].ID.ID, "Recently seen vehicle should be kept")
+	}
+
+	_, ok1 := feed.VehicleLastSeen["v1"]
+	assert.True(t, ok1, "v1 should still be in VehicleLastSeen map")
+
+	_, ok2 := feed.VehicleLastSeen["v2"]
+	assert.False(t, ok2, "v2 should be removed from VehicleLastSeen map due to staleness")
 }
