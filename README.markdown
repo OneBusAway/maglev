@@ -190,7 +190,7 @@ All basic commands are managed by our Makefile:
 * `make update-openapi` - Fetch the latest upstream OpenAPI spec and overwrite `testdata/openapi.yml`.
 * `make check-openapi` - Check whether `testdata/openapi.yml` is in sync with upstream (exits 1 if out of date).
 
-The OpenAPI spec (`testdata/openapi.yml`) is auto-fetched from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every CI run, so conformance tests always validate against the latest upstream spec.
+CI checks that `testdata/openapi.yml` is in sync with [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every push and PR. If the upstream spec has changed, CI will fail with a message to run `make update-openapi` and commit the result.
 
 ### FTS5 (SQLite) builds and tests
 

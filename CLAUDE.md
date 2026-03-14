@@ -35,7 +35,7 @@ All commands are managed through the Makefile:
 
 **Build tags**: When running `go` commands directly (not via Makefile), you must pass `-tags "sqlite_fts5"` for CGO builds or `-tags "purego"` for pure Go builds.
 
-**OpenAPI spec**: `testdata/openapi.yml` is auto-fetched from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every CI run, so conformance tests always validate against the latest upstream spec.
+**OpenAPI spec**: CI checks that `testdata/openapi.yml` is in sync with [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every push and PR. If upstream has changed, CI fails — run `make update-openapi` locally and commit the updated file.
 
 ## Load Testing and Profiling
 
