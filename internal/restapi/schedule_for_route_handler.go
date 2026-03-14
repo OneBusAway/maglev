@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -160,6 +159,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		headsignSet := make(map[string]struct{})
 		tripIDs := make([]string, 0, len(groupedTrips))
 		rawTripIDs := make([]string, 0, len(groupedTrips))
+		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
 
 		for _, trip := range groupedTrips {
 			rawTripIDs = append(rawTripIDs, trip.ID)
