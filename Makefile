@@ -35,6 +35,7 @@ LDFLAGS := -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=$(G
 
 .PHONY: build build-debug clean coverage-report check-jq coverage test run lint watch fmt \
         gtfstidy models check-golangci-lint \
+        test-latency bench-sqlite-all bench-sqlite-perftest \
         docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all
 
 run: build
@@ -79,6 +80,15 @@ fmt:
 
 test:
 	$(SET_ENV) go test -tags "sqlite_fts5" ./...
+
+test-latency:
+	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -run "TestQueryLatency|TestExplainQueryPlans|TestConnectionPoolTuning" -v -count=1 -timeout 300s
+
+bench-sqlite-all:
+	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -bench=. -benchmem -benchtime=5s -run=^$
+
+bench-sqlite-perftest:
+	$(SET_ENV) go test -tags "sqlite_fts5 perftest" ./gtfsdb/ -bench=BenchmarkLargeDataset -benchmem -benchtime=10s -run=^$
 
 test-pure:
 	CGO_ENABLED=0 go test -tags "purego" ./...

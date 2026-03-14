@@ -7,7 +7,9 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"log/slog"
+	"os"
 	"runtime"
 	"sort"
 	"strconv"
@@ -22,6 +24,98 @@ import (
 
 //go:embed schema.sql
 var ddl string
+
+// Minimum query duration to log as slow.
+// Controlled by MAGLEV_SLOW_QUERY_THRESHOLD_MS (in ms).
+// Default = 0 → slow query logging disabled.
+const slowQueryThresholdEnv = "MAGLEV_SLOW_QUERY_THRESHOLD_MS"
+
+func parseSlowQueryThreshold(v string, warnf func(format string, args ...any)) time.Duration {
+	if v == "" {
+		return 0
+	}
+
+	ms, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || ms <= 0 {
+		if warnf != nil {
+			warnf("WARNING: ignoring invalid %s=%q (must be a positive integer)", slowQueryThresholdEnv, v)
+		}
+		return 0
+	}
+
+	return time.Duration(ms) * time.Millisecond
+}
+
+var slowQueryThreshold = parseSlowQueryThreshold(os.Getenv(slowQueryThresholdEnv), log.Printf)
+
+// slowQueryDB wraps *sql.DB and logs queries slower than slowQueryThreshold.
+type slowQueryDB struct {
+	db        *sql.DB
+	threshold time.Duration
+	logger    *slog.Logger
+	now       func() time.Time // Overridden in tests to avoid OS timer resolution issues.
+}
+
+func newSlowQueryDB(db *sql.DB, threshold time.Duration) *slowQueryDB {
+	return &slowQueryDB{
+		db:        db,
+		threshold: threshold,
+		logger:    slog.Default().With(slog.String("component", "slow_query")),
+		now:       time.Now,
+	}
+}
+
+func (s *slowQueryDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	start := s.now()
+	res, err := s.db.ExecContext(ctx, query, args...)
+	s.maybeLog("ExecContext", query, s.now().Sub(start), err)
+	return res, err
+}
+
+func (s *slowQueryDB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	// PrepareContext is not instrumented; latency-significant work happens
+	// at execution time via ExecContext/QueryContext/QueryRowContext.
+	return s.db.PrepareContext(ctx, query)
+}
+
+func (s *slowQueryDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	start := s.now()
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	s.maybeLog("QueryContext", query, s.now().Sub(start), err)
+	return rows, err
+}
+
+func (s *slowQueryDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	start := s.now()
+	row := s.db.QueryRowContext(ctx, query, args...)
+	s.maybeLog("QueryRowContext", query, s.now().Sub(start), nil)
+	return row
+}
+
+func (s *slowQueryDB) maybeLog(op, query string, elapsed time.Duration, err error) {
+	if s.threshold <= 0 || elapsed < s.threshold {
+		return
+	}
+	attrs := []any{
+		slog.String("op", op),
+		slog.Duration("duration", elapsed),
+		slog.String("query", trimQuery(query)),
+	}
+	if err != nil {
+		attrs = append(attrs, slog.String("error", err.Error()))
+	}
+	s.logger.Warn("slow_query", attrs...)
+}
+
+// trimQuery truncates a query to 120 characters for concise logging.
+func trimQuery(q string) string {
+	q = strings.Join(strings.Fields(q), " ") // collapse whitespace
+	runes := []rune(q)
+	if len(runes) > 120 {
+		return string(runes[:120]) + "…"
+	}
+	return q
+}
 
 // createDB creates a new SQLite database with tables for static GTFS data
 func createDB(config Config) (*sql.DB, error) {
