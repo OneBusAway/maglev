@@ -514,18 +514,17 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 		req, err := http.NewRequest("GET", "/api/where/block/25_1.json?key=TEST", nil)
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		// Use a deadline in the past — context.Err() is DeadlineExceeded immediately,
+		// no timer resolution dependency (avoids Windows ~15ms minimum sleep issue).
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
 		defer cancel()
 		req = req.WithContext(ctx)
-
-		time.Sleep(time.Microsecond)
 
 		w := httptest.NewRecorder()
 		mux := http.NewServeMux()
 		api.SetRoutes(mux)
 		mux.ServeHTTP(w, req)
 
-		// With a 1ns timeout and 1µs sleep the context is always DeadlineExceeded
 		assert.Equal(t, http.StatusGatewayTimeout, w.Code,
 			"Expected 504 Gateway Timeout for DeadlineExceeded context, got: %d", w.Code)
 	})
