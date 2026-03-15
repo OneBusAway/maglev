@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"log/slog"
 	"net/http"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -15,7 +14,7 @@ import (
 func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.Request) {
 	logger := api.Logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = logging.FromContext(r.Context())
 	}
 
 	agencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
@@ -40,15 +39,15 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	userLocationAccuracy := utils.ValidateNumericParam(query.Get("userLocationAccuracy"))
 
 	// Log the problem report for observability
-	logger = logging.FromContext(r.Context()).With(slog.String("component", "problem_reporting"))
+	logger = logging.FromContext(r.Context()).With("component", "problem_reporting")
 	logging.LogOperation(logger, "problem_report_received_for_stop",
-		slog.String("stop_id", stopID),
-		slog.String("composite_id", compositeID),
-		slog.String("code", code),
-		slog.String("user_comment", userComment),
-		slog.String("user_lat", userLatStr),
-		slog.String("user_lon", userLonStr),
-		slog.String("user_location_accuracy", userLocationAccuracy))
+		"stop_id", stopID,
+		"composite_id", compositeID,
+		"code", code,
+		"user_comment", userComment,
+		"user_lat", userLatStr,
+		"user_lon", userLonStr,
+		"user_location_accuracy", userLocationAccuracy)
 
 	// Store the problem report in the database
 	now := api.Clock.Now().UnixMilli()
@@ -66,7 +65,7 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	err := api.GtfsManager.GtfsDB.Queries.CreateProblemReportStop(r.Context(), params)
 	if err != nil {
 		logging.LogError(logger, "failed to store problem report", err,
-			slog.String("stop_id", stopID))
+			"stop_id", stopID)
 		http.Error(w, `{"code":500, "text":"failed to store problem report"}`, http.StatusInternalServerError)
 		return
 	}

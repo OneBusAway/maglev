@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"bytes"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +16,7 @@ import (
 func TestRequestLoggingMiddleware(t *testing.T) {
 	t.Run("logs HTTP request details", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		// Create test handler
 		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +53,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 
 	t.Run("logs different HTTP methods and status codes", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == "POST" {
@@ -95,7 +94,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 
 	t.Run("measures request duration accurately", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		// Handler that takes some time
 		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +128,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 
 	t.Run("handles requests without User-Agent header", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
@@ -150,7 +149,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 
 	t.Run("strips query parameters from logged path", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
@@ -173,7 +172,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 func TestRequestLoggingIntegration(t *testing.T) {
 	t.Run("integrates with existing API handler chain", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		// Create test API
 		api := createTestApi(t)
@@ -202,7 +201,7 @@ func TestRequestLoggingIntegration(t *testing.T) {
 
 	t.Run("logs error responses correctly", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		api := createTestApi(t)
 		defer api.Shutdown()
@@ -225,7 +224,7 @@ func TestRequestLoggingIntegration(t *testing.T) {
 func TestRequestLoggingWithContext(t *testing.T) {
 	t.Run("logger is available in request context", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := logging.NewStructuredLogger(&buf, 0)
 
 		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Should be able to get logger from context
@@ -233,7 +232,7 @@ func TestRequestLoggingWithContext(t *testing.T) {
 			require.NotNil(t, ctxLogger)
 
 			// Log something from the handler
-			ctxLogger.Info("handler called", slog.String("test", "value"))
+			ctxLogger.Info("handler called", "test", "value")
 			w.WriteHeader(http.StatusOK)
 		})
 
@@ -254,7 +253,7 @@ func TestRequestLoggingWithContext(t *testing.T) {
 }
 
 // createHandlerWithRequestLogging creates an API handler with request logging enabled for testing
-func createHandlerWithRequestLogging(api *RestAPI, logger *slog.Logger) http.Handler {
+func createHandlerWithRequestLogging(api *RestAPI, logger *logging.Logger) http.Handler {
 	// Create a simple test handler
 	mux := http.NewServeMux()
 

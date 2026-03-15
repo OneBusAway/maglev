@@ -1,8 +1,8 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
-	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -185,7 +185,7 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	}
 
 	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
-		logger := slog.Default().With(slog.String("component", "rate_limit_middleware"))
+		logger := logging.FromContext(context.Background()).With("component", "rate_limit_middleware")
 		logging.LogError(logger, "failed to encode rate limit response", err)
 	}
 }

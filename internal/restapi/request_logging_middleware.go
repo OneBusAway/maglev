@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -20,7 +19,7 @@ func (rw *responseWriter) WriteHeader(code int) {
 }
 
 // NewRequestLoggingMiddleware creates middleware that logs HTTP requests
-func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+func NewRequestLoggingMiddleware(logger *logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -48,9 +47,9 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 				r.URL.Path,
 				wrapped.statusCode,
 				float64(duration.Nanoseconds())/1e6,
-				slog.String("request_id", reqID),
-				slog.String("user_agent", r.Header.Get("User-Agent")),
-				slog.String("component", "http_server"))
+				"request_id", reqID,
+				"user_agent", r.Header.Get("User-Agent"),
+				"component", "http_server")
 		})
 	}
 }

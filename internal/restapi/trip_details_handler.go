@@ -3,7 +3,6 @@ package restapi
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -163,9 +162,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		var statusErr error
 		status, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, serviceDate, currentTime)
 		if statusErr != nil {
-			slog.Warn("BuildTripStatus failed",
-				slog.String("trip_id", trip.ID),
-				slog.String("error", statusErr.Error()))
+			api.Logger.Warn("BuildTripStatus failed",
+				"trip_id", trip.ID,
+				"error", statusErr.Error())
 			status = nil
 		}
 	}
@@ -173,9 +172,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if params.IncludeSchedule {
 		schedule, err = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, loc)
 		if err != nil {
-			slog.Warn("BuildTripSchedule failed",
-				slog.String("trip_id", trip.ID),
-				slog.String("error", err.Error()))
+			api.Logger.Warn("BuildTripSchedule failed",
+				"trip_id", trip.ID,
+				"error", err.Error())
 			schedule = nil
 		}
 	}
