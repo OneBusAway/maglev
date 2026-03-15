@@ -7,6 +7,9 @@ import (
 	"log/slog"
 )
 
+// Logger is an alias for slog.Logger to avoid direct slog imports in handlers
+type Logger = slog.Logger
+
 // loggerKey is used to store the logger in context
 type loggerKey struct{}
 
@@ -20,61 +23,46 @@ func NewStructuredLogger(w io.Writer, level slog.Level) *slog.Logger {
 }
 
 // LogError logs an error with structured context
-func LogError(logger *slog.Logger, message string, err error, attrs ...slog.Attr) {
+func LogError(logger *slog.Logger, message string, err error, args ...any) {
 	if logger == nil {
-		slog.Default().Error("nil logger provided to LogError", slog.String("message", message))
+		slog.Default().Error("nil logger provided to LogError", "message", message, "error", err)
 		return
 	}
 
-	args := make([]any, 0, len(attrs)+2)
-	args = append(args, slog.String("error", err.Error()))
+	finalArgs := make([]any, 0, len(args)+2)
+	finalArgs = append(finalArgs, "error", err.Error())
+	finalArgs = append(finalArgs, args...)
 
-	for _, attr := range attrs {
-		args = append(args, attr)
-	}
-
-	logger.Error(message, args...)
+	logger.Error(message, finalArgs...)
 }
 
 // LogOperation logs an operation with structured context
-func LogOperation(logger *slog.Logger, operation string, attrs ...slog.Attr) {
+func LogOperation(logger *slog.Logger, operation string, args ...any) {
 	if logger == nil {
-		slog.Default().Info("nil logger provided to LogOperation", slog.String("operation", operation))
+		slog.Default().Info("nil logger provided to LogOperation", "operation", operation)
 		return
-	}
-
-	args := make([]any, 0, len(attrs))
-	for _, attr := range attrs {
-		// Skip zero-value durations to avoid cluttering logs with meaningless timing data
-		if attr.Key == "duration" && attr.Value.Duration() == 0 {
-			continue
-		}
-		args = append(args, attr)
 	}
 
 	logger.Info(operation, args...)
 }
 
 // LogHTTPRequest logs HTTP request details
-func LogHTTPRequest(logger *slog.Logger, method, path string, status int, durationMs float64, attrs ...slog.Attr) {
+func LogHTTPRequest(logger *slog.Logger, method, path string, status int, durationMs float64, args ...any) {
 	if logger == nil {
-		slog.Default().Info("nil logger provided to LogHTTPRequest", slog.String("path", path))
+		slog.Default().Info("nil logger provided to LogHTTPRequest", "path", path)
 		return
 	}
 
-	args := make([]any, 0, len(attrs)+4)
-	args = append(args,
-		slog.String("method", method),
-		slog.String("path", path),
-		slog.Int("status", status),
-		slog.Float64("duration_ms", durationMs),
+	finalArgs := make([]any, 0, len(args)+8)
+	finalArgs = append(finalArgs,
+		"method", method,
+		"path", path,
+		"status", status,
+		"duration_ms", durationMs,
 	)
+	finalArgs = append(finalArgs, args...)
 
-	for _, attr := range attrs {
-		args = append(args, attr)
-	}
-
-	logger.Info("http_request", args...)
+	logger.Info("http_request", finalArgs...)
 }
 
 // WithLogger adds a logger to the context
@@ -95,7 +83,7 @@ func FromContext(ctx context.Context) *slog.Logger {
 // ReplaceLogPrint replaces log.Print calls with structured logging
 func ReplaceLogPrint(logger *slog.Logger, message string) {
 	if logger == nil {
-		slog.Default().Info("nil logger provided to ReplaceLogPrint", slog.String("message", message))
+		slog.Default().Info("nil logger provided to ReplaceLogPrint", "message", message)
 		return
 	}
 	logger.Info(message)

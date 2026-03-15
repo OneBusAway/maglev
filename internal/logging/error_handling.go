@@ -32,8 +32,8 @@ func SafeCloseWithLogging(closer io.Closer, logger *slog.Logger, operation strin
 
 	if err := closer.Close(); err != nil {
 		LogError(logger, "failed to close resource", err,
-			slog.String("operation", operation),
-			slog.String("component", "resource_management"))
+			"operation", operation,
+			"component", "resource_management")
 	}
 }
 
@@ -72,8 +72,8 @@ func SafeRollbackWithLogging(tx interface{ Rollback() error }, logger *slog.Logg
 		}
 
 		LogError(logger, "failed to rollback transaction", err,
-			slog.String("operation", operation),
-			slog.String("component", "database"))
+			"operation", operation,
+			"component", "database")
 	}
 }
 
@@ -104,8 +104,8 @@ func HandleDeferredError(originalErr *error, deferredOp func() error, logger *sl
 	if err := deferredOp(); err != nil {
 		// Log the deferred error
 		LogError(logger, "deferred operation failed", err,
-			slog.String("operation", operation),
-			slog.String("component", "deferred_cleanup"))
+			"operation", operation,
+			"component", "deferred_cleanup")
 
 		// If there was no original error, set this as the error
 		if *originalErr == nil {

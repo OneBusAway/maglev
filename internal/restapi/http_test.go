@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -88,7 +87,7 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 	}
 
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	api.Logger = logging.NewStructuredLogger(os.Stdout, -4)
 
 	return api
 }
@@ -119,7 +118,7 @@ func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*
 	resp, err := http.Get(server.URL + endpoint)
 	require.NoError(t, err)
 	defer logging.SafeCloseWithLogging(resp.Body,
-		slog.Default().With(slog.String("component", "test")),
+		logging.FromContext(context.Background()).With("component", "test"),
 		"http_response_body")
 
 	var response models.ResponseModel

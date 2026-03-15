@@ -1,8 +1,8 @@
 package restapi
 
 import (
+	"maglev.onebusaway.org/internal/logging"
 	"bytes"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,7 +110,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 func TestRequestIDLoggingIntegration(t *testing.T) {
 	var logBuf bytes.Buffer
 
-	testLogger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	testLogger := logging.NewStructuredLogger(&logBuf, 0)
 
 	finalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

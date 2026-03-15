@@ -3,7 +3,7 @@
 package restapi
 
 import (
-	"log/slog"
+	"maglev.onebusaway.org/internal/logging"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +43,6 @@ func createLargeAgencyApi(tb testing.TB) *RestAPI {
 		Clock:       clock.RealClock{},
 	}
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	api.Logger = logging.NewStructuredLogger(os.Stdout, 4)
 	return api
 }

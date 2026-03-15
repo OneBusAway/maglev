@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/logging"
@@ -47,7 +46,7 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 		api.clientCanceledResponse(w, r, err)
 		return
 	}
-	logging.LogError(api.Logger, "internal server error", err, slog.String("path", r.URL.Path))
+	logging.LogError(api.Logger, "internal server error", err, "path", r.URL.Path)
 	// Send a 500 Internal Server Error response
 	response := struct {
 		Code        int    `json:"code"`

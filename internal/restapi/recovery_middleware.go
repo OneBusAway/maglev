@@ -3,7 +3,6 @@ package restapi
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"runtime/debug"
 
@@ -32,7 +31,7 @@ func (rw *recoveryResponseWriter) Write(b []byte) (int, error) {
 
 // NewRecoveryMiddleware returns middleware that recovers from panics in handlers,
 // logs the panic with stack trace, and returns HTTP 500 (JSON) if no response was sent.
-func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler) http.Handler {
+func NewRecoveryMiddleware(logger *logging.Logger, c clock.Clock) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rw := &recoveryResponseWriter{ResponseWriter: w}
@@ -47,10 +46,10 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 						err = fmt.Errorf("%v", rec)
 					}
 					logging.LogError(logger, "handler panic recovered", err,
-						slog.String("path", r.URL.Path),
-						slog.String("method", r.Method),
-						slog.String("request_id", reqID),
-						slog.String("stack", string(stack)))
+						"path", r.URL.Path,
+						"method", r.Method,
+						"request_id", reqID,
+						"stack", string(stack))
 					if !rw.wroteHeader {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusInternalServerError)
@@ -67,9 +66,9 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 						}
 						if err := json.NewEncoder(w).Encode(response); err != nil {
 							logging.LogError(logger, "failed to encode panic recovery response", err,
-								slog.String("path", r.URL.Path),
-								slog.String("method", r.Method),
-								slog.String("request_id", reqID))
+								"path", r.URL.Path,
+								"method", r.Method,
+								"request_id", reqID)
 						}
 					}
 				}

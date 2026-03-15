@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -141,7 +140,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		})
 
 		if err != nil {
-			logging.LogError(api.Logger, "failed to fetch trips in block", err, slog.String("block_id", blockID))
+			logging.LogError(api.Logger, "failed to fetch trips in block", err, "block_id", blockID)
 			continue
 		}
 
@@ -154,7 +153,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
-			logging.LogError(api.Logger, "failed to fetch active trip in block", err, slog.String("block_id", blockID))
+			logging.LogError(api.Logger, "failed to fetch active trip in block", err, "block_id", blockID)
 			continue
 		}
 

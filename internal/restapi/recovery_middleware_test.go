@@ -1,10 +1,10 @@
 package restapi
 
 import (
+	"maglev.onebusaway.org/internal/logging"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,7 +14,7 @@ import (
 )
 
 func TestRecoveryMiddleware_Panic(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logging.NewStructuredLogger(io.Discard, 0)
 	mockClock := clock.NewMockClock(time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC))
 
 	panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func TestRecoveryMiddleware_Panic(t *testing.T) {
 }
 
 func TestRecoveryMiddleware_NoPanic(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logging.NewStructuredLogger(io.Discard, 0)
 	mockClock := clock.NewMockClock(time.Now())
 
 	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +88,7 @@ func TestRecoveryMiddleware_NoPanic(t *testing.T) {
 }
 
 func TestRecoveryMiddleware_PanicAfterWriteDoesNotOverrideResponse(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logging.NewStructuredLogger(io.Discard, 0)
 	mockClock := clock.NewMockClock(time.Now())
 
 	panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +112,7 @@ func TestRecoveryMiddleware_PanicAfterWriteDoesNotOverrideResponse(t *testing.T)
 }
 
 func TestRecoveryMiddleware_PanicWithErrorType(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logging.NewStructuredLogger(io.Discard, 0)
 	mockClock := clock.NewMockClock(time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC))
 
 	panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

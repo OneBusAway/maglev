@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"time"
 
@@ -64,9 +63,9 @@ func (api *RestAPI) BuildTripStatus(
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, activeTripRawID)
 	if err != nil {
-		slog.Warn("BuildTripStatus: failed to get stop times",
-			slog.String("trip_id", activeTripRawID),
-			slog.String("error", err.Error()))
+		api.Logger.Warn("BuildTripStatus: failed to get stop times",
+			"trip_id", activeTripRawID,
+			"error", err.Error())
 	}
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
@@ -122,9 +121,9 @@ func (api *RestAPI) BuildTripStatus(
 
 	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, activeTripRawID)
 	if shapeErr != nil {
-		slog.Warn("BuildTripStatus: failed to get shape points",
-			slog.String("trip_id", activeTripRawID),
-			slog.String("error", shapeErr.Error()))
+		api.Logger.Warn("BuildTripStatus: failed to get shape points",
+			"trip_id", activeTripRawID,
+			"error", shapeErr.Error())
 	}
 	if shapeErr == nil && len(shapeRows) > 1 {
 		shapePoints := shapeRowsToPoints(shapeRows)
@@ -256,9 +255,9 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 	case nil:
 		// Expected for the first trip in the block.
 	default:
-		slog.Warn("GetNextAndPreviousTripIDs: unexpected type for prev_trip_id",
-			slog.String("type", fmt.Sprintf("%T", prev)),
-			slog.String("trip_id", trip.ID))
+		api.Logger.Warn("GetNextAndPreviousTripIDs: unexpected type for prev_trip_id",
+			"type", fmt.Sprintf("%T", prev),
+			"trip_id", trip.ID)
 	}
 
 	switch next := navResult.NextTripID.(type) {
@@ -273,9 +272,9 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 	case nil:
 		// Expected for the last trip in the block.
 	default:
-		slog.Warn("GetNextAndPreviousTripIDs: unexpected type for next_trip_id",
-			slog.String("type", fmt.Sprintf("%T", next)),
-			slog.String("trip_id", trip.ID))
+		api.Logger.Warn("GetNextAndPreviousTripIDs: unexpected type for next_trip_id",
+			"type", fmt.Sprintf("%T", next),
+			"trip_id", trip.ID)
 	}
 
 	stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
@@ -289,9 +288,9 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatus, tripID string, currentTime time.Time, serviceDate time.Time, agencyID string) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
-		slog.Warn("fillStopsFromSchedule: failed to get stop times",
-			slog.String("trip_id", tripID),
-			slog.String("error", err.Error()))
+		api.Logger.Warn("fillStopsFromSchedule: failed to get stop times",
+			"trip_id", tripID,
+			"error", err.Error())
 		return
 	}
 	if len(stopTimes) == 0 {
@@ -514,9 +513,9 @@ func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, min
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get trip",
-			slog.String("trip_id", tripID),
-			slog.String("error", err.Error()))
+		api.Logger.Warn("calculateBlockTripSequence: failed to get trip",
+			"trip_id", tripID,
+			"error", err.Error())
 		return 0
 	}
 
@@ -527,10 +526,10 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	formattedDate := serviceDate.Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get active service IDs",
-			slog.String("trip_id", tripID),
-			slog.String("date", formattedDate),
-			slog.String("error", err.Error()))
+		api.Logger.Warn("calculateBlockTripSequence: failed to get active service IDs",
+			"trip_id", tripID,
+			"date", formattedDate,
+			"error", err.Error())
 		return 0
 	}
 	if len(activeServiceIDs) == 0 {
@@ -545,10 +544,10 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	})
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("calculateBlockTripSequence: failed to get block trip sequence",
-				slog.String("trip_id", tripID),
-				slog.String("block_id", trip.BlockID.String),
-				slog.String("error", err.Error()))
+			api.Logger.Warn("calculateBlockTripSequence: failed to get block trip sequence",
+				"trip_id", tripID,
+				"block_id", trip.BlockID.String,
+				"error", err.Error())
 		}
 		return 0
 	}
@@ -692,15 +691,15 @@ func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) [
 				agencyID = route.AgencyID
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				api.Logger.Warn("Failed to fetch route for alerts; degrading to trip+route matching only",
-					slog.String("trip_id", tripID),
-					slog.String("route_id", routeID),
-					slog.Any("error", err),
+					"trip_id", tripID,
+					"route_id", routeID,
+					"error", err,
 				)
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			api.Logger.Warn("Failed to fetch trip for alerts; degrading to trip matching only",
-				slog.String("trip_id", tripID),
-				slog.Any("error", err),
+				"trip_id", tripID,
+				"error", err,
 			)
 		}
 	}
@@ -993,9 +992,9 @@ func (api *RestAPI) findNextStopBySequence(
 func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string, serviceDate time.Time) *gtfsdb.StopTime {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, currentTripID)
 	if err != nil {
-		slog.Warn("getFirstStopOfNextTripInBlock: failed to get trip",
-			slog.String("trip_id", currentTripID),
-			slog.String("error", err.Error()))
+		api.Logger.Warn("getFirstStopOfNextTripInBlock: failed to get trip",
+			"trip_id", currentTripID,
+			"error", err.Error())
 		return nil
 	}
 	if !trip.BlockID.Valid {
@@ -1010,10 +1009,10 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 	})
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
-				slog.String("trip_id", currentTripID),
-				slog.String("block_id", trip.BlockID.String),
-				slog.String("error", err.Error()))
+			api.Logger.Warn("getFirstStopOfNextTripInBlock: query failed",
+				"trip_id", currentTripID,
+				"block_id", trip.BlockID.String,
+				"error", err.Error())
 		}
 		return nil
 	}

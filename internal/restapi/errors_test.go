@@ -1,9 +1,9 @@
 package restapi
 
 import (
+	"maglev.onebusaway.org/internal/logging"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +16,7 @@ import (
 
 func TestServerErrorResponse(t *testing.T) {
 	// Create a mock Application with Clock
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := logging.NewStructuredLogger(os.Stdout, 0)
 	application := &app.Application{
 		Clock:  clock.RealClock{},
 		Logger: logger,
