@@ -35,7 +35,7 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 	defer m.realTimeMutex.Unlock()
 
 	for _, v := range m.realTimeVehicles {
-		if v.ID.ID == vehicleID {
+		if v.ID != nil && v.ID.ID == vehicleID {
 			return
 		}
 	}
@@ -110,7 +110,7 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	if vehicleID != "" && !opts.NoID {
 		m.realTimeVehicleLookupByVehicle[vehicleID] = idx
 	}
-	if tripID != "" {
+	if tripID != "" && !opts.NoTrip {
 		m.realTimeVehicleLookupByTrip[tripID] = idx
 	}
 }

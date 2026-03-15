@@ -69,10 +69,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		var vid string
-		if vehicle.ID != nil {
-			vid = vehicle.ID.ID
+		if vehicle.ID == nil {
+			api.Logger.Warn("skipping vehicle with nil ID descriptor", "agencyID", id)
+			continue
 		}
+		vid := vehicle.ID.ID
 		vehicleStatus := models.VehicleStatus{
 			VehicleID: vid,
 		}

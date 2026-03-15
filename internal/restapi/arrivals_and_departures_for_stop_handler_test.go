@@ -1217,29 +1217,104 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
-	api := createTestApi(t)
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
+
+	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencies := api.GtfsManager.GetAgencies()
-	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
 
-	stops := api.GtfsManager.GetStops()
-	require.NotEmpty(t, stops)
-	combinedStopID := utils.FormCombinedID(agencyID, stops[0].Id)
+	const (
+		agencyID = "NilIDAgency"
+		stopID   = "NilIDStop"
+		routeID  = "NilIDRoute"
+		tripID   = "NilIDTrip"
+	)
 
-	trips := api.GtfsManager.GetTrips()
-	require.NotEmpty(t, trips)
-	rawRouteID := trips[0].Route.Id
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       agencyID,
+		Name:     "Nil ID Test Agency",
+		Url:      "http://nilid-agency.com",
+		Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
 
-	api.GtfsManager.MockAddVehicleWithOptions("", trips[0].ID, rawRouteID, internalgtfs.MockVehicleOptions{
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:   stopID,
+		Name: sql.NullString{String: "Nil ID Test Stop", Valid: true},
+		Lat:  40.5865,
+		Lon:  -122.3917,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID:       routeID,
+		AgencyID: agencyID,
+		Type:     3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        "nilid_service",
+		Monday:    1,
+		Tuesday:   1,
+		Wednesday: 1,
+		Thursday:  1,
+		Friday:    1,
+		Saturday:  1,
+		Sunday:    1,
+		StartDate: "20000101",
+		EndDate:   "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   routeID,
+		ServiceID: "nilid_service",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopID,
+		StopSequence:  1,
+		ArrivalTime:   29100 * 1e9, // 08:05:00 in nanoseconds
+		DepartureTime: 29400 * 1e9, // 08:10:00 in nanoseconds
+	})
+	require.NoError(t, err)
+
+	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
 		NoID: true,
 	})
 
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
 		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST&minutesBefore=60&minutesAfter=60")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+	arrivalsRaw, ok := entry["arrivalsAndDepartures"].([]interface{})
+	require.True(t, ok)
+
+	var found bool
+	for _, a := range arrivalsRaw {
+		arr := a.(map[string]interface{})
+		_, arrTripID, _ := utils.ExtractAgencyIDAndCodeID(arr["tripId"].(string))
+		if arrTripID == tripID {
+			assert.Equal(t, "", arr["vehicleId"], "vehicleId should be empty for vehicle with nil ID")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "should find arrival for test trip %s", tripID)
 }

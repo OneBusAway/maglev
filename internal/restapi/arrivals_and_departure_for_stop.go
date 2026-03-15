@@ -316,8 +316,12 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		// Get vehicle if available
 		vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
-		if vehicle != nil && vehicle.Trip != nil && vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
+		if vehicle != nil && vehicle.Trip != nil {
+			if vehicle.ID != nil {
+				vehicleID = vehicle.ID.ID
+			} else {
+				api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", st.TripID)
+			}
 		}
 
 		// Prepare scheduled times for the shared function

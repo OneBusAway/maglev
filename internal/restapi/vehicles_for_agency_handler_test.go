@@ -403,6 +403,15 @@ func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	for _, item := range list {
+		v := item.(map[string]interface{})
+		assert.NotEqual(t, "", v["vehicleId"], "vehicle with nil ID must be skipped, not returned with empty vehicleId")
+	}
 }
 
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
@@ -510,10 +519,14 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 		t.Log("Real-time vehicles are not matching the test agency. Debugging:")
 		for i, vehicle := range realTimeVehicles {
 			if i < 3 { // Log first 3 vehicles
+				vehicleID := ""
+				if vehicle.ID != nil {
+					vehicleID = vehicle.ID.ID
+				}
 				if vehicle.Trip != nil {
-					t.Logf("Vehicle %s: tripId=%s, routeId=%s", vehicle.ID.ID, vehicle.Trip.ID.ID, vehicle.Trip.ID.RouteID)
+					t.Logf("Vehicle %s: tripId=%s, routeId=%s", vehicleID, vehicle.Trip.ID.ID, vehicle.Trip.ID.RouteID)
 				} else {
-					t.Logf("Vehicle %s: no trip assigned", vehicle.ID.ID)
+					t.Logf("Vehicle %s: no trip assigned", vehicleID)
 				}
 			}
 		}
