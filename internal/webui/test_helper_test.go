@@ -27,18 +27,18 @@ func TestMain(m *testing.M) {
 
 func createTestWebUI(t testing.TB) *WebUI {
 	t.Helper()
+	var initErr error
 	testDbSetupOnce.Do(func() {
 		ctx := context.Background()
 		gtfsConfig := gtfs.Config{
 			GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
 			GTFSDataPath: testDbPath,
 		}
-		var err error
-		testGtfsManager, err = gtfs.InitGTFSManager(ctx, gtfsConfig)
-		if err != nil {
-			t.Fatalf("failed to initialize test GTFS manager: %v", err)
-		}
+		testGtfsManager, initErr = gtfs.InitGTFSManager(ctx, gtfsConfig)
 	})
+	if initErr != nil {
+		t.Fatalf("failed to initialize test GTFS manager: %v", initErr)
+	}
 
 	return &WebUI{
 		Application: &app.Application{

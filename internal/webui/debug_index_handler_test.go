@@ -105,19 +105,20 @@ func TestDebugIndexHandler_AllDataTypes(t *testing.T) {
 		name          string
 		dataType      string
 		expectedTitle string
+		expectedData  []string
 	}{
-		{"warnings", "warnings", "GTFS Static - Parse Warnings"},
-		{"agencies", "agencies", "GTFS Static - Agencies"},
-		{"routes", "routes", "GTFS Static - Routes"},
-		{"stops", "stops", "GTFS Static - Stops"},
-		{"transfers", "transfers", "GTFS Static - Transfers"},
-		{"services", "services", "GTFS Static - Services"},
-		{"trips", "trips", "GTFS Static - Trips"},
-		{"shapes", "shapes", "GTFS Static - Shapes"},
-		{"realtime_trips", "realtime_trips", "GTFS Realtime - Trips"},
-		{"realtime_vehicles", "realtime_vehicles", "GTFS Realtime - Vehicles"},
-		{"default_empty", "", "Choose a data type"},
-		{"default_invalid", "invalid_type", "Choose a data type"},
+		{"warnings", "warnings", "GTFS Static - Parse Warnings", nil},
+		{"agencies", "agencies", "GTFS Static - Agencies", []string{"Redding Area Bus Authority"}},
+		{"routes", "routes", "GTFS Static - Routes", []string{"Route 1"}},
+		{"stops", "stops", "GTFS Static - Stops", nil},
+		{"transfers", "transfers", "GTFS Static - Transfers", nil},
+		{"services", "services", "GTFS Static - Services", nil},
+		{"trips", "trips", "GTFS Static - Trips", nil},
+		{"shapes", "shapes", "GTFS Static - Shapes", nil},
+		{"realtime_trips", "realtime_trips", "GTFS Realtime - Trips", nil},
+		{"realtime_vehicles", "realtime_vehicles", "GTFS Realtime - Vehicles", nil},
+		{"default_empty", "", "Choose a data type", nil},
+		{"default_invalid", "invalid_type", "Choose a data type", nil},
 	}
 
 	for _, tt := range tests {
@@ -132,7 +133,11 @@ func TestDebugIndexHandler_AllDataTypes(t *testing.T) {
 			webUI.debugIndexHandler(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
-			assert.Contains(t, rr.Body.String(), tt.expectedTitle)
+			body := rr.Body.String()
+			assert.Contains(t, body, tt.expectedTitle)
+			for _, s := range tt.expectedData {
+				assert.Contains(t, body, s)
+			}
 		})
 	}
 }
