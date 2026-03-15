@@ -2,7 +2,6 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { SharedArray } from 'k6/data';
 import { thresholds } from './thresholds.js';
-// Added for the handleSummary text output
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 
 // Tell k6 not to count 4xx responses as failures.
