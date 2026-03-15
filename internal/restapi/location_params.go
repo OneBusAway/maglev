@@ -44,5 +44,5 @@ func (api *RestAPI) parseLocationParams(r *http.Request, fieldErrors map[string]
 		Radius:  radius,
 		LatSpan: latSpan,
 		LonSpan: lonSpan,
-	}, fieldErrors
+	}, nil
 }
