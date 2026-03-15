@@ -150,7 +150,10 @@ func latencyFetchActiveServiceIDs(ctx context.Context, tb testing.TB, q *Queries
 func latencyIsWALEnabled(ctx context.Context, t *testing.T, db *sql.DB) bool {
 	t.Helper()
 	var mode string
-	_ = db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode)
+	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Errorf("failed to check WAL mode: %v", err)
+		return false
+	}
 	return mode == "wal"
 }
 
@@ -423,7 +426,12 @@ SELECT DISTINCT service_id FROM base_services`,
 			t.Errorf("EXPLAIN failed for %s: %v", p.name, err)
 			continue
 		}
-		cols, _ := rows.Columns()
+		cols, colErr := rows.Columns()
+		if colErr != nil {
+			t.Errorf("columns for %s: %v", p.name, colErr)
+			_ = rows.Close()
+			continue
+		}
 		for rows.Next() {
 			vals := make([]interface{}, len(cols))
 			ptrs := make([]interface{}, len(cols))
@@ -464,14 +472,21 @@ SELECT DISTINCT service_id FROM base_services`,
 		WHERE type = 'index'
 		  AND name NOT LIKE 'sqlite_autoindex_%'
 		ORDER BY tbl_name, name`)
-	if err == nil {
+	if err != nil {
+		t.Errorf("querying indexes from sqlite_master: %v", err)
+	} else {
 		defer func() { _ = idxRows.Close() }()
 		for idxRows.Next() {
 			var tbl, name string
 			var idxSQL sql.NullString
-			if scanErr := idxRows.Scan(&tbl, &name, &idxSQL); scanErr == nil {
-				t.Logf("  %-35s  %s", tbl+"."+name, idxSQL.String)
+			if scanErr := idxRows.Scan(&tbl, &name, &idxSQL); scanErr != nil {
+				t.Errorf("scanning index row: %v", scanErr)
+				break
 			}
+			t.Logf("  %-35s  %s", tbl+"."+name, idxSQL.String)
+		}
+		if iterErr := idxRows.Err(); iterErr != nil {
+			t.Errorf("index rows iteration failed: %v", iterErr)
 		}
 	}
 }
