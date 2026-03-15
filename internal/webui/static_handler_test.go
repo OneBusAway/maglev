@@ -20,6 +20,11 @@ func TestMarketingHandler_PathTraversal(t *testing.T) {
 		t.Fatalf("failed to create valid file: %v", err)
 	}
 
+	dirWithExt := filepath.Join(marketingDir, "fakedir.html")
+	if err := os.MkdirAll(dirWithExt, 0755); err != nil {
+		t.Fatalf("failed to create directory with extension: %v", err)
+	}
+
 	secretDir := filepath.Join(tempDir, "marketing-secret")
 	if err := os.MkdirAll(secretDir, 0755); err != nil {
 		t.Fatalf("failed to create secret directory: %v", err)
@@ -75,6 +80,16 @@ func TestMarketingHandler_PathTraversal(t *testing.T) {
 		{
 			name:       "disallowed extension",
 			path:       "/marketing/config.json",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "directory with allowed extension is blocked",
+			path:       "/marketing/fakedir.html",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "nonexistent file with allowed extension",
+			path:       "/marketing/nonexistent.css",
 			wantStatus: http.StatusNotFound,
 		},
 		{
