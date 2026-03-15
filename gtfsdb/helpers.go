@@ -54,6 +54,8 @@ type slowQueryDB struct {
 	threshold time.Duration
 	logger    *slog.Logger
 	now       func() time.Time // Overridden in tests to avoid OS timer resolution issues.
+	// Optional per-query metrics recorder.
+	queryMetrics DBQueryMetricsRecorder
 }
 
 func newSlowQueryDB(db *sql.DB, threshold time.Duration) *slowQueryDB {
@@ -68,7 +70,9 @@ func newSlowQueryDB(db *sql.DB, threshold time.Duration) *slowQueryDB {
 func (s *slowQueryDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	start := s.now()
 	res, err := s.db.ExecContext(ctx, query, args...)
-	s.maybeLog("ExecContext", query, s.now().Sub(start), err)
+	elapsed := s.now().Sub(start)
+	s.maybeLog("ExecContext", query, elapsed, err)
+	s.recordQueryMetrics("exec", query, elapsed, err)
 	return res, err
 }
 
@@ -81,14 +85,18 @@ func (s *slowQueryDB) PrepareContext(ctx context.Context, query string) (*sql.St
 func (s *slowQueryDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	start := s.now()
 	rows, err := s.db.QueryContext(ctx, query, args...)
-	s.maybeLog("QueryContext", query, s.now().Sub(start), err)
+	elapsed := s.now().Sub(start)
+	s.maybeLog("QueryContext", query, elapsed, err)
+	s.recordQueryMetrics("query", query, elapsed, err)
 	return rows, err
 }
 
 func (s *slowQueryDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
 	start := s.now()
 	row := s.db.QueryRowContext(ctx, query, args...)
-	s.maybeLog("QueryRowContext", query, s.now().Sub(start), nil)
+	elapsed := s.now().Sub(start)
+	s.maybeLog("QueryRowContext", query, elapsed, nil)
+	s.recordQueryMetrics("query_row", query, elapsed, nil)
 	return row
 }
 
@@ -105,6 +113,38 @@ func (s *slowQueryDB) maybeLog(op, query string, elapsed time.Duration, err erro
 		attrs = append(attrs, slog.String("error", err.Error()))
 	}
 	s.logger.Warn("slow_query", attrs...)
+}
+
+func (s *slowQueryDB) recordQueryMetrics(op, query string, elapsed time.Duration, err error) {
+	if s.queryMetrics == nil {
+		return
+	}
+	s.queryMetrics.RecordDBQuery(extractQueryName(query), op, err, elapsed)
+}
+
+func extractQueryName(query string) string {
+	const prefix = "-- name:"
+
+	for _, line := range strings.Split(query, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, prefix) {
+			nameAndType := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+			fields := strings.Fields(nameAndType)
+			if len(fields) > 0 && fields[0] != "" {
+				return fields[0]
+			}
+			return "unknown"
+		}
+		// SQL body started without a sqlc name header.
+		if !strings.HasPrefix(trimmed, "--") {
+			break
+		}
+	}
+
+	return "unknown"
 }
 
 // trimQuery truncates a query to 120 characters for concise logging.

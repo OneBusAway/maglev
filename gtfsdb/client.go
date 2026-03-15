@@ -28,12 +28,17 @@ func NewClient(config Config) (*Client, error) {
 		log.Println("Successfully created tables")
 	}
 
-	// Wrap DB with slow-query logging. Using New() ensures
-	// queries go through slowQueryDB for interception and logging.
+	// Wrap DB for query interception (slow-query logging and optional metrics).
+	// Using New() ensures sqlc queries go through slowQueryDB.
 	var dbtx DBTX = db
-	if slowQueryThreshold > 0 {
-		dbtx = newSlowQueryDB(db, slowQueryThreshold)
-		log.Printf("Slow query logging enabled (threshold: %s)", slowQueryThreshold)
+	if slowQueryThreshold > 0 || config.QueryMetricsRecorder != nil {
+		wrapper := newSlowQueryDB(db, slowQueryThreshold)
+		wrapper.queryMetrics = config.QueryMetricsRecorder
+		dbtx = wrapper
+
+		if slowQueryThreshold > 0 {
+			log.Printf("Slow query logging enabled (threshold: %s)", slowQueryThreshold)
+		}
 	}
 	queries := New(dbtx)
 

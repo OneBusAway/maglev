@@ -86,6 +86,7 @@ func buildGtfsDB(ctx context.Context, config Config, isLocalFile bool, dbPath st
 		dbPath = config.GTFSDataPath
 	}
 	dbConfig := gtfsdb.NewConfig(dbPath, config.Env, config.Verbose)
+	dbConfig.QueryMetricsRecorder = config.Metrics
 	client, err := gtfsdb.NewClient(dbConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GTFS database client: %w", err)
@@ -308,6 +309,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		logging.LogOperation(logger, "attempting_recovery_reopening_old_db")
 
 		dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
+		dbConfig.QueryMetricsRecorder = manager.config.Metrics
 		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
 			manager.GtfsDB = reopenedClient
 			logging.LogOperation(logger, "recovery_successful_old_db_reopened")
@@ -330,6 +332,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 
 	dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
+	dbConfig.QueryMetricsRecorder = manager.config.Metrics
 	client, err := gtfsdb.NewClient(dbConfig)
 
 	if err != nil {
