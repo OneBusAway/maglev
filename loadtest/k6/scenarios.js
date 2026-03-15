@@ -97,7 +97,7 @@ export default function () {
 export function handleSummary(data) {
     return {
         // Output summary to stdout (console)
-        'stdout': textSummary(data, { indent: ' ', enableColors: true }),
+        'stdout': textSummary(data, { indent: ' ', enableColors: false }),
         // Output JSON report exactly where the CI expects it
         'loadtest/k6/stress-summary.json': JSON.stringify(data),
     };
