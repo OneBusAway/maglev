@@ -59,9 +59,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
+	// GetStopsForLocation manages its own locking internally.
 	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, radius, latSpan, lonSpan, query, maxCount, true, nil, time.Time{})
 
 	var results = []models.Route{}
@@ -76,10 +74,15 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
+		// Scope the read lock narrowly for in-memory data access only.
+		api.GtfsManager.RLock()
 		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+		outOfBounds := checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius)
+		api.GtfsManager.RUnlock()
+
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
-		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
+		response := models.NewListResponseWithRange(results, *references, outOfBounds, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -133,7 +136,11 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Scope the read lock narrowly for in-memory data access only.
+	api.GtfsManager.RLock()
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+	outOfBounds := checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius)
+	api.GtfsManager.RUnlock()
 
 	// Populate situation references for alerts affecting the returned routes
 	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
@@ -143,7 +150,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	references.Agencies = agencies
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, outOfBounds, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
 

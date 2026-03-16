@@ -20,9 +20,6 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
 	if fieldErrors != nil {
 		api.validationErrorResponse(w, r, fieldErrors)
@@ -39,6 +36,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
 	currentTime := api.Clock.Now().In(currentLocation)
 
+	// GetStopsForLocation manages its own locking internally.
 	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, api.Clock.Now())
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
@@ -119,7 +117,12 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		Stops:       stops,
 		Trips:       result,
 	})
-	response := models.NewListResponseWithRange(result, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, 0), api.Clock, false)
+	// Scope the read lock narrowly for in-memory data access only (GetRegionBounds).
+	api.GtfsManager.RLock()
+	outOfBounds := checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, 0)
+	api.GtfsManager.RUnlock()
+
+	response := models.NewListResponseWithRange(result, references, outOfBounds, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
@@ -141,7 +144,11 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
+	// Scope the read lock narrowly for in-memory data access only (GetAgencies).
+	api.GtfsManager.RLock()
 	agencies := api.GtfsManager.GetAgencies()
+	api.GtfsManager.RUnlock()
+
 	if len(agencies) == 0 {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
 	}

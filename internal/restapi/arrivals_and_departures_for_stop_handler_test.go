@@ -1044,19 +1044,16 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	// The RABA agency ID is "25".
 	rabaAgencyID := "25"
 
-	// GetStopsForLocation requires the caller to hold RLock.
-	api.GtfsManager.RLock()
+	// GetStopsForLocation manages its own locking internally.
 	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, stops, "precondition: RABA should have stops near Redding, CA")
 
 	currentStop := stops[0]
 
 	// Call getNearbyStopIDs with a wrong fallback agency.
 	// If batch resolution works, nearby stops should use "25", not the fallback.
-	api.GtfsManager.RLock()
+	// getNearbyStopIDs calls GetStopsForLocation which manages its own locking.
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, result, "should find nearby stops")
 
 	for _, combinedID := range result {
@@ -1075,16 +1072,14 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 
 	ctx := context.Background()
 
-	api.GtfsManager.RLock()
+	// GetStopsForLocation manages its own locking internally.
 	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, stops)
 
 	currentStop := stops[0]
 
-	api.GtfsManager.RLock()
+	// getNearbyStopIDs calls GetStopsForLocation which manages its own locking.
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
-	api.GtfsManager.RUnlock()
 
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
