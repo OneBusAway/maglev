@@ -71,10 +71,10 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 	}
 
 	if val := query.Get("time"); val != "" {
-		if timeMs, err := strconv.ParseInt(val, 10, 64); err == nil {
-			params.Time = time.Unix(timeMs/1000, (timeMs%1000)*1000000)
+		if parsed, err := time.Parse(time.RFC3339, val); err == nil {
+			params.Time = parsed
 		} else {
-			addError("time", "must be a valid Unix timestamp in milliseconds")
+			addError("time", "must be a valid RFC3339 date-time (e.g. 2026-01-01T00:00:00Z)")
 		}
 	}
 

@@ -6,23 +6,23 @@ type ArrivalAndDeparture struct {
 	BlockTripSequence          int         `json:"blockTripSequence"`
 	DepartureEnabled           bool        `json:"departureEnabled"`
 	DistanceFromStop           float64     `json:"distanceFromStop"`
-	Frequency                  *Frequency  `json:"frequency"`
+	Frequency                  string      `json:"frequency,omitempty"`
 	HistoricalOccupancy        string      `json:"historicalOccupancy"`
 	LastUpdateTime             *int64      `json:"lastUpdateTime,omitempty"`
 	NumberOfStopsAway          int         `json:"numberOfStopsAway"`
 	OccupancyStatus            string      `json:"occupancyStatus"`
 	Predicted                  bool        `json:"predicted"`
-	PredictedArrivalInterval   interface{} `json:"predictedArrivalInterval"`
+	PredictedArrivalInterval   string      `json:"predictedArrivalInterval,omitempty"`
 	PredictedArrivalTime       int64       `json:"predictedArrivalTime"`
-	PredictedDepartureInterval interface{} `json:"predictedDepartureInterval"`
+	PredictedDepartureInterval string      `json:"predictedDepartureInterval,omitempty"`
 	PredictedDepartureTime     int64       `json:"predictedDepartureTime"`
 	PredictedOccupancy         string      `json:"predictedOccupancy"`
 	RouteID                    string      `json:"routeId"`
 	RouteLongName              string      `json:"routeLongName"`
 	RouteShortName             string      `json:"routeShortName"`
-	ScheduledArrivalInterval   interface{} `json:"scheduledArrivalInterval"`
+	ScheduledArrivalInterval   string      `json:"scheduledArrivalInterval,omitempty"`
 	ScheduledArrivalTime       int64       `json:"scheduledArrivalTime"`
-	ScheduledDepartureInterval interface{} `json:"scheduledDepartureInterval"`
+	ScheduledDepartureInterval string      `json:"scheduledDepartureInterval,omitempty"`
 	ScheduledDepartureTime     int64       `json:"scheduledDepartureTime"`
 	ScheduledTrack             string      `json:"scheduledTrack"`
 	ServiceDate                int64       `json:"serviceDate"`
@@ -54,23 +54,23 @@ func NewArrivalAndDeparture(
 		BlockTripSequence:          blockTripSequence,
 		DepartureEnabled:           departureEnabled,
 		DistanceFromStop:           distanceFromStop,
-		Frequency:                  nil,
+		Frequency:                  "",
 		HistoricalOccupancy:        historicalOccupancy,
 		LastUpdateTime:             lastUpdateTime,
 		NumberOfStopsAway:          numberOfStopsAway,
 		OccupancyStatus:            occupancyStatus,
 		Predicted:                  predicted,
-		PredictedArrivalInterval:   nil,
+		PredictedArrivalInterval:   "",
 		PredictedArrivalTime:       predictedArrivalTime,
-		PredictedDepartureInterval: nil,
+		PredictedDepartureInterval: "",
 		PredictedDepartureTime:     predictedDepartureTime,
 		PredictedOccupancy:         predictedOccupancy,
 		RouteID:                    routeID,
 		RouteLongName:              routeLongName,
 		RouteShortName:             routeShortName,
-		ScheduledArrivalInterval:   nil,
+		ScheduledArrivalInterval:   "",
 		ScheduledArrivalTime:       scheduledArrivalTime,
-		ScheduledDepartureInterval: nil,
+		ScheduledDepartureInterval: "",
 		ScheduledDepartureTime:     scheduledDepartureTime,
 		ScheduledTrack:             "",
 		ServiceDate:                serviceDate,

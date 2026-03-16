@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -225,10 +226,9 @@ func TestArrivalsAndDeparturesForStopHandlerWithSpecificTime(t *testing.T) {
 
 	tomorrow := time.Now().AddDate(0, 0, 1)
 	specificTime := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 9, 0, 0, 0, time.Local)
-	timeMs := specificTime.Unix() * 1000
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
-		"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST&time="+strconv.FormatInt(timeMs, 10))
+		"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST&time="+url.QueryEscape(specificTime.Format(time.RFC3339)))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
@@ -293,10 +293,9 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
 
 	futureTime := time.Now().AddDate(10, 0, 0)
-	timeMs := futureTime.Unix() * 1000
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
-		"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST&time="+strconv.FormatInt(timeMs, 10))
+		"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST&time="+url.QueryEscape(futureTime.Format(time.RFC3339)))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
@@ -394,7 +393,7 @@ func TestParseArrivalsAndDeparturesParams_AllParameters(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	req := httptest.NewRequest("GET", "/test?minutesAfter=60&minutesBefore=15&time=1609459200000", nil)
+	req := httptest.NewRequest("GET", "/test?minutesAfter=60&minutesBefore=15&time=2021-01-01T00:00:00Z", nil)
 
 	params, errs := api.parseArrivalsAndDeparturesParams(req)
 
@@ -433,7 +432,7 @@ func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
 
 	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
 	assert.Equal(t, "must be a valid integer", errs["minutesBefore"][0])
-	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
+	assert.Equal(t, "must be a valid RFC3339 date-time (e.g. 2026-01-01T00:00:00Z)", errs["time"][0])
 }
 
 func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
