@@ -565,7 +565,7 @@ func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", nil, time.Now())
+	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", nil, time.Now(), nil)
 
 	assert.Equal(t, 0.0, result)
 }
@@ -579,7 +579,7 @@ func TestGetBlockDistanceToStop_NoPosition(t *testing.T) {
 		Position: nil,
 	}
 
-	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", vehicle, time.Now())
+	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", vehicle, time.Now(), nil)
 
 	assert.Equal(t, 0.0, result)
 }

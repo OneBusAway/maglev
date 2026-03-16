@@ -141,6 +141,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBlockIDByTripIDStmt, err = db.PrepareContext(ctx, getBlockIDByTripID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockIDByTripID: %w", err)
 	}
+	if q.getBlockIDsByTripIDsStmt, err = db.PrepareContext(ctx, getBlockIDsByTripIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBlockIDsByTripIDs: %w", err)
+	}
 	if q.getBlockTripIndexIDsForBlocksStmt, err = db.PrepareContext(ctx, getBlockTripIndexIDsForBlocks); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockTripIndexIDsForBlocks: %w", err)
 	}
@@ -233,6 +236,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getShapePointsByTripIDStmt, err = db.PrepareContext(ctx, getShapePointsByTripID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetShapePointsByTripID: %w", err)
+	}
+	if q.getShapePointsByTripIDsStmt, err = db.PrepareContext(ctx, getShapePointsByTripIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetShapePointsByTripIDs: %w", err)
 	}
 	if q.getShapePointsForTripStmt, err = db.PrepareContext(ctx, getShapePointsForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetShapePointsForTrip: %w", err)
@@ -539,6 +545,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getBlockIDByTripIDStmt: %w", cerr)
 		}
 	}
+	if q.getBlockIDsByTripIDsStmt != nil {
+		if cerr := q.getBlockIDsByTripIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBlockIDsByTripIDsStmt: %w", cerr)
+		}
+	}
 	if q.getBlockTripIndexIDsForBlocksStmt != nil {
 		if cerr := q.getBlockTripIndexIDsForBlocksStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBlockTripIndexIDsForBlocksStmt: %w", cerr)
@@ -692,6 +703,11 @@ func (q *Queries) Close() error {
 	if q.getShapePointsByTripIDStmt != nil {
 		if cerr := q.getShapePointsByTripIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getShapePointsByTripIDStmt: %w", cerr)
+		}
+	}
+	if q.getShapePointsByTripIDsStmt != nil {
+		if cerr := q.getShapePointsByTripIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getShapePointsByTripIDsStmt: %w", cerr)
 		}
 	}
 	if q.getShapePointsForTripStmt != nil {
@@ -947,6 +963,7 @@ type Queries struct {
 	getArrivalsAndDeparturesForStopStmt           *sql.Stmt
 	getBlockDetailsStmt                           *sql.Stmt
 	getBlockIDByTripIDStmt                        *sql.Stmt
+	getBlockIDsByTripIDsStmt                      *sql.Stmt
 	getBlockTripIndexIDsForBlocksStmt             *sql.Stmt
 	getBlockTripIndexIDsForRouteStmt              *sql.Stmt
 	getBlockTripSequenceStmt                      *sql.Stmt
@@ -978,6 +995,7 @@ type Queries struct {
 	getShapePointWindowStmt                       *sql.Stmt
 	getShapePointsByIDsStmt                       *sql.Stmt
 	getShapePointsByTripIDStmt                    *sql.Stmt
+	getShapePointsByTripIDsStmt                   *sql.Stmt
 	getShapePointsForTripStmt                     *sql.Stmt
 	getShapePointsWithDistanceStmt                *sql.Stmt
 	getShapesGroupedByTripHeadSignStmt            *sql.Stmt
@@ -1058,6 +1076,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getArrivalsAndDeparturesForStopStmt:           q.getArrivalsAndDeparturesForStopStmt,
 		getBlockDetailsStmt:                           q.getBlockDetailsStmt,
 		getBlockIDByTripIDStmt:                        q.getBlockIDByTripIDStmt,
+		getBlockIDsByTripIDsStmt:                      q.getBlockIDsByTripIDsStmt,
 		getBlockTripIndexIDsForBlocksStmt:             q.getBlockTripIndexIDsForBlocksStmt,
 		getBlockTripIndexIDsForRouteStmt:              q.getBlockTripIndexIDsForRouteStmt,
 		getBlockTripSequenceStmt:                      q.getBlockTripSequenceStmt,
@@ -1089,6 +1108,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getShapePointWindowStmt:                       q.getShapePointWindowStmt,
 		getShapePointsByIDsStmt:                       q.getShapePointsByIDsStmt,
 		getShapePointsByTripIDStmt:                    q.getShapePointsByTripIDStmt,
+		getShapePointsByTripIDsStmt:                   q.getShapePointsByTripIDsStmt,
 		getShapePointsForTripStmt:                     q.getShapePointsForTripStmt,
 		getShapePointsWithDistanceStmt:                q.getShapePointsWithDistanceStmt,
 		getShapesGroupedByTripHeadSignStmt:            q.getShapesGroupedByTripHeadSignStmt,

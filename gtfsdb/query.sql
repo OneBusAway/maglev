@@ -808,6 +808,32 @@ WHERE
 ORDER BY
     t.id, st.stop_sequence;
 
+-- name: GetBlockIDsByTripIDs :many
+SELECT
+    id AS trip_id,
+    block_id
+FROM
+    trips
+WHERE
+    id IN (sqlc.slice('trip_ids'));
+
+-- name: GetShapePointsByTripIDs :many
+SELECT
+    t.id AS trip_id,
+    s.id,
+    s.shape_id,
+    s.lat,
+    s.lon,
+    s.shape_pt_sequence,
+    s.shape_dist_traveled
+FROM
+    shapes s
+    JOIN trips t ON t.shape_id = s.shape_id
+WHERE
+    t.id IN (sqlc.slice('trip_ids'))
+ORDER BY
+    t.id, s.shape_pt_sequence ASC;
+
 -- name: GetStopTimesByStopIDs :many
 SELECT
     *

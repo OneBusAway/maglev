@@ -141,17 +141,20 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 }
 
 func TestStopsForRouteHandlerInvalidRouteID(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/invalid_route.json?key=TEST")
+	api, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/invalid_route.json?key=TEST")
+	defer api.Shutdown()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestStopsForRouteHandlerMissingRouteIDComponent(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/_FMS.json?key=TEST")
+	api, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/_FMS.json?key=TEST")
+	defer api.Shutdown()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestStopsForRouteHandlerNonExistentAgency(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/fake_Raba.json?key=TEST")
+	api, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/fake_Raba.json?key=TEST")
+	defer api.Shutdown()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
@@ -165,7 +168,8 @@ func TestStopsForRouteHandlerWithInvalidTimeFormats(t *testing.T) {
 
 	for _, format := range invalidFormats {
 		t.Run("Invalid format: "+format, func(t *testing.T) {
-			_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25-151.json?key=TEST&time="+format)
+			api, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25-151.json?key=TEST&time="+format)
+			defer api.Shutdown()
 
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		})
