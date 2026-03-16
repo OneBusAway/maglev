@@ -11,33 +11,37 @@ import (
 	"sync/atomic"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/logging"
 
 	"golang.org/x/time/rate"
-	"maglev.onebusaway.org/internal/clock"
 )
 
+// maxLRUSize is the maximum number of per-key rate limiters held in the cache.
+const maxLRUSize = 10_000
+
+// idleThreshold defines how long a key must be idle
+const idleThreshold = 10 * time.Minute
+
 // rateLimitClient tracks the limiter and its last usage time.
-// This allows us to remove inactive users without disrupting active ones.
+// This allows us to lazily reset inactive users without disrupting active ones.
 type rateLimitClient struct {
 	limiter  *rate.Limiter
 	lastSeen atomic.Int64 // Unix nanoseconds (time.Time.UnixNano())
 }
 
-// RateLimitMiddleware provides per-API-key rate limiting
+// RateLimitMiddleware provides per-API-key rate limiting using an LRU cache with lazy eviction.
 type RateLimitMiddleware struct {
-	limiters    sync.Map
-	rateLimit   rate.Limit
-	burstSize   int
-	cleanupTick *time.Ticker
-	exemptKeys  map[string]bool
-	stopChan    chan struct{}
-	stopOnce    sync.Once
-	wg          sync.WaitGroup
-	clock       clock.Clock
+	mu         sync.Mutex
+	limiters   *lru.Cache[string, *rateLimitClient]
+	rateLimit  rate.Limit
+	burstSize  int
+	exemptKeys map[string]bool
+	clock      clock.Clock
 }
 
-// NewRateLimitMiddleware creates a new rate limiting middleware
+// NewRateLimitMiddleware creates a new rate limiting middleware.
 // ratePerSecond: number of requests allowed per second per API key
 // burstSize: number of requests allowed in a burst per API key
 func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKeys []string, clock clock.Clock) *RateLimitMiddleware {
@@ -60,18 +64,15 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 		}
 	}
 
-	middleware := &RateLimitMiddleware{
-		rateLimit:   rateLimit,
-		burstSize:   ratePerSecond,
-		cleanupTick: time.NewTicker(5 * time.Minute), // Cleanup old limiters every 5 minutes
-		exemptKeys:  exemptMap,
-		stopChan:    make(chan struct{}),
-		clock:       clock,
-	}
+	cache, _ := lru.New[string, *rateLimitClient](maxLRUSize)
 
-	// Start cleanup goroutine
-	middleware.wg.Add(1)
-	go middleware.cleanup()
+	middleware := &RateLimitMiddleware{
+		limiters:   cache,
+		rateLimit:  rateLimit,
+		burstSize:  ratePerSecond,
+		exemptKeys: exemptMap,
+		clock:      clock,
+	}
 
 	return middleware
 }
@@ -81,30 +82,41 @@ func (rl *RateLimitMiddleware) Handler() func(http.Handler) http.Handler {
 	return rl.rateLimitHandler
 }
 
-// getLimiter gets or creates a rate limiter for the given API key
-// and updates the last usage timestamp.
+// getLimiter gets or creates a rate limiter for the given API key.
+// It implements lazy eviction
 func (rl *RateLimitMiddleware) getLimiter(apiKey string) *rate.Limiter {
-	// Fast path: lock-free read
-	if val, ok := rl.limiters.Load(apiKey); ok {
-		client := val.(*rateLimitClient)
-		client.lastSeen.Store(rl.clock.Now().UnixNano())
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := rl.clock.Now()
+
+	if client, ok := rl.limiters.Get(apiKey); ok {
+		lastSeenNano := client.lastSeen.Load()
+		lastSeenTime := time.Unix(0, lastSeenNano)
+
+		if now.Sub(lastSeenTime) > idleThreshold {
+			// Lazily evict: replace with a fresh limiter
+			newLimiter := rate.NewLimiter(rl.rateLimit, rl.burstSize)
+			newClient := &rateLimitClient{
+				limiter: newLimiter,
+			}
+			newClient.lastSeen.Store(now.UnixNano())
+			rl.limiters.Add(apiKey, newClient)
+			return newLimiter
+		}
+
+		client.lastSeen.Store(now.UnixNano())
 		return client.limiter
 	}
 
-	// Client does not exist, create it locally
+	// Key not in cache
 	limiter := rate.NewLimiter(rl.rateLimit, rl.burstSize)
 	newClient := &rateLimitClient{
 		limiter: limiter,
 	}
-	newClient.lastSeen.Store(rl.clock.Now().UnixNano())
-
-	// LoadOrStore ensures we don't overwrite if another goroutine just created it
-	actual, _ := rl.limiters.LoadOrStore(apiKey, newClient)
-	client := actual.(*rateLimitClient)
-
-	// Ensure lastSeen is updated even if we loaded an existing one from another goroutine
-	client.lastSeen.Store(rl.clock.Now().UnixNano())
-	return client.limiter
+	newClient.lastSeen.Store(now.UnixNano())
+	rl.limiters.Add(apiKey, newClient)
+	return limiter
 }
 
 // rateLimitHandler is the HTTP middleware function
@@ -190,57 +202,8 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	}
 }
 
-// cleanupOnce performs a single iteration of removing old, unused limiters.
-// It is separated from the background loop so tests can trigger it synchronously.
-func (rl *RateLimitMiddleware) cleanupOnce() {
-	// Define how long a client must be idle before eviction
-	threshold := 10 * time.Minute
-	now := rl.clock.Now()
-
-	// Iterate over the sync.Map without acquiring a global lock
-	rl.limiters.Range(func(key, value interface{}) bool {
-		apiKey := key.(string)
-		client := value.(*rateLimitClient)
-
-		// Skip exempted keys
-		if !rl.exemptKeys[apiKey] {
-			// using Time-Based Eviction (LRU)
-			lastSeenNano := client.lastSeen.Load()
-			if lastSeenNano != 0 {
-				lastSeenTime := time.Unix(0, lastSeenNano)
-				if now.Sub(lastSeenTime) > threshold {
-					// Safe concurrent deletion
-					rl.limiters.Delete(apiKey)
-				}
-			}
-		}
-		return true // Return true to continue iterating
-	})
-}
-
-// cleanup periodically removes old, unused limiters to prevent memory leaks.
-// It decrements the WaitGroup when it exits so that Stop can await completion.
-func (rl *RateLimitMiddleware) cleanup() {
-	defer rl.wg.Done()
-	for {
-		select {
-		case <-rl.cleanupTick.C:
-			rl.cleanupOnce()
-		case <-rl.stopChan:
-			return
-		}
-	}
-}
-
-// Stop stops the cleanup goroutine and waits for it to exit. It is safe to call multiple times.
-// Note: This does not affect in-flight requests - it only stops the
-// background cleanup goroutine.
+// Stop performs cleanup of rate limiter resources.
+// It is safe to call multiple times with the LRU-based design
 func (rl *RateLimitMiddleware) Stop() {
-	rl.stopOnce.Do(func() {
-		close(rl.stopChan)
-		if rl.cleanupTick != nil {
-			rl.cleanupTick.Stop()
-		}
-	})
-	rl.wg.Wait()
+	rl.limiters.Purge()
 }
