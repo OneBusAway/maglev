@@ -160,26 +160,34 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		tripIDs := make([]string, 0, len(groupedTrips))
 		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
 
+		rawTripIDs := make([]string, 0, len(groupedTrips))
 		for _, trip := range groupedTrips {
-			combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
-			tripIDs = append(tripIDs, combinedTripID)
+			rawTripIDs = append(rawTripIDs, trip.ID)
 			if trip.TripHeadsign.String != "" {
 				headsignSet[trip.TripHeadsign.String] = struct{}{}
 			}
-			stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
-			if err != nil {
-				api.Logger.Warn("failed to fetch stop times for trip", "trip_id", trip.ID, "error", err)
+		}
+
+		allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, rawTripIDs)
+		if err != nil {
+			api.Logger.Warn("failed to fetch stop times for trips in direction group", "dir_id", dirID, "error", err)
+		}
+
+		// Group stop times by trip ID (query returns rows ordered by trip_id, stop_sequence).
+		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(groupedTrips))
+		for _, st := range allStopTimes {
+			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+		}
+
+		for _, trip := range groupedTrips {
+			stopTimes := stopTimesByTrip[trip.ID]
+			if len(stopTimes) == 0 {
 				continue
-			}
-			for _, st := range stopTimes {
-				stopIDSet[st.StopID] = struct{}{}
-				globalStopIDSet[st.StopID] = struct{}{}
 			}
 			stopTimesList := make([]models.RouteStopTime, 0, len(stopTimes))
 			for _, st := range stopTimes {
 				arrivalSec := int(utils.NanosToSeconds(st.ArrivalTime))
 				departureSec := int(utils.NanosToSeconds(st.DepartureTime))
-
 				stopTimesList = append(stopTimesList, models.RouteStopTime{
 					ArrivalEnabled:   true,
 					ArrivalTime:      arrivalSec,
@@ -190,11 +198,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					StopID:           utils.FormCombinedID(agencyID, st.StopID),
 					TripID:           utils.FormCombinedID(agencyID, trip.ID),
 				})
-
 				stopIDSet[st.StopID] = struct{}{}
 				globalStopIDSet[st.StopID] = struct{}{}
 			}
-
+			tripIDs = append(tripIDs, utils.FormCombinedID(agencyID, trip.ID))
 			tripsWithStopTimes = append(tripsWithStopTimes, models.TripStopTimes{
 				TripID:    utils.FormCombinedID(agencyID, trip.ID),
 				StopTimes: stopTimesList,
