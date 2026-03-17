@@ -383,18 +383,37 @@ func (manager *Manager) SetGtfsURL(url string) {
 	manager.isLocalFile = !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://")
 }
 
-// Shutdown gracefully shuts down the manager and its background goroutines
-func (manager *Manager) Shutdown() {
+// Shutdown gracefully shuts down the manager and its background goroutines.
+func (manager *Manager) Shutdown(ctx context.Context) error {
 	manager.shutdownOnce.Do(func() {
 		close(manager.shutdownChan)
+	})
+
+	done := make(chan struct{})
+	go func() {
 		manager.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
 		if manager.GtfsDB != nil {
 			if err := manager.GtfsDB.Close(); err != nil {
 				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 				logging.LogError(logger, "failed to close GTFS database", err)
 			}
 		}
-	})
+		return nil
+	case <-ctx.Done():
+		// close DB even on timeout
+		if manager.GtfsDB != nil {
+			if err := manager.GtfsDB.Close(); err != nil {
+				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+				logging.LogError(logger, "failed to close GTFS database during timeout", err)
+			}
+		}
+		return fmt.Errorf("shutdown timeout exceeded: %w", ctx.Err())
+	}
 }
 
 // RLock acquires the static data read lock.
