@@ -630,7 +630,7 @@ func TestMain(m *testing.M) {
 	// Global Teardown
 	// If sharedManager was initialized during tests, shut it down now.
 	if sharedManager != nil {
-		sharedManager.Shutdown()
+		sharedManager.Shutdown(context.Background())
 	}
 
 	// Exit with the test result code
