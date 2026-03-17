@@ -145,7 +145,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Get active service IDs for the requested queryTime
 	currentDate := queryTime.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
+	activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, currentDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return

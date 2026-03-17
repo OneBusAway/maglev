@@ -525,7 +525,7 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	}
 
 	formattedDate := serviceDate.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, formattedDate)
 	if err != nil {
 		slog.Warn("calculateBlockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),

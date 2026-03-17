@@ -70,7 +70,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		scheduleDate = startOfDay.UnixMilli()
 	}
 
-	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
+	serviceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, targetDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return

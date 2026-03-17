@@ -707,6 +707,10 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 	combinedStopID = utils.FormCombinedID(agencyID, stopCode)
 	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	scheduledArrivalMs = serviceMidnight.Add(time.Duration(arrivalNanos)).UnixMilli()
+
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted
+	// calendar entry rather than a result cached by an earlier test in this package.
+	api.GtfsManager.MockClearServiceIDsCache()
 	return
 }
 
@@ -1166,6 +1170,10 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 		DepartureTime: 29400 * 1e9, // 08:10:00 in nanoseconds
 	})
 	require.NoError(t, err)
+
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted
+	// calendar entry rather than a result cached by an earlier test in this package.
+	api.GtfsManager.MockClearServiceIDsCache()
 
 	// Add a trip update WITHOUT any vehicle position.
 	delayDuration := 120 * time.Second
