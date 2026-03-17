@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,20 +33,12 @@ func TestManagerShutdown(t *testing.T) {
 	agencies := manager.GetAgencies()
 	assert.Greater(t, len(agencies), 0, "Should have loaded agencies")
 
-	// Test shutdown
-	done := make(chan struct{})
-	go func() {
-		manager.Shutdown()
-		close(done)
-	}()
+	// Test shutdown with generous context
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	// Shutdown should complete within a reasonable time
-	select {
-	case <-done:
-		// Success
-	case <-time.After(5 * time.Second):
-		t.Fatal("Shutdown took too long")
-	}
+	err = manager.Shutdown(ctx)
+	assert.NoError(t, err, "Shutdown should complete without error")
 }
 
 func TestManagerShutdownWithRealtime(t *testing.T) {
@@ -77,20 +70,12 @@ func TestManagerShutdownWithRealtime(t *testing.T) {
 	// Give the real-time goroutine a moment to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Test shutdown
-	done := make(chan struct{})
-	go func() {
-		manager.Shutdown()
-		close(done)
-	}()
+	// Test shutdown with generous context
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	// Shutdown should complete within a reasonable time even with real-time goroutine
-	select {
-	case <-done:
-		// Success
-	case <-time.After(5 * time.Second):
-		t.Fatal("Shutdown took too long")
-	}
+	err = manager.Shutdown(ctx)
+	assert.NoError(t, err, "Shutdown should complete without error even with real-time goroutine")
 }
 
 func TestManagerShutdownIdempotent(t *testing.T) {
@@ -110,6 +95,56 @@ func TestManagerShutdownIdempotent(t *testing.T) {
 	require.NoError(t, err, "Failed to initialize GTFS manager")
 
 	// Call shutdown multiple times - should not panic or hang
-	manager.Shutdown()
-	manager.Shutdown() // Second call should be safe
+	err = manager.Shutdown(context.Background())
+	assert.NoError(t, err)
+
+	err = manager.Shutdown(context.Background()) // Second call should be safe
+	assert.NoError(t, err)
+}
+
+// TestManagerShutdown_CleanPath verifies that Shutdown returns nil when all
+// goroutines exit promptly before the context deadline.
+func TestManagerShutdown_CleanPath(t *testing.T) {
+	manager := &Manager{
+		shutdownChan: make(chan struct{}),
+	}
+
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		<-manager.shutdownChan
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := manager.Shutdown(ctx)
+	assert.NoError(t, err, "Shutdown should succeed when goroutines exit promptly")
+}
+
+// TestManagerShutdown_TimeoutPath verifies that Shutdown returns an error wrapping
+// context.DeadlineExceeded when a goroutine is stuck and ignores shutdownChan.
+func TestManagerShutdown_TimeoutPath(t *testing.T) {
+	manager := &Manager{
+		shutdownChan: make(chan struct{}),
+	}
+
+	manager.wg.Add(1)
+	stuck := make(chan struct{})
+	go func() {
+		defer manager.wg.Done()
+		<-stuck
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := manager.Shutdown(ctx)
+	require.Error(t, err, "Shutdown should return an error when context expires")
+	assert.True(t, errors.Is(err, context.DeadlineExceeded),
+		"error should wrap context.DeadlineExceeded, got: %v", err)
+	assert.Contains(t, err.Error(), "shutdown timeout exceeded")
+
+	close(stuck)
+
 }

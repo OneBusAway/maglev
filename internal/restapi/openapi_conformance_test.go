@@ -447,7 +447,7 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer gtfsManager.Shutdown()
+	defer func() { _ = gtfsManager.Shutdown(context.Background()) }()
 
 	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
 

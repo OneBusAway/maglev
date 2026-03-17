@@ -82,7 +82,7 @@ func TestInitializeGlobalCache_EmptyDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	wipeDatabase(t, manager.GtfsDB)
 
@@ -108,7 +108,7 @@ func TestInitializeGlobalCache_DatabaseError(t *testing.T) {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
 	// Important: Defer shutdown to clean up background routines
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	// SABOTAGE: Close DB to force errors
 	_ = manager.GtfsDB.DB.Close()
@@ -135,7 +135,7 @@ func TestInitializeGlobalCache_StopsWithoutShapes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	// Clear any existing data
 	wipeDatabase(t, manager.GtfsDB)
