@@ -885,3 +885,108 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 	hasNewDataSuccess := manager.updateFeedRealtime(context.Background(), cfgSuccess)
 	assert.True(t, hasNewDataSuccess, "OR check should return true when ALL sub-feeds succeed")
 }
+
+func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v1"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip1",
+						RouteID:              "route-A",
+						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+					},
+				},
+			},
+		},
+		realTimeTripLookup: make(map[string]int),
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-A")
+	assert.Len(t, result, 1)
+	assert.Equal(t, "v1", result[0].ID.ID)
+}
+
+func TestGetDuplicatedVehiclesForRoute_FallbackViaTripUpdate(t *testing.T) {
+	// Vehicle has no route_id in its trip descriptor; the TripUpdate carries it.
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v2"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip2",
+						RouteID:              "", // omitted in VehiclePosition
+						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+					},
+				},
+			},
+		},
+		realTimeTrips: []gtfs.Trip{
+			{
+				ID: gtfs.TripID{
+					ID:      "trip2",
+					RouteID: "route-B",
+				},
+			},
+		},
+		realTimeTripLookup: map[string]int{"trip2": 0},
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-B")
+	require.Len(t, result, 1)
+	assert.Equal(t, "v2", result[0].ID.ID)
+}
+
+func TestGetDuplicatedVehiclesForRoute_ExcludesNonDuplicated(t *testing.T) {
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v3"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip3",
+						RouteID:              "route-C",
+						ScheduleRelationship: gtfsrt.TripDescriptor_SCHEDULED,
+					},
+				},
+			},
+			{
+				ID: &gtfs.VehicleID{ID: "v4"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip4",
+						RouteID:              "route-C",
+						ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+					},
+				},
+			},
+		},
+		realTimeTripLookup: make(map[string]int),
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-C")
+	assert.Empty(t, result, "SCHEDULED and CANCELED vehicles must be excluded")
+}
+
+func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v5"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip5",
+						RouteID:              "route-D",
+						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+					},
+				},
+			},
+		},
+		realTimeTripLookup: make(map[string]int),
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-UNKNOWN")
+	assert.Empty(t, result)
+}
