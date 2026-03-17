@@ -146,5 +146,5 @@ func TestManagerShutdown_TimeoutPath(t *testing.T) {
 	assert.Contains(t, err.Error(), "shutdown timeout exceeded")
 
 	close(stuck)
-	
+
 }
