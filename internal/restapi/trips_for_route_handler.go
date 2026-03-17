@@ -235,7 +235,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 					BlockID:    blockIDNullStr,
 					ServiceIds: sd.serviceIDs,
 				})
-				if qErr != nil || len(candidates) == 0 {
+				if qErr != nil {
+					api.Logger.Warn("failed to query block trip candidates", "block_id", blockIDNullStr.String, "error", qErr)
+					continue
+				}
+				if len(candidates) == 0 {
 					continue
 				}
 				activeTrip = selectBestTripInBlock(candidates, sd.nanosSinceMidnight)
@@ -327,7 +331,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
 		if includeStatus {
-			status, _ = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			var statusErr error
+			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			if statusErr != nil {
+				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
+				status = nil
+			}
 		}
 
 		entry := models.TripsForRouteListEntry{
@@ -393,7 +402,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		var status *models.TripStatus
 		if includeStatus {
-			status, _ = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			var statusErr error
+			status, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			if statusErr != nil {
+				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
+				status = nil
+			}
 		}
 
 		entry := models.TripsForRouteListEntry{
@@ -517,7 +531,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	if len(tripIDsToFetch) > 0 {
 		extraTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
 		if err != nil {
-			api.Logger.Debug("failed to fetch trips for references", "error", err)
+			api.Logger.Warn("failed to fetch trips for references", "error", err)
 		}
 
 		for _, trip := range extraTrips {
@@ -545,7 +559,7 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	if len(routeIDsToFetch) > 0 {
 		fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDsToFetch)
 		if err != nil {
-			api.Logger.Debug("failed to fetch routes for references", "error", err)
+			api.Logger.Warn("failed to fetch routes for references", "error", err)
 		}
 
 		for _, route := range fetchedRoutes {
