@@ -81,7 +81,13 @@ func (api *RestAPI) BuildTripStatus(
 	// activeTripRawID may be a synthetic ID not in the DB, so fall back to tripID.
 	dbTripID := activeTripRawID
 	if activeTripRawID != tripID {
-		if _, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID); errors.Is(lookupErr, sql.ErrNoRows) {
+		if _, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID); lookupErr != nil {
+			if !errors.Is(lookupErr, sql.ErrNoRows) {
+				slog.Warn("BuildTripStatus: failed to resolve active trip ID, falling back to trip ID",
+					slog.String("active_trip_id", activeTripRawID),
+					slog.String("trip_id", tripID),
+					slog.String("error", lookupErr.Error()))
+			}
 			dbTripID = tripID
 		}
 	}

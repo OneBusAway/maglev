@@ -362,7 +362,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// Try the full ID first; if not found, strip a trailing numeric suffix
 		// (e.g., ".00060") that some feeds append to distinguish duplicated runs.
 		baseTripID := dupTripID
-		if _, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID); errors.Is(err, sql.ErrNoRows) {
+		if _, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
+					"dup_trip_id", dupTripID, "error", err)
+			}
 			stripped := stripNumericSuffix(dupTripID)
 			if stripped != dupTripID {
 				baseTripID = stripped
