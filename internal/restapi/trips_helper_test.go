@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1157,6 +1158,47 @@ func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 	assert.InDelta(t, float64(lon), status.LastKnownLocation.Lon, 0.001)
 
 	assert.Equal(t, utils.FormCombinedID(agencyID, tripID), status.ActiveTripID)
+}
+
+func TestBuildTripStatus_CanceledTrip(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+	tripID := trips[0].ID
+
+	now := time.Now()
+	canceledRelationship := gtfsrt.TripDescriptor_CANCELED
+	vehicle := &gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: "canceled-vehicle"},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:                   tripID,
+				ScheduleRelationship: canceledRelationship,
+			},
+		},
+	}
+
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+
+	assert.Equal(t, "CANCELED", status.Status, "CANCELED vehicle must produce CANCELED status")
+	assert.Empty(t, status.Phase, "CANCELED trips have no phase")
+	assert.Empty(t, status.ClosestStop, "CANCELED trips must not have a closest stop")
+	assert.Empty(t, status.NextStop, "CANCELED trips must not have a next stop")
+	assert.Zero(t, status.DistanceAlongTrip, "CANCELED trips must not have distance calculations")
+	assert.Zero(t, status.TotalDistanceAlongTrip, "CANCELED trips must not have total distance calculations")
 }
 
 // BenchmarkDistanceToLineSegment benchmarks the line segment distance calculation
