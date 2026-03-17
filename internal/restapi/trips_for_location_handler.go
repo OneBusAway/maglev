@@ -402,9 +402,7 @@ func (api *RestAPI) buildScheduleForTrip(
 	ctx context.Context,
 	tripID, agencyID string, serviceDate time.Time,
 	currentLocation *time.Location,
-	w http.ResponseWriter,
-	r *http.Request,
-) *models.TripsSchedule {
+) (*models.TripsSchedule, error) {
 	shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
 	var shapePoints []gtfs.ShapePoint
 	if len(shapeRows) > 1 {
@@ -413,14 +411,15 @@ func (api *RestAPI) buildScheduleForTrip(
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	nextTripID, previousTripID, stopTimes, err := api.GetNextAndPreviousTripIDs(ctx, &trip, agencyID, serviceDate)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return nil
+		return nil, err
 	}
 
 	stopTimesList := buildStopTimesList(api, ctx, stopTimes, shapePoints, agencyID)
@@ -430,7 +429,7 @@ func (api *RestAPI) buildScheduleForTrip(
 		PreviousTripId: previousTripID,
 		StopTimes:      stopTimesList,
 		TimeZone:       currentLocation.String(),
-	}
+	}, nil
 }
 
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {

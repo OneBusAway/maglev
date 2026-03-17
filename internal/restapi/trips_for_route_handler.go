@@ -307,9 +307,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 
 		if includeSchedule {
-			schedule = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation, w, r)
-			if schedule == nil {
-				continue
+			var schedErr error
+			schedule, schedErr = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation)
+			if schedErr != nil {
+				api.serverErrorResponse(w, r, schedErr)
+				return
 			}
 
 			// Collect stop IDs from this trip's schedule
@@ -369,7 +371,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		var schedule *models.TripsSchedule
 		if includeSchedule {
-			schedule = api.buildScheduleForTrip(ctx, baseTripID, agencyID, currentTime, currentLocation, w, r)
+			var schedErr error
+			schedule, schedErr = api.buildScheduleForTrip(ctx, baseTripID, agencyID, currentTime, currentLocation)
+			if schedErr != nil {
+				api.serverErrorResponse(w, r, schedErr)
+				return
+			}
 			if schedule != nil {
 				for _, stopTime := range schedule.StopTimes {
 					_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
