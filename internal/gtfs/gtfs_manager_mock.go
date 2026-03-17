@@ -135,6 +135,17 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 	m.realTimeTripLookup[tripID] = len(m.realTimeTrips) - 1
 }
 
+func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	if m.feedAlerts == nil {
+		m.feedAlerts = make(map[string][]gtfs.Alert)
+	}
+	m.feedAlerts[feedID] = append(m.feedAlerts[feedID], alert)
+	m.rebuildMergedRealtimeLocked()
+}
+
 // MockResetRealTimeData clears all mock real-time vehicles and trip updates.
 func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()

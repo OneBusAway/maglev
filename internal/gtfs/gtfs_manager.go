@@ -49,10 +49,10 @@ type Manager struct {
 	realTimeTrips                  []gtfs.Trip
 	realTimeVehicles               []gtfs.Vehicle
 	realTimeMutex                  sync.RWMutex
-	realTimeAlerts                 []gtfs.Alert
 	realTimeTripLookup             map[string]int
 	realTimeVehicleLookupByTrip    map[string]int
 	realTimeVehicleLookupByVehicle map[string]int
+	alertIdx                       alertIndex
 	agenciesMap                    map[string]*gtfs.Agency
 	routesMap                      map[string]*gtfs.Route
 	frequencyTripIDs               map[string]struct{}
