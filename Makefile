@@ -33,11 +33,12 @@ LDFLAGS := -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=$(G
                     -X 'maglev.onebusaway.org/internal/buildinfo.CommitMessage=$(GIT_MSG)' \
                     -X 'maglev.onebusaway.org/internal/buildinfo.Host=$(BUILD_HOST)'"
 
-.PHONY: build build-debug clean coverage-report check-jq coverage test run lint watch fmt \
+.PHONY: build build-debug clean coverage-report check-jq check-k6 coverage test run lint watch fmt \
         gtfstidy models check-golangci-lint \
         test-latency bench-sqlite-all bench-sqlite-perftest \
         docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all \
-        update-openapi check-openapi
+        update-openapi check-openapi \
+        smoketest stresstest load-test
 
 run: build
 	bin/maglev -f config.json
@@ -61,6 +62,9 @@ clean:
 
 check-jq:
 	@which jq > /dev/null 2>&1 || (echo "Error: jq is not installed. Install with: apt install jq, or brew install jq" && exit 1)
+
+check-k6:
+	@which k6 > /dev/null 2>&1 || (echo "Error: k6 is not installed. Install with: https://grafana.com/docs/k6/latest/set-up/install-k6/" && exit 1)
 
 coverage-report: check-jq
 	$(SET_ENV) go test -tags "sqlite_fts5" ./... -cover > /tmp/go-coverage.txt 2>&1 || (cat /tmp/go-coverage.txt && exit 1)
@@ -164,3 +168,90 @@ docker-clean:
 	@if docker image inspect $(DOCKER_IMAGE):latest >/dev/null 2>&1; then docker rmi $(DOCKER_IMAGE):latest && echo "Removed $(DOCKER_IMAGE):latest" || echo "Warning: Could not remove $(DOCKER_IMAGE):latest (may be in use)"; fi
 	@if docker image inspect $(DOCKER_IMAGE):dev >/dev/null 2>&1; then docker rmi $(DOCKER_IMAGE):dev && echo "Removed $(DOCKER_IMAGE):dev" || echo "Warning: Could not remove $(DOCKER_IMAGE):dev (may be in use)"; fi
 	@echo "Cleanup complete."
+
+load-test: smoketest stresstest
+
+smoketest: build check-k6
+	@set -e; \
+	printf '%s\n' \
+	  '{' \
+	  '  "port": 4000,' \
+	  '  "env": "development",' \
+	  '  "api-keys": ["test"],' \
+	  '  "rate-limit": 100,' \
+	  '  "log-level": "info",' \
+	  '  "log-format": "json",' \
+	  '  "gtfs-static-feed": {' \
+	  '    "url": "testdata/raba.zip",' \
+	  '    "enable-gtfs-tidy": false' \
+	  '  },' \
+	  '  "gtfs-rt-feeds": [],' \
+	  '  "data-path": "./ci-gtfs.db"' \
+	  '}' > config.ci.json; \
+	./bin/maglev -f config.ci.json > maglev.log 2>&1 & \
+	MAGLEV_PID=$$!; \
+	trap 'kill $$MAGLEV_PID 2>/dev/null || true; rm -f config.ci.json' EXIT; \
+	echo "Waiting for Maglev to be ready..."; \
+	ready=0; \
+	for i in $$(seq 1 60); do \
+	  if curl -sf http://localhost:4000/healthz > /dev/null 2>&1; then \
+	    echo "Server is ready after $${i} attempts."; \
+	    ready=1; \
+	    break; \
+	  fi; \
+	  echo "  Attempt $${i}/60 — not ready yet, waiting 5s..."; \
+	  tail -1 maglev.log 2>/dev/null || true; \
+	  sleep 5; \
+	done; \
+	if [ "$$ready" -ne 1 ]; then \
+	  echo "ERROR: Server did not become ready in time. Dumping logs:"; \
+	  cat maglev.log; \
+	  exit 1; \
+	fi; \
+	k6 run \
+	  --vus 5 \
+	  --duration 30s \
+	  --summary-export=loadtest/k6/smoke-summary.json \
+	  loadtest/k6/scenarios.js
+
+stresstest: build check-k6
+	@set -e; \
+	printf '%s\n' \
+	  '{' \
+	  '  "port": 4000,' \
+	  '  "env": "development",' \
+	  '  "api-keys": ["test"],' \
+	  '  "rate-limit": 1000,' \
+	  '  "log-level": "warn",' \
+	  '  "log-format": "json",' \
+	  '  "gtfs-static-feed": {' \
+	  '    "url": "testdata/raba.zip",' \
+	  '    "enable-gtfs-tidy": false' \
+	  '  },' \
+	  '  "gtfs-rt-feeds": [],' \
+	  '  "data-path": "./ci-gtfs.db"' \
+	  '}' > config.ci.json; \
+	MAGLEV_ENABLE_PPROF=1 ./bin/maglev -f config.ci.json > maglev.log 2>&1 & \
+	MAGLEV_PID=$$!; \
+	trap 'kill $$MAGLEV_PID 2>/dev/null || true; rm -f config.ci.json' EXIT; \
+	echo "Waiting for Maglev to be ready..."; \
+	ready=0; \
+	for i in $$(seq 1 60); do \
+	  if curl -sf http://localhost:4000/healthz > /dev/null 2>&1; then \
+	    echo "Server is ready after $${i} attempts."; \
+	    ready=1; \
+	    break; \
+	  fi; \
+	  echo "  Attempt $${i}/60 — not ready yet, waiting 5s..."; \
+	  tail -1 maglev.log 2>/dev/null || true; \
+	  sleep 5; \
+	done; \
+	if [ "$$ready" -ne 1 ]; then \
+	  echo "ERROR: Server did not become ready in time. Dumping logs:"; \
+	  cat maglev.log; \
+	  exit 1; \
+	fi; \
+	k6 run \
+	  -e USE_FALLBACKS=true \
+	  --summary-export=loadtest/k6/stress-summary.json \
+	  loadtest/k6/scenarios.js
