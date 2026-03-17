@@ -452,7 +452,7 @@ type stopWithDistance struct {
 
 // GetStopsForLocation retrieves stops near a given location using the spatial index.
 // It supports filtering by route types and querying for specific stop codes.
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+// This method manages its own locking internally; callers must NOT hold any Manager locks.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	lat, lon, radius, latSpan, lonSpan float64,
@@ -486,7 +486,10 @@ func (manager *Manager) GetStopsForLocation(
 		return []gtfsdb.Stop{}
 	}
 
+	// Acquire the read lock only for the in-memory spatial search.
+	manager.staticMutex.RLock()
 	dbStops := queryStopsInBounds(manager.stopSpatialIndex, bounds)
+	manager.staticMutex.RUnlock()
 
 	for _, dbStop := range dbStops {
 		if ctx.Err() != nil {
