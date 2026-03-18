@@ -716,8 +716,11 @@ func (rb *referenceBuilder) buildTripReferences() error {
 			continue
 		}
 
-		currentAgency := rb.presentRoutes[tripDetails.RouteID].AgencyID
-		rb.tripsRefList = append(rb.tripsRefList, rb.createTripReference(tripDetails, currentAgency, trip))
+		route, ok := rb.presentRoutes[tripDetails.RouteID]
+		if !ok {
+			continue
+		}
+		rb.tripsRefList = append(rb.tripsRefList, rb.createTripReference(tripDetails, route.AgencyID, trip))
 	}
 	return nil
 }
