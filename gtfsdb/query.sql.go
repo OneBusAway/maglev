@@ -2041,6 +2041,58 @@ func (q *Queries) GetNextStopInTrip(ctx context.Context, arg GetNextStopInTripPa
 	return i, err
 }
 
+const getOrderedStopIDsForRouteDirection = `-- name: GetOrderedStopIDsForRouteDirection :many
+SELECT st.stop_id
+FROM stop_times st
+JOIN trips t ON t.id = st.trip_id
+WHERE t.route_id = ?1
+  AND t.direction_id = ?2
+  AND t.service_id IN (/*SLICE:service_ids*/?)
+GROUP BY st.stop_id
+ORDER BY MAX(st.stop_sequence)
+`
+
+type GetOrderedStopIDsForRouteDirectionParams struct {
+	RouteID     string
+	DirectionID sql.NullInt64
+	ServiceIds  []string
+}
+
+func (q *Queries) GetOrderedStopIDsForRouteDirection(ctx context.Context, arg GetOrderedStopIDsForRouteDirectionParams) ([]string, error) {
+	query := getOrderedStopIDsForRouteDirection
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.RouteID)
+	queryParams = append(queryParams, arg.DirectionID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var stop_id string
+		if err := rows.Scan(&stop_id); err != nil {
+			return nil, err
+		}
+		items = append(items, stop_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getOrderedStopIDsForTrip = `-- name: GetOrderedStopIDsForTrip :many
 SELECT stop_id
 FROM stop_times

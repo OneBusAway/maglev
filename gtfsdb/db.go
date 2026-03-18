@@ -186,6 +186,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getNextStopInTripStmt, err = db.PrepareContext(ctx, getNextStopInTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextStopInTrip: %w", err)
 	}
+	if q.getOrderedStopIDsForRouteDirectionStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForRouteDirection); err != nil {
+		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForRouteDirection: %w", err)
+	}
 	if q.getOrderedStopIDsForTripStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForTrip: %w", err)
 	}
@@ -620,6 +623,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getNextStopInTripStmt: %w", cerr)
 		}
 	}
+	if q.getOrderedStopIDsForRouteDirectionStmt != nil {
+		if cerr := q.getOrderedStopIDsForRouteDirectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getOrderedStopIDsForRouteDirectionStmt: %w", cerr)
+		}
+	}
 	if q.getOrderedStopIDsForTripStmt != nil {
 		if cerr := q.getOrderedStopIDsForTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getOrderedStopIDsForTripStmt: %w", cerr)
@@ -978,6 +986,7 @@ type Queries struct {
 	getImportMetadataStmt                         *sql.Stmt
 	getNextAndPreviousTripsInBlockStmt            *sql.Stmt
 	getNextStopInTripStmt                         *sql.Stmt
+	getOrderedStopIDsForRouteDirectionStmt        *sql.Stmt
 	getOrderedStopIDsForTripStmt                  *sql.Stmt
 	getProblemReportsByStopStmt                   *sql.Stmt
 	getProblemReportsByTripStmt                   *sql.Stmt
@@ -1091,6 +1100,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getImportMetadataStmt:                         q.getImportMetadataStmt,
 		getNextAndPreviousTripsInBlockStmt:            q.getNextAndPreviousTripsInBlockStmt,
 		getNextStopInTripStmt:                         q.getNextStopInTripStmt,
+		getOrderedStopIDsForRouteDirectionStmt:        q.getOrderedStopIDsForRouteDirectionStmt,
 		getOrderedStopIDsForTripStmt:                  q.getOrderedStopIDsForTripStmt,
 		getProblemReportsByStopStmt:                   q.getProblemReportsByStopStmt,
 		getProblemReportsByTripStmt:                   q.getProblemReportsByTripStmt,
