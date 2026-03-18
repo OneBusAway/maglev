@@ -247,9 +247,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	for _, tripID := range nullBlockTrips {
-		activeTrips = append(activeTrips, tripID)
-	}
+	activeTrips = append(activeTrips, nullBlockTrips...)
 
 	tripIDsSet := make(map[string]bool)
 	for _, id := range activeTrips {
