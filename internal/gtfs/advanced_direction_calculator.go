@@ -26,11 +26,9 @@ const (
 type AdvancedDirectionCalculator struct {
 	queries                    *gtfsdb.Queries
 	standardDeviationThreshold float64
-	contextCache               map[string][]gtfsdb.GetStopsWithShapeContextRow   // Cache of stop shape context data
 	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
 	cacheMutex                 sync.RWMutex                                      // Protects map access
-
 	// directionResults caches computed stop directions.
 	// Lifecycle note: This map grows indefinitely for the lifetime of the application.
 	// Unbounded growth is acceptable here because it is strictly bounded by the finite
@@ -102,7 +100,7 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 		}
 
 		// Actually compute it (Hits the DB)
-		computedDir := adc.computeFromShapes(ctx, stopID)
+		computedDir := adc.computeFromShapes(context.WithoutCancel(ctx), stopID)
 
 		// Store in sync.Map for all future requests
 		adc.directionResults.Store(stopID, computedDir)
@@ -161,25 +159,12 @@ func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string)
 // computeFromShapes calculates direction from shape data using the Java algorithm
 func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, stopID string) string {
 
-	var stopTrips []gtfsdb.GetStopsWithShapeContextRow
-
-	adc.cacheMutex.RLock()
-	hasCache := adc.contextCache != nil
-	if hasCache {
-		stopTrips = adc.contextCache[stopID]
-	}
-	adc.cacheMutex.RUnlock()
-
-	// Use cache if available, otherwise hit DB
-	if !hasCache {
-		var err error
-		stopTrips, err = adc.queries.GetStopsWithShapeContext(ctx, stopID)
-		if err != nil {
-			slog.Warn("failed to get stop shape context",
-				slog.String("stopID", stopID),
-				slog.String("error", err.Error()))
-			return ""
-		}
+	stopTrips, err := adc.queries.GetStopsWithShapeContext(ctx, stopID)
+	if err != nil {
+		slog.Warn("failed to get stop shape context",
+			slog.String("stopID", stopID),
+			slog.String("error", err.Error()))
+		return ""
 	}
 
 	// Collect orientations from all trips, using cache to avoid duplicates
