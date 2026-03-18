@@ -829,7 +829,8 @@ func (api *RestAPI) buildScheduleFromMemory(
 	freqs, freqErr := api.GtfsManager.GetFrequenciesForTrip(context.Background(), trip.ID)
 	if freqErr == nil && len(freqs) > 0 {
 		// Use midnight of current time for the service date
-		serviceDate := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, currentLocation)
+		now := api.Clock.Now()
+		serviceDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, currentLocation)
 		f := models.NewFrequencyFromDB(freqs[0], serviceDate)
 		scheduleFreq = &f
 	}
