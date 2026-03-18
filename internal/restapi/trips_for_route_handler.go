@@ -174,16 +174,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
-		references := buildTripReferences(api, w, r, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+		references := buildTripReferences(api, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
 		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
 
-	type ActiveTripEntry struct {
-		TripID string
-	}
-	var activeTrips []ActiveTripEntry
+	var activeTrips []string
 
 	type serviceDayEntry struct {
 		serviceIDs         []string
@@ -245,18 +242,18 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				activeTrip = selectBestTripInBlock(candidates, sd.nanosSinceMidnight)
 			}
 
-			activeTrips = append(activeTrips, ActiveTripEntry{TripID: activeTrip})
+			activeTrips = append(activeTrips, activeTrip)
 			break
 		}
 	}
 
 	for _, tripID := range nullBlockTrips {
-		activeTrips = append(activeTrips, ActiveTripEntry{TripID: tripID})
+		activeTrips = append(activeTrips, tripID)
 	}
 
 	tripIDsSet := make(map[string]bool)
-	for _, entry := range activeTrips {
-		tripIDsSet[entry.TripID] = true
+	for _, id := range activeTrips {
+		tripIDsSet[id] = true
 	}
 	var tripIDs []string
 	for id := range tripIDsSet {
@@ -318,15 +315,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Collect stop IDs from this trip's schedule
-			if schedule.StopTimes != nil {
-				for _, stopTime := range schedule.StopTimes {
-					_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
-					if err == nil {
-						stopIDsMap[stopID] = true
-					}
-				}
-			}
+			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
 		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
@@ -390,14 +379,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				api.serverErrorResponse(w, r, schedErr)
 				return
 			}
-			if schedule != nil {
-				for _, stopTime := range schedule.StopTimes {
-					_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
-					if err == nil {
-						stopIDsMap[stopID] = true
-					}
-				}
-			}
+			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
 		var status *models.TripStatus
@@ -447,18 +429,28 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	references := buildTripReferences(api, w, r, ctx, includeSchedule, result, stops, fetchedTrips)
+	references := buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
 	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
-func buildTripReferences[T interface{ GetTripId() string }](
+func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]bool) {
+	if schedule == nil {
+		return
+	}
+	for _, stopTime := range schedule.StopTimes {
+		_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
+		if err == nil {
+			stopIDsMap[stopID] = true
+		}
+	}
+}
+
+func buildTripReferences(
 	api *RestAPI,
-	w http.ResponseWriter,
-	r *http.Request,
 	ctx context.Context,
 	includeTrip bool,
-	trips []T,
+	trips []models.TripsForRouteListEntry,
 	stops []gtfsdb.Stop,
 	preFetchedTrips []gtfsdb.Trip,
 ) models.ReferencesModel {
@@ -487,35 +479,31 @@ func buildTripReferences[T interface{ GetTripId() string }](
 		}
 	}
 
-	for i := range trips {
-		tripEntry := trips[i]
-
-		if entry, ok := any(tripEntry).(models.TripsForRouteListEntry); ok {
-			if entry.Schedule != nil {
-				if entry.Schedule.NextTripId != "" {
-					_, nextTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.NextTripId)
-					if err == nil {
-						if _, exists := presentTrips[nextTripID]; !exists {
-							presentTrips[nextTripID] = models.Trip{}
-						}
-					}
-				}
-				if entry.Schedule.PreviousTripId != "" {
-					_, prevTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.PreviousTripId)
-					if err == nil {
-						if _, exists := presentTrips[prevTripID]; !exists {
-							presentTrips[prevTripID] = models.Trip{}
-						}
+	for _, entry := range trips {
+		if entry.Schedule != nil {
+			if entry.Schedule.NextTripId != "" {
+				_, nextTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.NextTripId)
+				if err == nil {
+					if _, exists := presentTrips[nextTripID]; !exists {
+						presentTrips[nextTripID] = models.Trip{}
 					}
 				}
 			}
-
-			if entry.Status != nil && entry.Status.ActiveTripID != "" {
-				_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Status.ActiveTripID)
+			if entry.Schedule.PreviousTripId != "" {
+				_, prevTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.PreviousTripId)
 				if err == nil {
-					if _, exists := presentTrips[activeTripID]; !exists {
-						presentTrips[activeTripID] = models.Trip{}
+					if _, exists := presentTrips[prevTripID]; !exists {
+						presentTrips[prevTripID] = models.Trip{}
 					}
+				}
+			}
+		}
+
+		if entry.Status != nil && entry.Status.ActiveTripID != "" {
+			_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Status.ActiveTripID)
+			if err == nil {
+				if _, exists := presentTrips[activeTripID]; !exists {
+					presentTrips[activeTripID] = models.Trip{}
 				}
 			}
 		}
