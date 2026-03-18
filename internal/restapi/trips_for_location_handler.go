@@ -134,10 +134,10 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 ) {
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors = utils.ParseRequiredFloatParam(queryParams, "lat", nil)
-	lon, _ = utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
-	latSpan, _ = utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
-	lonSpan, _ = utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
+	locParams, fieldErrors := utils.ParseLocationParams(queryParams)
+	if locParams != nil {
+		lat, lon, latSpan, lonSpan = locParams.Lat, locParams.Lon, locParams.LatSpan, locParams.LonSpan
+	}
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 

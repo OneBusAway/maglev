@@ -1009,3 +1009,122 @@ func TestParseRequiredFloatParam(t *testing.T) {
 		assert.Equal(t, []string{"some error"}, fieldErrors["other"])
 	})
 }
+
+func TestParseLocationParams(t *testing.T) {
+	t.Run("valid full params", func(t *testing.T) {
+		q := url.Values{
+			"lat":     []string{"47.6097"},
+			"lon":     []string{"-122.3331"},
+			"latSpan": []string{"0.01"},
+			"lonSpan": []string{"0.02"},
+			"radius":  []string{"500"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Empty(t, fieldErrors)
+		require.NotNil(t, locParams)
+		assert.Equal(t, 47.6097, locParams.Lat)
+		assert.Equal(t, -122.3331, locParams.Lon)
+		assert.Equal(t, 0.01, locParams.LatSpan)
+		assert.Equal(t, 0.02, locParams.LonSpan)
+		assert.Equal(t, 500.0, locParams.Radius)
+	})
+
+	t.Run("missing lat and lon returns field errors", func(t *testing.T) {
+		q := url.Values{}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Nil(t, locParams)
+		assert.Contains(t, fieldErrors, "lat")
+		assert.Contains(t, fieldErrors["lat"][0], "Missing required field")
+		assert.Contains(t, fieldErrors, "lon")
+		assert.Contains(t, fieldErrors["lon"][0], "Missing required field")
+	})
+
+	t.Run("missing lat only returns field error for lat", func(t *testing.T) {
+		q := url.Values{
+			"lon": []string{"-122.3331"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Nil(t, locParams)
+		assert.Contains(t, fieldErrors, "lat")
+		assert.NotContains(t, fieldErrors, "lon")
+	})
+
+	t.Run("missing lon only returns field error for lon", func(t *testing.T) {
+		q := url.Values{
+			"lat": []string{"47.6097"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Nil(t, locParams)
+		assert.Contains(t, fieldErrors, "lon")
+		assert.NotContains(t, fieldErrors, "lat")
+	})
+
+	t.Run("optional params absent returns zero values and no error", func(t *testing.T) {
+		q := url.Values{
+			"lat": []string{"47.6097"},
+			"lon": []string{"-122.3331"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Empty(t, fieldErrors)
+		require.NotNil(t, locParams)
+		assert.Equal(t, 47.6097, locParams.Lat)
+		assert.Equal(t, -122.3331, locParams.Lon)
+		assert.Equal(t, 0.0, locParams.LatSpan)
+		assert.Equal(t, 0.0, locParams.LonSpan)
+		assert.Equal(t, 0.0, locParams.Radius)
+	})
+
+	t.Run("invalid non-numeric lat returns field error", func(t *testing.T) {
+		q := url.Values{
+			"lat": []string{"not_a_number"},
+			"lon": []string{"-122.3331"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Nil(t, locParams)
+		assert.Contains(t, fieldErrors, "lat")
+		assert.Contains(t, fieldErrors["lat"][0], "Invalid field value")
+	})
+
+	t.Run("invalid non-numeric lon returns field error", func(t *testing.T) {
+		q := url.Values{
+			"lat": []string{"47.6097"},
+			"lon": []string{"abc"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Nil(t, locParams)
+		assert.Contains(t, fieldErrors, "lon")
+		assert.Contains(t, fieldErrors["lon"][0], "Invalid field value")
+	})
+
+	t.Run("invalid non-numeric optional params return field errors", func(t *testing.T) {
+		q := url.Values{
+			"lat":     []string{"47.6097"},
+			"lon":     []string{"-122.3331"},
+			"radius":  []string{"big"},
+			"latSpan": []string{"wide"},
+			"lonSpan": []string{"tall"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Nil(t, locParams)
+		assert.Contains(t, fieldErrors, "radius")
+		assert.Contains(t, fieldErrors, "latSpan")
+		assert.Contains(t, fieldErrors, "lonSpan")
+	})
+
+	t.Run("all fields invalid returns multiple field errors", func(t *testing.T) {
+		q := url.Values{
+			"lat":     []string{"x"},
+			"lon":     []string{"y"},
+			"radius":  []string{"z"},
+			"latSpan": []string{"a"},
+			"lonSpan": []string{"b"},
+		}
+		locParams, fieldErrors := ParseLocationParams(q)
+		assert.Nil(t, locParams)
+		assert.Contains(t, fieldErrors, "lat")
+		assert.Contains(t, fieldErrors, "lon")
+		assert.Contains(t, fieldErrors, "radius")
+		assert.Contains(t, fieldErrors, "latSpan")
+		assert.Contains(t, fieldErrors, "lonSpan")
+	})
+}
