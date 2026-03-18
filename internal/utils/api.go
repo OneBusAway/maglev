@@ -181,6 +181,34 @@ func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[stri
 
 }
 
+type LocationParams struct {
+	Lat     float64
+	Lon     float64
+	LatSpan float64
+	LonSpan float64
+	Radius  float64
+}
+
+func ParseLocationParams(q url.Values) (*LocationParams, map[string][]string) {
+	lat, fieldErrors := ParseRequiredFloatParam(q, "lat", nil)
+	lon, fieldErrors := ParseRequiredFloatParam(q, "lon", fieldErrors)
+	radius, fieldErrors := ParseFloatParam(q, "radius", fieldErrors)
+	latSpan, fieldErrors := ParseFloatParam(q, "latSpan", fieldErrors)
+	lonSpan, fieldErrors := ParseFloatParam(q, "lonSpan", fieldErrors)
+
+	if len(fieldErrors) > 0 {
+		return nil, fieldErrors
+	}
+
+	return &LocationParams{
+		Lat:     lat,
+		Lon:     lon,
+		LatSpan: latSpan,
+		LonSpan: lonSpan,
+		Radius:  radius,
+	}, fieldErrors
+}
+
 func ParseTimeParameter(timeParam string, currentLocation *time.Location) (string, time.Time, map[string][]string, bool) {
 	if timeParam == "" {
 		// No time parameter, use current date

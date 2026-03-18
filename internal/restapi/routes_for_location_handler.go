@@ -14,12 +14,12 @@ import (
 func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors := utils.ParseRequiredFloatParam(queryParams, "lat", nil)
-	lon, _ := utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
-	radius, _ := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
-	latSpan, _ := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
-	lonSpan, _ := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
-	maxCount, _ := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, fieldErrors)
+	locParams, fieldErrors := utils.ParseLocationParams(queryParams)
+	var lat, lon, radius, latSpan, lonSpan float64
+	if locParams != nil {
+		lat, lon, radius, latSpan, lonSpan = locParams.Lat, locParams.Lon, locParams.Radius, locParams.LatSpan, locParams.LonSpan
+	}
+	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, fieldErrors)
 	query := queryParams.Get("query")
 
 	if len(fieldErrors) > 0 {
