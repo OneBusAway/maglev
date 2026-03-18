@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
@@ -281,13 +282,58 @@ func TestStripNumericSuffix(t *testing.T) {
 	}{
 		{"LLR_TRIP_1083.00060", "LLR_TRIP_1083"},
 		{"LLR_TRIP_1083.0", "LLR_TRIP_1083"},
-		{"LLR_TRIP_1083", "LLR_TRIP_1083"},        // no dot → unchanged
+		{"LLR_TRIP_1083", "LLR_TRIP_1083"},         // no dot → unchanged
 		{"LLR_TRIP_1083.abc", "LLR_TRIP_1083.abc"}, // non-digit suffix → unchanged
-		{"LLR_TRIP_1083.", "LLR_TRIP_1083."},        // trailing dot only → unchanged
-		{"12345", "12345"},                           // no dot → unchanged
-		{"a.1.2", "a.1"},                             // strips last numeric segment only
+		{"LLR_TRIP_1083.", "LLR_TRIP_1083."},       // trailing dot only → unchanged
+		{"12345", "12345"},                         // no dot → unchanged
+		{"a.1.2", "a.1"},                           // strips last numeric segment only
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.expected, stripNumericSuffix(tt.input), "input: %q", tt.input)
 	}
+}
+
+func TestCollectStopIDsFromSchedule_NilSchedule(t *testing.T) {
+	stopIDsMap := map[string]bool{}
+	collectStopIDsFromSchedule(nil, stopIDsMap)
+	assert.Empty(t, stopIDsMap, "nil schedule must not add any entries")
+}
+
+func TestCollectStopIDsFromSchedule_PopulatesMap(t *testing.T) {
+	schedule := &models.TripsSchedule{
+		StopTimes: []models.StopTime{
+			{StopID: "25_1001"},
+			{StopID: "25_1002"},
+			{StopID: "25_1003"},
+		},
+	}
+	stopIDsMap := map[string]bool{}
+	collectStopIDsFromSchedule(schedule, stopIDsMap)
+
+	assert.Equal(t, map[string]bool{
+		"1001": true,
+		"1002": true,
+		"1003": true,
+	}, stopIDsMap)
+}
+
+func TestCollectStopIDsFromSchedule_SkipsMalformedIDs(t *testing.T) {
+	schedule := &models.TripsSchedule{
+		StopTimes: []models.StopTime{
+			{StopID: "25_good"},
+			{StopID: "no-underscore"},
+		},
+	}
+	stopIDsMap := map[string]bool{}
+	collectStopIDsFromSchedule(schedule, stopIDsMap)
+
+	assert.Equal(t, map[string]bool{"good": true}, stopIDsMap,
+		"malformed stop IDs must be silently skipped")
+}
+
+func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
+	schedule := &models.TripsSchedule{StopTimes: []models.StopTime{}}
+	stopIDsMap := map[string]bool{}
+	collectStopIDsFromSchedule(schedule, stopIDsMap)
+	assert.Empty(t, stopIDsMap)
 }
