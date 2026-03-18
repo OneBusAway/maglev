@@ -224,7 +224,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 
 	// Validate the structural integrity of the in-memory data before proceeding
-	if err := gtfsdb.ValidateGTFSData(newStaticData); err != nil {
+	if err := gtfsdb.ValidateAndFilterGTFSData(newStaticData, logger); err != nil {
 		logging.LogError(logger, "GTFS structural validation failed during periodic update", err)
 		return fmt.Errorf("GTFS validation failed during update: %w", err)
 	}
@@ -503,6 +503,9 @@ func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger 
 
 	var strVal string
 	switch v := val.(type) {
+	case nil:
+		// No calendar data; strVal remains "" and falls through
+		// to the "no active calendar dates" warning below.
 	case string:
 		strVal = v
 	case []byte:

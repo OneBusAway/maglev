@@ -30,8 +30,7 @@ func (api *RestAPI) BuildTripStatus(
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	status.ServiceDate = sdMidnight.UnixMilli()
 	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
-	// OccupancyCapacity and OccupancyCount are left nil (null in JSON) when no data.
-	// Java OBA uses nullable Integer types that serialize conditionally.
+	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 
@@ -45,7 +44,7 @@ func (api *RestAPI) BuildTripStatus(
 		// NOTE: GTFS-RT OccupancyPercentage (0-100%) has no direct equivalent in the
 		// OBA TripStatus schema. The Java OBA server populates occupancyCapacity from
 		// agency-provided vehicle capacity data, not from GTFS-RT percentages.
-		// We intentionally leave OccupancyCapacity as nil here.
+		// We intentionally leave OccupancyCapacity at its zero value (0) here, as GTFS-RT OccupancyPercentage has no direct mapping to OBA's capacity-based model.
 		// See: TripStatusBeanServiceImpl.java in onebusaway-transit-data-federation.
 	}
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status, currentTime)
@@ -58,12 +57,11 @@ func (api *RestAPI) BuildTripStatus(
 	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviation(activeTripRawID)
 
 	if hasRealtimeTripUpdate {
-		status.ScheduleDeviation = utils.IntPtr(scheduleDeviation)
+		status.ScheduleDeviation = scheduleDeviation
 	}
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
-	status.Predicted = hasVehicleRealtimeData || hasRealtimeTripUpdate
-	status.Scheduled = !status.Predicted
+	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, activeTripRawID)
 	if err != nil {
@@ -132,27 +130,28 @@ func (api *RestAPI) BuildTripStatus(
 	if shapeErr == nil && len(shapeRows) > 1 {
 		shapePoints := shapeRowsToPoints(shapeRows)
 		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-		status.TotalDistanceAlongTrip = utils.Float64Ptr(cumulativeDistances[len(cumulativeDistances)-1])
+		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
 
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
 			// it onto the route shape. Reuses the already-fetched shapePoints.
-			actualPosition := status.LastKnownLocation
-			if actualPosition != nil {
-				if projected := projectPositionWithShapePoints(shapePoints, *actualPosition); projected != nil {
+			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
+			status.DistanceAlongTrip = actualDistance
+
+			if status.LastKnownLocation != nil {
+				actualPosition := *status.LastKnownLocation
+
+				if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
 					status.Position = *projected
 				}
-			}
 
-			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
-			status.DistanceAlongTrip = utils.Float64Ptr(actualDistance)
-
-			// If the feed does not provide a bearing, infer orientation from the
-			// heading of the closest shape segment at the vehicle's position.
-			if vehicle.Position.Bearing == nil && actualPosition != nil {
-				if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
-					status.Orientation = utils.Float64Ptr(inferred)
-					status.LastKnownOrientation = utils.Float64Ptr(inferred)
+				// If the feed does not provide a bearing, infer orientation from the
+				// heading of the closest shape segment at the vehicle's position.
+				if vehicle.Position.Bearing == nil {
+					if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+						status.Orientation = utils.Float64Ptr(inferred)
+						status.LastKnownOrientation = utils.Float64Ptr(inferred)
+					}
 				}
 			}
 
@@ -211,30 +210,13 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
-	// Look up frequency data for this trip
-	var scheduleFrequency *models.Frequency
-	frequencies, freqErr := api.GtfsManager.GetFrequenciesForTrip(ctx, trip.ID)
-	if freqErr != nil {
-		slog.Warn("BuildTripSchedule: failed to get frequencies",
-			slog.String("trip_id", trip.ID),
-			slog.String("error", freqErr.Error()))
-	}
-	if len(frequencies) > 0 {
-		active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, time.Now().In(serviceDate.Location()))
-		if active != nil {
-			f := models.NewFrequencyFromDB(*active, serviceDate)
-			scheduleFrequency = &f
-		} else {
-			// No window is currently active; use the first frequency entry as fallback
-			f := models.NewFrequencyFromDB(frequencies[0], serviceDate)
-			scheduleFrequency = &f
-		}
-	}
+	// Look up frequency data for this trip using the new helper
+	freq := api.lookupTripFrequency(ctx, trip.ID, serviceDate, api.Clock.Now())
 
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
 		TimeZone:       loc.String(),
-		Frequency:      scheduleFrequency,
+		Frequency:      freq,
 		NextTripID:     nextTripID,
 		PreviousTripID: previousTripID,
 	}, nil
@@ -323,10 +305,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 
 	// Dereference schedule deviation safely, default to 0 if not set
-	schedDev := int64(0)
-	if status.ScheduleDeviation != nil {
-		schedDev = int64(*status.ScheduleDeviation)
-	}
+	schedDev := int64(status.ScheduleDeviation)
 
 	for i, st := range stopTimes {
 		arrivalTime := utils.EffectiveStopTimeSeconds(st.ArrivalTime, st.DepartureTime)
@@ -1168,4 +1147,19 @@ func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float6
 		degrees += 360
 	}
 	return degrees
+}
+
+func (api *RestAPI) lookupTripFrequency(ctx context.Context, tripID string, serviceDate time.Time, now time.Time) *models.Frequency {
+	frequencies, err := api.GtfsManager.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil || len(frequencies) == 0 {
+		return nil
+	}
+
+	active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, now)
+	if active == nil {
+		active = &frequencies[0]
+	}
+
+	freq := models.NewFrequencyFromDB(*active, serviceDate)
+	return &freq
 }

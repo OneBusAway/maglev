@@ -78,6 +78,9 @@ func NewStopRouteSchedule(routeID string, directionSchedules []StopRouteDirectio
 
 // NewScheduleForStopEntry creates a new ScheduleForStopEntry
 func NewScheduleForStopEntry(stopID string, date int64, routeSchedules []StopRouteSchedule) ScheduleForStopEntry {
+	if routeSchedules == nil {
+		routeSchedules = []StopRouteSchedule{}
+	}
 	return ScheduleForStopEntry{
 		Date:               date,
 		StopID:             stopID,

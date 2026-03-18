@@ -10,6 +10,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// reportProblemWithTripHandler accepts a user-submitted problem report for a specific trip
+// and persists it to the database.
 func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.Request) {
 	logger := api.Logger
 	if logger == nil {

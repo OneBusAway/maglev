@@ -3,7 +3,6 @@ package restapi
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -38,6 +37,8 @@ func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParam
 	return params
 }
 
+// stopsForRouteHandler returns all stops served by a route, grouped by direction
+// with optional encoded polyline shapes.
 func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -63,14 +64,10 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	currentLocation, err := time.LoadLocation(currentAgency.Timezone)
-	// Fallback to UTC on error
+	currentLocation, err := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if err != nil {
-		slog.Warn("failed to load agency timezone, defaulting to UTC",
-			slog.String("agencyID", agencyID),
-			slog.String("timezone", currentAgency.Timezone),
-			slog.String("error", err.Error()))
-		currentLocation = time.UTC
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
 	timeParam := r.URL.Query().Get("time")
@@ -228,7 +225,7 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 	references.Routes = routes
 	references.Stops = stopsList
 
-	response := models.NewEntryResponse(result, references, api.Clock)
+	response := models.NewEntryResponse(result, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

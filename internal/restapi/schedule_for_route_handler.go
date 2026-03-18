@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// scheduleForRouteHandler returns the full schedule for a route on a given date,
+// organized by stop-trip groupings with associated service IDs.
 func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -41,7 +44,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		api.sendNotFound(w, r)
 		return
 	}
-	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
+	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	var targetDate string
 	var scheduleDate int64
@@ -81,7 +88,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			Stops:             []models.Stop{},
 			Trips:             []models.Trip{},
 		}
-		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
 	}
 
@@ -122,7 +129,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			Stops:             []models.Stop{},
 			Trips:             []models.Trip{},
 		}
-		api.sendResponse(w, r, models.NewEntryResponse(entry, models.NewEmptyReferences(), api.Clock))
+		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
 	}
 
@@ -165,31 +172,49 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		stopIDSet := make(map[string]struct{})
 		headsignSet := make(map[string]struct{})
 		tripIDs := make([]string, 0, len(groupedTrips))
-		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
+		rawTripIDs := make([]string, 0, len(groupedTrips))
+
 		for _, trip := range groupedTrips {
+			rawTripIDs = append(rawTripIDs, trip.ID)
 			combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
 			tripIDs = append(tripIDs, combinedTripID)
 			if trip.TripHeadsign.String != "" {
 				headsignSet[trip.TripHeadsign.String] = struct{}{}
 			}
-			stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, trip.ID)
-			if err != nil {
-				api.Logger.Warn("failed to fetch stop IDs for trip", "trip_id", trip.ID, "error", err)
+		}
+
+		if len(rawTripIDs) == 0 {
+			continue
+		}
+
+		allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, rawTripIDs)
+		if err != nil {
+			api.Logger.Warn("failed to fetch stop times for trips", "error", err)
+			continue
+		}
+
+		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(rawTripIDs))
+		for _, st := range allStopTimes {
+			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+		}
+
+		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
+
+		for _, trip := range groupedTrips {
+			tripStopTimes := stopTimesByTrip[trip.ID]
+			if len(tripStopTimes) == 0 {
 				continue
 			}
-			for _, stopID := range stopIDs {
-				stopIDSet[stopID] = struct{}{}
-				globalStopIDSet[stopID] = struct{}{}
-			}
-			stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
-			if err != nil {
-				api.Logger.Warn("failed to fetch stop times for trip", "trip_id", trip.ID, "error", err)
-				continue
-			}
-			stopTimesList := make([]models.RouteStopTime, 0, len(stopTimes))
-			for _, st := range stopTimes {
+
+			sort.Slice(tripStopTimes, func(i, j int) bool {
+				return tripStopTimes[i].StopSequence < tripStopTimes[j].StopSequence
+			})
+
+			stopTimesList := make([]models.RouteStopTime, 0, len(tripStopTimes))
+			for _, st := range tripStopTimes {
 				arrivalSec := int(utils.NanosToSeconds(st.ArrivalTime))
 				departureSec := int(utils.NanosToSeconds(st.DepartureTime))
+
 				stopTimesList = append(stopTimesList, models.RouteStopTime{
 					ArrivalEnabled:   true,
 					ArrivalTime:      arrivalSec,
@@ -200,7 +225,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					StopID:           utils.FormCombinedID(agencyID, st.StopID),
 					TripID:           utils.FormCombinedID(agencyID, trip.ID),
 				})
+
+				stopIDSet[st.StopID] = struct{}{}
+				globalStopIDSet[st.StopID] = struct{}{}
 			}
+
 			tripsWithStopTimes = append(tripsWithStopTimes, models.TripStopTimes{
 				TripID:    utils.FormCombinedID(agencyID, trip.ID),
 				StopTimes: stopTimesList,
@@ -282,8 +311,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		tripIDs = append(tripIDs, tid)
 	}
 
-	entryTrips := make([]models.Trip, 0)
-
 	if len(tripIDs) > 0 {
 		tripRows, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
 		if err != nil {
@@ -304,7 +331,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				utils.FormCombinedID(agencyID, t.ShapeID.String),
 			)
 			references.Trips = append(references.Trips, *tripRef)
-			entryTrips = append(entryTrips, *tripRef)
 		}
 	}
 
@@ -313,17 +339,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		uniqueStopIDs = append(uniqueStopIDs, sid)
 	}
 
-	entryStops := make([]models.Stop, 0)
-
 	if len(uniqueStopIDs) > 0 {
-
 		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
 		references.Stops = append(references.Stops, modelStops...)
-		entryStops = modelStops
 	}
 
 	for _, sref := range stopTimesRefs {
@@ -335,8 +357,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ScheduleDate:      scheduleDate,
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
-		Stops:             entryStops,
-		Trips:             entryTrips,
+		Stops:             references.Stops,
+		Trips:             references.Trips,
 	}
-	api.sendResponse(w, r, models.NewEntryResponse(entry, references, api.Clock))
+	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }

@@ -3,6 +3,8 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,10 +12,13 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripsForRouteHandler returns all active trips for a route, including their real-time
+// status, schedule, and vehicle positions when available.
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -34,7 +39,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	currentLocation, err := time.LoadLocation(currentAgency.Timezone)
+	currentLocation, err := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -138,14 +143,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		})
 
 		if err != nil {
+			logging.LogError(api.Logger, "failed to fetch trips in block", err, slog.String("block_id", blockID))
 			continue
 		}
 
 		activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 			BlockID:     blockIDNullStr,
 			ServiceIds:  serviceIDs,
-			CurrentTime: sql.NullInt64{Int64: currentNanosSinceMidnight, Valid: true}})
+			CurrentTime: sql.NullInt64{Int64: currentNanosSinceMidnight, Valid: true},
+		})
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			logging.LogError(api.Logger, "failed to fetch active trip in block", err, slog.String("block_id", blockID))
 			continue
 		}
 
@@ -511,5 +522,5 @@ func buildTripReferences[T interface{ GetTripId() string }](
 	references.Routes = routes
 	references.Stops = stopList
 	references.Trips = tripsRefList
-	return references
+	return *references
 }

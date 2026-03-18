@@ -12,6 +12,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// stopsForLocationHandler returns stops near a geographic location, specified by
+// lat/lon coordinates with an optional radius or latSpan/lonSpan bounding box.
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 
@@ -109,7 +111,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return stops[i].ID < stops[j].ID
 	})
 
-	var results []models.Stop
+	results := []models.Stop{}
 	routeIDs := map[string]bool{}
 	agencyIDs := map[string]bool{}
 
@@ -123,11 +125,20 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
 		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+		if agencies == nil {
+			agencies = []models.AgencyReference{}
+		}
+
 		routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+		if routes == nil {
+			routes = []models.Route{}
+		}
+
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
 		references.Routes = routes
-		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
+
+		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -241,6 +252,13 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
 	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
 
+	if agencies == nil {
+		agencies = []models.AgencyReference{}
+	}
+	if routes == nil {
+		routes = []models.Route{}
+	}
+
 	// Populate situation references for alerts affecting the returned stops
 	alerts := api.collectAlertsForStops(resultRawStopIDs)
 	situations := api.BuildSituationReferences(alerts)
@@ -250,6 +268,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	references.Routes = routes
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -17,6 +16,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripsForLocationHandler returns active trips near a geographic location, specified by
+// lat/lon coordinates with latSpan/lonSpan bounds, including real-time status and schedule data.
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -147,9 +148,9 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, err = time.LoadLocation(currentAgency.Timezone)
+	currentLocation, err = loadAgencyLocation(currentAgency.Id, currentAgency.Timezone)
 	if err != nil {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, fmt.Errorf("invalid timezone for agency %q: %w", currentAgency.Id, err)
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, err
 	}
 
 	timeParam := queryParams.Get("time")
@@ -770,12 +771,22 @@ func (rb *referenceBuilder) createTripReference(tripDetails gtfsdb.Trip, current
 }
 
 func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
+	trips := rb.tripsRefList
+	if trips == nil {
+		trips = []models.Trip{}
+	}
+	stops := rb.stopList
+	if stops == nil {
+		stops = []models.Stop{}
+	}
+
 	references := models.NewEmptyReferences()
 	references.Agencies = rb.getAgenciesList()
 	references.Routes = rb.getRoutesList()
-	references.Stops = rb.stopList
-	references.Trips = rb.tripsRefList
-	return references
+	references.Stops = stops
+	references.Trips = trips
+
+	return *references
 }
 
 func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {

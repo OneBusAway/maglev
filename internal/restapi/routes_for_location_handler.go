@@ -9,6 +9,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// routesForLocationHandler returns routes serving stops near a geographic location,
+// specified by lat/lon coordinates with an optional radius or latSpan/lonSpan bounding box.
 func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 
@@ -77,7 +79,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
-		response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
+		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -141,7 +143,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	references.Agencies = agencies
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
 

@@ -12,6 +12,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// scheduleForStopHandler returns the full schedule for a stop on a given date,
+// including arrival and departure times grouped by route.
 func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -42,7 +44,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
+	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	var date int64
 	var targetDate string
 	var weekday string
@@ -89,7 +95,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	if len(routeIDs) == 0 {
 		api.sendResponse(w, r, models.NewEntryResponse(
 			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), date, nil),
-			models.NewEmptyReferences(),
+			*models.NewEmptyReferences(),
 			api.Clock,
 		))
 		return
@@ -393,6 +399,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	references.Stops = append(references.Stops, stopRef)
 	// Create and send response
-	response := models.NewEntryResponse(entry, references, api.Clock)
+	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }

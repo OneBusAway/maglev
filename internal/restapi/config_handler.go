@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// configHandler returns server configuration metadata, including the Git commit hash and build info.
 func (api *RestAPI) configHandler(w http.ResponseWriter, r *http.Request) {
 	shortHash := "unknown"
 	if len(buildinfo.CommitHash) >= 7 {
@@ -43,7 +44,7 @@ func (api *RestAPI) configHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewEntryResponse(
 		configEntry,
-		models.NewEmptyReferences(),
+		*models.NewEmptyReferences(),
 		api.Clock,
 	)
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
-	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -117,6 +116,9 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request, loc ...*time
 	return params, nil
 }
 
+// arrivalAndDepartureForStopHandler returns arrival and departure information for a stop.
+// It handles both the single arrival-and-departure and the list arrivals-and-departures endpoints,
+// merging scheduled stop times with real-time predictions when available.
 func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *http.Request) {
 	stopAgencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -176,7 +178,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Localize serviceDate and time to the agency's timezone now that we know it.
 	// This ensures Year()/Month()/Day()/Format() extract the correct local date.
-	loc := utils.LoadLocationWithUTCFallBack(stopAgency.Timezone, stopAgency.ID)
+	loc, err := loadAgencyLocation(stopAgency.ID, stopAgency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if params.ServiceDate != nil {
 		localized := params.ServiceDate.In(loc)
 		params.ServiceDate = &localized
@@ -387,20 +393,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		situationIDs,                                   // situationIds
 	)
 
-	// Populate frequency for frequency-based trips
-	tripFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
-	if freqErr != nil {
-		api.Logger.Warn("failed to fetch frequencies for arrival trip", "tripID", tripID, "error", freqErr)
-	}
-	if len(tripFreqs) > 0 {
-		if activeFreq := gtfsInternal.GetActiveHeadwayForTime(tripFreqs, serviceMidnight, currentTime); activeFreq != nil {
-			freq := models.NewFrequencyFromDB(*activeFreq, serviceMidnight)
-			arrival.Frequency = &freq
-		} else {
-			freq := models.NewFrequencyFromDB(tripFreqs[0], serviceMidnight)
-			arrival.Frequency = &freq
-		}
-	}
+	// Populate frequency using the new helper
+	arrival.Frequency = api.lookupTripFrequency(ctx, tripID, serviceMidnight, currentTime)
 
 	references := models.NewEmptyReferences()
 
@@ -597,7 +591,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	response := models.NewEntryResponse(arrival, references, api.Clock)
+	response := models.NewEntryResponse(arrival, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

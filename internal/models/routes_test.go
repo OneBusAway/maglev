@@ -106,7 +106,7 @@ func TestRouteDataJSON(t *testing.T) {
 	routeData := RouteData{
 		LimitExceeded: false,
 		List:          []Route{route1, route2},
-		References:    NewEmptyReferences(),
+		References:    *NewEmptyReferences(),
 	}
 
 	jsonData, err := json.Marshal(routeData)

@@ -27,9 +27,12 @@ func TestNewTripDetails(t *testing.T) {
 	serviceDate := int64(1609459200000)
 
 	frequency := &Frequency{
-		StartTime: 28800,
-		EndTime:   32400,
-		Headway:   300,
+		StartTime:   28800,
+		EndTime:     32400,
+		Headway:     300,
+		ServiceDate: serviceDate,
+		ServiceID:   "service_789",
+		TripID:      tripID,
 	}
 
 	status := &TripStatus{
@@ -71,9 +74,12 @@ func TestNewEmptyTripDetails(t *testing.T) {
 
 func TestTripDetailsJSON(t *testing.T) {
 	frequency := &Frequency{
-		StartTime: 28800,
-		EndTime:   32400,
-		Headway:   300,
+		StartTime:   28800,
+		EndTime:     32400,
+		Headway:     300,
+		ServiceDate: 1609459200000,
+		ServiceID:   "service_789",
+		TripID:      "trip_123",
 	}
 
 	status := NewTripStatus()
@@ -145,20 +151,20 @@ func TestTripStatusJSON(t *testing.T) {
 		BlockTripSequence:          2,
 		ClosestStop:                "stop_456",
 		ClosestStopTimeOffset:      &closestOffset,
-		DistanceAlongTrip:          &distanceAlongTrip,
+		DistanceAlongTrip:          distanceAlongTrip,
 		Frequency:                  nil,
-		LastKnownDistanceAlongTrip: &lastKnownDistanceAlongTrip,
+		LastKnownDistanceAlongTrip: lastKnownDistanceAlongTrip,
 		LastKnownLocation: &Location{
 			Lat: 38.542661,
 			Lon: -121.743914,
 		},
 		LastKnownOrientation:   &lastKnownOrientation,
-		LastLocationUpdateTime: &lastLocationUpdateTime,
-		LastUpdateTime:         &lastUpdateTime,
+		LastLocationUpdateTime: lastLocationUpdateTime,
+		LastUpdateTime:         lastUpdateTime,
 		NextStop:               "stop_789",
 		NextStopTimeOffset:     &nextOffset,
-		OccupancyCapacity:      &occupancyCapacity,
-		OccupancyCount:         &occupancyCount,
+		OccupancyCapacity:      occupancyCapacity,
+		OccupancyCount:         occupancyCount,
 		OccupancyStatus:        "MANY_SEATS_AVAILABLE",
 		Orientation:            &orientation,
 		Phase:                  "in_progress",
@@ -167,15 +173,15 @@ func TestTripStatusJSON(t *testing.T) {
 			Lon: -121.744000,
 		},
 		Predicted:                  true,
-		ScheduleDeviation:          &scheduleDeviation,
+		ScheduleDeviation:          scheduleDeviation,
 		ScheduledDistanceAlongTrip: &scheduledDistanceAlongTrip,
 		ServiceDate:                1609459200000,
 		SituationIDs:               []string{"situation_1"},
 		Status:                     "SCHEDULED",
-		TotalDistanceAlongTrip:     &totalDistanceAlongTrip,
+		TotalDistanceAlongTrip:     totalDistanceAlongTrip,
 		VehicleFeatures:            []string{"wifi", "bike_rack"},
 		VehicleID:                  "vehicle_789",
-		Scheduled:                  true,
+		Scheduled:                  false,
 	}
 
 	jsonData, err := json.Marshal(tripStatus)
@@ -191,6 +197,7 @@ func TestTripStatusJSON(t *testing.T) {
 	assert.Equal(t, tripStatus.Predicted, unmarshaledStatus.Predicted)
 	assert.Equal(t, tripStatus.Position.Lat, unmarshaledStatus.Position.Lat)
 	assert.Equal(t, tripStatus.Position.Lon, unmarshaledStatus.Position.Lon)
+	assert.Equal(t, tripStatus.Scheduled, unmarshaledStatus.Scheduled)
 }
 
 func TestTripStatus_JSONOmitEmpty(t *testing.T) {
@@ -201,12 +208,29 @@ func TestTripStatus_JSONOmitEmpty(t *testing.T) {
 	require.NoError(t, err)
 	jsonStr := string(data)
 
-	assert.NotContains(t, jsonStr, `"scheduleDeviation"`, "scheduleDeviation should be omitted when nil")
-	assert.NotContains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip should be omitted when nil")
+	// Required fields should always be present (even with zero values)
+	assert.Contains(t, jsonStr, `"scheduleDeviation"`, "scheduleDeviation is required and should always be present")
+	assert.Contains(t, jsonStr, `"distanceAlongTrip"`, "distanceAlongTrip is required and should always be present")
+
+	// Optional pointer fields should be omitted when nil
 	assert.NotContains(t, jsonStr, `"closestStopTimeOffset"`, "closestStopTimeOffset should be omitted when nil")
 	assert.NotContains(t, jsonStr, `"orientation"`, "orientation should be omitted when nil")
 
 	// These are required fields per the OpenAPI spec — must always appear, even when empty string
 	assert.Contains(t, jsonStr, `"closestStop":""`, "closestStop is required by OpenAPI spec and must always be present")
 	assert.Contains(t, jsonStr, `"occupancyStatus":""`, "occupancyStatus is required by OpenAPI spec and must always be present")
+	assert.Contains(t, jsonStr, `"predicted":false`, "predicted defaults to false in NewTripStatus")
+	assert.Contains(t, jsonStr, `"scheduled":true`, "scheduled must stay inverse of predicted")
+}
+
+func TestTripStatus_SetPredicted_KeepsInverseScheduled(t *testing.T) {
+	status := NewTripStatus()
+
+	status.SetPredicted(true)
+	assert.True(t, status.Predicted)
+	assert.False(t, status.Scheduled)
+
+	status.SetPredicted(false)
+	assert.False(t, status.Predicted)
+	assert.True(t, status.Scheduled)
 }

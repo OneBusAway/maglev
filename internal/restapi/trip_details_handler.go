@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -103,6 +102,8 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 	return params, nil
 }
 
+// tripDetailsHandler returns extended information for a trip, including its schedule,
+// real-time status, and optionally the full stop time sequence.
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -132,7 +133,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
+	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	// Parse query params with the agency's timezone so that serviceDate and time
 	// are localized at parse time, preventing UTC date-extraction bugs.
@@ -175,26 +180,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Look up frequency data for this trip
-	var tripFrequency *models.Frequency
-	frequencies, freqErr := api.GtfsManager.GetFrequenciesForTrip(ctx, tripID)
-	if freqErr != nil {
-		slog.Warn("tripDetailsHandler: failed to get frequencies",
-			slog.String("trip_id", tripID),
-			slog.String("error", freqErr.Error()))
-	}
-	if len(frequencies) > 0 {
-		// Try to find the currently-active frequency window
-		active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, currentTime)
-		if active != nil {
-			freq := models.NewFrequencyFromDB(*active, serviceDate)
-			tripFrequency = &freq
-		} else {
-			// Fallback: use the first frequency entry
-			freq := models.NewFrequencyFromDB(frequencies[0], serviceDate)
-			tripFrequency = &freq
-		}
-	}
+	// Look up frequency using the new helper
+	tripFrequency := api.lookupTripFrequency(r.Context(), trip.ID, serviceDate, api.Clock.Now())
 
 	// Propagate frequency to status and schedule
 	if tripFrequency != nil {
@@ -206,11 +193,12 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var situationsIDs []string
+	// Resolve Situation IDs
+	var situationIDs []string
 	if status != nil && len(status.SituationIDs) > 0 {
-		situationsIDs = status.SituationIDs
+		situationIDs = status.SituationIDs
 	} else {
-		situationsIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
+		situationIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
 	}
 
 	tripDetails := &models.TripDetails{
@@ -218,7 +206,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
 		Frequency:    tripFrequency,
-		SituationIDs: situationsIDs,
+		SituationIDs: situationIDs,
 	}
 
 	if status != nil {
@@ -268,7 +256,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	)
 	references.Agencies = append(references.Agencies, agencyModel)
 
-	if len(situationsIDs) > 0 {
+	if len(situationIDs) > 0 {
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
 			situations := api.BuildSituationReferences(alerts)
@@ -293,7 +281,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Routes = routes
 	}
 
-	response := models.NewEntryResponse(tripDetails, references, api.Clock)
+	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

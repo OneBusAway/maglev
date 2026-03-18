@@ -13,7 +13,10 @@ type Frequency struct {
 	// Headway is the time between departures in seconds
 	Headway int `json:"headway"`
 	// ExactTimes is used internally for business logic but omitted from API responses
-	ExactTimes int `json:"-"`
+	ExactTimes  int    `json:"-"`
+	ServiceDate int64  `json:"serviceDate"`
+	ServiceID   string `json:"serviceId"`
+	TripID      string `json:"tripId"`
 }
 
 // NewFrequencyFromDB converts a database Frequency row into an API Frequency model.

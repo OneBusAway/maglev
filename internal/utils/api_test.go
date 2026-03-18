@@ -589,20 +589,19 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 	})
 }
 
-func TestLoadLocationWithUTCFallBack(t *testing.T) {
-	t.Run("Valid location", func(t *testing.T) {
-		loc := LoadLocationWithUTCFallBack("America/Los_Angeles", "test-agency")
+func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
 
-		assert.NotNil(t, loc)
-		assert.Equal(t, "America/Los_Angeles", loc.String())
-	})
+	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12", loc)
 
-	t.Run("Invalid location falls back to UTC", func(t *testing.T) {
-		loc := LoadLocationWithUTCFallBack("Invalid/Timezone", "test-agency")
+	require.True(t, valid)
+	require.Nil(t, fieldErrors)
+	assert.Equal(t, "20260312", dateStr)
 
-		assert.NotNil(t, loc)
-		assert.Equal(t, time.UTC, loc)
-	})
+	expected := time.Date(2026, 3, 12, 0, 0, 0, 0, loc)
+	assert.True(t, parsedTime.Equal(expected), "parsed time should represent midnight in the provided location")
+	assert.Equal(t, loc.String(), parsedTime.Location().String())
 }
 
 func TestParseMaxCount(t *testing.T) {

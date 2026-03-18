@@ -6,6 +6,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// problemReportsForTripHandler returns all user-submitted problem reports for a given trip.
 func (api *RestAPI) problemReportsForTripHandler(w http.ResponseWriter, r *http.Request) {
 	_, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -31,6 +32,6 @@ func (api *RestAPI) problemReportsForTripHandler(w http.ResponseWriter, r *http.
 	}
 
 	references := models.NewEmptyReferences()
-	response := models.NewListResponse(reportList, references, false, api.Clock)
+	response := models.NewListResponse(reportList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

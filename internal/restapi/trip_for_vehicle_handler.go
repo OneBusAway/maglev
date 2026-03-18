@@ -4,17 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripForVehicleHandler returns trip details for the trip currently being served by a given vehicle.
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
 	agencyID, vehicleID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -50,7 +49,11 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	loc := utils.LoadLocationWithUTCFallBack(agency.Timezone, agency.ID)
+	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	// Parse query params with the agency's timezone so that serviceDate and time
 	// are localized at parse time, preventing UTC date-extraction bugs.
@@ -111,24 +114,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Look up frequency data for this trip
-	var tripFrequency *models.Frequency
-	frequencies, freqErr := api.GtfsManager.GetFrequenciesForTrip(ctx, tripID)
-	if freqErr != nil {
-		slog.Warn("tripForVehicleHandler: failed to get frequencies",
-			slog.String("trip_id", tripID),
-			slog.String("error", freqErr.Error()))
-	}
-	if len(frequencies) > 0 {
-		active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, currentTime)
-		if active != nil {
-			freq := models.NewFrequencyFromDB(*active, serviceDate)
-			tripFrequency = &freq
-		} else {
-			freq := models.NewFrequencyFromDB(frequencies[0], serviceDate)
-			tripFrequency = &freq
-		}
-	}
+	// Look up frequency data for this trip using the new helper
+	tripFrequency := api.lookupTripFrequency(r.Context(), tripID, serviceDate, api.Clock.Now())
 
 	// Propagate frequency to status and schedule
 	if tripFrequency != nil {
@@ -231,7 +218,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		references.Trips = append(references.Trips, *tripRef)
 	}
 
-	response := models.NewEntryResponse(entry, references, api.Clock)
+	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

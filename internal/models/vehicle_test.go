@@ -32,14 +32,14 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		// (which has its own phase/status/occupancyStatus without omitempty).
 		var top map[string]interface{}
 		require.NoError(t, json.Unmarshal(data, &top))
-		assert.NotContains(t, top, "occupancyCapacity")
-		assert.NotContains(t, top, "occupancyCount")
+		assert.Equal(t, float64(0), top["occupancyCapacity"])
+		assert.Equal(t, float64(0), top["occupancyCount"])
 		assert.NotContains(t, top, "occupancyStatus")
 		assert.NotContains(t, top, "phase")
 		assert.NotContains(t, top, "status")
 
-		assert.Nil(t, top["lastUpdateTime"], "lastUpdateTime must serialize as JSON null when not set")
-		assert.Nil(t, top["lastLocationUpdateTime"], "lastLocationUpdateTime must serialize as JSON null when not set")
+		assert.Equal(t, float64(0), top["lastUpdateTime"], "lastUpdateTime must serialize as 0 when not set")
+		assert.Equal(t, float64(0), top["lastLocationUpdateTime"], "lastLocationUpdateTime must serialize as 0 when not set")
 		assert.Nil(t, top["location"], "location must serialize as JSON null when not set")
 		assert.Nil(t, top["tripStatus"], "tripStatus must serialize as JSON null when not set")
 		assert.Equal(t, "", top["tripId"], "tripId must serialize as empty string when not set")
@@ -55,14 +55,14 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 
 		vs := VehicleStatus{
 			VehicleID:              "40_1234",
-			LastUpdateTime:         &ts,
-			LastLocationUpdateTime: &ts,
+			LastUpdateTime:         ts,
+			LastLocationUpdateTime: ts,
 			Location:               &Location{Lat: 47.65, Lon: -122.3},
 			TripID:                 "trip_1",
 			TripStatus:             tripStatus,
 			OccupancyStatus:        "MANY_SEATS_AVAILABLE",
-			OccupancyCapacity:      &capacity,
-			OccupancyCount:         &count,
+			OccupancyCapacity:      capacity,
+			OccupancyCount:         count,
 			Phase:                  "in_progress",
 			Status:                 "IN_TRANSIT_TO",
 		}
@@ -81,8 +81,8 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		// Optional fields should be absent at the top level.
 		// Unmarshal to a map to avoid false positives from nested TripStatus JSON
 		// (which has its own phase/status/occupancyStatus without omitempty).
-		vs.OccupancyCapacity = nil
-		vs.OccupancyCount = nil
+		vs.OccupancyCapacity = 0
+		vs.OccupancyCount = 0
 		vs.OccupancyStatus = ""
 		vs.Phase = ""
 		vs.Status = ""
@@ -93,8 +93,8 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		var top map[string]interface{}
 		require.NoError(t, json.Unmarshal(data, &top))
 
-		assert.NotContains(t, top, "occupancyCapacity")
-		assert.NotContains(t, top, "occupancyCount")
+		assert.Equal(t, float64(0), top["occupancyCapacity"])
+		assert.Equal(t, float64(0), top["occupancyCount"])
 		assert.NotContains(t, top, "occupancyStatus")
 		assert.NotContains(t, top, "phase")
 		assert.NotContains(t, top, "status")

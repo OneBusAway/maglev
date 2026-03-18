@@ -23,6 +23,6 @@ func NewCurrentTimeData(t time.Time) CurrentTimeData {
 			ReadableTime: t.Format(time.RFC3339),
 			Time:         timeMillis,
 		},
-		References: NewEmptyReferences(),
+		References: *NewEmptyReferences(),
 	}
 }
