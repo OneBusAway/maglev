@@ -279,14 +279,13 @@ func TestTripsForLocationFrequencyIntegration(t *testing.T) {
 		url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&latSpan=0.5&lonSpan=0.5&includeSchedule=true", lat, lon)
 		_, model := serveApiAndRetrieveEndpoint(t, api, url)
 
-		if model.Code == 200 {
-			data := model.Data.(map[string]interface{})
-			list := data["list"].([]interface{})
-			if len(list) > 0 {
-				entry := list[0].(map[string]interface{})
-				_, exists := entry["frequency"]
-				assert.True(t, exists, "frequency key should exist")
-			}
+		require.Equal(t, 200, model.Code)
+		data := model.Data.(map[string]interface{})
+		list := data["list"].([]interface{})
+		if len(list) > 0 {
+			entry := list[0].(map[string]interface{})
+			_, exists := entry["frequency"]
+			assert.True(t, exists, "frequency key should exist")
 		}
 	})
 
@@ -297,31 +296,30 @@ func TestTripsForLocationFrequencyIntegration(t *testing.T) {
 		url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&latSpan=0.5&lonSpan=0.5&includeSchedule=true", lat, lon)
 		_, model := serveApiAndRetrieveEndpoint(t, api, url)
 
-		if model.Code == 200 {
-			data := model.Data.(map[string]interface{})
-			list := data["list"].([]interface{})
+		require.Equal(t, 200, model.Code)
+		data := model.Data.(map[string]interface{})
+		list := data["list"].([]interface{})
 
-			for _, item := range list {
-				entry := item.(map[string]interface{})
-				if entry["tripId"] == utils.FormCombinedID(agency.Id, tripRawID) {
-					freq := entry["frequency"]
-					if freq != nil {
-						freqVal, ok := freq.(float64)
-						assert.True(t, ok, "frequency should be numeric")
-						assert.Equal(t, float64(600), freqVal)
-					}
-
-					// Check schedule.frequency if schedule is present
-					if sched, ok := entry["schedule"].(map[string]interface{}); ok {
-						schedFreq := sched["frequency"]
-						if schedFreq != nil {
-							schedFreqMap, ok := schedFreq.(map[string]interface{})
-							assert.True(t, ok, "schedule.frequency should be a map")
-							assert.Equal(t, float64(600), schedFreqMap["headway"])
-						}
-					}
-					break
+		for _, item := range list {
+			entry := item.(map[string]interface{})
+			if entry["tripId"] == utils.FormCombinedID(agency.Id, tripRawID) {
+				freq := entry["frequency"]
+				if freq != nil {
+					freqVal, ok := freq.(float64)
+					assert.True(t, ok, "frequency should be numeric")
+					assert.Equal(t, float64(600), freqVal)
 				}
+
+				// Check schedule.frequency if schedule is present
+				if sched, ok := entry["schedule"].(map[string]interface{}); ok {
+					schedFreq := sched["frequency"]
+					if schedFreq != nil {
+						schedFreqMap, ok := schedFreq.(map[string]interface{})
+						assert.True(t, ok, "schedule.frequency should be a map")
+						assert.Equal(t, float64(600), schedFreqMap["headway"])
+					}
+				}
+				break
 			}
 		}
 	})
@@ -347,13 +345,12 @@ func TestTripForVehicleFrequencyIntegration(t *testing.T) {
 		_, model := serveApiAndRetrieveEndpoint(t, api,
 			"/api/where/trip-for-vehicle/"+combinedVehicleID+".json?key=TEST")
 
-		if model.Code == 200 {
-			data := model.Data.(map[string]interface{})
-			entry := data["entry"].(map[string]interface{})
+		require.Equal(t, 200, model.Code)
+		data := model.Data.(map[string]interface{})
+		entry := data["entry"].(map[string]interface{})
 
-			_, exists := entry["frequency"]
-			assert.True(t, exists, "frequency key should exist in response")
-		}
+		_, exists := entry["frequency"]
+		assert.True(t, exists, "frequency key should exist in response")
 	})
 
 	t.Run("vehicle trip with frequency data", func(t *testing.T) {
@@ -379,14 +376,13 @@ func TestTripForVehicleFrequencyIntegration(t *testing.T) {
 		_, model := serveApiAndRetrieveEndpoint(t, api,
 			"/api/where/trip-for-vehicle/"+combinedVehicleID+".json?key=TEST")
 
-		if model.Code == 200 {
-			data := model.Data.(map[string]interface{})
-			entry := data["entry"].(map[string]interface{})
+		require.Equal(t, 200, model.Code)
+		data := model.Data.(map[string]interface{})
+		entry := data["entry"].(map[string]interface{})
 
-			freq, ok := entry["frequency"].(map[string]interface{})
-			if ok && freq != nil {
-				assert.Equal(t, float64(600), freq["headway"])
-			}
+		freq, ok := entry["frequency"].(map[string]interface{})
+		if ok && freq != nil {
+			assert.Equal(t, float64(600), freq["headway"])
 		}
 	})
 }
@@ -699,13 +695,12 @@ func TestSingularArrivalAndDepartureFrequencyIntegration(t *testing.T) {
 			stopID, combinedTripID, serviceDateMs)
 		_, model := serveApiAndRetrieveEndpoint(t, api, url)
 
-		if model.Code == 200 {
-			data := model.Data.(map[string]interface{})
-			entry := data["entry"].(map[string]interface{})
-			_, exists := entry["frequency"]
-			assert.True(t, exists, "frequency key should exist")
-			assert.Nil(t, entry["frequency"], "frequency should be nil without frequency data")
-		}
+		require.Equal(t, 200, model.Code)
+		data := model.Data.(map[string]interface{})
+		entry := data["entry"].(map[string]interface{})
+		_, exists := entry["frequency"]
+		assert.True(t, exists, "frequency key should exist")
+		assert.Nil(t, entry["frequency"], "frequency should be nil without frequency data")
 	})
 
 	t.Run("singular arrival with frequency data", func(t *testing.T) {
@@ -716,16 +711,15 @@ func TestSingularArrivalAndDepartureFrequencyIntegration(t *testing.T) {
 			stopID, combinedTripID, serviceDateMs)
 		_, model := serveApiAndRetrieveEndpoint(t, api, url)
 
-		if model.Code == 200 {
-			data := model.Data.(map[string]interface{})
-			entry := data["entry"].(map[string]interface{})
+		require.Equal(t, 200, model.Code)
+		data := model.Data.(map[string]interface{})
+		entry := data["entry"].(map[string]interface{})
 
-			freq, ok := entry["frequency"].(map[string]interface{})
-			if ok && freq != nil {
-				assert.Equal(t, float64(600), freq["headway"])
-				assert.NotNil(t, freq["startTime"])
-				assert.NotNil(t, freq["endTime"])
-			}
+		freq, ok := entry["frequency"].(map[string]interface{})
+		if ok && freq != nil {
+			assert.Equal(t, float64(600), freq["headway"])
+			assert.NotNil(t, freq["startTime"])
+			assert.NotNil(t, freq["endTime"])
 		}
 	})
 }
