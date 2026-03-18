@@ -1,7 +1,7 @@
 package models
 
 type TripDetails struct {
-	Frequency    *Frequency  `json:"frequency,omitempty"`
+	Frequency    *Frequency  `json:"frequency,omitempty"` // omitempty intentional: trip-details callers expect the field absent when the trip is not frequency-based
 	Schedule     *Schedule   `json:"schedule"`
 	ServiceDate  int64       `json:"serviceDate"`
 	SituationIDs []string    `json:"situationIds"`
@@ -38,7 +38,7 @@ type TripStatus struct {
 	ClosestStop                string     `json:"closestStop"`
 	ClosestStopTimeOffset      int        `json:"closestStopTimeOffset"`
 	DistanceAlongTrip          float64    `json:"distanceAlongTrip"`
-	Frequency                  *Frequency `json:"frequency,omitempty"`
+	Frequency                  *Frequency `json:"frequency,omitempty"` // omitempty intentional: the OpenAPI spec declares frequency as non-nullable; omit the field rather than emit null when the trip is not frequency-based
 	LastKnownDistanceAlongTrip float64    `json:"lastKnownDistanceAlongTrip"`
 	LastKnownLocation          *Location  `json:"lastKnownLocation,omitempty"`
 	LastKnownOrientation       float64    `json:"lastKnownOrientation"`
