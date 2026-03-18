@@ -57,7 +57,7 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 2, len(stopGroups))
 
-	// Verify inbound group (direction 1)
+	// Verify inbound group (direction 1 in normalized 0-based index)
 	inboundGroup, ok := stopGroups[1].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "1", inboundGroup["id"])
@@ -76,13 +76,13 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 
 	// With deterministic sorting, checks should be consistent
-	assert.Equal(t, 21, len(inboundStopIds))
+	assert.Equal(t, 22, len(inboundStopIds))
 
 	inboundPolylines, ok := inboundGroup["polylines"].([]interface{})
 	require.True(t, ok)
 	assert.Equal(t, 1, len(inboundPolylines))
 
-	// Verify outbound group (direction 0)
+	// Verify outbound group (direction 0 in normalized 0-based index)
 	outboundGroup, ok := stopGroups[0].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "0", outboundGroup["id"])
@@ -95,7 +95,7 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	outboundStopIds, ok := outboundGroup["stopIds"].([]interface{})
 	require.True(t, ok)
 	// With deterministic sorting, checks should be consistent
-	assert.Equal(t, 22, len(outboundStopIds))
+	assert.Equal(t, 21, len(outboundStopIds))
 
 	// Verify references
 	refs, ok := data["references"].(map[string]interface{})
@@ -138,6 +138,42 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	trips, ok := refs["trips"].([]interface{})
 	require.True(t, ok)
 	assert.Equal(t, 0, len(trips))
+}
+
+// TestStopsForRouteNoDuplicateStopGroups guards against the regression where
+// trips with different headsigns in the same direction produced duplicate group
+// IDs (e.g. "0", "0", "1" instead of "0", "1").
+func TestStopsForRouteNoDuplicateStopGroups(t *testing.T) {
+	_, _, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25_151.json?key=TEST")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	stopGroupings, ok := entry["stopGroupings"].([]interface{})
+	require.True(t, ok)
+	require.Equal(t, 1, len(stopGroupings), "expected exactly one stopGrouping")
+
+	grouping, ok := stopGroupings[0].(map[string]interface{})
+	require.True(t, ok)
+
+	stopGroups, ok := grouping["stopGroups"].([]interface{})
+	require.True(t, ok)
+	require.Equal(t, 2, len(stopGroups), "expected exactly 2 stop groups (one per direction)")
+
+	// Verify IDs are unique and normalized to "0" and "1"
+	ids := make(map[string]bool)
+	for _, g := range stopGroups {
+		group, ok := g.(map[string]interface{})
+		require.True(t, ok)
+		id, ok := group["id"].(string)
+		require.True(t, ok)
+		assert.False(t, ids[id], "duplicate stop group ID: %s", id)
+		ids[id] = true
+	}
+	assert.True(t, ids["0"], "expected stop group with id '0'")
+	assert.True(t, ids["1"], "expected stop group with id '1'")
 }
 
 func TestStopsForRouteHandlerInvalidRouteID(t *testing.T) {
