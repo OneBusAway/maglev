@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -1075,4 +1076,58 @@ func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
 	entry2, ok := data2["entry"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, float64(14), entry2["stopSequence"], "expected zero-based index for stop_sequence=15")
+}
+
+func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+
+	var validTripID, validStopID string
+	var stopSequence int64
+	for _, trip := range trips {
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		if err == nil && len(stopTimes) > 0 {
+			validTripID = trip.ID
+			validStopID = stopTimes[0].StopID
+			stopSequence = stopTimes[0].StopSequence
+			break
+		}
+	}
+	require.NotEmpty(t, validTripID, "no trip with stop times found in test data")
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	combinedStopID := utils.FormCombinedID(agencyID, validStopID)
+	combinedTripID := utils.FormCombinedID(agencyID, validTripID)
+	serviceDateMs := time.Now().UnixMilli()
+
+	api.GtfsManager.MockAddVehicleWithOptions("", validTripID, "", internalgtfs.MockVehicleOptions{
+		NoID: true,
+	})
+
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d",
+		combinedStopID,
+		combinedTripID,
+		serviceDateMs,
+		stopSequence,
+	)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "", entry["vehicleId"], "vehicleId should be empty for vehicle with nil ID")
 }
