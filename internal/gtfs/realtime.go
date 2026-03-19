@@ -17,6 +17,15 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
+// alertIndex holds pre-built maps for O(1) alert lookups, keyed by trip, route, agency, and stop IDs.
+// It is rebuilt on every call to rebuildMergedRealtimeLocked under the existing write lock.
+type alertIndex struct {
+	byTrip   map[string][]gtfs.Alert
+	byRoute  map[string][]gtfs.Alert
+	byAgency map[string][]gtfs.Alert
+	byStop   map[string][]gtfs.Alert
+}
+
 // staleVehicleTimeout is the duration after which a vehicle is considered stale
 const staleVehicleTimeout = 15 * time.Minute
 
@@ -114,32 +123,27 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
+	seen := make(map[string]bool)
 	var alerts []gtfs.Alert
-	for _, alert := range manager.realTimeAlerts {
-		if alert.InformedEntities == nil {
-			continue
-		}
-		for _, entity := range alert.InformedEntities {
-			if entity.TripID != nil && tripID != "" && entity.TripID.ID == tripID {
-				alerts = append(alerts, alert)
-				break
-			}
-			// Only match route-level entities that have no stop restriction.
-			// Entities with {routeId + stopId} are stop-specific alerts and should
-			// only appear when looking up a specific stop (matching Java's inverted
-			// index which files {routeId+stopId} entities in a separate bucket).
-			if entity.RouteID != nil && routeID != "" && *entity.RouteID == routeID &&
-				entity.StopID == nil {
-				alerts = append(alerts, alert)
-				break
-			}
-			// Only match agency-wide alerts: entity has agencyId but no route or trip restriction.
-			if entity.AgencyID != nil && agencyID != "" && *entity.AgencyID == agencyID &&
-				entity.RouteID == nil && entity.TripID == nil {
-				alerts = append(alerts, alert)
-				break
+	// Invariant: alertIdx only contains alerts with non-empty IDs (rebuildMergedRealtimeLocked
+	// skips any alert where alert.ID == ""), so seen[a.ID] is sufficient for deduplication.
+	addUnique := func(candidates []gtfs.Alert) {
+		for _, a := range candidates {
+			if !seen[a.ID] {
+				seen[a.ID] = true
+				alerts = append(alerts, a)
 			}
 		}
+	}
+
+	if tripID != "" {
+		addUnique(manager.alertIdx.byTrip[tripID])
+	}
+	if routeID != "" {
+		addUnique(manager.alertIdx.byRoute[routeID])
+	}
+	if agencyID != "" {
+		addUnique(manager.alertIdx.byAgency[agencyID])
 	}
 	return alerts
 }
@@ -175,22 +179,25 @@ func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []g
 	return manager.GetAlertsByIDs(tripID, routeID, agencyID)
 }
 
+// GetAlertsForStop returns deduplicated alerts for the given stopID.
+// Deduplication by alert ID is done internally so callers never receive
+// duplicate entries even when the same alert ID appears in multiple feeds.
 func (manager *Manager) GetAlertsForStop(stopID string) []gtfs.Alert {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
-
-	var alerts []gtfs.Alert
-	for _, alert := range manager.realTimeAlerts {
-		if alert.InformedEntities != nil {
-			for _, entity := range alert.InformedEntities {
-				if entity.StopID != nil && *entity.StopID == stopID {
-					alerts = append(alerts, alert)
-					break
-				}
-			}
+	src := manager.alertIdx.byStop[stopID]
+	if len(src) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(src))
+	out := make([]gtfs.Alert, 0, len(src))
+	for _, a := range src {
+		if _, ok := seen[a.ID]; !ok {
+			seen[a.ID] = struct{}{}
+			out = append(out, a)
 		}
 	}
-	return alerts
+	return out
 }
 
 // Fetches GTFS-RT data from a URL with per-feed headers.
@@ -610,17 +617,10 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	}
 
 	alertFeedIDs := make([]string, 0, len(manager.feedAlerts))
-	totalAlerts := 0
-	for id, alerts := range manager.feedAlerts {
+	for id := range manager.feedAlerts {
 		alertFeedIDs = append(alertFeedIDs, id)
-		totalAlerts += len(alerts)
 	}
 	sort.Strings(alertFeedIDs)
-
-	allAlerts := make([]gtfs.Alert, 0, totalAlerts)
-	for _, id := range alertFeedIDs {
-		allAlerts = append(allAlerts, manager.feedAlerts[id]...)
-	}
 
 	tripLookup := make(map[string]int, len(allTrips))
 	for i, trip := range allTrips {
@@ -639,12 +639,57 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			vehicleLookupByVehicle[vehicle.ID.ID] = i
 		}
 	}
+	idx := alertIndex{
+		byTrip:   make(map[string][]gtfs.Alert),
+		byRoute:  make(map[string][]gtfs.Alert),
+		byAgency: make(map[string][]gtfs.Alert),
+		byStop:   make(map[string][]gtfs.Alert),
+	}
+	for _, id := range alertFeedIDs {
+		for _, alert := range manager.feedAlerts[id] {
+			if alert.InformedEntities == nil || alert.ID == "" {
+				continue
+			}
+			// Per-alert per-bucket dedup: prevents the same alert from being appended
+			// to the same bucket more than once when it has multiple InformedEntities
+			// referencing the same key (e.g. two entities both pointing to stop "S1").
+			// Capacity is set to the entity count so the map never needs to grow.
+			n := len(alert.InformedEntities)
+			seenTrip := make(map[string]bool, n)
+			seenRoute := make(map[string]bool, n)
+			seenAgency := make(map[string]bool, n)
+			seenStop := make(map[string]bool, n)
+			for _, entity := range alert.InformedEntities {
+				if entity.TripID != nil && !seenTrip[entity.TripID.ID] {
+					seenTrip[entity.TripID.ID] = true
+					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], alert)
+				}
+				// Only match route-level entities that have no stop or trip restriction.
+				// Entities with {routeId + stopId} are stop-specific alerts and are filed
+				// in byStop only (matching Java's inverted index bucket behaviour).
+				if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seenRoute[*entity.RouteID] {
+					seenRoute[*entity.RouteID] = true
+					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], alert)
+				}
+				// Only match agency-wide alerts: entity has agencyId but no route or trip restriction.
+				if entity.AgencyID != nil && entity.RouteID == nil && entity.TripID == nil && !seenAgency[*entity.AgencyID] {
+					seenAgency[*entity.AgencyID] = true
+					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], alert)
+				}
+				if entity.StopID != nil && !seenStop[*entity.StopID] {
+					seenStop[*entity.StopID] = true
+					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], alert)
+				}
+			}
+		}
+	}
+
 	manager.realTimeTrips = allTrips
 	manager.realTimeVehicles = allVehicles
-	manager.realTimeAlerts = allAlerts
 	manager.realTimeTripLookup = tripLookup
 	manager.realTimeVehicleLookupByTrip = vehicleLookupByTrip
 	manager.realTimeVehicleLookupByVehicle = vehicleLookupByVehicle
+	manager.alertIdx = idx
 }
 
 // calculateBackoff computes the next polling interval using exponential backoff with jitter
