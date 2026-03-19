@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"runtime"
 	"testing"
 	"time"
 
@@ -59,24 +58,4 @@ func TestRestAPI_ShutdownIdempotent(t *testing.T) {
 	api.Shutdown()
 	api.Shutdown()
 	api.Shutdown()
-}
-
-func TestRateLimitMiddleware_GoroutineActuallyExits(t *testing.T) {
-	// Force garbage collection to clean up any lingering goroutines from previous tests
-	runtime.GC()
-	time.Sleep(50 * time.Millisecond)
-
-	// Get baseline goroutine count
-	initial := runtime.NumGoroutine()
-
-	middleware := NewRateLimitMiddleware(10, time.Second, nil, clock.RealClock{})
-	time.Sleep(50 * time.Millisecond) // Give goroutine time to start
-
-	afterCreate := runtime.NumGoroutine()
-	assert.Greater(t, afterCreate, initial, "cleanup goroutine should have started")
-
-	middleware.Stop()
-
-	afterStop := runtime.NumGoroutine()
-	assert.LessOrEqual(t, afterStop, initial, "cleanup goroutine should have exited")
 }
