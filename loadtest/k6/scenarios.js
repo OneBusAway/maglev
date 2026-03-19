@@ -2,6 +2,7 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { SharedArray } from 'k6/data';
 import { thresholds } from './thresholds.js';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 
 // Tell k6 not to count 4xx responses as failures.
 // Only 5xx (panics, crashes) count as failures.
@@ -70,8 +71,7 @@ export default function () {
     }
     // 10% - trip-details
     else if (rand < 0.90) {
-        // Assuming a valid RABA trip ID here, or let it 404 if unknown
-        const tripId = randomItem(tripIds) || '25_route_1_morning'; 
+        const tripId = randomItem(tripIds) || '25_84f4520e-88b6-4ee6-8975-856799bc1359'; 
         url = `${BASE_URL}/trip-details/${tripId}.json?key=${API_KEY}`;
     }
     // 10% - Other endpoints (routes, schedules, etc.)
@@ -91,4 +91,14 @@ export default function () {
 
     // Simulate user think-time (between 0.5 and 1.5 seconds)
     sleep(Math.random() + 0.5);
+}
+
+// Replaces the deprecated --summary-export flag
+export function handleSummary(data) {
+    return {
+        // Output summary to stdout (console)
+        'stdout': textSummary(data, { indent: ' ', enableColors: false }),
+        // Output JSON report exactly where the CI expects it
+        'loadtest/k6/stress-summary.json': JSON.stringify(data),
+    };
 }

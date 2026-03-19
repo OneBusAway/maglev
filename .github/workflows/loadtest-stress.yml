@@ -94,11 +94,14 @@ jobs:
         run: |
           # Wait 60s for ramp-up, then capture 30s CPU profile during peak load
           (sleep 60 && curl -sf "http://localhost:6060/debug/pprof/profile?seconds=30" -o loadtest/profiles/cpu.pprof) &
+          PPROF_PID=$!
 
           k6 run \
             -e USE_FALLBACKS=true \
-            --summary-export=loadtest/k6/stress-summary.json \
             loadtest/k6/scenarios.js
+
+          # Wait for the background profile to finish and gracefully catch any errors
+          wait $PPROF_PID || echo "Warning: Background CPU profile capture failed."
         continue-on-error: true
         id: k6_stress
 
