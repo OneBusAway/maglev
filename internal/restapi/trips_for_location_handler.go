@@ -24,7 +24,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	defer api.GtfsManager.RUnlock()
 
 	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
-	if fieldErrors != nil {
+	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
@@ -130,14 +130,20 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	todayMidnight time.Time,
 	serviceDate time.Time,
 	fieldErrors map[string][]string,
-	err error,
+	serverErr error,
 ) {
+	var loc *LocationParams
+	loc, fieldErrors = api.parseLocationParams(r, nil)
+
+	if loc != nil {
+		lat = loc.Lat
+		lon = loc.Lon
+		latSpan = loc.LatSpan
+		lonSpan = loc.LonSpan
+	}
+
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors = utils.ParseRequiredFloatParam(queryParams, "lat", nil)
-	lon, _ = utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
-	latSpan, _ = utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
-	lonSpan, _ = utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
@@ -147,9 +153,9 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, err = loadAgencyLocation(currentAgency.Id, currentAgency.Timezone)
-	if err != nil {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, err
+	currentLocation, serverErr = loadAgencyLocation(currentAgency.Id, currentAgency.Timezone)
+	if serverErr != nil {
+		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, serverErr
 	}
 
 	timeParam := queryParams.Get("time")
@@ -157,26 +163,19 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 
 	var timeFieldErrors map[string][]string
-	var success bool
-	_, serviceDate, timeFieldErrors, success = utils.ParseTimeParameter(timeParam, currentLocation)
-	for k, v := range timeFieldErrors {
-		fieldErrors[k] = append(fieldErrors[k], v...)
+	_, serviceDate, timeFieldErrors, _ = utils.ParseTimeParameter(timeParam, currentLocation)
+	if len(timeFieldErrors) > 0 {
+		if fieldErrors == nil {
+			fieldErrors = make(map[string][]string)
+		}
+		for k, v := range timeFieldErrors {
+			fieldErrors[k] = append(fieldErrors[k], v...)
+		}
 	}
 
 	ctx := r.Context()
 	if ctx.Err() != nil {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, ctx.Err()
-	}
-
-	if !success {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
-	}
-
-	locationErrors := utils.ValidateLocationParams(lat, lon, 0, latSpan, lonSpan)
-	for k, v := range locationErrors {
-		fieldErrors[k] = append(fieldErrors[k], v...)
 	}
 
 	if len(fieldErrors) > 0 {
