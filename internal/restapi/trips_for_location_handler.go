@@ -295,7 +295,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			}
 
 			dateStr := serviceDate.Format("20060102")
-			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
+			activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, dateStr)
 			if err != nil {
 				activeServiceIDs = []string{}
 				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
