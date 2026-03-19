@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -547,7 +548,7 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -588,7 +589,7 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
 	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -616,11 +617,11 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	currentTime := serviceDate.Add(8 * time.Hour)
 
 	// No vehicle, no trip updates — purely scheduled
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, 0, status.ScheduleDeviation, "ScheduleDeviation should be zero with no real-time data")
+	assert.Equal(t, 0, status.ScheduleDeviation, "ScheduleDeviation should be 0 with no real-time data")
 	assert.False(t, status.Predicted, "Predicted should be false with no real-time data")
 	assert.True(t, status.Scheduled, "Scheduled should be true with no real-time data")
 	assert.Equal(t, "default", status.Status)
@@ -680,7 +681,7 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -711,7 +712,7 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 	ctx := context.Background()
 
 	currentTime := time.Now()
-	model, err := api.BuildTripStatus(ctx, agencyID, tripID, currentTime, currentTime)
+	model, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, currentTime, currentTime)
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, model)
@@ -837,7 +838,7 @@ func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 	currentTime := serviceDate.Add(time.Second) // 00:00:01 — before any stop
 
 	status := models.NewTripStatus()
-	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
+	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID, nil)
 
 	// When before all stops, NextStop should be the first stop
 	assert.NotEmpty(t, status.NextStop, "NextStop should be set when currentTime is before all stops")
@@ -865,7 +866,7 @@ func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 	currentTime := serviceDate.Add(30 * time.Hour)
 
 	status := models.NewTripStatus()
-	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID)
+	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID, nil)
 
 	// When past all stops, ClosestStop should be the last stop
 	assert.NotEmpty(t, status.ClosestStop, "ClosestStop should be set to last stop when past all stops")
@@ -881,7 +882,7 @@ func TestFillStopsFromSchedule_InvalidTripID(t *testing.T) {
 	status := models.NewTripStatus()
 
 	// Should not panic or set any stops for an invalid trip
-	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, "any-agency")
+	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, "any-agency", nil)
 
 	assert.Empty(t, status.ClosestStop)
 	assert.Empty(t, status.NextStop)
@@ -1078,7 +1079,7 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -1100,6 +1101,104 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	assert.Equal(t, "in_progress", status.Phase)
 	require.NotNil(t, status.LastKnownLocation, "LastKnownLocation should be set from vehicle position")
 	assert.NotZero(t, status.LastKnownLocation.Lat, "LastKnownLocation should be set from vehicle position")
+}
+func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+
+	var tripID string
+	var stopTimes []gtfsdb.StopTime
+	for _, trip := range trips {
+		st, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		if err == nil && len(st) >= 2 {
+			tripID = trip.ID
+			stopTimes = st
+			break
+		}
+	}
+	require.NotEmpty(t, tripID, "Need a trip with at least 2 stop times")
+
+	lat := float32(37.3)
+	lon := float32(-121.9)
+	vehicleID := "PRE_RESOLVED_VEHICLE"
+
+	vehicle := &gtfs.Vehicle{
+		ID: &gtfs.VehicleID{ID: vehicleID},
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{ID: tripID},
+		},
+		Position: &gtfs.Position{
+			Latitude:  &lat,
+			Longitude: &lon,
+		},
+	}
+
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+
+	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), status.VehicleID,
+		"VehicleID should be set from the pre-resolved vehicle")
+
+	require.NotNil(t, status.LastKnownLocation)
+	assert.InDelta(t, float64(lat), status.LastKnownLocation.Lat, 0.001)
+	assert.InDelta(t, float64(lon), status.LastKnownLocation.Lon, 0.001)
+
+	assert.Equal(t, utils.FormCombinedID(agencyID, tripID), status.ActiveTripID)
+}
+
+func TestBuildTripStatus_CanceledTrip(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+	tripID := trips[0].ID
+
+	now := time.Now()
+	canceledRelationship := gtfsrt.TripDescriptor_CANCELED
+	vehicle := &gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: "canceled-vehicle"},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:                   tripID,
+				ScheduleRelationship: canceledRelationship,
+			},
+		},
+	}
+
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+
+	assert.Equal(t, "CANCELED", status.Status, "CANCELED vehicle must produce CANCELED status")
+	assert.Empty(t, status.Phase, "CANCELED trips have no phase")
+	assert.Empty(t, status.ClosestStop, "CANCELED trips must not have a closest stop")
+	assert.Empty(t, status.NextStop, "CANCELED trips must not have a next stop")
+	assert.Zero(t, status.DistanceAlongTrip, "CANCELED trips must not have distance calculations")
+	assert.Zero(t, status.TotalDistanceAlongTrip, "CANCELED trips must not have total distance calculations")
 }
 
 // BenchmarkDistanceToLineSegment benchmarks the line segment distance calculation

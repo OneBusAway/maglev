@@ -47,7 +47,7 @@ func TestNewEntryResponse(t *testing.T) {
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, entryData, responseData["entry"], "Entry in response data should match input entry")
 	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
-	assert.Equal(t, false, responseData["limitExceeded"], "limitExceeded should be false for entry responses")
+	assert.NotContains(t, responseData, "limitExceeded", "entry responses must not include limitExceeded")
 }
 
 func TestNewOKResponse(t *testing.T) {

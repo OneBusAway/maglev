@@ -228,7 +228,7 @@ LIMIT
 SELECT
     id
 FROM
-    stops;    
+    stops;
 
 -- name: GetStopIDsForAgency :many
 SELECT DISTINCT
@@ -978,10 +978,10 @@ SELECT DISTINCT
     bte.block_trip_sequence
 FROM trips t
 JOIN block_trip_entry bte ON t.id = bte.trip_id
-WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
-  AND bte.service_id IN (sqlc.slice('service_ids'))
-  AND t.max_departure_time >= sqlc.arg('from_time')
+WHERE t.max_departure_time >= sqlc.arg('from_time')
   AND t.min_arrival_time <= sqlc.arg('to_time')
+  AND bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.route_id, bte.block_trip_sequence, t.id;
 
 -- name: GetActiveTripForRouteAtTime :one
@@ -992,11 +992,11 @@ SELECT
     t.direction_id, t.block_id, t.shape_id, t.wheelchair_accessible, t.bikes_allowed
 FROM trips t
 JOIN block_trip_entry bte ON t.id = bte.trip_id
-WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
-  AND t.route_id = sqlc.arg('route_id')
-  AND bte.service_id IN (sqlc.slice('service_ids'))
+WHERE t.route_id = sqlc.arg('route_id')
   AND t.min_arrival_time <= sqlc.arg('current_time')
   AND t.max_departure_time >= sqlc.arg('from_time')
+  AND bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.min_arrival_time DESC
 LIMIT 1;
 
@@ -1023,9 +1023,9 @@ WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
 SELECT t.id
 FROM trips t
 WHERE t.block_id = sqlc.arg('block_id')
-  AND t.service_id IN (sqlc.slice('service_ids'))
   AND t.min_arrival_time <= sqlc.arg('current_time')
   AND t.max_departure_time >= sqlc.arg('current_time')
+  AND t.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.min_arrival_time ASC
 LIMIT 1;
 
@@ -1035,6 +1035,26 @@ SELECT id
 FROM trips
 WHERE block_id = sqlc.arg('block_id')
   AND service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetTripsInBlockWithTimeBounds :many
+-- Get all trips in a block with their time bounds for best-trip selection in Go
+SELECT id, min_arrival_time, max_departure_time
+FROM trips
+WHERE block_id = sqlc.arg('block_id')
+  AND service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetActiveTripsWithNullBlockForRoute :many
+-- Returns null-block trips whose service window overlaps [time_range_start, time_range_end].
+-- Use time_range_start = now - 30 min and time_range_end = now + 10 min to include
+-- recently-completed (running late) trips and upcoming trips, matching Java OBA behavior.
+SELECT t.id
+FROM trips t
+WHERE t.route_id = sqlc.arg('route_id')
+  AND t.block_id IS NULL
+  AND t.min_arrival_time <= sqlc.arg('time_range_end')
+  AND t.max_departure_time >= sqlc.arg('time_range_start')
+  AND t.service_id IN (sqlc.slice('service_ids'))
+ORDER BY t.min_arrival_time ASC;
 
 -- name: GetRoutesInBlockTripIndices :many
 -- Get all unique route IDs that have trips in the specified block_trip_index IDs

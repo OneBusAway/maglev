@@ -75,7 +75,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	var status *models.TripStatus
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, serviceDate, currentTime)
+		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("failed to build trip status",
 				"tripID", tripID,
