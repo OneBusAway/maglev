@@ -127,8 +127,7 @@ func latencyFetchRouteIDsForStop(ctx context.Context, tb testing.TB, q *Queries,
 	tb.Helper()
 	routes, err := q.GetRoutesForStop(ctx, stopID)
 	if err != nil {
-		tb.Logf("WARNING: GetRoutesForStop failed for stopID=%s: %v", stopID, err)
-		return nil
+		tb.Fatalf("GetRoutesForStop failed for stopID=%s: %v", stopID, err)
 	}
 	ids := make([]string, 0, len(routes))
 	for _, r := range routes {
@@ -143,8 +142,7 @@ func latencyFetchActiveServiceIDs(ctx context.Context, tb testing.TB, q *Queries
 	// exception/addition handling — identical to what the API layer calls.
 	ids, err := q.GetActiveServiceIDsForDate(ctx, dateStr)
 	if err != nil {
-		tb.Logf("WARNING: GetActiveServiceIDsForDate failed for date=%s: %v", dateStr, err)
-		return nil
+		tb.Fatalf("GetActiveServiceIDsForDate failed for date=%s: %v", dateStr, err)
 	}
 	return ids
 }
@@ -152,7 +150,10 @@ func latencyFetchActiveServiceIDs(ctx context.Context, tb testing.TB, q *Queries
 func latencyIsWALEnabled(ctx context.Context, t *testing.T, db *sql.DB) bool {
 	t.Helper()
 	var mode string
-	_ = db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode)
+	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Errorf("failed to check WAL mode: %v", err)
+		return false
+	}
 	return mode == "wal"
 }
 
@@ -425,7 +426,12 @@ SELECT DISTINCT service_id FROM base_services`,
 			t.Errorf("EXPLAIN failed for %s: %v", p.name, err)
 			continue
 		}
-		cols, _ := rows.Columns()
+		cols, colErr := rows.Columns()
+		if colErr != nil {
+			t.Errorf("columns for %s: %v", p.name, colErr)
+			_ = rows.Close()
+			continue
+		}
 		for rows.Next() {
 			vals := make([]interface{}, len(cols))
 			ptrs := make([]interface{}, len(cols))
@@ -449,6 +455,9 @@ SELECT DISTINCT service_id FROM base_services`,
 				}
 			}
 		}
+		if iterErr := rows.Err(); iterErr != nil {
+			t.Errorf("rows iteration failed for %s: %v", p.name, iterErr)
+		}
 		if closeErr := rows.Close(); closeErr != nil {
 			t.Errorf("close rows for %s: %v", p.name, closeErr)
 		}
@@ -463,14 +472,21 @@ SELECT DISTINCT service_id FROM base_services`,
 		WHERE type = 'index'
 		  AND name NOT LIKE 'sqlite_autoindex_%'
 		ORDER BY tbl_name, name`)
-	if err == nil {
+	if err != nil {
+		t.Errorf("querying indexes from sqlite_master: %v", err)
+	} else {
 		defer func() { _ = idxRows.Close() }()
 		for idxRows.Next() {
 			var tbl, name string
 			var idxSQL sql.NullString
-			if scanErr := idxRows.Scan(&tbl, &name, &idxSQL); scanErr == nil {
-				t.Logf("  %-35s  %s", tbl+"."+name, idxSQL.String)
+			if scanErr := idxRows.Scan(&tbl, &name, &idxSQL); scanErr != nil {
+				t.Errorf("scanning index row: %v", scanErr)
+				break
 			}
+			t.Logf("  %-35s  %s", tbl+"."+name, idxSQL.String)
+		}
+		if iterErr := idxRows.Err(); iterErr != nil {
+			t.Errorf("index rows iteration failed: %v", iterErr)
 		}
 	}
 }
@@ -530,6 +546,7 @@ func TestConnectionPoolTuning(t *testing.T) {
 			mu      sync.Mutex
 			samples []time.Duration
 			wg      sync.WaitGroup
+			errCh   = make(chan error, concurrency)
 		)
 		start := time.Now()
 		for g := 0; g < concurrency; g++ {
@@ -545,6 +562,7 @@ func TestConnectionPoolTuning(t *testing.T) {
 						WindowEndNanos:   windowEnd,
 					})
 					if qErr != nil {
+						errCh <- qErr
 						return
 					}
 					local = append(local, time.Since(t0))
@@ -555,6 +573,10 @@ func TestConnectionPoolTuning(t *testing.T) {
 			}()
 		}
 		wg.Wait()
+		close(errCh)
+		for qErr := range errCh {
+			t.Errorf("GetStopTimesForStopInWindow failed (MaxOpenConns=%d): %v", maxConns, qErr)
+		}
 		elapsed := time.Since(start)
 
 		poolStats := client.DB.Stats()
