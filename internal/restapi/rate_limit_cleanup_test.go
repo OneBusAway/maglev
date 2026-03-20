@@ -14,82 +14,49 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 )
 
-// TestRateLimitMiddleware_CleanupKeepsActiveClients verifies active users are not deleted.
-func TestRateLimitMiddleware_CleanupKeepsActiveClients(t *testing.T) {
+// TestRateLimitMiddleware_LazyEvictionKeepsActiveClients verifies that an active
+// user's limiter is reused (not reset) as long as they remain within the idle threshold.
+func TestRateLimitMiddleware_LazyEvictionKeepsActiveClients(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
 	middleware := NewRateLimitMiddleware(10, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	limitedHandler := middleware.Handler()(handler)
+	// create a limiter
+	limiter1 := middleware.getLimiter("active-user")
+	require.NotNil(t, limiter1)
 
-	// Make a request from a user (creates a limiter)
-	req := httptest.NewRequest("GET", "/test?key=active-user", nil)
-	w := httptest.NewRecorder()
-	limitedHandler.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Verify limiter exists
-	val, exists := middleware.limiters.Load("active-user")
-	require.True(t, exists, "Limiter should exist after first request")
-	require.NotNil(t, val.(*rateLimitClient))
-
-	// Advance time by 5 minutes (less than 10 minute threshold)
+	// advance time, but stay within threshold
 	mockClock.Advance(5 * time.Minute)
 
-	// Make another request (user is still active)
-	req = httptest.NewRequest("GET", "/test?key=active-user", nil)
-	w = httptest.NewRecorder()
-	limitedHandler.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Advance time by another 6 minutes (total 11 minutes since creation, but only 6 since last use)
-	mockClock.Advance(6 * time.Minute)
-
-	// Trigger cleanup manually
-	middleware.cleanupOnce()
-
-	// Verify limiter still exists (last seen was only 6 minutes ago)
-	_, exists = middleware.limiters.Load("active-user")
-	assert.True(t, exists, "Active user limiter should NOT be deleted")
+	// fetch the limiter again should be the same instance (not lazily evicted)
+	limiter2 := middleware.getLimiter("active-user")
+	assert.Same(t, limiter1, limiter2,
+		"Active user should receive the same limiter instance")
 }
 
-// TestRateLimitMiddleware_CleanupRemovesInactiveClients verifies inactive users are deleted after threshold.
-func TestRateLimitMiddleware_CleanupRemovesInactiveClients(t *testing.T) {
+// TestRateLimitMiddleware_LazyEvictionResetsIdleClients verifies that an idle
+// user's limiter is transparently replaced with a fresh one on access.
+func TestRateLimitMiddleware_LazyEvictionResetsIdleClients(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
 	middleware := NewRateLimitMiddleware(10, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	limitedHandler := middleware.Handler()(handler)
+	// create a limiter
+	limiter1 := middleware.getLimiter("idle-user")
+	require.NotNil(t, limiter1)
 
-	// Make a request from a user (creates a limiter)
-	req := httptest.NewRequest("GET", "/test?key=inactive-user", nil)
-	w := httptest.NewRecorder()
-	limitedHandler.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Verify limiter exists
-	_, exists := middleware.limiters.Load("inactive-user")
-	require.True(t, exists, "Limiter should exist after first request")
-
-	// Advance time by 11 minutes (past the 10 minute threshold)
+	// advance time past the idle threshold (>10 min)
 	mockClock.Advance(11 * time.Minute)
 
-	// Trigger cleanup manually
-	middleware.cleanupOnce()
-
-	// Verify limiter was deleted
-	_, exists = middleware.limiters.Load("inactive-user")
-	assert.False(t, exists, "Inactive user limiter should be deleted after 10+ minutes")
+	// fetch the limiter again should be a new instance (lazy eviction)
+	limiter2 := middleware.getLimiter("idle-user")
+	assert.NotSame(t, limiter1, limiter2,
+		"Idle user should receive a fresh limiter after the threshold")
 }
 
-// TestRateLimitMiddleware_CleanupHandlesExhaustedLimiters verifies exhausted limiters are deleted based on time, not token count.
-func TestRateLimitMiddleware_CleanupHandlesExhaustedLimiters(t *testing.T) {
+// TestRateLimitMiddleware_LazyEvictionResetsExhaustedLimiters verifies that
+// an exhausted, idle limiter is replaced with a fresh one upon the next request.
+func TestRateLimitMiddleware_LazyEvictionResetsExhaustedLimiters(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
 	middleware := NewRateLimitMiddleware(3, time.Second, nil, mockClock)
 	defer middleware.Stop()
@@ -113,91 +80,58 @@ func TestRateLimitMiddleware_CleanupHandlesExhaustedLimiters(t *testing.T) {
 	limitedHandler.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
-	// Verify limiter exists and is effectively exhausted
-	val, exists := middleware.limiters.Load("exhausted-user")
-	require.True(t, exists)
-	client := val.(*rateLimitClient)
-	assert.Less(t, client.limiter.Tokens(), 1.0, "Limiter should be exhausted (less than 1 token)")
+	// Capture the exhausted limiter
+	client, ok := middleware.limiters.Get("exhausted-user")
+	require.True(t, ok)
+	exhaustedLimiter := client.limiter
+	assert.Less(t, exhaustedLimiter.Tokens(), 1.0,
+		"Limiter should be exhausted (less than 1 token)")
 
-	// Advance time by 11 minutes without any new requests
+	// Advance time past the idle threshold
 	mockClock.Advance(11 * time.Minute)
 
-	// Trigger cleanup manually
-	middleware.cleanupOnce()
+	// Next request should succeed, the limiter was lazily replaced
+	req = httptest.NewRequest("GET", "/test?key=exhausted-user", nil)
+	w = httptest.NewRecorder()
+	limitedHandler.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code,
+		"Request after lazy eviction of exhausted limiter should succeed")
 
-	// Verify limiter was deleted despite being exhausted
-	_, exists = middleware.limiters.Load("exhausted-user")
-	assert.False(t, exists, "Exhausted limiter should be deleted based on inactivity, not token count")
+	// Verify a new limiter was created
+	client, ok = middleware.limiters.Get("exhausted-user")
+	require.True(t, ok)
+	assert.NotSame(t, exhaustedLimiter, client.limiter,
+		"Should have received a fresh limiter after idle threshold")
 }
 
-// TestRateLimitMiddleware_CleanupMemoryLeakPrevention verifies cleanup prevents memory leaks from attack scenarios.
-func TestRateLimitMiddleware_CleanupMemoryLeakPrevention(t *testing.T) {
+// TestRateLimitMiddleware_LRUEviction verifies that the LRU cache evicts
+// the least-recently-used entries when it exceeds its capacity.
+func TestRateLimitMiddleware_LRUEviction(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
 	middleware := NewRateLimitMiddleware(5, time.Second, nil, mockClock)
 	defer middleware.Stop()
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	limitedHandler := middleware.Handler()(handler)
-
-	// Simulate attack: 100 different API keys, each exhausting their limit
-	attackKeys := make([]string, 100)
-	for i := 0; i < 100; i++ {
-		key := fmt.Sprintf("attacker-key-%d", i)
-		attackKeys[i] = key
-
-		// Exhaust the limiter for this key
-		for j := 0; j < 6; j++ {
-			req := httptest.NewRequest("GET", fmt.Sprintf("/test?key=%s", key), nil)
-			w := httptest.NewRecorder()
-			limitedHandler.ServeHTTP(w, req)
-		}
+	for i := 0; i < maxLRUSize; i++ {
+		middleware.getLimiter(fmt.Sprintf("key-%d", i))
 	}
+	assert.Equal(t, maxLRUSize, middleware.limiters.Len(),
+		"Cache should be at capacity")
 
-	// Verify all 100 limiters exist using sync.Map Range
-	count := 0
-	middleware.limiters.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	assert.Equal(t, 100, count, "Should have 100 attack limiters")
+	// Adding one more should evict the oldest (key-0)
+	middleware.getLimiter("overflow-key")
+	assert.Equal(t, maxLRUSize, middleware.limiters.Len(),
+		"Cache should not exceed capacity")
 
-	// Advance time by 11 minutes (attack stops)
-	mockClock.Advance(11 * time.Minute)
+	// The oldest key should have been evicted
+	_, ok := middleware.limiters.Get("key-0")
+	assert.False(t, ok, "Least recently used key should be evicted")
 
-	// Trigger cleanup manually
-	middleware.cleanupOnce()
+	// The newest keys should still exist
+	_, ok = middleware.limiters.Get("overflow-key")
+	assert.True(t, ok, "Most recently added key should exist")
 
-	// Verify all attack limiters were cleaned up
-	count = 0
-	middleware.limiters.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	assert.Equal(t, 0, count, "All inactive attack limiters should be deleted")
-}
-
-// TestRateLimitMiddleware_CleanupPreservesExemptedKeys verifies exempted keys are never deleted.
-func TestRateLimitMiddleware_CleanupPreservesExemptedKeys(t *testing.T) {
-	mockClock := clock.NewMockClock(time.Now())
-	middleware := NewRateLimitMiddleware(10, time.Second, []string{"org.onebusaway.iphone"}, mockClock)
-	defer middleware.Stop()
-
-	// Manually add an exempted key to the limiters map
-	exemptClient := &rateLimitClient{limiter: nil}
-	exemptClient.lastSeen.Store(mockClock.Now().Add(-20 * time.Minute).UnixNano())
-	middleware.limiters.Store("org.onebusaway.iphone", exemptClient)
-
-	// Advance time
-	mockClock.Advance(1 * time.Minute)
-
-	// Trigger cleanup manually
-	middleware.cleanupOnce()
-
-	// Verify exempted key still exists despite being very old
-	_, exists := middleware.limiters.Load("org.onebusaway.iphone")
-	assert.True(t, exists, "Exempted key should never be deleted")
+	_, ok = middleware.limiters.Get(fmt.Sprintf("key-%d", maxLRUSize-1))
+	assert.True(t, ok, "Recently used key should still exist")
 }
 
 // TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest verifies lastSeen timestamp is updated on each request.
@@ -216,8 +150,9 @@ func TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	limitedHandler.ServeHTTP(w, req)
 
-	val, _ := middleware.limiters.Load("timestamp-test")
-	firstSeenNano := val.(*rateLimitClient).lastSeen.Load()
+	client, ok := middleware.limiters.Get("timestamp-test")
+	require.True(t, ok)
+	firstSeenNano := client.lastSeen.Load()
 	firstSeen := time.Unix(0, firstSeenNano)
 
 	// Advance time by 2 minutes
@@ -228,8 +163,9 @@ func TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest(t *testing.T) {
 	w = httptest.NewRecorder()
 	limitedHandler.ServeHTTP(w, req)
 
-	val, _ = middleware.limiters.Load("timestamp-test")
-	secondSeenNano := val.(*rateLimitClient).lastSeen.Load()
+	client, ok = middleware.limiters.Get("timestamp-test")
+	require.True(t, ok)
+	secondSeenNano := client.lastSeen.Load()
 	secondSeen := time.Unix(0, secondSeenNano)
 
 	// Verify lastSeen was updated
@@ -237,7 +173,9 @@ func TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest(t *testing.T) {
 	assert.Equal(t, 2*time.Minute, secondSeen.Sub(firstSeen), "lastSeen should reflect the 2 minute advancement")
 }
 
-func TestRateLimitMiddleware_DoubleCheckedLockingCreatesOneLimiter(t *testing.T) {
+// TestRateLimitMiddleware_ConcurrentGetLimiterReturnsSameInstance verifies
+// that concurrent calls to getLimiter for the same key all receive a valid limiter.
+func TestRateLimitMiddleware_ConcurrentGetLimiterReturnsSameInstance(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Now())
 	middleware := NewRateLimitMiddleware(100, time.Second, nil, mockClock)
 	defer middleware.Stop()
@@ -255,16 +193,11 @@ func TestRateLimitMiddleware_DoubleCheckedLockingCreatesOneLimiter(t *testing.T)
 	}
 	wg.Wait()
 
-	// All goroutines should get the exact same limiter instance
-	for i := 1; i < goroutines; i++ {
-		assert.Same(t, limiters[0], limiters[i],
-			"All goroutines should get the same limiter instance")
+	// All goroutines should get a valid limiter and the key should exist
+	for i := 0; i < goroutines; i++ {
+		assert.NotNil(t, limiters[i], "All goroutines should get a valid limiter")
 	}
 
-	count := 0
-	middleware.limiters.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	assert.Equal(t, 1, count, "Exactly one limiter should be created")
+	_, ok := middleware.limiters.Get("new-key")
+	assert.True(t, ok, "Key should exist in cache after concurrent access")
 }

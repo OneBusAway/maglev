@@ -319,6 +319,13 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 			manager.isHealthy = false
 		}
 
+		// The DB was briefly closed and may have been reopened. Flush the cache so the next
+		// caller re-queries against whichever DB is now active rather than using stale entries.
+		manager.activeServiceIDsCacheMutex.Lock()
+		manager.activeServiceIDsCache = make(map[string][]string)
+		manager.cacheEpoch.Add(1)
+		manager.activeServiceIDsCacheMutex.Unlock()
+
 		return err
 	}
 
@@ -332,6 +339,10 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		manager.GtfsDB = nil
 
 		manager.isHealthy = false
+		// Intentionally skip cache invalidation here. GtfsDB is now nil, so any cache
+		// miss would immediately hit the nil-DB guard and return an error. Keeping stale
+		// entries means cached callers continue receiving answers rather than errors —
+		// the least-bad outcome until the next successful ForceUpdate clears the cache.
 		return fmt.Errorf("failed to update GTFS database client: %w", err)
 	}
 
@@ -341,6 +352,17 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.regionBounds = newRegionBounds
+
+	// Note: the epoch is incremented after GtfsDB is assigned. A narrow race exists where
+	// a reader snapshots epochBefore, then reads the new DB pointer (already live), queries
+	// the new DB, and writes to the cache before the epoch advances — only for this clear
+	// to immediately evict it. The outcome is one extra DB round-trip, not data corruption.
+	// Moving the epoch increment earlier would break the epoch guard's correctness guarantee,
+	// so this ordering is intentional.
+	manager.activeServiceIDsCacheMutex.Lock()
+	manager.activeServiceIDsCache = make(map[string][]string)
+	manager.cacheEpoch.Add(1)
+	manager.activeServiceIDsCacheMutex.Unlock()
 
 	manager.routesByAgencyID = buildRouteIndex(newStaticData)
 

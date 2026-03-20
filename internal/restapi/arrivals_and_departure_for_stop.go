@@ -153,7 +153,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, loc)
 		serviceDateStr := targetDate.Format("20060102")
 
-		activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+		activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, serviceDateStr)
 		if err != nil {
 			api.Logger.Warn("failed to query active service IDs",
 				slog.String("date", serviceDateStr),
@@ -317,7 +317,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		// Get vehicle if available
 		vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
 		if vehicle != nil && vehicle.Trip != nil {
-			vehicleID = vehicle.ID.ID
+			if vehicle.ID != nil {
+				vehicleID = vehicle.ID.ID
+			} else {
+				api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", st.TripID)
+			}
 		}
 
 		// Prepare scheduled times for the shared function
@@ -341,7 +345,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		if vehicle != nil {
 			// Use route.AgencyID instead of stopAgencyID for BuildTripStatus
-			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, serviceMidnight, params.Time)
+			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for arrival",
 					"tripID", st.TripID, "error", statusErr)

@@ -381,6 +381,39 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 	}
 }
 
+func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := api.GtfsManager.GetAgencies()
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].Id
+
+	trips := api.GtfsManager.GetTrips()
+	require.NotEmpty(t, trips)
+	rawRouteID := trips[0].Route.Id
+
+	api.GtfsManager.MockAddVehicleWithOptions("", trips[0].ID, rawRouteID, gtfs.MockVehicleOptions{
+		NoID: true,
+	})
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	for _, item := range list {
+		v := item.(map[string]interface{})
+		assert.NotEqual(t, "", v["vehicleId"], "vehicle with nil ID must be skipped, not returned with empty vehicleId")
+	}
+}
+
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
 func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 	ctx := context.Background()
@@ -486,10 +519,14 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 		t.Log("Real-time vehicles are not matching the test agency. Debugging:")
 		for i, vehicle := range realTimeVehicles {
 			if i < 3 { // Log first 3 vehicles
+				vehicleID := ""
+				if vehicle.ID != nil {
+					vehicleID = vehicle.ID.ID
+				}
 				if vehicle.Trip != nil {
-					t.Logf("Vehicle %s: tripId=%s, routeId=%s", vehicle.ID.ID, vehicle.Trip.ID.ID, vehicle.Trip.ID.RouteID)
+					t.Logf("Vehicle %s: tripId=%s, routeId=%s", vehicleID, vehicle.Trip.ID.ID, vehicle.Trip.ID.RouteID)
 				} else {
-					t.Logf("Vehicle %s: no trip assigned", vehicle.ID.ID)
+					t.Logf("Vehicle %s: no trip assigned", vehicleID)
 				}
 			}
 		}

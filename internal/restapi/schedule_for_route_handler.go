@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -70,7 +69,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		scheduleDate = startOfDay.UnixMilli()
 	}
 
-	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
+	serviceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, targetDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -84,8 +83,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			ScheduleDate:      scheduleDate,
 			ServiceIDs:        []string{},
 			StopTripGroupings: []models.StopTripGrouping{},
-			Stops:             []models.Stop{},
-			Trips:             []models.Trip{},
 		}
 		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
@@ -113,8 +110,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			ScheduleDate:      scheduleDate,
 			ServiceIDs:        combinedServiceIDs,
 			StopTripGroupings: []models.StopTripGrouping{},
-			Stops:             []models.Stop{},
-			Trips:             []models.Trip{},
 		}
 		api.sendResponse(w, r, models.NewEntryResponse(entry, *models.NewEmptyReferences(), api.Clock))
 		return
@@ -159,49 +154,36 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		stopIDSet := make(map[string]struct{})
 		headsignSet := make(map[string]struct{})
 		tripIDs := make([]string, 0, len(groupedTrips))
-		rawTripIDs := make([]string, 0, len(groupedTrips))
+		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
 
+		rawTripIDs := make([]string, 0, len(groupedTrips))
 		for _, trip := range groupedTrips {
 			rawTripIDs = append(rawTripIDs, trip.ID)
-			combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
-			tripIDs = append(tripIDs, combinedTripID)
 			if trip.TripHeadsign.String != "" {
 				headsignSet[trip.TripHeadsign.String] = struct{}{}
 			}
 		}
 
-		if len(rawTripIDs) == 0 {
-			continue
-		}
-
 		allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, rawTripIDs)
 		if err != nil {
-			api.Logger.Warn("failed to fetch stop times for trips", "error", err)
-			continue
+			api.Logger.Warn("failed to fetch stop times for trips in direction group", "dir_id", dirID, "error", err)
 		}
 
-		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(rawTripIDs))
+		// Group stop times by trip ID (query returns rows ordered by trip_id, stop_sequence).
+		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(groupedTrips))
 		for _, st := range allStopTimes {
 			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
 		}
 
-		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
-
 		for _, trip := range groupedTrips {
-			tripStopTimes := stopTimesByTrip[trip.ID]
-			if len(tripStopTimes) == 0 {
+			stopTimes := stopTimesByTrip[trip.ID]
+			if len(stopTimes) == 0 {
 				continue
 			}
-
-			sort.Slice(tripStopTimes, func(i, j int) bool {
-				return tripStopTimes[i].StopSequence < tripStopTimes[j].StopSequence
-			})
-
-			stopTimesList := make([]models.RouteStopTime, 0, len(tripStopTimes))
-			for _, st := range tripStopTimes {
+			stopTimesList := make([]models.RouteStopTime, 0, len(stopTimes))
+			for _, st := range stopTimes {
 				arrivalSec := int(utils.NanosToSeconds(st.ArrivalTime))
 				departureSec := int(utils.NanosToSeconds(st.DepartureTime))
-
 				stopTimesList = append(stopTimesList, models.RouteStopTime{
 					ArrivalEnabled:   true,
 					ArrivalTime:      arrivalSec,
@@ -212,11 +194,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					StopID:           utils.FormCombinedID(agencyID, st.StopID),
 					TripID:           utils.FormCombinedID(agencyID, trip.ID),
 				})
-
 				stopIDSet[st.StopID] = struct{}{}
 				globalStopIDSet[st.StopID] = struct{}{}
 			}
-
+			tripIDs = append(tripIDs, utils.FormCombinedID(agencyID, trip.ID))
 			tripsWithStopTimes = append(tripsWithStopTimes, models.TripStopTimes{
 				TripID:    utils.FormCombinedID(agencyID, trip.ID),
 				StopTimes: stopTimesList,
@@ -308,8 +289,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ScheduleDate:      scheduleDate,
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
-		Stops:             references.Stops,
-		Trips:             references.Trips,
 	}
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }

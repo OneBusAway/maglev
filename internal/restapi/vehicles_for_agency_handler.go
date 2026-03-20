@@ -69,8 +69,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
+		if vehicle.ID == nil {
+			api.Logger.Warn("skipping vehicle with nil ID descriptor", "agencyID", id)
+			continue
+		}
+		vid := vehicle.ID.ID
 		vehicleStatus := models.VehicleStatus{
-			VehicleID: vehicle.ID.ID,
+			VehicleID: vid,
 		}
 
 		// Set timestamps
@@ -121,7 +126,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				if obaOrientation < 0 {
 					obaOrientation += 360
 				}
-				tripStatus.Orientation = utils.Float64Ptr(float64(obaOrientation))
+				tripStatus.Orientation = float64(obaOrientation)
 			}
 
 			// Set timestamps on trip status to match vehicle timestamps

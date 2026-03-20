@@ -25,17 +25,20 @@ func TestGetAlertsForTrip(t *testing.T) {
 	tripID := gtfs.TripID{ID: "trip123"}
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		realTimeAlerts: []gtfs.Alert{
-			{
-				ID: "alert1",
-				InformedEntities: []gtfs.AlertInformedEntity{
-					{
-						TripID: &tripID,
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID: "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{
+						{
+							TripID: &tripID,
+						},
 					},
 				},
 			},
 		},
 	}
+	manager.rebuildMergedRealtimeLocked()
 
 	alerts := manager.GetAlertsForTrip(context.Background(), "trip123")
 
@@ -47,17 +50,20 @@ func TestGetAlertsForStop(t *testing.T) {
 	stopID := "stop123"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		realTimeAlerts: []gtfs.Alert{
-			{
-				ID: "alert1",
-				InformedEntities: []gtfs.AlertInformedEntity{
-					{
-						StopID: &stopID,
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID: "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{
+						{
+							StopID: &stopID,
+						},
 					},
 				},
 			},
 		},
 	}
+	manager.rebuildMergedRealtimeLocked()
 
 	alerts := manager.GetAlertsForStop("stop123")
 
@@ -699,6 +705,11 @@ func TestGetAlertsByIDs_RouteScoping(t *testing.T) {
 			expectMatch: true,
 		},
 		{
+			name:        "route+trip entity does not match route query",
+			entities:    []gtfs.AlertInformedEntity{{RouteID: &routeID, TripID: &gtfs.TripID{ID: "t1"}}},
+			expectMatch: false,
+		},
+		{
 			name:        "different route does not match",
 			entities:    []gtfs.AlertInformedEntity{{RouteID: &otherRoute}},
 			expectMatch: false,
@@ -708,9 +719,12 @@ func TestGetAlertsByIDs_RouteScoping(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &Manager{
-				realTimeMutex:  sync.RWMutex{},
-				realTimeAlerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}},
+				realTimeMutex: sync.RWMutex{},
+				feedAlerts: map[string][]gtfs.Alert{
+					"feed-0": {{ID: "alert1", InformedEntities: tt.entities}},
+				},
 			}
+			manager.rebuildMergedRealtimeLocked()
 			alerts := manager.GetAlertsByIDs("", routeID, "")
 			if tt.expectMatch {
 				assert.Len(t, alerts, 1)
@@ -719,6 +733,35 @@ func TestGetAlertsByIDs_RouteScoping(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAlertIndex_RouteTripEntityIndexedUnderByTrip verifies the positive path of the
+// {routeID+tripID} scoping rule: such an entity is excluded from byRoute (covered by
+// TestGetAlertsByIDs_RouteScoping) but must still appear in byTrip so trip-scoped
+// lookups find it.
+func TestAlertIndex_RouteTripEntityIndexedUnderByTrip(t *testing.T) {
+	routeID := "route123"
+	tripID := gtfs.TripID{ID: "trip456"}
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID, TripID: &tripID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	tripAlerts := manager.GetAlertsByIDs(tripID.ID, "", "")
+	assert.Len(t, tripAlerts, 1, "{routeID+tripID} entity should be indexed under byTrip")
+	assert.Equal(t, "alert1", tripAlerts[0].ID)
+
+	routeAlerts := manager.GetAlertsByIDs("", routeID, "")
+	assert.Empty(t, routeAlerts, "{routeID+tripID} entity must NOT appear in byRoute")
 }
 
 // TestGetAlertsByIDs_AgencyScoping verifies that agency-wide matching only fires
@@ -748,14 +791,24 @@ func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, TripID: &tripID}},
 			expectMatch: false,
 		},
+		{
+			// {agencyID+stopID} has no route/trip restriction, so it is filed in byAgency
+			// AND byStop. An agency-only lookup should therefore still match.
+			name:        "agency+stop entity matches agency-only query",
+			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, StopID: func() *string { s := "stop99"; return &s }()}},
+			expectMatch: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &Manager{
-				realTimeMutex:  sync.RWMutex{},
-				realTimeAlerts: []gtfs.Alert{{ID: "alert1", InformedEntities: tt.entities}},
+				realTimeMutex: sync.RWMutex{},
+				feedAlerts: map[string][]gtfs.Alert{
+					"feed-0": {{ID: "alert1", InformedEntities: tt.entities}},
+				},
 			}
+			manager.rebuildMergedRealtimeLocked()
 			alerts := manager.GetAlertsByIDs("", "", agencyID)
 			if tt.expectMatch {
 				assert.Len(t, alerts, 1)
@@ -764,6 +817,316 @@ func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAlertIndex_ByTripID(t *testing.T) {
+	tripID := gtfs.TripID{ID: "trip1"}
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{TripID: &tripID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	alerts := manager.GetAlertsByIDs("trip1", "", "")
+
+	require.Len(t, alerts, 1)
+	assert.Equal(t, "alert1", alerts[0].ID)
+}
+
+func TestAlertIndex_ByRouteID(t *testing.T) {
+	routeID := "route1"
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	alerts := manager.GetAlertsByIDs("", "route1", "")
+
+	require.Len(t, alerts, 1)
+	assert.Equal(t, "alert1", alerts[0].ID)
+}
+
+func TestAlertIndex_ByAgencyID(t *testing.T) {
+	agencyID := "agency1"
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	alerts := manager.GetAlertsByIDs("", "", "agency1")
+
+	require.Len(t, alerts, 1)
+	assert.Equal(t, "alert1", alerts[0].ID)
+}
+
+func TestAlertIndex_ByStopID(t *testing.T) {
+	stopID := "stop1"
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	alerts := manager.GetAlertsForStop("stop1")
+
+	require.Len(t, alerts, 1)
+	assert.Equal(t, "alert1", alerts[0].ID)
+}
+
+func TestAlertIndex_Deduplication(t *testing.T) {
+	tripID := gtfs.TripID{ID: "trip1"}
+	routeID := "route1"
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID: "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{
+						{TripID: &tripID},
+						{RouteID: &routeID},
+					},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	// Querying by both trip and route should return the alert exactly once.
+	alerts := manager.GetAlertsByIDs("trip1", "route1", "")
+
+	require.Len(t, alerts, 1)
+	assert.Equal(t, "alert1", alerts[0].ID)
+}
+
+func TestAlertIndex_EmptyAlerts(t *testing.T) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts:    map[string][]gtfs.Alert{},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	assert.Empty(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"))
+	assert.Empty(t, manager.GetAlertsForStop("stop1"))
+}
+
+func TestAlertIndex_NoDuplicatesFromRepeatedEntityKeys(t *testing.T) {
+	stopID := "stop1"
+	routeID := "route1"
+	tripID := gtfs.TripID{ID: "trip1"}
+	agencyID := "agency1"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID: "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{
+						{StopID: &stopID},
+						{StopID: &stopID},
+						{RouteID: &routeID},
+						{RouteID: &routeID},
+						{TripID: &tripID},
+						{TripID: &tripID},
+						{AgencyID: &agencyID},
+						{AgencyID: &agencyID},
+					},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	assert.Len(t, manager.GetAlertsForStop("stop1"), 1)
+	assert.Len(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"), 1)
+}
+
+func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
+	stopID := "stop1"
+	tripID := gtfs.TripID{ID: "trip1"}
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "",
+					InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}, {TripID: &tripID}},
+				},
+				{
+					ID:               "alert-valid",
+					InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	stopAlerts := manager.GetAlertsForStop("stop1")
+	require.Len(t, stopAlerts, 1)
+	assert.Equal(t, "alert-valid", stopAlerts[0].ID)
+
+	tripAlerts := manager.GetAlertsByIDs("trip1", "", "")
+	assert.Empty(t, tripAlerts)
+}
+
+// TestAlertIndex_AgencyStopEntityAlsoIndexedByStop verifies the symmetric half
+// of the agency+stop scoping rule: an entity with both agencyID and stopID is
+// filed in byStop (so stop-scoped lookups find it) in addition to byAgency.
+func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
+	agencyID := "agency40"
+	stopID := "stop99"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID, StopID: &stopID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	stopAlerts := manager.GetAlertsForStop(stopID)
+	assert.Len(t, stopAlerts, 1, "agency+stop entity should appear in byStop")
+	assert.Equal(t, "alert1", stopAlerts[0].ID)
+
+	agencyAlerts := manager.GetAlertsByIDs("", "", agencyID)
+	assert.Len(t, agencyAlerts, 1, "agency+stop entity should also appear in byAgency")
+	assert.Equal(t, "alert1", agencyAlerts[0].ID)
+}
+
+// TestAlertIndex_AllEmptyArgsReturnsNil verifies that GetAlertsByIDs returns nil
+// (not an allocated empty slice) when all three arguments are empty strings.
+func TestAlertIndex_AllEmptyArgsReturnsNil(t *testing.T) {
+	stopID := "stop1"
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	result := manager.GetAlertsByIDs("", "", "")
+	assert.Nil(t, result, "GetAlertsByIDs with all empty args should return nil")
+}
+
+func TestMockAddAlert_IndexIsImmediatelySynced(t *testing.T) {
+	stopID := "stop-mock"
+	routeID := "route-mock"
+	tripID := gtfs.TripID{ID: "trip-mock"}
+	agencyID := "agency-mock"
+
+	manager := &Manager{realTimeMutex: sync.RWMutex{}}
+	manager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: "alert-synced",
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{StopID: &stopID},
+			{RouteID: &routeID},
+			{TripID: &tripID},
+			{AgencyID: &agencyID},
+		},
+	})
+
+	t.Run("byStop bucket is populated", func(t *testing.T) {
+		alerts := manager.GetAlertsForStop(stopID)
+		require.Len(t, alerts, 1)
+		assert.Equal(t, "alert-synced", alerts[0].ID)
+	})
+
+	t.Run("byTrip bucket is populated", func(t *testing.T) {
+		alerts := manager.GetAlertsByIDs(tripID.ID, "", "")
+		require.Len(t, alerts, 1)
+		assert.Equal(t, "alert-synced", alerts[0].ID)
+	})
+
+	t.Run("byRoute bucket is populated", func(t *testing.T) {
+		alerts := manager.GetAlertsByIDs("", routeID, "")
+		require.Len(t, alerts, 1)
+		assert.Equal(t, "alert-synced", alerts[0].ID)
+	})
+
+	t.Run("byAgency bucket is populated", func(t *testing.T) {
+		alerts := manager.GetAlertsByIDs("", "", agencyID)
+		require.Len(t, alerts, 1)
+		assert.Equal(t, "alert-synced", alerts[0].ID)
+	})
+}
+
+func TestAlertIndex_NilInformedEntitiesExcludedFromAllBuckets(t *testing.T) {
+	// Two different code paths both produce empty buckets:
+	//   - nil InformedEntities: hits the `continue` guard in rebuildMergedRealtimeLocked
+	//   - non-nil but empty slice: falls through to an inner loop that never executes
+	// Both are tested here to guard against regressions in either branch.
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{ID: "alert-nil-entities", InformedEntities: nil},
+				{ID: "alert-empty-entities", InformedEntities: []gtfs.AlertInformedEntity{}},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	assert.Empty(t, manager.GetAlertsForStop("any-stop"))
+	assert.Empty(t, manager.GetAlertsByIDs("any-trip", "any-route", "any-agency"))
+}
+
+func TestAlertIndex_CrossFeedDeduplication(t *testing.T) {
+	stopID := "stop1"
+	// The same alert ID appears in two feeds. GetAlertsForStop deduplicates
+	// by alert ID internally, so the caller always receives exactly one entry
+	// regardless of how many feeds contributed the same alert.
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}}},
+			"feed-1": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}}},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	stopAlerts := manager.GetAlertsForStop(stopID)
+	assert.Len(t, stopAlerts, 1, "GetAlertsForStop deduplicates by alert ID across feeds")
+	assert.Equal(t, "alert1", stopAlerts[0].ID)
 }
 
 // encodeVehicleFeed constructs a GTFS-RT protobuf payload containing
@@ -884,4 +1247,109 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 
 	hasNewDataSuccess := manager.updateFeedRealtime(context.Background(), cfgSuccess)
 	assert.True(t, hasNewDataSuccess, "OR check should return true when ALL sub-feeds succeed")
+}
+
+func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v1"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip1",
+						RouteID:              "route-A",
+						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+					},
+				},
+			},
+		},
+		realTimeTripLookup: make(map[string]int),
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-A")
+	assert.Len(t, result, 1)
+	assert.Equal(t, "v1", result[0].ID.ID)
+}
+
+func TestGetDuplicatedVehiclesForRoute_FallbackViaTripUpdate(t *testing.T) {
+	// Vehicle has no route_id in its trip descriptor; the TripUpdate carries it.
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v2"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip2",
+						RouteID:              "", // omitted in VehiclePosition
+						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+					},
+				},
+			},
+		},
+		realTimeTrips: []gtfs.Trip{
+			{
+				ID: gtfs.TripID{
+					ID:      "trip2",
+					RouteID: "route-B",
+				},
+			},
+		},
+		realTimeTripLookup: map[string]int{"trip2": 0},
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-B")
+	require.Len(t, result, 1)
+	assert.Equal(t, "v2", result[0].ID.ID)
+}
+
+func TestGetDuplicatedVehiclesForRoute_ExcludesNonDuplicated(t *testing.T) {
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v3"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip3",
+						RouteID:              "route-C",
+						ScheduleRelationship: gtfsrt.TripDescriptor_SCHEDULED,
+					},
+				},
+			},
+			{
+				ID: &gtfs.VehicleID{ID: "v4"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip4",
+						RouteID:              "route-C",
+						ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+					},
+				},
+			},
+		},
+		realTimeTripLookup: make(map[string]int),
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-C")
+	assert.Empty(t, result, "SCHEDULED and CANCELED vehicles must be excluded")
+}
+
+func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
+	manager := &Manager{
+		realTimeVehicles: []gtfs.Vehicle{
+			{
+				ID: &gtfs.VehicleID{ID: "v5"},
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{
+						ID:                   "trip5",
+						RouteID:              "route-D",
+						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+					},
+				},
+			},
+		},
+		realTimeTripLookup: make(map[string]int),
+	}
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-UNKNOWN")
+	assert.Empty(t, result)
 }

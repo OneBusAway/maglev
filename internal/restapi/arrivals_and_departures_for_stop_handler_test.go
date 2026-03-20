@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -707,6 +708,10 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 	combinedStopID = utils.FormCombinedID(agencyID, stopCode)
 	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	scheduledArrivalMs = serviceMidnight.Add(time.Duration(arrivalNanos)).UnixMilli()
+
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted
+	// calendar entry rather than a result cached by an earlier test in this package.
+	api.GtfsManager.MockClearServiceIDsCache()
 	return
 }
 
@@ -1167,6 +1172,10 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted
+	// calendar entry rather than a result cached by an earlier test in this package.
+	api.GtfsManager.MockClearServiceIDsCache()
+
 	// Add a trip update WITHOUT any vehicle position.
 	delayDuration := 120 * time.Second
 	seq := uint32(1)
@@ -1208,6 +1217,109 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 				assert.NotEqual(t, schedArr, predArr,
 					"predicted arrival should differ from scheduled by the delay amount")
 			}
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "should find arrival for test trip %s", tripID)
+}
+
+func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
+
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID = "NilIDAgency"
+		stopID   = "NilIDStop"
+		routeID  = "NilIDRoute"
+		tripID   = "NilIDTrip"
+	)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       agencyID,
+		Name:     "Nil ID Test Agency",
+		Url:      "http://nilid-agency.com",
+		Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:   stopID,
+		Name: sql.NullString{String: "Nil ID Test Stop", Valid: true},
+		Lat:  40.5865,
+		Lon:  -122.3917,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID:       routeID,
+		AgencyID: agencyID,
+		Type:     3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        "nilid_service",
+		Monday:    1,
+		Tuesday:   1,
+		Wednesday: 1,
+		Thursday:  1,
+		Friday:    1,
+		Saturday:  1,
+		Sunday:    1,
+		StartDate: "20000101",
+		EndDate:   "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   routeID,
+		ServiceID: "nilid_service",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopID,
+		StopSequence:  1,
+		ArrivalTime:   29100 * 1e9, // 08:05:00 in nanoseconds
+		DepartureTime: 29400 * 1e9, // 08:10:00 in nanoseconds
+	})
+	require.NoError(t, err)
+
+	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
+		NoID: true,
+	})
+
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	resp, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST&minutesBefore=60&minutesAfter=60")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+	arrivalsRaw, ok := entry["arrivalsAndDepartures"].([]interface{})
+	require.True(t, ok)
+
+	var found bool
+	for _, a := range arrivalsRaw {
+		arr := a.(map[string]interface{})
+		_, arrTripID, _ := utils.ExtractAgencyIDAndCodeID(arr["tripId"].(string))
+		if arrTripID == tripID {
+			assert.Equal(t, "", arr["vehicleId"], "vehicleId should be empty for vehicle with nil ID")
 			found = true
 			break
 		}

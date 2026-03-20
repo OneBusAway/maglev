@@ -17,6 +17,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/tidwall/rtree"
 	"maglev.onebusaway.org/internal/logging"
 )
@@ -36,9 +37,11 @@ type RegionBounds struct {
 // Lock ordering policy (to prevent deadlocks):
 //
 //	staticMutex → realTimeMutex
+//	staticMutex → activeServiceIDsCacheMutex
 //
 // When both locks are needed, staticMutex MUST be acquired first.
 // Never acquire staticMutex while holding realTimeMutex.
+// Never acquire staticMutex while holding activeServiceIDsCacheMutex.
 type Manager struct {
 	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
@@ -49,10 +52,10 @@ type Manager struct {
 	realTimeTrips                  []gtfs.Trip
 	realTimeVehicles               []gtfs.Vehicle
 	realTimeMutex                  sync.RWMutex
-	realTimeAlerts                 []gtfs.Alert
 	realTimeTripLookup             map[string]int
 	realTimeVehicleLookupByTrip    map[string]int
 	realTimeVehicleLookupByVehicle map[string]int
+	alertIdx                       alertIndex
 	agenciesMap                    map[string]*gtfs.Agency
 	routesMap                      map[string]*gtfs.Route
 	frequencyTripIDs               map[string]struct{}
@@ -89,6 +92,15 @@ type Manager struct {
 
 	// Tracks the last successful update time per feed
 	feedLastUpdate map[string]time.Time
+
+	// activeServiceIDsCache caches GetActiveServiceIDsForDate results keyed by "YYYYMMDD" date string.
+	// Protected by activeServiceIDsCacheMutex. Cleared on every ForceUpdate.
+	activeServiceIDsCache      map[string][]string
+	activeServiceIDsCacheMutex sync.RWMutex
+	// cacheEpoch is incremented each time the cache is cleared (ForceUpdate or MockClearServiceIDsCache).
+	// GetActiveServiceIDsForDateCached snapshots it before the DB query and discards the result if
+	// it has advanced, preventing stale writes from a pre-swap DB into a freshly-cleared cache.
+	cacheEpoch atomic.Uint64
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -251,6 +263,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
 		frequencyTripIDs:               make(map[string]struct{}),
+		activeServiceIDsCache:          make(map[string][]string),
 		Metrics:                        config.Metrics,
 	}
 
@@ -556,7 +569,7 @@ func (manager *Manager) GetStopsForLocation(
 			}
 
 			// Get active service IDs for current date
-			activeServiceIDs, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
+			activeServiceIDs, err := manager.GetActiveServiceIDsForDateCached(ctx, currentDate)
 			if err != nil {
 				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 				logging.LogError(logger, "could not get active service IDs for date", err, slog.String("date", currentDate))
@@ -638,6 +651,34 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 	}
 
 	return vehicles
+}
+
+// GetDuplicatedVehiclesForRoute returns real-time vehicles serving DUPLICATED trips
+// (GTFS-RT schedule_relationship=DUPLICATED) for the given route ID.
+// DUPLICATED trips are extra runs of a scheduled trip, each assigned to a different
+// vehicle. They only exist in real-time data and have no static DB entry.
+func (manager *Manager) GetDuplicatedVehiclesForRoute(routeID string) []gtfs.Vehicle {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	var result []gtfs.Vehicle
+	for _, v := range manager.realTimeVehicles {
+		if v.Trip == nil || v.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+			continue
+		}
+		vRouteID := v.Trip.ID.RouteID
+		// Some feeds omit route_id in VehiclePosition trip descriptors.
+		// Fall back to the corresponding TripUpdate to resolve the route.
+		if vRouteID == "" {
+			if index, exists := manager.realTimeTripLookup[v.Trip.ID.ID]; exists {
+				vRouteID = manager.realTimeTrips[index].ID.RouteID
+			}
+		}
+		if vRouteID == routeID {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 // GetVehicleForTrip retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block
@@ -746,6 +787,55 @@ func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 	return manager.realTimeTrips
+}
+
+// GetActiveServiceIDsForDateCached returns the active service IDs for the given date string
+// ("YYYYMMDD"), using an in-memory cache to avoid repeating the calendar CTE query within
+// the same GTFS dataset. The cache is invalidated on every ForceUpdate.
+// On a cache miss the query is executed with no lock held; on error nothing is cached.
+//
+// The returned slice is a defensive copy; callers may freely modify it.
+func (manager *Manager) GetActiveServiceIDsForDateCached(ctx context.Context, date string) ([]string, error) {
+	manager.activeServiceIDsCacheMutex.RLock()
+	cached, ok := manager.activeServiceIDsCache[date]
+	manager.activeServiceIDsCacheMutex.RUnlock()
+	if ok {
+		out := make([]string, len(cached))
+		copy(out, cached)
+		return out, nil
+	}
+
+	// Snapshot the epoch before querying the DB. ForceUpdate may swap manager.GtfsDB
+	// while our query is in-flight — results from the old DB must not populate the cache
+	// for the new dataset. The epoch detects this: ForceUpdate increments it (under
+	// activeServiceIDsCacheMutex) after the DB swap, so our snapshot will no longer match.
+	epochBefore := manager.cacheEpoch.Load()
+
+	// Read GtfsDB under staticMutex.RLock to avoid a data race with ForceUpdate, which
+	// writes the field under staticMutex.Lock. We release the lock before the query so
+	// ForceUpdate is never blocked by an in-flight DB call.
+	manager.staticMutex.RLock()
+	db := manager.GtfsDB
+	manager.staticMutex.RUnlock()
+	if db == nil {
+		return nil, fmt.Errorf("GTFS database is not available")
+	}
+	ids, err := db.Queries.GetActiveServiceIDsForDate(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+
+	manager.activeServiceIDsCacheMutex.Lock()
+	if manager.cacheEpoch.Load() == epochBefore {
+		if _, ok := manager.activeServiceIDsCache[date]; !ok {
+			manager.activeServiceIDsCache[date] = ids
+		}
+	}
+	manager.activeServiceIDsCacheMutex.Unlock()
+
+	out := make([]string, len(ids))
+	copy(out, ids)
+	return out, nil
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.

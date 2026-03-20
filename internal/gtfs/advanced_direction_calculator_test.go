@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -105,16 +104,14 @@ func TestTranslateGtfsDirection(t *testing.T) {
 }
 
 func TestCalculateStopDirectionResultCache(t *testing.T) {
-	calc := &AdvancedDirectionCalculator{}
-	// Set an empty context cache so computeFromShapes doesn't try to hit the DB
-	_ = calc.SetContextCache(make(map[string][]gtfsdb.GetStopsWithShapeContextRow))
+	_, calc := getSharedTestComponents(t)
 
 	// First call: precomputed direction "NE" from DB should be recognized
 	result := calc.CalculateStopDirection(context.Background(), "stop-1", sql.NullString{String: "NE", Valid: true})
 	assert.Equal(t, "NE", result, "should recognize compass abbreviation NE from precomputed direction")
 
 	// Verify that a stop with no GTFS direction falls through to computeFromShapes,
-	// gets an empty result (no data in cache), and caches the empty result.
+	// gets an empty result (no data in cache for nonexistent stop), and caches the empty result.
 	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{Valid: false})
 	assert.Equal(t, "", result, "should return empty for stop with no direction data")
 
@@ -274,7 +271,7 @@ func TestStandardDeviationThreshold(t *testing.T) {
 
 func TestCalculateStopDirection_WithShapeData(t *testing.T) {
 	ctx := context.Background()
-	// Optimization: Reuse shared DB and Cache
+	// Optimization: Reuse shared DB
 	_, calc := getSharedTestComponents(t)
 
 	// Test with a real stop from RABA data
@@ -285,7 +282,7 @@ func TestCalculateStopDirection_WithShapeData(t *testing.T) {
 
 func TestComputeFromShapes_NoShapeData(t *testing.T) {
 	ctx := context.Background()
-	// Optimization: Reuse shared DB and Cache
+	// Optimization: Reuse shared DB
 	_, calc := getSharedTestComponents(t)
 
 	// Test with a non-existent stop
@@ -295,7 +292,7 @@ func TestComputeFromShapes_NoShapeData(t *testing.T) {
 
 func TestComputeFromShapes_SingleOrientation(t *testing.T) {
 	ctx := context.Background()
-	// Optimization: Reuse shared DB and Cache
+	// Optimization: Reuse shared DB
 	_, calc := getSharedTestComponents(t)
 
 	// Test with actual stop data - single orientation path will be taken if only one trip
@@ -442,43 +439,6 @@ func TestTranslateGtfsDirection_NumericEdgeCases(t *testing.T) {
 	}
 }
 
-func TestSetContextCache_HappyPath(t *testing.T) {
-	// Create a bare instance (no queries needed for this test)
-	adc := &AdvancedDirectionCalculator{}
-
-	// Create dummy cache data
-	cache := make(map[string][]gtfsdb.GetStopsWithShapeContextRow)
-	cache["stop1"] = []gtfsdb.GetStopsWithShapeContextRow{
-		{
-			ID:  "stop1",
-			Lat: 40.7128,
-			Lon: -74.0060,
-		},
-	}
-
-	// Set the cache
-	err := adc.SetContextCache(cache)
-	assert.NoError(t, err)
-
-	// Verify it was set correctly (accessing private field)
-	assert.Equal(t, 1, len(adc.contextCache))
-	assert.Equal(t, "stop1", adc.contextCache["stop1"][0].ID)
-}
-
-func TestSetContextCache_ReturnsErrorAfterInit(t *testing.T) {
-	// Create the instance
-	adc := &AdvancedDirectionCalculator{}
-
-	// Simulate that concurrent operations have already started
-	// We manually toggle the atomic boolean to "true"
-	adc.initialized.Store(true)
-
-	// This call MUST return an error now
-	err := adc.SetContextCache(make(map[string][]gtfsdb.GetStopsWithShapeContextRow))
-	assert.Error(t, err)
-	assert.Equal(t, "SetContextCache called after concurrent operations have started", err.Error())
-}
-
 func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
 	ctx := context.Background()
 	_, calc := getSharedTestComponents(t)
@@ -493,51 +453,6 @@ func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
 	// Crucially, it won't panic because 'queries' is initialized.
 	dirOmitted := calc.CalculateStopDirection(ctx, "any_stop")
 	assert.Equal(t, "", dirOmitted, "Should fall back gracefully when argument is omitted")
-}
-
-func TestSetContextCache_ConcurrentAccess(t *testing.T) {
-	ctx := context.Background()
-	manager, _ := getSharedTestComponents(t)
-	// We use shared DB, but MUST use a fresh Calculator to test the race condition specifically on that instance.
-	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
-
-	// Create dummy cache
-	cache := make(map[string][]gtfsdb.GetStopsWithShapeContextRow)
-
-	// Channel to coordinate start
-	start := make(chan struct{})
-	done := make(chan struct{})
-	setErrCh := make(chan error, 1)
-
-	// Launch a "Reader" Goroutine (Simulating a request coming in)
-	go func() {
-		<-start // Wait for signal
-		// This triggers 'initialized.Store(true)' internally
-		calc.CalculateStopDirection(ctx, "7000")
-		close(done)
-	}()
-
-	// Launch a "Writer" (Simulating the bulk loader trying to set cache late)
-	// We want to verify this doesn't crash the program with a race condition,
-	// but correctly returns an error if it happens too late.
-	go func() {
-		<-start // Wait for signal
-		setErrCh <- calc.SetContextCache(cache)
-	}()
-
-	// Start the race
-	close(start)
-
-	// Wait for reader to finish
-	<-done
-
-	// Wait for writer to finish
-	err := <-setErrCh
-	if err != nil {
-		assert.Equal(t, "SetContextCache called after concurrent operations have started", err.Error())
-	}
-
-	// If got here without the test binary crashing/deadlocking, the atomic guards did their job.
 }
 
 // TestBulkQuery_GetStopsWithShapeContextByIDs verifies the bulk optimization

@@ -35,7 +35,7 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 	defer m.realTimeMutex.Unlock()
 
 	for _, v := range m.realTimeVehicles {
-		if v.ID.ID == vehicleID {
+		if v.ID != nil && v.ID.ID == vehicleID {
 			return
 		}
 	}
@@ -64,7 +64,8 @@ type MockVehicleOptions struct {
 	StopID              *string
 	CurrentStatus       *gtfs.CurrentStatus
 	OccupancyStatus     *gtfs.OccupancyStatus
-	NoTrip              bool // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle.with no current trip assignment, which VehiclesForAgencyID filters out.
+	NoTrip              bool // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle with no current trip assignment, which VehiclesForAgencyID filters out.
+	NoID                bool // NoID creates a vehicle with ID == nil, simulating a GTFS-RT vehicle that omits the vehicle descriptor.
 }
 
 func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
@@ -72,7 +73,7 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	defer m.realTimeMutex.Unlock()
 
 	for _, v := range m.realTimeVehicles {
-		if v.ID.ID == vehicleID {
+		if v.ID != nil && v.ID.ID == vehicleID {
 			return
 		}
 	}
@@ -88,8 +89,13 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 		}
 	}
 
+	var vehicleIDPtr *gtfs.VehicleID
+	if !opts.NoID {
+		vehicleIDPtr = &gtfs.VehicleID{ID: vehicleID}
+	}
+
 	v := gtfs.Vehicle{
-		ID:                  &gtfs.VehicleID{ID: vehicleID},
+		ID:                  vehicleIDPtr,
 		Timestamp:           &now,
 		Trip:                trip,
 		Position:            opts.Position,
@@ -101,8 +107,10 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	m.realTimeVehicles = append(m.realTimeVehicles, v)
 
 	idx := len(m.realTimeVehicles) - 1
-	m.realTimeVehicleLookupByVehicle[vehicleID] = idx
-	if tripID != "" {
+	if vehicleID != "" && !opts.NoID {
+		m.realTimeVehicleLookupByVehicle[vehicleID] = idx
+	}
+	if tripID != "" && !opts.NoTrip {
 		m.realTimeVehicleLookupByTrip[tripID] = idx
 	}
 }
@@ -135,6 +143,17 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 	m.realTimeTripLookup[tripID] = len(m.realTimeTrips) - 1
 }
 
+func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	if m.feedAlerts == nil {
+		m.feedAlerts = make(map[string][]gtfs.Alert)
+	}
+	m.feedAlerts[feedID] = append(m.feedAlerts[feedID], alert)
+	m.rebuildMergedRealtimeLocked()
+}
+
 // MockResetRealTimeData clears all mock real-time vehicles and trip updates.
 func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()
@@ -145,4 +164,17 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeVehicleLookupByTrip = make(map[string]int)
 	m.realTimeTrips = nil
 	m.realTimeTripLookup = make(map[string]int)
+}
+
+// MockClearServiceIDsCache evicts all entries from the active-service-IDs cache.
+// Call this in tests that mutate the calendar tables of a shared Manager to ensure
+// the next request re-queries the database with the updated data.
+//
+// Safe to call without holding staticMutex. Acquires only activeServiceIDsCacheMutex,
+// consistent with the lock ordering: staticMutex → activeServiceIDsCacheMutex.
+func (m *Manager) MockClearServiceIDsCache() {
+	m.activeServiceIDsCacheMutex.Lock()
+	m.activeServiceIDsCache = make(map[string][]string)
+	m.cacheEpoch.Add(1)
+	m.activeServiceIDsCacheMutex.Unlock()
 }
