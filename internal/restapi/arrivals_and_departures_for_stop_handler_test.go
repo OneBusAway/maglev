@@ -1232,6 +1232,7 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	t.Cleanup(api.GtfsManager.MockClearServiceIDsCache)
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -1279,6 +1280,10 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 		EndDate:   "20301231",
 	})
 	require.NoError(t, err)
+
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted
+	// calendar entry rather than a result cached by an earlier test in this package.
+	api.GtfsManager.MockClearServiceIDsCache()
 
 	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID:        tripID,
