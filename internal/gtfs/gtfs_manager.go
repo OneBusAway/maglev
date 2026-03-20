@@ -17,7 +17,6 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
-	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/tidwall/rtree"
 	"maglev.onebusaway.org/internal/logging"
 )
@@ -55,6 +54,7 @@ type Manager struct {
 	realTimeTripLookup             map[string]int
 	realTimeVehicleLookupByTrip    map[string]int
 	realTimeVehicleLookupByVehicle map[string]int
+	duplicatedVehicleByRoute       map[string][]gtfs.Vehicle
 	alertIdx                       alertIndex
 	agenciesMap                    map[string]*gtfs.Agency
 	routesMap                      map[string]*gtfs.Route
@@ -255,6 +255,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		realTimeTripLookup:             make(map[string]int),
 		realTimeVehicleLookupByTrip:    make(map[string]int),
 		realTimeVehicleLookupByVehicle: make(map[string]int),
+		duplicatedVehicleByRoute:       make(map[string][]gtfs.Vehicle),
 		feedTrips:                      make(map[string][]gtfs.Trip),
 		feedVehicles:                   make(map[string][]gtfs.Vehicle),
 		feedAlerts:                     make(map[string][]gtfs.Alert),
@@ -661,24 +662,11 @@ func (manager *Manager) GetDuplicatedVehiclesForRoute(routeID string) []gtfs.Veh
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
-	var result []gtfs.Vehicle
-	for _, v := range manager.realTimeVehicles {
-		if v.Trip == nil || v.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
-			continue
-		}
-		vRouteID := v.Trip.ID.RouteID
-		// Some feeds omit route_id in VehiclePosition trip descriptors.
-		// Fall back to the corresponding TripUpdate to resolve the route.
-		if vRouteID == "" {
-			if index, exists := manager.realTimeTripLookup[v.Trip.ID.ID]; exists {
-				vRouteID = manager.realTimeTrips[index].ID.RouteID
-			}
-		}
-		if vRouteID == routeID {
-			result = append(result, v)
-		}
-	}
-	return result
+	src := manager.duplicatedVehicleByRoute[routeID]
+
+	out := make([]gtfs.Vehicle, len(src))
+	copy(out, src)
+	return out
 }
 
 // GetVehicleForTrip retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block
