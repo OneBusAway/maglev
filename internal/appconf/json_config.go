@@ -235,7 +235,7 @@ func (j *JSONConfig) ToAppConfig() Config {
 
 // RTFeedConfigData holds per-feed GTFS-RT configuration
 type RTFeedConfigData struct {
-	ID                  string   // Note it's will be generated if missing
+	ID                  string   // Note it will be generated if missing
 	AgencyIDs           []string // When set, only realtime data for these agencies is included
 	TripUpdatesURL      string
 	VehiclePositionsURL string
