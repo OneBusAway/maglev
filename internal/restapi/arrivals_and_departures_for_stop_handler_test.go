@@ -1233,6 +1233,8 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
+	api.GtfsManager.MockClearServiceIDsCache()
+
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
 
@@ -1295,8 +1297,6 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 		DepartureTime: 29400 * 1e9, // 08:10:00 in nanoseconds
 	})
 	require.NoError(t, err)
-
-	api.GtfsManager.MockClearServiceIDsCache()
 
 	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
 		NoID: true,
