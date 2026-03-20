@@ -60,11 +60,11 @@ func formatBytes(b uint64) string {
 
 // HotSwapMemoryResults holds all the measurements from a hot-swap test
 type HotSwapMemoryResults struct {
-	BaselineRSS     uint64
-	PeakRSS         uint64
-	PostSwapRSS     uint64
-	PostGCRSS       uint64
-	PeakMultiplier  float64 // PeakRSS / BaselineRSS
+	BaselineGoSys   uint64
+	PeakGoSys       uint64
+	PostSwapGoSys   uint64
+	PostGCGoSys     uint64
+	PeakMultiplier  float64 // PeakGoSys / BaselineGoSys
 	GCSettleTimeMs  int64   // Time for memory to settle after swap
 	SwapDurationMs  int64   // Time to complete ForceUpdate
 	RequestsTotal   int64
@@ -136,11 +136,11 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 		formatBytes(postInitStats.HeapAlloc), formatBytes(postInitStats.Sys))
 
 	// This is our baseline for the swap test
-	baselineRSS := postInitStats.Sys
+	baselineGoSys := postInitStats.Sys
 
 	// Capture peak memory during the swap
-	var peakRSS atomic.Uint64
-	peakRSS.Store(baselineRSS)
+	var peakGoSys atomic.Uint64
+	peakGoSys.Store(baselineGoSys)
 
 	// Track request metrics
 	var requestsTotal atomic.Int64
@@ -168,11 +168,11 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 				// Update peak if current is higher
 				current := stats.Sys
 				for {
-					peak := peakRSS.Load()
+					peak := peakGoSys.Load()
 					if current <= peak {
 						break
 					}
-					if peakRSS.CompareAndSwap(peak, current) {
+					if peakGoSys.CompareAndSwap(peak, current) {
 						break
 					}
 				}
@@ -272,11 +272,11 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 
 	// Compile results
 	results := HotSwapMemoryResults{
-		BaselineRSS:     baselineRSS,
-		PeakRSS:         peakRSS.Load(),
-		PostSwapRSS:     postSwapStats.Sys,
-		PostGCRSS:       postGCStats.Sys,
-		PeakMultiplier:  float64(peakRSS.Load()) / float64(baselineRSS),
+		BaselineGoSys:   baselineGoSys,
+		PeakGoSys:       peakGoSys.Load(),
+		PostSwapGoSys:   postSwapStats.Sys,
+		PostGCGoSys:     postGCStats.Sys,
+		PeakMultiplier:  float64(peakGoSys.Load()) / float64(baselineGoSys),
 		GCSettleTimeMs:  gcSettleTime.Milliseconds(),
 		SwapDurationMs:  swapDuration.Milliseconds(),
 		RequestsTotal:   requestsTotal.Load(),
@@ -287,10 +287,10 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 
 	// Print detailed results
 	t.Log("=== HOT-SWAP MEMORY ANALYSIS ===")
-	t.Logf("Baseline RSS:       %s", formatBytes(results.BaselineRSS))
-	t.Logf("Peak RSS:           %s", formatBytes(results.PeakRSS))
-	t.Logf("Post-Swap RSS:      %s", formatBytes(results.PostSwapRSS))
-	t.Logf("Post-GC RSS:        %s", formatBytes(results.PostGCRSS))
+	t.Logf("Baseline Go Sys:    %s", formatBytes(results.BaselineGoSys))
+	t.Logf("Peak Go Sys:        %s", formatBytes(results.PeakGoSys))
+	t.Logf("Post-Swap Go Sys:   %s", formatBytes(results.PostSwapGoSys))
+	t.Logf("Post-GC Go Sys:     %s", formatBytes(results.PostGCGoSys))
 	t.Logf("Peak Multiplier:    %.2fx baseline", results.PeakMultiplier)
 	t.Logf("GC Settle Time:     %d ms", results.GCSettleTimeMs)
 	t.Logf("Swap Duration:      %d ms", results.SwapDurationMs)

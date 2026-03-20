@@ -49,7 +49,7 @@ During ForceUpdate, the following happens:
 3. Acquire write lock and swap old for new (**both old AND new in memory**)
 4. GC eventually reclaims old data
 
-Steps 2-3 can cause peak RSS to reach ~2x the baseline, potentially triggering OOM in memory-constrained containers.
+Steps 2-3 can cause peak memory to reach ~2x the baseline, potentially triggering OOM in memory-constrained containers.
 
 ### Quick Test (Unit Test)
 
@@ -63,7 +63,7 @@ go test -tags=perftest -v -run TestHotSwapMemory_LargeAgency ./internal/gtfs/
 ```
 
 This will output:
-- Baseline RSS, Peak RSS, Post-GC RSS
+- Baseline Go Sys, Peak Go Sys, Post-GC Go Sys
 - Peak memory multiplier (e.g., 1.8x, 2.1x)
 - GC settle time
 - Request failure rate during swap
@@ -83,7 +83,7 @@ MAGLEV_ENABLE_PPROF=1 make run
 # Terminal 3: Trigger ForceUpdate (run the perftest or wait for 24h cycle)
 ```
 
-#### Option B: RSS Monitoring with k6 Load
+#### Option B: Memory Monitoring with k6 Load
 ```bash
 # Terminal 1: Start server
 MAGLEV_ENABLE_PPROF=1 make run
@@ -91,7 +91,7 @@ MAGLEV_ENABLE_PPROF=1 make run
 # Terminal 2: Run hot-swap specific load test
 k6 run loadtest/k6/hotswap_scenario.js
 
-# Terminal 3: Monitor RSS
+# Terminal 3: Monitor RSS (OS level metric)
 while true; do ps -o rss= -p $(pgrep maglev); sleep 1; done
 
 # Terminal 4: Capture heap profiles periodically
@@ -105,23 +105,23 @@ go tool pprof http://localhost:4000/debug/pprof/heap  # after
 
 | Metric | Description | Target |
 |--------|-------------|--------|
-| Peak RSS Multiplier | Peak RSS / Baseline RSS | <2.0x |
+| Peak Multiplier | Peak Go Sys / Baseline Go Sys | <2.0x |
 | GC Settle Time | Time for memory to return to baseline | <30s |
 | Request Failures | Failed requests during swap | <1% |
 | Swap Duration | Time for ForceUpdate to complete | <60s |
 
 ### Container Sizing Recommendations
 
-Based on the hot-swap behavior, here are recommended container memory limits:
+Based on the hot-swap behavior, here are recommended container memory limits (measured via Go Sys memory):
 
-| Agency Size | Baseline RSS | Peak RSS (1.25x) | Recommended Limit |
-|-------------|--------------|------------------|-------------------|
-| Small (RABA) | ~100 MB | ~125 MB | 256 MB |
-| Medium | ~500 MB | ~625 MB | 1 GB |
-| Large (TriMet) | ~2.9 GB | ~3.6 GB | 4 GB |
-| XL (MTA) | ~6.0 GB | ~7.5 GB | 12 GB |
+| Agency Size | Baseline Go Sys | Peak Go Sys (1.25x) | Recommended Limit |
+|-------------|-----------------|---------------------|-------------------|
+| Small (RABA)| ~100 MB         | ~125 MB             | 256 MB            |
+| Medium      | ~500 MB         | ~625 MB             | 1 GB              |
+| Large (TriMet)| ~2.9 GB       | ~3.6 GB             | 4 GB              |
+| XL (MTA)    | ~6.0 GB         | ~7.5 GB             | 12 GB             |
 
-**Safety margin**: Multiply peak RSS by 2.5x for the container limit to handle unexpected spikes.
+**Safety margin**: Multiply peak Go Sys by 2.5x for the container limit to handle unexpected spikes and external CGO/SQLite allocations not tracked by Go Sys.
 
 ### Mitigation Options
 
@@ -168,11 +168,11 @@ This document presents the findings from the hot-swap memory analysis during GTF
 
 | Metric | Value |
 |--------|-------|
-| **Baseline RSS** | 2.92 GiB |
-| **Peak RSS** | 3.64 GiB |
+| **Baseline Go Sys** | 2.92 GiB |
+| **Peak Go Sys** | 3.64 GiB |
 | **Peak Multiplier** | **1.25x** baseline |
-| **Post-Swap RSS** | 3.64 GiB |
-| **Post-GC RSS** | 3.64 GiB |
+| **Post-Swap Go Sys** | 3.64 GiB |
+| **Post-GC Go Sys** | 3.64 GiB |
 
 **Finding**: The peak memory multiplier of 1.25x is **better than expected** (anticipated ~2.0x). This suggests the Go GC is actively reclaiming old data during the swap process.
 
@@ -231,50 +231,16 @@ Based on the TriMet results:
 | 4 GB | Large (TriMet, regional) | Recommended |
 | 8 GB | XL (MTA, multi-region) | Safe for largest |
 
-**Recommendation**: For TriMet-sized agencies (~24 MB GTFS), use at least 4 GB container limit to provide 1.08x safety margin above peak RSS.
+**Recommendation**: For TriMet-sized agencies (~24 MB GTFS), use at least 4 GB container limit to provide 1.08x safety margin above peak Go Sys memory.
 
 ## Container Sizing Recommendations
 
-Given the **1.25x** peak multiplier observed:
-
-`Recommended Limit = Baseline RSS × 1.5 (for safety margin)`
-
-| Agency Size | Est. Baseline | Peak (1.25x) | Recommended |
-|-------------|---------------|--------------|-------------|
-| Small (RABA) | ~100 MB | ~125 MB | 256 MB |
-| Medium | ~500 MB | ~625 MB | 1 GB |
-| Large (TriMet) | ~2.9 GB | ~3.6 GB | 4 GB |
-| XL (MTA) | ~6.0 GB | ~7.5 GB | 12 GB |
-
-## Mitigation Options (If Needed)
-
-The observed 1.25x multiplier is acceptable for most deployments. However, if memory is critically constrained:
-
-1. **Explicit GC after swap** (minimal benefit, ~1s faster settle)
-   ```go
-   // In ForceUpdate() after swap:
-   runtime.GC()
-   debug.FreeOSMemory()
-   ```
-
-2. **Streaming import** (significant refactor, ~30% peak reduction)
-   - Process GTFS chunks incrementally
-   - Reduces peak heap allocation
-
-3. **Memory-mapped SQLite** (moderate effort, ~20% RSS reduction)
-   - Use mmap for database file
-   - Reduces heap pressure
-
-4. **Pre-swap GC hint** (minimal effort, ~5-10% peak reduction)
-   ```go
-   // Before starting swap:
-   runtime.GC()
-   ```
+*Please refer to the [Container Sizing Recommendations](#container-sizing-recommendations) section above for the sizing table and guidelines derived from these results.*
 
 ## Recommendations
 
-1. **Container sizing**: Use 1.5x baseline RSS as minimum container limit
-2. **Monitoring**: Set up alerts for RSS > 1.4x baseline during swap windows
+1. **Container sizing**: Use 1.5x baseline Go Sys as minimum container limit
+2. **Monitoring**: Set up alerts for memory > 1.4x baseline during swap windows
 3. **No immediate mitigation needed**: The 1.25x multiplier is within acceptable bounds
 4. **Future consideration**: For XL agencies (MTA), consider streaming import
 
