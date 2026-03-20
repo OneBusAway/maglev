@@ -462,6 +462,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockClearServiceIDsCache)
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -534,6 +535,10 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 		DepartureTime: 29100 * 1e9, // 08:05:00 converted to nanoseconds
 	})
 	require.NoError(t, err)
+
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted
+	// calendar entry rather than a result cached by an earlier test in this package.
+	api.GtfsManager.MockClearServiceIDsCache()
 
 	combinedStopID := utils.FormCombinedID(agencyA, stopID)
 
