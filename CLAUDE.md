@@ -39,7 +39,7 @@ All commands are managed through the Makefile:
 
 ## Load Testing and Profiling
 
-See `loadtest/README.md`. Start with pprof enabled: `MAGLEV_ENABLE_PPROF=1 make run`, then run `k6 run loadtest/k6/scenarios.js`. Capture CPU profiles with `go tool pprof http://localhost:4000/debug/pprof/profile?seconds=30`.
+See `loadtest/README.md`. Start with pprof enabled: `MAGLEV_ENABLE_PPROF=1 make run`, then run `k6 run loadtest/k6/scenarios.js`. Capture CPU profiles with `go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30`.
 
 ## Docker Commands
 
