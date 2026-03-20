@@ -169,89 +169,53 @@ docker-clean:
 	@if docker image inspect $(DOCKER_IMAGE):dev >/dev/null 2>&1; then docker rmi $(DOCKER_IMAGE):dev && echo "Removed $(DOCKER_IMAGE):dev" || echo "Warning: Could not remove $(DOCKER_IMAGE):dev (may be in use)"; fi
 	@echo "Cleanup complete."
 
+define run_load_test
+	@set -e; \
+	printf '%s\n' \
+	  '{' \
+	  '  "port": 4000,' \
+	  '  "env": "development",' \
+	  '  "api-keys": ["test"],' \
+	  '  "rate-limit": $(1),' \
+	  '  "log-level": "$(2)",' \
+	  '  "log-format": "json",' \
+	  '  "gtfs-static-feed": {' \
+	  '    "url": "testdata/raba.zip",' \
+	  '    "enable-gtfs-tidy": false' \
+	  '  },' \
+	  '  "gtfs-rt-feeds": [],' \
+	  '  "data-path": "./ci-gtfs.db"' \
+	  '}' > config.ci.json; \
+	$(3)./bin/maglev -f config.ci.json > maglev.log 2>&1 & \
+	MAGLEV_PID=$$!; \
+	trap 'kill $$MAGLEV_PID 2>/dev/null || true; rm -f config.ci.json maglev.log ci-gtfs.db' EXIT; \
+	echo "Waiting for Maglev to be ready..."; \
+	ready=0; \
+	for i in $$(seq 1 60); do \
+	  if curl -sf http://localhost:4000/healthz > /dev/null 2>&1; then \
+	    echo "Server is ready after $${i} attempts."; \
+	    ready=1; \
+	    break; \
+	  fi; \
+	  echo "  Attempt $${i}/60 — not ready yet, waiting 5s..."; \
+	  tail -1 maglev.log 2>/dev/null || true; \
+	  sleep 5; \
+	done; \
+	if [ "$$ready" -ne 1 ]; then \
+	  echo "ERROR: Server did not become ready in time. Dumping logs:"; \
+	  cat maglev.log; \
+	  exit 1; \
+	fi; \
+	k6 run \
+	  $(4) \
+	  --summary-export=$(5) \
+	  loadtest/k6/scenarios.js
+endef
+
 load-test: smoketest stresstest
 
 smoketest: build check-k6
-	@set -e; \
-	printf '%s\n' \
-	  '{' \
-	  '  "port": 4000,' \
-	  '  "env": "development",' \
-	  '  "api-keys": ["test"],' \
-	  '  "rate-limit": 100,' \
-	  '  "log-level": "info",' \
-	  '  "log-format": "json",' \
-	  '  "gtfs-static-feed": {' \
-	  '    "url": "testdata/raba.zip",' \
-	  '    "enable-gtfs-tidy": false' \
-	  '  },' \
-	  '  "gtfs-rt-feeds": [],' \
-	  '  "data-path": "./ci-gtfs.db"' \
-	  '}' > config.ci.json; \
-	./bin/maglev -f config.ci.json > maglev.log 2>&1 & \
-	MAGLEV_PID=$$!; \
-	trap 'kill $$MAGLEV_PID 2>/dev/null || true; rm -f config.ci.json' EXIT; \
-	echo "Waiting for Maglev to be ready..."; \
-	ready=0; \
-	for i in $$(seq 1 60); do \
-	  if curl -sf http://localhost:4000/healthz > /dev/null 2>&1; then \
-	    echo "Server is ready after $${i} attempts."; \
-	    ready=1; \
-	    break; \
-	  fi; \
-	  echo "  Attempt $${i}/60 — not ready yet, waiting 5s..."; \
-	  tail -1 maglev.log 2>/dev/null || true; \
-	  sleep 5; \
-	done; \
-	if [ "$$ready" -ne 1 ]; then \
-	  echo "ERROR: Server did not become ready in time. Dumping logs:"; \
-	  cat maglev.log; \
-	  exit 1; \
-	fi; \
-	k6 run \
-	  --vus 5 \
-	  --duration 30s \
-	  --summary-export=loadtest/k6/smoke-summary.json \
-	  loadtest/k6/scenarios.js
+	$(call run_load_test,100,info,,--vus 5 --duration 30s,loadtest/k6/smoke-summary.json)
 
 stresstest: build check-k6
-	@set -e; \
-	printf '%s\n' \
-	  '{' \
-	  '  "port": 4000,' \
-	  '  "env": "development",' \
-	  '  "api-keys": ["test"],' \
-	  '  "rate-limit": 1000,' \
-	  '  "log-level": "warn",' \
-	  '  "log-format": "json",' \
-	  '  "gtfs-static-feed": {' \
-	  '    "url": "testdata/raba.zip",' \
-	  '    "enable-gtfs-tidy": false' \
-	  '  },' \
-	  '  "gtfs-rt-feeds": [],' \
-	  '  "data-path": "./ci-gtfs.db"' \
-	  '}' > config.ci.json; \
-	MAGLEV_ENABLE_PPROF=1 ./bin/maglev -f config.ci.json > maglev.log 2>&1 & \
-	MAGLEV_PID=$$!; \
-	trap 'kill $$MAGLEV_PID 2>/dev/null || true; rm -f config.ci.json' EXIT; \
-	echo "Waiting for Maglev to be ready..."; \
-	ready=0; \
-	for i in $$(seq 1 60); do \
-	  if curl -sf http://localhost:4000/healthz > /dev/null 2>&1; then \
-	    echo "Server is ready after $${i} attempts."; \
-	    ready=1; \
-	    break; \
-	  fi; \
-	  echo "  Attempt $${i}/60 — not ready yet, waiting 5s..."; \
-	  tail -1 maglev.log 2>/dev/null || true; \
-	  sleep 5; \
-	done; \
-	if [ "$$ready" -ne 1 ]; then \
-	  echo "ERROR: Server did not become ready in time. Dumping logs:"; \
-	  cat maglev.log; \
-	  exit 1; \
-	fi; \
-	k6 run \
-	  -e USE_FALLBACKS=true \
-	  --summary-export=loadtest/k6/stress-summary.json \
-	  loadtest/k6/scenarios.js
+	$(call run_load_test,1000,warn,MAGLEV_ENABLE_PPROF=1 ,-e USE_FALLBACKS=true,loadtest/k6/stress-summary.json)
