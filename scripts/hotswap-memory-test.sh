@@ -199,8 +199,12 @@ cleanup() {
     echo ""
     log_info "Stopping monitoring..."
     
-    # Kill background processes
-    jobs -p | xargs -r kill 2>/dev/null || true
+    # Kill background processes 
+    local pids
+    pids=$(jobs -p)
+    if [ -n "$pids" ]; then
+        echo "$pids" | xargs kill 2>/dev/null || true
+    fi
     
     # Capture final heap profile
     if check_pprof 2>/dev/null; then
