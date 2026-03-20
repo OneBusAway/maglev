@@ -1300,6 +1300,9 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 		NoID: true,
 	})
 
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted calendar entry.
+	api.GtfsManager.MockClearServiceIDsCache()
+
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
 		"/api/where/arrivals-and-departures-for-stop/"+combinedStopID+".json?key=TEST&minutesBefore=60&minutesAfter=60")
