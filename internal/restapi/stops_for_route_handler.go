@@ -252,6 +252,10 @@ func processTripGroups(
 		directionIDs = append(directionIDs, dirID)
 	}
 
+	// Sort descending so index 0 maps to the highest direction_id value. This
+	// produces normalized group IDs "0", "1", … that match the Java OBA server's
+	// convention where outbound (direction_id=1) is group "0" and inbound
+	// (direction_id=0) is group "1".
 	sort.Slice(directionIDs, func(i, j int) bool {
 		return directionIDs[i] > directionIDs[j]
 	})
@@ -279,12 +283,23 @@ func processTripGroups(
 			}
 		}
 
-		orderedStopIDs, err := api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
-			gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
-				RouteID:     routeID,
-				DirectionID: tripsInGroup[0].DirectionID,
-				ServiceIds:  dirServiceIDs,
-			})
+		var orderedStopIDs []string
+		var err error
+		if !tripsInGroup[0].DirectionID.Valid {
+			/*
+				direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
+				UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
+				zero rows. Fall back to single-trip ordering instead.
+			*/
+			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, tripsInGroup[0].ID)
+		} else {
+			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
+				gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
+					RouteID:     routeID,
+					DirectionID: tripsInGroup[0].DirectionID,
+					ServiceIds:  dirServiceIDs,
+				})
+		}
 		if err != nil {
 			api.Logger.Warn("failed to fetch ordered stop IDs for route direction", "route_id", routeID, "direction_id", dirID, "error", err)
 			continue
