@@ -55,6 +55,8 @@ func New() *Metrics {
 	return NewWithLogger(nil)
 }
 
+var dbQueryDurationBuckets = []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1}
+
 // NewWithLogger creates metrics with a logger for error reporting.
 func NewWithLogger(logger *slog.Logger) *Metrics {
 	registry := prometheus.NewRegistry()
@@ -108,7 +110,7 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		prometheus.HistogramOpts{
 			Name:    "maglev_db_query_duration_seconds",
 			Help:    "Database query latency distribution by query name, operation, and status",
-			Buckets: prometheus.DefBuckets,
+			Buckets: dbQueryDurationBuckets,
 		},
 		[]string{"query_name", "op", "status"},
 	)

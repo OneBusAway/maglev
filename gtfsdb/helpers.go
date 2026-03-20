@@ -96,6 +96,8 @@ func (s *slowQueryDB) QueryRowContext(ctx context.Context, query string, args ..
 	row := s.db.QueryRowContext(ctx, query, args...)
 	elapsed := s.now().Sub(start)
 	s.maybeLog("QueryRowContext", query, elapsed, nil)
+	// Note: QueryRowContext defers errors to row.Scan(), so err is always nil here.
+	// query_row metrics always report status="ok". See PR description for follow-up plan.
 	s.recordQueryMetrics("query_row", query, elapsed, nil)
 	return row
 }

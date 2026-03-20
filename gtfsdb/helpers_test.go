@@ -306,6 +306,50 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	assert.Equal(t, queryMetricCall{queryName: "unknown", op: "query_row", hadErr: false}, recorder.calls[2])
 }
 
+func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
+	originalThreshold := slowQueryThreshold
+	slowQueryThreshold = 0
+	t.Cleanup(func() {
+		slowQueryThreshold = originalThreshold
+	})
+	originalDDL := ddl
+	ddl = `
+	CREATE TABLE IF NOT EXISTS agencies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        lang TEXT,
+        phone TEXT,
+        fare_url TEXT,
+        email TEXT
+    );
+`
+	t.Cleanup(func() {
+		ddl = originalDDL
+	})
+
+	recorder := &testQueryMetricsRecorder{}
+	config := Config{
+		DBPath:               ":memory:",
+		Env:                  appconf.Test,
+		QueryMetricsRecorder: recorder,
+	}
+
+	client, err := NewClient(config)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+	})
+
+	agencies, err := client.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, agencies)
+
+	require.Len(t, recorder.calls, 1)
+	assert.Equal(t, queryMetricCall{queryName: "ListAgencies", op: "query", hadErr: false}, recorder.calls[0])
+}
+
 func TestExtractQueryName(t *testing.T) {
 	testCases := []struct {
 		name     string
