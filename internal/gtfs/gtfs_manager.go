@@ -55,6 +55,7 @@ type Manager struct {
 	realTimeVehicleLookupByTrip    map[string]int
 	realTimeVehicleLookupByVehicle map[string]int
 	duplicatedVehicleByRoute       map[string][]gtfs.Vehicle
+	vehiclesByRoute                map[string][]gtfs.Vehicle
 	alertIdx                       alertIndex
 	agenciesMap                    map[string]*gtfs.Agency
 	routesMap                      map[string]*gtfs.Route
@@ -256,6 +257,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		realTimeVehicleLookupByTrip:    make(map[string]int),
 		realTimeVehicleLookupByVehicle: make(map[string]int),
 		duplicatedVehicleByRoute:       make(map[string][]gtfs.Vehicle),
+		vehiclesByRoute:                make(map[string][]gtfs.Vehicle),
 		feedTrips:                      make(map[string][]gtfs.Trip),
 		feedVehicles:                   make(map[string][]gtfs.Vehicle),
 		feedAlerts:                     make(map[string][]gtfs.Alert),
@@ -635,20 +637,23 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 	// Step 1: Acquire static lock, collect route IDs, then release.
 	manager.staticMutex.RLock()
 	routes := manager.RoutesForAgencyID(agencyID)
-	routeIDs := make(map[string]bool, len(routes))
+	routeIDs := make([]string, 0, len(routes))
+	seenRouteIDs := make(map[string]struct{}, len(routes))
 	for _, route := range routes {
-		routeIDs[route.Id] = true
+		if _, exists := seenRouteIDs[route.Id]; exists {
+			continue
+		}
+		seenRouteIDs[route.Id] = struct{}{}
+		routeIDs = append(routeIDs, route.Id)
 	}
 	manager.staticMutex.RUnlock()
 
-	// Step 2: Acquire real-time lock independently to read vehicles.
-	rtVehicles := manager.GetRealTimeVehicles()
-
-	var vehicles []gtfs.Vehicle
-	for _, v := range rtVehicles {
-		if v.Trip != nil && routeIDs[v.Trip.ID.RouteID] {
-			vehicles = append(vehicles, v)
-		}
+	// Step 2: Acquire real-time lock independently and union the prebuilt route buckets.
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+	vehicles := make([]gtfs.Vehicle, 0)
+	for _, routeID := range routeIDs {
+		vehicles = append(vehicles, manager.vehiclesByRoute[routeID]...)
 	}
 
 	return vehicles
