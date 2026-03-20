@@ -1233,6 +1233,8 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
+	api.GtfsManager.MockClearServiceIDsCache()
+
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
 

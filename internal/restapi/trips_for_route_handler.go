@@ -44,10 +44,23 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	timeParam := r.URL.Query().Get("time")
-	formattedDate, currentTime, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
-	if !success {
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
+
+	var formattedDate string
+	var currentTime time.Time
+
+	// If no time parameter is provided, use the injected API clock
+	// instead of letting the utility default to the system's real time.Now()
+	if timeParam == "" {
+		currentTime = api.Clock.Now().In(currentLocation)
+		formattedDate = currentTime.Format("20060102")
+	} else {
+		var fieldErrors map[string][]string
+		var success bool
+		formattedDate, currentTime, fieldErrors, success = utils.ParseTimeParameter(timeParam, currentLocation)
+		if !success {
+			api.validationErrorResponse(w, r, fieldErrors)
+			return
+		}
 	}
 
 	serviceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, formattedDate)
@@ -205,26 +218,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
 
 		for _, sd := range serviceDays {
-			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
-				BlockID:    blockIDNullStr,
-				ServiceIds: sd.serviceIDs,
-			})
-			if err != nil {
-				api.Logger.Warn("trips-for-route: failed to fetch trips in block", "block_id", blockID, "error", err)
-				continue
-			}
-			if len(tripsInBlock) == 0 {
-				continue
-			}
-
 			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 				BlockID:     blockIDNullStr,
 				ServiceIds:  sd.serviceIDs,
 				CurrentTime: sql.NullInt64{Int64: sd.nanosSinceMidnight, Valid: true}})
+
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				api.Logger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
 				continue
 			}
+
 			if errors.Is(err, sql.ErrNoRows) {
 				// No currently-running trip; pick the best candidate (most recently
 				// completed or next upcoming) so that blocks are never skipped.
@@ -365,7 +368,19 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 			stripped := stripNumericSuffix(dupTripID)
 			if stripped != dupTripID {
+				api.Logger.Debug("trips-for-route: falling back to stripped trip ID", "original", dupTripID, "stripped", stripped)
+
 				baseTripID = stripped
+
+				if _, err2 := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID); err2 != nil {
+					if !errors.Is(err2, sql.ErrNoRows) {
+						api.Logger.Warn("trips-for-route: failed to resolve stripped DUPLICATED trip ID", "stripped_trip_id", baseTripID, "error", err2)
+					} else {
+						api.Logger.Warn("trips-for-route: DUPLICATED trip ID not found after stripping suffix", "dup_trip_id", dupTripID, "base_trip_id", baseTripID)
+					}
+				}
+			} else if errors.Is(err, sql.ErrNoRows) {
+				api.Logger.Warn("trips-for-route: base trip ID not found and no suffix to strip", "dup_trip_id", dupTripID)
 			}
 		}
 
@@ -405,6 +420,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			if err == nil {
 				fetchedTrips = append(fetchedTrips, baseTrip)
 				filteredRouteTrips[baseTripID] = true
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				api.Logger.Warn("trips-for-route: failed to fetch base trip for reference", "trip_id", baseTripID, "error", err)
 			}
 		}
 	}
@@ -591,6 +608,8 @@ func buildTripReferences(
 					stopRouteIDs[row.StopID] = append(stopRouteIDs[row.StopID], rid)
 				}
 			}
+		} else {
+			api.Logger.Warn("trips-for-route: failed to fetch route IDs for stops", "error", err)
 		}
 	}
 

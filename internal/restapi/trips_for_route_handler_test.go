@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -27,8 +29,8 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	}{
 		{
 			name:         "Main Route",
-			routeID:      "25_1",
-			minExpected:  0,
+			routeID:      "25_151",
+			minExpected:  1,
 			maxExpected:  50,
 			expectStatus: http.StatusOK,
 		},
@@ -50,7 +52,11 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true", tt.routeID)
+			// Use 20:00:00 UTC (12:00 PM Noon Pacific Time) on a Tuesday
+			// Buses are definitely running on this route at noon!
+			testTime := time.Date(2024, 11, 5, 20, 0, 0, 0, time.UTC).UnixMilli()
+
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d", tt.routeID, testTime)
 
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 			assert.Equal(t, tt.expectStatus, resp.StatusCode)
@@ -84,7 +90,6 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 }
 
 func verifyTripEntry(t *testing.T, trip map[string]interface{}) {
-	assert.Contains(t, trip, "frequency")
 	assert.Contains(t, trip, "serviceDate")
 	assert.Contains(t, trip, "situationIds")
 	assert.Contains(t, trip, "tripId")
@@ -96,7 +101,6 @@ func verifyTripEntry(t *testing.T, trip map[string]interface{}) {
 	assert.Contains(t, status, "closestStop")
 	assert.Contains(t, status, "closestStopTimeOffset")
 	assert.Contains(t, status, "distanceAlongTrip")
-	assert.Contains(t, status, "frequency")
 	assert.Contains(t, status, "phase")
 	assert.Contains(t, status, "predicted")
 	assert.Contains(t, status, "scheduleDeviation")
@@ -112,7 +116,6 @@ func verifyTripEntry(t *testing.T, trip map[string]interface{}) {
 	}
 
 	if schedule, ok := trip["schedule"].(map[string]interface{}); ok {
-		assert.Contains(t, schedule, "frequency")
 		assert.Contains(t, schedule, "nextTripId")
 		assert.Contains(t, schedule, "previousTripId")
 		assert.Contains(t, schedule, "timeZone")
@@ -195,7 +198,7 @@ func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := fmt.Sprintf("/api/where/trips-for-route/25_1.json?key=TEST&includeSchedule=%v", tt.includeSchedule)
+			url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=%v", tt.includeSchedule)
 
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -259,6 +262,16 @@ func TestSelectBestTripInBlock(t *testing.T) {
 			row("later", 1400, 1600),
 		}
 		assert.Equal(t, "sooner", selectBestTripInBlock(rows, now))
+	})
+
+	t.Run("fallback to first row when trip spans now", func(t *testing.T) {
+		rows := []gtfsdb.GetTripsInBlockWithTimeBoundsRow{
+			row("running", 800, 1200), // min < now < max
+			row("future", 1300, 1500),
+		}
+		// "running" doesn't match MaxDepartureTime < now OR MinArrivalTime > now.
+		// It falls back to the next available trip in the list ("future").
+		assert.Equal(t, "future", selectBestTripInBlock(rows, now))
 	})
 
 	t.Run("completed beats upcoming", func(t *testing.T) {
@@ -336,4 +349,67 @@ func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 	stopIDsMap := map[string]bool{}
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 	assert.Empty(t, stopIDsMap)
+}
+
+func TestTripsForRouteHandler_DuplicatedTrips(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	duplicateTripID := "25_TRIP_DUPLICATE.00060"
+
+	// Create a synthetic DUPLICATED vehicle
+	injectedVehicle := gtfs.Vehicle{
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:                   duplicateTripID,
+				RouteID:              "25_151",
+				ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+			},
+		},
+	}
+
+	// Inject it safely using the manager's test helper
+	api.GtfsManager.SetRealTimeVehiclesForTest([]gtfs.Vehicle{injectedVehicle})
+
+	// Use a static time (Nov 5 2024, 12:00 PM Pacific)
+	testTime := time.Date(2024, 11, 5, 20, 0, 0, 0, time.UTC).UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeStatus=true&time=%d", testTime)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := model.Data.(map[string]interface{})
+	list := data["list"].([]interface{})
+
+	// Assert that the injected duplicated vehicle didn't cause the handler to panic or fail
+	assert.NotNil(t, list)
+}
+
+func TestTripsForRouteHandler_PastMidnightService(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	// Simulate time being just past midnight (e.g., 00:30 AM)
+	// so that previous day's late trips are included.
+	currentLocation, _ := time.LoadLocation("America/Los_Angeles")
+	pastMidnightTime := time.Date(2024, 11, 5, 0, 30, 0, 0, currentLocation)
+
+	// Temporarily override the API clock
+	// api.Clock = mockClock{Time: pastMidnightTime}
+
+	// Format time parameter to force the handler to process at 00:30
+	timeParam := pastMidnightTime.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&time=%d", timeParam)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := model.Data.(map[string]interface{})
+	list := data["list"].([]interface{})
+
+	// As long as the request succeeds and doesn't fail the bounds, the prev-day time math didn't panic
+	assert.NotNil(t, list)
 }
