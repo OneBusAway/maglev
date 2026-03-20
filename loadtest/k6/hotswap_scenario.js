@@ -70,6 +70,11 @@ const BASE_URL = __ENV.MAGLEV_URL || 'http://localhost:4000';
 const API_KEY = __ENV.API_KEY || 'test';
 
 // State tracking for swap window detection
+// NOTE: In k6, each Virtual User (VU) runs in an isolated JavaScript environment.
+// Module-level variables like swapStarted are NOT shared across VUs.
+// Therefore, swap window detection is per-VU. Only the specific VU that
+// experiences the latency spike will track these metrics. Global metrics like
+// requests_during_swap and swap_window_error_rate will be underreported.
 let swapStarted = false;
 let swapStartTime = 0;
 const SWAP_WINDOW_MS = 30000;  // 30 second window around swap
