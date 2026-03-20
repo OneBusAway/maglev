@@ -1030,6 +1030,35 @@ func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
 	assert.Equal(t, "alert1", agencyAlerts[0].ID)
 }
 
+// TestAlertIndex_RouteStopEntityAlsoIndexedByStop verifies the positive half
+// of the route+stop scoping rule: an entity with both routeID and stopID is
+// excluded from byRoute (covered by TestGetAlertsByIDs_RouteScoping) but must
+// still appear in byStop for stop-scoped lookups.
+func TestAlertIndex_RouteStopEntityAlsoIndexedByStop(t *testing.T) {
+	routeID := "route40"
+	stopID := "stop99"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID, StopID: &stopID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	stopAlerts := manager.GetAlertsForStop(stopID)
+	assert.Len(t, stopAlerts, 1, "route+stop entity should appear in byStop")
+	assert.Equal(t, "alert1", stopAlerts[0].ID)
+
+	routeAlerts := manager.GetAlertsByIDs("", routeID, "")
+	assert.Empty(t, routeAlerts, "route+stop entity must NOT appear in byRoute")
+}
+
 // TestAlertIndex_AllEmptyArgsReturnsNil verifies that GetAlertsByIDs returns nil
 // (not an allocated empty slice) when all three arguments are empty strings.
 func TestAlertIndex_AllEmptyArgsReturnsNil(t *testing.T) {
@@ -1127,6 +1156,25 @@ func TestAlertIndex_CrossFeedDeduplication(t *testing.T) {
 	stopAlerts := manager.GetAlertsForStop(stopID)
 	assert.Len(t, stopAlerts, 1, "GetAlertsForStop deduplicates by alert ID across feeds")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
+}
+
+func TestAlertIndex_CrossFeedDeduplicationByIDs(t *testing.T) {
+	routeID := "route1"
+	tripID := gtfs.TripID{ID: "trip1"}
+	// The same alert ID appears in two feeds and is reachable through different
+	// buckets. GetAlertsByIDs must still deduplicate by alert ID before returning.
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}}}},
+			"feed-1": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{TripID: &tripID}}}},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	alerts := manager.GetAlertsByIDs(tripID.ID, routeID, "")
+	assert.Len(t, alerts, 1, "GetAlertsByIDs deduplicates by alert ID across feeds")
+	assert.Equal(t, "alert1", alerts[0].ID)
 }
 
 // encodeVehicleFeed constructs a GTFS-RT protobuf payload containing
