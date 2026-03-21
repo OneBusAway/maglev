@@ -1296,6 +1296,8 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	api.GtfsManager.MockClearServiceIDsCache()
+
 	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
 		NoID: true,
 	})
