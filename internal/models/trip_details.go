@@ -9,7 +9,7 @@ type TripDetails struct {
 	TripID       string      `json:"tripId"`
 }
 
-func NewTripDetails(trip Trip, tripID string, serviceDate int64, frequency *Frequency, status *TripStatus, schedule *Schedule, situationIDs []string) *TripDetails {
+func NewTripDetails(tripID string, serviceDate int64, frequency *Frequency, status *TripStatus, schedule *Schedule, situationIDs []string) *TripDetails {
 	return &TripDetails{
 		TripID:       tripID,
 		ServiceDate:  serviceDate,
