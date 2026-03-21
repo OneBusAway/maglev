@@ -8,6 +8,14 @@ WHERE
 LIMIT
     1;
 
+-- name: GetAgenciesByIDs :many
+SELECT
+    *
+FROM
+    agencies
+WHERE
+    id IN (sqlc.slice('agency_ids'));
+
 -- name: ListAgencies :many
 SELECT
     *

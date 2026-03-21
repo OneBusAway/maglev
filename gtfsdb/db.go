@@ -117,6 +117,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getActiveTripsWithNullBlockForRouteStmt, err = db.PrepareContext(ctx, getActiveTripsWithNullBlockForRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveTripsWithNullBlockForRoute: %w", err)
 	}
+	if q.getAgenciesByIDsStmt, err = db.PrepareContext(ctx, getAgenciesByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAgenciesByIDs: %w", err)
+	}
 	if q.getAgenciesForStopsStmt, err = db.PrepareContext(ctx, getAgenciesForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAgenciesForStops: %w", err)
 	}
@@ -503,6 +506,11 @@ func (q *Queries) Close() error {
 	if q.getActiveTripsWithNullBlockForRouteStmt != nil {
 		if cerr := q.getActiveTripsWithNullBlockForRouteStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getActiveTripsWithNullBlockForRouteStmt: %w", cerr)
+		}
+	}
+	if q.getAgenciesByIDsStmt != nil {
+		if cerr := q.getAgenciesByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAgenciesByIDsStmt: %w", cerr)
 		}
 	}
 	if q.getAgenciesForStopsStmt != nil {
@@ -955,6 +963,7 @@ type Queries struct {
 	getActiveTripForRouteAtTimeStmt               *sql.Stmt
 	getActiveTripInBlockAtTimeStmt                *sql.Stmt
 	getActiveTripsWithNullBlockForRouteStmt       *sql.Stmt
+	getAgenciesByIDsStmt                          *sql.Stmt
 	getAgenciesForStopsStmt                       *sql.Stmt
 	getAgencyStmt                                 *sql.Stmt
 	getAgencyForStopStmt                          *sql.Stmt
@@ -1068,6 +1077,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getActiveTripForRouteAtTimeStmt:               q.getActiveTripForRouteAtTimeStmt,
 		getActiveTripInBlockAtTimeStmt:                q.getActiveTripInBlockAtTimeStmt,
 		getActiveTripsWithNullBlockForRouteStmt:       q.getActiveTripsWithNullBlockForRouteStmt,
+		getAgenciesByIDsStmt:                          q.getAgenciesByIDsStmt,
 		getAgenciesForStopsStmt:                       q.getAgenciesForStopsStmt,
 		getAgencyStmt:                                 q.getAgencyStmt,
 		getAgencyForStopStmt:                          q.getAgencyForStopStmt,
