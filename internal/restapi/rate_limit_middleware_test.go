@@ -476,13 +476,23 @@ func TestRateLimitMiddleware_CorrectRetryAfterTime(t *testing.T) {
 			var last *httptest.ResponseRecorder
 
 			// Fire requests until we exceed the burst and any tokens generated during the loop's execution (CI can be slow)
-			for i := 0; i < testCase.rateLimit+50; i++ {
+			hitLimit := false
+			for i := 0; i < testCase.rateLimit*5+100; i++ {
 				req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
 				w := httptest.NewRecorder()
 				limited.ServeHTTP(w, req)
 				last = w
+
+				// Break exactly when we hit the limit, ignoring CI speed variations
+				if w.Code == http.StatusTooManyRequests {
+					hitLimit = true
+					break
+				}
 			}
 
+			if !assert.True(t, hitLimit, "Should eventually hit rate limit") {
+				return // Stop test if we never hit 429 to avoid parsing panics
+			}
 			assert.Equal(t, http.StatusTooManyRequests, last.Code)
 
 			retryAfterStr := last.Header().Get("Retry-After")
@@ -506,13 +516,22 @@ func TestRateLimitMiddleware_CorrectRetryAfterTime(t *testing.T) {
 
 		var last *httptest.ResponseRecorder
 
-		for i := 0; i < 2; i++ {
+		hitLimit := false
+		for i := 0; i < 10; i++ { // Increased iterations to account for CI delays
 			req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
 			w := httptest.NewRecorder()
 			limited.ServeHTTP(w, req)
 			last = w
+
+			if w.Code == http.StatusTooManyRequests {
+				hitLimit = true
+				break
+			}
 		}
 
+		if !assert.True(t, hitLimit, "Should eventually hit rate limit") {
+			return
+		}
 		assert.Equal(t, http.StatusTooManyRequests, last.Code)
 
 		retryAfterStr := last.Header().Get("Retry-After")
