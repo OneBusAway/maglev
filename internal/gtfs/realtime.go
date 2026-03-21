@@ -715,7 +715,7 @@ func calculateBackoff(baseInterval time.Duration, consecutiveErrors int, maxInte
 
 // pollFeed runs the polling loop for a single feed. Each feed gets its own
 // goroutine with exponential backoff on errors, reporting to prometheus metrics.
-func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
+func (manager *Manager) pollFeed(ctx context.Context, feedCfg RTFeedConfig) {
 	defer manager.wg.Done()
 
 	if feedCfg.RefreshInterval <= 0 {
@@ -745,6 +745,10 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			logging.LogOperation(logger, "worker_context_cancelled_shutting_down_realtime_feed_poller",
+				slog.String("feed", feedCfg.ID))
+			return
 		case <-manager.shutdownChan:
 			logging.LogOperation(logger, "shutting_down_realtime_feed_poller",
 				slog.String("feed", feedCfg.ID))
@@ -753,14 +757,15 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 			func() {
 				start := time.Now()
 
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				// Derive timeout from the worker context
+				fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 				defer cancel()
-				ctx = logging.WithLogger(ctx, logger)
+				ctx = logging.WithLogger(fetchCtx, logger)
 
 				logging.LogOperation(logger, "updating_gtfs_realtime_data",
 					slog.String("feed", feedCfg.ID))
 
-				hasNewData := manager.updateFeedRealtime(ctx, feedCfg)
+				hasNewData := manager.updateFeedRealtime(fetchCtx, feedCfg)
 				duration := time.Since(start)
 
 				if manager.Metrics != nil {

@@ -65,6 +65,7 @@ type Manager struct {
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
+	workerCancel                   context.CancelFunc // Actively aborts in-flight I/O during shutdown
 	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
 	regionBounds                   *RegionBounds
@@ -159,7 +160,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		attemptsMade = attempt
 		// Attempt to load in-memory static data if we haven't already succeeded
 		if staticData == nil {
-			staticData, err = loadGTFSData(config.GtfsURL, isLocalFile, config)
+			staticData, err = loadGTFSData(ctx, config.GtfsURL, isLocalFile, config)
 			if err != nil {
 				if attempt < maxAttempts {
 					delay := backoffs[attempt-1]
@@ -338,6 +339,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	}
 	manager.frequencyTripIDs = freqTripIDs
 
+	// Derive a global worker context for background routines
+	workerCtx, cancel := context.WithCancel(ctx)
+	manager.workerCancel = cancel
+
 	// STARTUP SEQUENCING:
 	// If realtime is enabled, perform the first fetch synchronously for each feed
 	// to "warm" the cache before marking the manager as ready.
@@ -357,13 +362,13 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 
 	if !isLocalFile {
 		manager.wg.Add(1)
-		go manager.updateStaticGTFS()
+		go manager.updateStaticGTFS(workerCtx)
 	}
 
 	// Start one poller goroutine per enabled feed
 	for _, feedCfg := range enabledFeeds {
 		manager.wg.Add(1)
-		go manager.pollFeed(feedCfg)
+		go manager.pollFeed(workerCtx, feedCfg)
 	}
 
 	return manager, nil
@@ -381,6 +386,9 @@ func (manager *Manager) SetGtfsURL(url string) {
 // Shutdown gracefully shuts down the manager and its background goroutines
 func (manager *Manager) Shutdown() {
 	manager.shutdownOnce.Do(func() {
+		if manager.workerCancel != nil {
+			manager.workerCancel() // Instantly aborts active database/HTTP tasks
+		}
 		close(manager.shutdownChan)
 		manager.wg.Wait()
 		if manager.GtfsDB != nil {

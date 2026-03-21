@@ -15,7 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error) {
+func rawGtfsData(ctx context.Context, source string, isLocalFile bool, config Config) ([]byte, error) {
 	var b []byte
 	var err error
 
@@ -27,7 +27,8 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
 		}
 	} else {
-		req, err := http.NewRequest("GET", source, nil)
+		// Use NewRequestWithContext so the download instantly aborts on shutdown
+		req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error creating GTFS request: %w", err)
 		}
@@ -121,8 +122,8 @@ func buildGtfsDB(ctx context.Context, config Config, isLocalFile bool, dbPath st
 }
 
 // loadGTFSData loads and parses GTFS data from either a URL or a local file
-func loadGTFSData(source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
-	b, err := rawGtfsData(source, isLocalFile, config)
+func loadGTFSData(ctx context.Context, source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
+	b, err := rawGtfsData(ctx, source, isLocalFile, config)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
@@ -156,7 +157,7 @@ func validateStaticAgencyTimezones(staticData *gtfs.Static) error {
 }
 
 // UpdateGTFSPeriodically updates the GTFS data on a regular schedule
-func (manager *Manager) updateStaticGTFS() { // nolint
+func (manager *Manager) updateStaticGTFS(ctx context.Context) { // nolint
 	defer manager.wg.Done()
 
 	// Create a logger for this goroutine
@@ -175,11 +176,16 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 
 	for { // nolint
 		select {
+		case <-ctx.Done():
+			logging.LogOperation(logger, "worker_context_cancelled_shutting_down_static_gtfs_updates")
+			return
 		case <-ticker.C:
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			// Derive timeout from the worker context rather than context.Background()
+			// This ensures it cancels immediately on shutdown, ignoring the 5m timeout.
+			updateCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 
-			err := manager.ForceUpdate(ctx)
+			err := manager.ForceUpdate(updateCtx)
 			cancel()
 
 			if err != nil {
@@ -216,7 +222,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
-	newStaticData, err := loadGTFSData(manager.config.GtfsURL, manager.isLocalFile, manager.config)
+	newStaticData, err := loadGTFSData(ctx, manager.config.GtfsURL, manager.isLocalFile, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error updating GTFS data", err,
 			slog.String("source", manager.config.GtfsURL))
