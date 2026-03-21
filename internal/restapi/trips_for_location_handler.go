@@ -581,6 +581,13 @@ func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 }
 
 func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) models.Stop {
+	agencyID := ""
+	if len(routeIds) > 0 {
+		if id, err := utils.ExtractAgencyID(routeIds[0]); err == nil {
+			agencyID = id
+		}
+	}
+
 	direction := models.UnknownValue
 	if stop.Direction.Valid && stop.Direction.String != "" {
 		direction = stop.Direction.String
@@ -589,7 +596,7 @@ func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) mode
 	return models.Stop{
 		Code:               utils.NullStringOrEmpty(stop.Code),
 		Direction:          direction,
-		ID:                 stop.ID,
+		ID:                 utils.FormCombinedID(agencyID, stop.ID),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		LocationType:       0,
