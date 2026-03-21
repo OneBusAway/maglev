@@ -253,7 +253,10 @@ func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *r
 
 	// Then shutdown GTFS manager (stops data fetching - the lowest-level dependency)
 	if coreApp.GtfsManager != nil {
-		coreApp.GtfsManager.Shutdown()
+		err := coreApp.GtfsManager.Shutdown(shutdownCtx)
+		if err != nil {
+			logger.Error("Error occurred while shutting down GTFS manager", "error", err)
+		}
 	}
 
 	logger.Info("server exited")
