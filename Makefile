@@ -219,3 +219,4 @@ smoketest: build check-k6
 
 stresstest: build check-k6
 	$(call run_load_test,1000,warn,MAGLEV_ENABLE_PPROF=1 ,-e USE_FALLBACKS=true,loadtest/k6/stress-summary.json)
+		
