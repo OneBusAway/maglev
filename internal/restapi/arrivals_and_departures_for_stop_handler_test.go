@@ -1296,8 +1296,6 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Clear the service-IDs cache so the upcoming request sees the newly inserted
-	// calendar entry rather than a result cached by an earlier test in this package.
 	api.GtfsManager.MockClearServiceIDsCache()
 
 	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
