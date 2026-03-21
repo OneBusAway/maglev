@@ -664,11 +664,35 @@ func (rb *referenceBuilder) collectAgenciesAndRoutes() error {
 		return err
 	}
 
+	agencyIDSet := make(map[string]struct{})
 	for _, route := range routes {
 		rb.presentRoutes[route.ID] = rb.createRoute(route)
-		if err := rb.addAgency(route.AgencyID); err != nil {
-			return err
-		}
+		agencyIDSet[route.AgencyID] = struct{}{}
+	}
+
+	uniqueAgencyIDs := make([]string, 0, len(agencyIDSet))
+	for id := range agencyIDSet {
+		uniqueAgencyIDs = append(uniqueAgencyIDs, id)
+	}
+
+	agencies, err := rb.api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(rb.ctx, uniqueAgencyIDs)
+	if err != nil {
+		return err
+	}
+
+	for _, agency := range agencies {
+		rb.presentAgencies[agency.ID] = models.NewAgencyReference(
+			agency.ID,
+			agency.Name,
+			agency.Url,
+			agency.Timezone,
+			agency.Lang.String,
+			agency.Phone.String,
+			agency.Email.String,
+			agency.FareUrl.String,
+			"",
+			false,
+		)
 	}
 	return nil
 }
@@ -687,26 +711,6 @@ func (rb *referenceBuilder) createRoute(route gtfsdb.Route) models.Route {
 
 }
 
-func (rb *referenceBuilder) addAgency(agencyID string) error {
-	agency, err := rb.api.GtfsManager.GtfsDB.Queries.GetAgency(rb.ctx, agencyID)
-	if err != nil {
-		return err
-	}
-
-	rb.presentAgencies[agency.ID] = models.NewAgencyReference(
-		agency.ID,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Lang.String,
-		agency.Phone.String,
-		agency.Email.String,
-		agency.FareUrl.String,
-		"",
-		false,
-	)
-	return nil
-}
 
 func (rb *referenceBuilder) buildTripReferences() error {
 	rb.tripsRefList = make([]models.Trip, 0, len(rb.presentTrips))
