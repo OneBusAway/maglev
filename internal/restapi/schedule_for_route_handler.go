@@ -270,7 +270,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	for sid := range globalStopIDSet {
 		uniqueStopIDs = append(uniqueStopIDs, sid)
 	}
-
+	var entryStops []models.Stop
 	if len(uniqueStopIDs) > 0 {
 		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
@@ -278,6 +278,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		references.Stops = append(references.Stops, modelStops...)
+		entryStops = modelStops // ← CORRECT: = assigns to existing variable
 	}
 
 	for _, sref := range stopTimesRefs {
@@ -289,6 +290,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ScheduleDate:      scheduleDate,
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
+		Stops:             entryStops,
 	}
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }
