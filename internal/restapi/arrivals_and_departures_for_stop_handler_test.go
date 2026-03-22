@@ -1232,6 +1232,7 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	t.Cleanup(api.GtfsManager.MockClearServiceIDsCache)
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -1279,6 +1280,9 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 		EndDate:   "20301231",
 	})
 	require.NoError(t, err)
+	// Invalidate the shared service-IDs cache so the newly inserted calendar
+	// entry is visible even if another test already cached this date.
+	api.GtfsManager.MockClearServiceIDsCache()
 
 	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID:        tripID,
@@ -1299,6 +1303,11 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
 		NoID: true,
 	})
+
+	// The shared test DB's service-ID cache may have been populated by a prior test
+	// for this same date. Clear it so the handler re-queries the DB and picks up the
+	// nilid_service calendar entry inserted above.
+	api.GtfsManager.MockClearServiceIDsCache()
 
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
