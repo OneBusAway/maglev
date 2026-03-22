@@ -1131,3 +1131,34 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "", entry["vehicleId"], "vehicleId should be empty for vehicle with nil ID")
 }
+
+// TestArrivalAndDepartureForStopHandler_AgencyNotFound verifies that the handler
+// returns 404 (not 500) when the stop's agency does not exist in the database.
+// This guards against regression of the sql.ErrNoRows → serverErrorResponse bug.
+func TestArrivalAndDepartureForStopHandler_AgencyNotFound(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	trips := api.GtfsManager.GetTrips()
+	if len(trips) == 0 {
+		t.Skip("No trips available for testing")
+	}
+
+	// Use a real agency's trip ID but a non-existent agency prefix for the stop.
+	realAgency := api.GtfsManager.GetAgencies()[0]
+	tripID := utils.FormCombinedID(realAgency.Id, trips[0].ID)
+	serviceDate := time.Now().Unix() * 1000
+
+	// "nonexistent_agency" does not exist in the DB, so GetAgency will return sql.ErrNoRows.
+	stopID := utils.FormCombinedID("nonexistent_agency", "some_stop_code")
+
+	_, resp, model := serveAndRetrieveEndpoint(t,
+		"/api/where/arrival-and-departure-for-stop/"+stopID+".json?key=TEST&tripId="+tripID+
+			"&serviceDate="+fmt.Sprintf("%d", serviceDate))
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+		"should return 404 when the agency is not found, not 500")
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
+}
+
