@@ -588,10 +588,7 @@ func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) mode
 		}
 	}
 
-	direction := models.UnknownValue
-	if stop.Direction.Valid && stop.Direction.String != "" {
-		direction = stop.Direction.String
-	}
+	direction := rb.api.DirectionCalculator.CalculateStopDirection(rb.ctx, stop.ID, stop.Direction)
 
 	return models.Stop{
 		Code:               utils.NullStringOrEmpty(stop.Code),
