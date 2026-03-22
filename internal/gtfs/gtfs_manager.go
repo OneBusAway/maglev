@@ -147,7 +147,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		attemptsMade = attempt
 		// Attempt to load in-memory static data if we haven't already succeeded
 		if staticData == nil {
-			staticData, err = loadGTFSData(config.GtfsURL, isLocalFile, config)
+			staticData, err = loadGTFSData(ctx, config.GtfsURL, isLocalFile, config)
 			if err != nil {
 				if attempt < maxAttempts {
 					delay := backoffs[attempt-1]
