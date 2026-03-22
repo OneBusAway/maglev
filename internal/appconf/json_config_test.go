@@ -648,6 +648,7 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
 }
 
 func TestToGtfsConfigData_NoDuplicates(t *testing.T) {
+	// Passing unique IDs
 	j := &JSONConfig{
 		GtfsRtFeeds: []GtfsRtFeed{
 			{ID: "feed-1"},
@@ -662,6 +663,7 @@ func TestToGtfsConfigData_NoDuplicates(t *testing.T) {
 }
 
 func TestToGtfsConfigData_DuplicateIDs(t *testing.T) {
+	// Passing duplicate IDs
 	j := &JSONConfig{
 		GtfsRtFeeds: []GtfsRtFeed{
 			{ID: "feed-1"},
