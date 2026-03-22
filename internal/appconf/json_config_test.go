@@ -646,3 +646,31 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
 		assert.Equal(t, "Env-Value", config.GtfsStaticFeed.AuthHeaderValue)
 	})
 }
+
+func TestToGtfsConfigData_NoDuplicates(t *testing.T) {
+	j := &JSONConfig{
+		GtfsRtFeeds: []GtfsRtFeed{
+			{ID: "feed-1"},
+			{ID: "feed-2"},
+		},
+	}
+
+	cfg, err := j.ToGtfsConfigData()
+
+	assert.NoError(t, err)
+	assert.Len(t, cfg.RTFeeds, 2)
+}
+
+func TestToGtfsConfigData_DuplicateIDs(t *testing.T) {
+	j := &JSONConfig{
+		GtfsRtFeeds: []GtfsRtFeed{
+			{ID: "feed-1"},
+			{ID: "feed-1"},
+		},
+	}
+
+	_, err := j.ToGtfsConfigData()
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate feed ID")
+}
