@@ -255,6 +255,110 @@ func TestTripsForLocationMissingBothLatAndLon(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
+func TestTripsForLocationHandler_StopIDsAreCombined(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := "/api/where/trips-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=2.0&lonSpan=3.0&includeSchedule=true"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok, "references should be present")
+
+	stops, ok := refs["stops"].([]interface{})
+	require.True(t, ok, "references.stops should be present")
+
+	for _, s := range stops {
+		stop, ok := s.(map[string]interface{})
+		require.True(t, ok)
+		id, ok := stop["id"].(string)
+		require.True(t, ok, "stop id should be a string")
+		assert.Contains(t, id, "_", "stop ID %q should be in {agencyID}_{rawID} format", id)
+	}
+}
+
+func TestTripsForLocationHandler_AgenciesExistForAllRoutes(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := "/api/where/trips-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=2.0&lonSpan=3.0&includeSchedule=true"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok, "references should be present")
+
+	agencies, ok := refs["agencies"].([]interface{})
+	require.True(t, ok, "references.agencies should be present")
+
+	routes, ok := refs["routes"].([]interface{})
+	require.True(t, ok, "references.routes should be present")
+
+	agencyIDSet := make(map[string]bool, len(agencies))
+	for _, a := range agencies {
+		agency, ok := a.(map[string]interface{})
+		require.True(t, ok)
+		if id, ok := agency["id"].(string); ok {
+			agencyIDSet[id] = true
+		}
+	}
+
+	for _, r := range routes {
+		route, ok := r.(map[string]interface{})
+		require.True(t, ok)
+		agencyID, ok := route["agencyId"].(string)
+		require.True(t, ok, "route should have agencyId")
+		assert.True(t, agencyIDSet[agencyID],
+			"agency %q referenced by route %q must appear in references.agencies",
+			agencyID, route["id"])
+	}
+}
+
+func TestTripsForLocationHandler_StopDirectionsAreStrings(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := "/api/where/trips-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=2.0&lonSpan=3.0&includeSchedule=true"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok, "references should be present")
+
+	stops, ok := refs["stops"].([]interface{})
+	require.True(t, ok, "references.stops should be present")
+
+	require.NotEmpty(t, stops, "expected stops in references to verify directions")
+
+	nonEmptyCount := 0
+	for _, s := range stops {
+		stop, ok := s.(map[string]interface{})
+		require.True(t, ok)
+		_, ok = stop["direction"].(string)
+		assert.True(t, ok, "stop %q direction field should be a string, not absent or null", stop["id"])
+		if dir, _ := stop["direction"].(string); dir != "" {
+			nonEmptyCount++
+		}
+	}
+	assert.Greater(t, nonEmptyCount, 0, "at least some stops should have a non-empty direction from DirectionCalculator")
+}
+
 func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t)
 	defer cleanup()
