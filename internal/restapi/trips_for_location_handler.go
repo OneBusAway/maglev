@@ -573,8 +573,8 @@ func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 			return
 		}
 		combinedRouteIDs := stopRouteMap[stop.ID]
-		if combinedRouteIDs == nil {
-			combinedRouteIDs = []string{}
+		if len(combinedRouteIDs) == 0 {
+			continue
 		}
 		rb.stopList = append(rb.stopList, rb.createStop(stop, combinedRouteIDs))
 	}

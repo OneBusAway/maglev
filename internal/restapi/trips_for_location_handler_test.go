@@ -283,6 +283,34 @@ func TestTripsForLocationHandler_StopIDsAreCombined(t *testing.T) {
 	}
 }
 
+func TestTripsForLocationHandler_OrphanedStopsNotInResponse(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t)
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := "/api/where/trips-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=2.0&lonSpan=3.0&includeSchedule=true"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok, "references should be present")
+
+	stops, ok := refs["stops"].([]interface{})
+	require.True(t, ok, "references.stops should be present")
+
+	for _, s := range stops {
+		stop, ok := s.(map[string]interface{})
+		require.True(t, ok)
+		id, ok := stop["id"].(string)
+		require.True(t, ok, "stop id should be a string")
+		assert.NotEmpty(t, id, "stop with empty ID found in response — orphaned stop slipped through")
+	}
+}
+
 func TestTripsForLocationHandler_AgenciesExistForAllRoutes(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t)
 	defer cleanup()
