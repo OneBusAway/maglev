@@ -168,8 +168,8 @@ func BenchmarkGetAlertsForStop(b *testing.B) {
 func BenchmarkRebuildDuplicatedVehicleByRoute(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips:     make(map[string][]gtfs.Trip),
-		feedVehicles:  make(map[string][]gtfs.Vehicle),
+		feedData:      make(map[string]*FeedData),
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
 	}
 
 	feedTrips := make([]gtfs.Trip, 1000)
@@ -194,20 +194,19 @@ func BenchmarkRebuildDuplicatedVehicleByRoute(b *testing.B) {
 			},
 		}
 	}
-	manager.feedTrips["feed-0"] = feedTrips
-	manager.feedVehicles["feed-0"] = feedVehicles
+	manager.feedData["feed-0"] = &FeedData{Trips: feedTrips, Vehicles: feedVehicles}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.rebuildMergedRealtimeLocked()
+		manager.buildMergedRealtime()
 	}
 }
 
 func BenchmarkGetDuplicatedVehiclesForRoute(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips:     make(map[string][]gtfs.Trip),
-		feedVehicles:  make(map[string][]gtfs.Vehicle),
+		feedData:      make(map[string]*FeedData),
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
 	}
 
 	feedTrips := make([]gtfs.Trip, 1000)
@@ -232,9 +231,8 @@ func BenchmarkGetDuplicatedVehiclesForRoute(b *testing.B) {
 			},
 		}
 	}
-	manager.feedTrips["feed-0"] = feedTrips
-	manager.feedVehicles["feed-0"] = feedVehicles
-	manager.rebuildMergedRealtimeLocked()
+	manager.feedData["feed-0"] = &FeedData{Trips: feedTrips, Vehicles: feedVehicles}
+	manager.buildMergedRealtime()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
