@@ -53,7 +53,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
 		parsed, err := strconv.Atoi(maxCountStr)
-		if err != nil || parsed <= 0 {
+		if err != nil || parsed <= 0 || parsed > 50 {
 			api.validationErrorResponse(w, r, map[string][]string{"maxCount": {"need to be a positive integer"}})
 			return
 		}
