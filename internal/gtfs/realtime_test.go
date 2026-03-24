@@ -1107,16 +1107,16 @@ func TestAlertIndex_RouteStopEntityAlsoIndexedByStop(t *testing.T) {
 
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{
 				{
 					ID:               "alert1",
 					InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID, StopID: &stopID}},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	stopAlerts := manager.GetAlertsForStop(stopID)
 	assert.Len(t, stopAlerts, 1, "route+stop entity should appear in byStop")
@@ -1188,7 +1188,7 @@ func TestMockAddAlert_IndexIsImmediatelySynced(t *testing.T) {
 
 func TestAlertIndex_NilInformedEntitiesExcludedFromAllBuckets(t *testing.T) {
 	// Two different code paths both produce empty buckets:
-	//   - nil InformedEntities: hits the `continue` guard in rebuildMergedRealtimeLocked
+	//   - nil InformedEntities: hits the `continue` guard in buildMergedRealtime
 	//   - non-nil but empty slice: falls through to an inner loop that never executes
 	// Both are tested here to guard against regressions in either branch.
 	manager := &Manager{
@@ -1232,12 +1232,12 @@ func TestAlertIndex_CrossFeedDeduplicationByIDs(t *testing.T) {
 	// buckets. GetAlertsByIDs must still deduplicate by alert ID before returning.
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts: map[string][]gtfs.Alert{
-			"feed-0": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}}}},
-			"feed-1": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{TripID: &tripID}}}},
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Alerts: []gtfs.Alert{{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}}}}},
+			"feed-1": &FeedData{Alerts: []gtfs.Alert{{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{TripID: &tripID}}}}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	alerts := manager.GetAlertsByIDs(tripID.ID, routeID, "")
 	assert.Len(t, alerts, 1, "GetAlertsByIDs deduplicates by alert ID across feeds")
@@ -1362,9 +1362,10 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 
 func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {
 	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
+		realTimeMutex:            sync.RWMutex{},
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Vehicles: []gtfs.Vehicle{
 				{
 					ID: &gtfs.VehicleID{ID: "v1"},
 					Trip: &gtfs.Trip{
@@ -1375,11 +1376,11 @@ func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	result := manager.GetDuplicatedVehiclesForRoute("route-A")
 	require.Len(t, result, 1, "expected exactly one duplicated vehicle")
@@ -1389,34 +1390,35 @@ func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {
 func TestGetDuplicatedVehiclesForRoute_FallbackViaTripUpdate(t *testing.T) {
 	// Vehicle has no route_id in its trip descriptor; the TripUpdate carries it.
 	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
-				{
-					ID: &gtfs.VehicleID{ID: "v2"},
-					Trip: &gtfs.Trip{
-						ID: gtfs.TripID{
-							ID:                   "trip2",
-							RouteID:              "", // omitted in VehiclePosition
-							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+		realTimeMutex:            sync.RWMutex{},
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{
+				Vehicles: []gtfs.Vehicle{
+					{
+						ID: &gtfs.VehicleID{ID: "v2"},
+						Trip: &gtfs.Trip{
+							ID: gtfs.TripID{
+								ID:                   "trip2",
+								RouteID:              "", // omitted in VehiclePosition
+								ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+							},
 						},
 					},
 				},
-			},
-		},
-		feedTrips: map[string][]gtfs.Trip{
-			"feed-0": {
-				{
-					ID: gtfs.TripID{
-						ID:      "trip2",
-						RouteID: "route-B",
+				Trips: []gtfs.Trip{
+					{
+						ID: gtfs.TripID{
+							ID:      "trip2",
+							RouteID: "route-B",
+						},
 					},
 				},
 			},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	result := manager.GetDuplicatedVehiclesForRoute("route-B")
 	require.Len(t, result, 1, "expected exactly one duplicated vehicle matched via trip update fallback")
@@ -1425,9 +1427,10 @@ func TestGetDuplicatedVehiclesForRoute_FallbackViaTripUpdate(t *testing.T) {
 
 func TestGetDuplicatedVehiclesForRoute_ExcludesNonDuplicated(t *testing.T) {
 	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
+		realTimeMutex:            sync.RWMutex{},
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Vehicles: []gtfs.Vehicle{
 				{
 					ID: &gtfs.VehicleID{ID: "v3"},
 					Trip: &gtfs.Trip{
@@ -1448,11 +1451,11 @@ func TestGetDuplicatedVehiclesForRoute_ExcludesNonDuplicated(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	result := manager.GetDuplicatedVehiclesForRoute("route-C")
 	assert.Empty(t, result, "SCHEDULED and CANCELED vehicles must be excluded")
@@ -1460,9 +1463,10 @@ func TestGetDuplicatedVehiclesForRoute_ExcludesNonDuplicated(t *testing.T) {
 
 func TestGetDuplicatedVehiclesForRoute_RebuildClearsStaleIndex(t *testing.T) {
 	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
+		realTimeMutex:            sync.RWMutex{},
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Vehicles: []gtfs.Vehicle{
 				{
 					ID: &gtfs.VehicleID{ID: "v6"},
 					Trip: &gtfs.Trip{
@@ -1473,24 +1477,25 @@ func TestGetDuplicatedVehiclesForRoute_RebuildClearsStaleIndex(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 	require.Len(t, manager.GetDuplicatedVehiclesForRoute("route-E"), 1)
 
-	manager.feedVehicles["feed-0"] = nil
-	manager.rebuildMergedRealtimeLocked()
+	manager.feedData["feed-0"] = &FeedData{}
+	manager.buildMergedRealtime()
 
 	assert.Empty(t, manager.GetDuplicatedVehiclesForRoute("route-E"))
 }
 
 func TestGetDuplicatedVehiclesForRoute_MissingRouteIDWithoutTripUpdate(t *testing.T) {
 	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
+		realTimeMutex:            sync.RWMutex{},
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Vehicles: []gtfs.Vehicle{
 				{
 					ID: &gtfs.VehicleID{ID: "v7"},
 					Trip: &gtfs.Trip{
@@ -1501,11 +1506,11 @@ func TestGetDuplicatedVehiclesForRoute_MissingRouteIDWithoutTripUpdate(t *testin
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	result := manager.GetDuplicatedVehiclesForRoute("route-F")
 	assert.Empty(t, result, "Vehicle without route_id and no matching trip_id should not be included")
@@ -1513,9 +1518,10 @@ func TestGetDuplicatedVehiclesForRoute_MissingRouteIDWithoutTripUpdate(t *testin
 
 func TestGetDuplicatedVehiclesForRoute_MultipleVehiclesSameRoute(t *testing.T) {
 	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
+		realTimeMutex:            sync.RWMutex{},
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Vehicles: []gtfs.Vehicle{
 				{
 					ID: &gtfs.VehicleID{ID: "v8"},
 					Trip: &gtfs.Trip{
@@ -1536,11 +1542,11 @@ func TestGetDuplicatedVehiclesForRoute_MultipleVehiclesSameRoute(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	result := manager.GetDuplicatedVehiclesForRoute("route-G")
 	require.Len(t, result, 2, "all DUPLICATED vehicles for the same route should be retained")
@@ -1550,9 +1556,10 @@ func TestGetDuplicatedVehiclesForRoute_MultipleVehiclesSameRoute(t *testing.T) {
 
 func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
 	manager := &Manager{
-		realTimeMutex: sync.RWMutex{},
-		feedVehicles: map[string][]gtfs.Vehicle{
-			"feed-0": {
+		realTimeMutex:            sync.RWMutex{},
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		feedData: map[string]*FeedData{
+			"feed-0": &FeedData{Vehicles: []gtfs.Vehicle{
 				{
 					ID: &gtfs.VehicleID{ID: "v10"},
 					Trip: &gtfs.Trip{
@@ -1563,10 +1570,10 @@ func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 
 	result := manager.GetDuplicatedVehiclesForRoute("route-unknown")
 
