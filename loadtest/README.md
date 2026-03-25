@@ -22,12 +22,12 @@ While the load test is running, you can capture performance profiles using `ppro
 
 ### CPU Profiling (30 seconds)
 ```bash
-go tool pprof http://localhost:4000/debug/pprof/profile?seconds=30
+go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
 ```
 
 ### Mutex Contention
 ```bash
-go tool pprof http://localhost:4000/debug/pprof/mutex
+go tool pprof http://localhost:6060/debug/pprof/mutex
 ```
 
 ## Note on Test Data
