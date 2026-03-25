@@ -81,7 +81,9 @@ func TestRateLimitMiddleware_LazyEvictionResetsExhaustedLimiters(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
 	// Capture the exhausted limiter
+	middleware.mu.Lock()
 	client, ok := middleware.limiters.Get("exhausted-user")
+	middleware.mu.Unlock()
 	require.True(t, ok)
 	exhaustedLimiter := client.limiter
 	assert.Less(t, exhaustedLimiter.Tokens(), 1.0,
@@ -98,7 +100,9 @@ func TestRateLimitMiddleware_LazyEvictionResetsExhaustedLimiters(t *testing.T) {
 		"Request after lazy eviction of exhausted limiter should succeed")
 
 	// Verify a new limiter was created
+	middleware.mu.Lock()
 	client, ok = middleware.limiters.Get("exhausted-user")
+	middleware.mu.Unlock()
 	require.True(t, ok)
 	assert.NotSame(t, exhaustedLimiter, client.limiter,
 		"Should have received a fresh limiter after idle threshold")
@@ -114,11 +118,14 @@ func TestRateLimitMiddleware_LRUEviction(t *testing.T) {
 	for i := 0; i < maxLRUSize; i++ {
 		middleware.getLimiter(fmt.Sprintf("key-%d", i))
 	}
+	middleware.mu.Lock()
 	assert.Equal(t, maxLRUSize, middleware.limiters.Len(),
 		"Cache should be at capacity")
+	middleware.mu.Unlock()
 
 	// Adding one more should evict the oldest (key-0)
 	middleware.getLimiter("overflow-key")
+	middleware.mu.Lock()
 	assert.Equal(t, maxLRUSize, middleware.limiters.Len(),
 		"Cache should not exceed capacity")
 
@@ -132,6 +139,7 @@ func TestRateLimitMiddleware_LRUEviction(t *testing.T) {
 
 	_, ok = middleware.limiters.Get(fmt.Sprintf("key-%d", maxLRUSize-1))
 	assert.True(t, ok, "Recently used key should still exist")
+	middleware.mu.Unlock()
 }
 
 // TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest verifies lastSeen timestamp is updated on each request.
@@ -150,7 +158,9 @@ func TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	limitedHandler.ServeHTTP(w, req)
 
+	middleware.mu.Lock()
 	client, ok := middleware.limiters.Get("timestamp-test")
+	middleware.mu.Unlock()
 	require.True(t, ok)
 	firstSeenNano := client.lastSeen.Load()
 	firstSeen := time.Unix(0, firstSeenNano)
@@ -163,7 +173,9 @@ func TestRateLimitMiddleware_LastSeenUpdateOnEveryRequest(t *testing.T) {
 	w = httptest.NewRecorder()
 	limitedHandler.ServeHTTP(w, req)
 
+	middleware.mu.Lock()
 	client, ok = middleware.limiters.Get("timestamp-test")
+	middleware.mu.Unlock()
 	require.True(t, ok)
 	secondSeenNano := client.lastSeen.Load()
 	secondSeen := time.Unix(0, secondSeenNano)
@@ -194,10 +206,12 @@ func TestRateLimitMiddleware_ConcurrentGetLimiterReturnsSameInstance(t *testing.
 	wg.Wait()
 
 	// All goroutines should get a valid limiter and the key should exist
-	for i := 0; i < goroutines; i++ {
-		assert.NotNil(t, limiters[i], "All goroutines should get a valid limiter")
+	for i := 1; i < goroutines; i++ {
+		assert.Same(t, limiters[0], limiters[i], "All goroutines should get the same limiter instance")
 	}
 
+	middleware.mu.Lock()
 	_, ok := middleware.limiters.Get("new-key")
+	middleware.mu.Unlock()
 	assert.True(t, ok, "Key should exist in cache after concurrent access")
 }
