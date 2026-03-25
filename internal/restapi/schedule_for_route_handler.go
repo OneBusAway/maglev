@@ -270,8 +270,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	for sid := range globalStopIDSet {
 		uniqueStopIDs = append(uniqueStopIDs, sid)
 	}
+	modelStops := []models.Stop{}
 
 	if len(uniqueStopIDs) > 0 {
+		var err error
 		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
@@ -284,11 +286,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		references.StopTimes = append(references.StopTimes, sref...)
 	}
 
+
 	entry := models.ScheduleForRouteEntry{
 		RouteID:           utils.FormCombinedID(agencyID, routeID),
 		ScheduleDate:      scheduleDate,
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
+		Stops:             modelStops,
 	}
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }
