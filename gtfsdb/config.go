@@ -2,6 +2,7 @@ package gtfsdb
 
 import (
 	"fmt"
+	"time"
 
 	"maglev.onebusaway.org/internal/appconf"
 )
@@ -18,6 +19,14 @@ type Config struct {
 	DBPath  string              // Path to SQLite database file
 	Env     appconf.Environment // Environment name: development, test, production.
 	verbose bool                // Enable verbose logging
+	// Optional recorder for DB query metrics.
+	QueryMetricsRecorder DBQueryMetricsRecorder
+}
+
+// DBQueryMetricsRecorder is a minimal abstraction used to emit per-query metrics
+// without coupling gtfsdb to a specific metrics implementation.
+type DBQueryMetricsRecorder interface {
+	RecordDBQuery(queryName, op string, err error, duration time.Duration)
 }
 
 func NewConfig(dbPath string, env appconf.Environment, verbose bool) Config {

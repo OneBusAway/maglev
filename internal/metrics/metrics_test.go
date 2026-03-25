@@ -23,6 +23,8 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, m.DBConnectionsInUse)
 	assert.NotNil(t, m.DBConnectionsIdle)
 	assert.NotNil(t, m.DBWaitSecondsTotal)
+	assert.NotNil(t, m.DBQueryTotal)
+	assert.NotNil(t, m.DBQueryDuration)
 
 	// GTFS-RT metrics
 	assert.NotNil(t, m.FeedLastSuccessfulFetchTime)
@@ -202,4 +204,27 @@ func TestHTTPMetrics_RecordRequest(t *testing.T) {
 	// Metrics should be accessible without error
 	assert.NotNil(t, m.HTTPRequestsTotal)
 	assert.NotNil(t, m.HTTPRequestDuration)
+}
+
+func TestRecordDBQuery(t *testing.T) {
+	m := New()
+
+	m.RecordDBQuery("GetTrip", "query", nil, 250*time.Millisecond)
+	m.RecordDBQuery("GetTrip", "query", assert.AnError, 500*time.Millisecond)
+	m.RecordDBQuery("", "", nil, 0)
+
+	okTotal := testutil.ToFloat64(m.DBQueryTotal.WithLabelValues("GetTrip", "query", "ok"))
+	errTotal := testutil.ToFloat64(m.DBQueryTotal.WithLabelValues("GetTrip", "query", "error"))
+	unknownTotal := testutil.ToFloat64(m.DBQueryTotal.WithLabelValues("unknown", "unknown", "ok"))
+
+	assert.Equal(t, float64(1), okTotal)
+	assert.Equal(t, float64(1), errTotal)
+	assert.Equal(t, float64(1), unknownTotal)
+
+	assert.GreaterOrEqual(t, testutil.CollectAndCount(m.DBQueryDuration), 1)
+}
+
+func TestRecordDBQuery_NilReceiverNoPanic(t *testing.T) {
+	var m *Metrics
+	m.RecordDBQuery("GetTrip", "query", nil, time.Millisecond)
 }
