@@ -123,14 +123,14 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	var alerts []gtfs.Alert
 	// Invariant: alertIdx only contains alerts with non-empty IDs (rebuildMergedRealtimeLocked
 	// skips any alert where alert.ID == ""), so seen[a.ID] is sufficient for deduplication.
 	addUnique := func(candidates []gtfs.Alert) {
 		for _, a := range candidates {
-			if !seen[a.ID] {
-				seen[a.ID] = true
+			if _, ok := seen[a.ID]; !ok {
+				seen[a.ID] = struct{}{}
 				alerts = append(alerts, a)
 			}
 		}
