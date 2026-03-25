@@ -1059,8 +1059,8 @@ type GetActiveTripsWithNullBlockForRouteParams struct {
 }
 
 // Returns null-block trips whose service window overlaps [time_range_start, time_range_end].
-// Use time_range_start = now - 10 min and time_range_end = now + 30 min to include
-// recently-completed trips and upcoming trips, matching Java OBA behavior.
+// Use time_range_start = now - 30 min and time_range_end = now + 10 min to include
+// recently-completed (running late) trips and upcoming trips, matching Java OBA behavior.
 func (q *Queries) GetActiveTripsWithNullBlockForRoute(ctx context.Context, arg GetActiveTripsWithNullBlockForRouteParams) ([]string, error) {
 	query := getActiveTripsWithNullBlockForRoute
 	var queryParams []interface{}
@@ -1087,6 +1087,57 @@ func (q *Queries) GetActiveTripsWithNullBlockForRoute(ctx context.Context, arg G
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAgenciesByIDs = `-- name: GetAgenciesByIDs :many
+SELECT
+    id, name, url, timezone, lang, phone, fare_url, email
+FROM
+    agencies
+WHERE
+    id IN (/*SLICE:agency_ids*/?)
+`
+
+func (q *Queries) GetAgenciesByIDs(ctx context.Context, agencyIds []string) ([]Agency, error) {
+	query := getAgenciesByIDs
+	var queryParams []interface{}
+	if len(agencyIds) > 0 {
+		for _, v := range agencyIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:agency_ids*/?", strings.Repeat(",?", len(agencyIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:agency_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Agency
+	for rows.Next() {
+		var i Agency
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Url,
+			&i.Timezone,
+			&i.Lang,
+			&i.Phone,
+			&i.FareUrl,
+			&i.Email,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
