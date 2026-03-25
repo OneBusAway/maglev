@@ -1233,6 +1233,9 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
+	// Clear the service-IDs cache so the request sees the newly inserted calendar entry
+	api.GtfsManager.MockClearServiceIDsCache()
+
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
 
