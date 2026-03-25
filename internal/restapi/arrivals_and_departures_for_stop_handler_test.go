@@ -1235,6 +1235,9 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	// Clear the service-IDs cache so that the calendar inserted below is visible,
+	// even if a previous test already cached the result for this date.
+	api.GtfsManager.MockClearServiceIDsCache()
 
 	// Clear the service-IDs cache so the request sees the newly inserted calendar entry
 	api.GtfsManager.MockClearServiceIDsCache()
