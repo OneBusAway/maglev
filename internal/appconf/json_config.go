@@ -270,19 +270,20 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 		EnableGTFSTidy:        j.GtfsStaticFeed.EnableGTFSTidy,
 	}
 
+	seen := make(map[string]struct{})
+
 	for i, feed := range j.GtfsRtFeeds {
 		feedID := feed.ID
 		if feedID == "" {
 			feedID = fmt.Sprintf("feed-%d", i)
 		}
 
-		for _, existingID := range cfg.RTFeeds {
-			if existingID.ID == feedID {
-				return GtfsConfigData{}, fmt.Errorf("duplicate feed ID found: %q", feedID)
-			}
+		if _, exists := seen[feedID]; exists {
+			return GtfsConfigData{}, fmt.Errorf("duplicate feed ID found: %q", feedID)
 		}
+		seen[feedID] = struct{}{}
 
-		headers := make(map[string]string)
+		headers := make(map[string]string, len(feed.Headers))
 		for k, v := range feed.Headers {
 			headers[k] = v
 		}
