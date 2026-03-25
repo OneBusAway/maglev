@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -225,18 +226,33 @@ func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, a
 		}
 	}
 
-	stopsDB, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueStopIDs)
-	if err != nil {
-		return nil, nil, err
+	// Fetch stops and routes in parallel for improved performance
+	var stopsDB []gtfsdb.Stop
+	var allRoutes []gtfsdb.GetRoutesForStopsRow
+	var stopsErr, routesErr error
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		stopsDB, stopsErr = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueStopIDs)
+	}()
+	go func() {
+		defer wg.Done()
+		allRoutes, routesErr = api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, uniqueStopIDs)
+	}()
+	wg.Wait()
+
+	if stopsErr != nil {
+		return nil, nil, stopsErr
 	}
+	if routesErr != nil {
+		return nil, nil, routesErr
+	}
+
 	stopMap := make(map[string]gtfsdb.Stop)
 	for _, stop := range stopsDB {
 		stopMap[stop.ID] = stop
-	}
-
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, uniqueStopIDs)
-	if err != nil {
-		return nil, nil, err
 	}
 
 	routesByStop := make(map[string][]gtfsdb.Route)
