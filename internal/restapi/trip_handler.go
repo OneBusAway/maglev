@@ -71,7 +71,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 	references := models.NewEmptyReferences()
 
 	references.Routes = append(references.Routes, models.NewRoute(
-		utils.FormCombinedID(agencyID, trip.RouteID),
+		utils.FormCombinedID(route.AgencyID, trip.RouteID),
 		route.AgencyID,
 		route.ShortName.String,
 		route.LongName.String,
