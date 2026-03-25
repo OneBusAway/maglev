@@ -35,10 +35,19 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request, loc ...*time
 	// Initialize errors map
 	fieldErrors := make(map[string][]string)
 
+	const maxMinutesAfter = 240
+	const maxMinutesBefore = 60
+
 	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
 		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
-			params.MinutesAfter = minutesAfter
+			if minutesAfter < 0 {
+				fieldErrors["minutesAfter"] = []string{"must be a non-negative integer"}
+			} else if minutesAfter > maxMinutesAfter {
+				params.MinutesAfter = maxMinutesAfter
+			} else {
+				params.MinutesAfter = minutesAfter
+			}
 		} else {
 			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
 		}
@@ -47,7 +56,13 @@ func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request, loc ...*time
 	// Validate minutesBefore
 	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
 		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
-			params.MinutesBefore = minutesBefore
+			if minutesBefore < 0 {
+				fieldErrors["minutesBefore"] = []string{"must be a non-negative integer"}
+			} else if minutesBefore > maxMinutesBefore {
+				params.MinutesBefore = maxMinutesBefore
+			} else {
+				params.MinutesBefore = minutesBefore
+			}
 		} else {
 			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
 		}
