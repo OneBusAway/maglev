@@ -1227,7 +1227,10 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
+	// Use a date distinct from other tests that share the active-service-IDs cache
+	// (e.g. TestPluralArrivals_TripUpdateWithoutVehicle uses 2010-01-01).
+	// A unique date guarantees a cache miss so "nilid_service" is visible on first query.
+	mockClock := clock.NewMockClock(time.Date(2009, 6, 15, 8, 2, 0, 0, loc))
 
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
