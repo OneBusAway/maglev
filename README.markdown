@@ -185,6 +185,7 @@ All basic commands are managed by our Makefile:
 * `make clean` - Delete all build and coverage artifacts.
 * `make coverage` - Test and generate HTML coverage artifacts.
 * `make test` - Run tests.
+* `make load-test` - Run smoketest and stresstest (k6).
 * `make models` - Generate Go code from SQL queries using sqlc.
 * `make watch` - Build and run the app with Air for live reloading.
 * `make update-openapi` - Fetch the latest upstream OpenAPI spec and overwrite `testdata/openapi.yml`.
