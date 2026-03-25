@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/internal/logging"
 )
 
@@ -631,12 +632,27 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 
 	vehicleLookupByTrip := make(map[string]int, len(allVehicles))
 	vehicleLookupByVehicle := make(map[string]int, len(allVehicles))
+	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
 	for i, vehicle := range allVehicles {
 		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
 			vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
 		}
 		if vehicle.ID != nil && vehicle.ID.ID != "" {
 			vehicleLookupByVehicle[vehicle.ID.ID] = i
+		}
+		if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+			continue
+		}
+		routeID := vehicle.Trip.ID.RouteID
+		// Some feeds omit route_id in VehiclePosition trip descriptors.
+		// Fall back to the corresponding TripUpdate to resolve the route.
+		if routeID == "" && vehicle.Trip.ID.ID != "" {
+			if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
+				routeID = allTrips[index].ID.RouteID
+			}
+		}
+		if routeID != "" {
+			duplicatedVehicleByRoute[routeID] = append(duplicatedVehicleByRoute[routeID], vehicle)
 		}
 	}
 	idx := alertIndex{
@@ -689,6 +705,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	manager.realTimeTripLookup = tripLookup
 	manager.realTimeVehicleLookupByTrip = vehicleLookupByTrip
 	manager.realTimeVehicleLookupByVehicle = vehicleLookupByVehicle
+	manager.duplicatedVehicleByRoute = duplicatedVehicleByRoute
 	manager.alertIdx = idx
 }
 

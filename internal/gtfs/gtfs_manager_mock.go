@@ -162,6 +162,7 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeVehicles = nil
 	m.realTimeVehicleLookupByVehicle = make(map[string]int)
 	m.realTimeVehicleLookupByTrip = make(map[string]int)
+	m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
 	m.realTimeTrips = nil
 	m.realTimeTripLookup = make(map[string]int)
 }
