@@ -635,7 +635,7 @@ func buildTripReferences(
 					TripHeadsign:  trip.TripHeadsign,
 					TripShortName: trip.TripShortName,
 					DirectionID:   trip.DirectionID,
-					BlockID:       trip.BlockID,
+					BlockID: utils.FormCombinedID(currentAgency, trip.BlockID),
 					ShapeID:       utils.FormCombinedID(currentAgency, trip.ShapeID),
 					PeakOffPeak:   0,
 					TimeZone:      "",
