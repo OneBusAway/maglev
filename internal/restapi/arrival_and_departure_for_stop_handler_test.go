@@ -654,6 +654,27 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
 }
 
+func TestParseArrivalAndDepartureParams_Bounds(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Negative values should produce validation errors
+	req := httptest.NewRequest("GET", "/test?minutesAfter=-5&minutesBefore=-1", nil)
+	_, errs := api.parseArrivalAndDepartureParams(req)
+	require.NotNil(t, errs)
+	assert.Contains(t, errs, "minutesAfter")
+	assert.Contains(t, errs, "minutesBefore")
+	assert.Equal(t, "must be a non-negative integer", errs["minutesAfter"][0])
+	assert.Equal(t, "must be a non-negative integer", errs["minutesBefore"][0])
+
+	// Out-of-bound values should be clamped to max values
+	req2 := httptest.NewRequest("GET", "/test?minutesAfter=9999&minutesBefore=9999", nil)
+	params, errs2 := api.parseArrivalAndDepartureParams(req2)
+	assert.Nil(t, errs2)
+	assert.Equal(t, 240, params.MinutesAfter)
+	assert.Equal(t, 60, params.MinutesBefore)
+}
+
 func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
