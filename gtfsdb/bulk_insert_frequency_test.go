@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
-    "time"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -105,21 +105,21 @@ func TestBulkInsertFrequencies(t *testing.T) {
 						TripID:      "trip_1",
 						StartTime:   int64(6 * time.Hour), // 6 AM in nanoseconds
 						EndTime:     int64(9 * time.Hour), // 9 AM
-						HeadwaySecs: 600,                   // 10 minutes
+						HeadwaySecs: 600,                  // 10 minutes
 						ExactTimes:  0,
 					},
 					{
 						TripID:      "trip_1",
 						StartTime:   int64(11 * time.Hour), // 11 AM
 						EndTime:     int64(14 * time.Hour), // 2 PM
-						HeadwaySecs: 900,                    // 15 minutes
+						HeadwaySecs: 900,                   // 15 minutes
 						ExactTimes:  0,
 					},
 					{
 						TripID:      "trip_1",
 						StartTime:   int64(16 * time.Hour), // 4 PM
 						EndTime:     int64(19 * time.Hour), // 7 PM
-						HeadwaySecs: 600,                    // 10 minutes
+						HeadwaySecs: 600,                   // 10 minutes
 						ExactTimes:  1,
 					},
 				}
