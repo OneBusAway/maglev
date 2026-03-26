@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -247,6 +248,92 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Batch-fetch frequencies for all trips contributing to this schedule
+	var freqsByTrip map[string][]gtfsdb.Frequency
+	if len(tripIDs) > 0 {
+		allFreqs, freqErr := api.GtfsManager.GetFrequenciesForTrips(ctx, tripIDs)
+		if freqErr != nil {
+			api.Logger.Warn("failed to batch fetch frequencies for schedule-for-stop", "error", freqErr)
+		}
+		if len(allFreqs) > 0 {
+			freqsByTrip = gtfsInternal.GroupFrequenciesByTrip(allFreqs)
+		}
+	}
+	if freqsByTrip == nil {
+		freqsByTrip = make(map[string][]gtfsdb.Frequency)
+	}
+
+	// Track which trips belong to which routes (for frequency enrichment)
+	tripRouteMap := make(map[string]string)
+	tripServiceMap := make(map[string]string)
+	for _, row := range scheduleRows {
+		tripRouteMap[row.TripID] = row.RouteID
+		tripServiceMap[row.TripID] = row.ServiceID
+	}
+
+	startOfDay := time.UnixMilli(date).In(loc)
+
+	// For exact_times=1 trips, expand stop times at each headway interval
+	for _, row := range scheduleRows {
+		freqs, hasFreqs := freqsByTrip[row.TripID]
+		if !hasFreqs {
+			continue
+		}
+		for _, freq := range freqs {
+			if freq.ExactTimes != 1 {
+				continue
+			}
+			combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
+			combinedTripID := utils.FormCombinedID(agencyID, row.TripID)
+
+			// Expand: create a virtual stop-time at each headway offset within the frequency window
+			headwayNanos := freq.HeadwaySecs * int64(time.Second)
+			if headwayNanos <= 0 {
+				continue
+			}
+			for depBase := freq.StartTime; depBase < freq.EndTime; depBase += headwayNanos {
+				shift := depBase - row.ArrivalTime
+				if shift == 0 {
+					continue // The original stop time already covers this
+				}
+				arrTimeMs := startOfDay.Add(time.Duration(row.ArrivalTime + shift)).UnixMilli()
+				depTimeMs := startOfDay.Add(time.Duration(row.DepartureTime + shift)).UnixMilli()
+				expandedST := models.NewScheduleStopTime(
+					arrTimeMs, depTimeMs,
+					utils.FormCombinedID(agencyID, row.ServiceID),
+					row.StopHeadsign.String,
+					combinedTripID,
+				)
+				routeScheduleMap[combinedRouteID] = append(routeScheduleMap[combinedRouteID], expandedST)
+			}
+		}
+	}
+
+	// Build ScheduleFrequency entries for each route from exact_times=0 trips
+	routeScheduleFreqs := make(map[string][]models.ScheduleFrequency)
+	for tripID, freqs := range freqsByTrip {
+		routeID, ok := tripRouteMap[tripID]
+		if !ok {
+			continue
+		}
+		combinedRouteID := utils.FormCombinedID(agencyID, routeID)
+		serviceID := tripServiceMap[tripID]
+		for _, freq := range freqs {
+			if freq.ExactTimes != 0 {
+				continue
+			}
+			sf := models.ScheduleFrequency{
+				ServiceDate: date,
+				StartTime:   startOfDay.Add(time.Duration(freq.StartTime)).UnixMilli(),
+				EndTime:     startOfDay.Add(time.Duration(freq.EndTime)).UnixMilli(),
+				Headway:     int(freq.HeadwaySecs),
+				ServiceID:   utils.FormCombinedID(agencyID, serviceID),
+				TripID:      utils.FormCombinedID(agencyID, tripID),
+			}
+			routeScheduleFreqs[combinedRouteID] = append(routeScheduleFreqs[combinedRouteID], sf)
+		}
+	}
+
 	// Build the route schedules
 	var routeSchedules []models.StopRouteSchedule
 	for routeID, stopTimes := range routeScheduleMap {
@@ -262,7 +349,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, nil)
+		directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, routeScheduleFreqs[routeID])
 		routeSchedule := models.NewStopRouteSchedule(routeID, []models.StopRouteDirectionSchedule{directionSchedule})
 		routeSchedules = append(routeSchedules, routeSchedule)
 	}
