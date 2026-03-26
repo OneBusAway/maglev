@@ -512,7 +512,9 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 	t.Logf("Loaded %d real-time vehicles", len(realTimeVehicles))
 
 	// Debug vehicle-to-agency matching
+	api.GtfsManager.RLock()
 	vehiclesForAgency := api.GtfsManager.VehiclesForAgencyID(agencyId)
+	api.GtfsManager.RUnlock()
 	t.Logf("Found %d vehicles for agency %s", len(vehiclesForAgency), agencyId)
 
 	if len(realTimeVehicles) > 0 && len(vehiclesForAgency) == 0 {

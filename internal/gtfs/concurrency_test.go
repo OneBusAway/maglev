@@ -231,7 +231,9 @@ func TestConcurrentVehicleUpdates(t *testing.T) {
 				case <-done:
 					return
 				default:
+					manager.RLock()
 					_ = manager.VehiclesForAgencyID("test")
+					manager.RUnlock()
 					time.Sleep(time.Microsecond)
 				}
 			}

@@ -629,19 +629,18 @@ func (manager *Manager) GetStopsForLocation(
 }
 
 // VehiclesForAgencyID returns all real-time vehicles serving routes that belong
-// to the given agency. It manages its own locking internally; callers must NOT
-// hold any Manager locks.
+// to the given agency.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+// The method acquires the real-time lock internally while reading vehicles.
 func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
-	// Step 1: Acquire static lock, collect route IDs, then release.
-	manager.staticMutex.RLock()
+	// Step 1: Get route IDs for the agency from static data.
 	routes := manager.RoutesForAgencyID(agencyID)
 	routeIDs := make(map[string]bool, len(routes))
 	for _, route := range routes {
 		routeIDs[route.Id] = true
 	}
-	manager.staticMutex.RUnlock()
 
-	// Step 2: Acquire real-time lock independently to read vehicles.
+	// Step 2: Get real-time vehicles and filter by route IDs.
 	rtVehicles := manager.GetRealTimeVehicles()
 
 	var vehicles []gtfs.Vehicle
