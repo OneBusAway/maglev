@@ -50,11 +50,11 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	limit := 50
+	limit := 20
 	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
 		parsed, err := strconv.Atoi(maxCountStr)
-		if err != nil || parsed <= 0 || parsed > 50 {
-			api.validationErrorResponse(w, r, map[string][]string{"maxCount": {"need to be a positive integer"}})
+		if err != nil || parsed <= 0 {
+			api.validationErrorResponse(w, r, map[string][]string{"maxCount": {"must be a positive integer"}})
 			return
 		}
 		limit = parsed

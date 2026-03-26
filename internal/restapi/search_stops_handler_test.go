@@ -226,7 +226,7 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 	}{
 		{"zero", "0", http.StatusBadRequest},
 		{"negative", "-1", http.StatusBadRequest},
-		{"tooLarge", "101", http.StatusBadRequest},
+		{"largeRequest", "101", http.StatusOK},
 		{"invalid string", "abc", http.StatusBadRequest},
 	}
 	for _, tt := range tests {
