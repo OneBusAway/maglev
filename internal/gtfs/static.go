@@ -361,6 +361,13 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.regionBounds = newRegionBounds
 
+	// Refresh the direction calculator's queries pointer so on-demand lookups
+	// use the new database. This also clears the direction result cache so stale
+	// entries from the old database are not served.
+	if manager.DirectionCalculator != nil {
+		manager.DirectionCalculator.UpdateQueries(client.Queries)
+	}
+
 	// Note: the epoch is incremented after GtfsDB is assigned. A narrow race exists where
 	// a reader snapshots epochBefore, then reads the new DB pointer (already live), queries
 	// the new DB, and writes to the cache before the epoch advances — only for this clear
