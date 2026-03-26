@@ -16,13 +16,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	api.GtfsManager.RLock()
+	defer api.GtfsManager.RUnlock()
+
 	ctx := r.Context()
 
-	// Acquire static lock only for the agency lookup; release immediately.
-	// VehiclesForAgencyID manages its own locking internally.
-	api.GtfsManager.RLock()
 	agency := api.GtfsManager.FindAgency(id)
-	api.GtfsManager.RUnlock()
 
 	if agency == nil {
 		// return an empty list response.
