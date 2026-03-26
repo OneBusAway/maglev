@@ -286,7 +286,7 @@ func TestComputeFromShapes_NoShapeData(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// Test with a non-existent stop
-	direction := calc.computeFromShapes(ctx, "nonexistent")
+	direction, _ := calc.computeFromShapes(ctx, "nonexistent")
 	assert.Equal(t, "", direction)
 }
 
@@ -296,7 +296,7 @@ func TestComputeFromShapes_SingleOrientation(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// Test with actual stop data - single orientation path will be taken if only one trip
-	direction := calc.computeFromShapes(ctx, "7000")
+	direction, _ := calc.computeFromShapes(ctx, "7000")
 	// Direction should be valid or empty
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
@@ -314,7 +314,7 @@ func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test with a stop that might have multiple trips
-	direction := calc.computeFromShapes(ctx, "7000")
+	direction, _ := calc.computeFromShapes(ctx, "7000")
 	// With low threshold, high variance might return empty
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
