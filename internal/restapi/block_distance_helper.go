@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/gtfsdb"
 )
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, targetStopID string, vehicle *gtfs.Vehicle, serviceDate time.Time) float64 {
+func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, targetStopID string, vehicle *gtfs.Vehicle, serviceDate time.Time, cache *DistanceHelperCache) float64 {
 	if vehicle == nil || vehicle.Position == nil || vehicle.Trip == nil {
 		return 0
 	}
@@ -19,8 +20,8 @@ func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, ta
 	if err != nil || !blockID.Valid || blockID.String == "" {
 		// Fallback to single trip logic if no block
 		if vehicle.Trip.ID.ID == targetTripID {
-			targetDist := api.getStopDistanceAlongShape(ctx, targetTripID, targetStopID)
-			vehicleDist := api.getVehicleDistanceAlongShapeContextual(ctx, targetTripID, vehicle)
+			targetDist := api.getStopDistanceAlongShape(ctx, targetTripID, targetStopID, cache)
+			vehicleDist := api.getVehicleDistanceAlongShapeContextual(ctx, targetTripID, vehicle, cache)
 			return targetDist - vehicleDist
 		}
 		return 0
@@ -44,7 +45,12 @@ func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, ta
 			continue
 		}
 
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, blockTrip.ID)
+		var stopTimes []gtfsdb.StopTime
+		if cache != nil && cache.stopTimesByTrip[blockTrip.ID] != nil {
+			stopTimes = cache.stopTimesByTrip[blockTrip.ID]
+		} else {
+			stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, blockTrip.ID)
+		}
 		if err != nil || len(stopTimes) == 0 {
 			continue
 		}
@@ -56,10 +62,20 @@ func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, ta
 			}
 		}
 
-		shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, blockTrip.ID)
+		var shapeRows []gtfsdb.Shape
+		var shapePoints []gtfs.ShapePoint
+		if cache != nil && cache.shapePointsByTrip[blockTrip.ID] != nil {
+			cachedShapeRows := cache.shapePointsByTrip[blockTrip.ID]
+			shapePoints = shapePointsRowsToPoints(cachedShapeRows)
+		} else {
+			shapeRows, _ = api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, blockTrip.ID)
+			if len(shapeRows) > 1 {
+				shapePoints = shapeRowsToPoints(shapeRows)
+			}
+		}
+
 		totalDist := 0.0
-		if len(shapeRows) > 1 {
-			shapePoints := shapeRowsToPoints(shapeRows)
+		if len(shapePoints) > 1 {
 			totalDist = preCalculateCumulativeDistances(shapePoints)[len(shapePoints)-1]
 		}
 
@@ -80,11 +96,11 @@ func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, ta
 
 	for _, trip := range activeTrips {
 		if trip.TripID == vehicle.Trip.ID.ID {
-			vehicleDist := api.getVehicleDistanceAlongShapeContextual(ctx, trip.TripID, vehicle)
+			vehicleDist := api.getVehicleDistanceAlongShapeContextual(ctx, trip.TripID, vehicle, cache)
 			vehicleBlockDist = cumulativeDist + vehicleDist
 		}
 		if trip.TripID == targetTripID {
-			targetDist := api.getStopDistanceAlongShape(ctx, trip.TripID, targetStopID)
+			targetDist := api.getStopDistanceAlongShape(ctx, trip.TripID, targetStopID, cache)
 			targetBlockDist = cumulativeDist + targetDist
 		}
 

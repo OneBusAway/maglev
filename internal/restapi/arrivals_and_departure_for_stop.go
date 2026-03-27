@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -269,6 +270,83 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			}
 		}
 	}
+	// Batch-fetch block data for DistanceHelperCache
+	distanceHelperCache := &DistanceHelperCache{
+		stopTimesByTrip:   make(map[string][]gtfsdb.StopTime),
+		shapePointsByTrip: make(map[string][]gtfsdb.GetShapePointsByTripIDsRow),
+	}
+
+	if len(uniqueTripIDs) > 0 {
+		blockTripMappings, err := api.GtfsManager.GtfsDB.Queries.GetBlockIDsByTripIDs(ctx, uniqueTripIDs)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch block IDs for caching", slog.Any("error", err))
+		} else {
+			uniqueBlockIDsMap := make(map[string]bool)
+			for _, m := range blockTripMappings {
+				if m.BlockID.Valid && m.BlockID.String != "" {
+					uniqueBlockIDsMap[m.BlockID.String] = true
+				}
+			}
+
+			if len(uniqueBlockIDsMap) > 0 {
+				uniqueBlockIDs := make([]sql.NullString, 0, len(uniqueBlockIDsMap))
+				for bid := range uniqueBlockIDsMap {
+					uniqueBlockIDs = append(uniqueBlockIDs, sql.NullString{String: bid, Valid: true})
+				}
+
+				// re-collect active service IDs
+				activeServiceIDSet := make(map[string]bool)
+				for _, ast := range allActiveStopTimes {
+					activeServiceIDSet[ast.ServiceID] = true
+				}
+				activeServiceIDsArray := make([]string, 0, len(activeServiceIDSet))
+				for sid := range activeServiceIDSet {
+					activeServiceIDsArray = append(activeServiceIDsArray, sid)
+				}
+
+				blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+					BlockIds:   uniqueBlockIDs,
+					ServiceIds: activeServiceIDsArray,
+				})
+
+				if err == nil {
+					blockTripIDsMap := make(map[string]bool)
+					for _, bt := range blockTrips {
+						blockTripIDsMap[bt.ID] = true
+					}
+
+					blockTripIDs := make([]string, 0, len(blockTripIDsMap))
+					for tid := range blockTripIDsMap {
+						blockTripIDs = append(blockTripIDs, tid)
+					}
+
+					if len(blockTripIDs) > 0 {
+						stForBlocks, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, blockTripIDs)
+						if err == nil {
+							for _, st := range stForBlocks {
+								distanceHelperCache.stopTimesByTrip[st.TripID] = append(distanceHelperCache.stopTimesByTrip[st.TripID], st)
+							}
+						} else {
+							api.Logger.Warn("failed to batch fetch stop times for block trips", slog.Any("error", err))
+						}
+
+						spForBlocks, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripIDs(ctx, blockTripIDs)
+						if err == nil {
+							for _, sp := range spForBlocks {
+								distanceHelperCache.shapePointsByTrip[sp.TripID] = append(distanceHelperCache.shapePointsByTrip[sp.TripID], sp)
+							}
+						} else {
+							api.Logger.Warn("failed to batch fetch shape points for block trips", slog.Any("error", err))
+						}
+					}
+				} else {
+					api.Logger.Warn("failed to batch fetch trips by block IDs for caching", slog.Any("error", err))
+				}
+			}
+		}
+	}
+
+	missingActiveTripIDs := make(map[string]bool)
 
 	for _, ast := range allActiveStopTimes {
 		st := ast.GetStopTimesForStopInWindowRow
@@ -367,9 +445,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				}
 
 				if vehicle.Position != nil {
-					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, params.Time)
+					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, serviceMidnight, distanceHelperCache)
 
-					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, params.Time)
+					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, serviceMidnight)
 					if numberOfStopsAwayPtr != nil {
 						numberOfStopsAway = *numberOfStopsAwayPtr
 					} else {
@@ -381,24 +459,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				if status.ActiveTripID != "" {
 					_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 					if err == nil && activeTripID != st.TripID {
-						// Check cache for active trip
+						// Deferred fetch: just record that we need this trip
 						if _, exists := tripIDSet[activeTripID]; !exists {
-							activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
-							if err != nil {
-								api.Logger.Debug("skipping active trip reference: trip not found",
-									slog.String("activeTripID", activeTripID),
-									slog.String("scheduledTripID", st.TripID),
-									slog.Any("error", err))
-							} else {
-								tripIDSet[activeTrip.ID] = &activeTrip
-								activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
-								if err == nil {
-									routeIDSet[activeRoute.ID] = &activeRoute
-								} else {
-									api.Logger.Warn("failed to fetch route for active trip reference",
-										"tripID", activeTripID, "routeID", activeTrip.RouteID, "error", err)
-								}
-							}
+							missingActiveTripIDs[activeTripID] = true
 						}
 					}
 				}
@@ -468,6 +531,49 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		)
 
 		arrivals = append(arrivals, *arrival)
+	}
+
+	// Batch-fetch missing active trips
+	if len(missingActiveTripIDs) > 0 {
+		tripIDsToFetch := make([]string, 0, len(missingActiveTripIDs))
+		for tid := range missingActiveTripIDs {
+			tripIDsToFetch = append(tripIDsToFetch, tid)
+		}
+
+		fetchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
+		if err == nil {
+			for i := range fetchedTrips {
+				trip := fetchedTrips[i]
+				tripIDSet[trip.ID] = &trip
+			}
+		} else {
+			api.Logger.Warn("failed to batch fetch active trips", slog.Any("error", err))
+		}
+	}
+
+	// Batch-fetch missing routes for both the scheduled trips and the newly added active trips
+	missingRouteIDs := make(map[string]bool)
+	for _, trip := range tripIDSet {
+		if _, exists := routeIDSet[trip.RouteID]; !exists {
+			missingRouteIDs[trip.RouteID] = true
+		}
+	}
+
+	if len(missingRouteIDs) > 0 {
+		routeIDsToFetch := make([]string, 0, len(missingRouteIDs))
+		for rid := range missingRouteIDs {
+			routeIDsToFetch = append(routeIDsToFetch, rid)
+		}
+
+		fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDsToFetch)
+		if err == nil {
+			for i := range fetchedRoutes {
+				route := fetchedRoutes[i]
+				routeIDSet[route.ID] = &route
+			}
+		} else {
+			api.Logger.Warn("failed to batch fetch missing routes", slog.Any("error", err))
+		}
 	}
 
 	for _, trip := range tripIDSet {
