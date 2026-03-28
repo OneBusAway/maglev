@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 )
 
 // Benchmark for map rebuild optimization
@@ -161,5 +162,82 @@ func BenchmarkGetAlertsForStop(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = manager.GetAlertsForStop(fmt.Sprintf("stop_%d", i%1000))
+	}
+}
+
+func BenchmarkRebuildDuplicatedVehicleByRoute(b *testing.B) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedTrips:     make(map[string][]gtfs.Trip),
+		feedVehicles:  make(map[string][]gtfs.Vehicle),
+	}
+
+	feedTrips := make([]gtfs.Trip, 1000)
+	feedVehicles := make([]gtfs.Vehicle, 1000)
+	for i := 0; i < 1000; i++ {
+		tripID := fmt.Sprintf("trip_%d", i)
+		routeID := fmt.Sprintf("route_%d", i%100)
+		feedTrips[i] = gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:      tripID,
+				RouteID: routeID,
+			},
+		}
+		feedVehicles[i] = gtfs.Vehicle{
+			ID: &gtfs.VehicleID{ID: fmt.Sprintf("vehicle_%d", i)},
+			Trip: &gtfs.Trip{
+				ID: gtfs.TripID{
+					ID:                   tripID,
+					RouteID:              routeID,
+					ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+				},
+			},
+		}
+	}
+	manager.feedTrips["feed-0"] = feedTrips
+	manager.feedVehicles["feed-0"] = feedVehicles
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		manager.rebuildMergedRealtimeLocked()
+	}
+}
+
+func BenchmarkGetDuplicatedVehiclesForRoute(b *testing.B) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedTrips:     make(map[string][]gtfs.Trip),
+		feedVehicles:  make(map[string][]gtfs.Vehicle),
+	}
+
+	feedTrips := make([]gtfs.Trip, 1000)
+	feedVehicles := make([]gtfs.Vehicle, 1000)
+	for i := 0; i < 1000; i++ {
+		tripID := fmt.Sprintf("trip_%d", i)
+		routeID := fmt.Sprintf("route_%d", i%100)
+		feedTrips[i] = gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:      tripID,
+				RouteID: routeID,
+			},
+		}
+		feedVehicles[i] = gtfs.Vehicle{
+			ID: &gtfs.VehicleID{ID: fmt.Sprintf("vehicle_%d", i)},
+			Trip: &gtfs.Trip{
+				ID: gtfs.TripID{
+					ID:                   tripID,
+					RouteID:              routeID,
+					ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+				},
+			},
+		}
+	}
+	manager.feedTrips["feed-0"] = feedTrips
+	manager.feedVehicles["feed-0"] = feedVehicles
+	manager.rebuildMergedRealtimeLocked()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = manager.GetDuplicatedVehiclesForRoute(fmt.Sprintf("route_%d", i%100))
 	}
 }

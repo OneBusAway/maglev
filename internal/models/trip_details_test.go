@@ -23,7 +23,7 @@ func TestNewTripDetails(t *testing.T) {
 		TimeZone:       "America/Los_Angeles",
 	}
 
-	tripID := "trip_123"
+	tripID := trip.ID
 	serviceDate := int64(1609459200000)
 
 	frequency := &Frequency{
@@ -50,7 +50,7 @@ func TestNewTripDetails(t *testing.T) {
 
 	situationIDs := []string{"situation_1", "situation_2"}
 
-	tripDetails := NewTripDetails(trip, tripID, serviceDate, frequency, status, schedule, situationIDs)
+	tripDetails := NewTripDetails(tripID, serviceDate, frequency, status, schedule, situationIDs)
 
 	assert.Equal(t, tripID, tripDetails.TripID)
 	assert.Equal(t, serviceDate, tripDetails.ServiceDate)
@@ -121,9 +121,9 @@ func TestTripDetailsJSON(t *testing.T) {
 func TestTripDetailsWithNilValues(t *testing.T) {
 	trip := Trip{ID: "trip_123"}
 
-	tripDetails := NewTripDetails(trip, "trip_123", 1609459200000, nil, nil, nil, nil)
+	tripDetails := NewTripDetails(trip.ID, 1609459200000, nil, nil, nil, nil)
 
-	assert.Equal(t, "trip_123", tripDetails.TripID)
+	assert.Equal(t, trip.ID, tripDetails.TripID)
 	assert.Equal(t, int64(1609459200000), tripDetails.ServiceDate)
 	assert.Nil(t, tripDetails.Frequency)
 	assert.Nil(t, tripDetails.Status)

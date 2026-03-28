@@ -120,15 +120,14 @@ Example `config.json`:
 }
 ```
 
-**Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will error if you try to use both.
+**Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will return an error if you try to use both.
 
 **Dump Current Configuration:**
 
 ```bash
-./bin/maglev --dump-config > my-config.json
+./bin/maglev -dump-config > my-config.json
 # or with other flags
-./bin/maglev -port 8080 -env production --dump-config > config.json
-
+./bin/maglev -port 8080 -env production -dump-config > config.json
 ```
 
 **JSON Schema & IDE Integration:**
@@ -149,15 +148,17 @@ A JSON schema file is provided at `config.schema.json` for IDE autocomplete and 
 
 | Option             | Type    | Default         | Description                                 |
 | ------------------ | ------- | --------------- | ------------------------------------------- |
-| `port`             | integer | 4000            | API server port                             |
-| `env`              | string  | "development"   | Environment (development, test, production) |
-| `api-keys`         | array   | ["test"]        | API keys for authentication                 |
-| `log-level`        | string  | "info"          | Log level (debug, info, warn, error)        |
-| `log-format`       | string  | "text"          | Log format (text, json)                     |
-| `rate-limit`       | integer | 100             | Requests per second per API key             |
-| `gtfs-static-feed` | object  | (Sound Transit) | Static GTFS feed configuration              |
-| `gtfs-rt-feeds`    | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
-| `data-path`        | string  | "./gtfs.db"     | Path to SQLite database                     |
+| `port`               | integer | 4000            | API server port                             |
+| `env`                | string  | "development"   | Environment (development, test, production) |
+| `api-keys`           | array   | ["test"]        | API keys for authentication                 |
+| `protected-api-keys` | array   | (test keys)     | Secret API keys for sensitive endpoints     |
+| `exempt-api-keys`    | array   | (Sound Transit) | API keys exempt from rate limiting          |
+| `log-level`          | string  | "info"          | Log level (debug, info, warn, error)        |
+| `log-format`         | string  | "text"          | Log format (text, json)                     |
+| `rate-limit`         | integer | 100             | Requests per second per API key             |
+| `gtfs-static-feed`   | object  | (Sound Transit) | Static GTFS feed configuration              |
+| `gtfs-rt-feeds`      | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
+| `data-path`          | string  | "./gtfs.db"     | Path to SQLite database                     |
 
 #### GTFS-RT Feed Options
 
@@ -170,9 +171,11 @@ Each entry in the `gtfs-rt-feeds` array supports:
 | `trip-updates-url`      | string  | `""`                             | URL for GTFS-RT trip updates protobuf                                                                                                                                                                                                      |
 | `vehicle-positions-url` | string  | `""`                             | URL for GTFS-RT vehicle positions protobuf                                                                                                                                                                                                 |
 | `service-alerts-url`    | string  | `""`                             | URL for GTFS-RT service alerts protobuf                                                                                                                                                                                                    |
-| `headers`               | object  | `{}`                             | HTTP headers sent with every request to this feed                                                                                                                                                                                          |
-| `refresh-interval`      | integer | `30`                             | Polling interval in seconds                                                                                                                                                                                                                |
-| `enabled`               | boolean | `true`                           | Set to `false` to disable polling without removing the entry                                                                                                                                                                               |
+| `realtime-auth-header-name`  | string  | `""`                             | Optional header name for GTFS-RT auth (legacy)                                                                                                                                                                                             |
+| `realtime-auth-header-value` | string  | `""`                             | Optional header value for GTFS-RT auth (legacy)                                                                                                                                                                                            |
+| `headers`                    | object  | `{}`                             | HTTP headers sent with every request to this feed                                                                                                                                                                                          |
+| `refresh-interval`           | integer | `30`                             | Polling interval in seconds                                                                                                                                                                                                                |
+| `enabled`                    | boolean | `true`                           | Set to `false` to disable polling without removing the entry                                                                                                                                                                               |
 
 A feed must have at least one URL (`trip-updates-url`, `vehicle-positions-url`, or `service-alerts-url`) to be activated. Each feed runs its own independent polling goroutine. Data from all enabled feeds is merged into a single unified view for the API.
 
@@ -185,6 +188,7 @@ All basic commands are managed by our Makefile:
 * `make clean` - Delete all build and coverage artifacts.
 * `make coverage` - Test and generate HTML coverage artifacts.
 * `make test` - Run tests.
+* `make load-test` - Run smoketest and stresstest (k6).
 * `make models` - Generate Go code from SQL queries using sqlc.
 * `make watch` - Build and run the app with Air for live reloading.
 * `make update-openapi` - Fetch the latest upstream OpenAPI spec and overwrite `testdata/openapi.yml`.
@@ -477,5 +481,5 @@ curl http://localhost:4000/healthz
 
 **Permission issues:**
 
-* The container runs as non-root user (maglev:1000).
+* The container runs as a non-root user (maglev:1000).
 * Ensure mounted volumes are accessible.

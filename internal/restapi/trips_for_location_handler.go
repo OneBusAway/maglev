@@ -573,23 +573,27 @@ func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
 			return
 		}
 		combinedRouteIDs := stopRouteMap[stop.ID]
-		if combinedRouteIDs == nil {
-			combinedRouteIDs = []string{}
+		if len(combinedRouteIDs) == 0 {
+			continue
 		}
 		rb.stopList = append(rb.stopList, rb.createStop(stop, combinedRouteIDs))
 	}
 }
 
 func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) models.Stop {
-	direction := models.UnknownValue
-	if stop.Direction.Valid && stop.Direction.String != "" {
-		direction = stop.Direction.String
+	agencyID := ""
+	if len(routeIds) > 0 {
+		if id, err := utils.ExtractAgencyID(routeIds[0]); err == nil {
+			agencyID = id
+		}
 	}
+
+	direction := rb.api.DirectionCalculator.CalculateStopDirection(rb.ctx, stop.ID, stop.Direction)
 
 	return models.Stop{
 		Code:               utils.NullStringOrEmpty(stop.Code),
 		Direction:          direction,
-		ID:                 stop.ID,
+		ID:                 utils.FormCombinedID(agencyID, stop.ID),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		LocationType:       0,
@@ -657,11 +661,35 @@ func (rb *referenceBuilder) collectAgenciesAndRoutes() error {
 		return err
 	}
 
+	agencyIDSet := make(map[string]struct{})
 	for _, route := range routes {
 		rb.presentRoutes[route.ID] = rb.createRoute(route)
-		if err := rb.addAgency(route.AgencyID); err != nil {
-			return err
-		}
+		agencyIDSet[route.AgencyID] = struct{}{}
+	}
+
+	uniqueAgencyIDs := make([]string, 0, len(agencyIDSet))
+	for id := range agencyIDSet {
+		uniqueAgencyIDs = append(uniqueAgencyIDs, id)
+	}
+
+	agencies, err := rb.api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(rb.ctx, uniqueAgencyIDs)
+	if err != nil {
+		return err
+	}
+
+	for _, agency := range agencies {
+		rb.presentAgencies[agency.ID] = models.NewAgencyReference(
+			agency.ID,
+			agency.Name,
+			agency.Url,
+			agency.Timezone,
+			agency.Lang.String,
+			agency.Phone.String,
+			agency.Email.String,
+			agency.FareUrl.String,
+			"",
+			false,
+		)
 	}
 	return nil
 }
@@ -680,26 +708,6 @@ func (rb *referenceBuilder) createRoute(route gtfsdb.Route) models.Route {
 
 }
 
-func (rb *referenceBuilder) addAgency(agencyID string) error {
-	agency, err := rb.api.GtfsManager.GtfsDB.Queries.GetAgency(rb.ctx, agencyID)
-	if err != nil {
-		return err
-	}
-
-	rb.presentAgencies[agency.ID] = models.NewAgencyReference(
-		agency.ID,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Lang.String,
-		agency.Phone.String,
-		agency.Email.String,
-		agency.FareUrl.String,
-		"",
-		false,
-	)
-	return nil
-}
 
 func (rb *referenceBuilder) buildTripReferences() error {
 	rb.tripsRefList = make([]models.Trip, 0, len(rb.presentTrips))

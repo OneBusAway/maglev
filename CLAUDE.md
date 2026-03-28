@@ -21,6 +21,7 @@ All commands are managed through the Makefile:
 - `make run` - Build and run the server with config from `config.json`
 - `make build` - Build the application binary to `bin/maglev`
 - `make test` - Run all tests
+- `make load-test` - Run smoketest and stresstest (k6)
 - `make lint` - Run golangci-lint (requires: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
 - `make coverage` - Generate test coverage report with HTML output
 - `make coverage-report` - Output per-package test coverage as JSON for CI parsing (requires jq)
@@ -39,7 +40,11 @@ All commands are managed through the Makefile:
 
 ## Load Testing and Profiling
 
-See `loadtest/README.md`. Start with pprof enabled: `MAGLEV_ENABLE_PPROF=1 make run`, then run `k6 run loadtest/k6/scenarios.js`. Capture CPU profiles with `go tool pprof http://localhost:4000/debug/pprof/profile?seconds=30`.
+See `loadtest/README.md`. Start with pprof enabled: `MAGLEV_ENABLE_PPROF=1 make run`, then run `k6 run loadtest/k6/scenarios.js`. Capture CPU profiles with `go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30`.
+
+## Slow Query Logging
+
+Set `MAGLEV_SLOW_QUERY_THRESHOLD_MS=<ms>` to log queries slower than that threshold (`0` disables slow-query logging).
 
 ## Docker Commands
 
