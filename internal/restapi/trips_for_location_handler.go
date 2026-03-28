@@ -708,7 +708,6 @@ func (rb *referenceBuilder) createRoute(route gtfsdb.Route) models.Route {
 
 }
 
-
 func (rb *referenceBuilder) buildTripReferences() error {
 	rb.tripsRefList = make([]models.Trip, 0, len(rb.presentTrips))
 

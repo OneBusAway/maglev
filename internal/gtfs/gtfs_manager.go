@@ -170,10 +170,12 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 					)
 
 					// Cancellable sleep
+					retryTimer := time.NewTimer(delay)
 					select {
 					case <-ctx.Done():
+						retryTimer.Stop()
 						return nil, ctx.Err()
-					case <-time.After(delay):
+					case <-retryTimer.C:
 					}
 					continue
 				}
@@ -194,10 +196,12 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 					staticData = nil
 
 					// Cancellable sleep
+					retryTimer := time.NewTimer(delay)
 					select {
 					case <-ctx.Done():
+						retryTimer.Stop()
 						return nil, ctx.Err()
-					case <-time.After(delay):
+					case <-retryTimer.C:
 					}
 					continue
 				}
@@ -228,10 +232,12 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 					)
 
 					// Cancellable sleep
+					retryTimer := time.NewTimer(delay)
 					select {
 					case <-ctx.Done():
+						retryTimer.Stop()
 						return nil, ctx.Err()
-					case <-time.After(delay):
+					case <-retryTimer.C:
 					}
 					continue
 				}
