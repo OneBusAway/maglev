@@ -172,7 +172,7 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 	return nil
 }
 
-func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) error {
+func (c *Client) processAndStoreGTFSDataWithSource(ctx context.Context, b []byte, source string) error {
 	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
 
 	startTime := time.Now()
@@ -189,8 +189,6 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	// Calculate hash of the GTFS data
 	hash := sha256.Sum256(b)
 	hashStr := hex.EncodeToString(hash[:])
-
-	ctx := context.Background()
 
 	// 1. Check if we already have this data imported
 	var hasExisting bool

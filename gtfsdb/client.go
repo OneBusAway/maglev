@@ -84,7 +84,7 @@ func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authH
 		return fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxBodySize)
 	}
 
-	err = c.processAndStoreGTFSDataWithSource(body, url)
+	err = c.processAndStoreGTFSDataWithSource(ctx, body, url)
 
 	return err
 }
@@ -96,7 +96,7 @@ func (c *Client) ImportFromFile(ctx context.Context, path string) error {
 		return err
 	}
 
-	err = c.processAndStoreGTFSDataWithSource(data, path)
+	err = c.processAndStoreGTFSDataWithSource(ctx, data, path)
 
 	return err
 }
