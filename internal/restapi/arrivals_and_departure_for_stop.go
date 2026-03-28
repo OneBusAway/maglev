@@ -345,7 +345,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		if vehicle != nil {
 			// Use route.AgencyID instead of stopAgencyID for BuildTripStatus
-			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
+			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, vehicle, serviceMidnight, params.Time)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for arrival",
 					"tripID", st.TripID, "error", statusErr)
