@@ -370,16 +370,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			stripped := stripNumericSuffix(dupTripID)
 			if stripped != dupTripID {
 				api.Logger.Debug("trips-for-route: falling back to stripped trip ID", "original", dupTripID, "stripped", stripped)
-
 				baseTripID = stripped
-
-				if _, err2 := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID); err2 != nil {
-					if !errors.Is(err2, sql.ErrNoRows) {
-						api.Logger.Warn("trips-for-route: failed to resolve stripped DUPLICATED trip ID", "stripped_trip_id", baseTripID, "error", err2)
-					} else {
-						api.Logger.Warn("trips-for-route: DUPLICATED trip ID not found after stripping suffix", "dup_trip_id", dupTripID, "base_trip_id", baseTripID)
-					}
-				}
 			} else if errors.Is(err, sql.ErrNoRows) {
 				api.Logger.Warn("trips-for-route: base trip ID not found and no suffix to strip", "dup_trip_id", dupTripID)
 			}

@@ -397,9 +397,6 @@ func TestTripsForRouteHandler_PastMidnightService(t *testing.T) {
 	currentLocation, _ := time.LoadLocation("America/Los_Angeles")
 	pastMidnightTime := time.Date(2024, 11, 5, 0, 30, 0, 0, currentLocation)
 
-	// Temporarily override the API clock
-	// api.Clock = mockClock{Time: pastMidnightTime}
-
 	// Format time parameter to force the handler to process at 00:30
 	timeParam := pastMidnightTime.UnixMilli()
 	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&time=%d", timeParam)
