@@ -201,6 +201,36 @@ func (manager *Manager) GetAlertsForStop(stopID string) []gtfs.Alert {
 	return out
 }
 
+// GetAllAlerts returns all deduplicated realtime alerts across all feeds.
+// Deduplication is by alert ID, preserving first-seen order by sorted feed ID.
+func (manager *Manager) GetAllAlerts() []gtfs.Alert {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+
+	feedIDs := make([]string, 0, len(manager.feedAlerts))
+	for feedID := range manager.feedAlerts {
+		feedIDs = append(feedIDs, feedID)
+	}
+	sort.Strings(feedIDs)
+
+	seen := make(map[string]struct{})
+	alerts := make([]gtfs.Alert, 0)
+	for _, feedID := range feedIDs {
+		for _, alert := range manager.feedAlerts[feedID] {
+			if alert.ID == "" {
+				continue
+			}
+			if _, exists := seen[alert.ID]; exists {
+				continue
+			}
+			seen[alert.ID] = struct{}{}
+			alerts = append(alerts, alert)
+		}
+	}
+
+	return alerts
+}
+
 // Fetches GTFS-RT data from a URL with per-feed headers.
 func loadRealtimeData(ctx context.Context, source string, headers map[string]string) (*gtfs.Realtime, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
