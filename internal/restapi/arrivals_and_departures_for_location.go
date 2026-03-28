@@ -526,16 +526,16 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 			totalStopsInTrip := tripStopCountMap[st.TripID]
 			blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
 
-			// Collect service alerts for this trip.
-			// situationIDs on each arrival use FormCombinedID(route.AgencyID, alert.ID)
-			// to match Java's "agencyId_alertId" format (e.g. "40_40_16737").
+			// alert.ID from GTFS-RT already contains the agency prefix (e.g. "40_16931").
+			// Do NOT wrap with FormCombinedID — that would double-prefix to "40_40_16931".
+			// Both per-arrival situationIds and top-level situationIds use the raw alert.ID.
 			tripAlerts := api.GtfsManager.GetAlertsForTrip(ctx, st.TripID)
 			situationIDs := make([]string, 0, len(tripAlerts))
 			for _, alert := range tripAlerts {
 				if alert.ID == "" {
 					continue
 				}
-				situationIDs = append(situationIDs, utils.FormCombinedID(route.AgencyID, alert.ID))
+				situationIDs = append(situationIDs, alert.ID)
 				if _, seen := collectedAlerts[alert.ID]; !seen {
 					collectedAlerts[alert.ID] = alert
 				}
