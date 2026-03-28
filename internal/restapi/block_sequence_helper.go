@@ -17,7 +17,7 @@ func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID 
 
 	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, blockID)
 	if err != nil {
-		return 0
+		return stopSequence
 	}
 
 	type TripWithDetails struct {
