@@ -228,7 +228,8 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// Shared reference-collection maps (deduplicated across all stops).
 	tripIDSet := make(map[string]*gtfsdb.Trip)
 	routeIDSet := make(map[string]*gtfsdb.Route)
-	stopIDSet := make(map[string]bool) // raw stop codes for reference building
+	stopIDSet := make(map[string]bool)            // raw stop codes for reference building
+	stopAgencyOverride := make(map[string]string) // raw stop code → correct agencyID
 
 	// Track which stop codes actually produced at least one arrival.
 	// Java only includes a stop in the entry's stopIds when it has results.
@@ -480,13 +481,19 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 					// Collect stops referenced in trip status for the references block.
 					if status.NextStop != "" {
-						if _, nsID, nsErr := utils.ExtractAgencyIDAndCodeID(status.NextStop); nsErr == nil {
+						if nsAgency, nsID, nsErr := utils.ExtractAgencyIDAndCodeID(status.NextStop); nsErr == nil {
 							stopIDSet[nsID] = true
+							if nsAgency != "" {
+								stopAgencyOverride[nsID] = nsAgency
+							}
 						}
 					}
 					if status.ClosestStop != "" {
-						if _, csID, csErr := utils.ExtractAgencyIDAndCodeID(status.ClosestStop); csErr == nil {
+						if csAgency, csID, csErr := utils.ExtractAgencyIDAndCodeID(status.ClosestStop); csErr == nil {
 							stopIDSet[csID] = true
+							if csAgency != "" {
+								stopAgencyOverride[csID] = csAgency
+							}
 						}
 					}
 
@@ -703,6 +710,9 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 			continue
 		}
 		ag := stopAgencyMap[sid]
+		if ag == "" {
+			ag = stopAgencyOverride[sid]
+		}
 		if ag == "" {
 			ag = fallbackAgencyID
 		}
