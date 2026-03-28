@@ -473,15 +473,18 @@ func TestRateLimitMiddleware_CorrectRetryAfterTime(t *testing.T) {
 			})
 			limited := middleware.Handler()(handler)
 
-			var last *httptest.ResponseRecorder
+			// Drain the burst and reserve one full burst into the future so the
+			// next HTTP request remains rate limited even if CI is slow enough for
+			// a few tokens to refill between these calls and ServeHTTP.
+			limiter := middleware.getLimiter("test-key")
+			now := time.Now()
+			assert.True(t, limiter.AllowN(now, testCase.rateLimit))
+			reservation := limiter.ReserveN(now, testCase.rateLimit)
+			assert.True(t, reservation.OK())
 
-			// Fire requests until we exceed the burst and any tokens generated during the loop's execution (CI can be slow)
-			for i := 0; i < testCase.rateLimit+50; i++ {
-				req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
-				w := httptest.NewRecorder()
-				limited.ServeHTTP(w, req)
-				last = w
-			}
+			req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
+			last := httptest.NewRecorder()
+			limited.ServeHTTP(last, req)
 
 			assert.Equal(t, http.StatusTooManyRequests, last.Code)
 
@@ -504,14 +507,15 @@ func TestRateLimitMiddleware_CorrectRetryAfterTime(t *testing.T) {
 		})
 		limited := middleware.Handler()(handler)
 
-		var last *httptest.ResponseRecorder
+		now := time.Now()
+		limiter := middleware.getLimiter("test-key")
+		assert.True(t, limiter.AllowN(now, 1))
+		reservation := limiter.ReserveN(now, 1)
+		assert.True(t, reservation.OK())
 
-		for i := 0; i < 2; i++ {
-			req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
-			w := httptest.NewRecorder()
-			limited.ServeHTTP(w, req)
-			last = w
-		}
+		req := httptest.NewRequest(http.MethodGet, "/test?key=test-key", nil)
+		last := httptest.NewRecorder()
+		limited.ServeHTTP(last, req)
 
 		assert.Equal(t, http.StatusTooManyRequests, last.Code)
 

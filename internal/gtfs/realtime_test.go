@@ -1030,6 +1030,35 @@ func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
 	assert.Equal(t, "alert1", agencyAlerts[0].ID)
 }
 
+// TestAlertIndex_RouteStopEntityAlsoIndexedByStop verifies the positive half
+// of the route+stop scoping rule: an entity with both routeID and stopID is
+// excluded from byRoute (covered by TestGetAlertsByIDs_RouteScoping) but must
+// still appear in byStop for stop-scoped lookups.
+func TestAlertIndex_RouteStopEntityAlsoIndexedByStop(t *testing.T) {
+	routeID := "route40"
+	stopID := "stop99"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID, StopID: &stopID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	stopAlerts := manager.GetAlertsForStop(stopID)
+	assert.Len(t, stopAlerts, 1, "route+stop entity should appear in byStop")
+	assert.Equal(t, "alert1", stopAlerts[0].ID)
+
+	routeAlerts := manager.GetAlertsByIDs("", routeID, "")
+	assert.Empty(t, routeAlerts, "route+stop entity must NOT appear in byRoute")
+}
+
 // TestAlertIndex_AllEmptyArgsReturnsNil verifies that GetAlertsByIDs returns nil
 // (not an allocated empty slice) when all three arguments are empty strings.
 func TestAlertIndex_AllEmptyArgsReturnsNil(t *testing.T) {
@@ -1127,6 +1156,25 @@ func TestAlertIndex_CrossFeedDeduplication(t *testing.T) {
 	stopAlerts := manager.GetAlertsForStop(stopID)
 	assert.Len(t, stopAlerts, 1, "GetAlertsForStop deduplicates by alert ID across feeds")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
+}
+
+func TestAlertIndex_CrossFeedDeduplicationByIDs(t *testing.T) {
+	routeID := "route1"
+	tripID := gtfs.TripID{ID: "trip1"}
+	// The same alert ID appears in two feeds and is reachable through different
+	// buckets. GetAlertsByIDs must still deduplicate by alert ID before returning.
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}}}},
+			"feed-1": {{ID: "alert1", InformedEntities: []gtfs.AlertInformedEntity{{TripID: &tripID}}}},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	alerts := manager.GetAlertsByIDs(tripID.ID, routeID, "")
+	assert.Len(t, alerts, 1, "GetAlertsByIDs deduplicates by alert ID across feeds")
+	assert.Equal(t, "alert1", alerts[0].ID)
 }
 
 // encodeVehicleFeed constructs a GTFS-RT protobuf payload containing
@@ -1251,105 +1299,213 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 
 func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {
 	manager := &Manager{
-		realTimeVehicles: []gtfs.Vehicle{
-			{
-				ID: &gtfs.VehicleID{ID: "v1"},
-				Trip: &gtfs.Trip{
-					ID: gtfs.TripID{
-						ID:                   "trip1",
-						RouteID:              "route-A",
-						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID: &gtfs.VehicleID{ID: "v1"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip1",
+							RouteID:              "route-A",
+							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+						},
 					},
 				},
 			},
 		},
-		realTimeTripLookup: make(map[string]int),
 	}
 
+	manager.rebuildMergedRealtimeLocked()
+
 	result := manager.GetDuplicatedVehiclesForRoute("route-A")
-	assert.Len(t, result, 1)
+	require.Len(t, result, 1, "expected exactly one duplicated vehicle")
 	assert.Equal(t, "v1", result[0].ID.ID)
 }
 
 func TestGetDuplicatedVehiclesForRoute_FallbackViaTripUpdate(t *testing.T) {
 	// Vehicle has no route_id in its trip descriptor; the TripUpdate carries it.
 	manager := &Manager{
-		realTimeVehicles: []gtfs.Vehicle{
-			{
-				ID: &gtfs.VehicleID{ID: "v2"},
-				Trip: &gtfs.Trip{
-					ID: gtfs.TripID{
-						ID:                   "trip2",
-						RouteID:              "", // omitted in VehiclePosition
-						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID: &gtfs.VehicleID{ID: "v2"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip2",
+							RouteID:              "", // omitted in VehiclePosition
+							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+						},
 					},
 				},
 			},
 		},
-		realTimeTrips: []gtfs.Trip{
-			{
-				ID: gtfs.TripID{
-					ID:      "trip2",
-					RouteID: "route-B",
+		feedTrips: map[string][]gtfs.Trip{
+			"feed-0": {
+				{
+					ID: gtfs.TripID{
+						ID:      "trip2",
+						RouteID: "route-B",
+					},
 				},
 			},
 		},
-		realTimeTripLookup: map[string]int{"trip2": 0},
 	}
 
+	manager.rebuildMergedRealtimeLocked()
+
 	result := manager.GetDuplicatedVehiclesForRoute("route-B")
-	require.Len(t, result, 1)
+	require.Len(t, result, 1, "expected exactly one duplicated vehicle matched via trip update fallback")
 	assert.Equal(t, "v2", result[0].ID.ID)
 }
 
 func TestGetDuplicatedVehiclesForRoute_ExcludesNonDuplicated(t *testing.T) {
 	manager := &Manager{
-		realTimeVehicles: []gtfs.Vehicle{
-			{
-				ID: &gtfs.VehicleID{ID: "v3"},
-				Trip: &gtfs.Trip{
-					ID: gtfs.TripID{
-						ID:                   "trip3",
-						RouteID:              "route-C",
-						ScheduleRelationship: gtfsrt.TripDescriptor_SCHEDULED,
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID: &gtfs.VehicleID{ID: "v3"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip3",
+							RouteID:              "route-C",
+							ScheduleRelationship: gtfsrt.TripDescriptor_SCHEDULED,
+						},
 					},
 				},
-			},
-			{
-				ID: &gtfs.VehicleID{ID: "v4"},
-				Trip: &gtfs.Trip{
-					ID: gtfs.TripID{
-						ID:                   "trip4",
-						RouteID:              "route-C",
-						ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+				{
+					ID: &gtfs.VehicleID{ID: "v4"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip4",
+							RouteID:              "route-C",
+							ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+						},
 					},
 				},
 			},
 		},
-		realTimeTripLookup: make(map[string]int),
 	}
+
+	manager.rebuildMergedRealtimeLocked()
 
 	result := manager.GetDuplicatedVehiclesForRoute("route-C")
 	assert.Empty(t, result, "SCHEDULED and CANCELED vehicles must be excluded")
 }
 
-func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
+func TestGetDuplicatedVehiclesForRoute_RebuildClearsStaleIndex(t *testing.T) {
 	manager := &Manager{
-		realTimeVehicles: []gtfs.Vehicle{
-			{
-				ID: &gtfs.VehicleID{ID: "v5"},
-				Trip: &gtfs.Trip{
-					ID: gtfs.TripID{
-						ID:                   "trip5",
-						RouteID:              "route-D",
-						ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID: &gtfs.VehicleID{ID: "v6"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip6",
+							RouteID:              "route-E",
+							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+						},
 					},
 				},
 			},
 		},
-		realTimeTripLookup: make(map[string]int),
 	}
 
-	result := manager.GetDuplicatedVehiclesForRoute("route-UNKNOWN")
-	assert.Empty(t, result)
+	manager.rebuildMergedRealtimeLocked()
+	require.Len(t, manager.GetDuplicatedVehiclesForRoute("route-E"), 1)
+
+	manager.feedVehicles["feed-0"] = nil
+	manager.rebuildMergedRealtimeLocked()
+
+	assert.Empty(t, manager.GetDuplicatedVehiclesForRoute("route-E"))
+}
+
+func TestGetDuplicatedVehiclesForRoute_MissingRouteIDWithoutTripUpdate(t *testing.T) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID: &gtfs.VehicleID{ID: "v7"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip7",
+							RouteID:              "", // empty route_id
+							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	manager.rebuildMergedRealtimeLocked()
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-F")
+	assert.Empty(t, result, "Vehicle without route_id and no matching trip_id should not be included")
+}
+
+func TestGetDuplicatedVehiclesForRoute_MultipleVehiclesSameRoute(t *testing.T) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID: &gtfs.VehicleID{ID: "v8"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip8",
+							RouteID:              "route-G",
+							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+						},
+					},
+				},
+				{
+					ID: &gtfs.VehicleID{ID: "v9"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip9",
+							RouteID:              "route-G",
+							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	manager.rebuildMergedRealtimeLocked()
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-G")
+	require.Len(t, result, 2, "all DUPLICATED vehicles for the same route should be retained")
+	ids := []string{result[0].ID.ID, result[1].ID.ID}
+	assert.ElementsMatch(t, []string{"v8", "v9"}, ids)
+}
+
+func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID: &gtfs.VehicleID{ID: "v10"},
+					Trip: &gtfs.Trip{
+						ID: gtfs.TripID{
+							ID:                   "trip10",
+							RouteID:              "route-H",
+							ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+						},
+					},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	result := manager.GetDuplicatedVehiclesForRoute("route-unknown")
+
+	assert.Empty(t, result, "route miss should return empty result")
 }

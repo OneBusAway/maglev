@@ -26,6 +26,8 @@ type Metrics struct {
 	DBConnectionsInUse prometheus.Gauge
 	DBConnectionsIdle  prometheus.Gauge
 	DBWaitSecondsTotal prometheus.Counter
+	DBQueryTotal       *prometheus.CounterVec
+	DBQueryDuration    *prometheus.HistogramVec
 
 	// GTFS-RT metrics
 	FeedLastSuccessfulFetchTime *prometheus.GaugeVec
@@ -52,6 +54,8 @@ type Metrics struct {
 func New() *Metrics {
 	return NewWithLogger(nil)
 }
+
+var dbQueryDurationBuckets = []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1}
 
 // NewWithLogger creates metrics with a logger for error reporting.
 func NewWithLogger(logger *slog.Logger) *Metrics {
@@ -93,6 +97,23 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		Name: "maglev_db_wait_seconds_total",
 		Help: "Total time blocked waiting for a database connection",
 	})
+
+	dbQueryTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "maglev_db_query_total",
+			Help: "Total number of database queries by query name, operation, and status",
+		},
+		[]string{"query_name", "op", "status"},
+	)
+
+	dbQueryDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "maglev_db_query_duration_seconds",
+			Help:    "Database query latency distribution by query name, operation, and status",
+			Buckets: dbQueryDurationBuckets,
+		},
+		[]string{"query_name", "op", "status"},
+	)
 
 	feedLastSuccessfulFetchTime := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -137,6 +158,8 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		dbConnectionsInUse,
 		dbConnectionsIdle,
 		dbWaitSecondsTotal,
+		dbQueryTotal,
+		dbQueryDuration,
 		feedLastSuccessfulFetchTime,
 		feedConsecutiveErrors,
 		feedFetchDuration,
@@ -151,12 +174,36 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		DBConnectionsInUse:          dbConnectionsInUse,
 		DBConnectionsIdle:           dbConnectionsIdle,
 		DBWaitSecondsTotal:          dbWaitSecondsTotal,
+		DBQueryTotal:                dbQueryTotal,
+		DBQueryDuration:             dbQueryDuration,
 		FeedLastSuccessfulFetchTime: feedLastSuccessfulFetchTime,
 		FeedConsecutiveErrors:       feedConsecutiveErrors,
 		FeedFetchDuration:           feedFetchDuration,
 		FeedExpiresAt:               feedExpiresAt,
 		logger:                      logger,
 	}
+}
+
+// RecordDBQuery records per-query DB counters and latency histograms.
+func (m *Metrics) RecordDBQuery(queryName, op string, err error, duration time.Duration) {
+	if m == nil || m.DBQueryTotal == nil || m.DBQueryDuration == nil {
+		return
+	}
+
+	if queryName == "" {
+		queryName = "unknown"
+	}
+	if op == "" {
+		op = "unknown"
+	}
+
+	status := "ok"
+	if err != nil {
+		status = "error"
+	}
+
+	m.DBQueryTotal.WithLabelValues(queryName, op, status).Inc()
+	m.DBQueryDuration.WithLabelValues(queryName, op, status).Observe(duration.Seconds())
 }
 
 // StartDBStatsCollector starts a goroutine that periodically collects database
