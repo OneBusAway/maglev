@@ -1059,8 +1059,8 @@ type GetActiveTripsWithNullBlockForRouteParams struct {
 }
 
 // Returns null-block trips whose service window overlaps [time_range_start, time_range_end].
-// Use time_range_start = now - 10 min and time_range_end = now + 30 min to include
-// recently-completed trips and upcoming trips, matching Java OBA behavior.
+// Use time_range_start = now - 30 min and time_range_end = now + 10 min to include
+// recently-completed (running late) trips and upcoming trips, matching Java OBA behavior.
 func (q *Queries) GetActiveTripsWithNullBlockForRoute(ctx context.Context, arg GetActiveTripsWithNullBlockForRouteParams) ([]string, error) {
 	query := getActiveTripsWithNullBlockForRoute
 	var queryParams []interface{}
@@ -1087,6 +1087,57 @@ func (q *Queries) GetActiveTripsWithNullBlockForRoute(ctx context.Context, arg G
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAgenciesByIDs = `-- name: GetAgenciesByIDs :many
+SELECT
+    id, name, url, timezone, lang, phone, fare_url, email
+FROM
+    agencies
+WHERE
+    id IN (/*SLICE:agency_ids*/?)
+`
+
+func (q *Queries) GetAgenciesByIDs(ctx context.Context, agencyIds []string) ([]Agency, error) {
+	query := getAgenciesByIDs
+	var queryParams []interface{}
+	if len(agencyIds) > 0 {
+		for _, v := range agencyIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:agency_ids*/?", strings.Repeat(",?", len(agencyIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:agency_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Agency
+	for rows.Next() {
+		var i Agency
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Url,
+			&i.Timezone,
+			&i.Lang,
+			&i.Phone,
+			&i.FareUrl,
+			&i.Email,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -2039,6 +2090,58 @@ func (q *Queries) GetNextStopInTrip(ctx context.Context, arg GetNextStopInTripPa
 	var i GetNextStopInTripRow
 	err := row.Scan(&i.Lat, &i.Lon, &i.ID)
 	return i, err
+}
+
+const getOrderedStopIDsForRouteDirection = `-- name: GetOrderedStopIDsForRouteDirection :many
+SELECT st.stop_id
+FROM stop_times st
+JOIN trips t ON t.id = st.trip_id
+WHERE t.route_id = ?1
+  AND t.direction_id = ?2
+  AND t.service_id IN (/*SLICE:service_ids*/?)
+GROUP BY st.stop_id
+ORDER BY MAX(st.stop_sequence)
+`
+
+type GetOrderedStopIDsForRouteDirectionParams struct {
+	RouteID     string
+	DirectionID sql.NullInt64
+	ServiceIds  []string
+}
+
+func (q *Queries) GetOrderedStopIDsForRouteDirection(ctx context.Context, arg GetOrderedStopIDsForRouteDirectionParams) ([]string, error) {
+	query := getOrderedStopIDsForRouteDirection
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.RouteID)
+	queryParams = append(queryParams, arg.DirectionID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var stop_id string
+		if err := rows.Scan(&stop_id); err != nil {
+			return nil, err
+		}
+		items = append(items, stop_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getOrderedStopIDsForTrip = `-- name: GetOrderedStopIDsForTrip :many

@@ -18,5 +18,6 @@ tmp/
 .DS_Store
 /api
 testdata/perf/
+loadtest/results/
 loadtest/k6/*-summary.json
 loadtest/profiles/

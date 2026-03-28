@@ -11,6 +11,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -517,7 +518,7 @@ func buildTripReferences(
 	if len(tripIDsToFetch) > 0 {
 		extraTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
 		if err != nil {
-			api.Logger.Warn("failed to fetch trips for references", "error", err)
+			logging.LogError(api.Logger, "failed to fetch trips for references", err)
 		}
 
 		for _, trip := range extraTrips {
@@ -545,7 +546,7 @@ func buildTripReferences(
 	if len(routeIDsToFetch) > 0 {
 		fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDsToFetch)
 		if err != nil {
-			api.Logger.Warn("failed to fetch routes for references", "error", err)
+			logging.LogError(api.Logger, "failed to fetch routes for references", err)
 		}
 
 		for _, route := range fetchedRoutes {
@@ -634,7 +635,7 @@ func buildTripReferences(
 					TripHeadsign:  trip.TripHeadsign,
 					TripShortName: trip.TripShortName,
 					DirectionID:   trip.DirectionID,
-					BlockID:       trip.BlockID,
+					BlockID: utils.FormCombinedID(currentAgency, trip.BlockID),
 					ShapeID:       utils.FormCombinedID(currentAgency, trip.ShapeID),
 					PeakOffPeak:   0,
 					TimeZone:      "",

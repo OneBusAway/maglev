@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/hashicorp/golang-lru/v2/simplelru"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/logging"
 
@@ -34,7 +34,7 @@ type rateLimitClient struct {
 // RateLimitMiddleware provides per-API-key rate limiting using an LRU cache with lazy eviction.
 type RateLimitMiddleware struct {
 	mu         sync.Mutex
-	limiters   *lru.Cache[string, *rateLimitClient]
+	limiters   *simplelru.LRU[string, *rateLimitClient]
 	rateLimit  rate.Limit
 	burstSize  int
 	exemptKeys map[string]bool
@@ -64,7 +64,7 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 		}
 	}
 
-	cache, _ := lru.New[string, *rateLimitClient](maxLRUSize)
+	cache, _ := simplelru.NewLRU[string, *rateLimitClient](maxLRUSize, nil)
 
 	middleware := &RateLimitMiddleware{
 		limiters:   cache,
@@ -205,5 +205,7 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 // Stop performs cleanup of rate limiter resources.
 // It is safe to call multiple times with the LRU-based design
 func (rl *RateLimitMiddleware) Stop() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
 	rl.limiters.Purge()
 }

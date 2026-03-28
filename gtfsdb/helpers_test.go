@@ -260,6 +260,131 @@ func TestSlowQueryDB_LogsSlowErrorsWithErrorAttribute(t *testing.T) {
 	assert.Contains(t, errAttr, "no such table")
 }
 
+type queryMetricCall struct {
+	queryName string
+	op        string
+	hadErr    bool
+}
+
+type testQueryMetricsRecorder struct {
+	calls []queryMetricCall
+}
+
+func (r *testQueryMetricsRecorder) RecordDBQuery(queryName, op string, err error, _ time.Duration) {
+	r.calls = append(r.calls, queryMetricCall{
+		queryName: queryName,
+		op:        op,
+		hadErr:    err != nil,
+	})
+}
+
+func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	recorder := &testQueryMetricsRecorder{}
+
+	wrapper := newSlowQueryDB(db, 0)
+	wrapper.queryMetrics = recorder
+
+	_, err = wrapper.QueryContext(ctx, "-- name: ListAgencies :many\nSELECT 1")
+	require.NoError(t, err)
+
+	_, err = wrapper.ExecContext(ctx, "-- name: BrokenExec :exec\nTHIS IS INVALID SQL")
+	require.Error(t, err)
+
+	row := wrapper.QueryRowContext(ctx, "SELECT 1")
+	var n int
+	require.NoError(t, row.Scan(&n))
+	assert.Equal(t, 1, n)
+
+	require.Len(t, recorder.calls, 3)
+	assert.Equal(t, queryMetricCall{queryName: "ListAgencies", op: "query", hadErr: false}, recorder.calls[0])
+	assert.Equal(t, queryMetricCall{queryName: "BrokenExec", op: "exec", hadErr: true}, recorder.calls[1])
+	assert.Equal(t, queryMetricCall{queryName: "unknown", op: "query_row", hadErr: false}, recorder.calls[2])
+}
+
+func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
+	originalThreshold := slowQueryThreshold
+	slowQueryThreshold = 0
+	t.Cleanup(func() {
+		slowQueryThreshold = originalThreshold
+	})
+	originalDDL := ddl
+	ddl = `
+	CREATE TABLE IF NOT EXISTS agencies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        lang TEXT,
+        phone TEXT,
+        fare_url TEXT,
+        email TEXT
+    );
+`
+	t.Cleanup(func() {
+		ddl = originalDDL
+	})
+
+	recorder := &testQueryMetricsRecorder{}
+	config := Config{
+		DBPath:               ":memory:",
+		Env:                  appconf.Test,
+		QueryMetricsRecorder: recorder,
+	}
+
+	client, err := NewClient(config)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+	})
+
+	agencies, err := client.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, agencies)
+
+	require.Len(t, recorder.calls, 1)
+	assert.Equal(t, queryMetricCall{queryName: "ListAgencies", op: "query", hadErr: false}, recorder.calls[0])
+}
+
+func TestExtractQueryName(t *testing.T) {
+	testCases := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{
+			name:     "sqlc header present",
+			query:    "-- name: GetTrip :one\nSELECT * FROM trips",
+			expected: "GetTrip",
+		},
+		{
+			name:     "leading blank lines before sqlc header",
+			query:    "\n\n-- name: ListStops :many\nSELECT * FROM stops",
+			expected: "ListStops",
+		},
+		{
+			name:     "non-sqlc comment only",
+			query:    "-- hello\nSELECT 1",
+			expected: "unknown",
+		},
+		{
+			name:     "no header",
+			query:    "SELECT 1",
+			expected: "unknown",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, extractQueryName(tc.query))
+		})
+	}
+}
+
 func TestParseSlowQueryThreshold(t *testing.T) {
 	t.Run("empty value disables logging", func(t *testing.T) {
 		warned := false

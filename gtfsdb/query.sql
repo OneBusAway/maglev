@@ -8,6 +8,14 @@ WHERE
 LIMIT
     1;
 
+-- name: GetAgenciesByIDs :many
+SELECT
+    *
+FROM
+    agencies
+WHERE
+    id IN (sqlc.slice('agency_ids'));
+
 -- name: ListAgencies :many
 SELECT
     *
@@ -452,6 +460,16 @@ SELECT stop_id
 FROM stop_times
 WHERE trip_id = ?
 ORDER BY stop_sequence;
+
+-- name: GetOrderedStopIDsForRouteDirection :many
+SELECT st.stop_id
+FROM stop_times st
+JOIN trips t ON t.id = st.trip_id
+WHERE t.route_id = @route_id
+  AND t.direction_id = @direction_id
+  AND t.service_id IN (sqlc.slice('service_ids'))
+GROUP BY st.stop_id
+ORDER BY MAX(st.stop_sequence);
 
 -- name: GetScheduleForStop :many
 SELECT

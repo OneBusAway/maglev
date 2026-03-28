@@ -1232,13 +1232,19 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
+	// Use a date distinct from other tests that share the active-service-IDs cache
+	// (e.g. TestPluralArrivals_TripUpdateWithoutVehicle uses 2010-01-01).
+	// A unique date guarantees a cache miss so "nilid_service" is visible on first query.
+	mockClock := clock.NewMockClock(time.Date(2009, 6, 15, 8, 2, 0, 0, loc))
 
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	t.Cleanup(api.GtfsManager.MockClearServiceIDsCache)
+	// Clear the service-IDs cache so that the calendar inserted below is visible,
+  // even if a previous test already cached the result for this date.
+  api.GtfsManager.MockClearServiceIDsCache()
 
+  // Ensure cache is cleared after test as well
+  t.Cleanup(api.GtfsManager.MockClearServiceIDsCache)
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
 
@@ -1306,9 +1312,14 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	api.GtfsManager.MockClearServiceIDsCache()
+
 	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
 		NoID: true,
 	})
+
+	// Clear the service-IDs cache so the upcoming request sees the newly inserted calendar entry.
+	api.GtfsManager.MockClearServiceIDsCache()
 
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	resp, model := serveApiAndRetrieveEndpoint(t, api,

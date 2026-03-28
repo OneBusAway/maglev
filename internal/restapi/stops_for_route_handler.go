@@ -2,9 +2,9 @@ package restapi
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/twpayne/go-polyline"
@@ -239,89 +239,133 @@ func processTripGroups(
 	allStops map[string]bool,
 	allPolylines *[]models.Polyline,
 ) {
-	type directionHeadsignKey struct {
-		DirectionID  int64
-		TripHeadsign string
-	}
-
-	tripGroups := make(map[directionHeadsignKey][]gtfsdb.Trip)
+	tripGroups := make(map[int64][]gtfsdb.Trip)
 	for _, trip := range trips {
-		key := directionHeadsignKey{
-			DirectionID:  trip.DirectionID.Int64,
-			TripHeadsign: trip.TripHeadsign.String,
-		}
-		tripGroups[key] = append(tripGroups[key], trip)
+		dirID := trip.DirectionID.Int64
+		tripGroups[dirID] = append(tripGroups[dirID], trip)
 	}
 
 	var allStopGroups []models.StopGroup
 
-	var keys []directionHeadsignKey
-	for key := range tripGroups {
-		keys = append(keys, key)
+	var directionIDs []int64
+	for dirID := range tripGroups {
+		directionIDs = append(directionIDs, dirID)
 	}
 
-	/// Sort by direction ID to ensure consistent ordering (0 = outbound, 1 = inbound)
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].DirectionID < keys[j].DirectionID
+	// Sort descending so index 0 maps to the highest direction_id value. This
+	// produces normalized group IDs "0", "1", … that match the Java OBA server's
+	// convention where outbound (direction_id=1) is group "0" and inbound
+	// (direction_id=0) is group "1".
+	sort.Slice(directionIDs, func(i, j int) bool {
+		return directionIDs[i] > directionIDs[j]
 	})
 
-	for _, key := range keys {
+	for i, dirID := range directionIDs {
 		if ctx.Err() != nil {
 			return
 		}
 
-		tripsInGroup := tripGroups[key]
+		tripsInGroup := tripGroups[dirID]
 
 		// Sort trips by ID to ensure we always pick the same representative trip
 		sort.Slice(tripsInGroup, func(i, j int) bool {
 			return tripsInGroup[i].ID < tripsInGroup[j].ID
 		})
 
-		representativeTrip := tripsInGroup[0]
-		stopsList, err := api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, representativeTrip.ID)
-		if err != nil {
-			api.Logger.Warn("failed to fetch stop IDs for representative trip", "trip_id", representativeTrip.ID, "error", err)
-			continue
+		headsignCounts := make(map[string]int)
+		var dirServiceIDs []string
+		seenServiceIDs := make(map[string]bool)
+		for _, trip := range tripsInGroup {
+			headsignCounts[trip.TripHeadsign.String]++
+			if !seenServiceIDs[trip.ServiceID] {
+				seenServiceIDs[trip.ServiceID] = true
+				dirServiceIDs = append(dirServiceIDs, trip.ServiceID)
+			}
 		}
 
-		stopIDs := make(map[string]bool)
-		for _, stopID := range stopsList {
-			stopIDs[stopID] = true
+		var orderedStopIDs []string
+		var err error
+		if !tripsInGroup[0].DirectionID.Valid {
+			/*
+				direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
+				UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
+				zero rows. Fall back to single-trip ordering instead.
+			*/
+			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, tripsInGroup[0].ID)
+		} else {
+			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
+				gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
+					RouteID:     routeID,
+					DirectionID: tripsInGroup[0].DirectionID,
+					ServiceIds:  dirServiceIDs,
+				})
+		}
+		if err != nil {
+			api.Logger.Warn("failed to fetch ordered stop IDs for route direction", "route_id", routeID, "direction_id", dirID, "error", err)
+			continue
+		}
+		for _, stopID := range orderedStopIDs {
 			allStops[stopID] = true
 		}
 
-		shape, err := api.GtfsManager.GtfsDB.Queries.GetShapesGroupedByTripHeadSign(ctx,
-			gtfsdb.GetShapesGroupedByTripHeadSignParams{
-				RouteID:      routeID,
-				TripHeadsign: representativeTrip.TripHeadsign,
-			})
-		if err != nil {
-			api.Logger.Warn("failed to fetch shapes for trip group", "route_id", routeID, "headsign", representativeTrip.TripHeadsign.String, "error", err)
-			continue
+		groupHeadsign := ""
+		maxCount := 0
+		for headsign, count := range headsignCounts {
+			if count > maxCount || (count == maxCount && headsign < groupHeadsign) {
+				groupHeadsign = headsign
+				maxCount = count
+			}
 		}
 
-		polylines := generatePolylines(shape)
-		*allPolylines = append(*allPolylines, polylines...)
+		seenHeadsigns := make(map[string]bool)
+		var groupPolylines []models.Polyline
+		for _, trip := range tripsInGroup {
+			hs := trip.TripHeadsign.String
+			if seenHeadsigns[hs] {
+				continue
+			}
+			seenHeadsigns[hs] = true
+			shape, err := api.GtfsManager.GtfsDB.Queries.GetShapesGroupedByTripHeadSign(ctx,
+				gtfsdb.GetShapesGroupedByTripHeadSignParams{
+					RouteID:      routeID,
+					TripHeadsign: trip.TripHeadsign,
+				})
+			if err != nil {
+				api.Logger.Warn("failed to fetch shapes for trip group", "route_id", routeID, "headsign", hs, "error", err)
+				continue
+			}
+			pl := generatePolylines(shape)
+			groupPolylines = append(groupPolylines, pl...)
+		}
+		*allPolylines = append(*allPolylines, groupPolylines...)
 
-		formattedStopIDs := formatStopIDs(agencyID, stopIDs)
+		formattedStopIDs := make([]string, len(orderedStopIDs))
+		for idx, id := range orderedStopIDs {
+			formattedStopIDs[idx] = utils.FormCombinedID(agencyID, id)
+		}
 
-		groupID := fmt.Sprintf("%d", key.DirectionID-1)
+		// i is the 0-based index over descending-sorted direction IDs, giving
+		// normalized group IDs "0", "1", … regardless of raw GTFS direction_id values.
+		groupID := strconv.Itoa(i)
 
 		stopGroup := models.StopGroup{
 			ID: groupID,
 			Name: models.StopGroupName{
-				Name:  key.TripHeadsign,
-				Names: []string{key.TripHeadsign},
+				Name:  groupHeadsign,
+				Names: []string{groupHeadsign},
 				Type:  "destination",
 			},
 			StopIds:   formattedStopIDs,
-			Polylines: polylines,
+			Polylines: groupPolylines,
 		}
 
 		allStopGroups = append(allStopGroups, stopGroup)
 	}
 
 	if len(allStopGroups) > 0 {
+		sort.Slice(allStopGroups, func(i, j int) bool {
+			return allStopGroups[i].ID < allStopGroups[j].ID
+		})
 		*stopGroupings = append(*stopGroupings, models.StopGrouping{
 			Ordered:    true,
 			StopGroups: allStopGroups,
@@ -349,8 +393,8 @@ func generatePolylines(shapes []gtfsdb.GetShapesGroupedByTripHeadSignRow) []mode
 func formatStopIDs(agencyID string, stops map[string]bool) []string {
 	var stopIDs []string
 	for key := range stops {
-		stopID := utils.FormCombinedID(agencyID, key)
-		stopIDs = append(stopIDs, stopID)
+		stopIDs = append(stopIDs, utils.FormCombinedID(agencyID, key))
 	}
+	sort.Strings(stopIDs)
 	return stopIDs
 }

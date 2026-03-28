@@ -15,7 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error) {
+func rawGtfsData(ctx context.Context, source string, isLocalFile bool, config Config) ([]byte, error) {
 	var b []byte
 	var err error
 
@@ -27,7 +27,7 @@ func rawGtfsData(source string, isLocalFile bool, config Config) ([]byte, error)
 			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
 		}
 	} else {
-		req, err := http.NewRequest("GET", source, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error creating GTFS request: %w", err)
 		}
@@ -85,7 +85,7 @@ func buildGtfsDB(ctx context.Context, config Config, isLocalFile bool, dbPath st
 	if dbPath == "" {
 		dbPath = config.GTFSDataPath
 	}
-	dbConfig := gtfsdb.NewConfig(dbPath, config.Env, config.Verbose)
+	dbConfig := newGTFSDBConfig(dbPath, config)
 	client, err := gtfsdb.NewClient(dbConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GTFS database client: %w", err)
@@ -120,9 +120,17 @@ func buildGtfsDB(ctx context.Context, config Config, isLocalFile bool, dbPath st
 	return client, nil
 }
 
+func newGTFSDBConfig(dbPath string, config Config) gtfsdb.Config {
+	dbConfig := gtfsdb.NewConfig(dbPath, config.Env, config.Verbose)
+	if config.Metrics != nil {
+		dbConfig.QueryMetricsRecorder = config.Metrics
+	}
+	return dbConfig
+}
+
 // loadGTFSData loads and parses GTFS data from either a URL or a local file
-func loadGTFSData(source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
-	b, err := rawGtfsData(source, isLocalFile, config)
+func loadGTFSData(ctx context.Context, source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
+	b, err := rawGtfsData(ctx, source, isLocalFile, config)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
@@ -216,7 +224,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
-	newStaticData, err := loadGTFSData(manager.config.GtfsURL, manager.isLocalFile, manager.config)
+	newStaticData, err := loadGTFSData(ctx, manager.config.GtfsURL, manager.isLocalFile, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error updating GTFS data", err,
 			slog.String("source", manager.config.GtfsURL))
@@ -307,7 +315,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 		logging.LogOperation(logger, "attempting_recovery_reopening_old_db")
 
-		dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
+		dbConfig := newGTFSDBConfig(finalDBPath, manager.config)
 		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
 			manager.GtfsDB = reopenedClient
 			logging.LogOperation(logger, "recovery_successful_old_db_reopened")
@@ -329,7 +337,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return err
 	}
 
-	dbConfig := gtfsdb.NewConfig(finalDBPath, manager.config.Env, manager.config.Verbose)
+	dbConfig := newGTFSDBConfig(finalDBPath, manager.config)
 	client, err := gtfsdb.NewClient(dbConfig)
 
 	if err != nil {

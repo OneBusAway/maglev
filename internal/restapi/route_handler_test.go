@@ -57,7 +57,11 @@ func TestRouteHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, routes[0].Url, entry["url"])
 	assert.Equal(t, routes[0].Color, entry["color"])
 	assert.Equal(t, routes[0].TextColor, entry["textColor"])
-	assert.Equal(t, int(routes[0].Type), int(entry["type"].(float64)))
+	if typeVal, typeOk := entry["type"].(float64); typeOk {
+		assert.Equal(t, int(routes[0].Type), int(typeVal))
+	} else {
+		assert.Fail(t, "Route type missing or not a number")
+	}
 
 	references, ok := data["references"].(map[string]interface{})
 	assert.True(t, ok, "References section should exist")
