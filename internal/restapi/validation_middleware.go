@@ -69,16 +69,19 @@ func NonNegativeIntRule(param string) QueryParamRule {
 // ValidateQueryParams applies validation rules to query parameters
 // and returns 400 if validation fails before invoking the next handler.
 // Parameters not present in the request are skipped (all rules are optional-param-safe).
+// Parameters present but empty (e.g. ?maxCount=) are validated normally.
 func ValidateQueryParams(api *RestAPI, rules []QueryParamRule, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		fieldErrors := make(map[string][]string)
 
 		for _, rule := range rules {
-			value := query.Get(rule.Param)
-			if value == "" {
-				continue // param not provided, skip
+			if !query.Has(rule.Param) {
+				continue // truly absent, skip
 			}
+
+			value := query.Get(rule.Param)
+
 			if errMsg, ok := rule.Validate(value); !ok {
 				fieldErrors[rule.Param] = append(fieldErrors[rule.Param], errMsg)
 			}

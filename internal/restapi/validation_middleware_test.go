@@ -122,6 +122,17 @@ func TestValidateQueryParams(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
+	t.Run("empty param value returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test?maxCount=", nil)
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		body, err := io.ReadAll(rec.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "maxCount")
+	})
+
 	t.Run("invalid param returns 400", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test?maxCount=-1", nil)
 		rec := httptest.NewRecorder()
