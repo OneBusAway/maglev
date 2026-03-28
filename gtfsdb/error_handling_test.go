@@ -77,12 +77,12 @@ func TestProcessAndStoreGTFSData_ErrorHandling(t *testing.T) {
 
 	// Test with invalid GTFS data
 	invalidData := []byte("invalid gtfs data")
-	err = client.processAndStoreGTFSDataWithSource(invalidData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), invalidData, "test-source")
 	assert.Error(t, err, "processAndStoreGTFSDataWithSource should return error for invalid data")
 
 	// Test with empty data
 	emptyData := []byte{}
-	err = client.processAndStoreGTFSDataWithSource(emptyData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), emptyData, "test-source")
 	assert.Error(t, err, "processAndStoreGTFSDataWithSource should return error for empty data")
 }
 

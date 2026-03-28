@@ -56,7 +56,7 @@ func TestConditionalImport_InitialImport(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), originalData, "test-source")
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Verify metadata was stored
@@ -89,7 +89,7 @@ func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), originalData, "test-source")
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Get initial metadata
@@ -106,7 +106,7 @@ func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 
 	// Perform second import with same data
 	startTime := time.Now()
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), originalData, "test-source")
 	duration := time.Since(startTime)
 	require.NoError(t, err, "Second import should succeed")
 
@@ -143,7 +143,7 @@ func TestConditionalImport_ReloadChangedData(t *testing.T) {
 	originalData, modifiedData := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), originalData, "test-source")
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Get initial metadata
@@ -151,7 +151,7 @@ func TestConditionalImport_ReloadChangedData(t *testing.T) {
 	require.NoError(t, err, "Should be able to retrieve initial metadata")
 
 	// Perform import with modified data
-	err = client.processAndStoreGTFSDataWithSource(modifiedData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), modifiedData, "test-source")
 	require.NoError(t, err, "Import with modified data should succeed")
 
 	// Verify metadata was updated
@@ -186,7 +186,7 @@ func TestConditionalImport_DifferentSources(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import with source A
-	err = client.processAndStoreGTFSDataWithSource(originalData, "source-a")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), originalData, "source-a")
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Get initial metadata
@@ -194,7 +194,7 @@ func TestConditionalImport_DifferentSources(t *testing.T) {
 	require.NoError(t, err, "Should be able to retrieve initial metadata")
 
 	// Perform import with same data but different source
-	err = client.processAndStoreGTFSDataWithSource(originalData, "source-b")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), originalData, "source-b")
 	require.NoError(t, err, "Import with different source should succeed")
 
 	// Verify metadata was updated (different source should trigger reimport)
@@ -264,7 +264,7 @@ func TestClearAllGTFSData(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), originalData, "test-source")
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Verify data exists

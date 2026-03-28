@@ -84,7 +84,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 		t.Skip("Skipping test: testdata/gtfs.zip not found")
 	}
 
-	err = client.processAndStoreGTFSDataWithSource(validBytes, "test-source-valid")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), validBytes, "test-source-valid")
 	assert.NoError(t, err, "First import should succeed")
 
 	counts, err := client.TableCounts()
@@ -120,7 +120,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 	invalidBytes := buf.Bytes()
 
 	// 3. Attempt to import structurally invalid data
-	err = client.processAndStoreGTFSDataWithSource(invalidBytes, "test-source-invalid")
+	err = client.processAndStoreGTFSDataWithSource(context.Background(), invalidBytes, "test-source-invalid")
 	assert.Error(t, err, "Import should fail structural validation")
 	assert.Contains(t, err.Error(), "validation failed")
 
