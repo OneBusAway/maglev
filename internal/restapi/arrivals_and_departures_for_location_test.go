@@ -140,6 +140,33 @@ func TestParseArrivalsAndDeparturesForLocationParams_InvalidMaxCount(t *testing.
 
 // --- HTTP handler integration tests ---
 
+func TestParseArrivalsAndDeparturesForLocationParams_FrequencyAndRouteType(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req := httptest.NewRequest("GET",
+		"/test?lat=47.653&lon=-122.307&radius=500&frequencyMinutesBefore=15&frequencyMinutesAfter=45&emptyReturnsNotFound=true&routeType=1,3", nil)
+	params, errs := api.parseArrivalsAndDeparturesForLocationParams(req)
+
+	assert.Nil(t, errs)
+	assert.Equal(t, 15, params.FrequencyMinutesBefore)
+	assert.Equal(t, 45, params.FrequencyMinutesAfter)
+	assert.True(t, params.EmptyReturnsNotFound)
+	assert.Equal(t, []int{1, 3}, params.RouteTypes)
+}
+
+func TestParseArrivalsAndDeparturesForLocationParams_InvalidRouteType(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req := httptest.NewRequest("GET",
+		"/test?lat=47.6&lon=-122.3&routeType=1,abc", nil)
+	_, errs := api.parseArrivalsAndDeparturesForLocationParams(req)
+
+	assert.NotNil(t, errs)
+	assert.Contains(t, errs, "routeType")
+}
+
 func TestArrivalsAndDeparturesForLocationRequiresValidAPIKey(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t,
 		"/api/where/arrivals-and-departures-for-location.json?key=invalid&lat=40.583321&lon=-122.426966&latSpan=0.01&lonSpan=0.01")
@@ -199,6 +226,17 @@ func TestArrivalsAndDeparturesForLocationEmptyAreaReturnsOK(t *testing.T) {
 	assert.Empty(t, stopIDs)
 
 	assert.False(t, entry["limitExceeded"].(bool))
+}
+
+func TestArrivalsAndDeparturesForLocationEmptyReturnsNotFound(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2025, 12, 26, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=0.0&lon=0.0&radius=100&emptyReturnsNotFound=true")
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, 404, model.Code)
 }
 
 func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
