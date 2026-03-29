@@ -1,5 +1,5 @@
 # Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
-# Fetched: 2026-03-13
+# Fetched: 2026-03-29
 openapi: 3.0.0
 info:
   title: OneBusAway
@@ -538,7 +538,7 @@ paths:
         - name: routeType
           in: query
           required: false
-          description: Optional list of GTFS routeTypes to filter by (comma delimited).
+          description: Optional list of GTFS routeTypes to filter by (comma delimited) e.g. "1,2,3".
           schema:
             type: string
         - name: emptyReturnsNotFound
