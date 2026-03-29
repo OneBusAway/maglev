@@ -616,8 +616,8 @@ func (manager *Manager) buildMergedRealtime() {
 	manager.mergeMutex.Lock()
 	defer manager.mergeMutex.Unlock()
 
-	// Snapshot feed pointers once under a single read lock — the pointers
-	// in the map are never overwritten, only appended, so this is safe.
+	// Snapshot feed pointers under feedMapMutex.RLock; writers use
+	// feedMapMutex.Lock when inserting new entries.
 	manager.feedMapMutex.RLock()
 	feedIDs := make([]string, 0, len(manager.feedData))
 	for id := range manager.feedData {
