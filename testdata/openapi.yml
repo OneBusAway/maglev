@@ -463,6 +463,105 @@ paths:
                     required:
                       - data
 
+  /api/where/arrivals-and-departures-for-location.json:
+    get:
+      tags:
+        - default
+      summary: arrivals-and-departures-for-location
+      description: Returns real-time arrival and departure data for stops within a bounding box or radius centered on a specific location.
+      operationId: getArrivalsAndDeparturesForLocation
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          description: The latitude coordinate of the search center.
+          schema:
+            type: number
+            format: double
+        - name: lon
+          in: query
+          required: true
+          description: The longitude coordinate of the search center.
+          schema:
+            type: number
+            format: double
+        - name: radius
+          in: query
+          required: false
+          description: The search radius in meters.
+          schema:
+            type: number
+            format: double
+        - name: latSpan
+          in: query
+          required: false
+          description: Sets the latitude limits of the search bounding box.
+          schema:
+            type: number
+            format: double
+        - name: lonSpan
+          in: query
+          required: false
+          description: Sets the longitude limits of the search bounding box.
+          schema:
+            type: number
+            format: double
+        - name: time
+          in: query
+          required: false
+          description: By default, returns the status right now. Can be queried at a specific time (milliseconds since epoch) for testing.
+          schema:
+            type: integer
+            format: int64
+        - name: minutesBefore
+          in: query
+          required: false
+          description: Include arrivals and departures this many minutes before the query time.
+          schema:
+            type: integer
+            default: 5
+        - name: minutesAfter
+          in: query
+          required: false
+          description: Include arrivals and departures this many minutes after the query time.
+          schema:
+            type: integer
+            default: 35
+        - name: maxCount
+          in: query
+          required: false
+          description: The max size of the list of nearby stops and arrivals to return. Defaults to 250, max 1000.
+          schema:
+            type: integer
+            default: 250
+            maximum: 1000
+        - name: routeType
+          in: query
+          required: false
+          description: Optional list of GTFS routeTypes to filter by (comma delimited).
+          schema:
+            type: string
+        - name: emptyReturnsNotFound
+          in: query
+          required: false
+          description: If true, returns a 404 Not Found error instead of an empty result.
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ArrivalsDeparturesForLocationResponse'
+                    required:
+                      - data
+
   /api/where/trip/{tripID}.json:
     parameters:
       - name: tripID
@@ -1892,6 +1991,47 @@ components:
                 $ref: '#/components/schemas/ArrivalDepartureForStop'
           required:
             - arrivalsAndDepartures
+        references:
+          $ref: '#/components/schemas/Reference'
+      required:
+        - entry
+        - references
+
+    ArrivalsDeparturesForLocationResponse:
+      type: object
+      properties:
+        entry:
+          type: object
+          properties:
+            stopIds:
+              type: array
+              items:
+                type: string
+            arrivalsAndDepartures:
+              type: array
+              items:
+                $ref: '#/components/schemas/ArrivalDepartureForStop'
+            nearbyStopIds:
+              type: array
+              items:
+                type: object
+                properties:
+                  stopId:
+                    type: string
+                  distanceFromQuery:
+                    type: number
+                    format: double
+            situationIds:
+              type: array
+              items:
+                type: string
+            limitExceeded:
+              type: boolean
+          required:
+            - stopIds
+            - arrivalsAndDepartures
+            - nearbyStopIds
+            - limitExceeded
         references:
           $ref: '#/components/schemas/Reference'
       required:
