@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -23,11 +24,15 @@ type ArrivalsAndDeparturesForLocationParams struct {
 	LatSpan float64
 	LonSpan float64
 
-	Time          time.Time
-	MinutesBefore int
-	MinutesAfter  int
+	Time                   time.Time
+	MinutesBefore          int
+	MinutesAfter           int
+	FrequencyMinutesBefore int
+	FrequencyMinutesAfter  int
 
-	MaxCount int
+	MaxCount             int
+	EmptyReturnsNotFound bool
+	RouteTypes           []int
 }
 
 // parseArrivalsAndDeparturesForLocationParams parses and validates all query
@@ -110,6 +115,54 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 		}
 	}
 
+	// frequencyMinutesBefore
+	if val := q.Get("frequencyMinutesBefore"); val != "" {
+		if n, err := strconv.Atoi(val); err != nil {
+			addError("frequencyMinutesBefore", "must be a valid integer")
+		} else if n < 0 {
+			addError("frequencyMinutesBefore", "must be a non-negative integer")
+		} else {
+			params.FrequencyMinutesBefore = n
+		}
+	}
+
+	// frequencyMinutesAfter
+	if val := q.Get("frequencyMinutesAfter"); val != "" {
+		if n, err := strconv.Atoi(val); err != nil {
+			addError("frequencyMinutesAfter", "must be a valid integer")
+		} else if n < 0 {
+			addError("frequencyMinutesAfter", "must be a non-negative integer")
+		} else {
+			params.FrequencyMinutesAfter = n
+		}
+	}
+
+	// emptyReturnsNotFound
+	if val := q.Get("emptyReturnsNotFound"); val != "" {
+		if b, err := strconv.ParseBool(val); err == nil {
+			params.EmptyReturnsNotFound = b
+		} else {
+			addError("emptyReturnsNotFound", "must be true or false")
+		}
+	}
+
+	// routeType
+	if val := q.Get("routeType"); val != "" {
+		parts := strings.Split(val, ",")
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if rt, err := strconv.Atoi(p); err == nil {
+				params.RouteTypes = append(params.RouteTypes, rt)
+			} else {
+				addError("routeType", "must be a comma-delimited list of integers")
+				break
+			}
+		}
+	}
+
 	// maxCount — reuse the shared parser.
 	var maxCountErrors map[string][]string
 	params.MaxCount, maxCountErrors = utils.ParseMaxCount(q, defaultMaxCount, nil)
@@ -170,11 +223,15 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		"",
 		params.MaxCount,
 		false,
-		[]int{},
+		params.RouteTypes, // Pass parsed routeTypes
 		params.Time,
 	)
 
 	if len(stops) == 0 {
+		if params.EmptyReturnsNotFound {
+			api.sendNotFound(w, r)
+			return
+		}
 		api.sendResponse(w, r, models.NewArrivalsAndDeparturesForLocationResponse(
 			[]models.ArrivalAndDeparture{},
 			*models.NewEmptyReferences(),
@@ -795,10 +852,9 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// Build nearbyStopIds as []StopWithDistance.
 	//
-	// FIX #3: pass queriedStopIDs so that stops already in the entry's stopIds
-	// are excluded from nearbyStopIds. Java's includeInputIdsInNearby=false
-	// default means the bbox stops must not appear in both lists.
-	nearbyStops := getLocationNearbyStops(api, ctx, params.Lat, params.Lon, params.Time, queriedStopIDs)
+	// FIX #3: Java's includeInputIdsInNearby is overridden to true in this endpoint,
+	// so we DO NOT exclude queried stops from the nearby stops list.
+	nearbyStops := getLocationNearbyStops(api, ctx, params.Lat, params.Lon, params.Time)
 
 	api.sendResponse(w, r, models.NewArrivalsAndDeparturesForLocationResponse(
 		arrivals,
@@ -816,16 +872,11 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 //
 // Java equivalent: getNearbyStops() in StopWithArrivalsAndDeparturesBeanServiceImpl,
 // which calls SphericalGeometryLibrary.distance() to populate distanceFromQuery.
-//
-// FIX #3: queriedStopIDs are excluded from the result so that stops already
-// present in entry.stopIds do not also appear in entry.nearbyStopIds.
-// This matches Java's includeInputIdsInNearby=false default behaviour.
 func getLocationNearbyStops(
 	api *RestAPI,
 	ctx context.Context,
 	centerLat, centerLon float64,
 	queryTime time.Time,
-	queriedStopIDs []string, // stops already in entry.stopIds — must be excluded
 ) []models.StopWithDistance {
 
 	nearby := api.GtfsManager.GetStopsForLocation(
@@ -857,13 +908,6 @@ func getLocationNearbyStops(
 	// pickPrimaryAgency over the nearby set for stops with no resolved agency.
 	nearbyFallback := pickPrimaryAgency(nearbyAgencyMap)
 
-	// Build a set of already-queried combined stop IDs for O(1) lookup.
-	// FIX #3: Java excludes these via includeInputIdsInNearby=false.
-	queriedSet := make(map[string]bool, len(queriedStopIDs))
-	for _, id := range queriedStopIDs {
-		queriedSet[id] = true
-	}
-
 	result := make([]models.StopWithDistance, 0, len(nearby))
 	for _, s := range nearby {
 		ag := nearbyFallback
@@ -871,11 +915,6 @@ func getLocationNearbyStops(
 			ag = resolved
 		}
 		combinedID := utils.FormCombinedID(ag, s.ID)
-
-		// FIX #3: skip stops that are already in entry.stopIds.
-		if queriedSet[combinedID] {
-			continue
-		}
 
 		dist := utils.Distance(centerLat, centerLon, s.Lat, s.Lon)
 		result = append(result, models.StopWithDistance{
