@@ -100,7 +100,13 @@ type Manager struct {
 	cacheEpoch atomic.Uint64
 }
 
-// FeedData holds real-time data for a specific feed
+// FeedData holds real-time data for a specific feed.
+//
+// Concurrency: All exported fields are protected by mu. Callers must hold
+// mu.RLock() for reads and mu.Lock() for writes. Direct field access without
+// the lock is a data race. Within the Manager, production code acquires mu
+// after releasing feedMapMutex (see updateFeedRealtime and clearFeedData for
+// the canonical pattern).
 type FeedData struct {
 	mu               sync.RWMutex
 	Trips            []gtfs.Trip
@@ -128,7 +134,9 @@ func (manager *Manager) clearFeedData(feedID string) {
 	feed.VehicleLastSeen = make(map[string]time.Time)
 	feed.mu.Unlock()
 
+	manager.realTimeMutex.Lock()
 	delete(manager.feedLastUpdate, feedID)
+	manager.realTimeMutex.Unlock()
 
 	manager.buildMergedRealtime()
 }
