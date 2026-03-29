@@ -210,14 +210,15 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 	assert.Empty(t, list)
 }
 
-func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
+// TestSearchStopsHandlerInvalidMaxCount verifies that non-positive integers and
+// non-integer strings for maxCount are rejected with 400 Bad Request.
+func TestSearchStopsHandlerInvalidMaxCount(t *testing.T) {
 	api := createTestApi(t)
 
 	stops := api.GtfsManager.GetStops()
 	require.NotEmpty(t, stops)
 
-	targetStop := stops[0]
-	query := url.QueryEscape(targetStop.Name)
+	query := url.QueryEscape(stops[0].Name)
 
 	tests := []struct {
 		name     string
@@ -225,7 +226,8 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 	}{
 		{"zero", "0"},
 		{"negative", "-1"},
-		{"tooLarge", "101"},
+		{"non_integer", "abc"},
+		{"float", "3.14"},
 	}
 
 	for _, tt := range tests {
@@ -238,17 +240,39 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 
 			resp, model := serveApiAndRetrieveEndpoint(t, api, reqUrl)
 
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
+				"maxCount=%q should return 400", tt.maxCount)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
 
 			data, ok := model.Data.(map[string]interface{})
 			require.True(t, ok)
 
-			list, ok := data["list"].([]interface{})
-			require.True(t, ok)
-
-			assert.NotEmpty(t, list)
+			fieldErrors, ok := data["fieldErrors"].(map[string]interface{})
+			require.True(t, ok, "response should contain fieldErrors")
+			assert.Contains(t, fieldErrors, "maxCount",
+				"fieldErrors should mention the maxCount field")
 		})
 	}
+}
+
+// TestSearchStopsHandlerLargeMaxCount verifies that a large but valid positive
+// integer is accepted (it is a valid limit, not a validation error).
+func TestSearchStopsHandlerLargeMaxCount(t *testing.T) {
+	api := createTestApi(t)
+
+	stops := api.GtfsManager.GetStops()
+	require.NotEmpty(t, stops)
+
+	query := url.QueryEscape(stops[0].Name)
+	reqUrl := fmt.Sprintf(
+		"/api/where/search/stop.json?key=TEST&input=%s&maxCount=1000",
+		query,
+	)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, reqUrl)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
 }
 
 func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {

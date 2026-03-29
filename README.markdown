@@ -38,6 +38,14 @@ docker run -p 4000:4000 -v $(pwd)/config.docker.json:/app/config.json:ro -v magl
 
 ```bash
 curl http://localhost:4000/healthz
+### Windows (PowerShell) Note
+
+When using PowerShell, you may see a security warning when running:
+
+```powershell
+curl http://localhost:4000/healthz
+
+to avoid this use  curl http://localhost:4000/healthz -UseBasicParsing
 
 ```
 
