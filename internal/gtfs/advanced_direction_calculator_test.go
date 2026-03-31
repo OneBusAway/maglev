@@ -8,7 +8,9 @@ import (
 	"sync"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -123,6 +125,30 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	// Second call for same stop should return from cache without recomputation
 	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{Valid: false})
 	assert.Equal(t, "", result, "second call should return cached empty result")
+}
+
+// TestTransientDBError_NotCached verifies that if the DB fails (simulated by closing it),
+// the resulting empty direction is NOT cached, allowing future requests to retry.
+func TestTransientDBError_NotCached(t *testing.T) {
+	// Simulate a transient DB failure by opening and immediately closing an in-memory DB
+	rawDB, err := sql.Open("sqlite3", ":memory:")
+	assert.NoError(t, err)
+	err = rawDB.Close()
+	assert.NoError(t, err)
+
+	brokenQueries := gtfsdb.New(rawDB)
+
+	calc := NewAdvancedDirectionCalculator(brokenQueries)
+
+	stopID := "transient-error-stop"
+
+	// The query will fail, gracefully returning an empty direction
+	result := calc.CalculateStopDirection(context.Background(), stopID)
+	assert.Equal(t, "", result, "should return empty string on DB error")
+
+	// Critical check: ensure the failure was NOT permanently cached
+	_, cached := calc.directionResults.Load(stopID)
+	assert.False(t, cached, "transient DB error result must not be cached in directionResults")
 }
 
 func TestCalculateStopDirectionPrecomputedAbbreviations(t *testing.T) {
