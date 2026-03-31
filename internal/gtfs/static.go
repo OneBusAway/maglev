@@ -318,11 +318,17 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		dbConfig := newGTFSDBConfig(finalDBPath, manager.config)
 		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
 			manager.GtfsDB = reopenedClient
+			if manager.DirectionCalculator != nil {
+				manager.DirectionCalculator.UpdateQueries(reopenedClient.Queries)
+			}
 			logging.LogOperation(logger, "recovery_successful_old_db_reopened")
 		} else {
 			logging.LogError(logger, "CRITICAL: Failed to recover old DB after rename failure", reopenErr)
 			logging.LogOperation(logger, "setting manager.gtfsDB to nil")
 			manager.GtfsDB = nil
+			if manager.DirectionCalculator != nil {
+				manager.DirectionCalculator.UpdateQueries(nil)
+			}
 
 			manager.isHealthy = false
 		}
