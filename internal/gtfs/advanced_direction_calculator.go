@@ -58,10 +58,7 @@ func (adc *AdvancedDirectionCalculator) UpdateQueries(queries *gtfsdb.Queries) {
 	adc.queriesMu.Unlock()
 
 	// Evict all cached directions so they are recomputed against the new DB.
-	adc.directionResults.Range(func(key, _ any) bool {
-		adc.directionResults.Delete(key)
-		return true
-	})
+	adc.directionResults.Clear()
 }
 
 // SetStandardDeviationThreshold sets the standard deviation threshold for direction variance checking.
