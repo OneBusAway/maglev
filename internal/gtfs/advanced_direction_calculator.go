@@ -125,6 +125,8 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 			adc.directionResults.Store(stopID, computedDir)
 		}
 
+		// Intentionally return nil so singleflight shares the empty fallback result with concurrent callers.
+		// Since we skip caching on error, future requests will safely retry the DB.
 		return computedDir, nil
 	})
 
