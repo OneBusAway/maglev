@@ -33,9 +33,9 @@ type AdvancedDirectionCalculator struct {
 	// directionResults caches computed stop directions.
 	// Only non-error results are cached; transient DB errors are never stored so that
 	// a recovered database will be retried on the next request.
-	// Lifecycle note: This map grows indefinitely for the lifetime of the application.
-	// Unbounded growth is acceptable here because it is strictly bounded by the finite
-	// number of valid real-world stops, and computed directions remain stable across GTFS reloads.
+	// Lifecycle note: This map caches computed directions to reduce database load.
+	// It is explicitly cleared during GTFS reloads (via UpdateQueries) to prevent
+	// stale directions from persisting across dataset updates.
 	directionResults sync.Map           // Cached direction results (stopID -> string), includes negative cache
 	requestGroup     singleflight.Group // Prevents duplicate concurrent computations for the same stop
 }
