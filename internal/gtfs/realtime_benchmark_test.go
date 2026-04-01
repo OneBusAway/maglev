@@ -165,7 +165,7 @@ func BenchmarkGetAlertsForStop(b *testing.B) {
 	}
 }
 
-func BenchmarkRebuildDuplicatedVehicleByRoute(b *testing.B) {
+func BenchmarkRebuildVehiclesByRoute(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
 		feedTrips:     make(map[string][]gtfs.Trip),
@@ -221,6 +221,7 @@ func BenchmarkGetDuplicatedVehiclesForRoute(b *testing.B) {
 				RouteID: routeID,
 			},
 		}
+
 		feedVehicles[i] = gtfs.Vehicle{
 			ID: &gtfs.VehicleID{ID: fmt.Sprintf("vehicle_%d", i)},
 			Trip: &gtfs.Trip{
@@ -239,5 +240,41 @@ func BenchmarkGetDuplicatedVehiclesForRoute(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = manager.GetDuplicatedVehiclesForRoute(fmt.Sprintf("route_%d", i%100))
+	}
+}
+
+func BenchmarkVehiclesForAgencyID(b *testing.B) {
+	routes := make([]*gtfs.Route, 0, 10)
+	for i := 0; i < 10; i++ {
+		routes = append(routes, &gtfs.Route{Id: fmt.Sprintf("route_%d", i)})
+	}
+
+	manager := &Manager{
+		staticMutex:   sync.RWMutex{},
+		realTimeMutex: sync.RWMutex{},
+		routesByAgencyID: map[string][]*gtfs.Route{
+			"agency_0": routes,
+		},
+		feedVehicles: make(map[string][]gtfs.Vehicle),
+	}
+
+	feedVehicles := make([]gtfs.Vehicle, 1000)
+	for i := 0; i < 1000; i++ {
+		feedVehicles[i] = gtfs.Vehicle{
+			ID: &gtfs.VehicleID{ID: fmt.Sprintf("vehicle_%d", i)},
+			Trip: &gtfs.Trip{
+				ID: gtfs.TripID{
+					ID:      fmt.Sprintf("trip_%d", i),
+					RouteID: fmt.Sprintf("route_%d", i%100),
+				},
+			},
+		}
+	}
+	manager.feedVehicles["feed-0"] = feedVehicles
+	manager.rebuildMergedRealtimeLocked()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = manager.VehiclesForAgencyID("agency_0")
 	}
 }

@@ -40,7 +40,7 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 		}
 	}
 	now := time.Now()
-	m.realTimeVehicles = append(m.realTimeVehicles, gtfs.Vehicle{
+	v := gtfs.Vehicle{
 		ID:        &gtfs.VehicleID{ID: vehicleID},
 		Timestamp: &now,
 		Trip: &gtfs.Trip{
@@ -49,12 +49,19 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 				RouteID: routeID,
 			},
 		},
-	})
+	}
+	m.realTimeVehicles = append(m.realTimeVehicles, v)
 
 	idx := len(m.realTimeVehicles) - 1
 	m.realTimeVehicleLookupByVehicle[vehicleID] = idx
 	if tripID != "" {
 		m.realTimeVehicleLookupByTrip[tripID] = idx
+	}
+	if routeID != "" {
+		if m.vehiclesByRoute == nil {
+			m.vehiclesByRoute = make(map[string][]gtfs.Vehicle)
+		}
+		m.vehiclesByRoute[routeID] = append(m.vehiclesByRoute[routeID], v)
 	}
 }
 
@@ -113,6 +120,12 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	if tripID != "" && !opts.NoTrip {
 		m.realTimeVehicleLookupByTrip[tripID] = idx
 	}
+	if !opts.NoTrip && routeID != "" {
+		if m.vehiclesByRoute == nil {
+			m.vehiclesByRoute = make(map[string][]gtfs.Vehicle)
+		}
+		m.vehiclesByRoute[routeID] = append(m.vehiclesByRoute[routeID], v)
+	}
 }
 
 func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
@@ -162,7 +175,7 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeVehicles = nil
 	m.realTimeVehicleLookupByVehicle = make(map[string]int)
 	m.realTimeVehicleLookupByTrip = make(map[string]int)
-	m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
+	m.vehiclesByRoute = make(map[string][]gtfs.Vehicle)
 	m.realTimeTrips = nil
 	m.realTimeTripLookup = make(map[string]int)
 }

@@ -633,6 +633,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	vehicleLookupByTrip := make(map[string]int, len(allVehicles))
 	vehicleLookupByVehicle := make(map[string]int, len(allVehicles))
 	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
+	vehiclesByRoute := make(map[string][]gtfs.Vehicle)
 	for i, vehicle := range allVehicles {
 		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
 			vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
@@ -640,10 +641,19 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		if vehicle.ID != nil && vehicle.ID.ID != "" {
 			vehicleLookupByVehicle[vehicle.ID.ID] = i
 		}
-		if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+		if vehicle.Trip == nil {
 			continue
 		}
+
 		routeID := vehicle.Trip.ID.RouteID
+		if routeID != "" {
+			vehiclesByRoute[routeID] = append(vehiclesByRoute[routeID], vehicle)
+		}
+
+		if vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+			continue
+		}
+
 		// Some feeds omit route_id in VehiclePosition trip descriptors.
 		// Fall back to the corresponding TripUpdate to resolve the route.
 		if routeID == "" && vehicle.Trip.ID.ID != "" {
@@ -706,6 +716,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	manager.realTimeVehicleLookupByTrip = vehicleLookupByTrip
 	manager.realTimeVehicleLookupByVehicle = vehicleLookupByVehicle
 	manager.duplicatedVehicleByRoute = duplicatedVehicleByRoute
+	manager.vehiclesByRoute = vehiclesByRoute
 	manager.alertIdx = idx
 }
 

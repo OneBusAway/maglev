@@ -51,6 +51,156 @@ func TestManager_RoutesForAgencyID(t *testing.T) {
 	assert.Equal(t, "25", route.Agency.Id)
 }
 
+func TestManager_VehiclesForAgencyID_UsesRouteBuckets(t *testing.T) {
+	manager := &Manager{
+		staticMutex:   sync.RWMutex{},
+		realTimeMutex: sync.RWMutex{},
+		routesByAgencyID: map[string][]*gtfs.Route{
+			"agency-1": {
+				{Id: "route-a"},
+				{Id: "route-b"},
+			},
+		},
+		vehiclesByRoute: map[string][]gtfs.Vehicle{
+			"route-a": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v1"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "route-a"}},
+				},
+			},
+			"route-b": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v2"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "route-b"}},
+				},
+			},
+		},
+		realTimeVehicles: []gtfs.Vehicle{},
+	}
+
+	result := manager.VehiclesForAgencyID("agency-1")
+	require.Len(t, result, 2)
+	ids := []string{result[0].ID.ID, result[1].ID.ID}
+	assert.ElementsMatch(t, []string{"v1", "v2"}, ids)
+}
+
+func TestManager_VehiclesForAgencyID_DeduplicatesDuplicateRouteIDs(t *testing.T) {
+	manager := &Manager{
+		staticMutex:   sync.RWMutex{},
+		realTimeMutex: sync.RWMutex{},
+		routesByAgencyID: map[string][]*gtfs.Route{
+			"agency-1": {
+				{Id: "route-a"},
+				{Id: "route-a"},
+			},
+		},
+		vehiclesByRoute: map[string][]gtfs.Vehicle{
+			"route-a": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v1"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "route-a"}},
+				},
+			},
+		},
+	}
+
+	result := manager.VehiclesForAgencyID("agency-1")
+	require.Len(t, result, 1, "duplicate route IDs in routesByAgencyID must not duplicate returned vehicles")
+	assert.Equal(t, "v1", result[0].ID.ID)
+}
+
+func TestManager_VehiclesForAgencyID_FiltersInvalidAndMatchesRoutes(t *testing.T) {
+	manager := &Manager{
+		staticMutex:   sync.RWMutex{},
+		realTimeMutex: sync.RWMutex{},
+		routesByAgencyID: map[string][]*gtfs.Route{
+			"agency-1": {
+				{Id: "route-a"},
+				{Id: "route-b"},
+			},
+		},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v1"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip1", RouteID: "route-a"}},
+				},
+				{
+					ID:   &gtfs.VehicleID{ID: "v2"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip2", RouteID: "route-b"}},
+				},
+				{
+					ID:   &gtfs.VehicleID{ID: "v3"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip3", RouteID: "route-c"}},
+				},
+				{
+					ID: &gtfs.VehicleID{ID: "v4"},
+				},
+				{
+					ID:   &gtfs.VehicleID{ID: "v5"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip5", RouteID: ""}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	result := manager.VehiclesForAgencyID("agency-1")
+	require.Len(t, result, 2)
+	ids := []string{result[0].ID.ID, result[1].ID.ID}
+	assert.ElementsMatch(t, []string{"v1", "v2"}, ids)
+}
+
+func TestManager_VehiclesForAgencyID_RebuildClearsStaleIndex(t *testing.T) {
+	manager := &Manager{
+		staticMutex:   sync.RWMutex{},
+		realTimeMutex: sync.RWMutex{},
+		routesByAgencyID: map[string][]*gtfs.Route{
+			"agency-1": {
+				{Id: "route-a"},
+			},
+		},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v1"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip1", RouteID: "route-a"}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+	require.Len(t, manager.VehiclesForAgencyID("agency-1"), 1)
+
+	manager.feedVehicles["feed-0"] = nil
+	manager.rebuildMergedRealtimeLocked()
+
+	assert.Empty(t, manager.VehiclesForAgencyID("agency-1"))
+}
+
+func TestManager_VehiclesForAgencyID_NoMatchReturnsEmpty(t *testing.T) {
+	manager := &Manager{
+		staticMutex:   sync.RWMutex{},
+		realTimeMutex: sync.RWMutex{},
+		routesByAgencyID: map[string][]*gtfs.Route{
+			"agency-1": {
+				{Id: "route-a"},
+			},
+		},
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-0": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v1"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip1", RouteID: "route-b"}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	assert.Empty(t, manager.VehiclesForAgencyID("agency-1"))
+}
+
 func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 	ctx := context.Background()
 
