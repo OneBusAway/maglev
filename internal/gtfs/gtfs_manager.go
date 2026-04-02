@@ -90,6 +90,11 @@ type Manager struct {
 	// Exported metrics client dependency
 	Metrics *metrics.Metrics
 
+	// DirectionCalculator is set by the application layer after construction so that
+	// ForceUpdate can refresh its queries pointer whenever the DB is hot-swapped.
+	// May be nil when running without direction computation (e.g. in tests).
+	DirectionCalculator *AdvancedDirectionCalculator
+
 	// Tracks the last successful update time per feed
 	feedLastUpdate map[string]time.Time
 

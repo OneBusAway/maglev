@@ -318,11 +318,17 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		dbConfig := newGTFSDBConfig(finalDBPath, manager.config)
 		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
 			manager.GtfsDB = reopenedClient
+			if manager.DirectionCalculator != nil {
+				manager.DirectionCalculator.UpdateQueries(reopenedClient.Queries)
+			}
 			logging.LogOperation(logger, "recovery_successful_old_db_reopened")
 		} else {
 			logging.LogError(logger, "CRITICAL: Failed to recover old DB after rename failure", reopenErr)
 			logging.LogOperation(logger, "setting manager.gtfsDB to nil")
 			manager.GtfsDB = nil
+			if manager.DirectionCalculator != nil {
+				manager.DirectionCalculator.UpdateQueries(nil)
+			}
 
 			manager.isHealthy = false
 		}
@@ -360,6 +366,13 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.regionBounds = newRegionBounds
+
+	// Refresh the direction calculator's queries pointer so on-demand lookups
+	// use the new database. This also clears the direction result cache so stale
+	// entries from the old database are not served.
+	if manager.DirectionCalculator != nil {
+		manager.DirectionCalculator.UpdateQueries(client.Queries)
+	}
 
 	// Note: the epoch is incremented after GtfsDB is assigned. A narrow race exists where
 	// a reader snapshots epochBefore, then reads the new DB pointer (already live), queries

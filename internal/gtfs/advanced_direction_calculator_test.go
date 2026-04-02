@@ -8,7 +8,9 @@ import (
 	"sync"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -123,6 +125,30 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	// Second call for same stop should return from cache without recomputation
 	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{Valid: false})
 	assert.Equal(t, "", result, "second call should return cached empty result")
+}
+
+// TestTransientDBError_NotCached verifies that if the DB fails (simulated by closing it),
+// the resulting empty direction is NOT cached, allowing future requests to retry.
+func TestTransientDBError_NotCached(t *testing.T) {
+	// Simulate a transient DB failure by opening and immediately closing an in-memory DB
+	rawDB, err := sql.Open("sqlite3", ":memory:")
+	assert.NoError(t, err)
+	err = rawDB.Close()
+	assert.NoError(t, err)
+
+	brokenQueries := gtfsdb.New(rawDB)
+
+	calc := NewAdvancedDirectionCalculator(brokenQueries)
+
+	stopID := "transient-error-stop"
+
+	// The query will fail, gracefully returning an empty direction
+	result := calc.CalculateStopDirection(context.Background(), stopID)
+	assert.Equal(t, "", result, "should return empty string on DB error")
+
+	// Critical check: ensure the failure was NOT permanently cached
+	_, cached := calc.directionResults.Load(stopID)
+	assert.False(t, cached, "transient DB error result must not be cached in directionResults")
 }
 
 func TestCalculateStopDirectionPrecomputedAbbreviations(t *testing.T) {
@@ -286,7 +312,8 @@ func TestComputeFromShapes_NoShapeData(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// Test with a non-existent stop
-	direction := calc.computeFromShapes(ctx, "nonexistent")
+	direction, err := calc.computeFromShapes(ctx, "nonexistent")
+	assert.NoError(t, err)
 	assert.Equal(t, "", direction)
 }
 
@@ -296,7 +323,8 @@ func TestComputeFromShapes_SingleOrientation(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// Test with actual stop data - single orientation path will be taken if only one trip
-	direction := calc.computeFromShapes(ctx, "7000")
+	direction, err := calc.computeFromShapes(ctx, "7000")
+	assert.NoError(t, err)
 	// Direction should be valid or empty
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
@@ -314,7 +342,8 @@ func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test with a stop that might have multiple trips
-	direction := calc.computeFromShapes(ctx, "7000")
+	direction, err := calc.computeFromShapes(ctx, "7000")
+	assert.NoError(t, err)
 	// With low threshold, high variance might return empty
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
@@ -331,10 +360,9 @@ func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
 
 	// Test with distance traveled
 	orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", 100.0, 0, 0)
-	if err == nil {
+	assert.NoError(t, err)
 		assert.GreaterOrEqual(t, orientation, -math.Pi)
 		assert.LessOrEqual(t, orientation, math.Pi)
-	}
 }
 
 func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
@@ -351,20 +379,19 @@ func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
 	stopLat := shapes[0].Lat
 	stopLon := shapes[0].Lon
 	orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", -1.0, stopLat, stopLon)
-	if err == nil {
+	assert.NoError(t, err)
 		assert.GreaterOrEqual(t, orientation, -math.Pi)
 		assert.LessOrEqual(t, orientation, math.Pi)
 	}
-}
 
 func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
 	ctx := context.Background()
 	_, calc := getSharedTestComponents(t)
 
-	// Test with non-existent shape - should return error or 0 orientation
+	// Test with non-existent shape - should return error
 	orientation, err := calc.calculateOrientationAtStop(ctx, "nonexistent", 0, 0, 0)
-	// Either err is not nil, or orientation is 0
-	assert.True(t, err != nil || orientation == 0)
+	assert.Error(t, err)
+	assert.Equal(t, float64(0), orientation)
 }
 
 func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
@@ -379,21 +406,19 @@ func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
 	// Test at the very beginning of the shape
 	if len(shapes) > 0 && shapes[0].ShapeDistTraveled.Valid {
 		orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", shapes[0].ShapeDistTraveled.Float64, 0, 0)
-		if err == nil {
+		assert.NoError(t, err)
 			assert.GreaterOrEqual(t, orientation, -math.Pi)
 			assert.LessOrEqual(t, orientation, math.Pi)
 		}
-	}
 
 	// Test at the very end of the shape
 	if len(shapes) > 1 && shapes[len(shapes)-1].ShapeDistTraveled.Valid {
 		orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", shapes[len(shapes)-1].ShapeDistTraveled.Float64, 0, 0)
-		if err == nil {
+		assert.NoError(t, err)
 			assert.GreaterOrEqual(t, orientation, -math.Pi)
 			assert.LessOrEqual(t, orientation, math.Pi)
 		}
 	}
-}
 
 func TestGetAngleAsDirection_EdgeCases(t *testing.T) {
 	calc := &AdvancedDirectionCalculator{}
@@ -489,7 +514,7 @@ func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
 	results, err := manager.GtfsDB.Queries.GetStopsWithShapeContextByIDs(ctx, stopIDs)
 
 	// Verify Results
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.NotEmpty(t, results)
 
 	// We expect AT LEAST as many rows as IDs we asked for.
@@ -522,7 +547,7 @@ func TestBulkQuery_GetShapePointsByIDs(t *testing.T) {
 	points, err := manager.GtfsDB.Queries.GetShapePointsByIDs(ctx, shapeIDs)
 
 	// Verify
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.NotEmpty(t, points)
 
 	// Verify sorting
