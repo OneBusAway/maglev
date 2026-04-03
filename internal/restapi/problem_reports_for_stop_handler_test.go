@@ -17,9 +17,9 @@ func TestProblemReportsForStopRequiresValidApiKey(t *testing.T) {
 }
 
 func TestProblemReportsForStop_EmptyList(t *testing.T) {
-	api := createTestApi(t)
+	api, cleanup := createIsolatedTestApi(t)
 	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
-	defer api.Shutdown()
+	defer cleanup()
 
 	stopID := "1_75403"
 	url := fmt.Sprintf("/api/where/problem-reports-for-stop/%s.json?key=PROTECTED-TEST", stopID)
@@ -41,9 +41,9 @@ func TestProblemReportsForStop_EmptyList(t *testing.T) {
 }
 
 func TestProblemReportsForStop_SubmitThenRetrieve(t *testing.T) {
-	api := createTestApi(t)
+	api, cleanup := createIsolatedTestApi(t)
 	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
-	defer api.Shutdown()
+	defer cleanup()
 
 	stopID := "1_75403"
 

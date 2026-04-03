@@ -447,7 +447,12 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer gtfsManager.Shutdown()
+
+	defer func() {
+		if err := gtfsManager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
 

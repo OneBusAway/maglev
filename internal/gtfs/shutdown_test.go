@@ -34,9 +34,9 @@ func TestManagerShutdown(t *testing.T) {
 
 	// Test shutdown
 	done := make(chan struct{})
+	errCh := make(chan error, 1)
 	go func() {
-		manager.Shutdown()
-		close(done)
+		errCh <- manager.Shutdown(context.Background())
 	}()
 
 	// Shutdown should complete within a reasonable time
@@ -45,6 +45,8 @@ func TestManagerShutdown(t *testing.T) {
 		// Success
 	case <-time.After(5 * time.Second):
 		t.Fatal("Shutdown took too long")
+	case err := <-errCh:
+		require.NoError(t, err, "Failed to shutdown GTFS manager")
 	}
 }
 
@@ -79,9 +81,9 @@ func TestManagerShutdownWithRealtime(t *testing.T) {
 
 	// Test shutdown
 	done := make(chan struct{})
+	errCh := make(chan error, 1)
 	go func() {
-		manager.Shutdown()
-		close(done)
+		errCh <- manager.Shutdown(context.Background())
 	}()
 
 	// Shutdown should complete within a reasonable time even with real-time goroutine
@@ -90,6 +92,8 @@ func TestManagerShutdownWithRealtime(t *testing.T) {
 		// Success
 	case <-time.After(5 * time.Second):
 		t.Fatal("Shutdown took too long")
+	case err := <-errCh:
+		require.NoError(t, err, "Failed to shutdown GTFS manager")
 	}
 }
 
@@ -110,6 +114,9 @@ func TestManagerShutdownIdempotent(t *testing.T) {
 	require.NoError(t, err, "Failed to initialize GTFS manager")
 
 	// Call shutdown multiple times - should not panic or hang
-	manager.Shutdown()
-	manager.Shutdown() // Second call should be safe
+	ctx := context.Background()
+	err = manager.Shutdown(ctx)
+	require.NoError(t, err, "Failed to shutdown GTFS manager")
+	err = manager.Shutdown(ctx) // Second call should be safe
+	require.NoError(t, err, "Failed to shutdown GTFS manager on second call")
 }

@@ -305,7 +305,12 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	// We use isolated GTFSManager here instead of shared test components because we want to control the real-time vehicles for this test.
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	assert.Nil(t, err)
-	defer manager.Shutdown()
+
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	trip := &gtfs.Trip{
 		ID: gtfs.TripID{ID: "5735633"},
@@ -407,7 +412,12 @@ func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err, "Failed to initialize manager")
-	defer manager.Shutdown()
+	defer func() {
+		err := manager.Shutdown(ctx)
+		if err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	targetAgencyID := "25"
 	expectedRouteCount := 13
@@ -435,18 +445,24 @@ func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
 }
 
 func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
-	ctx := context.Background()
+	setupCtx := context.Background()
 
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
 	}
-	manager, err := InitGTFSManager(ctx, gtfsConfig)
+	manager, err := InitGTFSManager(setupCtx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer func() {
+		err := manager.Shutdown(context.Background())
+		if err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
+
+	runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -459,7 +475,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for {
 				select {
-				case <-ctx.Done():
+				case <-runCtx.Done():
 					return
 				default:
 					manager.RLock()
@@ -488,7 +504,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			default:
 				manager.setStaticGTFS(staticData)
@@ -517,7 +533,11 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to initialize: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			b.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	b.ReportAllocs()
 
@@ -661,7 +681,11 @@ func TestActiveServiceIDsCacheInvalidation(t *testing.T) {
 
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	// Use a fixed date that has known calendar data in the RABA fixture.
 	// The RABA feed covers weekdays; pick a Monday.
@@ -713,9 +737,13 @@ func TestActiveServiceIDsCache_ErrorPathLeavesNothingCached(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
 
 	cancelledCtx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 	cancel()
 
 	_, queryErr := manager.GetActiveServiceIDsForDateCached(cancelledCtx, "20240101")
@@ -766,6 +794,7 @@ func TestActiveServiceIDsCacheNilDB(t *testing.T) {
 }
 
 func TestActiveServiceIDsCacheMutationSafety(t *testing.T) {
+	ctx := context.Background()
 	// Use an isolated manager so the cache is cold, guaranteeing the first call is a
 	// genuine cache miss and that we exercise both the miss-path and hit-path copies.
 	gtfsConfig := Config{
@@ -775,9 +804,12 @@ func TestActiveServiceIDsCacheMutationSafety(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
-	ctx := context.Background()
 	date := "20240101"
 
 	// First call: cache miss path — result must be a defensive copy.
@@ -832,7 +864,11 @@ func TestActiveServiceIDsCacheConcurrentForceUpdate(t *testing.T) {
 
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	date := "20240101"
 
@@ -936,7 +972,11 @@ func BenchmarkGetActiveServiceIDsForDate(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to initialize: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			b.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	date := "20240101"
 

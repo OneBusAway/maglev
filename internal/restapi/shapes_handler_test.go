@@ -55,8 +55,8 @@ func decodePolylinePoints(t *testing.T, encoded string) [][]float64 {
 }
 
 func TestShapesHandlerReturnsShapeWhenItExists(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	points := []struct {
 		lat      float64

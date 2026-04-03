@@ -17,8 +17,8 @@ func TestReportProblemWithStopRequiresValidApiKey(t *testing.T) {
 }
 
 func TestReportProblemWithStopEndToEnd(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	stopId := "1_75403"
 
@@ -44,8 +44,8 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 }
 
 func TestReportProblemWithStop_MinimalParams(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	// Test with only stop_id (no optional params)
 	stopID := "1_75403"
@@ -58,8 +58,8 @@ func TestReportProblemWithStop_MinimalParams(t *testing.T) {
 }
 
 func TestReportProblemWithStopSanitization(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	stopId := "1_75403"
 	urlInvalidGeo := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userLat=invalid&userLon=not_a_number", stopId)

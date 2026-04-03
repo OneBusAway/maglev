@@ -17,9 +17,9 @@ func TestProblemReportsForTripRequiresValidApiKey(t *testing.T) {
 }
 
 func TestProblemReportsForTrip_EmptyList(t *testing.T) {
-	api := createTestApi(t)
+	api, cleanup := createIsolatedTestApi(t)
 	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
-	defer api.Shutdown()
+	defer cleanup()
 
 	tripID := "1_12345"
 	url := fmt.Sprintf("/api/where/problem-reports-for-trip/%s.json?key=PROTECTED-TEST", tripID)
@@ -41,9 +41,9 @@ func TestProblemReportsForTrip_EmptyList(t *testing.T) {
 }
 
 func TestProblemReportsForTrip_SubmitThenRetrieve(t *testing.T) {
-	api := createTestApi(t)
+	api, cleanup := createIsolatedTestApi(t)
 	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
-	defer api.Shutdown()
+	defer cleanup()
 
 	tripID := "1_12345"
 

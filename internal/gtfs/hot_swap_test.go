@@ -39,7 +39,12 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Failed to shutdown manager: %v", err)
+		}
+	}()
 
 	agencies := manager.GetAgencies()
 	assert.Equal(t, 1, len(agencies))
@@ -122,7 +127,11 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
 	if err != nil {
@@ -175,7 +184,11 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	manager.SetGtfsURL(gtfsNew)
 	err = manager.ForceUpdate(context.Background())
@@ -217,7 +230,11 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	// Verify initial state
 	manager.RLock()
@@ -271,7 +288,11 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("Error occurred while shutting down GTFS manager: %v", err)
+		}
+	}()
 
 	// Verify initial state
 	manager.RLock()

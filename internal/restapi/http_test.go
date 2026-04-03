@@ -33,16 +33,22 @@ var (
 	testDbPath              = filepath.Join("../../testdata", "raba-test.db")
 )
 
+func removeTestDBArtifacts() {
+	for _, path := range []string{testDbPath, testDbPath + "-wal", testDbPath + "-shm"} {
+		_ = os.Remove(path)
+	}
+}
+
 // TestMain handles setup and cleanup for all tests in this package
 func TestMain(m *testing.M) {
 	// Clean up any leftover test database from interrupted/failed previous runs
-	_ = os.Remove(testDbPath)
+	removeTestDBArtifacts()
 
 	// Run all tests
 	code := m.Run()
 
 	// Clean up test database after all tests complete
-	_ = os.Remove(testDbPath)
+	removeTestDBArtifacts()
 
 	os.Exit(code)
 }
@@ -98,6 +104,51 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 // Accepts testing.TB to support both *testing.T and *testing.B
 func createTestApi(t testing.TB) *RestAPI {
 	return createTestApiWithClock(t, clock.RealClock{})
+}
+
+// createIsolatedTestApiWithClock creates a fresh in-memory GTFS manager for tests
+// that mutate the database and must not leak state across the package.
+func createIsolatedTestApiWithClock(t testing.TB, c clock.Clock) (*RestAPI, func()) {
+	t.Helper()
+
+	ctx := context.Background()
+	gtfsConfig := gtfs.Config{
+		GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
+		GTFSDataPath: ":memory:",
+	}
+
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:              appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:          []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
+			ProtectedApiKeys: []string{"PROTECTED-TEST"},
+			RateLimit:        5,
+			ExemptApiKeys:    []string{"org.onebusaway.iphone"},
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cleanup := func() {
+		api.Shutdown()
+		err := gtfsManager.Shutdown(context.Background())
+		require.NoError(t, err)
+	}
+
+	return api, cleanup
+}
+
+func createIsolatedTestApi(t testing.TB) (*RestAPI, func()) {
+	return createIsolatedTestApiWithClock(t, clock.RealClock{})
 }
 
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
