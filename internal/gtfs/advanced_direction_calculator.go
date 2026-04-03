@@ -6,7 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -270,7 +270,7 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 		normalizedThetas = append(normalizedThetas, thetaMu+delta)
 	}
 
-	sort.Float64s(normalizedThetas)
+	slices.Sort(normalizedThetas)
 	thetaMedian := median(normalizedThetas)
 
 	return adc.getAngleAsDirection(thetaMedian)

@@ -1,10 +1,11 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -75,7 +76,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 	for serviceID := range serviceGroups {
 		serviceIDs = append(serviceIDs, serviceID)
 	}
-	sort.Strings(serviceIDs)
+	slices.Sort(serviceIDs)
 
 	configurations := make([]models.BlockConfiguration, 0, len(serviceGroups))
 
@@ -99,13 +100,13 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 		for tripID := range tripStops {
 			tripIDs = append(tripIDs, tripID)
 		}
-		sort.Strings(tripIDs)
+		slices.Sort(tripIDs)
 
 		for _, tripID := range tripIDs {
 			stops := tripStops[tripID]
 
-			sort.Slice(stops, func(i, j int) bool {
-				return stops[i].StopSequence < stops[j].StopSequence
+			slices.SortFunc(stops, func(a, b gtfsdb.GetBlockDetailsRow) int {
+				return cmp.Compare(a.StopSequence, b.StopSequence)
 			})
 
 			var blockStopTimes []models.BlockStopTime
