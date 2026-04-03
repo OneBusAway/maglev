@@ -2119,3 +2119,90 @@ func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
 	assert.Empty(t, next)
 	assert.Empty(t, prev)
 }
+
+func makeTestTrip(id string, directionID sql.NullInt64) gtfsdb.Trip {
+	return gtfsdb.Trip{ID: id, DirectionID: directionID}
+}
+
+func nullDir() sql.NullInt64    { return sql.NullInt64{Valid: false} }
+func dir(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true} }
+
+// TestGroupTripsByDirection_TwoDirections verifies that direction_id=1 becomes
+// group "0" and direction_id=0 becomes group "1", matching the Java OBA convention.
+func TestGroupTripsByDirection_TwoDirections(t *testing.T) {
+	trips := []gtfsdb.Trip{
+		makeTestTrip("t-inbound-2", dir(0)),
+		makeTestTrip("t-inbound-1", dir(0)),
+		makeTestTrip("t-outbound-1", dir(1)),
+		makeTestTrip("t-outbound-2", dir(1)),
+	}
+
+	groups := groupTripsByDirection(trips)
+
+	require.Len(t, groups, 2)
+
+	// Highest direction_id (1) → group "0"
+	assert.Equal(t, "0", groups[0].GroupID)
+	assert.Equal(t, int64(1), groups[0].DirectionID.Int64)
+	assert.True(t, groups[0].DirectionID.Valid)
+	assert.Equal(t, []string{"t-outbound-1", "t-outbound-2"}, testTripIDs(groups[0].Trips))
+
+	// direction_id=0 → group "1"
+	assert.Equal(t, "1", groups[1].GroupID)
+	assert.Equal(t, int64(0), groups[1].DirectionID.Int64)
+	assert.True(t, groups[1].DirectionID.Valid)
+	assert.Equal(t, []string{"t-inbound-1", "t-inbound-2"}, testTripIDs(groups[1].Trips))
+}
+
+// TestGroupTripsByDirection_SingleDirection verifies single-direction routes produce one group "0".
+func TestGroupTripsByDirection_SingleDirection(t *testing.T) {
+	trips := []gtfsdb.Trip{
+		makeTestTrip("t-b", dir(0)),
+		makeTestTrip("t-a", dir(0)),
+	}
+
+	groups := groupTripsByDirection(trips)
+
+	require.Len(t, groups, 1)
+	assert.Equal(t, "0", groups[0].GroupID)
+	assert.Equal(t, []string{"t-a", "t-b"}, testTripIDs(groups[0].Trips))
+}
+
+// TestGroupTripsByDirection_NullDirectionID verifies that NULL direction_id is surfaced
+// via group.DirectionID.Valid == false so callers can fall back to single-trip stop ordering.
+func TestGroupTripsByDirection_NullDirectionID(t *testing.T) {
+	trips := []gtfsdb.Trip{
+		makeTestTrip("t-2", nullDir()),
+		makeTestTrip("t-1", nullDir()),
+	}
+
+	groups := groupTripsByDirection(trips)
+
+	require.Len(t, groups, 1)
+	assert.Equal(t, "0", groups[0].GroupID)
+	assert.False(t, groups[0].DirectionID.Valid, "NULL direction_id must be surfaced via Valid=false")
+	assert.Equal(t, []string{"t-1", "t-2"}, testTripIDs(groups[0].Trips))
+}
+
+// TestGroupTripsByDirection_TripsWithinGroupSortedByID verifies deterministic trip order.
+func TestGroupTripsByDirection_TripsWithinGroupSortedByID(t *testing.T) {
+	trips := []gtfsdb.Trip{
+		makeTestTrip("zzz", dir(1)),
+		makeTestTrip("aaa", dir(1)),
+		makeTestTrip("mmm", dir(1)),
+	}
+
+	groups := groupTripsByDirection(trips)
+
+	require.Len(t, groups, 1)
+	assert.Equal(t, []string{"aaa", "mmm", "zzz"}, testTripIDs(groups[0].Trips))
+}
+
+// testTripIDs extracts trip IDs for assertion readability.
+func testTripIDs(trips []gtfsdb.Trip) []string {
+	ids := make([]string, len(trips))
+	for i, t := range trips {
+		ids[i] = t.ID
+	}
+	return ids
+}
