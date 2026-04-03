@@ -1,9 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"time"
 
@@ -256,8 +257,8 @@ func processTripGroups(
 	// produces normalized group IDs "0", "1", … that match the Java OBA server's
 	// convention where outbound (direction_id=1) is group "0" and inbound
 	// (direction_id=0) is group "1".
-	sort.Slice(directionIDs, func(i, j int) bool {
-		return directionIDs[i] > directionIDs[j]
+	slices.SortFunc(directionIDs, func(a, b int64) int {
+		return cmp.Compare(b, a)
 	})
 
 	for i, dirID := range directionIDs {
@@ -268,8 +269,8 @@ func processTripGroups(
 		tripsInGroup := tripGroups[dirID]
 
 		// Sort trips by ID to ensure we always pick the same representative trip
-		sort.Slice(tripsInGroup, func(i, j int) bool {
-			return tripsInGroup[i].ID < tripsInGroup[j].ID
+		slices.SortFunc(tripsInGroup, func(a, b gtfsdb.Trip) int {
+			return cmp.Compare(a.ID, b.ID)
 		})
 
 		headsignCounts := make(map[string]int)
@@ -363,9 +364,10 @@ func processTripGroups(
 	}
 
 	if len(allStopGroups) > 0 {
-		sort.Slice(allStopGroups, func(i, j int) bool {
-			return allStopGroups[i].ID < allStopGroups[j].ID
+		slices.SortFunc(*stopGroupings, func(a, b models.StopGrouping) int {
+			return cmp.Compare(a.StopGroups[0].ID, b.StopGroups[0].ID)
 		})
+
 		*stopGroupings = append(*stopGroupings, models.StopGrouping{
 			Ordered:    true,
 			StopGroups: allStopGroups,
@@ -395,6 +397,7 @@ func formatStopIDs(agencyID string, stops map[string]bool) []string {
 	for key := range stops {
 		stopIDs = append(stopIDs, utils.FormCombinedID(agencyID, key))
 	}
-	sort.Strings(stopIDs)
+	slices.Sort(stopIDs)
+
 	return stopIDs
 }

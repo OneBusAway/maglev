@@ -1,7 +1,8 @@
 package gtfs
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 
 	"github.com/OneBusAway/go-gtfs"
 )
@@ -63,8 +64,8 @@ func buildBlockLayoverIndices(staticData *gtfs.Static) map[string][]*BlockLayove
 		}
 
 		// Sort trips by their start time (first stop departure)
-		sort.Slice(trips, func(i, j int) bool {
-			return trips[i].StopTimes[0].DepartureTime < trips[j].StopTimes[0].DepartureTime
+		slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
+			return cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime)
 		})
 
 		// Find layovers between consecutive trips
