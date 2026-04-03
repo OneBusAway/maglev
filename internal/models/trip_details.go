@@ -40,7 +40,7 @@ type TripStatus struct {
 	DistanceAlongTrip          float64    `json:"distanceAlongTrip"`
 	Frequency                  *Frequency `json:"frequency,omitempty"` // omitempty intentional: the OpenAPI spec declares frequency as non-nullable; omit the field rather than emit null when the trip is not frequency-based
 	LastKnownDistanceAlongTrip float64    `json:"lastKnownDistanceAlongTrip"`
-	LastKnownLocation          *Location  `json:"lastKnownLocation,omitempty"`
+	LastKnownLocation          *Location  `json:"lastKnownLocation"`
 	LastKnownOrientation       float64    `json:"lastKnownOrientation"`
 	LastLocationUpdateTime     int64      `json:"lastLocationUpdateTime"`
 	LastUpdateTime             int64      `json:"lastUpdateTime"`

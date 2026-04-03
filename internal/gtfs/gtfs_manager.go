@@ -1000,3 +1000,14 @@ func (m *Manager) AddTestAlert(alert gtfs.Alert) {
 	m.feedAlerts["_test"] = append(m.feedAlerts["_test"], alert)
 	m.rebuildMergedRealtimeLocked()
 }
+
+// SetRealTimeVehiclesForTest manually sets realtime vehicles for testing purposes.
+// It stores the vehicles under the synthetic feed ID "_test" so that a subsequent
+// call to rebuildMergedRealtimeLocked does not silently discard the injected data.
+func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle) {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	manager.feedVehicles["_test"] = vehicles
+	manager.rebuildMergedRealtimeLocked()
+}
