@@ -74,18 +74,15 @@ type Manager struct {
 
 	feedExpiresAt time.Time // Holds the max valid service date for the static feed
 
-	feedTrips    map[string][]gtfs.Trip
-	feedVehicles map[string][]gtfs.Vehicle
-	feedAlerts   map[string][]gtfs.Alert
+	feedMapMutex sync.RWMutex
+	feedData     map[string]*FeedData
+
+	mergeMutex sync.Mutex
+
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
 	feedAgencyFilter map[string]map[string]bool
-	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
-	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
-
-	// Per-feed last successfully applied vehicle feed timestamp
-	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
 
 	// Exported metrics client dependency
 	Metrics *metrics.Metrics
@@ -108,21 +105,45 @@ type Manager struct {
 	cacheEpoch atomic.Uint64
 }
 
+// FeedData holds real-time data for a specific feed.
+//
+// Concurrency: All exported fields are protected by mu. Callers must hold
+// mu.RLock() for reads and mu.Lock() for writes. Direct field access without
+// the lock is a data race. Within the Manager, production code acquires mu
+// after releasing feedMapMutex (see updateFeedRealtime and clearFeedData for
+// the canonical pattern).
+type FeedData struct {
+	mu               sync.RWMutex
+	Trips            []gtfs.Trip
+	Vehicles         []gtfs.Vehicle
+	Alerts           []gtfs.Alert
+	VehicleLastSeen  map[string]time.Time
+	VehicleTimestamp uint64 // last successfully applied vehicle feed timestamp
+}
+
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
 func (manager *Manager) clearFeedData(feedID string) {
+	manager.feedMapMutex.RLock()
+	feed := manager.feedData[feedID]
+	manager.feedMapMutex.RUnlock()
+
+	if feed == nil {
+		return
+	}
+
+	feed.mu.Lock()
+	feed.Trips = nil
+	feed.Vehicles = nil
+	feed.Alerts = nil
+	feed.VehicleTimestamp = 0
+	feed.VehicleLastSeen = make(map[string]time.Time)
+	feed.mu.Unlock()
+
 	manager.realTimeMutex.Lock()
-	defer manager.realTimeMutex.Unlock()
-
-	manager.feedTrips[feedID] = nil
-	manager.feedVehicles[feedID] = nil
-	manager.feedAlerts[feedID] = nil
-
-	delete(manager.feedVehicleTimestamp, feedID)
-	delete(manager.feedVehicleLastSeen, feedID)
-
 	delete(manager.feedLastUpdate, feedID)
+	manager.realTimeMutex.Unlock()
 
-	manager.rebuildMergedRealtimeLocked()
+	manager.buildMergedRealtime()
 }
 
 // IsReady returns true if the GTFS data is fully initialized and indexed.
@@ -261,13 +282,9 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		realTimeVehicleLookupByTrip:    make(map[string]int),
 		realTimeVehicleLookupByVehicle: make(map[string]int),
 		duplicatedVehicleByRoute:       make(map[string][]gtfs.Vehicle),
-		feedTrips:                      make(map[string][]gtfs.Trip),
-		feedVehicles:                   make(map[string][]gtfs.Vehicle),
-		feedAlerts:                     make(map[string][]gtfs.Alert),
+		feedData:                       make(map[string]*FeedData),
 		feedLastUpdate:                 make(map[string]time.Time),
 		feedAgencyFilter:               make(map[string]map[string]bool),
-		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
-		feedVehicleTimestamp:           make(map[string]uint64),
 		frequencyTripIDs:               make(map[string]struct{}),
 		activeServiceIDsCache:          make(map[string][]string),
 		Metrics:                        config.Metrics,
@@ -386,6 +403,9 @@ func (manager *Manager) SetGtfsURL(url string) {
 
 // Shutdown gracefully shuts down the manager and its background goroutines
 func (manager *Manager) Shutdown() {
+	if manager == nil {
+		return
+	}
 	manager.shutdownOnce.Do(func() {
 		close(manager.shutdownChan)
 		manager.wg.Wait()
@@ -935,14 +955,24 @@ func (manager *Manager) SetFeedExpiresAt(t time.Time) {
 
 // SetRealTimeTripsForTest manually sets realtime trips for testing purposes.
 // It stores the trips under the synthetic feed ID "_test" so that a subsequent
-// call to rebuildMergedRealtimeLocked (e.g. from a real feed update) does not
+// call to buildMergedRealtime (e.g. from a real feed update) does not
 // silently discard the injected data.
 func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
-	manager.realTimeMutex.Lock()
-	defer manager.realTimeMutex.Unlock()
+	manager.feedMapMutex.Lock()
+	feed := manager.feedData["_test"]
+	if feed == nil {
+		feed = &FeedData{
+			VehicleLastSeen: make(map[string]time.Time),
+		}
+		manager.feedData["_test"] = feed
+	}
+	manager.feedMapMutex.Unlock()
 
-	manager.feedTrips["_test"] = trips
-	manager.rebuildMergedRealtimeLocked()
+	feed.mu.Lock()
+	feed.Trips = trips
+	feed.mu.Unlock()
+
+	manager.buildMergedRealtime()
 }
 
 // GetStaticLastUpdated returns the timestamp when static GTFS data was last loaded lock-free.
@@ -991,12 +1021,19 @@ func (manager *Manager) SetStaticLastUpdatedForTest(t time.Time) {
 
 // AddTestAlert is a helper method used ONLY for testing to inject mock alerts safely.
 func (m *Manager) AddTestAlert(alert gtfs.Alert) {
-	m.realTimeMutex.Lock()
-	defer m.realTimeMutex.Unlock()
-	// Initialize the map if it doesn't exist
-	if m.feedAlerts == nil {
-		m.feedAlerts = make(map[string][]gtfs.Alert)
+	m.feedMapMutex.Lock()
+	feed := m.feedData["_test"]
+	if feed == nil {
+		feed = &FeedData{
+			VehicleLastSeen: make(map[string]time.Time),
+		}
+		m.feedData["_test"] = feed
 	}
-	m.feedAlerts["_test"] = append(m.feedAlerts["_test"], alert)
-	m.rebuildMergedRealtimeLocked()
+	m.feedMapMutex.Unlock()
+
+	feed.mu.Lock()
+	feed.Alerts = append(feed.Alerts, alert)
+	feed.mu.Unlock()
+
+	m.buildMergedRealtime()
 }
