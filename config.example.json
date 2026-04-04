@@ -12,6 +12,8 @@
     "org.onebusaway.iphone"
   ],
   "rate-limit": 100,
+  "running-late-window": 1800,
+  "running-early-window": 600,
   "log-level": "info",
   "log-format": "text",
   "_comment_slow_query": "Set env var MAGLEV_SLOW_QUERY_THRESHOLD_MS=<ms> to log queries slower than that threshold (0 = disabled).",

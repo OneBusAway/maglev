@@ -33,18 +33,25 @@ type GtfsRtFeed struct {
 
 // JSONConfig represents the JSON configuration file structure
 type JSONConfig struct {
-	Port             int            `json:"port"`
-	Env              string         `json:"env"`
-	ApiKeys          []string       `json:"api-keys"`
-	ProtectedApiKeys []string       `json:"protected-api-keys"`
-	ExemptApiKeys    []string       `json:"exempt-api-keys"`
-	RateLimit        int            `json:"rate-limit"`
-	GtfsStaticFeed   GtfsStaticFeed `json:"gtfs-static-feed"`
-	GtfsRtFeeds      []GtfsRtFeed   `json:"gtfs-rt-feeds"`
-	DataPath         string         `json:"data-path"`
-	LogLevel         string         `json:"log-level"`
-	LogFormat        string         `json:"log-format"`
+	Port               int            `json:"port"`
+	Env                string         `json:"env"`
+	ApiKeys            []string       `json:"api-keys"`
+	ProtectedApiKeys   []string       `json:"protected-api-keys"`
+	ExemptApiKeys      []string       `json:"exempt-api-keys"`
+	RateLimit          int            `json:"rate-limit"`
+	RunningLateWindow  int            `json:"running-late-window"`
+	RunningEarlyWindow int            `json:"running-early-window"`
+	GtfsStaticFeed     GtfsStaticFeed `json:"gtfs-static-feed"`
+	GtfsRtFeeds        []GtfsRtFeed   `json:"gtfs-rt-feeds"`
+	DataPath           string         `json:"data-path"`
+	LogLevel           string         `json:"log-level"`
+	LogFormat          string         `json:"log-format"`
 }
+
+const (
+	defaultRunningLateWindowSeconds  = 30 * 60
+	defaultRunningEarlyWindowSeconds = 10 * 60
+)
 
 // setDefaults applies default values to the JSON config if fields are missing or zero
 func (j *JSONConfig) setDefaults() {
@@ -65,6 +72,12 @@ func (j *JSONConfig) setDefaults() {
 	}
 	if j.RateLimit == 0 {
 		j.RateLimit = 100
+	}
+	if j.RunningLateWindow == 0 {
+		j.RunningLateWindow = defaultRunningLateWindowSeconds
+	}
+	if j.RunningEarlyWindow == 0 {
+		j.RunningEarlyWindow = defaultRunningEarlyWindowSeconds
 	}
 	if j.GtfsStaticFeed.URL == "" {
 		j.GtfsStaticFeed.URL = "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
@@ -105,6 +118,12 @@ func (j *JSONConfig) Validate() error {
 
 	if j.RateLimit < 1 {
 		return fmt.Errorf("rate-limit must be at least 1, got %d", j.RateLimit)
+	}
+	if j.RunningLateWindow < 0 {
+		return fmt.Errorf("running-late-window cannot be negative, got %d", j.RunningLateWindow)
+	}
+	if j.RunningEarlyWindow < 0 {
+		return fmt.Errorf("running-early-window cannot be negative, got %d", j.RunningEarlyWindow)
 	}
 
 	if len(j.ApiKeys) == 0 {
@@ -253,6 +272,8 @@ type GtfsConfigData struct {
 	StaticAuthHeaderValue string
 	RTFeeds               []RTFeedConfigData
 	GTFSDataPath          string
+	RunningLateWindow     int
+	RunningEarlyWindow    int
 	Env                   Environment
 	Verbose               bool
 	EnableGTFSTidy        bool
@@ -265,9 +286,17 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 		StaticAuthHeaderKey:   j.GtfsStaticFeed.AuthHeaderName,
 		StaticAuthHeaderValue: j.GtfsStaticFeed.AuthHeaderValue,
 		GTFSDataPath:          j.DataPath,
+		RunningLateWindow:     j.RunningLateWindow,
+		RunningEarlyWindow:    j.RunningEarlyWindow,
 		Env:                   EnvFlagToEnvironment(j.Env),
 		Verbose:               true, // Always set to true like in main.go
 		EnableGTFSTidy:        j.GtfsStaticFeed.EnableGTFSTidy,
+	}
+	if cfg.RunningLateWindow <= 0 {
+		cfg.RunningLateWindow = defaultRunningLateWindowSeconds
+	}
+	if cfg.RunningEarlyWindow <= 0 {
+		cfg.RunningEarlyWindow = defaultRunningEarlyWindowSeconds
 	}
 
 	seen := make(map[string]struct{})
