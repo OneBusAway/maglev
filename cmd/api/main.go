@@ -113,11 +113,13 @@ func main() {
 		// Pack the CLI flags into a temporary JSONConfig struct
 		// This allows us to run the exact same robust validation logic as the JSON path!
 		cliConfig := appconf.JSONConfig{
-			Port:          cfg.Port,
-			Env:           envFlag,
-			ApiKeys:       ParseAPIKeys(apiKeysFlag),
-			ExemptApiKeys: ParseAPIKeys(exemptApiKeysFlag),
-			RateLimit:     cfg.RateLimit,
+			Port:               cfg.Port,
+			Env:                envFlag,
+			ApiKeys:            ParseAPIKeys(apiKeysFlag),
+			ExemptApiKeys:      ParseAPIKeys(exemptApiKeysFlag),
+			RateLimit:          cfg.RateLimit,
+			RunningLateWindow:  30 * 60,
+			RunningEarlyWindow: 10 * 60,
 			GtfsStaticFeed: appconf.GtfsStaticFeed{
 				URL:             gtfsCfg.GtfsURL,
 				AuthHeaderName:  gtfsCfg.StaticAuthHeaderKey,
