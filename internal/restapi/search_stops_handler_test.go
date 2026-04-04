@@ -220,14 +220,15 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 	query := url.QueryEscape(targetStop.Name)
 
 	tests := []struct {
-		name     string
-		maxCount string
+		name           string
+		maxCount       string
+		expectedStatus int
 	}{
-		{"zero", "0"},
-		{"negative", "-1"},
-		{"tooLarge", "101"},
+		{"zero", "0", http.StatusBadRequest},
+		{"negative", "-1", http.StatusBadRequest},
+		{"largeRequest", "101", http.StatusOK},
+		{"invalid string", "abc", http.StatusBadRequest},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reqUrl := fmt.Sprintf(
@@ -238,15 +239,17 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 
 			resp, model := serveApiAndRetrieveEndpoint(t, api, reqUrl)
 
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 
-			data, ok := model.Data.(map[string]interface{})
-			require.True(t, ok)
+			if tt.expectedStatus == http.StatusOK {
+				data, ok := model.Data.(map[string]interface{})
+				require.True(t, ok)
 
-			list, ok := data["list"].([]interface{})
-			require.True(t, ok)
+				list, ok := data["list"].([]interface{})
+				require.True(t, ok)
 
-			assert.NotEmpty(t, list)
+				assert.NotEmpty(t, list)
+			}
 		})
 	}
 }
