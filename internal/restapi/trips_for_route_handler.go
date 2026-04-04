@@ -69,13 +69,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	// Check the previous day's service for trips running past midnight.
 	// GTFS allows departure times > 24:00:00 (e.g., 25:30:00 = 1:30 AM next day).
 	// These trips belong to yesterday's service but are still active now.
-	// TODO: We should add config for runningLateWindow and runningEarlyWindow like Java OBA
-	// source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
-	const (
-		oneDayNanos       = int64(24 * 60 * 60 * 1_000_000_000)
-		runningLateNanos  = int64(30 * 60 * 1_000_000_000) // runningLateWindow
-		runningEarlyNanos = int64(10 * 60 * 1_000_000_000) // runningEarlyWindow
-	)
+	const oneDayNanos = int64(24 * 60 * 60 * 1_000_000_000)
+	runningLateNanos, runningEarlyNanos := api.tripsForRouteWindowNanos()
 	prevDay := currentTime.AddDate(0, 0, -1)
 	prevFormattedDate := prevDay.Format("20060102")
 	prevServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, prevFormattedDate)
@@ -434,6 +429,22 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	references := buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
 	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
+}
+
+func (api *RestAPI) tripsForRouteWindowNanos() (runningLateNanos int64, runningEarlyNanos int64) {
+	runningLate := gtfsInternal.DefaultRunningLateWindow
+	runningEarly := gtfsInternal.DefaultRunningEarlyWindow
+
+	if api != nil {
+		if api.GtfsConfig.RunningLateWindow > 0 {
+			runningLate = api.GtfsConfig.RunningLateWindow
+		}
+		if api.GtfsConfig.RunningEarlyWindow > 0 {
+			runningEarly = api.GtfsConfig.RunningEarlyWindow
+		}
+	}
+
+	return runningLate.Nanoseconds(), runningEarly.Nanoseconds()
 }
 
 func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]bool) {
