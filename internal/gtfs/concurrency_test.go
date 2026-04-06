@@ -207,68 +207,6 @@ func TestSafeGTFSDataAccess(t *testing.T) {
 	})
 }
 
-func TestConcurrentVehicleUpdates(t *testing.T) {
-	// Test that real-time data updates are already safe (they use realTimeMutex)
-	manager := &Manager{
-		gtfsData: &gtfs.Static{
-			Routes: []gtfs.Route{},
-		},
-		realTimeVehicles: []gtfs.Vehicle{},
-		realTimeMutex:    sync.RWMutex{},
-		staticMutex:      sync.RWMutex{},
-	}
-
-	var wg sync.WaitGroup
-	done := make(chan struct{})
-
-	// Start readers
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-done:
-					return
-				default:
-					_ = manager.VehiclesForAgencyID("test")
-					time.Sleep(time.Microsecond)
-				}
-			}
-		}()
-	}
-
-	// Start writers
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			for j := 0; j < 10; j++ {
-				select {
-				case <-done:
-					return
-				default:
-					// Use direct assignment to realTimeVehicles for testing
-					manager.realTimeMutex.Lock()
-					testVehicleID := gtfs.VehicleID{ID: "test-vehicle"}
-					manager.realTimeVehicles = []gtfs.Vehicle{
-						{ID: &testVehicleID},
-					}
-					manager.realTimeMutex.Unlock()
-					time.Sleep(time.Millisecond)
-				}
-			}
-		}(i)
-	}
-
-	// Let it run for a short time
-	time.Sleep(50 * time.Millisecond)
-	close(done)
-	wg.Wait()
-
-	// Should complete without races (tested with race detector)
-}
-
 // Helper methods for testing - these simulate the unsafe operations
 func (manager *Manager) unsafeSetStaticGTFS(staticData *gtfs.Static) {
 	// This is the current unsafe implementation

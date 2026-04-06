@@ -24,19 +24,28 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	routesForAgency := api.GtfsManager.RoutesForAgencyID(id)
+	routesForAgency, err := api.GtfsManager.RoutesForAgencyID(r.Context(), id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	// Apply pagination
 	offset, limit := utils.ParsePaginationParams(r)
 	routesForAgency, limitExceeded := utils.PaginateSlice(routesForAgency, offset, limit)
-	// Safe allocation logic
 	routesList := make([]models.Route, 0, len(routesForAgency))
 
 	for _, route := range routesForAgency {
 		routesList = append(routesList, models.NewRoute(
-			utils.FormCombinedID(route.Agency.Id, route.Id), route.Agency.Id, route.ShortName, route.LongName,
-			route.Description, models.RouteType(route.Type),
-			route.Url, route.Color, route.TextColor))
+			utils.FormCombinedID(agency.Id, route.ID),
+			agency.Id,
+			utils.NullStringOrEmpty(route.ShortName),
+			utils.NullStringOrEmpty(route.LongName),
+			utils.NullStringOrEmpty(route.Desc),
+			models.RouteType(route.Type),
+			utils.NullStringOrEmpty(route.Url),
+			utils.NullStringOrEmpty(route.Color),
+			utils.NullStringOrEmpty(route.TextColor)))
 	}
 
 	references := models.NewEmptyReferences()

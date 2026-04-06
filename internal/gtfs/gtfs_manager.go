@@ -44,7 +44,6 @@ type RegionBounds struct {
 type Manager struct {
 	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
-	routesByAgencyID               map[string][]*gtfs.Route
 	lastUpdated                    time.Time
 	lastUpdatedUnixNanos           atomic.Int64 // Lock-free freshness tracking
 	isLocalFile                    bool
@@ -60,7 +59,7 @@ type Manager struct {
 	routesMap                      map[string]*gtfs.Route
 	frequencyTripIDs               map[string]struct{}
 	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
-	staticMutex                    sync.RWMutex // Protects gtfsData and lastUpdated
+	staticMutex                    sync.RWMutex // Protects GtfsDB, gtfsData, and lastUpdated
 	config                         Config
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
@@ -456,12 +455,8 @@ func (manager *Manager) GetRoutes() []gtfs.Route {
 
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) RoutesForAgencyID(agencyID string) []*gtfs.Route {
-	if routes, ok := manager.routesByAgencyID[agencyID]; ok {
-		return routes
-	}
-
-	return []*gtfs.Route{}
+func (manager *Manager) RoutesForAgencyID(ctx context.Context, agencyID string) ([]gtfsdb.GetRoutesForAgencyRow, error) {
+	return manager.GtfsDB.Queries.GetRoutesForAgency(ctx, agencyID)
 }
 
 type stopWithDistance struct {
@@ -636,15 +631,18 @@ func (manager *Manager) GetStopsForLocation(
 // VehiclesForAgencyID returns all real-time vehicles serving routes that belong
 // to the given agency. It manages its own locking internally; callers must NOT
 // hold any Manager locks.
-func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
-	// Step 1: Acquire static lock, collect route IDs, then release.
+func (manager *Manager) VehiclesForAgencyID(ctx context.Context, agencyID string) ([]gtfs.Vehicle, error) {
 	manager.staticMutex.RLock()
-	routes := manager.RoutesForAgencyID(agencyID)
+	routes, err := manager.RoutesForAgencyID(ctx, agencyID)
+	manager.staticMutex.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+
 	routeIDs := make(map[string]bool, len(routes))
 	for _, route := range routes {
-		routeIDs[route.Id] = true
+		routeIDs[route.ID] = true
 	}
-	manager.staticMutex.RUnlock()
 
 	// Step 2: Acquire real-time lock independently to read vehicles.
 	rtVehicles := manager.GetRealTimeVehicles()
@@ -656,7 +654,7 @@ func (manager *Manager) VehiclesForAgencyID(agencyID string) []gtfs.Vehicle {
 		}
 	}
 
-	return vehicles
+	return vehicles, nil
 }
 
 // GetDuplicatedVehiclesForRoute returns real-time vehicles serving DUPLICATED trips

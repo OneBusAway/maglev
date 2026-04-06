@@ -30,7 +30,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	vehiclesForAgency := api.GtfsManager.VehiclesForAgencyID(id)
+	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	// Apply pagination
 	offset, limit := utils.ParsePaginationParams(r)
