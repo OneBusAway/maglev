@@ -2,9 +2,12 @@ package gtfs
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -55,7 +58,6 @@ type Manager struct {
 	realTimeVehicleLookupByVehicle map[string]int
 	duplicatedVehicleByRoute       map[string][]gtfs.Vehicle
 	alertIdx                       alertIndex
-	agenciesMap                    map[string]*gtfs.Agency
 	routesMap                      map[string]*gtfs.Route
 	frequencyTripIDs               map[string]struct{}
 	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
@@ -287,6 +289,13 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	manager.GtfsDB = gtfsDB
 
 	// Startup validation and logging for agency filtering
+	manager.staticMutex.RLock()
+	validAgencies, err := manager.GtfsDB.Queries.ListAgencyIds(ctx)
+	manager.staticMutex.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+
 	enabledFeeds := config.enabledFeeds()
 	for _, feedCfg := range enabledFeeds {
 		if len(feedCfg.AgencyIDs) > 0 {
@@ -295,17 +304,9 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 				slog.Any("agency_ids", feedCfg.AgencyIDs),
 			)
 
-			manager.staticMutex.RLock()
-			var validAgencies []string
 			for _, configuredAgencyID := range feedCfg.AgencyIDs {
-				if _, exists := manager.agenciesMap[configuredAgencyID]; !exists {
-					if validAgencies == nil {
-						for validID := range manager.agenciesMap {
-							validAgencies = append(validAgencies, validID)
-						}
-						sort.Strings(validAgencies)
-					}
-
+				found := slices.Index(validAgencies, configuredAgencyID) != -1
+				if !found {
 					logger.Warn("configured agency-id not found in static GTFS data",
 						slog.String("feed", feedCfg.ID),
 						slog.String("invalid_agency_id", configuredAgencyID),
@@ -313,7 +314,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 					)
 				}
 			}
-			manager.staticMutex.RUnlock()
 		}
 	}
 	manager.parseAndLogFeedExpiryLocked(ctx, logger)
@@ -433,11 +433,15 @@ func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockL
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) FindAgency(id string) *gtfs.Agency {
-	if agency, ok := manager.agenciesMap[id]; ok {
-		return agency
+func (manager *Manager) FindAgency(ctx context.Context, id string) (*gtfsdb.Agency, error) {
+	agency, err := manager.GtfsDB.Queries.GetAgency(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
 	}
-	return nil
+
+	return &agency, nil
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.

@@ -24,6 +24,14 @@ FROM
 ORDER BY
     id;
 
+-- name: ListAgencyIds :many
+SELECT
+    id
+FROM
+    agencies
+ORDER BY
+    id;
+
 -- name: CreateAgency :one
 INSERT
 OR REPLACE INTO agencies (
