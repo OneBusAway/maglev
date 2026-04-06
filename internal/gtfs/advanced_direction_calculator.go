@@ -109,26 +109,27 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 
 	// Fall back to computing from shapes, protected by singleflight
 	// This ensures concurrent requests for the SAME stopID don't hit the DB multiple times.
-	v, _, _ := adc.requestGroup.Do(stopID, func() (interface{}, error) {
+	v, err, _ := adc.requestGroup.Do(stopID, func() (interface{}, error) {
 		// Double-check cache inside the singleflight in case another goroutine just finished it
 		if cached, ok := adc.directionResults.Load(stopID); ok {
 			return cached.(string), nil
 		}
 
 		// Actually compute it (Hits the DB)
-		computedDir, err := adc.computeFromShapes(context.WithoutCancel(ctx), stopID)
+		computedDir, err := adc.computeFromShapes(ctx, stopID)
+		if err != nil {
+			return "", err
+		}
 
 		// Only cache when there was no transient error. A transient error (e.g. DB
 		// connection lost) must not permanently poison the cache; omitting it here
 		// means the next request will retry the DB.
-		if err == nil {
-			adc.directionResults.Store(stopID, computedDir)
-		}
-
-		// Intentionally return nil so singleflight shares the empty fallback result with concurrent callers.
-		// Since we skip caching on error, future requests will safely retry the DB.
+		adc.directionResults.Store(stopID, computedDir)
 		return computedDir, nil
 	})
+	if err != nil {
+		return ""
+	}
 
 	return v.(string)
 }
