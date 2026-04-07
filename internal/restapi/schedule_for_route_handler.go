@@ -254,8 +254,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			combinedTripID := utils.FormCombinedID(agencyID, t.ID)
 			tripRef := models.NewTripReference(
 				combinedTripID,
-				t.RouteID,
-				t.ServiceID,
+				utils.FormCombinedID(agencyID, t.RouteID),
+				utils.FormCombinedID(agencyID, t.ServiceID),
 				t.TripHeadsign.String,
 				t.TripShortName.String,
 				strconv.FormatInt(t.DirectionID.Int64, 10),
