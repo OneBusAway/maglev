@@ -154,7 +154,7 @@ func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 	m.rebuildMergedRealtimeLocked()
 }
 
-// MockResetRealTimeData clears all mock real-time vehicles and trip updates.
+// MockResetRealTimeData clears all mock real-time vehicles, trip updates, and alerts.
 func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
@@ -165,6 +165,8 @@ func (m *Manager) MockResetRealTimeData() {
 	m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
 	m.realTimeTrips = nil
 	m.realTimeTripLookup = make(map[string]int)
+	m.feedAlerts = make(map[string][]gtfs.Alert)
+	m.rebuildMergedRealtimeLocked()
 }
 
 // MockClearServiceIDsCache evicts all entries from the active-service-IDs cache.
