@@ -69,7 +69,7 @@ func rawGtfsData(ctx context.Context, source string, isLocalFile bool, config Co
 	// Process through gtfstidy if enabled
 	if config.EnableGTFSTidy {
 		logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
-		tidiedData, err := tidyGTFSData(b, logger)
+		tidiedData, err := tidyGTFSData(ctx, b, logger)
 		if err != nil {
 			logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
 		} else {
