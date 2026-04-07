@@ -385,8 +385,6 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.cacheEpoch.Add(1)
 	manager.activeServiceIDsCacheMutex.Unlock()
 
-	manager.routesByAgencyID = buildRouteIndex(newStaticData)
-
 	if newCache, freqErr := buildFrequencyCache(ctx, client.Queries); freqErr == nil {
 		manager.frequencyTripIDs = newCache
 	} else {
@@ -413,8 +411,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
 		slog.String("source", manager.config.GtfsURL),
-		slog.String("db_path", finalDBPath),
-		slog.Int("route_index_agencies", len(manager.routesByAgencyID)))
+		slog.String("db_path", finalDBPath))
 
 	manager.parseAndLogFeedExpiryLocked(ctx, logger)
 
@@ -435,8 +432,6 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.isHealthy = true
 
 	manager.agenciesMap, manager.routesMap = buildLookupMaps(staticData)
-
-	manager.routesByAgencyID = buildRouteIndex(staticData)
 
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
 	manager.regionBounds = ComputeRegionBounds(staticData.Shapes, staticData.Stops)
@@ -478,8 +473,7 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogOperation(logger, "gtfs_data_set_successfully",
 			slog.String("source", manager.config.GtfsURL),
-			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)),
-			slog.Int("route_index_agencies", len(manager.routesByAgencyID)))
+			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)))
 	}
 }
 
@@ -495,19 +489,6 @@ func buildLookupMaps(data *gtfs.Static) (map[string]*gtfs.Agency, map[string]*gt
 		routes[data.Routes[i].Id] = &data.Routes[i]
 	}
 	return agencies, routes
-}
-
-func buildRouteIndex(staticData *gtfs.Static) map[string][]*gtfs.Route {
-	index := make(map[string][]*gtfs.Route, len(staticData.Agencies))
-
-	for i := range staticData.Routes {
-		route := &staticData.Routes[i]
-		agencyID := route.Agency.Id
-
-		index[agencyID] = append(index[agencyID], route)
-	}
-
-	return index
 }
 
 // buildFrequencyCache queries the DB for frequency trip IDs and returns a set.

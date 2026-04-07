@@ -210,6 +210,21 @@ FROM
 WHERE
     stop_times.stop_id = ?;
 
+-- name: GetRoutesForAgency :many
+SELECT
+    routes.id,
+    routes.short_name,
+    routes.long_name,
+    routes."desc",
+    routes.type,
+    routes.url,
+    routes.color,
+    routes.text_color
+FROM
+    routes
+WHERE
+    routes.agency_id = ?;
+
 -- name: GetAgencyForStop :one
 SELECT DISTINCT
     a.id,

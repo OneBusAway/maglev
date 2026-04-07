@@ -361,8 +361,8 @@ func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
 	// Test with distance traveled
 	orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", 100.0, 0, 0)
 	assert.NoError(t, err)
-		assert.GreaterOrEqual(t, orientation, -math.Pi)
-		assert.LessOrEqual(t, orientation, math.Pi)
+	assert.GreaterOrEqual(t, orientation, -math.Pi)
+	assert.LessOrEqual(t, orientation, math.Pi)
 }
 
 func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
@@ -380,9 +380,9 @@ func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
 	stopLon := shapes[0].Lon
 	orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", -1.0, stopLat, stopLon)
 	assert.NoError(t, err)
-		assert.GreaterOrEqual(t, orientation, -math.Pi)
-		assert.LessOrEqual(t, orientation, math.Pi)
-	}
+	assert.GreaterOrEqual(t, orientation, -math.Pi)
+	assert.LessOrEqual(t, orientation, math.Pi)
+}
 
 func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
 	ctx := context.Background()
@@ -407,18 +407,18 @@ func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
 	if len(shapes) > 0 && shapes[0].ShapeDistTraveled.Valid {
 		orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", shapes[0].ShapeDistTraveled.Float64, 0, 0)
 		assert.NoError(t, err)
-			assert.GreaterOrEqual(t, orientation, -math.Pi)
-			assert.LessOrEqual(t, orientation, math.Pi)
-		}
+		assert.GreaterOrEqual(t, orientation, -math.Pi)
+		assert.LessOrEqual(t, orientation, math.Pi)
+	}
 
 	// Test at the very end of the shape
 	if len(shapes) > 1 && shapes[len(shapes)-1].ShapeDistTraveled.Valid {
 		orientation, err := calc.calculateOrientationAtStop(ctx, "19_0_1", shapes[len(shapes)-1].ShapeDistTraveled.Float64, 0, 0)
 		assert.NoError(t, err)
-			assert.GreaterOrEqual(t, orientation, -math.Pi)
-			assert.LessOrEqual(t, orientation, math.Pi)
-		}
+		assert.GreaterOrEqual(t, orientation, -math.Pi)
+		assert.LessOrEqual(t, orientation, math.Pi)
 	}
+}
 
 func TestGetAngleAsDirection_EdgeCases(t *testing.T) {
 	calc := &AdvancedDirectionCalculator{}

@@ -475,7 +475,8 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 	require.NotEmpty(t, agencies)
 	agencyID := agencies[0].Id
 
-	vehicles := api.GtfsManager.VehiclesForAgencyID(agencyID)
+	vehicles, err := api.GtfsManager.VehiclesForAgencyID(ctx, agencyID)
+	require.Nil(t, err)
 	require.NotEmpty(t, vehicles, "Real-time vehicles must be loaded for conformance testing")
 
 	t.Run("vehicles-for-agency", func(t *testing.T) {

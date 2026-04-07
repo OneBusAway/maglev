@@ -512,7 +512,8 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 	t.Logf("Loaded %d real-time vehicles", len(realTimeVehicles))
 
 	// Debug vehicle-to-agency matching
-	vehiclesForAgency := api.GtfsManager.VehiclesForAgencyID(agencyId)
+	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(context.Background(), agencyId)
+	require.Nil(t, err)
 	t.Logf("Found %d vehicles for agency %s", len(vehiclesForAgency), agencyId)
 
 	if len(realTimeVehicles) > 0 && len(vehiclesForAgency) == 0 {
@@ -531,11 +532,12 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 			}
 		}
 
-		routes := api.GtfsManager.RoutesForAgencyID(agencyId)
+		routes, err := api.GtfsManager.RoutesForAgencyID(t.Context(), agencyId)
+		require.Nil(t, err)
 		t.Logf("Agency %s has %d routes:", agencyId, len(routes))
 		for i, route := range routes {
 			if i < 3 { // Log first 3 routes
-				t.Logf("Route: %s (agency: %s)", route.Id, route.Agency.Id)
+				t.Logf("Route: %s", route.ID)
 			}
 		}
 	}

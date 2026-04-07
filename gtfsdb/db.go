@@ -216,6 +216,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getRoutesByIDsStmt, err = db.PrepareContext(ctx, getRoutesByIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRoutesByIDs: %w", err)
 	}
+	if q.getRoutesForAgencyStmt, err = db.PrepareContext(ctx, getRoutesForAgency); err != nil {
+		return nil, fmt.Errorf("error preparing query GetRoutesForAgency: %w", err)
+	}
 	if q.getRoutesForStopStmt, err = db.PrepareContext(ctx, getRoutesForStop); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRoutesForStop: %w", err)
 	}
@@ -676,6 +679,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getRoutesByIDsStmt: %w", cerr)
 		}
 	}
+	if q.getRoutesForAgencyStmt != nil {
+		if cerr := q.getRoutesForAgencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getRoutesForAgencyStmt: %w", cerr)
+		}
+	}
 	if q.getRoutesForStopStmt != nil {
 		if cerr := q.getRoutesForStopStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getRoutesForStopStmt: %w", cerr)
@@ -1004,6 +1012,7 @@ type Queries struct {
 	getRouteIDsForStopStmt                        *sql.Stmt
 	getRouteIDsForStopsStmt                       *sql.Stmt
 	getRoutesByIDsStmt                            *sql.Stmt
+	getRoutesForAgencyStmt                        *sql.Stmt
 	getRoutesForStopStmt                          *sql.Stmt
 	getRoutesForStopsStmt                         *sql.Stmt
 	getRoutesInBlockTripIndicesStmt               *sql.Stmt
@@ -1119,6 +1128,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getRouteIDsForStopStmt:                        q.getRouteIDsForStopStmt,
 		getRouteIDsForStopsStmt:                       q.getRouteIDsForStopsStmt,
 		getRoutesByIDsStmt:                            q.getRoutesByIDsStmt,
+		getRoutesForAgencyStmt:                        q.getRoutesForAgencyStmt,
 		getRoutesForStopStmt:                          q.getRoutesForStopStmt,
 		getRoutesForStopsStmt:                         q.getRoutesForStopsStmt,
 		getRoutesInBlockTripIndicesStmt:               q.getRoutesInBlockTripIndicesStmt,
