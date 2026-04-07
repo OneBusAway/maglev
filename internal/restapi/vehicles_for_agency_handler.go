@@ -190,8 +190,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					textColor = route.TextColor.String
 				}
 
-				routeRefs[route.ID] = models.NewRoute(
-					route.ID, route.AgencyID, shortName, longName,
+				combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
+				routeRefs[combinedRouteID] = models.NewRoute(
+					combinedRouteID, route.AgencyID, shortName, longName,
 					desc, models.RouteType(route.Type),
 					url, color, textColor)
 
