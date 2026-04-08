@@ -114,7 +114,7 @@ func TestShapesHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencyID := api.GtfsManager.GetAgencies()[0].Id
+	agencyID := mustGetAgencies(t, api)[0].ID
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_any_shape.json?key=INVALID")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -272,7 +272,7 @@ func TestShapesHandlerWithMissingApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencyID := api.GtfsManager.GetAgencies()[0].Id
+	agencyID := mustGetAgencies(t, api)[0].ID
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_any_shape.json")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)

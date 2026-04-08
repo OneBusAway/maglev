@@ -13,12 +13,12 @@ func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
 	api, cleanup := createTestApiWithRealTimeData(b)
 	defer cleanup()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(b, api)
 	stops := api.GtfsManager.GetStops()
 	if len(agencies) == 0 || len(stops) == 0 {
 		b.Fatal("no agencies or stops")
 	}
-	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
@@ -66,11 +66,11 @@ func BenchmarkVehiclesForAgency(b *testing.B) {
 	api, cleanup := createTestApiWithRealTimeData(b)
 	defer cleanup()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(b, api)
 	if len(agencies) == 0 {
 		b.Fatal("no agencies")
 	}
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
@@ -95,12 +95,12 @@ func BenchmarkTripDetails(b *testing.B) {
 	api, cleanup := createTestApiWithRealTimeData(b)
 	defer cleanup()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(b, api)
 	trips := api.GtfsManager.GetTrips()
 	if len(agencies) == 0 || len(trips) == 0 {
 		b.Fatal("no agencies or trips")
 	}
-	tripID := utils.FormCombinedID(agencies[0].Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agencies[0].ID, trips[0].ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)

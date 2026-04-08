@@ -21,11 +21,11 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/"+tripID+".json?key=TEST")
 
@@ -41,11 +41,11 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	entry, ok := data["entry"].(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, tripID, entry["id"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Route.Id), entry["routeId"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Service.Id), entry["serviceId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Route.Id), entry["routeId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Service.Id), entry["serviceId"])
 	assert.Equal(t, fmt.Sprintf("%d", trips[0].DirectionId), entry["directionId"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].BlockID), entry["blockId"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Shape.ID), entry["shapeId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].BlockID), entry["blockId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Shape.ID), entry["shapeId"])
 	assert.Equal(t, trips[0].Headsign, entry["tripHeadsign"])
 	assert.Equal(t, trips[0].ShortName, entry["tripShortName"])
 	assert.Equal(t, trips[0].Route.ShortName, entry["routeShortName"])
@@ -60,8 +60,8 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 
 	route, ok := routes[0].(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Route.Id), route["id"])
-	assert.Equal(t, agency.Id, route["agencyId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Route.Id), route["id"])
+	assert.Equal(t, agency.ID, route["agencyId"])
 	assert.Equal(t, trips[0].Route.ShortName, route["shortName"])
 
 	agencies, ok := references["agencies"].([]interface{})
@@ -70,7 +70,7 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 
 	agencyRef, ok := agencies[0].(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, agency.Id, agencyRef["id"])
+	assert.Equal(t, agency.ID, agencyRef["id"])
 	assert.Equal(t, agency.Name, agencyRef["name"])
 }
 

@@ -11,9 +11,9 @@ import (
 func TestAgencyHandlerReturnsAgencyWhenItExists(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/"+agencyID+".json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -26,7 +26,7 @@ func TestAgencyHandlerReturnsAgencyWhenItExists(t *testing.T) {
 	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok)
 
-	assert.Equal(t, agencies[0].Id, entry["id"])
+	assert.Equal(t, agencies[0].ID, entry["id"])
 	assert.Equal(t, agencies[0].Name, entry["name"])
 	assert.Equal(t, agencies[0].Url, entry["url"])
 	assert.Equal(t, agencies[0].Timezone, entry["timezone"])
@@ -43,9 +43,9 @@ func TestAgencyHandlerReturnsNullWhenAgencyDoesNotExist(t *testing.T) {
 func TestAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/"+agencyID+".json?key=INVALID")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)

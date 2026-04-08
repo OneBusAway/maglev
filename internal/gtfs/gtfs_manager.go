@@ -407,9 +407,9 @@ func (manager *Manager) RUnlock() {
 	manager.staticMutex.RUnlock()
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) GetAgencies() []gtfs.Agency {
-	return manager.gtfsData.Agencies
+// GetAgencies returns all agencies from the database.
+func (manager *Manager) GetAgencies(ctx context.Context) ([]gtfsdb.Agency, error) {
+	return manager.GtfsDB.Queries.ListAgencies(ctx)
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.

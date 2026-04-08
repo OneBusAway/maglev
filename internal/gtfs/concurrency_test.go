@@ -42,7 +42,7 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 				// Simulate reading data multiple times
 				for j := 0; j < 10; j++ {
 					manager.RLock() // Acquire proper read lock
-					agencies := manager.GetAgencies()
+					agencies := manager.gtfsData.Agencies
 					manager.RUnlock()
 
 					results[index] = agencies
@@ -81,7 +81,7 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 					case <-done:
 						return
 					default:
-						_ = manager.GetAgencies()
+						_ = manager.gtfsData.Agencies
 						_ = manager.GetStops()
 						_ = manager.GetStaticData()
 						time.Sleep(time.Microsecond)

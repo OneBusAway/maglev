@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
@@ -98,6 +99,14 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 // Accepts testing.TB to support both *testing.T and *testing.B
 func createTestApi(t testing.TB) *RestAPI {
 	return createTestApiWithClock(t, clock.RealClock{})
+}
+
+// mustGetAgencies fetches agencies from the DB for use in tests.
+func mustGetAgencies(t testing.TB, api *RestAPI) []gtfsdb.Agency {
+	t.Helper()
+	agencies, err := api.GtfsManager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	return agencies
 }
 
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
