@@ -42,10 +42,12 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			api.serverErrorResponse(w, r, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
 			return
 		}
+		api.serverErrorResponse(w, r, err)
+		return
 	} else {
 		agencyModel := models.NewAgencyReference(
 			agency.ID,
