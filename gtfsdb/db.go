@@ -105,9 +105,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getActiveServiceIDsForDateStmt, err = db.PrepareContext(ctx, getActiveServiceIDsForDate); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveServiceIDsForDate: %w", err)
 	}
-	if q.getActiveStopsStmt, err = db.PrepareContext(ctx, getActiveStops); err != nil {
-		return nil, fmt.Errorf("error preparing query GetActiveStops: %w", err)
-	}
 	if q.getActiveTripForRouteAtTimeStmt, err = db.PrepareContext(ctx, getActiveTripForRouteAtTime); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveTripForRouteAtTime: %w", err)
 	}
@@ -495,11 +492,6 @@ func (q *Queries) Close() error {
 	if q.getActiveServiceIDsForDateStmt != nil {
 		if cerr := q.getActiveServiceIDsForDateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getActiveServiceIDsForDateStmt: %w", cerr)
-		}
-	}
-	if q.getActiveStopsStmt != nil {
-		if cerr := q.getActiveStopsStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getActiveStopsStmt: %w", cerr)
 		}
 	}
 	if q.getActiveTripForRouteAtTimeStmt != nil {
@@ -983,7 +975,6 @@ type Queries struct {
 	createTripStmt                                *sql.Stmt
 	getActiveRouteIDsForStopsOnDateStmt           *sql.Stmt
 	getActiveServiceIDsForDateStmt                *sql.Stmt
-	getActiveStopsStmt                            *sql.Stmt
 	getActiveTripForRouteAtTimeStmt               *sql.Stmt
 	getActiveTripInBlockAtTimeStmt                *sql.Stmt
 	getActiveTripsWithNullBlockForRouteStmt       *sql.Stmt
@@ -1100,7 +1091,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createTripStmt:                                q.createTripStmt,
 		getActiveRouteIDsForStopsOnDateStmt:           q.getActiveRouteIDsForStopsOnDateStmt,
 		getActiveServiceIDsForDateStmt:                q.getActiveServiceIDsForDateStmt,
-		getActiveStopsStmt:                            q.getActiveStopsStmt,
 		getActiveTripForRouteAtTimeStmt:               q.getActiveTripForRouteAtTimeStmt,
 		getActiveTripInBlockAtTimeStmt:                q.getActiveTripInBlockAtTimeStmt,
 		getActiveTripsWithNullBlockForRouteStmt:       q.getActiveTripsWithNullBlockForRouteStmt,

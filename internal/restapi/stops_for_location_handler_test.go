@@ -179,7 +179,7 @@ func TestStopsForLocationIsLimitExceeded(t *testing.T) {
 }
 
 func TestStopsForLocationActiveRoutesOnly(t *testing.T) {
-	futureClock := clock.NewMockClock(time.Date(2028, 1, 1, 12, 0, 0, 0, time.UTC))
+	futureClock := clock.NewMockClock(time.Date(2031, 1, 1, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, futureClock)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=5000")

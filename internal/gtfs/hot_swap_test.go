@@ -222,7 +222,6 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	// Verify initial state
 	manager.RLock()
 	assert.Equal(t, "25", manager.gtfsData.Agencies[0].Id)
-	assert.NotNil(t, manager.stopSpatialIndex)
 	assert.NotNil(t, manager.blockLayoverIndices)
 	manager.RUnlock()
 
@@ -230,7 +229,6 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	manager.RLock()
 	oldStaticData := manager.gtfsData
 	oldGtfsDB := manager.GtfsDB
-	oldSpatialIndex := manager.stopSpatialIndex
 	oldBlockLayoverIndices := manager.blockLayoverIndices
 	manager.RUnlock()
 
@@ -245,10 +243,8 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	// Verify memory cleanup (references replaced)
 	assert.NotEqual(t, oldStaticData, manager.gtfsData, "StaticData Reference should have been replaced")
 	assert.NotEqual(t, oldGtfsDB, manager.GtfsDB, "GtfsDB Reference should have been replaced")
-	assert.NotEqual(t, oldSpatialIndex, manager.stopSpatialIndex, "SpatialIndex Reference should have been replaced")
 	assert.NotEqual(t, oldBlockLayoverIndices, manager.blockLayoverIndices, "BlockLayoverIndices Reference should have been replaced")
 
-	assert.NotNil(t, manager.stopSpatialIndex)
 	assert.NotNil(t, manager.blockLayoverIndices)
 
 	manager.RUnlock()

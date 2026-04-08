@@ -20,7 +20,6 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
-	"github.com/tidwall/rtree"
 	"maglev.onebusaway.org/internal/logging"
 )
 
@@ -66,7 +65,6 @@ type Manager struct {
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
-	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
 	regionBounds                   *RegionBounds
 	isHealthy                      bool
@@ -324,14 +322,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		manager.systemETag = fmt.Sprintf(`"%s"`, metadata.FileHash)
 	}
 
-	// Build spatial index for fast stop location queries
-	spatialIndex, err := buildStopSpatialIndex(ctx, gtfsDB.Queries)
-	if err != nil {
-		_ = gtfsDB.Close()
-		return nil, fmt.Errorf("error building spatial index: %w", err)
-	}
-	manager.stopSpatialIndex = spatialIndex
-
 	freqTripIDs := make(map[string]struct{})
 	ids, err := gtfsDB.Queries.GetFrequencyTripIDs(ctx)
 	if err == nil {
@@ -471,6 +461,11 @@ type stopWithDistance struct {
 // GetStopsForLocation retrieves stops near a given location using the spatial index.
 // It supports filtering by route types and querying for specific stop codes.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
+//
+// TODO: split this into several functions backed by different database queries.
+// Some callers only want stop IDs, while others need to return Stops to the
+// client.
+// TODO: replace full scan on stops with query on code index when query is non-empty.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	lat, lon, radius, latSpan, lonSpan float64,
@@ -504,7 +499,12 @@ func (manager *Manager) GetStopsForLocation(
 		return []gtfsdb.Stop{}
 	}
 
-	dbStops := queryStopsInBounds(manager.stopSpatialIndex, bounds)
+	dbStops, err := manager.queryStopsInBounds(ctx, bounds)
+	if err != nil {
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+		logging.LogError(logger, "could not query stops within bounds", err)
+		return []gtfsdb.Stop{}
+	}
 
 	for _, dbStop := range dbStops {
 		if ctx.Err() != nil {
@@ -523,6 +523,8 @@ func (manager *Manager) GetStopsForLocation(
 
 	// If the stop does not have any routes actively serving it, don't include it in the results
 	// This filtering is only applied if we are not searching for a specific stop code
+	// TODO: move this logic into the first queryStopsInBounds call to avoid 2 db roundtrips. May need
+	// the function split for query logic mentioned above.
 	if query == "" || isForRoutes {
 		if len(routeTypes) > 0 {
 			stopIDs := make([]string, 0, len(candidates))
@@ -617,6 +619,7 @@ func (manager *Manager) GetStopsForLocation(
 		}
 	}
 
+	// TODO move sorting and limiting into the query as well.
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].distance < candidates[j].distance
 	})
@@ -630,6 +633,23 @@ func (manager *Manager) GetStopsForLocation(
 	}
 
 	return stops
+}
+
+// queryStopsInBounds retrieves all active stops within the given geographic bounds
+// from the database's stops_rtree spatial index.
+func (manager *Manager) queryStopsInBounds(ctx context.Context, bounds utils.CoordinateBounds) ([]gtfsdb.Stop, error) {
+	if bounds.MinLat > bounds.MaxLat {
+		return nil, fmt.Errorf("query min lat %f exceeds max lat %f", bounds.MinLat, bounds.MaxLat)
+	}
+	if bounds.MinLon > bounds.MaxLon {
+		return nil, fmt.Errorf("query min lon %f exceeds max lon %f", bounds.MinLon, bounds.MaxLon)
+	}
+	return manager.GtfsDB.Queries.GetActiveStopsWithinBounds(ctx, gtfsdb.GetActiveStopsWithinBoundsParams{
+		MinLat: bounds.MinLat,
+		MaxLat: bounds.MaxLat,
+		MinLon: bounds.MinLon,
+		MaxLon: bounds.MaxLon,
+	})
 }
 
 // VehiclesForAgencyID returns all real-time vehicles serving routes that belong
