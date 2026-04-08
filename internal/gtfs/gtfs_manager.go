@@ -1,11 +1,12 @@
 package gtfs
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -303,7 +304,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 						for validID := range manager.agenciesMap {
 							validAgencies = append(validAgencies, validID)
 						}
-						sort.Strings(validAgencies)
+						slices.Sort(validAgencies)
 					}
 
 					logger.Warn("configured agency-id not found in static GTFS data",
@@ -613,8 +614,8 @@ func (manager *Manager) GetStopsForLocation(
 		}
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].distance < candidates[j].distance
+	slices.SortFunc(candidates, func(a, b stopWithDistance) int {
+		return cmp.Compare(a.distance, b.distance)
 	})
 
 	// When isForRoutes is true, return all matching stops without applying maxCount limit.
