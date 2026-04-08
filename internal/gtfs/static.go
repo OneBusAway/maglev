@@ -362,7 +362,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	manager.gtfsData = newStaticData
 	manager.GtfsDB = client
-	manager.agenciesMap, manager.routesMap = buildLookupMaps(newStaticData)
+	manager.agenciesMap = buildLookupMaps(newStaticData)
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.regionBounds = newRegionBounds
@@ -431,7 +431,7 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 
 	manager.isHealthy = true
 
-	manager.agenciesMap, manager.routesMap = buildLookupMaps(staticData)
+	manager.agenciesMap = buildLookupMaps(staticData)
 
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
 	manager.regionBounds = ComputeRegionBounds(staticData.Shapes, staticData.Stops)
@@ -477,18 +477,12 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	}
 }
 
-// buildLookupMaps is used to create O(1) lookup maps for agencies and routes
-func buildLookupMaps(data *gtfs.Static) (map[string]*gtfs.Agency, map[string]*gtfs.Route) {
+func buildLookupMaps(data *gtfs.Static) map[string]*gtfs.Agency {
 	agencies := make(map[string]*gtfs.Agency, len(data.Agencies))
 	for i := range data.Agencies {
 		agencies[data.Agencies[i].Id] = &data.Agencies[i]
 	}
-
-	routes := make(map[string]*gtfs.Route, len(data.Routes))
-	for i := range data.Routes {
-		routes[data.Routes[i].Id] = &data.Routes[i]
-	}
-	return agencies, routes
+	return agencies
 }
 
 // buildFrequencyCache queries the DB for frequency trip IDs and returns a set.

@@ -56,7 +56,6 @@ type Manager struct {
 	duplicatedVehicleByRoute       map[string][]gtfs.Vehicle
 	alertIdx                       alertIndex
 	agenciesMap                    map[string]*gtfs.Agency
-	routesMap                      map[string]*gtfs.Route
 	frequencyTripIDs               map[string]struct{}
 	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
 	staticMutex                    sync.RWMutex // Protects GtfsDB, gtfsData, and lastUpdated
@@ -441,11 +440,8 @@ func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) FindRoute(id string) *gtfs.Route {
-	if route, ok := manager.routesMap[id]; ok {
-		return route
-	}
-	return nil
+func (manager *Manager) FindRoute(ctx context.Context, id string) (gtfsdb.Route, error) {
+	return manager.GtfsDB.Queries.GetRoute(ctx, id)
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.

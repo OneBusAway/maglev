@@ -332,30 +332,6 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	assert.Nil(t, nilVehicle)
 }
 
-func TestBuildLookupMaps(t *testing.T) {
-	staticData := &gtfs.Static{
-		Agencies: []gtfs.Agency{
-			{Id: "agency_1", Name: "Metro"},
-			{Id: "agency_2", Name: "Bus"},
-		},
-		Routes: []gtfs.Route{
-			{Id: "route_101", ShortName: "101"},
-			{Id: "route_102", ShortName: "102"},
-		},
-	}
-
-	agencyMap, routeMap := buildLookupMaps(staticData)
-
-	assert.Equal(t, 2, len(agencyMap))
-	assert.NotNil(t, agencyMap["agency_1"])
-	assert.Equal(t, "Metro", agencyMap["agency_1"].Name)
-	assert.Nil(t, agencyMap["agency_999"], "Should return nil for non-existent agency")
-
-	assert.Equal(t, 2, len(routeMap))
-	assert.NotNil(t, routeMap["route_101"])
-	assert.Equal(t, "101", routeMap["route_101"].ShortName)
-	assert.Nil(t, routeMap["route_999"], "Should return nil for non-existent route")
-}
 
 func TestManager_FindAgency_UsesMap(t *testing.T) {
 	// This test proves we are using the Map, not the Slice.
@@ -379,23 +355,6 @@ func TestManager_FindAgency_UsesMap(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestManager_FindRoute_UsesMap(t *testing.T) {
-	manager := &Manager{
-		routesMap: map[string]*gtfs.Route{
-			"R1": {Id: "R1", LongName: "Express Route"},
-		},
-		gtfsData: &gtfs.Static{
-			Routes: []gtfs.Route{},
-		},
-	}
-
-	result := manager.FindRoute("R1")
-	assert.NotNil(t, result)
-	assert.Equal(t, "Express Route", result.LongName)
-
-	result = manager.FindRoute("Unknown")
-	assert.Nil(t, result)
-}
 
 func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
 	ctx := context.Background()
