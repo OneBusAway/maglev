@@ -479,10 +479,21 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 	require.Nil(t, err)
 	require.NotEmpty(t, vehicles, "Real-time vehicles must be loaded for conformance testing")
 
+	stops := api.GtfsManager.GetStops()
+	require.NotEmpty(t, stops, "Test data must contain at least one stop")
+	stopID := utils.FormCombinedID(agencyID, stops[0].Id)
+
 	t.Run("vehicles-for-agency", func(t *testing.T) {
 		assertConformance(t, server.URL, doc,
 			"/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST",
 			"/api/where/vehicles-for-agency/{agencyID}.json",
+		)
+	})
+
+	t.Run("arrivals-and-departures-for-stop", func(t *testing.T) {
+		assertConformance(t, server.URL, doc,
+			"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST&time=2026-01-01T00%3A00%3A00Z",
+			"/api/where/arrivals-and-departures-for-stop/{stopID}.json",
 		)
 	})
 }

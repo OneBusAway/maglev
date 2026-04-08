@@ -79,11 +79,11 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 	assert.Equal(t, situationIDs, arrival.SituationIDs)
 	assert.Equal(t, "", arrival.ActualTrack)
 	assert.Equal(t, "", arrival.ScheduledTrack)
-	assert.Nil(t, arrival.Frequency)
-	assert.Nil(t, arrival.PredictedArrivalInterval)
-	assert.Nil(t, arrival.PredictedDepartureInterval)
-	assert.Nil(t, arrival.ScheduledArrivalInterval)
-	assert.Nil(t, arrival.ScheduledDepartureInterval)
+	assert.Equal(t, "", arrival.Frequency)
+	assert.Equal(t, "", arrival.PredictedArrivalInterval)
+	assert.Equal(t, "", arrival.PredictedDepartureInterval)
+	assert.Equal(t, "", arrival.ScheduledArrivalInterval)
+	assert.Equal(t, "", arrival.ScheduledDepartureInterval)
 }
 
 func TestArrivalAndDepartureJSON(t *testing.T) {
@@ -98,23 +98,23 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 		BlockTripSequence:          2,
 		DepartureEnabled:           true,
 		DistanceFromStop:           500.75,
-		Frequency:                  nil,
+		Frequency:                  "",
 		HistoricalOccupancy:        "STANDING_ROOM_ONLY",
 		LastUpdateTime:             &lastUpdateTime,
 		NumberOfStopsAway:          3,
 		OccupancyStatus:            "MANY_SEATS_AVAILABLE",
 		Predicted:                  true,
-		PredictedArrivalInterval:   nil,
+		PredictedArrivalInterval:   "",
 		PredictedArrivalTime:       1609462850000,
-		PredictedDepartureInterval: nil,
+		PredictedDepartureInterval: "",
 		PredictedDepartureTime:     1609462950000,
 		PredictedOccupancy:         "FEW_SEATS_AVAILABLE",
 		RouteID:                    "unitrans_FMS",
 		RouteLongName:              "Fremont Station",
 		RouteShortName:             "FMS",
-		ScheduledArrivalInterval:   nil,
+		ScheduledArrivalInterval:   "",
 		ScheduledArrivalTime:       1609462800000,
-		ScheduledDepartureInterval: nil,
+		ScheduledDepartureInterval: "",
 		ScheduledDepartureTime:     1609462900000,
 		ScheduledTrack:             "",
 		ServiceDate:                1609459200000,
@@ -131,6 +131,26 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 
 	jsonData, err := json.Marshal(arrival)
 	assert.NoError(t, err)
+
+	// verify omitempty fields are not present
+	var jsonMap map[string]interface{}
+	err = json.Unmarshal(jsonData, &jsonMap)
+	assert.NoError(t, err)
+
+	_, ok := jsonMap["frequency"]
+	assert.False(t, ok)
+
+	_, ok = jsonMap["predictedArrivalInterval"]
+	assert.False(t, ok)
+
+	_, ok = jsonMap["predictedDepartureInterval"]
+	assert.False(t, ok)
+
+	_, ok = jsonMap["scheduledArrivalInterval"]
+	assert.False(t, ok)
+
+	_, ok = jsonMap["scheduledDepartureInterval"]
+	assert.False(t, ok)
 
 	var unmarshaledArrival ArrivalAndDeparture
 	err = json.Unmarshal(jsonData, &unmarshaledArrival)
