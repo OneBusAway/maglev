@@ -170,20 +170,23 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Batch fetch agencies using cached manager
-	allAgencies := api.GtfsManager.GetAgencies()
+	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	for _, a := range allAgencies {
-		if uniqueAgencyIDsMap[a.Id] {
-			if _, exists := agencyRefs[a.Id]; !exists {
-				agencyRefs[a.Id] = models.NewAgencyReference(
-					a.Id,
+		if uniqueAgencyIDsMap[a.ID] {
+			if _, exists := agencyRefs[a.ID]; !exists {
+				agencyRefs[a.ID] = models.NewAgencyReference(
+					a.ID,
 					a.Name,
 					a.Url,
 					a.Timezone,
-					a.Language,
-					a.Phone,
-					a.Email,
-					a.FareUrl,
+					a.Lang.String,
+					a.Phone.String,
+					a.Email.String,
+					a.FareUrl.String,
 					"",    // disclaimer
 					false, // privateService
 				)

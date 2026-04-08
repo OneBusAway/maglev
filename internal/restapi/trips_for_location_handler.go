@@ -147,13 +147,13 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
-	agencies := api.GtfsManager.GetAgencies()
-	if len(agencies) == 0 {
+	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
+	if agenciesErr != nil || len(agencies) == 0 {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, serverErr = loadAgencyLocation(currentAgency.Id, currentAgency.Timezone)
+	currentLocation, serverErr = loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if serverErr != nil {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, serverErr
 	}

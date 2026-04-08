@@ -92,6 +92,12 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
@@ -115,7 +121,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
-		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 		if agencies == nil {
 			agencies = []models.AgencyReference{}
 		}
@@ -239,7 +245,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
 
 	if agencies == nil {
