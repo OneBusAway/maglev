@@ -13,7 +13,7 @@ import (
 func BenchmarkRebuildRealTimeTripLookup(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips:     make(map[string][]gtfs.Trip),
+		feedData:      make(map[string]*FeedData),
 	}
 
 	feedTrips := make([]gtfs.Trip, 1000)
@@ -22,18 +22,18 @@ func BenchmarkRebuildRealTimeTripLookup(b *testing.B) {
 			ID: gtfs.TripID{ID: fmt.Sprintf("trip_%d", i)},
 		}
 	}
-	manager.feedTrips["feed-0"] = feedTrips
+	manager.feedData["feed-0"] = &FeedData{Trips: feedTrips}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.rebuildMergedRealtimeLocked()
+		manager.buildMergedRealtime()
 	}
 }
 
 func BenchmarkRebuildRealTimeVehicleLookupByTrip(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles:  make(map[string][]gtfs.Vehicle),
+		feedData:      make(map[string]*FeedData),
 	}
 
 	feedVehicles := make([]gtfs.Vehicle, 1000)
@@ -44,18 +44,18 @@ func BenchmarkRebuildRealTimeVehicleLookupByTrip(b *testing.B) {
 			},
 		}
 	}
-	manager.feedVehicles["feed-0"] = feedVehicles
+	manager.feedData["feed-0"] = &FeedData{Vehicles: feedVehicles}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.rebuildMergedRealtimeLocked()
+		manager.buildMergedRealtime()
 	}
 }
 
 func BenchmarkRebuildRealTimeVehicleLookupByVehicle(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedVehicles:  make(map[string][]gtfs.Vehicle),
+		feedData:      make(map[string]*FeedData),
 	}
 
 	feedVehicles := make([]gtfs.Vehicle, 1000)
@@ -64,11 +64,11 @@ func BenchmarkRebuildRealTimeVehicleLookupByVehicle(b *testing.B) {
 			ID: &gtfs.VehicleID{ID: fmt.Sprintf("vehicle_%d", i)},
 		}
 	}
-	manager.feedVehicles["feed-0"] = feedVehicles
+	manager.feedData["feed-0"] = &FeedData{Vehicles: feedVehicles}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.rebuildMergedRealtimeLocked()
+		manager.buildMergedRealtime()
 	}
 }
 
@@ -77,14 +77,14 @@ func BenchmarkRebuildAlertIndex(b *testing.B) {
 	agencyID := "agency_0"
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts:    make(map[string][]gtfs.Alert),
+		feedData:      make(map[string]*FeedData),
 	}
 
-	feedAlerts := make([]gtfs.Alert, 1000)
+	alerts := make([]gtfs.Alert, 1000)
 	for i := 0; i < 1000; i++ {
 		tripID := gtfs.TripID{ID: fmt.Sprintf("trip_%d", i)}
 		stopID := fmt.Sprintf("stop_%d", i)
-		feedAlerts[i] = gtfs.Alert{
+		alerts[i] = gtfs.Alert{
 			ID: fmt.Sprintf("alert_%d", i),
 			InformedEntities: []gtfs.AlertInformedEntity{
 				{TripID: &tripID},
@@ -94,11 +94,11 @@ func BenchmarkRebuildAlertIndex(b *testing.B) {
 			},
 		}
 	}
-	manager.feedAlerts["feed-0"] = feedAlerts
+	manager.feedData["feed-0"] = &FeedData{Alerts: alerts}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.rebuildMergedRealtimeLocked()
+		manager.buildMergedRealtime()
 	}
 }
 
@@ -107,16 +107,16 @@ func BenchmarkGetAlertsByIDs(b *testing.B) {
 	// (~10 alerts/route, ~20 alerts/agency), each with a unique trip.
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts:    make(map[string][]gtfs.Alert),
+		feedData:      make(map[string]*FeedData),
 	}
 
-	feedAlerts := make([]gtfs.Alert, 1000)
+	alerts := make([]gtfs.Alert, 1000)
 	for i := 0; i < 1000; i++ {
 		tripID := gtfs.TripID{ID: fmt.Sprintf("trip_%d", i)}
 		routeID := fmt.Sprintf("route_%d", i%100)
 		agencyID := fmt.Sprintf("agency_%d", i%50)
 		stopID := fmt.Sprintf("stop_%d", i)
-		feedAlerts[i] = gtfs.Alert{
+		alerts[i] = gtfs.Alert{
 			ID: fmt.Sprintf("alert_%d", i),
 			InformedEntities: []gtfs.AlertInformedEntity{
 				{TripID: &tripID},
@@ -126,8 +126,8 @@ func BenchmarkGetAlertsByIDs(b *testing.B) {
 			},
 		}
 	}
-	manager.feedAlerts["feed-0"] = feedAlerts
-	manager.rebuildMergedRealtimeLocked()
+	manager.feedData["feed-0"] = &FeedData{Alerts: alerts}
+	manager.buildMergedRealtime()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -143,21 +143,21 @@ func BenchmarkGetAlertsByIDs(b *testing.B) {
 func BenchmarkGetAlertsForStop(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedAlerts:    make(map[string][]gtfs.Alert),
+		feedData:      make(map[string]*FeedData),
 	}
 
-	feedAlerts := make([]gtfs.Alert, 1000)
+	alerts := make([]gtfs.Alert, 1000)
 	for i := 0; i < 1000; i++ {
 		stopID := fmt.Sprintf("stop_%d", i)
-		feedAlerts[i] = gtfs.Alert{
+		alerts[i] = gtfs.Alert{
 			ID: fmt.Sprintf("alert_%d", i),
 			InformedEntities: []gtfs.AlertInformedEntity{
 				{StopID: &stopID},
 			},
 		}
 	}
-	manager.feedAlerts["feed-0"] = feedAlerts
-	manager.rebuildMergedRealtimeLocked()
+	manager.feedData["feed-0"] = &FeedData{Alerts: alerts}
+	manager.buildMergedRealtime()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -168,8 +168,8 @@ func BenchmarkGetAlertsForStop(b *testing.B) {
 func BenchmarkRebuildDuplicatedVehicleByRoute(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips:     make(map[string][]gtfs.Trip),
-		feedVehicles:  make(map[string][]gtfs.Vehicle),
+		feedData:      make(map[string]*FeedData),
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
 	}
 
 	feedTrips := make([]gtfs.Trip, 1000)
@@ -194,20 +194,19 @@ func BenchmarkRebuildDuplicatedVehicleByRoute(b *testing.B) {
 			},
 		}
 	}
-	manager.feedTrips["feed-0"] = feedTrips
-	manager.feedVehicles["feed-0"] = feedVehicles
+	manager.feedData["feed-0"] = &FeedData{Trips: feedTrips, Vehicles: feedVehicles}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.rebuildMergedRealtimeLocked()
+		manager.buildMergedRealtime()
 	}
 }
 
 func BenchmarkGetDuplicatedVehiclesForRoute(b *testing.B) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
-		feedTrips:     make(map[string][]gtfs.Trip),
-		feedVehicles:  make(map[string][]gtfs.Vehicle),
+		feedData:      make(map[string]*FeedData),
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
 	}
 
 	feedTrips := make([]gtfs.Trip, 1000)
@@ -232,9 +231,8 @@ func BenchmarkGetDuplicatedVehiclesForRoute(b *testing.B) {
 			},
 		}
 	}
-	manager.feedTrips["feed-0"] = feedTrips
-	manager.feedVehicles["feed-0"] = feedVehicles
-	manager.rebuildMergedRealtimeLocked()
+	manager.feedData["feed-0"] = &FeedData{Trips: feedTrips, Vehicles: feedVehicles}
+	manager.buildMergedRealtime()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
