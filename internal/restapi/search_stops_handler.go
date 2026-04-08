@@ -52,9 +52,14 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	limit := 50
 	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
-		if parsed, err := strconv.Atoi(maxCountStr); err == nil && parsed > 0 {
-			limit = parsed
+		parsed, err := strconv.Atoi(maxCountStr)
+		if err != nil || parsed <= 0 {
+			api.validationErrorResponse(w, r, map[string][]string{
+				"maxCount": {"must be a positive integer"},
+			})
+			return
 		}
+		limit = parsed
 	}
 
 	// 2. Sanitize and construct FTS5 query
