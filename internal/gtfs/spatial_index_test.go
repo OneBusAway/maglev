@@ -42,7 +42,7 @@ func TestQueryStopsInBounds(t *testing.T) {
 		name          string
 		bounds        utils.CoordinateBounds
 		expectedCount int
-		expectedIDs   []string 
+		expectedIDs   []string
 	}{
 		{
 			name: "NormalBoundingBox_SomeStops",

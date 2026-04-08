@@ -106,6 +106,9 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 	var directionCalculator *gtfs.AdvancedDirectionCalculator
 	if gtfsManager != nil {
 		directionCalculator = gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+		// Register the calculator on the manager so ForceUpdate can refresh its
+		// queries pointer (and evict the direction cache) after every DB hot-swap.
+		gtfsManager.DirectionCalculator = directionCalculator
 	}
 
 	// Select clock implementation based on environment

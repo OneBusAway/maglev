@@ -42,13 +42,13 @@ func TestManager_RoutesForAgencyID(t *testing.T) {
 	assert.NotNil(t, manager)
 
 	manager.RLock()
-	routes := manager.RoutesForAgencyID("25")
+	routes, err := manager.RoutesForAgencyID(t.Context(), "25")
 	manager.RUnlock()
+	assert.Nil(t, err)
 	assert.Equal(t, 13, len(routes))
 
 	route := routes[0]
-	assert.Equal(t, "1", route.ShortName)
-	assert.Equal(t, "25", route.Agency.Id)
+	assert.Equal(t, "1", route.ShortName.String)
 }
 
 func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
@@ -397,7 +397,24 @@ func TestManager_FindRoute_UsesMap(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
+func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
+	ctx := context.Background()
+
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err, "Failed to initialize manager")
+	defer manager.Shutdown()
+
+	emptyRoutes, err := manager.RoutesForAgencyID(ctx, "nonexistent")
+	assert.Nil(t, err)
+	assert.Empty(t, emptyRoutes, "Non-existent agency should return empty slice")
+}
+
+func TestRoutesForAgencyID_ValidId(t *testing.T) {
 	ctx := context.Background()
 
 	gtfsConfig := Config{
@@ -412,26 +429,9 @@ func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
 	targetAgencyID := "25"
 	expectedRouteCount := 13
 
-	// Consolidated lock region
-	manager.RLock()
-	assert.NotNil(t, manager.routesByAgencyID, "routesByAgencyID map should be initialized")
-
-	cachedRoutes, exists := manager.routesByAgencyID[targetAgencyID]
-	assert.True(t, exists, "Agency %s should exist in cache map", targetAgencyID)
-	assert.Len(t, cachedRoutes, expectedRouteCount, "Map should contain correct number of routes")
-
-	publicRoutes := manager.RoutesForAgencyID(targetAgencyID)
-	emptyRoutes := manager.RoutesForAgencyID("nonexistent")
-	manager.RUnlock()
-
+	publicRoutes, err := manager.RoutesForAgencyID(ctx, targetAgencyID)
+	assert.Nil(t, err)
 	assert.Len(t, publicRoutes, expectedRouteCount, "Public API should return correct route count")
-
-	for _, route := range publicRoutes {
-		assert.Equal(t, targetAgencyID, route.Agency.Id,
-			"Route %s should belong to agency %s", route.Id, targetAgencyID)
-	}
-
-	assert.Empty(t, emptyRoutes, "Non-existent agency should return empty slice")
 }
 
 func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
@@ -450,7 +450,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	errors := make(chan error, 10)
+	errorChan := make(chan error, 10)
 
 	// Spawn concurrent readers
 	for i := range 5 {
@@ -463,11 +463,17 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 					return
 				default:
 					manager.RLock()
-					routes := manager.RoutesForAgencyID("25")
+					routes, err := manager.RoutesForAgencyID(ctx, "25")
 					manager.RUnlock()
+					if errors.Is(err, context.DeadlineExceeded) {
+						return
+					} else if err != nil {
+						errorChan <- err
+						return
+					}
 
 					if routes == nil {
-						errors <- fmt.Errorf("reader %d: got nil routes slice", id)
+						errorChan <- fmt.Errorf("reader %d: got nil routes slice", id)
 						return
 					}
 					time.Sleep(1 * time.Microsecond)
@@ -498,9 +504,9 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 	}()
 
 	wg.Wait()
-	close(errors)
+	close(errorChan)
 
-	for err := range errors {
+	for err := range errorChan {
 		t.Error(err)
 	}
 }
@@ -523,7 +529,7 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		manager.RLock()
-		_ = manager.RoutesForAgencyID("25")
+		_, _ = manager.RoutesForAgencyID(ctx, "25")
 		manager.RUnlock()
 	}
 }

@@ -2458,6 +2458,65 @@ func (q *Queries) GetRoutesByIDs(ctx context.Context, routeIds []string) ([]Rout
 	return items, nil
 }
 
+const getRoutesForAgency = `-- name: GetRoutesForAgency :many
+SELECT
+    routes.id,
+    routes.short_name,
+    routes.long_name,
+    routes."desc",
+    routes.type,
+    routes.url,
+    routes.color,
+    routes.text_color
+FROM
+    routes
+WHERE
+    routes.agency_id = ?
+`
+
+type GetRoutesForAgencyRow struct {
+	ID        string
+	ShortName sql.NullString
+	LongName  sql.NullString
+	Desc      sql.NullString
+	Type      int64
+	Url       sql.NullString
+	Color     sql.NullString
+	TextColor sql.NullString
+}
+
+func (q *Queries) GetRoutesForAgency(ctx context.Context, agencyID string) ([]GetRoutesForAgencyRow, error) {
+	rows, err := q.query(ctx, q.getRoutesForAgencyStmt, getRoutesForAgency, agencyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRoutesForAgencyRow
+	for rows.Next() {
+		var i GetRoutesForAgencyRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ShortName,
+			&i.LongName,
+			&i.Desc,
+			&i.Type,
+			&i.Url,
+			&i.Color,
+			&i.TextColor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRoutesForStop = `-- name: GetRoutesForStop :many
 SELECT DISTINCT
     routes.id,
