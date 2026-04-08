@@ -174,3 +174,20 @@ func TestRouteHandlerWithSituations(t *testing.T) {
 	situationMap := situations[0].(map[string]interface{})
 	assert.Equal(t, "test-alert-123", situationMap["id"], "The alert ID should match our mocked alert")
 }
+
+func TestRouteHandlerAgencyNotFound(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	routes := api.GtfsManager.GetRoutes()
+	require.NotEmpty(t, routes, "Test data should contain at least one route")
+
+	// Use a valid route ID but with a non-existent agency ID
+	invalidAgencyID := "nonexistent_agency"
+	routeID := utils.FormCombinedID(invalidAgencyID, routes[0].Id)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+routeID+".json?key=TEST")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
+}
