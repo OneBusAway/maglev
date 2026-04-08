@@ -699,8 +699,8 @@ func TestArrivalsAndDeparturesForStopHandlerInvalidTime(t *testing.T) {
 }
 
 func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -900,8 +900,8 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 }
 
 func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -993,8 +993,8 @@ func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *t
 // Regression test for loop routes where the same stop appears multiple times in a trip.
 // Ensures that stopSequence correctly selects among multiple occurrences of the same stop.
 func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries

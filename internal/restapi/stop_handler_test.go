@@ -152,8 +152,8 @@ func TestStopHandlerWithMalformedID(t *testing.T) {
 }
 
 func TestStopHandlerMultiAgencyScenario(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries

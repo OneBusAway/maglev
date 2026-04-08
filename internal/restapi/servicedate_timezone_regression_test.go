@@ -138,8 +138,8 @@ func TestServiceDateTimezoneRegression_ArrivalDeparture(t *testing.T) {
 	require.Equal(t, 15, localTime.Day(), "precondition: local day should be 15")
 
 	mockClock := clock.NewMockClock(localTime)
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 
 	// All days active so the arrival lookup succeeds regardless of date
 	allDays := [7]int{1, 1, 1, 1, 1, 1, 1}
@@ -223,8 +223,8 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 			days[tc.activeDay] = 1
 
 			mockClock := clock.NewMockClock(tc.localTime)
-			api := createTestApiWithClock(t, mockClock)
-			defer api.Shutdown()
+			api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+			defer cleanup()
 
 			setupTzTestGTFS(t, api.GtfsManager.GtfsDB.Queries, td, days)
 			// Clear the service-IDs cache so the request below sees the newly

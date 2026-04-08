@@ -489,7 +489,8 @@ func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 	cleanup := func() {
 		api.Shutdown()
 		server.Close()
-		gtfsManager.Shutdown()
+		err = gtfsManager.Shutdown(ctx)
+		require.NoError(t, err)
 	}
 
 	return api, cleanup

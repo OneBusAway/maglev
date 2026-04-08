@@ -17,8 +17,8 @@ func TestReportProblemWithTripRequiresValidApiKey(t *testing.T) {
 }
 
 func TestReportProblemWithTripEndToEnd(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	tripId := "1_12345"
 
@@ -44,8 +44,8 @@ func TestReportProblemWithTripEndToEnd(t *testing.T) {
 }
 
 func TestReportProblemWithTrip_MinimalParams(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	tripID := "1_12345"
 
@@ -57,8 +57,8 @@ func TestReportProblemWithTrip_MinimalParams(t *testing.T) {
 }
 
 func TestReportProblemWithTripSanitization(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApi(t)
+	defer cleanup()
 
 	tripId := "1_12345"
 

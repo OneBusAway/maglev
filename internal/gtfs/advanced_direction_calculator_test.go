@@ -569,8 +569,12 @@ func TestMain(m *testing.M) {
 
 	// Global Teardown
 	// If sharedManager was initialized during tests, shut it down now.
+	ctx := context.Background()
 	if sharedManager != nil {
-		sharedManager.Shutdown()
+		err := sharedManager.Shutdown(ctx)
+		if err != nil {
+			_, _ = os.Stderr.WriteString("Error occurred while shutting down shared GTFS manager: " + err.Error() + "\n")
+		}
 	}
 
 	// Exit with the test result code

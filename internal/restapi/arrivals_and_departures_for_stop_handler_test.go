@@ -460,8 +460,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 	require.NoError(t, err)
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
 
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -600,8 +600,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 11, 0, 0, 0, time.UTC))
 
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 
 	agency := api.GtfsManager.GetAgencies()[0]
 	stops := api.GtfsManager.GetStops()
@@ -719,8 +719,8 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 // queried stop (by stop ID) is applied directly and marks the arrival as predicted.
 func TestPluralArrivals_ExactStopMatch(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	stopCode, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 2)
@@ -759,8 +759,8 @@ func TestPluralArrivals_ExactStopMatch(t *testing.T) {
 // matches the queried stop, the delay is propagated from the closest prior stop.
 func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	// Stop being queried is sequence 3; prior update is at sequence 2.
@@ -808,8 +808,8 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 // trip-level Delay but no StopTimeUpdates, that delay is applied to the arrival.
 func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
@@ -842,8 +842,8 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 // gated on vehicle != nil, so trip-level delays work even without a vehicle.
 func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
@@ -875,8 +875,8 @@ func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 // StopTimeUpdate for a later stop does not mark the arrival as predicted.
 func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	// Stop being queried is sequence 1; update is for sequence 5 (later stop).
@@ -914,8 +914,8 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 // whenever a vehicle existed, even without real-time delay data.
 func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -945,8 +945,8 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 // times are set directly from those absolute timestamps.
 func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	stopCode, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 2)
@@ -985,8 +985,8 @@ func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 // not carried forward from an earlier stop's delay.
 func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	// Stop being queried is sequence 3.
@@ -1040,8 +1040,8 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	// Use MockClock within RABA service window (calendar ends 2025-12-31).
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 
 	ctx := context.Background()
 
@@ -1075,8 +1075,8 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	// Use MockClock within RABA service window (calendar ends 2025-12-31).
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 
 	ctx := context.Background()
 
@@ -1104,8 +1104,8 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	require.NoError(t, err)
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
 
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -1232,8 +1232,8 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	// A unique date guarantees a cache miss so "nilid_service" is visible on first query.
 	mockClock := clock.NewMockClock(time.Date(2009, 6, 15, 8, 2, 0, 0, loc))
 
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
+	api, cleanup := createIsolatedTestApiWithClock(t, mockClock)
+	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	// Clear the service-IDs cache so that the calendar inserted below is visible,
 	// even if a previous test already cached the result for this date.
