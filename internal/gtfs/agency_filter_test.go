@@ -42,17 +42,17 @@ func newTestManagerWithDB(t *testing.T) *Manager {
 }
 
 func TestFilterTripsByAgency(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A", "R2": "agency-B", "R3": "agency-A"}
+	// R1 and R3 belong to agency-A, R2 to agency-B
+	allowedRouteIDs := map[string]bool{"R1": true, "R3": true}
 
 	trips := []gtfs.Trip{
-		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}},   // agency-A
-		{ID: gtfs.TripID{ID: "T2", RouteID: "R2"}},   // agency-B
-		{ID: gtfs.TripID{ID: "T3", RouteID: "R3"}},   // agency-A
+		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}},   // allowed
+		{ID: gtfs.TripID{ID: "T2", RouteID: "R2"}},   // not allowed
+		{ID: gtfs.TripID{ID: "T3", RouteID: "R3"}},   // allowed
 		{ID: gtfs.TripID{ID: "T4", RouteID: "R999"}}, // unknown route
 	}
 
-	allowed := map[string]bool{"agency-A": true}
-	filtered := filterTripsByAgency(trips, allowed, routeAgencyMap)
+	filtered := filterTripsByAgency(trips, allowedRouteIDs)
 
 	assert.Len(t, filtered, 2, "should keep only agency-A trips")
 	assert.Equal(t, "T1", filtered[0].ID.ID)
@@ -60,43 +60,42 @@ func TestFilterTripsByAgency(t *testing.T) {
 }
 
 func TestFilterTripsByAgency_AllAllowed(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A", "R2": "agency-B"}
+	allowedRouteIDs := map[string]bool{"R1": true, "R2": true}
 
 	trips := []gtfs.Trip{
 		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}},
 		{ID: gtfs.TripID{ID: "T2", RouteID: "R2"}},
 	}
 
-	allowed := map[string]bool{"agency-A": true, "agency-B": true}
-	filtered := filterTripsByAgency(trips, allowed, routeAgencyMap)
+	filtered := filterTripsByAgency(trips, allowedRouteIDs)
 
 	assert.Len(t, filtered, 2, "all trips belong to allowed agencies")
 }
 
 func TestFilterTripsByAgency_NoneAllowed(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A"}
+	allowedRouteIDs := map[string]bool{} // no routes for agency-X
 
 	trips := []gtfs.Trip{
 		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}},
 	}
 
-	allowed := map[string]bool{"agency-X": true}
-	filtered := filterTripsByAgency(trips, allowed, routeAgencyMap)
+	filtered := filterTripsByAgency(trips, allowedRouteIDs)
 
 	assert.Empty(t, filtered, "no trips should match agency-X")
 }
 
 func TestFilterVehiclesByAgency(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A", "R2": "agency-B"}
+	// R1 belongs to agency-A, R2 to agency-B
+	allowedRouteIDs := map[string]bool{"R1": true}
 
 	vehicles := []gtfs.Vehicle{
 		{
 			ID:   &gtfs.VehicleID{ID: "V1"},
-			Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}}, // agency-A
+			Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}}, // allowed
 		},
 		{
 			ID:   &gtfs.VehicleID{ID: "V2"},
-			Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "T2", RouteID: "R2"}}, // agency-B
+			Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "T2", RouteID: "R2"}}, // not allowed
 		},
 		{
 			ID: &gtfs.VehicleID{ID: "V3"},
@@ -104,8 +103,7 @@ func TestFilterVehiclesByAgency(t *testing.T) {
 		},
 	}
 
-	allowed := map[string]bool{"agency-A": true}
-	filtered := filterVehiclesByAgency(vehicles, allowed, routeAgencyMap)
+	filtered := filterVehiclesByAgency(vehicles, allowedRouteIDs)
 
 	assert.Len(t, filtered, 1, "only V1 (agency-A) should remain")
 	assert.Equal(t, "V1", filtered[0].ID.ID)
@@ -128,45 +126,47 @@ func TestFilterAlertsByAgency_DirectAgencyMatch(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := filterAlertsByAgency(alerts, allowed, map[string]string{})
+	filtered := filterAlertsByAgency(alerts, allowed, map[string]bool{})
 
 	assert.Len(t, filtered, 1)
 	assert.Equal(t, "alert-1", filtered[0].ID)
 }
 
 func TestFilterAlertsByAgency_RouteBasedMatch(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A", "R2": "agency-B"}
+	// R1 belongs to agency-A, R2 to agency-B
+	allowedRouteIDs := map[string]bool{"R1": true}
 
 	alerts := []gtfs.Alert{
 		{
 			ID: "alert-1",
 			InformedEntities: []gtfs.AlertInformedEntity{
-				{RouteID: strPtr("R1")}, // resolves to agency-A
+				{RouteID: strPtr("R1")}, // allowed
 			},
 		},
 		{
 			ID: "alert-2",
 			InformedEntities: []gtfs.AlertInformedEntity{
-				{RouteID: strPtr("R2")}, // resolves to agency-B
+				{RouteID: strPtr("R2")}, // not allowed
 			},
 		},
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := filterAlertsByAgency(alerts, allowed, routeAgencyMap)
+	filtered := filterAlertsByAgency(alerts, allowed, allowedRouteIDs)
 
 	assert.Len(t, filtered, 1)
 	assert.Equal(t, "alert-1", filtered[0].ID)
 }
 
 func TestFilterAlertsByAgency_TripBasedMatch(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A"}
+	// R1 belongs to agency-A
+	allowedRouteIDs := map[string]bool{"R1": true}
 
 	alerts := []gtfs.Alert{
 		{
 			ID: "alert-1",
 			InformedEntities: []gtfs.AlertInformedEntity{
-				{TripID: &gtfs.TripID{ID: "T1", RouteID: "R1"}}, // resolves to agency-A
+				{TripID: &gtfs.TripID{ID: "T1", RouteID: "R1"}}, // allowed
 			},
 		},
 		{
@@ -178,27 +178,28 @@ func TestFilterAlertsByAgency_TripBasedMatch(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := filterAlertsByAgency(alerts, allowed, routeAgencyMap)
+	filtered := filterAlertsByAgency(alerts, allowed, allowedRouteIDs)
 
 	assert.Len(t, filtered, 1)
 	assert.Equal(t, "alert-1", filtered[0].ID)
 }
 
 func TestFilterAlertsByAgency_MultipleEntitiesAnyMatch(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A"}
+	// R1 belongs to agency-A
+	allowedRouteIDs := map[string]bool{"R1": true}
 
 	alerts := []gtfs.Alert{
 		{
 			ID: "alert-mixed",
 			InformedEntities: []gtfs.AlertInformedEntity{
 				{AgencyID: strPtr("agency-B")},
-				{RouteID: strPtr("R1")}, // agency-A
+				{RouteID: strPtr("R1")}, // agency-A — any match wins
 			},
 		},
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := filterAlertsByAgency(alerts, allowed, routeAgencyMap)
+	filtered := filterAlertsByAgency(alerts, allowed, allowedRouteIDs)
 
 	assert.Len(t, filtered, 1)
 	assert.Equal(t, "alert-mixed", filtered[0].ID)
@@ -211,7 +212,7 @@ func TestFilterAlertsByAgency_NoEntities(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := filterAlertsByAgency(alerts, allowed, map[string]string{})
+	filtered := filterAlertsByAgency(alerts, allowed, map[string]bool{})
 
 	assert.Empty(t, filtered, "alerts without informed entities should be dropped")
 }
@@ -254,13 +255,21 @@ func TestAgencyFilterIntegration_UpdateFeedRealtime(t *testing.T) {
 	// Load with a DB so route→agency resolution works
 	filteredManager := newTestManagerWithDB(t)
 
-	// Query the DB to find the real agency ID for RABA routes
-	routes, err := filteredManager.GtfsDB.Queries.GetRoutesByIDs(ctx, collectRouteIDs(nil, allVehicles, nil))
-	require.NoError(t, err)
-	if len(routes) == 0 {
+	var realAgencyID string
+	for _, v := range allVehicles {
+		if v.Trip == nil {
+			continue
+		}
+		route, err := filteredManager.GtfsDB.Queries.GetRoute(ctx, v.Trip.ID.RouteID)
+		if err != nil {
+			continue
+		}
+		realAgencyID = route.AgencyID
+		break
+	}
+	if realAgencyID == "" {
 		t.Skip("no RABA routes found in DB for vehicles in feed — cannot test agency filtering")
 	}
-	realAgencyID := routes[0].AgencyID
 
 	filteredManager.feedAgencyFilter["filtered-feed"] = map[string]bool{realAgencyID: true}
 	filteredManager.updateFeedRealtime(ctx, RTFeedConfig{
@@ -353,37 +362,38 @@ func TestAgencyFilterFeedAgencyFilterPopulation(t *testing.T) {
 // TestAgencyFilterConcurrentFilterCalls verifies that filter functions can be
 // called concurrently without data races (no shared mutable state).
 func TestAgencyFilterConcurrentFilterCalls(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A"}
+	allowedRouteIDs := map[string]bool{"R1": true}
 	trips := []gtfs.Trip{
 		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}},
 	}
-	allowed := map[string]bool{"agency-A": true}
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := 0; i < 100; i++ {
-			_ = filterTripsByAgency(trips, allowed, routeAgencyMap)
+			_ = filterTripsByAgency(trips, allowedRouteIDs)
 		}
 	}()
 	for i := 0; i < 100; i++ {
-		_ = filterTripsByAgency(trips, allowed, routeAgencyMap)
+		_ = filterTripsByAgency(trips, allowedRouteIDs)
 	}
 	<-done
 }
 
 // TestAlertMatchesAgency is a table-driven test for the alertMatchesAgency helper.
 func TestAlertMatchesAgency(t *testing.T) {
-	routeAgencyMap := map[string]string{
-		"R1": "agency-A",
-		"R2": "agency-B",
+	// R1 belongs to agency-A, R2 to agency-B
+	allowedRouteIDs := map[string]bool{
+		"R1": true,
+		"R2": true,
 	}
 
 	tests := []struct {
-		name    string
-		alert   gtfs.Alert
-		allowed map[string]bool
-		want    bool
+		name            string
+		alert           gtfs.Alert
+		allowed         map[string]bool
+		allowedRouteIDs map[string]bool
+		want            bool
 	}{
 		{
 			name: "direct agency match",
@@ -392,8 +402,9 @@ func TestAlertMatchesAgency(t *testing.T) {
 					{AgencyID: strPtr("agency-A")},
 				},
 			},
-			allowed: map[string]bool{"agency-A": true},
-			want:    true,
+			allowed:         map[string]bool{"agency-A": true},
+			allowedRouteIDs: allowedRouteIDs,
+			want:            true,
 		},
 		{
 			name: "route-based match",
@@ -402,8 +413,9 @@ func TestAlertMatchesAgency(t *testing.T) {
 					{RouteID: strPtr("R1")},
 				},
 			},
-			allowed: map[string]bool{"agency-A": true},
-			want:    true,
+			allowed:         map[string]bool{"agency-A": true},
+			allowedRouteIDs: allowedRouteIDs,
+			want:            true,
 		},
 		{
 			name: "trip-based match",
@@ -412,8 +424,9 @@ func TestAlertMatchesAgency(t *testing.T) {
 					{TripID: &gtfs.TripID{ID: "T1", RouteID: "R2"}},
 				},
 			},
-			allowed: map[string]bool{"agency-B": true},
-			want:    true,
+			allowed:         map[string]bool{"agency-B": true},
+			allowedRouteIDs: allowedRouteIDs,
+			want:            true,
 		},
 		{
 			name: "no match",
@@ -422,16 +435,18 @@ func TestAlertMatchesAgency(t *testing.T) {
 					{AgencyID: strPtr("agency-C")},
 				},
 			},
-			allowed: map[string]bool{"agency-A": true},
-			want:    false,
+			allowed:         map[string]bool{"agency-A": true},
+			allowedRouteIDs: map[string]bool{"R1": true},
+			want:            false,
 		},
 		{
 			name: "empty entities",
 			alert: gtfs.Alert{
 				InformedEntities: []gtfs.AlertInformedEntity{},
 			},
-			allowed: map[string]bool{"agency-A": true},
-			want:    false,
+			allowed:         map[string]bool{"agency-A": true},
+			allowedRouteIDs: allowedRouteIDs,
+			want:            false,
 		},
 		{
 			name: "unknown route",
@@ -440,14 +455,15 @@ func TestAlertMatchesAgency(t *testing.T) {
 					{RouteID: strPtr("R999")},
 				},
 			},
-			allowed: map[string]bool{"agency-A": true},
-			want:    false,
+			allowed:         map[string]bool{"agency-A": true},
+			allowedRouteIDs: allowedRouteIDs,
+			want:            false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := alertMatchesAgency(tt.alert, tt.allowed, routeAgencyMap)
+			got := alertMatchesAgency(tt.alert, tt.allowed, tt.allowedRouteIDs)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -457,15 +473,14 @@ func TestAlertMatchesAgency(t *testing.T) {
 // configured with different agency filters, each feed's data is filtered
 // independently and the merged view contains only the allowed data.
 func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
-	routeAgencyMap := map[string]string{
-		"R1": "agency-A",
-		"R2": "agency-B",
-		"R3": "agency-C",
-	}
-
 	manager := newTestManager()
 	manager.feedAgencyFilter["feed-a"] = map[string]bool{"agency-A": true}
 	manager.feedAgencyFilter["feed-b"] = map[string]bool{"agency-B": true}
+
+	// feed-a only allows routes from agency-A (R1)
+	allowedRouteIDsA := map[string]bool{"R1": true}
+	// feed-b only allows routes from agency-B (R2)
+	allowedRouteIDsB := map[string]bool{"R2": true}
 
 	tripsA := []gtfs.Trip{
 		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}}, // agency-A ✓
@@ -477,8 +492,8 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 		{ID: gtfs.TripID{ID: "T5", RouteID: "R2"}}, // agency-B ✓
 	}
 
-	filteredA := filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"], routeAgencyMap)
-	filteredB := filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"], routeAgencyMap)
+	filteredA := filterTripsByAgency(tripsA, allowedRouteIDsA)
+	filteredB := filterTripsByAgency(tripsB, allowedRouteIDsB)
 
 	manager.realTimeMutex.Lock()
 	manager.feedTrips["feed-a"] = filteredA
@@ -503,7 +518,7 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 // TestAgencyFilterEmptyResult verifies that filtering can produce zero results
 // without panicking.
 func TestAgencyFilterEmptyResult(t *testing.T) {
-	routeAgencyMap := map[string]string{"R1": "agency-A"}
+	allowedRouteIDs := map[string]bool{} // no routes allowed
 	allowed := map[string]bool{"agency-X": true}
 
 	trips := []gtfs.Trip{{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}}}
@@ -514,9 +529,9 @@ func TestAgencyFilterEmptyResult(t *testing.T) {
 		{ID: "a1", InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: strPtr("agency-A")}}},
 	}
 
-	assert.Empty(t, filterTripsByAgency(trips, allowed, routeAgencyMap))
-	assert.Empty(t, filterVehiclesByAgency(vehicles, allowed, routeAgencyMap))
-	assert.Empty(t, filterAlertsByAgency(alerts, allowed, routeAgencyMap))
+	assert.Empty(t, filterTripsByAgency(trips, allowedRouteIDs))
+	assert.Empty(t, filterVehiclesByAgency(vehicles, allowedRouteIDs))
+	assert.Empty(t, filterAlertsByAgency(alerts, allowed, allowedRouteIDs))
 }
 
 // TestAgencyFilterNilTrip verifies vehicles without trips are dropped.
@@ -524,8 +539,7 @@ func TestAgencyFilterNilTrip(t *testing.T) {
 	vehicles := []gtfs.Vehicle{
 		{ID: &gtfs.VehicleID{ID: "V1"}}, // nil Trip
 	}
-	allowed := map[string]bool{"any": true}
-	assert.Empty(t, filterVehiclesByAgency(vehicles, allowed, map[string]string{}))
+	assert.Empty(t, filterVehiclesByAgency(vehicles, map[string]bool{}))
 }
 
 // TestAgencyFilterIntegration_TripUpdates tests filtering of trip updates
@@ -556,12 +570,19 @@ func TestAgencyFilterIntegration_TripUpdates(t *testing.T) {
 	// Use a real DB so route→agency resolution works
 	filteredManager := newTestManagerWithDB(t)
 
-	routes, err := filteredManager.GtfsDB.Queries.GetRoutesByIDs(ctx, collectRouteIDs(allTrips, nil, nil))
-	require.NoError(t, err)
-	if len(routes) == 0 {
+	// Find the agency ID from one of the trips' routes
+	var realAgencyID string
+	for _, trip := range allTrips {
+		route, err := filteredManager.GtfsDB.Queries.GetRoute(ctx, trip.ID.RouteID)
+		if err != nil {
+			continue
+		}
+		realAgencyID = route.AgencyID
+		break
+	}
+	if realAgencyID == "" {
 		t.Skip("no RABA routes found in DB for trips in feed — cannot test agency filtering")
 	}
-	realAgencyID := routes[0].AgencyID
 
 	filteredManager.feedAgencyFilter["filtered"] = map[string]bool{realAgencyID: true}
 	filteredManager.updateFeedRealtime(ctx, RTFeedConfig{

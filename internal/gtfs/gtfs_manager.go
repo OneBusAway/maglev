@@ -440,6 +440,7 @@ func (manager *Manager) FindAgency(id string) *gtfs.Agency {
 	return nil
 }
 
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) FindRoute(ctx context.Context, id string) (gtfsdb.Route, error) {
 	return manager.GtfsDB.Queries.GetRoute(ctx, id)
 }
