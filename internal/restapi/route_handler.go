@@ -1,6 +1,8 @@
 package restapi
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
@@ -39,7 +41,14 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	references := models.NewEmptyReferences()
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-	if err == nil {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+			return
+		}
+		api.serverErrorResponse(w, r, err)
+		return
+	} else {
 		agencyModel := models.NewAgencyReference(
 			agency.ID,
 			agency.Name,
