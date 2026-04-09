@@ -483,13 +483,7 @@ func (manager *Manager) GetStopsForLocation(
 		bounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
 	} else {
 		if radius == 0 {
-			if query != "" {
-				// Use a global radius (20,000 km) to ensure exact stop code
-				// searches are never artificially truncated by localized bounding boxes.
-				radius = models.GlobalSearchRadiusInMeters
-			} else {
-				radius = models.DefaultSearchRadiusInMeters // Standard constant for radius
-			}
+			radius = models.DefaultSearchRadiusInMeters // Standard constant for radius
 		}
 		bounds = utils.CalculateBounds(lat, lon, radius)
 	}
