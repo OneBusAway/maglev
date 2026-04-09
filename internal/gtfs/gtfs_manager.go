@@ -468,164 +468,133 @@ type stopWithDistance struct {
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	lat, lon, radius, latSpan, lonSpan float64,
-	query string,
+	stopCodeQuery string,
 	maxCount int,
-	isForRoutes bool,
 	routeTypes []int,
 	queryTime time.Time,
 ) []gtfsdb.Stop {
-	var candidates []stopWithDistance
-
 	var bounds utils.CoordinateBounds
-
 	if latSpan > 0 && lonSpan > 0 {
 		bounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
 	} else {
 		if radius == 0 {
-			radius = models.DefaultSearchRadiusInMeters // Standard constant for radius
+			radius = models.DefaultSearchRadiusInMeters
 		}
 		bounds = utils.CalculateBounds(lat, lon, radius)
 	}
 
-	// Check if context is already cancelled
 	if ctx.Err() != nil {
 		return []gtfsdb.Stop{}
 	}
 
-	dbStops, err := manager.queryStopsInBounds(ctx, bounds)
+	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogError(logger, "could not query stops within bounds", err)
 		return []gtfsdb.Stop{}
 	}
 
-	for _, dbStop := range dbStops {
-		if ctx.Err() != nil {
-			return []gtfsdb.Stop{}
+	if stopCodeQuery != "" {
+		idx := slices.IndexFunc(stops, func(stop gtfsdb.Stop) bool {
+			return utils.NullStringOrEmpty(stop.Code) == stopCodeQuery
+		})
+		if idx >= 0 {
+			return []gtfsdb.Stop{stops[idx]}
 		}
-
-		if query != "" && !isForRoutes {
-			if dbStop.Code.Valid && dbStop.Code.String == query {
-				return []gtfsdb.Stop{dbStop}
-			}
-			continue
-		}
-		distance := utils.Distance(lat, lon, dbStop.Lat, dbStop.Lon)
-		candidates = append(candidates, stopWithDistance{dbStop, distance})
+		return nil
 	}
 
 	// If the stop does not have any routes actively serving it, don't include it in the results
-	// This filtering is only applied if we are not searching for a specific stop code
 	// TODO: move this logic into the first queryStopsInBounds call to avoid 2 db roundtrips. May need
 	// the function split for query logic mentioned above.
-	if query == "" || isForRoutes {
-		if len(routeTypes) > 0 {
-			stopIDs := make([]string, 0, len(candidates))
-			for _, candidate := range candidates {
-				stopIDs = append(stopIDs, candidate.stop.ID)
-			}
-
-			routesForStops, err := manager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
-			if err == nil {
-				stopRouteTypes := make(map[string][]int)
-				for _, r := range routesForStops {
-					stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
-				}
-
-				filteredCandidates := make([]stopWithDistance, 0, len(candidates))
-				for _, candidate := range candidates {
-					if ctx.Err() != nil {
-						return []gtfsdb.Stop{}
-					}
-
-					types := stopRouteTypes[candidate.stop.ID]
-					hasMatchingType := false
-					for _, rt := range types {
-						for _, targetType := range routeTypes {
-							if rt == targetType {
-								hasMatchingType = true
-								break
-							}
-						}
-						if hasMatchingType {
-							break
-						}
-					}
-					if hasMatchingType {
-						filteredCandidates = append(filteredCandidates, candidate)
-					}
-				}
-				candidates = filteredCandidates
-			}
+	if len(routeTypes) > 0 {
+		stopIDs := make([]string, 0, len(stops))
+		for _, stop := range stops {
+			stopIDs = append(stopIDs, stop.ID)
 		}
 
-		// Filter by service date - only include stops with active service on current date
-		if len(candidates) > 0 && !isForRoutes {
-			var currentDate string
-			if !queryTime.IsZero() {
-				currentDate = queryTime.Format("20060102")
-			} else {
-				currentDate = time.Now().Format("20060102")
+		routesForStops, err := manager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
+		if err == nil {
+			stopRouteTypes := make(map[string][]int)
+			for _, r := range routesForStops {
+				stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
 			}
 
-			// Get active service IDs for current date
-			activeServiceIDs, err := manager.GetActiveServiceIDsForDateCached(ctx, currentDate)
+			filteredStops := make([]gtfsdb.Stop, 0, len(stops))
+			for _, stop := range stops {
+				types := stopRouteTypes[stop.ID]
+				for _, rt := range types {
+					if slices.Contains(routeTypes, rt) {
+						filteredStops = append(filteredStops, stop)
+						break
+					}
+				}
+			}
+			stops = filteredStops
+		}
+	}
+
+	// Filter by service date - only include stops with active service on current date
+	if len(stops) > 0 {
+		var currentDate string
+		if !queryTime.IsZero() {
+			currentDate = queryTime.Format("20060102")
+		} else {
+			currentDate = time.Now().Format("20060102")
+		}
+
+		activeServiceIDs, err := manager.GetActiveServiceIDsForDateCached(ctx, currentDate)
+		if err != nil {
+			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+			logging.LogError(logger, "could not get active service IDs for date", err, slog.String("date", currentDate))
+		}
+
+		if err == nil && len(activeServiceIDs) > 0 {
+			stopIDs := make([]string, 0, len(stops))
+			for _, stop := range stops {
+				stopIDs = append(stopIDs, stop.ID)
+			}
+
+			stopsWithActiveService, err := manager.GtfsDB.Queries.GetStopsWithActiveServiceOnDate(ctx, gtfsdb.GetStopsWithActiveServiceOnDateParams{
+				StopIds:    stopIDs,
+				ServiceIds: activeServiceIDs,
+			})
 			if err != nil {
 				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-				logging.LogError(logger, "could not get active service IDs for date", err, slog.String("date", currentDate))
+				logging.LogError(logger, "could not get stops with active service on date", err, slog.String("date", currentDate))
 			}
 
-			if err == nil && len(activeServiceIDs) > 0 {
-				stopIDs := make([]string, 0, len(candidates))
-				for _, candidate := range candidates {
-					stopIDs = append(stopIDs, candidate.stop.ID)
+			if err == nil {
+				stopsWithService := make(map[string]bool)
+				for _, stopID := range stopsWithActiveService {
+					stopsWithService[stopID] = true
 				}
 
-				stopsWithActiveService, err := manager.GtfsDB.Queries.GetStopsWithActiveServiceOnDate(ctx, gtfsdb.GetStopsWithActiveServiceOnDateParams{
-					StopIds:    stopIDs,
-					ServiceIds: activeServiceIDs,
-				})
-				if err != nil {
-					logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-					logging.LogError(logger, "could not get stops with active service on date", err, slog.String("date", currentDate))
-				}
-
-				if err == nil {
-					stopsWithService := make(map[string]bool)
-					for _, stopID := range stopsWithActiveService {
-						stopsWithService[stopID] = true
+				filteredStops := make([]gtfsdb.Stop, 0, len(stops))
+				for _, stop := range stops {
+					if stopsWithService[stop.ID] {
+						filteredStops = append(filteredStops, stop)
 					}
-
-					filteredCandidates := make([]stopWithDistance, 0, len(candidates))
-					for _, candidate := range candidates {
-						if ctx.Err() != nil {
-							return []gtfsdb.Stop{}
-						}
-
-						if stopsWithService[candidate.stop.ID] {
-							filteredCandidates = append(filteredCandidates, candidate)
-						}
-					}
-					candidates = filteredCandidates
 				}
+				stops = filteredStops
 			}
 		}
 	}
 
-	// TODO move sorting and limiting into the query as well.
+	var candidates []stopWithDistance
+	for _, stop := range stops {
+		distance := utils.Distance(lat, lon, stop.Lat, stop.Lon)
+		candidates = append(candidates, stopWithDistance{stop, distance})
+	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].distance < candidates[j].distance
 	})
-
-	// When isForRoutes is true, return all matching stops without applying maxCount limit.
-	// This prevents artificially limiting route results when the stop count would truncate
-	// routes that exist at stops beyond the maxCount threshold.
-	var stops []gtfsdb.Stop
-	for i := 0; i < len(candidates) && (i < maxCount || isForRoutes); i++ {
-		stops = append(stops, candidates[i].stop)
+	var results []gtfsdb.Stop
+	for i := 0; i < len(candidates) && (i < maxCount); i++ {
+		results = append(results, candidates[i].stop)
 	}
 
-	return stops
+	return results
 }
 
 // queryStopsInBounds retrieves all active stops within the given geographic bounds
