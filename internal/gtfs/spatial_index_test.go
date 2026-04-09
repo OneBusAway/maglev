@@ -26,8 +26,10 @@ func TestQueryStopsInBounds_WithRABA(t *testing.T) {
 
 	for _, stop := range results {
 		assert.NotEmpty(t, stop.ID, "Stop ID should not be empty")
-		assert.NotZero(t, stop.Lat, "Stop latitude should not be zero")
-		assert.NotZero(t, stop.Lon, "Stop longitude should not be zero")
+		assert.LessOrEqual(t, bounds.MinLat, stop.Lat)
+		assert.LessOrEqual(t, stop.Lat, bounds.MaxLat)
+		assert.LessOrEqual(t, bounds.MinLon, stop.Lon)
+		assert.LessOrEqual(t, stop.Lon, bounds.MaxLon)
 	}
 }
 

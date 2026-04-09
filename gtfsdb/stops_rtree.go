@@ -6,7 +6,6 @@ import (
 
 // Implemented manually because sqlc doesn't support the virtual tables from the RTree module.
 
-// TODO: remove unused columns from this query.
 const getActiveStopsWithinBounds = `
 SELECT DISTINCT
     s.id,

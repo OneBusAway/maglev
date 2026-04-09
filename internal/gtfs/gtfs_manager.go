@@ -465,7 +465,6 @@ type stopWithDistance struct {
 // TODO: split this into several functions backed by different database queries.
 // Some callers only want stop IDs, while others need to return Stops to the
 // client.
-// TODO: replace full scan on stops with query on code index when query is non-empty.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	lat, lon, radius, latSpan, lonSpan float64,
