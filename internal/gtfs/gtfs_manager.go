@@ -64,6 +64,7 @@ type Manager struct {
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
+	dbCloseOnce                    sync.Once
 	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
 	regionBounds                   *RegionBounds
@@ -383,11 +384,13 @@ func (manager *Manager) SetGtfsURL(url string) {
 	manager.isLocalFile = !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://")
 }
 
-// Shutdown gracefully shuts down the manager and its background goroutines
-func (manager *Manager) Shutdown() {
+// Shutdown gracefully shuts down the manager and its background goroutines.
+func (manager *Manager) Shutdown(ctx context.Context) error {
 	manager.shutdownOnce.Do(func() {
 		close(manager.shutdownChan)
-		manager.wg.Wait()
+	})
+
+	defer manager.dbCloseOnce.Do(func() {
 		if manager.GtfsDB != nil {
 			if err := manager.GtfsDB.Close(); err != nil {
 				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
@@ -395,6 +398,19 @@ func (manager *Manager) Shutdown() {
 			}
 		}
 	})
+
+	done := make(chan struct{})
+	go func() {
+		manager.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("shutdown timeout exceeded: %w", ctx.Err())
+	}
 }
 
 // RLock acquires the static data read lock.

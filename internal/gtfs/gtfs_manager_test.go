@@ -305,7 +305,7 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	// We use isolated GTFSManager here instead of shared test components because we want to control the real-time vehicles for this test.
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	assert.Nil(t, err)
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	trip := &gtfs.Trip{
 		ID: gtfs.TripID{ID: "5735633"},
@@ -407,7 +407,7 @@ func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err, "Failed to initialize manager")
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	emptyRoutes, err := manager.RoutesForAgencyID(ctx, "nonexistent")
 	assert.Nil(t, err)
@@ -424,7 +424,7 @@ func TestRoutesForAgencyID_ValidId(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err, "Failed to initialize manager")
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	targetAgencyID := "25"
 	expectedRouteCount := 13
@@ -444,7 +444,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -523,7 +523,7 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to initialize: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	b.ReportAllocs()
 
@@ -667,7 +667,7 @@ func TestActiveServiceIDsCacheInvalidation(t *testing.T) {
 
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	// Use a fixed date that has known calendar data in the RABA fixture.
 	// The RABA feed covers weekdays; pick a Monday.
@@ -719,7 +719,7 @@ func TestActiveServiceIDsCache_ErrorPathLeavesNothingCached(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -781,7 +781,7 @@ func TestActiveServiceIDsCacheMutationSafety(t *testing.T) {
 	}
 	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	date := "20240101"
@@ -838,7 +838,7 @@ func TestActiveServiceIDsCacheConcurrentForceUpdate(t *testing.T) {
 
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	date := "20240101"
 
@@ -942,7 +942,7 @@ func BenchmarkGetActiveServiceIDsForDate(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to initialize: %v", err)
 	}
-	defer manager.Shutdown()
+	defer func() { _ = manager.Shutdown(context.Background()) }()
 
 	date := "20240101"
 

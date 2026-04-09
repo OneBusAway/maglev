@@ -277,7 +277,7 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	t.Cleanup(gtfsManager.Shutdown)
+	t.Cleanup(func() { _ = gtfsManager.Shutdown(context.Background()) })
 
 	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
 
