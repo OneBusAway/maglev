@@ -38,17 +38,23 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
 	}
 
+	parentID := ""
+	if stop.ParentStation.Valid && stop.ParentStation.String != "" {
+		parentID = utils.FormCombinedID(agencyID, stop.ParentStation.String)
+	}
+
 	stopData := &models.Stop{
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
 		Name:               utils.NullStringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
-		Code:               utils.NullStringOrEmpty(stop.Code),
+		Code:               utils.NullStringOrDefault(stop.Code, stop.ID),
 		Direction:          utils.NullStringOrEmpty(stop.Direction),
 		LocationType:       int(stop.LocationType.Int64),
 		WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
+		Parent:             parentID,
 	}
 
 	references := models.NewEmptyReferences()
@@ -88,6 +94,29 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 				false,
 			)
 			references.Agencies = append(references.Agencies, agencyModel)
+		}
+	}
+
+	if stop.ParentStation.Valid && stop.ParentStation.String != "" {
+		parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
+		if err == nil {
+			parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
+			parentRouteIDs := make([]string, len(parentRoutes))
+			for i, r := range parentRoutes {
+				parentRouteIDs[i] = utils.FormCombinedID(r.AgencyID, r.ID)
+			}
+			references.Stops = append(references.Stops, models.Stop{
+				ID:                 utils.FormCombinedID(agencyID, parentStop.ID),
+				Name:               utils.NullStringOrEmpty(parentStop.Name),
+				Lat:                parentStop.Lat,
+				Lon:                parentStop.Lon,
+				Code:               utils.NullStringOrDefault(parentStop.Code, parentStop.ID),
+				Direction:          utils.NullStringOrEmpty(parentStop.Direction),
+				LocationType:       int(parentStop.LocationType.Int64),
+				WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(parentStop.WheelchairBoarding)),
+				RouteIDs:           parentRouteIDs,
+				StaticRouteIDs:     parentRouteIDs,
+			})
 		}
 	}
 
