@@ -362,25 +362,6 @@ FROM
 WHERE
     stop_times.stop_id = ?;
 
--- name: GetActiveStops :many
-SELECT DISTINCT
-    s.id,
-    s.code,
-    s.name,
-    s."desc",
-    s.lat,
-    s.lon,
-    s.zone_id,
-    s.url,
-    s.location_type,
-    s.timezone,
-    s.wheelchair_boarding,
-    s.platform_code,
-    s.direction,
-    s.parent_station
-FROM stops s
-INNER JOIN stop_times st ON s.id = st.stop_id;
-
 -- name: GetAllShapes :many
 SELECT
     *

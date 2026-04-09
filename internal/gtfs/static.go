@@ -265,18 +265,6 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 
 	newBlockLayoverIndices := buildBlockLayoverIndices(newStaticData)
-	newStopSpatialIndex, err := buildStopSpatialIndex(ctx, newGtfsDB.Queries)
-	if err != nil {
-		logging.LogError(logger, "Error building spatial index", err)
-		if closeErr := newGtfsDB.Close(); closeErr != nil {
-			logging.LogError(logger, "Failed to close new GTFS DB during cleanup", closeErr)
-		}
-		if removeErr := os.Remove(tempDBPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			logging.LogError(logger, "Failed to remove temp DB during cleanup", removeErr)
-		}
-		return err
-	}
-
 	newRegionBounds := ComputeRegionBounds(newStaticData.Shapes, newStaticData.Stops)
 
 	if err := ctx.Err(); err != nil {
@@ -364,7 +352,6 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	manager.GtfsDB = client
 	manager.routesMap = buildRoutesMaps(newStaticData)
 	manager.blockLayoverIndices = newBlockLayoverIndices
-	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.regionBounds = newRegionBounds
 
 	// Refresh the direction calculator's queries pointer so on-demand lookups
@@ -436,19 +423,10 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
 	manager.regionBounds = ComputeRegionBounds(staticData.Shapes, staticData.Stops)
 
-	// Rebuild spatial index with updated data
 	ctx := context.Background()
 
 	// GtfsDB may be nil during initial construction; frequency cache is populated by InitGTFSManager directly
 	if manager.GtfsDB != nil && manager.GtfsDB.Queries != nil {
-		spatialIndex, err := buildStopSpatialIndex(ctx, manager.GtfsDB.Queries)
-		if err == nil {
-			manager.stopSpatialIndex = spatialIndex
-		} else if manager.config.Verbose {
-			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-			logging.LogError(logger, "Failed to rebuild spatial index", err)
-		}
-
 		if newCache, freqErr := buildFrequencyCache(ctx, manager.GtfsDB.Queries); freqErr == nil {
 			manager.frequencyTripIDs = newCache
 		} else {

@@ -41,17 +41,25 @@ func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.NotEmpty(t, list)
 
-	stop, ok := list[0].(map[string]interface{})
-	require.True(t, ok)
-	assert.Contains(t, stop, "id")
-	assert.Contains(t, stop, "code")
-	assert.Contains(t, stop, "name")
-	assert.Contains(t, stop, "lat")
-	assert.Contains(t, stop, "lon")
-	assert.Contains(t, stop, "direction")
-	assert.Contains(t, stop, "routeIds")
-	assert.Contains(t, stop, "staticRouteIds")
-	assert.Contains(t, stop, "wheelchairBoarding")
+	for i, item := range list {
+		stop, ok := item.(map[string]any)
+		require.True(t, ok)
+		assert.Contains(t, stop, "id")
+		assert.Contains(t, stop, "code")
+		assert.Contains(t, stop, "name")
+		assert.Contains(t, stop, "lat")
+		assert.Contains(t, stop, "lon")
+		assert.Contains(t, stop, "direction")
+		assert.Contains(t, stop, "routeIds")
+		assert.Contains(t, stop, "staticRouteIds")
+		assert.Contains(t, stop, "wheelchairBoarding")
+
+		if i > 0 {
+			previous, ok := list[i-1].(map[string]any)
+			require.True(t, ok)
+			assert.GreaterOrEqualf(t, stop["id"], previous["id"], "stops should be returned in sorted order by id")
+		}
+	}
 
 	refs, ok := data["references"].(map[string]interface{})
 	require.True(t, ok)
@@ -179,7 +187,7 @@ func TestStopsForLocationIsLimitExceeded(t *testing.T) {
 }
 
 func TestStopsForLocationActiveRoutesOnly(t *testing.T) {
-	futureClock := clock.NewMockClock(time.Date(2028, 1, 1, 12, 0, 0, 0, time.UTC))
+	futureClock := clock.NewMockClock(time.Date(2031, 1, 1, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, futureClock)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=5000")
@@ -334,7 +342,7 @@ func TestStopsForLocationHandlerRouteTypeValidMultiple(t *testing.T) {
 	assert.NotNil(t, refs["routes"])
 }
 
-func TestStopsForLocationQueryGlobalRadius(t *testing.T) {
+func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 	clock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, clock)
 	// Use coordinates far from the RABA service area to verify global stop code search
@@ -346,7 +354,10 @@ func TestStopsForLocationQueryGlobalRadius(t *testing.T) {
 	require.True(t, ok)
 	list, ok := data["list"].([]interface{})
 	require.True(t, ok)
-	assert.Len(t, list, 1, "Stop code query should find stops globally regardless of coordinates")
+
+	// curl https://api.pugetsound.onebusaway.org/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&query=10914
+	// returns no results.
+	assert.Empty(t, list)
 }
 
 func TestStopsForLocationMissingLat(t *testing.T) {
@@ -393,10 +404,9 @@ func TestStopsForLocationHandlerWithSituations(t *testing.T) {
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
 
-	// Verify we got the stop back
 	list, ok := data["list"].([]interface{})
 	require.True(t, ok)
-	assert.NotEmpty(t, list, "Expected to find Stop 2042 in the location query")
+	assert.Len(t, list, 1)
 
 	// Verify references contain the situation we added
 	refs, ok := data["references"].(map[string]interface{})
