@@ -1,8 +1,9 @@
 package restapi
 
 import (
+	"maps"
 	"net/http"
-	"strings"
+	"slices"
 	"time"
 
 	"maglev.onebusaway.org/internal/models"
@@ -24,7 +25,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 	query := queryParams.Get("query")
 
-	// Validate and sanitize query
 	sanitizedQuery, err := utils.ValidateAndSanitizeQuery(query)
 	if err != nil {
 		fieldErrors := map[string][]string{
@@ -33,7 +33,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
-	query = strings.ToLower(sanitizedQuery)
 	radius := loc.Radius
 	if radius == 0 {
 		radius = models.DefaultSearchRadiusInMeters
@@ -44,96 +43,47 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	ctx := r.Context()
 
-	// Check if context is already cancelled
-	if ctx.Err() != nil {
-		api.clientCanceledResponse(w, r, ctx.Err())
-		return
-	}
-
-	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, radius, loc.LatSpan, loc.LonSpan, query, maxCount, true, nil, time.Time{})
-
-	var results = []models.Route{}
-	routeIDs := map[string]bool{}
-	agencyIDs := map[string]bool{}
-
-	// Extract stop IDs for batch query
-	stopIDs := make([]string, 0, len(stops))
-	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.ID)
-	}
-
-	if len(stopIDs) == 0 {
-		// Return empty response if no stops found
-		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
+	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc.Lat, loc.Lon, radius, loc.LatSpan, loc.LonSpan, sanitizedQuery, maxCount, time.Time{})
+	if len(routes) == 0 {
 		references := models.NewEmptyReferences()
-		references.Agencies = agencies
-		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, false)
+		response := models.NewListResponseWithRange([]models.Route{}, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
 
-	// Batch query to get all routes for all stops
-	routesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+	var results []models.Route
+	routeIDs := map[string]bool{}
+	agencyIDs := map[string]bool{}
+	for _, route := range routes {
+		agencyIDs[route.AgencyID] = true
+		routeIDs[route.ID] = true
+		results = append(results, models.NewRoute(
+			utils.FormCombinedID(route.AgencyID, route.ID),
+			route.AgencyID,
+			utils.NullStringOrEmpty(route.ShortName),
+			utils.NullStringOrEmpty(route.LongName),
+			utils.NullStringOrEmpty(route.Desc),
+			models.RouteType(route.Type),
+			utils.NullStringOrEmpty(route.Url),
+			utils.NullStringOrEmpty(route.Color),
+			utils.NullStringOrEmpty(route.TextColor)))
 	}
 
-	isLimitExceeded := false
-	var resultRawRouteIDs []string
-	// Process routes and filter by query if provided
-	for _, routeRow := range routesForStops {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
+	var agencies []models.AgencyReference
+	for agencyID := range agencyIDs {
+		agency, err := api.GtfsManager.FindAgency(ctx, agencyID)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
 			return
 		}
-
-		if query != "" && strings.ToLower(routeRow.ShortName.String) != query {
-			continue
-		}
-
-		combinedRouteID := utils.FormCombinedID(routeRow.AgencyID, routeRow.ID)
-
-		if !routeIDs[combinedRouteID] {
-			agencyIDs[routeRow.AgencyID] = true
-			resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
-
-			results = append(results, models.NewRoute(
-				combinedRouteID,
-				routeRow.AgencyID,
-				routeRow.ShortName.String,
-				routeRow.LongName.String,
-				routeRow.Desc.String,
-				models.RouteType(routeRow.Type),
-				routeRow.Url.String,
-				routeRow.Color.String,
-				routeRow.TextColor.String))
-		}
-		routeIDs[combinedRouteID] = true
-		if len(results) >= maxCount {
-			isLimitExceeded = true
-			break
-		}
+		agencies = append(agencies, models.AgencyReferenceFromDatabase(agency))
 	}
-
-	if ctx.Err() != nil {
-		api.clientCanceledResponse(w, r, ctx.Err())
-		return
-	}
-
-	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 
 	// Populate situation references for alerts affecting the returned routes
-	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
+	alerts := api.collectAlertsForRoutes(slices.Collect(maps.Keys(routeIDs)))
 	situations := api.BuildSituationReferences(alerts)
 
 	references := models.NewEmptyReferences()

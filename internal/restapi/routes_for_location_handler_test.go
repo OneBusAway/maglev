@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestRoutesForLocationHandlerRequiresValidApiKey(t *testing.T) {
@@ -105,6 +106,29 @@ func TestRoutesForLocationLatAndLon(t *testing.T) {
 	list, ok := data["list"].([]interface{})
 	require.True(t, ok)
 	assert.Len(t, list, 3)
+}
+
+func TestRoutesForLocationCaseInsensitiveQuery(t *testing.T) {
+	// Lat/Lon are for stop 2000 from the test data, which is on route 44X
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/routes-for-location.json?key=TEST&lat=40.583170&lon=-122.392586&query=44x")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	list, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, list, 1)
+
+	route, ok := list[0].(map[string]interface{})
+	require.True(t, ok)
+	routeId, ok := route["id"].(string)
+	require.True(t, ok)
+	agencyId, ok := route["agencyId"].(string)
+	require.True(t, ok)
+	assert.Equal(t, utils.FormCombinedID(agencyId, "44X"), routeId)
 }
 
 func TestRoutesForLocationHandlerValidatesParameters(t *testing.T) {

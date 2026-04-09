@@ -645,6 +645,73 @@ func (manager *Manager) queryStopsInBounds(ctx context.Context, bounds utils.Coo
 	})
 }
 
+// GetRoutesForLocation retrieves routes serving stops near a given location using the spatial index.
+// It supports filtering by route types and querying for specific route shortNames.
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func (manager *Manager) GetRoutesForLocation(
+	ctx context.Context,
+	lat, lon, radius, latSpan, lonSpan float64,
+	routeShortName string,
+	maxCount int,
+	queryTime time.Time,
+) ([]gtfsdb.Route, bool) {
+	var bounds utils.CoordinateBounds
+	if latSpan > 0 && lonSpan > 0 {
+		bounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
+	} else {
+		if radius == 0 {
+			radius = models.DefaultSearchRadiusInMeters
+		}
+		bounds = utils.CalculateBounds(lat, lon, radius)
+	}
+
+	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, lat, lon, maxCount, routeShortName)
+	if err != nil {
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+		logging.LogError(logger, "could not query routes within bounds", err)
+		return []gtfsdb.Route{}, false
+	}
+
+	return routes, limitExceeded
+}
+
+// queryRouteswithinBounds retrieves all routes serving stops within the given geographic bounds
+// from the database's stops_rtree spatial index.
+func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.CoordinateBounds,
+	lat, lon float64,
+	maxCount int,
+	shortNameQuery string,
+) ([]gtfsdb.Route, bool, error) {
+	if bounds.MinLat > bounds.MaxLat {
+		return nil, false, fmt.Errorf("query min lat %f exceeds max lat %f", bounds.MinLat, bounds.MaxLat)
+	}
+	if bounds.MinLon > bounds.MaxLon {
+		return nil, false, fmt.Errorf("query min lon %f exceeds max lon %f", bounds.MinLon, bounds.MaxLon)
+	}
+	routes, err := manager.GtfsDB.Queries.GetActiveRoutesWithinBounds(ctx, gtfsdb.GetActiveRoutesWithinBoundsParams{
+		MinLat: bounds.MinLat,
+		MaxLat: bounds.MaxLat,
+		MinLon: bounds.MinLon,
+		MaxLon: bounds.MaxLon,
+		Lat:    lat,
+		Lon:    lon,
+		// Ask for an extra element so that we can determine if we hit the max count.
+		MaxCount:  maxCount + 1,
+		ShortName: shortNameQuery,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	if len(routes) > maxCount {
+		// Drop the extra last element. This is correct because results are in ascending distance order.
+		routes = routes[:maxCount]
+		return routes, true, nil
+	}
+
+	return routes, false, nil
+}
+
 // VehiclesForAgencyID returns all real-time vehicles serving routes that belong
 // to the given agency. It manages its own locking internally; callers must NOT
 // hold any Manager locks.
