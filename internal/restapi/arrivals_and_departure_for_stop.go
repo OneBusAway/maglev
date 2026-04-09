@@ -274,6 +274,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	distanceHelperCache := &DistanceHelperCache{
 		stopTimesByTrip:   make(map[string][]gtfsdb.StopTime),
 		shapePointsByTrip: make(map[string][]gtfsdb.GetShapePointsByTripIDsRow),
+		blockIDByTrip:     make(map[string]string),
+		tripsByBlock:      make(map[string][]gtfsdb.GetTripsByBlockIDRow),
 	}
 
 	if len(uniqueTripIDs) > 0 {
@@ -285,6 +287,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			for _, m := range blockTripMappings {
 				if m.BlockID.Valid && m.BlockID.String != "" {
 					uniqueBlockIDsMap[m.BlockID.String] = true
+					distanceHelperCache.blockIDByTrip[m.TripID] = m.BlockID.String
 				}
 			}
 
@@ -313,6 +316,21 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 					blockTripIDsMap := make(map[string]bool)
 					for _, bt := range blockTrips {
 						blockTripIDsMap[bt.ID] = true
+
+						mappedRow := gtfsdb.GetTripsByBlockIDRow{
+							ID:            bt.ID,
+							RouteID:       bt.RouteID,
+							ServiceID:     bt.ServiceID,
+							TripHeadsign:  bt.TripHeadsign,
+							TripShortName: bt.TripShortName,
+							DirectionID:   bt.DirectionID,
+							BlockID:       bt.BlockID,
+							ShapeID:       bt.ShapeID,
+						}
+
+						if bt.BlockID.Valid {
+							distanceHelperCache.tripsByBlock[bt.BlockID.String] = append(distanceHelperCache.tripsByBlock[bt.BlockID.String], mappedRow)
+						}
 					}
 
 					blockTripIDs := make([]string, 0, len(blockTripIDsMap))

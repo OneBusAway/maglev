@@ -27,8 +27,10 @@ func shapePointsRowsToPoints(rows []gtfsdb.GetShapePointsByTripIDsRow) []gtfs.Sh
 }
 
 type DistanceHelperCache struct {
-	stopTimesByTrip map[string][]gtfsdb.StopTime
+	stopTimesByTrip   map[string][]gtfsdb.StopTime
 	shapePointsByTrip map[string][]gtfsdb.GetShapePointsByTripIDsRow
+	blockIDByTrip     map[string]string
+	tripsByBlock      map[string][]gtfsdb.GetTripsByBlockIDRow
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
