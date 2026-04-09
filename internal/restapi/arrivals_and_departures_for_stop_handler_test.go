@@ -1048,7 +1048,7 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	// RABA test data has stops near Redding, CA (~40.589, -122.39).
 	// GetStopsForLocation requires the caller to hold RLock.
 	api.GtfsManager.RLock()
-	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
+	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, []int{}, mockClock.Now())
 	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, stops, "precondition: RABA should have stops near Redding, CA")
 
@@ -1077,7 +1077,7 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	ctx := context.Background()
 
 	api.GtfsManager.RLock()
-	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, false, []int{}, mockClock.Now())
+	stops := api.GtfsManager.GetStopsForLocation(ctx, 40.589123, -122.390830, 2000, 0, 0, "", 10, []int{}, mockClock.Now())
 	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, stops)
 
