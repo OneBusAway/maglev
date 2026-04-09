@@ -1567,6 +1567,54 @@ func (q *Queries) GetBlockIDByTripID(ctx context.Context, id string) (sql.NullSt
 	return block_id, err
 }
 
+const getBlockIDsByTripIDs = `-- name: GetBlockIDsByTripIDs :many
+SELECT
+    id AS trip_id,
+    block_id
+FROM
+    trips
+WHERE
+    id IN (/*SLICE:trip_ids*/?)
+`
+
+type GetBlockIDsByTripIDsRow struct {
+	TripID  string
+	BlockID sql.NullString
+}
+
+func (q *Queries) GetBlockIDsByTripIDs(ctx context.Context, tripIds []string) ([]GetBlockIDsByTripIDsRow, error) {
+	query := getBlockIDsByTripIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetBlockIDsByTripIDsRow
+	for rows.Next() {
+		var i GetBlockIDsByTripIDsRow
+		if err := rows.Scan(&i.TripID, &i.BlockID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getBlockTripIndexIDsForBlocks = `-- name: GetBlockTripIndexIDsForBlocks :many
 SELECT DISTINCT bte.block_trip_index_id
 FROM block_trip_entry bte
@@ -3063,6 +3111,75 @@ func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shap
 	for rows.Next() {
 		var i Shape
 		if err := rows.Scan(
+			&i.ID,
+			&i.ShapeID,
+			&i.Lat,
+			&i.Lon,
+			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getShapePointsByTripIDs = `-- name: GetShapePointsByTripIDs :many
+SELECT
+    t.id AS trip_id,
+    s.id,
+    s.shape_id,
+    s.lat,
+    s.lon,
+    s.shape_pt_sequence,
+    s.shape_dist_traveled
+FROM
+    shapes s
+    JOIN trips t ON t.shape_id = s.shape_id
+WHERE
+    t.id IN (/*SLICE:trip_ids*/?)
+ORDER BY
+    t.id, s.shape_pt_sequence ASC
+`
+
+type GetShapePointsByTripIDsRow struct {
+	TripID            string
+	ID                int64
+	ShapeID           string
+	Lat               float64
+	Lon               float64
+	ShapePtSequence   int64
+	ShapeDistTraveled sql.NullFloat64
+}
+
+func (q *Queries) GetShapePointsByTripIDs(ctx context.Context, tripIds []string) ([]GetShapePointsByTripIDsRow, error) {
+	query := getShapePointsByTripIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetShapePointsByTripIDsRow
+	for rows.Next() {
+		var i GetShapePointsByTripIDsRow
+		if err := rows.Scan(
+			&i.TripID,
 			&i.ID,
 			&i.ShapeID,
 			&i.Lat,

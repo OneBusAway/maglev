@@ -173,7 +173,7 @@ func (api *RestAPI) BuildTripStatus(
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
 			// it onto the route shape. Reuses the already-fetched shapePoints.
-			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
+			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle, nil)
 			status.DistanceAlongTrip = actualDistance
 
 			if status.LastKnownLocation != nil {
