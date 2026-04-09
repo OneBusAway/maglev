@@ -555,10 +555,11 @@ OR REPLACE INTO stops (
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 `
 
 type CreateStopParams struct {
@@ -575,6 +576,7 @@ type CreateStopParams struct {
 	WheelchairBoarding sql.NullInt64
 	PlatformCode       sql.NullString
 	Direction          sql.NullString
+	ParentStation      sql.NullString
 }
 
 func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, error) {
@@ -592,6 +594,7 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		arg.WheelchairBoarding,
 		arg.PlatformCode,
 		arg.Direction,
+		arg.ParentStation,
 	)
 	var i Stop
 	err := row.Scan(
@@ -3167,7 +3170,8 @@ SELECT
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 FROM
     stops
 WHERE
@@ -3176,25 +3180,9 @@ LIMIT
     1
 `
 
-type GetStopRow struct {
-	ID                 string
-	Code               sql.NullString
-	Name               sql.NullString
-	Desc               sql.NullString
-	Lat                float64
-	Lon                float64
-	ZoneID             sql.NullString
-	Url                sql.NullString
-	LocationType       sql.NullInt64
-	Timezone           sql.NullString
-	WheelchairBoarding sql.NullInt64
-	PlatformCode       sql.NullString
-	Direction          sql.NullString
-}
-
-func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
+func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 	row := q.queryRow(ctx, q.getStopStmt, getStop, id)
-	var i GetStopRow
+	var i Stop
 	err := row.Scan(
 		&i.ID,
 		&i.Code,
@@ -3209,6 +3197,7 @@ func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
 		&i.Direction,
+		&i.ParentStation,
 	)
 	return i, err
 }

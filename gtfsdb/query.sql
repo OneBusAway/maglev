@@ -80,10 +80,11 @@ OR REPLACE INTO stops (
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: CreateCalendar :one
 INSERT
@@ -302,7 +303,8 @@ SELECT
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 FROM
     stops
 WHERE
