@@ -306,11 +306,11 @@ func TestStopHandlerWithSituations(t *testing.T) {
 	stops := api.GtfsManager.GetStops()
 	require.NotEmpty(t, stops, "Test data should contain at least one stop")
 
-	routes := api.GtfsManager.GetRoutes()
+	routes := mustGetRoutes(t, api)
 	require.NotEmpty(t, routes, "Test data should contain at least one route")
 
 	rawStopID := stops[0].Id
-	rawRouteID := routes[0].Id
+	rawRouteID := routes[0].ID
 	combinedStopID := utils.FormCombinedID(agencies[0].ID, rawStopID)
 
 	alert := gtfs.Alert{

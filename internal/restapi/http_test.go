@@ -138,6 +138,14 @@ func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*
 	return resp, response
 }
 
+// mustGetRoutes returns all routes from the DB, failing the test immediately on error.
+func mustGetRoutes(t testing.TB, api *RestAPI) []gtfsdb.Route {
+	t.Helper()
+	routes, err := api.GtfsManager.GetRoutes(context.Background())
+	require.NoError(t, err)
+	return routes
+}
+
 func TestCompressionMiddleware(t *testing.T) {
 	// Create a test handler that returns a large response
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

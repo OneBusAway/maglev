@@ -1,10 +1,12 @@
 package gtfs
 
 import (
+	"context"
 	"testing"
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestManagerAccessorsCoverage(t *testing.T) {
@@ -21,7 +23,9 @@ func TestManagerAccessorsCoverage(t *testing.T) {
 	assert.NotNil(t, m.GetStaticData())
 	assert.Empty(t, m.GetStops())
 	assert.Empty(t, m.GetBlockLayoverIndicesForRoute("r"))
-	assert.Empty(t, m.GetRoutes())
+	routes, err := m.GetRoutes(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, routes)
 	m.RUnlock()
 
 	assert.Empty(t, m.GetAllTripUpdates())

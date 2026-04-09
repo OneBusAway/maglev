@@ -443,8 +443,11 @@ func (manager *Manager) FindRoute(id string) *gtfs.Route {
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) GetRoutes() []gtfs.Route {
-	return manager.gtfsData.Routes
+func (manager *Manager) GetRoutes(ctx context.Context) ([]gtfsdb.Route, error) {
+	if manager.GtfsDB == nil {
+		return nil, nil
+	}
+	return manager.GtfsDB.Queries.ListRoutes(ctx)
 }
 
 // RoutesForAgencyID retrieves all routes associated with the specified agency ID from the GTFS data.
