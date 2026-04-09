@@ -413,8 +413,11 @@ func (manager *Manager) GetStaticData() *gtfs.Static {
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) GetStops() []gtfs.Stop {
-	return manager.gtfsData.Stops
+func (manager *Manager) GetStops(ctx context.Context) ([]gtfsdb.Stop, error) {
+	if manager.GtfsDB == nil {
+		return nil, nil
+	}
+	return manager.GtfsDB.Queries.ListStops(ctx)
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.

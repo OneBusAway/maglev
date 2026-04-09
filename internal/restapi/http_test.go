@@ -146,6 +146,14 @@ func mustGetRoutes(t testing.TB, api *RestAPI) []gtfsdb.Route {
 	return routes
 }
 
+// mustGetStops returns all active stops from the DB (stops with stop times)
+func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
+	t.Helper()
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetActiveStops(context.Background())
+	require.NoError(t, err)
+	return stops
+}
+
 func TestCompressionMiddleware(t *testing.T) {
 	// Create a test handler that returns a large response
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

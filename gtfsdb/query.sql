@@ -346,6 +346,13 @@ FROM
 ORDER BY
     id;
 
+-- name: GetActiveStops :many
+SELECT DISTINCT
+    s.*
+FROM
+    stops s
+    INNER JOIN stop_times st ON s.id = st.stop_id;
+
 -- name: GetRoutesForStop :many
 SELECT DISTINCT
     routes.id,

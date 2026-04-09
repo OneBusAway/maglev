@@ -1,6 +1,7 @@
 package gtfs
 
 import (
+	"context"
 	"os"
 	"sync"
 	"testing"
@@ -82,7 +83,7 @@ func TestConcurrentGTFSDataAccess(t *testing.T) {
 						return
 					default:
 						_ = manager.gtfsData.Agencies
-						_ = manager.GetStops()
+						_, _ = manager.GetStops(context.Background())
 						_ = manager.GetStaticData()
 						time.Sleep(time.Microsecond)
 					}

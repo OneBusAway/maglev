@@ -869,6 +869,52 @@ func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interfa
 	return items, nil
 }
 
+const getActiveStops = `-- name: GetActiveStops :many
+SELECT DISTINCT
+    s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction, s.parent_station
+FROM
+    stops s
+    INNER JOIN stop_times st ON s.id = st.stop_id
+`
+
+func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
+	rows, err := q.query(ctx, q.getActiveStopsStmt, getActiveStops)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Stop
+	for rows.Next() {
+		var i Stop
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.Desc,
+			&i.Lat,
+			&i.Lon,
+			&i.ZoneID,
+			&i.Url,
+			&i.LocationType,
+			&i.Timezone,
+			&i.WheelchairBoarding,
+			&i.PlatformCode,
+			&i.Direction,
+			&i.ParentStation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getActiveTripForRouteAtTime = `-- name: GetActiveTripForRouteAtTime :one
 SELECT
     t.id, t.route_id, t.service_id, t.trip_headsign, t.trip_short_name,

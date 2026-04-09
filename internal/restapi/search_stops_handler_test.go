@@ -57,11 +57,11 @@ func TestSearchStopsHandlerMissingInput(t *testing.T) {
 func TestSearchStopsHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	require.NotEmpty(t, stops)
 	targetStop := stops[0]
 
-	query := url.QueryEscape(targetStop.Name)
+	query := url.QueryEscape(targetStop.Name.String)
 	reqUrl := fmt.Sprintf("/api/where/search/stop.json?key=TEST&input=%s", query)
 
 	mux := http.NewServeMux()
@@ -131,13 +131,13 @@ func TestSearchStopsHandlerNoResults(t *testing.T) {
 func TestSearchStopsHandlerMaxCount(t *testing.T) {
 	api := createTestApi(t)
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	if len(stops) < 2 {
 		t.Skip("Not enough stops")
 	}
 
 	targetStop := stops[0]
-	query := url.QueryEscape(targetStop.Name)
+	query := url.QueryEscape(targetStop.Name.String)
 
 	reqUrl := fmt.Sprintf(
 		"/api/where/search/stop.json?key=TEST&input=%s&maxCount=1",
@@ -213,11 +213,11 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 	api := createTestApi(t)
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	require.NotEmpty(t, stops)
 
 	targetStop := stops[0]
-	query := url.QueryEscape(targetStop.Name)
+	query := url.QueryEscape(targetStop.Name.String)
 
 	tests := []struct {
 		name     string

@@ -168,9 +168,9 @@ func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 	require.NotEmpty(t, agencies, "Test data must contain at least one agency")
 	agencyID := agencies[0].ID
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	require.NotEmpty(t, stops, "Test data must contain at least one stop")
-	stopID := utils.FormCombinedID(agencyID, stops[0].Id)
+	stopID := utils.FormCombinedID(agencyID, stops[0].ID)
 
 	routes := api.GtfsManager.GetStaticData().Routes
 	require.NotEmpty(t, routes, "Test data must contain at least one route")
