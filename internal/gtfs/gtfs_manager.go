@@ -64,6 +64,7 @@ type Manager struct {
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
+	dbCloseOnce                    sync.Once
 	stopSpatialIndex               *rtree.RTree
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
 	regionBounds                   *RegionBounds
@@ -389,6 +390,15 @@ func (manager *Manager) Shutdown(ctx context.Context) error {
 		close(manager.shutdownChan)
 	})
 
+	defer manager.dbCloseOnce.Do(func() {
+		if manager.GtfsDB != nil {
+			if err := manager.GtfsDB.Close(); err != nil {
+				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+				logging.LogError(logger, "failed to close GTFS database", err)
+			}
+		}
+	})
+
 	done := make(chan struct{})
 	go func() {
 		manager.wg.Wait()
@@ -397,21 +407,8 @@ func (manager *Manager) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		if manager.GtfsDB != nil {
-			if err := manager.GtfsDB.Close(); err != nil {
-				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-				logging.LogError(logger, "failed to close GTFS database", err)
-			}
-		}
 		return nil
 	case <-ctx.Done():
-		// close DB even on timeout
-		if manager.GtfsDB != nil {
-			if err := manager.GtfsDB.Close(); err != nil {
-				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-				logging.LogError(logger, "failed to close GTFS database during timeout", err)
-			}
-		}
 		return fmt.Errorf("shutdown timeout exceeded: %w", ctx.Err())
 	}
 }
