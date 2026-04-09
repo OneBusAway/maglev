@@ -18,14 +18,16 @@ func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Reque
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	agency := api.GtfsManager.FindAgency(id)
-
+	ctx := r.Context()
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if agency == nil {
 		api.sendNull(w, r)
 		return
 	}
-
-	ctx := r.Context()
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {

@@ -4789,6 +4789,38 @@ func (q *Queries) ListAgencies(ctx context.Context) ([]Agency, error) {
 	return items, nil
 }
 
+const listAgencyIds = `-- name: ListAgencyIds :many
+SELECT
+    id
+FROM
+    agencies
+ORDER BY
+    id
+`
+
+func (q *Queries) ListAgencyIds(ctx context.Context) ([]string, error) {
+	rows, err := q.query(ctx, q.listAgencyIdsStmt, listAgencyIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRoutes = `-- name: ListRoutes :many
 SELECT
     id,

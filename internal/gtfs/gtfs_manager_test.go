@@ -111,13 +111,15 @@ func TestManager_GetTrips(t *testing.T) {
 func TestManager_FindAgency(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 
-	agency := manager.FindAgency("25")
+	agency, err := manager.FindAgency(context.Background(), "25")
+	assert.Nil(t, err)
 	assert.NotNil(t, agency)
-	assert.Equal(t, "25", agency.Id)
+	assert.Equal(t, "25", agency.ID)
 	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
 
-	agencyNotFound := manager.FindAgency("nonexistent")
-	assert.Nil(t, agencyNotFound)
+	agency, err = manager.FindAgency(context.Background(), "nonexistent")
+	assert.Nil(t, err)
+	assert.Nil(t, agency)
 }
 
 func TestManager_GetVehicleByID(t *testing.T) {
@@ -334,49 +336,18 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 
 func TestBuildLookupMaps(t *testing.T) {
 	staticData := &gtfs.Static{
-		Agencies: []gtfs.Agency{
-			{Id: "agency_1", Name: "Metro"},
-			{Id: "agency_2", Name: "Bus"},
-		},
 		Routes: []gtfs.Route{
 			{Id: "route_101", ShortName: "101"},
 			{Id: "route_102", ShortName: "102"},
 		},
 	}
 
-	agencyMap, routeMap := buildLookupMaps(staticData)
-
-	assert.Equal(t, 2, len(agencyMap))
-	assert.NotNil(t, agencyMap["agency_1"])
-	assert.Equal(t, "Metro", agencyMap["agency_1"].Name)
-	assert.Nil(t, agencyMap["agency_999"], "Should return nil for non-existent agency")
+	routeMap := buildRoutesMaps(staticData)
 
 	assert.Equal(t, 2, len(routeMap))
 	assert.NotNil(t, routeMap["route_101"])
 	assert.Equal(t, "101", routeMap["route_101"].ShortName)
 	assert.Nil(t, routeMap["route_999"], "Should return nil for non-existent route")
-}
-
-func TestManager_FindAgency_UsesMap(t *testing.T) {
-	// This test proves we are using the Map, not the Slice.
-	// We populate the Map, but leave the Slice empty.
-	// If the code was still looping over the slice, this would fail.
-	manager := &Manager{
-		agenciesMap: map[string]*gtfs.Agency{
-			"A1": {Id: "A1", Name: "Fast Agency"},
-		},
-		// Empty Slice to ensure we aren't using the old linear search
-		gtfsData: &gtfs.Static{
-			Agencies: []gtfs.Agency{},
-		},
-	}
-
-	result := manager.FindAgency("A1")
-	assert.NotNil(t, result)
-	assert.Equal(t, "Fast Agency", result.Name)
-
-	result = manager.FindAgency("B2")
-	assert.Nil(t, result)
 }
 
 func TestManager_FindRoute_UsesMap(t *testing.T) {

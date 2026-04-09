@@ -21,8 +21,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Acquire static lock only for the agency lookup; release immediately.
 	// VehiclesForAgencyID manages its own locking internally.
 	api.GtfsManager.RLock()
-	agency := api.GtfsManager.FindAgency(id)
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
 	api.GtfsManager.RUnlock()
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	if agency == nil {
 		// return an empty list response.
@@ -63,7 +67,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Maps to build references
-	agencyRefs := make(map[string]models.AgencyReference)
 	routeRefs := make(map[string]models.Route)
 	tripRefs := make(map[string]models.Trip)
 
@@ -208,19 +211,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		vehiclesList = append(vehiclesList, vehicleStatus)
 	}
 
-	// Add agency to references
-	agencyRefs[agency.Id] = models.NewAgencyReference(
-		agency.Id, agency.Name, agency.Url, agency.Timezone,
-		agency.Language, agency.Phone, agency.Email,
-		agency.FareUrl, "", false,
-	)
-
 	// Convert maps to slices for references
-	agencyRefList := make([]models.AgencyReference, 0, len(agencyRefs))
-	for _, agencyRef := range agencyRefs {
-		agencyRefList = append(agencyRefList, agencyRef)
-	}
-
 	routeRefList := make([]models.Route, 0, len(routeRefs))
 	for _, routeRef := range routeRefs {
 		routeRefList = append(routeRefList, routeRef)
@@ -232,7 +223,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	references := models.NewEmptyReferences()
-	references.Agencies = agencyRefList
+	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefList
 	references.Trips = tripRefList
 

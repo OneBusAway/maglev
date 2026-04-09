@@ -339,6 +339,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listAgenciesStmt, err = db.PrepareContext(ctx, listAgencies); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAgencies: %w", err)
 	}
+	if q.listAgencyIdsStmt, err = db.PrepareContext(ctx, listAgencyIds); err != nil {
+		return nil, fmt.Errorf("error preparing query ListAgencyIds: %w", err)
+	}
 	if q.listRoutesStmt, err = db.PrepareContext(ctx, listRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRoutes: %w", err)
 	}
@@ -884,6 +887,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listAgenciesStmt: %w", cerr)
 		}
 	}
+	if q.listAgencyIdsStmt != nil {
+		if cerr := q.listAgencyIdsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listAgencyIdsStmt: %w", cerr)
+		}
+	}
 	if q.listRoutesStmt != nil {
 		if cerr := q.listRoutesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listRoutesStmt: %w", cerr)
@@ -1053,6 +1061,7 @@ type Queries struct {
 	getTripsInBlockStmt                           *sql.Stmt
 	getTripsInBlockWithTimeBoundsStmt             *sql.Stmt
 	listAgenciesStmt                              *sql.Stmt
+	listAgencyIdsStmt                             *sql.Stmt
 	listRoutesStmt                                *sql.Stmt
 	listStopsStmt                                 *sql.Stmt
 	listTripsStmt                                 *sql.Stmt
@@ -1169,6 +1178,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsInBlockStmt:                           q.getTripsInBlockStmt,
 		getTripsInBlockWithTimeBoundsStmt:             q.getTripsInBlockWithTimeBoundsStmt,
 		listAgenciesStmt:                              q.listAgenciesStmt,
+		listAgencyIdsStmt:                             q.listAgencyIdsStmt,
 		listRoutesStmt:                                q.listRoutesStmt,
 		listStopsStmt:                                 q.listStopsStmt,
 		listTripsStmt:                                 q.listTripsStmt,

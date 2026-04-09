@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -562,19 +563,13 @@ func buildTripReferences(
 				route.TextColor.String)
 
 			if _, exists := presentAgencies[route.AgencyID]; !exists {
-				if agency := api.GtfsManager.FindAgency(route.AgencyID); agency != nil {
-					presentAgencies[agency.Id] = models.NewAgencyReference(
-						agency.Id,
-						agency.Name,
-						agency.Url,
-						agency.Timezone,
-						agency.Language,
-						agency.Phone,
-						agency.Email,
-						agency.FareUrl,
-						"",
-						false,
-					)
+				agency, err := api.GtfsManager.FindAgency(ctx, route.AgencyID)
+				if err != nil {
+					logging.LogError(api.Logger, "failed to fetch agency for references", err, slog.String("agency", route.AgencyID))
+				}
+
+				if agency != nil {
+					presentAgencies[agency.ID] = models.AgencyReferenceFromDatabase(agency)
 				}
 			}
 		}

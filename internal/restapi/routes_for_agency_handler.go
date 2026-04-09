@@ -17,14 +17,18 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	agency := api.GtfsManager.FindAgency(id)
-
+	ctx := r.Context()
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if agency == nil {
 		api.sendNull(w, r)
 		return
 	}
 
-	routesForAgency, err := api.GtfsManager.RoutesForAgencyID(r.Context(), id)
+	routesForAgency, err := api.GtfsManager.RoutesForAgencyID(ctx, id)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -37,8 +41,8 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 
 	for _, route := range routesForAgency {
 		routesList = append(routesList, models.NewRoute(
-			utils.FormCombinedID(agency.Id, route.ID),
-			agency.Id,
+			utils.FormCombinedID(agency.ID, route.ID),
+			agency.ID,
 			utils.NullStringOrEmpty(route.ShortName),
 			utils.NullStringOrEmpty(route.LongName),
 			utils.NullStringOrEmpty(route.Desc),
@@ -50,11 +54,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 
 	references := models.NewEmptyReferences()
 	references.Agencies = []models.AgencyReference{
-		models.NewAgencyReference(
-			agency.Id, agency.Name, agency.Url, agency.Timezone,
-			agency.Language, agency.Phone, agency.Email,
-			agency.FareUrl, "", false,
-		),
+		models.AgencyReferenceFromDatabase(agency),
 	}
 
 	response := models.NewListResponse(routesList, *references, limitExceeded, api.Clock)
