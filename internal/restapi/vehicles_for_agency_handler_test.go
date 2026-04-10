@@ -16,6 +16,7 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
@@ -670,5 +671,16 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 	} else {
 		t.Log("No real-time vehicles loaded - testing empty case")
 		assert.Len(t, vehiclesList, 0)
+	}
+}
+
+func TestVehiclesForAgency_RouteIDUsesCombinedID(t *testing.T) {
+	agencyID := "25"
+	routeID := "1"
+
+	expected := utils.FormCombinedID(agencyID, routeID)
+
+	if expected != "25_1" {
+		t.Fatalf("expected combined ID 25_1, got %s", expected)
 	}
 }
