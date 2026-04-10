@@ -444,9 +444,6 @@ func (manager *Manager) FindRoute(id string) *gtfs.Route {
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetRoutes(ctx context.Context) ([]gtfsdb.Route, error) {
-	if manager.GtfsDB == nil {
-		return nil, nil
-	}
 	return manager.GtfsDB.Queries.ListRoutes(ctx)
 }
 
