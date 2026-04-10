@@ -170,27 +170,30 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+	agencyIDsToFetch := make([]string, 0, len(uniqueAgencyIDsMap))
+	for agencyID := range uniqueAgencyIDsMap {
+		agencyIDsToFetch = append(agencyIDsToFetch, agencyID)
+	}
+
+	fetchedAgencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDsToFetch)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	for _, a := range allAgencies {
-		if uniqueAgencyIDsMap[a.ID] {
-			if _, exists := agencyRefs[a.ID]; !exists {
-				agencyRefs[a.ID] = models.NewAgencyReference(
-					a.ID,
-					a.Name,
-					a.Url,
-					a.Timezone,
-					a.Lang.String,
-					a.Phone.String,
-					a.Email.String,
-					a.FareUrl.String,
-					"",    // disclaimer
-					false, // privateService
-				)
-			}
+	for _, a := range fetchedAgencies {
+		if _, exists := agencyRefs[a.ID]; !exists {
+			agencyRefs[a.ID] = models.NewAgencyReference(
+				a.ID,
+				a.Name,
+				a.Url,
+				a.Timezone,
+				utils.NullStringOrEmpty(a.Lang),
+				a.Phone.String,
+				a.Email.String,
+				a.FareUrl.String,
+				"",    // disclaimer
+				false, // privateService
+			)
 		}
 	}
 
