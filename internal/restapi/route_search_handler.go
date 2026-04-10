@@ -114,7 +114,12 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 			textColor))
 	}
 
-	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 	// Populate situation references for alerts affecting the returned routes
 	resultRawRouteIDs := make([]string, 0, len(routes))
 	for _, routeRow := range routes {

@@ -26,11 +26,11 @@ func setupTestApiWithMockVehicle(t *testing.T) (*RestAPI, string, string) {
 
 	// Note: caller is responsible for calling api.Shutdown()
 
-	agencyStatic := api.GtfsManager.GetAgencies()[0]
+	agencyStatic := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
 	tripID := trips[0].ID
-	agencyID := agencyStatic.Id
+	agencyID := agencyStatic.ID
 	vehicleID := "MOCK_VEHICLE_1"
 	routeID := utils.FormCombinedID(agencyID, trips[0].Route.Id)
 
@@ -260,7 +260,7 @@ func TestTripForVehicleHandlerWithNonExistentTrip(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencyID := api.GtfsManager.GetAgencies()[0].Id
+	agencyID := mustGetAgencies(t, api)[0].ID
 
 	// Create vehicle with trip ID that doesn't exist in DB
 	vehicleID := "GHOST_TRIP_VEHICLE"

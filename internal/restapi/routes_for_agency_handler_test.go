@@ -11,9 +11,9 @@ import (
 func TestRoutesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=invalid")
 
@@ -25,9 +25,9 @@ func TestRoutesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST")
 
@@ -80,9 +80,9 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST")
 
@@ -111,9 +111,9 @@ func TestRoutesForAgencyHandlerPagination(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	// Case 1: Limit 5 (Should return 5 items, limitExceeded=true)
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=5")

@@ -21,9 +21,9 @@ import (
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyId+".json?key=invalid")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -34,9 +34,9 @@ func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyId+".json?key=TEST")
 
@@ -80,9 +80,9 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 func TestVehiclesForAgencyHandlerResponseStructure(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyId+".json?key=TEST")
 
@@ -126,9 +126,9 @@ func TestVehiclesForAgencyHandlerResponseStructure(t *testing.T) {
 func TestVehiclesForAgencyHandlerReferencesBuilding(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyId+".json?key=TEST")
 
@@ -201,9 +201,9 @@ func TestVehiclesForAgencyHandlerEmptyResult(t *testing.T) {
 func TestVehiclesForAgencyHandlerFieldMapping(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	// Test the endpoint to verify field mapping logic is tested
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyId+".json?key=TEST")
@@ -232,40 +232,37 @@ func TestVehiclesForAgencyHandlerFieldMapping(t *testing.T) {
 func TestVehiclesForAgencyHandlerWithAllAgencies(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
-	require.NotEmpty(t, agencies)
 
-	// Test each agency to maximize code coverage
-	for _, agency := range agencies {
-		t.Run("Agency_"+agency.Id, func(t *testing.T) {
-			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agency.Id+".json?key=TEST")
+	agencyID := "25"
 
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.Equal(t, 200, model.Code)
+	t.Run("Agency_"+agencyID, func(t *testing.T) {
+		resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
 
-			data := model.Data.(map[string]interface{})
-			vehiclesList := data["list"].([]interface{})
-			refs := data["references"].(map[string]interface{})
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 200, model.Code)
 
-			// Test that processing always happens
-			assert.IsType(t, []interface{}{}, vehiclesList)
+		data := model.Data.(map[string]interface{})
+		vehiclesList := data["list"].([]interface{})
+		refs := data["references"].(map[string]interface{})
 
-			// Agency reference should always be present
-			refAgencies := refs["agencies"].([]interface{})
-			assert.Len(t, refAgencies, 1)
+		// Test that processing always happens
+		assert.IsType(t, []interface{}{}, vehiclesList)
 
-			agencyRef := refAgencies[0].(map[string]interface{})
-			assert.Equal(t, agency.Id, agencyRef["id"])
-		})
-	}
+		// Agency reference should always be present
+		refAgencies := refs["agencies"].([]interface{})
+		assert.Len(t, refAgencies, 1)
+
+		agencyRef := refAgencies[0].(map[string]interface{})
+		assert.Equal(t, agencyID, agencyRef["id"])
+	})
 }
 
 func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	// This test specifically targets the database route lookup code
 	// Even if no vehicles exist, the handler should still execute the processing logic
@@ -304,9 +301,9 @@ func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -349,9 +346,9 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -386,9 +383,9 @@ func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -499,9 +496,9 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t)
 	defer cleanup()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	// Give the manager a moment to load real-time data
 	// The manager should load real-time data automatically on initialization

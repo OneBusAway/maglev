@@ -164,9 +164,9 @@ func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 	doc := loadOpenAPISpec(t)
 
 	// Gather test data IDs from the RABA fixture
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies, "Test data must contain at least one agency")
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	stops := api.GtfsManager.GetStops()
 	require.NotEmpty(t, stops, "Test data must contain at least one stop")
@@ -471,9 +471,9 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 
 	doc := loadOpenAPISpec(t)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	vehicles, err := api.GtfsManager.VehiclesForAgencyID(ctx, agencyID)
 	require.Nil(t, err)

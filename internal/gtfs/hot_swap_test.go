@@ -41,9 +41,10 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
-	assert.Equal(t, "25", agencies[0].Id)
+	assert.Equal(t, "25", agencies[0].ID)
 
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
@@ -103,9 +104,10 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 		t.Errorf("Reader error: %v", e)
 	}
 
-	agencies = manager.GetAgencies()
+	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
-	assert.Equal(t, "40", agencies[0].Id)
+	assert.Equal(t, "40", agencies[0].ID)
 }
 
 func TestHotSwap_FailureRecovery(t *testing.T) {
@@ -181,9 +183,10 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	err = manager.ForceUpdate(context.Background())
 	require.NoError(t, err, "ForceUpdate failed for new GTFS")
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	require.NotEmpty(t, agencies, "No agencies found after second update")
-	assert.Equal(t, "40", agencies[0].Id)
+	assert.Equal(t, "40", agencies[0].ID)
 
 	files, err := os.ReadDir(tempDir)
 	if err != nil {

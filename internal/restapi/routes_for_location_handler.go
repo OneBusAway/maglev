@@ -50,6 +50,12 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
@@ -67,7 +73,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
-		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
 		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, false)
@@ -124,7 +130,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 
 	// Populate situation references for alerts affecting the returned routes
 	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)

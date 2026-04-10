@@ -22,10 +22,10 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip-details/"+tripID+".json?key=TEST")
 
@@ -98,8 +98,8 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 		trip, ok := tripsRef[0].(map[string]interface{})
 		assert.True(t, ok)
 		assert.Equal(t, tripID, trip["id"])
-		assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Route.Id), trip["routeId"])
-		assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Service.Id), trip["serviceId"])
+		assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Route.Id), trip["routeId"])
+		assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Service.Id), trip["serviceId"])
 	}
 
 	routes, ok := references["routes"].([]interface{})
@@ -115,7 +115,7 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 
 	agencyRef, ok := agencies[0].(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, agency.Id, agencyRef["id"])
+	assert.Equal(t, agency.ID, agencyRef["id"])
 	assert.Equal(t, agency.Name, agencyRef["name"])
 
 	// Test stop references (should exist if schedule is included)
@@ -143,10 +143,10 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	// Use tomorrow's date as service date
 	tomorrow := time.Now().AddDate(0, 0, 1)
@@ -176,10 +176,10 @@ func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	// Test with includeTrip=false
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false")
@@ -206,10 +206,10 @@ func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	// Test with includeSchedule=false
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip-details/"+tripID+".json?key=TEST&includeSchedule=false")
@@ -245,10 +245,10 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	// Test with includeStatus=false
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=false")
@@ -272,10 +272,10 @@ func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	// Use a specific time (1 hour from now)
 	specificTime := time.Now().Add(1 * time.Hour)
@@ -301,10 +301,10 @@ func TestTripDetailsHandlerWithAllParametersFalse(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	_, resp, model := serveAndRetrieveEndpoint(t,
 		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false&includeSchedule=false&includeStatus=false")
@@ -361,9 +361,9 @@ func TestTripDetailsHandlerWithInvalidParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	endpoint := "/api/where/trip-details/" + tripID + ".json?key=TEST&serviceDate=invalid"
 

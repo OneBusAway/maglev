@@ -23,18 +23,19 @@ func TestManager_GetAgencies(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	assert.NotNil(t, manager)
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
 
 	agency := agencies[0]
-	assert.Equal(t, "25", agency.Id)
+	assert.Equal(t, "25", agency.ID)
 	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
 	assert.Equal(t, "http://www.rabaride.com/", agency.Url)
 	assert.Equal(t, "America/Los_Angeles", agency.Timezone)
-	assert.Equal(t, "en", agency.Language)
-	assert.Equal(t, "530-241-2877", agency.Phone)
-	assert.Equal(t, "", agency.FareUrl)
-	assert.Equal(t, "", agency.Email)
+	assert.Equal(t, "en", agency.Lang.String)
+	assert.Equal(t, "530-241-2877", agency.Phone.String)
+	assert.Equal(t, "", agency.FareUrl.String)
+	assert.Equal(t, "", agency.Email.String)
 }
 
 func TestManager_RoutesForAgencyID(t *testing.T) {

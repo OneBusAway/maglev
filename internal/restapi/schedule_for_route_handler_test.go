@@ -17,14 +17,14 @@ func TestScheduleForRouteHandler(t *testing.T) {
 	api := createTestApiWithClock(t, clk)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
 	static := api.GtfsManager.GetStaticData()
 	require.NotNil(t, static)
 	require.NotEmpty(t, static.Routes, "Test data should contain at least one route")
 
-	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
+	routeID := utils.FormCombinedID(agencies[0].ID, static.Routes[0].Id)
 
 	t.Run("Valid route", func(t *testing.T) {
 		// Use a date known to be in the test data's service calendar
@@ -132,13 +132,13 @@ func TestScheduleForRouteHandler(t *testing.T) {
 func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
 	static := api.GtfsManager.GetStaticData()
 	require.NotNil(t, static)
 	require.NotEmpty(t, static.Routes)
 
-	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
+	routeID := utils.FormCombinedID(agencies[0].ID, static.Routes[0].Id)
 
 	t.Run("Valid date parameter", func(t *testing.T) {
 		// Use a date known to be in the test data's service calendar

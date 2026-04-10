@@ -24,14 +24,14 @@ func TestArrivalsAndDeparturesForStopHandlerRequiresValidApiKey(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
 		"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=invalid")
@@ -47,14 +47,14 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
 		"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST")
@@ -171,14 +171,14 @@ func TestArrivalsAndDeparturesForStopHandlerWithTimeParameters(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
 	minutesAfter := 60
 	minutesBefore := 10
 
@@ -215,14 +215,14 @@ func TestArrivalsAndDeparturesForStopHandlerWithSpecificTime(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
 
 	tomorrow := time.Now().AddDate(0, 0, 1)
 	specificTime := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 9, 0, 0, 0, time.Local)
@@ -256,8 +256,8 @@ func TestArrivalsAndDeparturesForStopHandlerWithInvalidStopID(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	agency := api.GtfsManager.GetAgencies()[0]
-	invalidStopID := utils.FormCombinedID(agency.Id, "invalid_stop")
+	agency := mustGetAgencies(t, api)[0]
+	invalidStopID := utils.FormCombinedID(agency.ID, "invalid_stop")
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
 		"/api/where/arrivals-and-departures-for-stop/"+invalidStopID+".json?key=TEST")
@@ -284,14 +284,14 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
 
 	futureTime := time.Now().AddDate(10, 0, 0)
 	timeMs := futureTime.Unix() * 1000
@@ -344,14 +344,14 @@ func TestArrivalsAndDeparturesForStopHandlerDefaultParameters(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api,
 		"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST")
@@ -441,9 +441,9 @@ func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
-	stopID := utils.FormCombinedID(agency.Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
 
 	endpoint := "/api/where/arrivals-and-departures-for-stop/" + stopID + ".json?key=TEST&time=invalid"
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
@@ -603,7 +603,7 @@ func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
 	stops := api.GtfsManager.GetStops()
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
@@ -612,7 +612,7 @@ func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 	var foundResults bool
 
 	for _, stop := range stops {
-		stopID := utils.FormCombinedID(agency.Id, stop.Id)
+		stopID := utils.FormCombinedID(agency.ID, stop.Id)
 		url := "/api/where/arrivals-and-departures-for-stop/" + stopID + ".json?key=TEST&minutesBefore=15&minutesAfter=240"
 
 		resp, model := serveApiAndRetrieveEndpoint(t, api, url)

@@ -13,7 +13,7 @@ import (
 func TestRouteHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
 	routes := api.GtfsManager.GetRoutes()
@@ -30,7 +30,7 @@ func TestRouteHandlerRequiresValidApiKey(t *testing.T) {
 func TestRouteHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
 	routes := api.GtfsManager.GetRoutes()
@@ -70,14 +70,14 @@ func TestRouteHandlerEndToEnd(t *testing.T) {
 	agenciesRef, ok := references["agencies"].([]interface{})
 	assert.True(t, ok, "Agencies reference should exist and be an array")
 	agencyRef := agenciesRef[0].(map[string]interface{})
-	assert.Equal(t, agencies[0].Id, agencyRef["id"])
+	assert.Equal(t, agencies[0].ID, agencyRef["id"])
 	assert.NotEmpty(t, agenciesRef, "Agencies reference should not be empty")
 }
 
 func TestInvalidRouteID(t *testing.T) {
 	api := createTestApi(t)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
 	routes := api.GtfsManager.GetRoutes()
@@ -94,7 +94,7 @@ func TestInvalidRouteID(t *testing.T) {
 func TestRouteHandlerVerifiesReferences(t *testing.T) {
 	api := createTestApi(t)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
 	routes := api.GtfsManager.GetRoutes()

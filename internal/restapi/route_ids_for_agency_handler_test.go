@@ -19,9 +19,9 @@ func TestRouteIdsForAgencyRequiresValidApiKey(t *testing.T) {
 func TestRouteIdsForAgencyEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route-ids-for-agency/"+agencyId+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

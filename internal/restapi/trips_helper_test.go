@@ -444,9 +444,9 @@ func TestBuildStopTimesList_ErrorHandling(t *testing.T) {
 		}
 	}
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	t.Run("Normal operation - coordinates found", func(t *testing.T) {
 		result := buildStopTimesList(api, ctx, stopTimes, shapePoints, agencyID)
@@ -504,9 +504,9 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -569,9 +569,9 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -605,9 +605,9 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -634,9 +634,9 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	// Find a trip that has both shape data and stop times
 	trips := api.GtfsManager.GetTrips()
@@ -697,11 +697,11 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencyStatic := api.GtfsManager.GetAgencies()[0]
+	agencyStatic := mustGetAgencies(t, api)[0]
 	trips := api.GtfsManager.GetTrips()
 
 	tripID := trips[0].ID
-	agencyID := agencyStatic.Id
+	agencyID := agencyStatic.ID
 	vehicleID := "MOCK_VEHICLE_1"
 	routeID := utils.FormCombinedID(agencyID, trips[0].Route.Id)
 
@@ -823,10 +823,10 @@ func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
 
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 	tripID := trips[0].ID
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
@@ -851,10 +851,10 @@ func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
 
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 	tripID := trips[0].ID
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
@@ -1029,9 +1029,9 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -1108,9 +1108,9 @@ func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -1165,9 +1165,9 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	trips := api.GtfsManager.GetTrips()
 	require.NotEmpty(t, trips)
@@ -1284,11 +1284,11 @@ func BenchmarkBuildTripSchedule(b *testing.B) {
 		b.Skip("Could not get trip")
 	}
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	if len(agencies) == 0 {
 		b.Skip("No agencies available")
 	}
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	// Get timezone for service date
 	loc, err := time.LoadLocation(agencies[0].Timezone)
@@ -1317,11 +1317,11 @@ func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 		b.Skip("No trips available")
 	}
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	if len(agencies) == 0 {
 		b.Skip("No agencies available")
 	}
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	loc, err := time.LoadLocation(agencies[0].Timezone)
 	if err != nil {
@@ -2045,6 +2045,7 @@ func floatPtr(f float64) *float64 { return &f }
 
 func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
 
@@ -2092,6 +2093,7 @@ func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 
 func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
 

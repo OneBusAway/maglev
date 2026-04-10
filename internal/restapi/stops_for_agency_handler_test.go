@@ -12,9 +12,9 @@ import (
 func TestStopsForAgencyRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-agency/"+agencyID+".json?key=invalid")
 
@@ -26,9 +26,9 @@ func TestStopsForAgencyRequiresValidApiKey(t *testing.T) {
 func TestStopsForAgencyEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-agency/"+agencyID+".json?key=TEST")
 
