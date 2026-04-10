@@ -402,9 +402,9 @@ func (manager *Manager) GetAgencies(ctx context.Context) ([]gtfsdb.Agency, error
 	return manager.GtfsDB.Queries.ListAgencies(ctx)
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) GetTrips() []gtfs.ScheduledTrip {
-	return manager.gtfsData.Trips
+// GetTrips returns up to limit trips from the database.
+func (manager *Manager) GetTrips(ctx context.Context, limit int64) ([]gtfsdb.Trip, error) {
+	return manager.GtfsDB.Queries.ListTripsWithLimit(ctx, limit)
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.

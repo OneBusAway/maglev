@@ -853,6 +853,13 @@ SELECT
 FROM
     trips;
 
+-- name: ListTripsWithLimit :many
+SELECT
+    *
+FROM
+    trips
+LIMIT ?;
+
 -- name: GetArrivalsAndDeparturesForStop :many
 SELECT
     st.trip_id,

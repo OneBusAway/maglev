@@ -19,7 +19,7 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 	require.NotEmpty(t, trips, "Should have test trips")
 
 	// Monday within the RABA dataset's active service period (calendar range covers this date)

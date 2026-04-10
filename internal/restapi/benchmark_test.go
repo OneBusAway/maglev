@@ -96,7 +96,7 @@ func BenchmarkTripDetails(b *testing.B) {
 	defer cleanup()
 
 	agencies := mustGetAgencies(b, api)
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(b, api)
 	if len(agencies) == 0 || len(trips) == 0 {
 		b.Fatal("no agencies or trips")
 	}

@@ -305,10 +305,10 @@ func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
 	require.NotEmpty(t, agencies)
 	agencyID := agencies[0].ID
 
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 	require.NotEmpty(t, trips)
 
-	rawRouteID := trips[0].Route.Id
+	rawRouteID := trips[0].RouteID
 	tripID := trips[0].ID
 
 	occ := gtfsrt.VehiclePosition_OccupancyStatus(gtfsrt.VehiclePosition_MANY_SEATS_AVAILABLE)
@@ -350,9 +350,9 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 	require.NotEmpty(t, agencies)
 	agencyID := agencies[0].ID
 
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 	require.NotEmpty(t, trips)
-	rawRouteID := trips[0].Route.Id
+	rawRouteID := trips[0].RouteID
 
 	// Inject a vehicle with Trip == nil. It shares a routeID with static data so that
 	// if the nil-Trip filter is removed, the vehicle would propagate to the handler.
@@ -387,9 +387,9 @@ func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
 	require.NotEmpty(t, agencies)
 	agencyID := agencies[0].ID
 
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 	require.NotEmpty(t, trips)
-	rawRouteID := trips[0].Route.Id
+	rawRouteID := trips[0].RouteID
 
 	api.GtfsManager.MockAddVehicleWithOptions("", trips[0].ID, rawRouteID, gtfs.MockVehicleOptions{
 		NoID: true,

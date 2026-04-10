@@ -23,7 +23,7 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
@@ -98,8 +98,8 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 		trip, ok := tripsRef[0].(map[string]interface{})
 		assert.True(t, ok)
 		assert.Equal(t, tripID, trip["id"])
-		assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Route.Id), trip["routeId"])
-		assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].Service.Id), trip["serviceId"])
+		assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].RouteID), trip["routeId"])
+		assert.Equal(t, utils.FormCombinedID(agency.ID, trips[0].ServiceID), trip["serviceId"])
 	}
 
 	routes, ok := references["routes"].([]interface{})
@@ -144,7 +144,7 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
@@ -177,7 +177,7 @@ func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
@@ -207,7 +207,7 @@ func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
@@ -246,7 +246,7 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
@@ -273,7 +273,7 @@ func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
@@ -302,7 +302,7 @@ func TestTripDetailsHandlerWithAllParametersFalse(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
@@ -362,7 +362,7 @@ func TestTripDetailsHandlerWithInvalidParams(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trips := mustGetTrips(t, api)
 	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
 
 	endpoint := "/api/where/trip-details/" + tripID + ".json?key=TEST&serviceDate=invalid"

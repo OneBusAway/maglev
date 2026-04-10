@@ -4943,6 +4943,50 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 	return items, nil
 }
 
+const listTripsWithLimit = `-- name: ListTripsWithLimit :many
+SELECT
+    id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed, min_arrival_time, max_departure_time
+FROM
+    trips
+LIMIT ?
+`
+
+func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, error) {
+	rows, err := q.query(ctx, q.listTripsWithLimitStmt, listTripsWithLimit, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Trip
+	for rows.Next() {
+		var i Trip
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.ServiceID,
+			&i.TripHeadsign,
+			&i.TripShortName,
+			&i.DirectionID,
+			&i.BlockID,
+			&i.ShapeID,
+			&i.WheelchairAccessible,
+			&i.BikesAllowed,
+			&i.MinArrivalTime,
+			&i.MaxDepartureTime,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateStopDirection = `-- name: UpdateStopDirection :exec
 UPDATE stops
 SET direction = ?
