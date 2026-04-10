@@ -42,7 +42,6 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var items []Stop
 	for rows.Next() {
