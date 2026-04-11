@@ -39,7 +39,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parentID := ""
-	if stop.ParentStation.Valid && stop.ParentStation.String != "" {
+	if utils.NullStringOrEmpty(stop.ParentStation) != "" {
 		parentID = utils.FormCombinedID(agencyID, stop.ParentStation.String)
 	}
 
@@ -97,7 +97,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if stop.ParentStation.Valid && stop.ParentStation.String != "" {
+	if utils.NullStringOrEmpty(stop.ParentStation) != "" {
 		parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
 		if err == nil {
 			parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
@@ -112,7 +112,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 				Lon:                parentStop.Lon,
 				Code:               utils.NullStringOrDefault(parentStop.Code, parentStop.ID),
 				Direction:          utils.NullStringOrEmpty(parentStop.Direction),
-				LocationType:       int(parentStop.LocationType.Int64),
+				LocationType:       int(utils.NullInt64OrDefault(parentStop.LocationType, 0)),
 				WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(parentStop.WheelchairBoarding)),
 				RouteIDs:           parentRouteIDs,
 				StaticRouteIDs:     parentRouteIDs,
