@@ -118,6 +118,28 @@ func mustGetTrip(t testing.TB, api *RestAPI) gtfsdb.Trip {
 	return trips[0]
 }
 
+// mustGetTripIDWithBlockID returns the block_id of the first trip that has one set.
+func mustGetTripIDWithBlockID(t testing.TB, api *RestAPI) string {
+	t.Helper()
+	var blockID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+		`SELECT block_id FROM trips WHERE block_id IS NOT NULL AND block_id != '' LIMIT 1`,
+	).Scan(&blockID)
+	require.NoError(t, err, "test data should contain at least one trip with a block_id")
+	return blockID
+}
+
+// mustGetTripIDWithShapeID returns the shape_id of the first trip that has one set.
+func mustGetTripIDWithShapeID(t testing.TB, api *RestAPI) string {
+	t.Helper()
+	var shapeID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+		`SELECT shape_id FROM trips WHERE shape_id IS NOT NULL AND shape_id != '' LIMIT 1`,
+	).Scan(&shapeID)
+	require.NoError(t, err, "test data should contain at least one trip with a shape_id")
+	return shapeID
+}
+
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
 // and decoded model.
 // Accepts testing.TB to support both *testing.T and *testing.B

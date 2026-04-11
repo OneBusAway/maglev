@@ -123,6 +123,50 @@ func (q *Queries) ClearTrips(ctx context.Context) error {
 	return err
 }
 
+const countAgencies = `-- name: CountAgencies :one
+SELECT COUNT(*) FROM agencies
+`
+
+func (q *Queries) CountAgencies(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countAgenciesStmt, countAgencies)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countRoutes = `-- name: CountRoutes :one
+SELECT COUNT(*) FROM routes
+`
+
+func (q *Queries) CountRoutes(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countRoutesStmt, countRoutes)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countStops = `-- name: CountStops :one
+SELECT COUNT(*) FROM stops
+`
+
+func (q *Queries) CountStops(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countStopsStmt, countStops)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTrips = `-- name: CountTrips :one
+SELECT COUNT(*) FROM trips
+`
+
+func (q *Queries) CountTrips(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countTripsStmt, countTrips)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgency = `-- name: CreateAgency :one
 INSERT
 OR REPLACE INTO agencies (

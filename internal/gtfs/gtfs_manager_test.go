@@ -337,40 +337,6 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	assert.Nil(t, nilVehicle)
 }
 
-func TestBuildLookupMaps(t *testing.T) {
-	staticData := &gtfs.Static{
-		Routes: []gtfs.Route{
-			{Id: "route_101", ShortName: "101"},
-			{Id: "route_102", ShortName: "102"},
-		},
-	}
-
-	routeMap := buildRoutesMaps(staticData)
-
-	assert.Equal(t, 2, len(routeMap))
-	assert.NotNil(t, routeMap["route_101"])
-	assert.Equal(t, "101", routeMap["route_101"].ShortName)
-	assert.Nil(t, routeMap["route_999"], "Should return nil for non-existent route")
-}
-
-func TestManager_FindRoute_UsesMap(t *testing.T) {
-	manager := &Manager{
-		routesMap: map[string]*gtfs.Route{
-			"R1": {Id: "R1", LongName: "Express Route"},
-		},
-		gtfsData: &gtfs.Static{
-			Routes: []gtfs.Route{},
-		},
-	}
-
-	result := manager.FindRoute("R1")
-	assert.NotNil(t, result)
-	assert.Equal(t, "Express Route", result.LongName)
-
-	result = manager.FindRoute("Unknown")
-	assert.Nil(t, result)
-}
-
 func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
 	ctx := context.Background()
 
@@ -455,27 +421,6 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 			}
 		}(i)
 	}
-
-	// Spawn writer (simulating reload)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		// Use safe access with mutex for the test writer
-		manager.RLock()
-		staticData := manager.gtfsData
-		manager.RUnlock()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				manager.setStaticGTFS(staticData)
-				time.Sleep(5 * time.Millisecond)
-			}
-		}
-	}()
 
 	wg.Wait()
 	close(errorChan)

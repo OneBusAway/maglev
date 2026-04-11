@@ -133,7 +133,7 @@ func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActive
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // closing is also checked explicitly below
 	var items []Route
 	for rows.Next() {
 		var i Route

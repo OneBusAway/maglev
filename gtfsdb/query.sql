@@ -860,6 +860,18 @@ FROM
     trips
 LIMIT ?;
 
+-- name: CountAgencies :one
+SELECT COUNT(*) FROM agencies;
+
+-- name: CountRoutes :one
+SELECT COUNT(*) FROM routes;
+
+-- name: CountStops :one
+SELECT COUNT(*) FROM stops;
+
+-- name: CountTrips :one
+SELECT COUNT(*) FROM trips;
+
 -- name: GetArrivalsAndDeparturesForStop :many
 SELECT
     st.trip_id,
