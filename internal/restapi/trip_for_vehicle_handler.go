@@ -114,6 +114,19 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Look up frequency data for this trip using the new helper
+	tripFrequency := api.lookupTripFrequency(r.Context(), tripID, serviceDate, api.Clock.Now())
+
+	// Propagate frequency to status and schedule
+	if tripFrequency != nil {
+		if status != nil {
+			status.Frequency = tripFrequency
+		}
+		if schedule != nil {
+			schedule.Frequency = tripFrequency
+		}
+	}
+
 	var situationIDs []string
 	if status != nil && len(status.SituationIDs) > 0 {
 		situationIDs = status.SituationIDs
@@ -124,7 +137,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
 		ServiceDate:  serviceDateMillis,
-		Frequency:    nil,
+		Frequency:    tripFrequency,
 		Status:       status,
 		Schedule:     schedule,
 		SituationIDs: situationIDs,

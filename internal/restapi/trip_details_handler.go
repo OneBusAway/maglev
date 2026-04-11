@@ -180,39 +180,33 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var situationsIDs []string
+	// Look up frequency using the new helper
+	tripFrequency := api.lookupTripFrequency(r.Context(), trip.ID, serviceDate, api.Clock.Now())
+
+	// Propagate frequency to status and schedule
+	if tripFrequency != nil {
+		if status != nil {
+			status.Frequency = tripFrequency
+		}
+		if schedule != nil {
+			schedule.Frequency = tripFrequency
+		}
+	}
+
+	// Resolve Situation IDs
+	var situationIDs []string
 	if status != nil && len(status.SituationIDs) > 0 {
-		situationsIDs = status.SituationIDs
+		situationIDs = status.SituationIDs
 	} else {
-		situationsIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
-	}
-
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
-	if err != nil {
-		slog.Warn("GetFrequenciesForTrip failed",
-			slog.String("trip_id", tripID),
-			slog.String("error", err.Error()))
-		freqRows = nil
-	}
-
-	var frequency *models.Frequency
-	if len(freqRows) > 0 {
-		// TripDetails has only one frequency field, but GetFrequenciesForTrip query can return multiple rows
-		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
-		// we take the first row which gives us the frequency with the earliest start_time
-		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
-		converted.ServiceDate = serviceDateMillis
-		converted.ServiceID = utils.FormCombinedID(agencyID, trip.ServiceID)
-		converted.TripID = utils.FormCombinedID(agencyID, trip.ID)
-		frequency = &converted
+		situationIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
 	}
 
 	tripDetails := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
 		ServiceDate:  serviceDateMillis,
 		Schedule:     schedule,
-		Frequency:    frequency,
-		SituationIDs: situationsIDs,
+		Frequency:    tripFrequency,
+		SituationIDs: situationIDs,
 	}
 
 	if status != nil {
@@ -262,7 +256,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	)
 	references.Agencies = append(references.Agencies, agencyModel)
 
-	if len(situationsIDs) > 0 {
+	if len(situationIDs) > 0 {
 		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
 		if len(alerts) > 0 {
 			situations := api.BuildSituationReferences(alerts)
