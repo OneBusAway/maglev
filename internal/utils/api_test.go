@@ -281,6 +281,27 @@ func TestFormCombinedID(t *testing.T) {
 			codeID:   "",
 			expected: "",
 		},
+		// Consolidated GTFS feed: underscore-prefixed ID already has the agency prefix.
+		{
+			name:     "Code ID already has agency underscore prefix",
+			agencyID: "40",
+			codeID:   "40_1121",
+			expected: "40_1121",
+		},
+		// Consolidated GTFS feed: hyphen-prefixed ID — normalize separator to underscore.
+		{
+			name:     "Code ID has agency hyphen prefix — normalize to underscore",
+			agencyID: "40",
+			codeID:   "40-455",
+			expected: "40_455",
+		},
+		// Normal stop that happens to start with the same digits but is NOT prefixed.
+		{
+			name:     "Code ID starts with agency digits but no separator",
+			agencyID: "40",
+			codeID:   "401234",
+			expected: "40_401234",
+		},
 	}
 
 	for _, tt := range tests {
