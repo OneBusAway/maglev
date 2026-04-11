@@ -24,9 +24,8 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := mustGetTrips(t, api)
+	trip := mustGetTrip(t, api)
 
-	trip := trips[0]
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
 	ctx := context.Background()

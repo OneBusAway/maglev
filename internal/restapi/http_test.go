@@ -109,12 +109,13 @@ func mustGetAgencies(t testing.TB, api *RestAPI) []gtfsdb.Agency {
 	return agencies
 }
 
-// mustGetTrips fetches up to 100 trips from the DB for use in tests.
-func mustGetTrips(t testing.TB, api *RestAPI) []gtfsdb.Trip {
+// mustGetTrip fetches a single trip from the DB for use in tests.
+func mustGetTrip(t testing.TB, api *RestAPI) gtfsdb.Trip {
 	t.Helper()
-	trips, err := api.GtfsManager.GetTrips(context.Background(), 100)
+	trips, err := api.GtfsManager.GetTrips(context.Background(), 1)
 	require.NoError(t, err)
-	return trips
+	require.NotEmpty(t, trips, "test data should contain at least one trip")
+	return trips[0]
 }
 
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
