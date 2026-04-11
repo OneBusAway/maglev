@@ -109,6 +109,15 @@ func mustGetAgencies(t testing.TB, api *RestAPI) []gtfsdb.Agency {
 	return agencies
 }
 
+// mustGetTrip fetches a single trip from the DB for use in tests.
+func mustGetTrip(t testing.TB, api *RestAPI) gtfsdb.Trip {
+	t.Helper()
+	trips, err := api.GtfsManager.GetTrips(context.Background(), 1)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips, "test data should contain at least one trip")
+	return trips[0]
+}
+
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
 // and decoded model.
 // Accepts testing.TB to support both *testing.T and *testing.B

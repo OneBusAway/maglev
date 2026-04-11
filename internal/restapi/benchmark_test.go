@@ -96,11 +96,11 @@ func BenchmarkTripDetails(b *testing.B) {
 	defer cleanup()
 
 	agencies := mustGetAgencies(b, api)
-	trips := api.GtfsManager.GetTrips()
-	if len(agencies) == 0 || len(trips) == 0 {
-		b.Fatal("no agencies or trips")
+	if len(agencies) == 0 {
+		b.Fatal("no agencies")
 	}
-	tripID := utils.FormCombinedID(agencies[0].ID, trips[0].ID)
+	trip := mustGetTrip(b, api)
+	tripID := utils.FormCombinedID(agencies[0].ID, trip.ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)

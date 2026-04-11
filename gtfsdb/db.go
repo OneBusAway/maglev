@@ -351,6 +351,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listTripsStmt, err = db.PrepareContext(ctx, listTrips); err != nil {
 		return nil, fmt.Errorf("error preparing query ListTrips: %w", err)
 	}
+	if q.listTripsWithLimitStmt, err = db.PrepareContext(ctx, listTripsWithLimit); err != nil {
+		return nil, fmt.Errorf("error preparing query ListTripsWithLimit: %w", err)
+	}
 	if q.updateStopDirectionStmt, err = db.PrepareContext(ctx, updateStopDirection); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateStopDirection: %w", err)
 	}
@@ -907,6 +910,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listTripsStmt: %w", cerr)
 		}
 	}
+	if q.listTripsWithLimitStmt != nil {
+		if cerr := q.listTripsWithLimitStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listTripsWithLimitStmt: %w", cerr)
+		}
+	}
 	if q.updateStopDirectionStmt != nil {
 		if cerr := q.updateStopDirectionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateStopDirectionStmt: %w", cerr)
@@ -1065,6 +1073,7 @@ type Queries struct {
 	listRoutesStmt                                *sql.Stmt
 	listStopsStmt                                 *sql.Stmt
 	listTripsStmt                                 *sql.Stmt
+	listTripsWithLimitStmt                        *sql.Stmt
 	updateStopDirectionStmt                       *sql.Stmt
 	upsertImportMetadataStmt                      *sql.Stmt
 }
@@ -1182,6 +1191,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listRoutesStmt:                                q.listRoutesStmt,
 		listStopsStmt:                                 q.listStopsStmt,
 		listTripsStmt:                                 q.listTripsStmt,
+		listTripsWithLimitStmt:                        q.listTripsWithLimitStmt,
 		updateStopDirectionStmt:                       q.updateStopDirectionStmt,
 		upsertImportMetadataStmt:                      q.upsertImportMetadataStmt,
 	}

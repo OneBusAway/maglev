@@ -33,18 +33,15 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 
 	agency := mustGetAgencies(t, api)[0]
 	stops := mustGetStops(t, api)
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	if len(trips) == 0 {
-		t.Skip("No trips available for testing")
-	}
 
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
-	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 	serviceDate := time.Now().Unix() * 1000
 
 	mux := http.NewServeMux()
@@ -118,9 +115,9 @@ func TestArrivalAndDepartureForStopHandlerWithInvalidStopID(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
-	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 	serviceDate := time.Now().Unix() * 1000
 
 	_, resp, model := serveAndRetrieveEndpoint(t,
@@ -139,18 +136,15 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 
 	agency := mustGetAgencies(t, api)[0]
 	stops := mustGetStops(t, api)
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	if len(trips) == 0 {
-		t.Skip("No trips available for testing")
-	}
 
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
-	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
 	// Use a specific time (1 hour from now)
 	specificTime := time.Now().Add(1 * time.Hour)
@@ -223,10 +217,10 @@ func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
 
 	agency := mustGetAgencies(t, api)[0]
 	stops := mustGetStops(t, api)
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
-	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
@@ -260,18 +254,15 @@ func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {
 
 	agency := mustGetAgencies(t, api)[0]
 	stops := mustGetStops(t, api)
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	if len(trips) == 0 {
-		t.Skip("No trips available for testing")
-	}
 
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
-	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 	serviceDate := time.Now().Unix() * 1000
 	stopSequence := 1
 
@@ -299,18 +290,15 @@ func TestArrivalAndDepartureForStopHandlerWithMinutesParameters(t *testing.T) {
 
 	agency := mustGetAgencies(t, api)[0]
 	stops := mustGetStops(t, api)
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
 
-	if len(trips) == 0 {
-		t.Skip("No trips available for testing")
-	}
 
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
-	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 	serviceDate := time.Now().Unix() * 1000
 
 	_, resp, model := serveAndRetrieveEndpoint(t,
@@ -369,10 +357,10 @@ func TestArrivalAndDepartureForStopHandlerWithMalformedStopID(t *testing.T) {
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
 	stopID := "malformedid" // No underscore, will fail extraction
-	tripID := utils.FormCombinedID(agency.ID, trips[0].ID)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 	serviceDate := time.Now().Unix() * 1000
 
 	_, resp, _ := serveAndRetrieveEndpoint(t,
@@ -390,7 +378,10 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripStopCombination(t *testin
 	ctx := context.Background()
 
 	// Find a valid trip with stop times
-	trips := api.GtfsManager.GetTrips()
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(trips) == 0 {
 		t.Skip("No trips available for testing")
 	}
@@ -476,7 +467,10 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testin
 	ctx := context.Background()
 
 	// Find a valid trip with multiple stops
-	trips := api.GtfsManager.GetTrips()
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(trips) == 0 {
 		t.Skip("No trips available for testing")
 	}
@@ -1106,7 +1100,10 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 
 	ctx := context.Background()
 
-	trips := api.GtfsManager.GetTrips()
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
 	require.NotEmpty(t, trips)
 
 	var validTripID, validStopID string

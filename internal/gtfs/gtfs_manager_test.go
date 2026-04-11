@@ -104,7 +104,8 @@ func TestManager_GetTrips(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	assert.NotNil(t, manager)
 
-	trips := manager.GetTrips()
+	trips, err := manager.GetTrips(context.Background(), 100)
+	require.NoError(t, err)
 	assert.NotEmpty(t, trips)
 	assert.NotEmpty(t, trips[0].ID)
 }
@@ -238,10 +239,11 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 
 	// Get a trip to find a valid service ID
-	trips := manager.GetTrips()
+	trips, err := manager.GetTrips(context.Background(), 100)
+	require.NoError(t, err)
 	assert.NotEmpty(t, trips)
 
-	serviceID := trips[0].Service.Id
+	serviceID := trips[0].ServiceID
 
 	testCases := []struct {
 		name    string

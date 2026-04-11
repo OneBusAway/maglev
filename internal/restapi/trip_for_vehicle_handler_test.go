@@ -27,12 +27,12 @@ func setupTestApiWithMockVehicle(t *testing.T) (*RestAPI, string, string) {
 	// Note: caller is responsible for calling api.Shutdown()
 
 	agencyStatic := mustGetAgencies(t, api)[0]
-	trips := api.GtfsManager.GetTrips()
+	trip := mustGetTrip(t, api)
 
-	tripID := trips[0].ID
+	tripID := trip.ID
 	agencyID := agencyStatic.ID
 	vehicleID := "MOCK_VEHICLE_1"
-	routeID := utils.FormCombinedID(agencyID, trips[0].Route.Id)
+	routeID := utils.FormCombinedID(agencyID, trip.RouteID)
 
 	api.GtfsManager.MockAddAgency(agencyID, "unitrans")
 	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
