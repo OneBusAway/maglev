@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"maglev.onebusaway.org/internal/models"
@@ -90,6 +91,11 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	references.Agencies = agencies
 	references.Situations = situations
 
+	// Results must be sorted by ID after maxCount limit is applied.
+	// See how response changes when calling java API with different maxCounts.
+	slices.SortFunc(results, func(a, b models.Route) int {
+		return strings.Compare(a.ID, b.ID)
+	})
 	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

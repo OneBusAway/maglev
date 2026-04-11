@@ -131,6 +131,10 @@ func serveAndRetrieveEndpoint(t testing.TB, endpoint string) (*RestAPI, *http.Re
 // serveApiAndRetrieveEndpoint performs the request against an existing API instance
 // Accepts testing.TB to support both *testing.T and *testing.B
 func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
+	return callAPIHandler[models.ResponseModel](t, api, endpoint)
+}
+
+func callAPIHandler[ResponseType any](t testing.TB, api *RestAPI, endpoint string) (*http.Response, ResponseType) {
 	// Use SetupAPIRoutes to ensure global middleware (like compression) is applied
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
@@ -140,7 +144,7 @@ func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*
 		slog.Default().With(slog.String("component", "test")),
 		"http_response_body")
 
-	var response models.ResponseModel
+	var response ResponseType
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	require.NoError(t, err)
 
