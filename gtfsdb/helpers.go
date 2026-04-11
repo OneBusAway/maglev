@@ -368,6 +368,10 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		if s.Latitude == nil || s.Longitude == nil {
 			continue
 		}
+		parentStation := ""
+		if s.Parent != nil {
+			parentStation = s.Parent.Id
+		}
 		params := CreateStopParams{
 			ID:                 s.Id,
 			Code:               toNullString(s.Code),
@@ -382,6 +386,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			WheelchairBoarding: toNullInt64(int64(s.WheelchairBoarding)),
 			PlatformCode:       toNullString(s.PlatformCode),
 			Direction:          sql.NullString{}, // Will be computed later
+			ParentStation:      toNullString(parentStation),
 		}
 
 		allStopParams = append(allStopParams, params)

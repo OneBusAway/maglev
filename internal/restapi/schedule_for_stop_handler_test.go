@@ -19,10 +19,10 @@ func TestScheduleForStopHandler(t *testing.T) {
 	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	assert.NotEmpty(t, stops, "Test data should contain at least one stop")
 
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	tests := []struct {
 		name                string
@@ -80,8 +80,8 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 
 	// Get valid stop for testing
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+	stops := mustGetStops(t, api)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	// Test valid date parameter
 	t.Run("Valid date parameter", func(t *testing.T) {
@@ -109,10 +109,10 @@ func TestScheduleForStopHandlerAgencyTimeZone(t *testing.T) {
 	defer api.Shutdown()
 
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 
 	agency := agencies[0]
-	stopID := utils.FormCombinedID(agency.ID, stops[0].Id)
+	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
 
 	endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
 	_, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
@@ -135,8 +135,8 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 
 	// Get valid stop for testing
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+	stops := mustGetStops(t, api)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	tests := []struct {
 		name           string
@@ -205,8 +205,8 @@ func TestScheduleForStopHandlerReferences(t *testing.T) {
 	defer api.Shutdown()
 
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+	stops := mustGetStops(t, api)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	t.Run("Response structure is correct", func(t *testing.T) {
 		// NOTE: Hardcoded date 2025-06-12 matches GTFS data validity
@@ -249,8 +249,8 @@ func TestScheduleForStopHandlerInvalidDateFormat(t *testing.T) {
 	defer api.Shutdown()
 
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+	stops := mustGetStops(t, api)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	tests := []struct {
 		name           string
@@ -292,8 +292,8 @@ func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 	defer api.Shutdown()
 
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+	stops := mustGetStops(t, api)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	t.Run("Handler executes successfully", func(t *testing.T) {
 		// NOTE: Hardcoded date matches GTFS data validity
@@ -320,10 +320,10 @@ func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 	defer api.Shutdown()
 
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 
 	t.Run("Stop with no routes returns empty schedule", func(t *testing.T) {
-		stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+		stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 		// NOTE: Hardcoded date matches GTFS data validity
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
@@ -346,11 +346,11 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 	defer api.Shutdown()
 
 	agencies := mustGetAgencies(t, api)
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	require := assert.New(t)
 
 	t.Run("Query returns valid data structure", func(t *testing.T) {
-		stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+		stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2024-05-15"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
@@ -431,8 +431,8 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 		// Create a fresh API instance to avoid rate limiting
 		testApi := createTestApi(t)
 		testAgencies := mustGetAgencies(t, testApi)
-		testStops := testApi.GtfsManager.GetStops()
-		testStopID := utils.FormCombinedID(testAgencies[0].ID, testStops[0].Id)
+		testStops := mustGetStops(t, testApi)
+		testStopID := utils.FormCombinedID(testAgencies[0].ID, testStops[0].ID)
 
 		weekdayTests := []struct {
 			date    string
@@ -463,7 +463,7 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 	})
 
 	t.Run("Query properly formats timestamps", func(t *testing.T) {
-		stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+		stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2024-05-15"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 

@@ -14,11 +14,11 @@ func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
 	defer cleanup()
 
 	agencies := mustGetAgencies(b, api)
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(b, api)
 	if len(agencies) == 0 || len(stops) == 0 {
 		b.Fatal("no agencies or stops")
 	}
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].Id)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)

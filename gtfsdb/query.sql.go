@@ -555,10 +555,11 @@ OR REPLACE INTO stops (
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 `
 
 type CreateStopParams struct {
@@ -575,6 +576,7 @@ type CreateStopParams struct {
 	WheelchairBoarding sql.NullInt64
 	PlatformCode       sql.NullString
 	Direction          sql.NullString
+	ParentStation      sql.NullString
 }
 
 func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, error) {
@@ -592,6 +594,7 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		arg.WheelchairBoarding,
 		arg.PlatformCode,
 		arg.Direction,
+		arg.ParentStation,
 	)
 	var i Stop
 	err := row.Scan(
@@ -856,6 +859,52 @@ func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interfa
 			return nil, err
 		}
 		items = append(items, service_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getActiveStops = `-- name: GetActiveStops :many
+SELECT DISTINCT
+    s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction, s.parent_station
+FROM
+    stops s
+    INNER JOIN stop_times st ON s.id = st.stop_id
+`
+
+func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
+	rows, err := q.query(ctx, q.getActiveStopsStmt, getActiveStops)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Stop
+	for rows.Next() {
+		var i Stop
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.Desc,
+			&i.Lat,
+			&i.Lon,
+			&i.ZoneID,
+			&i.Url,
+			&i.LocationType,
+			&i.Timezone,
+			&i.WheelchairBoarding,
+			&i.PlatformCode,
+			&i.Direction,
+			&i.ParentStation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -3167,7 +3216,8 @@ SELECT
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 FROM
     stops
 WHERE
@@ -3176,25 +3226,9 @@ LIMIT
     1
 `
 
-type GetStopRow struct {
-	ID                 string
-	Code               sql.NullString
-	Name               sql.NullString
-	Desc               sql.NullString
-	Lat                float64
-	Lon                float64
-	ZoneID             sql.NullString
-	Url                sql.NullString
-	LocationType       sql.NullInt64
-	Timezone           sql.NullString
-	WheelchairBoarding sql.NullInt64
-	PlatformCode       sql.NullString
-	Direction          sql.NullString
-}
-
-func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
+func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 	row := q.queryRow(ctx, q.getStopStmt, getStop, id)
-	var i GetStopRow
+	var i Stop
 	err := row.Scan(
 		&i.ID,
 		&i.Code,
@@ -3209,6 +3243,7 @@ func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
 		&i.Direction,
+		&i.ParentStation,
 	)
 	return i, err
 }
