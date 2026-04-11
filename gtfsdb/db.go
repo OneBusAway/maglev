@@ -60,6 +60,18 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.clearTripsStmt, err = db.PrepareContext(ctx, clearTrips); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearTrips: %w", err)
 	}
+	if q.countAgenciesStmt, err = db.PrepareContext(ctx, countAgencies); err != nil {
+		return nil, fmt.Errorf("error preparing query CountAgencies: %w", err)
+	}
+	if q.countRoutesStmt, err = db.PrepareContext(ctx, countRoutes); err != nil {
+		return nil, fmt.Errorf("error preparing query CountRoutes: %w", err)
+	}
+	if q.countStopsStmt, err = db.PrepareContext(ctx, countStops); err != nil {
+		return nil, fmt.Errorf("error preparing query CountStops: %w", err)
+	}
+	if q.countTripsStmt, err = db.PrepareContext(ctx, countTrips); err != nil {
+		return nil, fmt.Errorf("error preparing query CountTrips: %w", err)
+	}
 	if q.createAgencyStmt, err = db.PrepareContext(ctx, createAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateAgency: %w", err)
 	}
@@ -423,6 +435,26 @@ func (q *Queries) Close() error {
 	if q.clearTripsStmt != nil {
 		if cerr := q.clearTripsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearTripsStmt: %w", cerr)
+		}
+	}
+	if q.countAgenciesStmt != nil {
+		if cerr := q.countAgenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countAgenciesStmt: %w", cerr)
+		}
+	}
+	if q.countRoutesStmt != nil {
+		if cerr := q.countRoutesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countRoutesStmt: %w", cerr)
+		}
+	}
+	if q.countStopsStmt != nil {
+		if cerr := q.countStopsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countStopsStmt: %w", cerr)
+		}
+	}
+	if q.countTripsStmt != nil {
+		if cerr := q.countTripsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countTripsStmt: %w", cerr)
 		}
 	}
 	if q.createAgencyStmt != nil {
@@ -976,6 +1008,10 @@ type Queries struct {
 	clearStopTimesStmt                            *sql.Stmt
 	clearStopsStmt                                *sql.Stmt
 	clearTripsStmt                                *sql.Stmt
+	countAgenciesStmt                             *sql.Stmt
+	countRoutesStmt                               *sql.Stmt
+	countStopsStmt                                *sql.Stmt
+	countTripsStmt                                *sql.Stmt
 	createAgencyStmt                              *sql.Stmt
 	createBlockTripEntryStmt                      *sql.Stmt
 	createBlockTripIndexStmt                      *sql.Stmt
@@ -1094,6 +1130,10 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		clearStopTimesStmt:                            q.clearStopTimesStmt,
 		clearStopsStmt:                                q.clearStopsStmt,
 		clearTripsStmt:                                q.clearTripsStmt,
+		countAgenciesStmt:                             q.countAgenciesStmt,
+		countRoutesStmt:                               q.countRoutesStmt,
+		countStopsStmt:                                q.countStopsStmt,
+		countTripsStmt:                                q.countTripsStmt,
 		createAgencyStmt:                              q.createAgencyStmt,
 		createBlockTripEntryStmt:                      q.createBlockTripEntryStmt,
 		createBlockTripIndexStmt:                      q.createBlockTripIndexStmt,

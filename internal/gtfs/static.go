@@ -348,9 +348,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		return fmt.Errorf("failed to update GTFS database client: %w", err)
 	}
 
-	manager.gtfsData = newStaticData
 	manager.GtfsDB = client
-	manager.routesMap = buildRoutesMaps(newStaticData)
 	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.regionBounds = newRegionBounds
 
@@ -410,15 +408,11 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
-	manager.gtfsData = staticData
-
 	now := time.Now()
 	manager.lastUpdated = now
 	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
 
 	manager.isHealthy = true
-
-	manager.routesMap = buildRoutesMaps(staticData)
 
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
 	manager.regionBounds = ComputeRegionBounds(staticData.Shapes, staticData.Stops)
@@ -453,15 +447,6 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 			slog.String("source", manager.config.GtfsURL),
 			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)))
 	}
-}
-
-// buildRoutesMaps is used to create an index for routes by ID.
-func buildRoutesMaps(data *gtfs.Static) map[string]*gtfs.Route {
-	routes := make(map[string]*gtfs.Route, len(data.Routes))
-	for i := range data.Routes {
-		routes[data.Routes[i].Id] = &data.Routes[i]
-	}
-	return routes
 }
 
 // buildFrequencyCache queries the DB for frequency trip IDs and returns a set.

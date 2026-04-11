@@ -172,33 +172,13 @@ func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 	require.NotEmpty(t, stops, "Test data must contain at least one stop")
 	stopID := utils.FormCombinedID(agencyID, stops[0].ID)
 
-	routes := api.GtfsManager.GetStaticData().Routes
+	routes := mustGetRoutes(t, api)
 	require.NotEmpty(t, routes, "Test data must contain at least one route")
-	var firstRouteID string
-	for _, r := range routes {
-		firstRouteID = utils.FormCombinedID(agencyID, r.Id)
-		break
-	}
+	firstRouteID := utils.FormCombinedID(agencyID, routes[0].ID)
 
-	trips := api.GtfsManager.GetStaticData().Trips
-	require.NotEmpty(t, trips, "Test data must contain at least one trip")
-	var firstTripID string
-	var firstBlockID string
-	var firstShapeID string
-	for _, trip := range trips {
-		if firstTripID == "" {
-			firstTripID = utils.FormCombinedID(agencyID, trip.ID)
-		}
-		if firstBlockID == "" && trip.BlockID != "" {
-			firstBlockID = utils.FormCombinedID(agencyID, trip.BlockID)
-		}
-		if firstShapeID == "" && trip.Shape != nil && trip.Shape.ID != "" {
-			firstShapeID = utils.FormCombinedID(agencyID, trip.Shape.ID)
-		}
-		if firstTripID != "" && firstBlockID != "" && firstShapeID != "" {
-			break
-		}
-	}
+	firstTripID := utils.FormCombinedID(agencyID, mustGetTrip(t, api).ID)
+	firstBlockID := utils.FormCombinedID(agencyID, mustGetTripIDWithBlockID(t, api))
+	firstShapeID := utils.FormCombinedID(agencyID, mustGetTripIDWithShapeID(t, api))
 
 	tests := []struct {
 		name     string

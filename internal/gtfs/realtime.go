@@ -513,16 +513,14 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 // filterTripsByAgency returns only the trips whose route belongs to one of the
 // allowed agencies. Trips with an unresolvable route are dropped.
 func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool) []gtfs.Trip {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
-
+	ctx := context.Background()
 	filtered := make([]gtfs.Trip, 0, len(trips))
 	for _, trip := range trips {
 		if trip.ID.RouteID == "" {
 			continue
 		}
-		if route, ok := manager.routesMap[trip.ID.RouteID]; ok && route.Agency != nil {
-			if allowed[route.Agency.Id] {
+		if route, err := manager.GtfsDB.Queries.GetRoute(ctx, trip.ID.RouteID); err == nil {
+			if allowed[route.AgencyID] {
 				filtered = append(filtered, trip)
 			}
 		}
@@ -533,16 +531,14 @@ func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[strin
 // filterVehiclesByAgency returns only the vehicles whose trip's route belongs to
 // one of the allowed agencies. Vehicles without a trip or unresolvable route are dropped.
 func (manager *Manager) filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed map[string]bool) []gtfs.Vehicle {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
-
+	ctx := context.Background()
 	filtered := make([]gtfs.Vehicle, 0, len(vehicles))
 	for _, v := range vehicles {
 		if v.Trip == nil || v.Trip.ID.RouteID == "" {
 			continue
 		}
-		if route, ok := manager.routesMap[v.Trip.ID.RouteID]; ok && route.Agency != nil {
-			if allowed[route.Agency.Id] {
+		if route, err := manager.GtfsDB.Queries.GetRoute(ctx, v.Trip.ID.RouteID); err == nil {
+			if allowed[route.AgencyID] {
 				filtered = append(filtered, v)
 			}
 		}
@@ -552,20 +548,17 @@ func (manager *Manager) filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed 
 
 // filterAlertsByAgency returns only alerts referencing an allowed agency.
 func (manager *Manager) filterAlertsByAgency(alerts []gtfs.Alert, allowed map[string]bool) []gtfs.Alert {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
-
+	ctx := context.Background()
 	filtered := make([]gtfs.Alert, 0, len(alerts))
 	for _, alert := range alerts {
-		if alertMatchesAgencyLocked(manager, alert, allowed) {
+		if alertMatchesAgency(ctx, manager, alert, allowed) {
 			filtered = append(filtered, alert)
 		}
 	}
 	return filtered
 }
 
-// alertMatchesAgencyLocked assumes staticMutex is already held by the caller.
-func alertMatchesAgencyLocked(manager *Manager, alert gtfs.Alert, allowed map[string]bool) bool {
+func alertMatchesAgency(ctx context.Context, manager *Manager, alert gtfs.Alert, allowed map[string]bool) bool {
 	// NOTE: stop-only InformedEntities are not resolved to agencies.
 	// Alerts referencing only stop IDs will be dropped when agency filtering is active.
 	for _, entity := range alert.InformedEntities {
@@ -573,15 +566,15 @@ func alertMatchesAgencyLocked(manager *Manager, alert gtfs.Alert, allowed map[st
 			return true
 		}
 		if entity.RouteID != nil && *entity.RouteID != "" {
-			if route, ok := manager.routesMap[*entity.RouteID]; ok && route.Agency != nil {
-				if allowed[route.Agency.Id] {
+			if route, err := manager.GtfsDB.Queries.GetRoute(ctx, *entity.RouteID); err == nil {
+				if allowed[route.AgencyID] {
 					return true
 				}
 			}
 		}
 		if entity.TripID != nil && entity.TripID.RouteID != "" {
-			if route, ok := manager.routesMap[entity.TripID.RouteID]; ok && route.Agency != nil {
-				if allowed[route.Agency.Id] {
+			if route, err := manager.GtfsDB.Queries.GetRoute(ctx, entity.TripID.RouteID); err == nil {
+				if allowed[route.AgencyID] {
 					return true
 				}
 			}
