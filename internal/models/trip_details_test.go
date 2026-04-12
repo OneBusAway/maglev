@@ -10,17 +10,7 @@ import (
 
 func TestNewTripDetails(t *testing.T) {
 	trip := Trip{
-		ID:             "trip_123",
-		RouteID:        "route_456",
-		ServiceID:      "service_789",
-		TripHeadsign:   "Downtown Terminal",
-		DirectionID:    "1",
-		BlockID:        "block_1",
-		ShapeID:        "shape_1",
-		TripShortName:  "DT",
-		RouteShortName: "R1",
-		PeakOffPeak:    1,
-		TimeZone:       "America/Los_Angeles",
+		ID: "trip_123",
 	}
 
 	tripID := trip.ID

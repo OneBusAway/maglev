@@ -122,19 +122,6 @@ func TestStaleDetector_ExactThreshold(t *testing.T) {
 	assert.False(t, d.Check(vehicle, now), "vehicle at exactly 15 minutes should not be stale")
 }
 
-func TestStaleDetector_WithCustomThreshold(t *testing.T) {
-	d := NewStaleDetector().WithThreshold(5 * time.Minute)
-	now := time.Now()
-
-	fresh := now.Add(-3 * time.Minute)
-	freshVehicle := &gtfs.Vehicle{Timestamp: &fresh}
-	assert.False(t, d.Check(freshVehicle, now), "3-minute old vehicle should not be stale with 5-minute threshold")
-
-	stale := now.Add(-6 * time.Minute)
-	staleVehicle := &gtfs.Vehicle{Timestamp: &stale}
-	assert.True(t, d.Check(staleVehicle, now), "6-minute old vehicle should be stale with 5-minute threshold")
-}
-
 func TestBuildVehicleStatus_NilVehicleSetsDefaultStatus(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

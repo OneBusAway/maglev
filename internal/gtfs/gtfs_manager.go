@@ -56,7 +56,6 @@ type Manager struct {
 	realTimeVehicleLookupByVehicle map[string]int
 	duplicatedVehicleByRoute       map[string][]gtfs.Vehicle
 	alertIdx                       alertIndex
-	frequencyTripIDs               map[string]struct{}
 	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
 	staticMutex                    sync.RWMutex // Protects GtfsDB and lastUpdated
 	config                         Config
@@ -265,7 +264,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedAgencyFilter:               make(map[string]map[string]bool),
 		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
 		feedVehicleTimestamp:           make(map[string]uint64),
-		frequencyTripIDs:               make(map[string]struct{}),
 		activeServiceIDsCache:          make(map[string][]string),
 		Metrics:                        config.Metrics,
 	}
@@ -320,17 +318,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	if err == nil && metadata.FileHash != "" {
 		manager.systemETag = fmt.Sprintf(`"%s"`, metadata.FileHash)
 	}
-
-	freqTripIDs := make(map[string]struct{})
-	ids, err := gtfsDB.Queries.GetFrequencyTripIDs(ctx)
-	if err == nil {
-		for _, id := range ids {
-			freqTripIDs[id] = struct{}{}
-		}
-	} else {
-		logging.LogError(logger, "failed to load frequency trip IDs", err)
-	}
-	manager.frequencyTripIDs = freqTripIDs
 
 	// STARTUP SEQUENCING:
 	// If realtime is enabled, perform the first fetch synchronously for each feed
@@ -959,13 +946,6 @@ func (manager *Manager) MarkHealthy() {
 	manager.isHealthy = true
 }
 
-// MarkUnhealthy sets the manager status to unhealthy.
-func (manager *Manager) MarkUnhealthy() {
-	manager.staticMutex.Lock()
-	defer manager.staticMutex.Unlock()
-	manager.isHealthy = false
-}
-
 // FeedExpiresAt returns the parsed feed expiry time.
 func (manager *Manager) FeedExpiresAt() time.Time {
 	manager.staticMutex.RLock()
@@ -973,8 +953,8 @@ func (manager *Manager) FeedExpiresAt() time.Time {
 	return manager.feedExpiresAt
 }
 
-// SetFeedExpiresAt implicitly sets the parsed feed expiry time for tests.
-func (manager *Manager) SetFeedExpiresAt(t time.Time) {
+// SetFeedExpiresAtForTest implicitly sets the parsed feed expiry time for tests.
+func (manager *Manager) SetFeedExpiresAtForTest(t time.Time) {
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 	manager.feedExpiresAt = t
@@ -1015,8 +995,8 @@ func (manager *Manager) GetFeedUpdateTimes() map[string]time.Time {
 	return result
 }
 
-// SetFeedUpdateTime safely records the time a feed was successfully updated.
-func (manager *Manager) SetFeedUpdateTime(feedID string, t time.Time) {
+// SetFeedUpdateTimeForTest safely records the time a feed was successfully updated.
+func (manager *Manager) SetFeedUpdateTimeForTest(feedID string, t time.Time) {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
@@ -1036,8 +1016,8 @@ func (manager *Manager) SetStaticLastUpdatedForTest(t time.Time) {
 	manager.lastUpdatedUnixNanos.Store(t.UnixNano())
 }
 
-// AddTestAlert is a helper method used ONLY for testing to inject mock alerts safely.
-func (m *Manager) AddTestAlert(alert gtfs.Alert) {
+// AddAlertForTest is a helper method used ONLY for testing to inject mock alerts safely.
+func (m *Manager) AddAlertForTest(alert gtfs.Alert) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
 	// Initialize the map if it doesn't exist

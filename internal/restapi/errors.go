@@ -13,7 +13,7 @@ import (
 
 // invalidAPIKeyResponse sends a 401 Unauthorized response with the required format
 // for invalid API key errors
-func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter, r *http.Request) {
+func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter) {
 	// Create response with the specific format required
 	response := struct {
 		Code        int    `json:"code"`
@@ -70,7 +70,7 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 }
 
 // validationErrorResponse sends a 400 Bad Request response with field-specific validation errors
-func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, r *http.Request, fieldErrors map[string][]string) {
+func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, _ *http.Request, fieldErrors map[string][]string) {
 	errorText := "validation error"
 	for _, errs := range fieldErrors {
 		if len(errs) > 0 {
