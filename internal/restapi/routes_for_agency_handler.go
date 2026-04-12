@@ -14,6 +14,8 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	includeReferences := r.URL.Query().Get("includeReferences") != "false"
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
@@ -24,7 +26,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if agency == nil {
-		api.sendNull(w, r)
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -34,9 +36,6 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	routesForAgency, limitExceeded := utils.PaginateSlice(routesForAgency, offset, limit)
 	routesList := make([]models.Route, 0, len(routesForAgency))
 
 	for _, route := range routesForAgency {
@@ -53,10 +52,12 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{
-		models.AgencyReferenceFromDatabase(agency),
+	if includeReferences {
+		references.Agencies = []models.AgencyReference{
+			models.AgencyReferenceFromDatabase(agency),
+		}
 	}
 
-	response := models.NewListResponse(routesList, *references, limitExceeded, api.Clock)
+	response := models.NewListResponse(routesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

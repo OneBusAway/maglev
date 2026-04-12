@@ -36,16 +36,15 @@ func TestRouteCreation(t *testing.T) {
 
 func TestRouteJSON(t *testing.T) {
 	route := Route{
-		ID:                "2",
-		AgencyID:          "agency-2",
-		ShortName:         "B",
-		LongName:          "Airport Shuttle",
-		Description:       "Service to the airport",
-		Type:              RouteType(2),
-		URL:               "https://transit.org/routes/2",
-		Color:             "00FF00",
-		TextColor:         "000000",
-		NullSafeShortName: "B",
+		ID:          "2",
+		AgencyID:    "agency-2",
+		ShortName:   "B",
+		LongName:    "Airport Shuttle",
+		Description: "Service to the airport",
+		Type:        RouteType(2),
+		URL:         "https://transit.org/routes/2",
+		Color:       "00FF00",
+		TextColor:   "000000",
 	}
 
 	jsonData, err := json.Marshal(route)
@@ -64,7 +63,6 @@ func TestRouteJSON(t *testing.T) {
 	assert.Equal(t, route.URL, unmarshaledRoute.URL)
 	assert.Equal(t, route.Color, unmarshaledRoute.Color)
 	assert.Equal(t, route.TextColor, unmarshaledRoute.TextColor)
-	assert.Equal(t, route.NullSafeShortName, unmarshaledRoute.NullSafeShortName)
 }
 
 func TestRouteWithEmptyValues(t *testing.T) {
@@ -94,9 +92,10 @@ func TestRouteWithNilValuesJSON(t *testing.T) {
 	jsonStr := string(jsonData)
 	assert.Contains(t, jsonStr, `"id":"3"`)
 	assert.Contains(t, jsonStr, `"agencyId":"agency-3"`)
-	assert.Contains(t, jsonStr, `"shortName":""`)
-	assert.Contains(t, jsonStr, `"longName":""`)
 	assert.Contains(t, jsonStr, `"type":0`)
+	assert.NotContains(t, jsonStr, `"shortName"`)
+	assert.NotContains(t, jsonStr, `"longName"`)
+	assert.NotContains(t, jsonStr, `"nullSafeShortName"`)
 }
 
 func TestRouteDataJSON(t *testing.T) {
