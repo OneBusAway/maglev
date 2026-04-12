@@ -141,7 +141,7 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 
 		// Check if request is allowed
 		if !limiter.Allow() {
-			rl.sendRateLimitExceeded(w, r)
+			rl.sendRateLimitExceeded(w)
 			return
 		}
 
@@ -159,7 +159,7 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 }
 
 // sendRateLimitExceeded sends a 429 Too Many Requests response
-func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *http.Request) {
+func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter) {
 	// Calculate retry-after based on rate limit
 	var retryAfter time.Duration
 	switch rl.rateLimit {

@@ -49,7 +49,7 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 		},
 	}
 
-	manager.SetFeedExpiresAt(time.Now().Add(24 * time.Hour))
+	manager.SetFeedExpiresAtForTest(time.Now().Add(24 * time.Hour))
 
 	// Mark the manager as ready (simulating completed initialization)
 	manager.MarkReady()
@@ -93,7 +93,7 @@ func TestHealthHandlerReturnsExpired(t *testing.T) {
 		},
 	}
 
-	manager.SetFeedExpiresAt(time.Now().Add(-24 * time.Hour))
+	manager.SetFeedExpiresAtForTest(time.Now().Add(-24 * time.Hour))
 
 	manager.MarkReady()
 
@@ -178,7 +178,7 @@ func TestHealthHandlerVerboseMode(t *testing.T) {
 
 	manager.MarkReady()
 	manager.SetStaticLastUpdatedForTest(time.Now().UTC())
-	manager.SetFeedUpdateTime("feed-1", time.Now().UTC())
+	manager.SetFeedUpdateTimeForTest("feed-1", time.Now().UTC())
 
 	app := &app.Application{
 		GtfsManager: manager,

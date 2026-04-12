@@ -321,7 +321,7 @@ func TestStopHandlerWithSituations(t *testing.T) {
 		},
 	}
 
-	api.GtfsManager.AddTestAlert(alert)
+	api.GtfsManager.AddAlertForTest(alert)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+combinedStopID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

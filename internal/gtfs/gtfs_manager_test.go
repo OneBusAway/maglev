@@ -563,7 +563,7 @@ func TestManager_DataFreshnessTracking(t *testing.T) {
 	assert.Equal(t, "UTC", gotStatic.Location().String())
 
 	// Test GetFeedUpdateTimes returns defensive map copy
-	manager.SetFeedUpdateTime("feed-1", now)
+	manager.SetFeedUpdateTimeForTest("feed-1", now)
 	feedTimes := manager.GetFeedUpdateTimes()
 	assert.Contains(t, feedTimes, "feed-1")
 	assert.Equal(t, now, feedTimes["feed-1"])

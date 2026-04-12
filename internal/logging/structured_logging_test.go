@@ -143,34 +143,3 @@ func TestContextLogger(t *testing.T) {
 		logger.Info("test message") // Should not panic
 	})
 }
-
-func TestMigrationHelpers(t *testing.T) {
-	t.Run("ReplaceLogPrint creates equivalent slog call", func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := NewStructuredLogger(&buf, slog.LevelInfo)
-
-		// Simulate replacing log.Printf with structured logging
-		message := "Importing GTFS data took 5s"
-		ReplaceLogPrint(logger, message)
-
-		output := buf.String()
-		assert.Contains(t, output, `"level":"INFO"`)
-		assert.Contains(t, output, message)
-	})
-
-	t.Run("ReplaceLogFatal creates error log instead of fatal", func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := NewStructuredLogger(&buf, slog.LevelError)
-
-		err := assert.AnError
-		result := ReplaceLogFatal(logger, "Unable to create DB", err)
-
-		// Should return the error instead of calling log.Fatal
-		assert.Error(t, result)
-		assert.Contains(t, result.Error(), "Unable to create DB")
-
-		output := buf.String()
-		assert.Contains(t, output, `"level":"ERROR"`)
-		assert.Contains(t, output, `"msg":"Unable to create DB"`)
-	})
-}
