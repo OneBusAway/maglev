@@ -154,7 +154,7 @@ func TestRouteHandlerWithSituations(t *testing.T) {
 		},
 	}
 
-	api.GtfsManager.AddTestAlert(alert)
+	api.GtfsManager.AddAlertForTest(alert)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+combinedRouteID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

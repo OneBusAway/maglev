@@ -34,13 +34,3 @@ func NewFrequencyFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Frequenc
 		ExactTimes: int(dbFreq.ExactTimes),
 	}
 }
-
-// NewFrequency creates a Frequency with explicit values (times already in epoch ms).
-func NewFrequency(startTime, endTime int64, headway, exactTimes int) Frequency {
-	return Frequency{
-		StartTime:  startTime,
-		EndTime:    endTime,
-		Headway:    headway,
-		ExactTimes: exactTimes,
-	}
-}

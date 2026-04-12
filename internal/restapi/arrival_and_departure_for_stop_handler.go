@@ -261,7 +261,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		ArrivalTime:   targetRow.ArrivalTime,
 		DepartureTime: targetRow.DepartureTime,
 		StopSequence:  targetRow.StopSequence,
-		StopHeadsign:  targetRow.StopHeadsign.String,
 	}
 
 	// Set current time

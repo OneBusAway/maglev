@@ -64,21 +64,6 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 	return modelRoutes, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (api *RestAPI) BuildRouteReferencesAsInterface(ctx context.Context, agencyID string, stops []models.Stop) ([]interface{}, error) {
-	routes, err := api.BuildRouteReferences(ctx, agencyID, stops)
-	if err != nil {
-		return nil, err
-	}
-
-	routeRefs := make([]interface{}, len(routes))
-	for i, route := range routes {
-		routeRefs[i] = route
-	}
-
-	return routeRefs, nil
-}
-
 func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 

@@ -61,20 +61,6 @@ func (adc *AdvancedDirectionCalculator) UpdateQueries(queries *gtfsdb.Queries) {
 	adc.directionResults.Clear()
 }
 
-// SetStandardDeviationThreshold sets the standard deviation threshold for direction variance checking.
-// IMPORTANT: This must be called before any concurrent operations begin.
-// Returns an error if called after CalculateStopDirection has been invoked.
-func (adc *AdvancedDirectionCalculator) SetStandardDeviationThreshold(threshold float64) error {
-	if adc.initialized.Load() {
-		return errors.New("SetStandardDeviationThreshold called after concurrent operations have started")
-	}
-	if threshold <= 0 {
-		return errors.New("standard deviation threshold must be greater than zero")
-	}
-	adc.standardDeviationThreshold = threshold
-	return nil
-}
-
 // SetShapeCache is retained exclusively for use by the DirectionPrecomputer during startup.
 // It sets a pre-loaded cache of shape data to avoid thousands of database queries during
 // the precomputation phase, significantly improving startup performance.

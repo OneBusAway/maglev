@@ -88,15 +88,6 @@ func TestNewFrequencyFromDB_OverMidnight(t *testing.T) {
 	assert.Equal(t, expectedEnd, freq.EndTime)
 }
 
-func TestNewFrequency(t *testing.T) {
-	freq := NewFrequency(1705305600000, 1705316400000, 600, 1)
-
-	assert.Equal(t, int64(1705305600000), freq.StartTime)
-	assert.Equal(t, int64(1705316400000), freq.EndTime)
-	assert.Equal(t, 600, freq.Headway)
-	assert.Equal(t, 1, freq.ExactTimes)
-}
-
 func TestFrequencyJSON(t *testing.T) {
 	freq := Frequency{
 		StartTime:   1705305600000,
@@ -145,21 +136,4 @@ func TestFrequencyJSON_NilPointer(t *testing.T) {
 	jsonData, err := json.Marshal(w)
 	require.NoError(t, err)
 	assert.Contains(t, string(jsonData), `"frequency":null`)
-}
-
-func TestFrequencyJSON_NonNilPointer(t *testing.T) {
-	type wrapper struct {
-		Freq *Frequency `json:"frequency"`
-	}
-
-	freq := NewFrequency(1000, 2000, 300, 0)
-	w := wrapper{Freq: &freq}
-	jsonData, err := json.Marshal(w)
-	require.NoError(t, err)
-
-	var result wrapper
-	err = json.Unmarshal(jsonData, &result)
-	require.NoError(t, err)
-	assert.NotNil(t, result.Freq)
-	assert.Equal(t, 300, result.Freq.Headway)
 }

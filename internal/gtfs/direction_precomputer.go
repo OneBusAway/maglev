@@ -37,13 +37,6 @@ func NewDirectionPrecomputer(queries *gtfsdb.Queries, db *sql.DB) *DirectionPrec
 	}
 }
 
-// SetStandardDeviationThreshold sets the standard deviation threshold for the calculator.
-// IMPORTANT: This method is NOT thread-safe and must be called before
-// PrecomputeAllDirections, never concurrently with it.
-func (dp *DirectionPrecomputer) SetStandardDeviationThreshold(threshold float64) error {
-	return dp.calculator.SetStandardDeviationThreshold(threshold)
-}
-
 // PrecomputeAllDirections computes and stores directions for all stops using parallel processing
 func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) error {
 	startTime := time.Now()
@@ -278,16 +271,4 @@ func (dp *DirectionPrecomputer) loadShapeCache(ctx context.Context) (map[string]
 	}
 
 	return shapeCache, nil
-}
-
-// PrecomputeDirectionsAsync runs direction precomputation in a background goroutine
-func (dp *DirectionPrecomputer) PrecomputeDirectionsAsync(ctx context.Context) {
-	go func() {
-		if err := dp.PrecomputeAllDirections(ctx); err != nil {
-			if ctx.Err() == nil {
-				// Only log error if not caused by context cancellation
-				logging.LogError(dp.logger, "Background direction precomputation failed", err)
-			}
-		}
-	}()
 }
