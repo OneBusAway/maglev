@@ -394,7 +394,7 @@ func TestStopsForLocationHandlerWithSituations(t *testing.T) {
 			{Text: "Stop 2042 is closed today", Language: "en"},
 		},
 	}
-	api.GtfsManager.AddTestAlert(mockAlert)
+	api.GtfsManager.AddAlertForTest(mockAlert)
 
 	// Call the API and force it to find Stop 2042 using the query parameter
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")

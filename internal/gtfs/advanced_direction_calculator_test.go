@@ -274,27 +274,6 @@ func TestStatisticalFunctions(t *testing.T) {
 	})
 }
 
-func TestStandardDeviationThreshold(t *testing.T) {
-	calc := NewAdvancedDirectionCalculator(nil)
-	// Test default threshold
-	assert.Equal(t, defaultStandardDeviationThreshold, calc.standardDeviationThreshold)
-
-	// Test setting custom threshold
-	err := calc.SetStandardDeviationThreshold(1.0)
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, calc.standardDeviationThreshold)
-
-	// Test invalid zero threshold
-	err = calc.SetStandardDeviationThreshold(0.0)
-	assert.Error(t, err)
-	assert.Equal(t, 1.0, calc.standardDeviationThreshold) // Should remain unchanged
-
-	// Test invalid negative threshold
-	err = calc.SetStandardDeviationThreshold(-1.0)
-	assert.Error(t, err)
-	assert.Equal(t, 1.0, calc.standardDeviationThreshold) // Should remain unchanged
-}
-
 func TestCalculateStopDirection_WithShapeData(t *testing.T) {
 	ctx := context.Background()
 	// Optimization: Reuse shared DB
@@ -338,8 +317,7 @@ func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
 	calc := NewAdvancedDirectionCalculator(manager.GtfsDB.Queries)
 
 	// Set a very low standard deviation threshold to trigger variance check
-	err := calc.SetStandardDeviationThreshold(0.01)
-	assert.NoError(t, err)
+	calc.standardDeviationThreshold = 0.01
 
 	// Test with a stop that might have multiple trips
 	direction, err := calc.computeFromShapes(ctx, "7000")

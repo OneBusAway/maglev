@@ -48,7 +48,7 @@ func TestMetadataHandler(t *testing.T) {
 	api.GtfsManager.SetStaticLastUpdatedForTest(staticTime)
 
 	// Ensure the map is initialized since we mock the Manager
-	api.GtfsManager.SetFeedUpdateTime("trip_updates", now)
+	api.GtfsManager.SetFeedUpdateTimeForTest("trip_updates", now)
 
 	req, err := http.NewRequest("GET", "/api/v2/metadata.json", nil)
 	if err != nil {

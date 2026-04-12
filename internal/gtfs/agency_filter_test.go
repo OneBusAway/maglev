@@ -379,16 +379,8 @@ func TestAgencyFilterIntegration_NoFilterPassesAll(t *testing.T) {
 // correctly populated from RTFeedConfig.AgencyIDs during manager construction.
 func TestAgencyFilterFeedAgencyFilterPopulation(t *testing.T) {
 	manager := &Manager{
-		realTimeMutex:                  sync.RWMutex{},
-		realTimeTripLookup:             make(map[string]int),
-		realTimeVehicleLookupByTrip:    make(map[string]int),
-		realTimeVehicleLookupByVehicle: make(map[string]int),
-		feedTrips:                      make(map[string][]gtfs.Trip),
-		feedVehicles:                   make(map[string][]gtfs.Vehicle),
-		feedAlerts:                     make(map[string][]gtfs.Alert),
-		feedAgencyFilter:               make(map[string]map[string]bool),
-		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
-		feedVehicleTimestamp:           make(map[string]uint64),
+		realTimeMutex:    sync.RWMutex{},
+		feedAgencyFilter: make(map[string]map[string]bool),
 	}
 
 	// Simulate what InitGTFSManager does for populating feedAgencyFilter
