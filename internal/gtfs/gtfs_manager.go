@@ -44,7 +44,6 @@ type RegionBounds struct {
 // Never acquire staticMutex while holding realTimeMutex.
 // Never acquire staticMutex while holding activeServiceIDsCacheMutex.
 type Manager struct {
-	gtfsData                       *gtfs.Static
 	GtfsDB                         *gtfsdb.Client
 	lastUpdated                    time.Time
 	lastUpdatedUnixNanos           atomic.Int64 // Lock-free freshness tracking
@@ -57,10 +56,9 @@ type Manager struct {
 	realTimeVehicleLookupByVehicle map[string]int
 	duplicatedVehicleByRoute       map[string][]gtfs.Vehicle
 	alertIdx                       alertIndex
-	routesMap                      map[string]*gtfs.Route
 	frequencyTripIDs               map[string]struct{}
 	staticUpdateMutex              sync.Mutex   // Protects against concurrent ForceUpdate calls
-	staticMutex                    sync.RWMutex // Protects GtfsDB, gtfsData, and lastUpdated
+	staticMutex                    sync.RWMutex // Protects GtfsDB and lastUpdated
 	config                         Config
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
@@ -285,6 +283,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 
 	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
+	manager.PrintStatistics()
 
 	// Startup validation and logging for agency filtering
 	manager.staticMutex.RLock()
@@ -407,12 +406,6 @@ func (manager *Manager) GetTrips(ctx context.Context, limit int64) ([]gtfsdb.Tri
 	return manager.GtfsDB.Queries.ListTripsWithLimit(ctx, limit)
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) GetStaticData() *gtfs.Static {
-	return manager.gtfsData
-}
-
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetStops(ctx context.Context) ([]gtfsdb.Stop, error) {
 	return manager.GtfsDB.Queries.ListStops(ctx)
 }
@@ -434,15 +427,6 @@ func (manager *Manager) FindAgency(ctx context.Context, id string) (*gtfsdb.Agen
 	return &agency, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) FindRoute(id string) *gtfs.Route {
-	if route, ok := manager.routesMap[id]; ok {
-		return route
-	}
-	return nil
-}
-
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetRoutes(ctx context.Context) ([]gtfsdb.Route, error) {
 	return manager.GtfsDB.Queries.ListRoutes(ctx)
 }
@@ -882,17 +866,29 @@ func (manager *Manager) GetActiveServiceIDsForDateCached(ctx context.Context, da
 	return out, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) PrintStatistics() {
+	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
+		return
+	}
+
+	ctx := context.Background()
 	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+
+	countOrZero := func(n int64, err error) int64 {
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+
 	logging.LogOperation(logger, "gtfs_statistics",
 		slog.String("source", manager.config.GtfsURL),
 		slog.Bool("local_file", manager.isLocalFile),
 		slog.Time("last_updated", manager.lastUpdated),
-		slog.Int("stops", len(manager.gtfsData.Stops)),
-		slog.Int("routes", len(manager.gtfsData.Routes)),
-		slog.Int("trips", len(manager.gtfsData.Trips)),
-		slog.Int("agencies", len(manager.gtfsData.Agencies)))
+		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
+		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),
+		slog.Int64("trips", countOrZero(manager.GtfsDB.Queries.CountTrips(ctx))),
+		slog.Int64("agencies", countOrZero(manager.GtfsDB.Queries.CountAgencies(ctx))))
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.

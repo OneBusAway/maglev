@@ -1,33 +1,38 @@
 package gtfs
 
 import (
+	"context"
+	"database/sql"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/gtfsdb"
 )
 
 func (m *Manager) MockAddAgency(id, name string) {
-	for _, a := range m.gtfsData.Agencies {
-		if a.Id == id {
-			return
-		}
+	ctx := context.Background()
+	// If the agency already exists preserve it so
+	// real fields like Timezone are not clobbered.
+	if _, err := m.GtfsDB.Queries.GetAgency(ctx, id); err == nil {
+		return
 	}
-	m.gtfsData.Agencies = append(m.gtfsData.Agencies, gtfs.Agency{
-		Id:   id,
-		Name: name,
+	_, _ = m.GtfsDB.Queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       id,
+		Name:     name,
+		Url:      "",
+		Timezone: "",
 	})
 }
 
 func (m *Manager) MockAddRoute(id, agencyID, name string) {
-	for _, r := range m.gtfsData.Routes {
-		if r.Id == id {
-			return
-		}
+	ctx := context.Background()
+	if _, err := m.GtfsDB.Queries.GetRoute(ctx, id); err == nil {
+		return
 	}
-	m.gtfsData.Routes = append(m.gtfsData.Routes, gtfs.Route{
-		Id:        id,
-		Agency:    &gtfs.Agency{Id: agencyID},
-		ShortName: name,
+	_, _ = m.GtfsDB.Queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID:        id,
+		AgencyID:  agencyID,
+		ShortName: sql.NullString{String: name, Valid: true},
 	})
 }
 func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
@@ -116,14 +121,11 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 }
 
 func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
-	for _, t := range m.gtfsData.Trips {
-		if t.ID == tripID {
-			return
-		}
-	}
-	m.gtfsData.Trips = append(m.gtfsData.Trips, gtfs.ScheduledTrip{
-		ID:    tripID,
-		Route: &gtfs.Route{Id: routeID},
+	ctx := context.Background()
+	_, _ = m.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   routeID,
+		ServiceID: "",
 	})
 }
 

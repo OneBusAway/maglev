@@ -39,7 +39,6 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 		t.Skip("No stops available for testing")
 	}
 
-
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 	serviceDate := time.Now().Unix() * 1000
@@ -141,7 +140,6 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
-
 
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
@@ -260,7 +258,6 @@ func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {
 		t.Skip("No stops available for testing")
 	}
 
-
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 	serviceDate := time.Now().Unix() * 1000
@@ -295,7 +292,6 @@ func TestArrivalAndDepartureForStopHandlerWithMinutesParameters(t *testing.T) {
 	if len(stops) == 0 {
 		t.Skip("No stops available for testing")
 	}
-
 
 	stopID := utils.FormCombinedID(agency.ID, stops[0].ID)
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
