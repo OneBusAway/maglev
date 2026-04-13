@@ -1,11 +1,12 @@
 # Detect OS (MSYS2 sets MSYSTEM; prefer Unix syntax over Windows CMD syntax)
-ifneq ($(MSYSTEM),)
-    SET_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_MATH_FUNCTIONS"
-else ifeq ($(OS),Windows_NT)
-    SET_ENV := set CGO_ENABLED=1 & set CGO_CFLAGS=-DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_MATH_FUNCTIONS &
+ifeq ($(OS),Windows_NT)
+    SET_ENV := set CGO_ENABLED=1
 else
-    SET_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_MATH_FUNCTIONS"
+    SET_ENV := CGO_ENABLED=1
 endif
+
+BUILD_TAGS := sqlite_fts5 sqlite_math_functions
+PURE_TAGS := purego
 
 DOCKER_IMAGE := opentransitsoftwarefoundation/maglev
 
@@ -44,16 +45,16 @@ run: build
 	bin/maglev -f config.json
 
 build: gtfstidy
-	$(SET_ENV) go build -tags "sqlite_fts5" $(LDFLAGS) -o bin/maglev ./cmd/api
+	$(SET_ENV) go build -tags "$(BUILD_TAGS)" $(LDFLAGS) -o bin/maglev ./cmd/api
 
 build-pure: gtfstidy
-	CGO_ENABLED=0 go build -tags "purego" $(LDFLAGS) -o bin/maglev ./cmd/api
+	CGO_ENABLED=0 go build -tags "$(PURE_TAGS)" $(LDFLAGS) -o bin/maglev ./cmd/api
 
 build-debug: gtfstidy
-	$(SET_ENV) go build -tags "sqlite_fts5" $(LDFLAGS) -gcflags "all=-N -l" -o bin/maglev ./cmd/api
+	$(SET_ENV) go build -tags "$(BUILD_TAGS)" $(LDFLAGS) -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 
 gtfstidy:
-	$(SET_ENV) go build -tags "sqlite_fts5" -o bin/gtfstidy github.com/patrickbr/gtfstidy
+	$(SET_ENV) go build -tags "$(BUILD_TAGS)" -o bin/gtfstidy github.com/patrickbr/gtfstidy
 
 clean:
 	go clean
@@ -67,36 +68,36 @@ check-k6:
 	@which k6 > /dev/null 2>&1 || (echo "Error: k6 is not installed. Install with: https://grafana.com/docs/k6/latest/set-up/install-k6/" && exit 1)
 
 coverage-report: check-jq
-	$(SET_ENV) go test -tags "sqlite_fts5" ./... -cover > /tmp/go-coverage.txt 2>&1 || (cat /tmp/go-coverage.txt && exit 1)
+	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./... -cover > /tmp/go-coverage.txt 2>&1 || (cat /tmp/go-coverage.txt && exit 1)
 	grep '^ok' /tmp/go-coverage.txt | awk '{print $$2, $$5}' | jq -R 'split(" ") | {pkg: .[0], coverage: .[1]}'
 
 coverage:
-	$(SET_ENV) go test -tags "sqlite_fts5" -coverprofile=coverage.out ./...
+	$(SET_ENV) go test -tags "$(BUILD_TAGS)" -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
 check-golangci-lint:
 	@which golangci-lint > /dev/null 2>&1 || (echo "Error: golangci-lint is not installed. Please install it by running: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
 
 lint: check-golangci-lint
-	golangci-lint run --build-tags "sqlite_fts5"
+	golangci-lint run --build-tags "$(BUILD_TAGS)"
 
 fmt:
 	go fmt ./...
 
 test:
-	$(SET_ENV) go test -tags "sqlite_fts5" ./...
+	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./...
 
 test-latency:
-	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -run "TestQueryLatency|TestExplainQueryPlans|TestConnectionPoolTuning" -v -count=1 -timeout 300s
+	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./gtfsdb/ -run "TestQueryLatency|TestExplainQueryPlans|TestConnectionPoolTuning" -v -count=1 -timeout 300s
 
 bench-sqlite-all:
-	$(SET_ENV) go test -tags "sqlite_fts5" ./gtfsdb/ -bench=. -benchmem -benchtime=5s -run=^$
+	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./gtfsdb/ -bench=. -benchmem -benchtime=5s -run=^$
 
 bench-sqlite-perftest:
-	$(SET_ENV) go test -tags "sqlite_fts5 perftest" ./gtfsdb/ -bench=BenchmarkLargeDataset -benchmem -benchtime=10s -run=^$
+	$(SET_ENV) go test -tags "$(BUILD_TAGS) perftest" ./gtfsdb/ -bench=BenchmarkLargeDataset -benchmem -benchtime=10s -run=^$
 
 test-pure:
-	CGO_ENABLED=0 go test -tags "purego" ./...
+	CGO_ENABLED=0 go test -tags "$(PURE_TAGS)" ./...
 
 models:
 	go tool sqlc generate -f gtfsdb/sqlc.yml
