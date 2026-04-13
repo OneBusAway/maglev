@@ -16,7 +16,6 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
@@ -675,12 +674,36 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 }
 
 func TestVehiclesForAgency_RouteIDUsesCombinedID(t *testing.T) {
-	agencyID := "25"
-	routeID := "1"
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	expected := utils.FormCombinedID(agencyID, routeID)
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].ID
 
-	if expected != "25_1" {
-		t.Fatalf("expected combined ID 25_1, got %s", expected)
-	}
+	trip := mustGetTrip(t, api)
+	rawRouteID := trip.RouteID
+	tripID := trip.ID
+
+	api.GtfsManager.MockAddVehicleWithOptions("v_route_id_test", tripID, rawRouteID, gtfs.MockVehicleOptions{})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+
+	tripRefs, ok := refs["trips"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, tripRefs, "expected at least one trip reference — mock vehicle was not returned by VehiclesForAgencyID")
+
+	tripRef := tripRefs[0].(map[string]interface{})
+	routeID, ok := tripRef["routeId"].(string)
+	require.True(t, ok, "routeId must be a string")
+
+	expectedRouteID := agencyID + "_" + rawRouteID
+	assert.Equal(t, expectedRouteID, routeID, "routeId in trip reference must be in combined agencyID_routeID format")
 }
