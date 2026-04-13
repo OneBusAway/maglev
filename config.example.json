@@ -14,7 +14,6 @@
   "rate-limit": 100,
   "log-level": "info",
   "log-format": "text",
-  "_comment_slow_query": "Set env var MAGLEV_SLOW_QUERY_THRESHOLD_MS=<ms> to log queries slower than that threshold (0 = disabled).",
   "gtfs-static-feed": {
     "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
     "enable-gtfs-tidy": false
