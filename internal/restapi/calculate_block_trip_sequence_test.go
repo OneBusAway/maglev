@@ -26,7 +26,7 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 
 	// Monday within the RABA dataset's active service period (calendar range covers this date)
 	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
-
+	// Find a block that has multiple active trips so we can verify sequencing
 	type blockInfo struct {
 		tripIDs []string
 	}
