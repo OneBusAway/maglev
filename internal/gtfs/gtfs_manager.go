@@ -283,6 +283,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 
 	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
+	manager.PrintStatistics()
 
 	// Startup validation and logging for agency filtering
 	manager.staticMutex.RLock()
@@ -897,6 +898,10 @@ func (manager *Manager) GetActiveServiceIDsForDateCached(ctx context.Context, da
 }
 
 func (manager *Manager) PrintStatistics() {
+	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
+		return
+	}
+
 	ctx := context.Background()
 	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 

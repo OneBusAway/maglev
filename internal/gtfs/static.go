@@ -398,6 +398,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		slog.String("source", manager.config.GtfsURL),
 		slog.String("db_path", finalDBPath))
 
+	manager.PrintStatistics()
 	manager.parseAndLogFeedExpiryLocked(ctx, logger)
 
 	return nil
