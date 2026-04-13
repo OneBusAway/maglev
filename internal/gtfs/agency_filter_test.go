@@ -216,7 +216,7 @@ func TestAlertMatchesAgency(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := alertMatchesAgency(ctx, manager, tt.alert, tt.allowed)
+			got := alertMatchesAgencyLocked(ctx, manager, tt.alert, tt.allowed)
 			assert.Equal(t, tt.want, got)
 		})
 	}

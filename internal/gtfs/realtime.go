@@ -514,6 +514,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 // allowed agencies. Trips with an unresolvable route are dropped.
 func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool) []gtfs.Trip {
 	ctx := context.Background()
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+
 	filtered := make([]gtfs.Trip, 0, len(trips))
 	for _, trip := range trips {
 		if trip.ID.RouteID == "" {
@@ -532,6 +535,9 @@ func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[strin
 // one of the allowed agencies. Vehicles without a trip or unresolvable route are dropped.
 func (manager *Manager) filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed map[string]bool) []gtfs.Vehicle {
 	ctx := context.Background()
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+
 	filtered := make([]gtfs.Vehicle, 0, len(vehicles))
 	for _, v := range vehicles {
 		if v.Trip == nil || v.Trip.ID.RouteID == "" {
@@ -549,16 +555,19 @@ func (manager *Manager) filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed 
 // filterAlertsByAgency returns only alerts referencing an allowed agency.
 func (manager *Manager) filterAlertsByAgency(alerts []gtfs.Alert, allowed map[string]bool) []gtfs.Alert {
 	ctx := context.Background()
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+
 	filtered := make([]gtfs.Alert, 0, len(alerts))
 	for _, alert := range alerts {
-		if alertMatchesAgency(ctx, manager, alert, allowed) {
+		if alertMatchesAgencyLocked(ctx, manager, alert, allowed) {
 			filtered = append(filtered, alert)
 		}
 	}
 	return filtered
 }
 
-func alertMatchesAgency(ctx context.Context, manager *Manager, alert gtfs.Alert, allowed map[string]bool) bool {
+func alertMatchesAgencyLocked(ctx context.Context, manager *Manager, alert gtfs.Alert, allowed map[string]bool) bool {
 	// NOTE: stop-only InformedEntities are not resolved to agencies.
 	// Alerts referencing only stop IDs will be dropped when agency filtering is active.
 	for _, entity := range alert.InformedEntities {
