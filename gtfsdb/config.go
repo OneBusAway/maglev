@@ -2,7 +2,6 @@ package gtfsdb
 
 import (
 	"fmt"
-	"time"
 
 	"maglev.onebusaway.org/internal/appconf"
 )
@@ -26,7 +25,7 @@ type Config struct {
 // DBQueryMetricsRecorder is a minimal abstraction used to emit per-query metrics
 // without coupling gtfsdb to a specific metrics implementation.
 type DBQueryMetricsRecorder interface {
-	RecordDBQuery(queryName, op string, err error, duration time.Duration)
+	RecordDBQuery(queryName, op string, err error)
 }
 
 func NewConfig(dbPath string, env appconf.Environment, verbose bool) Config {
