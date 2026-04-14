@@ -672,3 +672,38 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 		assert.Len(t, vehiclesList, 0)
 	}
 }
+
+func TestVehiclesForAgency_RouteIDUsesCombinedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].ID
+
+	trip := mustGetTrip(t, api)
+	rawRouteID := trip.RouteID
+	tripID := trip.ID
+
+	api.GtfsManager.MockAddVehicleWithOptions("v_route_id_test", tripID, rawRouteID, gtfs.MockVehicleOptions{})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+
+	tripRefs, ok := refs["trips"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, tripRefs, "expected at least one trip reference — mock vehicle was not returned by VehiclesForAgencyID")
+
+	tripRef := tripRefs[0].(map[string]interface{})
+	routeID, ok := tripRef["routeId"].(string)
+	require.True(t, ok, "routeId must be a string")
+
+	expectedRouteID := agencyID + "_" + rawRouteID
+	assert.Equal(t, expectedRouteID, routeID, "routeId in trip reference must be in combined agencyID_routeID format")
+}
