@@ -281,9 +281,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	fetchedTrips = fetchedTrips[:n]
 
 	tripAgencyMap := make(map[string]string)
-	for _, trip := range fetchedTrips {
-		if route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID); err == nil {
-			tripAgencyMap[trip.ID] = route.AgencyID
+	if len(fetchedTrips) > 0 {
+		if route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID); err == nil {
+			for _, trip := range fetchedTrips {
+				tripAgencyMap[trip.ID] = route.AgencyID
+			}
 		}
 	}
 
