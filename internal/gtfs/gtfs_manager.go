@@ -603,8 +603,11 @@ func (manager *Manager) GetRoutesForLocation(
 	return routes, limitExceeded
 }
 
-// queryRouteswithinBounds retrieves all routes serving stops within the given geographic bounds
+// queryRoutesInBounds retrieves all routes serving stops within the given geographic bounds
 // from the database's stops_rtree spatial index.
+// Despite the query's name, this doesn't actually check "Active" stops beyond
+// checking that the stop has at least one stop_time. The corresponding GetStopsForLocation
+// checks active service dates as well.
 func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.CoordinateBounds,
 	lat, lon float64,
 	maxCount int,
