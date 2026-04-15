@@ -153,7 +153,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, loc)
 		serviceDateStr := targetDate.Format("20060102")
 
-		activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, serviceDateStr)
+		activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 		if err != nil {
 			api.Logger.Warn("failed to query active service IDs",
 				slog.String("date", serviceDateStr),
