@@ -23,13 +23,13 @@ func NewAgencyCoverage(agencyID string, lat, latSpan, lon, lonSpan float64) Agen
 }
 
 type AgencyReference struct {
-	Disclaimer     string `json:"disclaimer"`
-	Email          string `json:"email"`
-	FareUrl        string `json:"fareUrl"`
+	Disclaimer     string `json:"disclaimer,omitempty"`
+	Email          string `json:"email,omitempty"`
+	FareUrl        string `json:"fareUrl,omitempty"`
 	ID             string `json:"id"`
-	Lang           string `json:"lang"`
+	Lang           string `json:"lang,omitempty"`
 	Name           string `json:"name"`
-	Phone          string `json:"phone"`
+	Phone          string `json:"phone,omitempty"`
 	PrivateService bool   `json:"privateService"`
 	Timezone       string `json:"timezone"`
 	URL            string `json:"url"`

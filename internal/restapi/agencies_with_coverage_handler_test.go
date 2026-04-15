@@ -52,12 +52,12 @@ func TestAgenciesWithCoverageHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, "America/Los_Angeles", agencyRef["timezone"])
 	assert.Equal(t, "en", agencyRef["lang"])
 	assert.Equal(t, "530-241-2877", agencyRef["phone"])
-	assert.Equal(t, "", agencyRef["email"])
-	assert.Equal(t, "", agencyRef["fareUrl"])
-	assert.Equal(t, "", agencyRef["disclaimer"])
+	assert.Nil(t, agencyRef["email"])
+	assert.Nil(t, agencyRef["fareUrl"])
+	assert.Nil(t, agencyRef["disclaimer"])
 	assert.False(t, agencyRef["privateService"].(bool))
-	// Ensure no extra fields
-	assert.Len(t, agencyRef, 10)
+	// Required fields (id, name, url, timezone, privateService) plus present optional fields (lang, phone)
+	assert.Len(t, agencyRef, 7)
 
 	assert.Empty(t, refs["routes"])
 	assert.Empty(t, refs["situations"])

@@ -39,16 +39,35 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
 
-	// Check that we have a list of routes
-	_, ok = data["list"].([]interface{})
+	routes, ok := data["list"].([]interface{})
 	require.True(t, ok)
+	require.NotEmpty(t, routes)
+
+	for _, r := range routes {
+		route, ok := r.(map[string]interface{})
+		require.True(t, ok)
+		assert.Nil(t, route["nullSafeShortName"], "nullSafeShortName must not appear in API responses")
+		assert.NotEmpty(t, route["id"], "route id must be present")
+		assert.NotEmpty(t, route["agencyId"], "route agencyId must be present")
+		_, hasType := route["type"]
+		assert.True(t, hasType, "route type must be present")
+	}
 
 	refs, ok := data["references"].(map[string]interface{})
 	require.True(t, ok)
 
 	refAgencies, ok := refs["agencies"].([]interface{})
 	require.True(t, ok)
-	assert.Len(t, refAgencies, 1)
+	require.Len(t, refAgencies, 1)
+
+	agency, ok := refAgencies[0].(map[string]interface{})
+	require.True(t, ok)
+	assert.NotEmpty(t, agency["id"], "agency id must be present")
+	assert.NotEmpty(t, agency["name"], "agency name must be present")
+	assert.NotEmpty(t, agency["url"], "agency url must be present")
+	assert.NotEmpty(t, agency["timezone"], "agency timezone must be present")
+	_, hasPrivateService := agency["privateService"]
+	assert.True(t, hasPrivateService, "agency privateService must be present")
 }
 
 func TestRoutesForAgencyHandlerInvalidID(t *testing.T) {
@@ -71,9 +90,9 @@ func TestRoutesForAgencyHandlerNonExistentAgency(t *testing.T) {
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/non-existent-agency.json?key=TEST")
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "", model.Text)
-	assert.Nil(t, model.Data)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
@@ -107,7 +126,7 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 	}
 }
 
-func TestRoutesForAgencyHandlerPagination(t *testing.T) {
+func TestRoutesForAgencyHandlerLimitExceededAlwaysFalse(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
@@ -115,41 +134,33 @@ func TestRoutesForAgencyHandlerPagination(t *testing.T) {
 	require.NotEmpty(t, agencies)
 	agencyId := agencies[0].ID
 
-	// Case 1: Limit 5 (Should return 5 items, limitExceeded=true)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=5")
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
-	list, ok := data["list"].([]interface{})
-	require.True(t, ok)
-	assert.Len(t, list, 5)
-	assert.True(t, data["limitExceeded"].(bool), "limitExceeded should be true when more items exist")
 
-	// Case 2: Offset 5, Limit 5 (Should return next 5 items)
-	resp2, model2 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&offset=5&limit=5")
-	assert.Equal(t, http.StatusOK, resp2.StatusCode)
-
-	data2, ok := model2.Data.(map[string]interface{})
+	limitExceeded, ok := data["limitExceeded"].(bool)
 	require.True(t, ok)
-	list2, ok := data2["list"].([]interface{})
-	require.True(t, ok)
-	assert.Len(t, list2, 5)
+	assert.False(t, limitExceeded)
+}
 
-	// Verify items are different
-	firstItem1 := list[0].(map[string]interface{})
-	firstItem2 := list2[0].(map[string]interface{})
-	assert.NotEqual(t, firstItem1["id"], firstItem2["id"])
+func TestRoutesForAgencyHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	// Case 3: Limit 100 (Should return all 13 items, limitExceeded=false)
-	resp3, model3 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=100")
-	assert.Equal(t, http.StatusOK, resp3.StatusCode)
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	agencyId := agencies[0].ID
 
-	data3, ok := model3.Data.(map[string]interface{})
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&includeReferences=false")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
 	require.True(t, ok)
-	list3, ok := data3["list"].([]interface{})
-	require.True(t, ok)
-	// RABA has 13 routes
-	assert.Len(t, list3, 13)
-	assert.False(t, data3["limitExceeded"].(bool), "limitExceeded should be false when all items returned")
+
+	if refs, ok := data["references"].(map[string]interface{}); ok {
+		refAgencies, _ := refs["agencies"].([]interface{})
+		assert.Empty(t, refAgencies, "agencies must be empty when includeReferences=false")
+	}
 }

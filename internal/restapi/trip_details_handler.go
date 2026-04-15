@@ -532,16 +532,15 @@ func (api *RestAPI) BuildRouteReference(ctx context.Context, agencyID string, st
 		}
 
 		routeModel := models.Route{
-			ID:                utils.FormCombinedID(agencyID, route.ID),
-			AgencyID:          agencyID,
-			ShortName:         route.ShortName.String,
-			LongName:          route.LongName.String,
-			Description:       route.Desc.String,
-			Type:              models.RouteType(route.Type),
-			URL:               route.Url.String,
-			Color:             route.Color.String,
-			TextColor:         route.TextColor.String,
-			NullSafeShortName: route.ShortName.String,
+			ID:          utils.FormCombinedID(agencyID, route.ID),
+			AgencyID:    agencyID,
+			ShortName:   route.ShortName.String,
+			LongName:    route.LongName.String,
+			Description: route.Desc.String,
+			Type:        models.RouteType(route.Type),
+			URL:         route.Url.String,
+			Color:       route.Color.String,
+			TextColor:   route.TextColor.String,
 		}
 		modelRoutes = append(modelRoutes, routeModel)
 	}

@@ -50,14 +50,22 @@ func TestRouteHandlerEndToEnd(t *testing.T) {
 	entry, ok := data["entry"].(map[string]interface{})
 	assert.True(t, ok)
 
+	assertOptional := func(expected string, got interface{}) {
+		if expected == "" {
+			assert.Nil(t, got)
+		} else {
+			assert.Equal(t, expected, got)
+		}
+	}
+
 	assert.Equal(t, routeID, entry["id"])
 	assert.Equal(t, routes[0].AgencyID, entry["agencyId"])
-	assert.Equal(t, routes[0].ShortName.String, entry["shortName"])
-	assert.Equal(t, routes[0].LongName.String, entry["longName"])
-	assert.Equal(t, routes[0].Desc.String, entry["description"])
-	assert.Equal(t, routes[0].Url.String, entry["url"])
-	assert.Equal(t, routes[0].Color.String, entry["color"])
-	assert.Equal(t, routes[0].TextColor.String, entry["textColor"])
+	assertOptional(routes[0].ShortName.String, entry["shortName"])
+	assertOptional(routes[0].LongName.String, entry["longName"])
+	assertOptional(routes[0].Desc.String, entry["description"])
+	assertOptional(routes[0].Url.String, entry["url"])
+	assertOptional(routes[0].Color.String, entry["color"])
+	assertOptional(routes[0].TextColor.String, entry["textColor"])
 	if typeVal, typeOk := entry["type"].(float64); typeOk {
 		assert.Equal(t, int(routes[0].Type), int(typeVal))
 	} else {

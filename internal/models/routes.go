@@ -4,15 +4,15 @@ type RouteType int
 
 type Route struct {
 	AgencyID          string    `json:"agencyId"`
-	Color             string    `json:"color"`
-	Description       string    `json:"description"`
+	Color             string    `json:"color,omitempty"`
+	Description       string    `json:"description,omitempty"`
 	ID                string    `json:"id"`
-	LongName          string    `json:"longName"`
-	NullSafeShortName string    `json:"nullSafeShortName"`
-	ShortName         string    `json:"shortName"`
-	TextColor         string    `json:"textColor"`
+	LongName          string    `json:"longName,omitempty"`
+	NullSafeShortName string    `json:"-"`
+	ShortName         string    `json:"shortName,omitempty"`
+	TextColor         string    `json:"textColor,omitempty"`
 	Type              RouteType `json:"type"`
-	URL               string    `json:"url"`
+	URL               string    `json:"url,omitempty"`
 }
 
 func NewRoute(id, agencyID, shortName, longName, description string, routeType RouteType, url, color, textColor string) Route {
