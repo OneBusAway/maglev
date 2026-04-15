@@ -97,23 +97,27 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 }
 
 // checkIfOutOfBounds returns true if the user's search area is completely
-// outside the transit agency's region bounds (derived from shape data).
+// outside every agency's region bounds.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
-	regionLat, regionLon, regionLatSpan, regionLonSpan := api.GtfsManager.GetRegionBounds()
-
-	// returns false if there exists only one point
-	if regionLatSpan == 0 && regionLonSpan == 0 {
+	boundsMap := api.GtfsManager.GetRegionBounds()
+	if len(boundsMap) == 0 {
 		return false
 	}
 
-	innerBounds := utils.CalculateBounds(lat, lon, radius)
-
+	var innerBounds utils.CoordinateBounds
 	if latSpan > 0 && lonSpan > 0 {
 		innerBounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
+	} else {
+		innerBounds = utils.CalculateBounds(lat, lon, radius)
 	}
 
-	outerBounds := utils.CalculateBoundsFromSpan(regionLat, regionLon, regionLatSpan/2, regionLonSpan/2)
+	for _, region := range boundsMap {
+		outerBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
+		if !utils.IsOutOfBounds(innerBounds, outerBounds) {
+			return false
+		}
+	}
 
-	return utils.IsOutOfBounds(innerBounds, outerBounds)
+	return true
 }

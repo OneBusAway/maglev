@@ -1,67 +1,46 @@
 package gtfs
 
-import "github.com/OneBusAway/go-gtfs"
+import (
+	"context"
+	"math"
 
-// ComputeRegionBounds calculates the geographic boundaries of the GTFS region
-// from all shape points, falling back to stops if no shapes exist.
-func ComputeRegionBounds(shapes []gtfs.Shape, stops []gtfs.Stop) *RegionBounds {
-	if len(shapes) == 0 && len(stops) == 0 {
+	"maglev.onebusaway.org/gtfsdb"
+)
+
+// roundTo7 rounds a float64 to 7 decimal places (~1.1cm precision, plenty
+// for region-level bounding boxes).
+func roundTo7(v float64) float64 {
+	return math.Round(v*1e7) / 1e7
+}
+
+// computeRegionBounds calculates the geographic boundaries per agency.
+func computeRegionBounds(ctx context.Context, gtfsDB *gtfsdb.Client) map[string]*RegionBounds {
+	rows, err := gtfsDB.Queries.GetStopBoundsPerAgency(ctx)
+	if err != nil || len(rows) == 0 {
 		return nil
 	}
 
-	var minLat, maxLat, minLon, maxLon float64
-	first := true
-
-	updateBounds := func(lat, lon float64) {
-		if first {
-			minLat = lat
-			maxLat = lat
-			minLon = lon
-			maxLon = lon
-			first = false
-			return
-		}
-		if lat < minLat {
-			minLat = lat
-		}
-		if lat > maxLat {
-			maxLat = lat
-		}
-		if lon < minLon {
-			minLon = lon
-		}
-		if lon > maxLon {
-			maxLon = lon
+	result := make(map[string]*RegionBounds, len(rows))
+	for _, row := range rows {
+		result[row.AgencyID] = &RegionBounds{
+			Lat:     roundTo7((row.MinLat + row.MaxLat) / 2),
+			Lon:     roundTo7((row.MinLon + row.MaxLon) / 2),
+			LatSpan: roundTo7(row.MaxLat - row.MinLat),
+			LonSpan: roundTo7(row.MaxLon - row.MinLon),
 		}
 	}
 
-	if len(shapes) > 0 {
-		for _, shape := range shapes {
-			for _, point := range shape.Points {
-				updateBounds(point.Latitude, point.Longitude)
-			}
-		}
-	} else {
-		for _, stop := range stops {
-			if stop.Latitude == nil || stop.Longitude == nil {
-				continue
-			}
-			updateBounds(*stop.Latitude, *stop.Longitude)
-		}
-	}
-
-	return &RegionBounds{
-		Lat:     (minLat + maxLat) / 2,
-		Lon:     (minLon + maxLon) / 2,
-		LatSpan: maxLat - minLat,
-		LonSpan: maxLon - minLon,
-	}
+	return result
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (manager *Manager) GetRegionBounds() (lat, lon, latSpan, lonSpan float64) {
+func (manager *Manager) GetRegionBounds() map[string]RegionBounds {
 	if manager.regionBounds == nil {
-		return 0, 0, 0, 0
+		return nil
 	}
-	return manager.regionBounds.Lat, manager.regionBounds.Lon, manager.regionBounds.LatSpan, manager.regionBounds.LonSpan
+	result := make(map[string]RegionBounds, len(manager.regionBounds))
+	for k, v := range manager.regionBounds {
+		result[k] = *v
+	}
+	return result
 }
