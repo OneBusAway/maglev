@@ -90,7 +90,7 @@ func TestTripJSON(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Ensure JSON contains correct field name
-	var m map[string]interface{}
+	var m map[string]any
 	err = json.Unmarshal(jsonData, &m)
 	assert.NoError(t, err)
 

@@ -80,11 +80,11 @@ func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, _ *http.Reque
 	}
 
 	response := struct {
-		Code        int         `json:"code"`
-		CurrentTime int64       `json:"currentTime"`
-		Text        string      `json:"text"`
-		Version     int         `json:"version"`
-		Data        interface{} `json:"data"`
+		Code        int    `json:"code"`
+		CurrentTime int64  `json:"currentTime"`
+		Text        string `json:"text"`
+		Version     int    `json:"version"`
+		Data        any    `json:"data"`
 	}{
 		Code:        http.StatusBadRequest,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),

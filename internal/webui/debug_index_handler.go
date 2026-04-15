@@ -19,7 +19,7 @@ type debugData struct {
 	Pre   string
 }
 
-func writeDebugData(w http.ResponseWriter, title string, data interface{}) {
+func writeDebugData(w http.ResponseWriter, title string, data any) {
 	content := spew.Sdump(data)
 	w.Header().Set("Content-Type", "text/html")
 	tmpl, err := template.ParseFS(templateFS, "debug_index.html")
@@ -50,7 +50,7 @@ func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	queries := webUI.GtfsManager.GtfsDB.Queries
 
-	var data interface{}
+	var data any
 	var title string
 
 	var err error

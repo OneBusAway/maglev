@@ -95,7 +95,7 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 
 	// Fall back to computing from shapes, protected by singleflight
 	// This ensures concurrent requests for the SAME stopID don't hit the DB multiple times.
-	v, _, _ := adc.requestGroup.Do(stopID, func() (interface{}, error) {
+	v, _, _ := adc.requestGroup.Do(stopID, func() (any, error) {
 		// Double-check cache inside the singleflight in case another goroutine just finished it
 		if cached, ok := adc.directionResults.Load(stopID); ok {
 			return cached.(string), nil

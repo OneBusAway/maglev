@@ -49,11 +49,11 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, data)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, stopID, entry["id"])
 	assert.Equal(t, stops[0].Name.String, entry["name"])
@@ -64,22 +64,22 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 
 	assert.Contains(t, entry, "direction", "direction field should exist")
 
-	routeIds, ok := entry["routeIds"].([]interface{})
+	routeIds, ok := entry["routeIds"].([]any)
 	assert.True(t, ok, "routeIds should exist and be an array")
 	assert.NotEmpty(t, routeIds, "routeIds should not be empty")
 
-	staticRouteIds, ok := entry["staticRouteIds"].([]interface{})
+	staticRouteIds, ok := entry["staticRouteIds"].([]any)
 	assert.True(t, ok, "staticRouteIds should exist and be an array")
 	assert.NotEmpty(t, staticRouteIds, "staticRouteIds should not be empty")
 
 	assert.Equal(t, len(routeIds), len(staticRouteIds), "routeIds and staticRouteIds should have same length")
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 
 	assert.True(t, ok, "References section should exist")
 	assert.NotNil(t, references, "References should not be nil")
 
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok, "Routes section should exist in references")
 	assert.Equal(t, len(routeIds), len(routes), "Number of routes in references should match routeIds")
 }
@@ -114,27 +114,27 @@ func TestStopHandlerVerifiesReferences(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+stopID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
 	// Verify routes are included
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok, "Routes should be in references")
 	if len(routes) > 0 {
-		route, ok := routes[0].(map[string]interface{})
+		route, ok := routes[0].(map[string]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, route["id"], "Route should have an ID")
 		assert.NotEmpty(t, route["shortName"], "Route should have a short name")
 	}
 
 	// Verify agencies are included
-	agenciesRef, ok := references["agencies"].([]interface{})
+	agenciesRef, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies should be in references")
 	if len(agenciesRef) > 0 {
-		agency, ok := agenciesRef[0].(map[string]interface{})
+		agency, ok := agenciesRef[0].(map[string]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, agency["id"], "Agency should have an ID")
 		assert.NotEmpty(t, agency["name"], "Agency should have a name")
@@ -264,27 +264,27 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 	// 6. Assertions
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	// Assert Route IDs use their respective correct Agency prefixes (The fix verification)
-	routeIDs, ok := entry["routeIds"].([]interface{})
+	routeIDs, ok := entry["routeIds"].([]any)
 	require.True(t, ok)
 	assert.Contains(t, routeIDs, agencyB+"_"+routeB_ID, "Route B ID should be prefixed with Agency B")
 	assert.Contains(t, routeIDs, agencyA+"_"+routeA_ID, "Route A ID should be prefixed with Agency A")
 
 	// Assert references.agencies contains BOTH Agency A and Agency B
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	require.True(t, ok)
 
 	foundA := false
 	foundB := false
 	for _, a := range agencies {
-		agencyMap := a.(map[string]interface{})
+		agencyMap := a.(map[string]any)
 		if agencyMap["id"] == agencyA {
 			foundA = true
 		}
@@ -326,18 +326,18 @@ func TestStopHandlerWithSituations(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+combinedStopID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "Response should have a data object")
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok, "Data should have a references object")
 
-	situations, ok := references["situations"].([]interface{})
+	situations, ok := references["situations"].([]any)
 	require.True(t, ok, "References should have a situations array")
 	require.NotEmpty(t, situations, "Situations array should NOT be empty")
 
 	require.Len(t, situations, 1, "Should have exactly 1 deduplicated situation despite matching multiple entities")
 
-	situationMap := situations[0].(map[string]interface{})
+	situationMap := situations[0].(map[string]any)
 	assert.Equal(t, "test-cross-entity-alert-789", situationMap["id"])
 }

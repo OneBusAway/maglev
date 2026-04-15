@@ -163,7 +163,7 @@ func TestCurrentTimeDataEndToEnd(t *testing.T) {
 	}
 
 	// Unmarshal back to verify structure
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal(jsonData, &result)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal JSON: %v", err)
@@ -183,13 +183,13 @@ func TestCurrentTimeDataEndToEnd(t *testing.T) {
 	}
 
 	// Check data structure
-	data, ok := result["data"].(map[string]interface{})
+	data, ok := result["data"].(map[string]any)
 	if !ok {
 		t.Fatalf("Expected data to be an object, got %T", result["data"])
 	}
 
 	// Check entry
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	if !ok {
 		t.Fatalf("Expected entry to be an object, got %T", data["entry"])
 	}
@@ -213,7 +213,7 @@ func TestCurrentTimeDataEndToEnd(t *testing.T) {
 	}
 
 	// Check references
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	if !ok {
 		t.Fatalf("Expected references to be an object, got %T", data["references"])
 	}
@@ -221,7 +221,7 @@ func TestCurrentTimeDataEndToEnd(t *testing.T) {
 	// Check that all reference arrays are present and empty
 	referenceFields := []string{"agencies", "routes", "situations", "stopTimes", "stops", "trips"}
 	for _, field := range referenceFields {
-		arr, ok := references[field].([]interface{})
+		arr, ok := references[field].([]any)
 		if !ok {
 			t.Errorf("Expected %s to be an array, got %T", field, references[field])
 		} else if len(arr) != 0 {

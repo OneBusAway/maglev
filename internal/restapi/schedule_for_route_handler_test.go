@@ -33,10 +33,10 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		require.True(t, ok)
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		require.True(t, ok)
 
 		// ScheduleForRouteEntry has only: routeId, scheduleDate, serviceIds, stopTripGroupings (no top-level stops/trips)
@@ -46,49 +46,49 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		assert.Greater(t, scheduleDate, float64(0))
 
 		// serviceIds should exist
-		svcIds, ok := entry["serviceIds"].([]interface{})
+		svcIds, ok := entry["serviceIds"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, svcIds)
 
 		// stopTripGroupings should exist and have expected structure
-		groupings, ok := entry["stopTripGroupings"].([]interface{})
+		groupings, ok := entry["stopTripGroupings"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, groupings)
 
-		firstGrouping, ok := groupings[0].(map[string]interface{})
+		firstGrouping, ok := groupings[0].(map[string]any)
 		require.True(t, ok)
 
 		// Check fields inside grouping
 		directionId, hasDir := firstGrouping["directionId"].(string)
 		assert.True(t, hasDir, "directionId should be a string")
 		assert.NotEmpty(t, directionId)
-		ths, hasTH := firstGrouping["tripHeadsigns"].([]interface{})
+		ths, hasTH := firstGrouping["tripHeadsigns"].([]any)
 		assert.True(t, hasTH)
 		assert.NotNil(t, ths)
 
-		stopIds, hasStops := firstGrouping["stopIds"].([]interface{})
+		stopIds, hasStops := firstGrouping["stopIds"].([]any)
 		assert.True(t, hasStops)
 		assert.NotEmpty(t, stopIds)
 
-		tripIds, hasTrips := firstGrouping["tripIds"].([]interface{})
+		tripIds, hasTrips := firstGrouping["tripIds"].([]any)
 		assert.True(t, hasTrips)
 		assert.NotEmpty(t, tripIds)
 
-		tripsWithStopTimes, hasT := firstGrouping["tripsWithStopTimes"].([]interface{})
+		tripsWithStopTimes, hasT := firstGrouping["tripsWithStopTimes"].([]any)
 		assert.True(t, hasT)
 		require.NotEmpty(t, tripsWithStopTimes)
 
-		firstTripWithStops := tripsWithStopTimes[0].(map[string]interface{})
+		firstTripWithStops := tripsWithStopTimes[0].(map[string]any)
 		tid, ok := firstTripWithStops["tripId"].(string)
 		require.True(t, ok)
 		require.Contains(t, tid, "_", "TripID should be combined with agency prefix")
 
-		stopTimesArr, ok := firstTripWithStops["stopTimes"].([]interface{})
+		stopTimesArr, ok := firstTripWithStops["stopTimes"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, stopTimesArr)
 
 		// Check a stop time inside entry trip stopTimes (arrival/departure should be numbers in seconds)
-		st0 := stopTimesArr[0].(map[string]interface{})
+		st0 := stopTimesArr[0].(map[string]any)
 		arr, ok := st0["arrivalTime"].(float64)
 		require.True(t, ok)
 		dep, ok := st0["departureTime"].(float64)
@@ -96,15 +96,15 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		require.GreaterOrEqual(t, dep, arr)
 
 		// References should include flattened stopTimes
-		refs, ok := data["references"].(map[string]interface{})
+		refs, ok := data["references"].(map[string]any)
 		require.True(t, ok)
 
-		stopTimesRef, ok := refs["stopTimes"].([]interface{})
+		stopTimesRef, ok := refs["stopTimes"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, stopTimesRef)
 
 		// Validate a reference stopTime contains stopId combined IDs
-		firstRefST := stopTimesRef[0].(map[string]interface{})
+		firstRefST := stopTimesRef[0].(map[string]any)
 
 		refTid, ok := firstRefST["tripId"].(string)
 		require.True(t, ok, "tripId should be present and be a string")
@@ -147,9 +147,9 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		require.True(t, ok)
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		require.True(t, ok)
 		scheduleDate, ok := entry["scheduleDate"].(float64)
 		require.True(t, ok, "scheduleDate should be a numeric Unix millisecond timestamp")

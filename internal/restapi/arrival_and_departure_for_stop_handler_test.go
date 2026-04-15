@@ -63,11 +63,11 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, data)
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 
 		// Verify entry fields
@@ -82,23 +82,23 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 		assert.NotNil(t, entry["totalStopsInTrip"])
 
 		// Verify references
-		references, ok := data["references"].(map[string]interface{})
+		references, ok := data["references"].(map[string]any)
 		assert.True(t, ok)
 		assert.NotNil(t, references)
 
-		agencies, ok := references["agencies"].([]interface{})
+		agencies, ok := references["agencies"].([]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, agencies)
 
-		routes, ok := references["routes"].([]interface{})
+		routes, ok := references["routes"].([]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, routes)
 
-		trips_ref, ok := references["trips"].([]interface{})
+		trips_ref, ok := references["trips"].([]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, trips_ref)
 
-		stops_ref, ok := references["stops"].([]interface{})
+		stops_ref, ok := references["stops"].([]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, stops_ref)
 	case http.StatusNotFound:
@@ -158,10 +158,10 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 	case http.StatusOK:
 		assert.Equal(t, http.StatusOK, model.Code)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		assert.True(t, ok)
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 
 		// The response should be successful
@@ -271,9 +271,9 @@ func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 		assert.Equal(t, http.StatusOK, model.Code)
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		assert.True(t, ok)
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 		assert.Equal(t, stopID, entry["stopId"])
 	case http.StatusNotFound:
@@ -411,10 +411,10 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripStopCombination(t *testin
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	// Verify all the important fields
@@ -435,22 +435,22 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripStopCombination(t *testin
 	assert.NotNil(t, entry["totalStopsInTrip"])
 
 	// Verify references
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, agencies)
 
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, routes)
 
-	trips_ref, ok := references["trips"].([]interface{})
+	trips_ref, ok := references["trips"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, trips_ref)
 
-	stops_ref, ok := references["stops"].([]interface{})
+	stops_ref, ok := references["stops"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, stops_ref)
 }
@@ -501,10 +501,10 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testin
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	assert.Equal(t, float64(stopSequence-1), entry["stopSequence"]) // Zero-based
@@ -780,10 +780,10 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	// CRITICAL: Verify routeId uses Agency B prefix (not Agency A)
@@ -794,15 +794,15 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 		"routeId should use the route's agency (AgencyB), not the stop's agency (AgencyA)")
 
 	// Verify references contain both agencies
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	require.True(t, ok)
 
 	agencyIDs := make(map[string]bool)
 	for _, ag := range agencies {
-		agencyMap := ag.(map[string]interface{})
+		agencyMap := ag.(map[string]any)
 		agencyIDs[agencyMap["id"].(string)] = true
 	}
 
@@ -810,13 +810,13 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 	assert.True(t, agencyIDs[agencyB], "references.agencies should contain Agency B")
 
 	// Verify route is correctly prefixed
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, routes)
 
 	foundCorrectRoute := false
 	for _, r := range routes {
-		routeMap := r.(map[string]interface{})
+		routeMap := r.(map[string]any)
 		if routeMap["id"].(string) == expectedRouteID {
 			foundCorrectRoute = true
 			assert.Equal(t, agencyB, routeMap["agencyId"], "route's agencyId should be AgencyB")
@@ -966,10 +966,10 @@ func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *t
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "response should contain data object")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok, "data should contain entry object")
 
 	// Expected: midnight Jan 15 CET + 8 hours = Jan 15 08:00 CET.
@@ -1072,9 +1072,9 @@ func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp1.StatusCode)
 	require.Equal(t, http.StatusOK, model1.Code)
 
-	data1, ok := model1.Data.(map[string]interface{})
+	data1, ok := model1.Data.(map[string]any)
 	require.True(t, ok)
-	entry1, ok := data1["entry"].(map[string]interface{})
+	entry1, ok := data1["entry"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, float64(1), entry1["stopSequence"], "expected zero-based index for stop_sequence=2")
 
@@ -1082,9 +1082,9 @@ func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
 	require.Equal(t, http.StatusOK, model2.Code)
 
-	data2, ok := model2.Data.(map[string]interface{})
+	data2, ok := model2.Data.(map[string]any)
 	require.True(t, ok)
-	entry2, ok := data2["entry"].(map[string]interface{})
+	entry2, ok := data2["entry"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, float64(14), entry2["stopSequence"], "expected zero-based index for stop_sequence=15")
 }
@@ -1139,9 +1139,9 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "", entry["vehicleId"], "vehicleId should be empty for vehicle with nil ID")
 }

@@ -36,16 +36,16 @@ func TestStopsForAgencyEndToEnd(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
 	// Check list of stops
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, list)
 
 	// Verify first stop has expected fields
-	firstStop := list[0].(map[string]interface{})
+	firstStop := list[0].(map[string]any)
 	assert.NotNil(t, firstStop["id"])
 	assert.NotNil(t, firstStop["lat"])
 	assert.NotNil(t, firstStop["lon"])
@@ -62,7 +62,7 @@ func TestStopsForAgencyEndToEnd(t *testing.T) {
 	validDirections := []string{"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
 	stopsWithDirections := 0
 	for _, stop := range list {
-		stopMap := stop.(map[string]interface{})
+		stopMap := stop.(map[string]any)
 		direction := stopMap["direction"].(string)
 		for _, validDir := range validDirections {
 			if direction == validDir {
@@ -80,7 +80,7 @@ func TestStopsForAgencyEndToEnd(t *testing.T) {
 		"Stop ID should start with agency ID prefix: %s", stopID)
 
 	// Verify route IDs have agency prefix
-	routeIDs := firstStop["routeIds"].([]interface{})
+	routeIDs := firstStop["routeIds"].([]any)
 	if len(routeIDs) > 0 {
 		routeID := routeIDs[0].(string)
 		assert.True(t, strings.HasPrefix(routeID, agencyID+"_"),
@@ -88,32 +88,32 @@ func TestStopsForAgencyEndToEnd(t *testing.T) {
 	}
 
 	// Check references
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
 	// Verify agency reference
-	agencyRefs, ok := refs["agencies"].([]interface{})
+	agencyRefs, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Len(t, agencyRefs, 1)
 
 	// Verify route references exist (may be empty if stops have no routes)
-	_, ok = refs["routes"].([]interface{})
+	_, ok = refs["routes"].([]any)
 	require.True(t, ok)
 
 	// Verify other reference fields exist but are empty
-	situations, ok := refs["situations"].([]interface{})
+	situations, ok := refs["situations"].([]any)
 	require.True(t, ok)
 	assert.Empty(t, situations)
 
-	stopTimes, ok := refs["stopTimes"].([]interface{})
+	stopTimes, ok := refs["stopTimes"].([]any)
 	require.True(t, ok)
 	assert.Empty(t, stopTimes)
 
-	stops, ok := refs["stops"].([]interface{})
+	stops, ok := refs["stops"].([]any)
 	require.True(t, ok)
 	assert.Empty(t, stops)
 
-	trips, ok := refs["trips"].([]interface{})
+	trips, ok := refs["trips"].([]any)
 	require.True(t, ok)
 	assert.Empty(t, trips)
 

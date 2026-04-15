@@ -83,17 +83,17 @@ func TestSearchStopsHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
 	assert.Equal(t, false, data["limitExceeded"])
 	assert.Equal(t, false, data["outOfRange"])
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, list)
 
-	firstResult, ok := list[0].(map[string]interface{})
+	firstResult, ok := list[0].(map[string]any)
 	require.True(t, ok)
 
 	assert.NotEmpty(t, firstResult["id"])
@@ -101,10 +101,10 @@ func TestSearchStopsHandlerEndToEnd(t *testing.T) {
 	assert.NotEmpty(t, firstResult["lat"])
 	assert.NotEmpty(t, firstResult["lon"])
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agenciesRef, ok := references["agencies"].([]interface{})
+	agenciesRef, ok := references["agencies"].([]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, agenciesRef)
 }
@@ -120,10 +120,10 @@ func TestSearchStopsHandlerNoResults(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.Empty(t, list)
 }
@@ -160,10 +160,10 @@ func TestSearchStopsHandlerMaxCount(t *testing.T) {
 	err = json.Unmarshal(bodyBytes, &model)
 	require.NoError(t, err)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 
 	assert.LessOrEqual(t, len(list), 1)
@@ -180,10 +180,10 @@ func TestSearchStopsHandlerWhitespaceOnlyInput(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 
 	assert.Empty(t, list)
@@ -201,10 +201,10 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 
 	assert.Empty(t, list)
@@ -240,10 +240,10 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-			data, ok := model.Data.(map[string]interface{})
+			data, ok := model.Data.(map[string]any)
 			require.True(t, ok)
 
-			list, ok := data["list"].([]interface{})
+			list, ok := data["list"].([]any)
 			require.True(t, ok)
 
 			assert.NotEmpty(t, list)
@@ -263,10 +263,10 @@ func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 
 	assert.Less(t, len(list), 50)

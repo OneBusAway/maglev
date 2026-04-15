@@ -45,17 +45,17 @@ func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
 	// Check that we have a list of vehicles
-	_, ok = data["list"].([]interface{})
+	_, ok = data["list"].([]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	refAgencies, ok := refs["agencies"].([]interface{})
+	refAgencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Len(t, refAgencies, 1)
 }
@@ -69,10 +69,10 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.Len(t, list, 0)
 }
@@ -90,36 +90,36 @@ func TestVehiclesForAgencyHandlerResponseStructure(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
 	// Verify basic response structure
-	_, ok = data["list"].([]interface{})
+	_, ok = data["list"].([]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
 	// Should have agency reference
-	refAgencies, ok := refs["agencies"].([]interface{})
+	refAgencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Len(t, refAgencies, 1)
 
 	// Verify agency reference structure
-	agency := refAgencies[0].(map[string]interface{})
+	agency := refAgencies[0].(map[string]any)
 	assert.Equal(t, agencyId, agency["id"])
 	assert.NotEmpty(t, agency["name"])
 
 	// Verify other reference sections exist (may be empty)
-	_, ok = refs["routes"].([]interface{})
+	_, ok = refs["routes"].([]any)
 	assert.True(t, ok)
-	_, ok = refs["trips"].([]interface{})
+	_, ok = refs["trips"].([]any)
 	assert.True(t, ok)
-	_, ok = refs["situations"].([]interface{})
+	_, ok = refs["situations"].([]any)
 	assert.True(t, ok)
-	_, ok = refs["stops"].([]interface{})
+	_, ok = refs["stops"].([]any)
 	assert.True(t, ok)
-	_, ok = refs["stopTimes"].([]interface{})
+	_, ok = refs["stopTimes"].([]any)
 	assert.True(t, ok)
 }
 
@@ -134,29 +134,29 @@ func TestVehiclesForAgencyHandlerReferencesBuilding(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data := model.Data.(map[string]interface{})
-	refs := data["references"].(map[string]interface{})
+	data := model.Data.(map[string]any)
+	refs := data["references"].(map[string]any)
 
 	// Test that references are properly built
-	refAgencies := refs["agencies"].([]interface{})
+	refAgencies := refs["agencies"].([]any)
 	assert.Len(t, refAgencies, 1)
 
-	agency := refAgencies[0].(map[string]interface{})
+	agency := refAgencies[0].(map[string]any)
 	assert.Equal(t, agencyId, agency["id"])
 
 	// Test reference deduplication (agency should appear only once)
-	vehiclesList := data["list"].([]interface{})
+	vehiclesList := data["list"].([]any)
 	if len(vehiclesList) > 0 {
 		// Even with multiple vehicles from same agency, only one agency reference
 		assert.Len(t, refAgencies, 1)
 	}
 
 	// Test that route references are built when vehicles have trips
-	refTrips := refs["trips"].([]interface{})
+	refTrips := refs["trips"].([]any)
 
 	vehiclesWithTrips := 0
 	for _, v := range vehiclesList {
-		vehicle := v.(map[string]interface{})
+		vehicle := v.(map[string]any)
 		if vehicle["tripStatus"] != nil {
 			vehiclesWithTrips++
 		}
@@ -168,7 +168,7 @@ func TestVehiclesForAgencyHandlerReferencesBuilding(t *testing.T) {
 
 		// Verify trip reference structure
 		if len(refTrips) > 0 {
-			trip := refTrips[0].(map[string]interface{})
+			trip := refTrips[0].(map[string]any)
 			assert.NotEmpty(t, trip["id"])
 			assert.NotEmpty(t, trip["routeId"])
 		}
@@ -185,14 +185,14 @@ func TestVehiclesForAgencyHandlerEmptyResult(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data := model.Data.(map[string]interface{})
-	vehiclesList := data["list"].([]interface{})
+	data := model.Data.(map[string]any)
+	vehiclesList := data["list"].([]any)
 
 	// Should handle empty vehicle list gracefully
-	assert.IsType(t, []interface{}{}, vehiclesList)
+	assert.IsType(t, []any{}, vehiclesList)
 
 	// Should still have proper references structure
-	refs := data["references"].(map[string]interface{})
+	refs := data["references"].(map[string]any)
 	assert.Contains(t, refs, "agencies")
 	assert.Contains(t, refs, "routes")
 	assert.Contains(t, refs, "trips")
@@ -210,23 +210,23 @@ func TestVehiclesForAgencyHandlerFieldMapping(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data := model.Data.(map[string]interface{})
-	vehiclesList := data["list"].([]interface{})
+	data := model.Data.(map[string]any)
+	vehiclesList := data["list"].([]any)
 
 	// Test that the processing loop runs even with empty results
 	// This should still test lines 21-139 in the handler
-	assert.IsType(t, []interface{}{}, vehiclesList)
+	assert.IsType(t, []any{}, vehiclesList)
 
 	// Verify that reference building happens even with empty vehicle list
-	refs := data["references"].(map[string]interface{})
-	refAgencies := refs["agencies"].([]interface{})
+	refs := data["references"].(map[string]any)
+	refAgencies := refs["agencies"].([]any)
 	assert.Len(t, refAgencies, 1)
 
 	// Test that the loop variables are initialized
-	refRoutes := refs["routes"].([]interface{})
-	refTrips := refs["trips"].([]interface{})
-	assert.IsType(t, []interface{}{}, refRoutes)
-	assert.IsType(t, []interface{}{}, refTrips)
+	refRoutes := refs["routes"].([]any)
+	refTrips := refs["trips"].([]any)
+	assert.IsType(t, []any{}, refRoutes)
+	assert.IsType(t, []any{}, refTrips)
 }
 
 func TestVehiclesForAgencyHandlerWithAllAgencies(t *testing.T) {
@@ -241,18 +241,18 @@ func TestVehiclesForAgencyHandlerWithAllAgencies(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, 200, model.Code)
 
-		data := model.Data.(map[string]interface{})
-		vehiclesList := data["list"].([]interface{})
-		refs := data["references"].(map[string]interface{})
+		data := model.Data.(map[string]any)
+		vehiclesList := data["list"].([]any)
+		refs := data["references"].(map[string]any)
 
 		// Test that processing always happens
-		assert.IsType(t, []interface{}{}, vehiclesList)
+		assert.IsType(t, []any{}, vehiclesList)
 
 		// Agency reference should always be present
-		refAgencies := refs["agencies"].([]interface{})
+		refAgencies := refs["agencies"].([]any)
 		assert.Len(t, refAgencies, 1)
 
-		agencyRef := refAgencies[0].(map[string]interface{})
+		agencyRef := refAgencies[0].(map[string]any)
 		assert.Equal(t, agencyID, agencyRef["id"])
 	})
 }
@@ -270,10 +270,10 @@ func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data := model.Data.(map[string]interface{})
+	data := model.Data.(map[string]any)
 
 	// Test that the handler processes the empty vehicle list and sets up references
-	refs := data["references"].(map[string]interface{})
+	refs := data["references"].(map[string]any)
 
 	// These should all exist even with no vehicles
 	assert.Contains(t, refs, "agencies")
@@ -284,13 +284,13 @@ func TestVehiclesForAgencyHandlerDatabaseRouteQueries(t *testing.T) {
 	assert.Contains(t, refs, "stopTimes")
 
 	// Test that maps are converted to slices properly
-	refAgencies := refs["agencies"].([]interface{})
-	refRoutes := refs["routes"].([]interface{})
-	refTrips := refs["trips"].([]interface{})
+	refAgencies := refs["agencies"].([]any)
+	refRoutes := refs["routes"].([]any)
+	refTrips := refs["trips"].([]any)
 
-	assert.IsType(t, []interface{}{}, refAgencies)
-	assert.IsType(t, []interface{}{}, refRoutes)
-	assert.IsType(t, []interface{}{}, refTrips)
+	assert.IsType(t, []any{}, refAgencies)
+	assert.IsType(t, []any{}, refRoutes)
+	assert.IsType(t, []any{}, refTrips)
 }
 
 // TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
@@ -317,14 +317,14 @@ func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
 
 	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "response data must be a map")
 
-	vehiclesList, ok := data["list"].([]interface{})
+	vehiclesList, ok := data["list"].([]any)
 	require.True(t, ok, "list must be a slice")
 	require.NotEmpty(t, vehiclesList, "expected at least one vehicle — occupancy mock vehicle not returned by VehiclesForAgencyID")
 
-	vehicle, ok := vehiclesList[0].(map[string]interface{})
+	vehicle, ok := vehiclesList[0].(map[string]any)
 	require.True(t, ok, "vehicle entry must be a map")
 
 	// VehicleStatus.occupancyStatus must be propagated from GTFS-RT
@@ -332,7 +332,7 @@ func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
 		"vehicleStatus.occupancyStatus must receive the GTFS-RT value")
 
 	// TripStatus.occupancyStatus must also be propagated (the handler sets both)
-	tripStatus, ok := vehicle["tripStatus"].(map[string]interface{})
+	tripStatus, ok := vehicle["tripStatus"].(map[string]any)
 	require.True(t, ok, "tripStatus must be present when vehicle has a trip")
 	assert.Equal(t, "MANY_SEATS_AVAILABLE", tripStatus["occupancyStatus"],
 		"tripStatus.occupancyStatus must receive the same GTFS-RT value")
@@ -361,15 +361,15 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 
 	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "response data must be a map")
 
-	vehiclesList, ok := data["list"].([]interface{})
+	vehiclesList, ok := data["list"].([]any)
 	require.True(t, ok, "list must be a slice")
 
 	// The nil-Trip vehicle must never appear in the response.
 	for _, item := range vehiclesList {
-		v, ok := item.(map[string]interface{})
+		v, ok := item.(map[string]any)
 		require.True(t, ok)
 		assert.NotEqual(t, noTripVehicleID, v["vehicleId"],
 			"vehicle with Trip==nil must be excluded by VehiclesForAgencyID before reaching the handler")
@@ -398,12 +398,12 @@ func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	for _, item := range list {
-		v := item.(map[string]interface{})
+		v := item.(map[string]any)
 		assert.NotEqual(t, "", v["vehicleId"], "vehicle with nil ID must be skipped, not returned with empty vehicleId")
 	}
 }
@@ -542,10 +542,10 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	vehiclesList, ok := data["list"].([]interface{})
+	vehiclesList, ok := data["list"].([]any)
 	require.True(t, ok)
 
 	if len(realTimeVehicles) > 0 {
@@ -554,7 +554,7 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 		// Now we can test the actual vehicle processing loop
 		if len(vehiclesList) > 0 {
 			// Test first vehicle in detail
-			vehicle := vehiclesList[0].(map[string]interface{})
+			vehicle := vehiclesList[0].(map[string]any)
 
 			// Required fields per OpenAPI spec — must always be present
 			assert.Contains(t, vehicle, "vehicleId", "vehicleId is required")
@@ -576,7 +576,7 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 
 			// Test location fields (present but may be null when no position data)
 			if vehicle["location"] != nil {
-				location := vehicle["location"].(map[string]interface{})
+				location := vehicle["location"].(map[string]any)
 				assert.Contains(t, location, "lat")
 				assert.Contains(t, location, "lon")
 				assert.IsType(t, float64(0), location["lat"])
@@ -607,7 +607,7 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 
 			// Test trip status (present but may be null when vehicle has no trip)
 			if vehicle["tripStatus"] != nil {
-				tripStatus := vehicle["tripStatus"].(map[string]interface{})
+				tripStatus := vehicle["tripStatus"].(map[string]any)
 
 				assert.NotEmpty(t, tripStatus["activeTripId"], "TripStatus should have activeTripId")
 				assert.IsType(t, true, tripStatus["scheduled"])
@@ -617,7 +617,7 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 				}
 
 				if tripStatus["position"] != nil {
-					position := tripStatus["position"].(map[string]interface{})
+					position := tripStatus["position"].(map[string]any)
 					assert.Contains(t, position, "lat")
 					assert.Contains(t, position, "lon")
 				} else {
@@ -634,17 +634,17 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 		}
 
 		// Test references when vehicles are present
-		refs := data["references"].(map[string]interface{})
+		refs := data["references"].(map[string]any)
 
-		refAgencies := refs["agencies"].([]interface{})
+		refAgencies := refs["agencies"].([]any)
 		assert.Len(t, refAgencies, 1)
 
-		refTrips := refs["trips"].([]interface{})
-		refRoutes := refs["routes"].([]interface{})
+		refTrips := refs["trips"].([]any)
+		refRoutes := refs["routes"].([]any)
 
 		vehiclesWithTrips := 0
 		for _, v := range vehiclesList {
-			vehicle := v.(map[string]interface{})
+			vehicle := v.(map[string]any)
 			if vehicle["tripStatus"] != nil {
 				vehiclesWithTrips++
 			}
@@ -655,14 +655,14 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 
 			// Test trip reference structure
 			if len(refTrips) > 0 {
-				trip := refTrips[0].(map[string]interface{})
+				trip := refTrips[0].(map[string]any)
 				assert.NotEmpty(t, trip["id"])
 				assert.NotEmpty(t, trip["routeId"])
 			}
 
 			// Test route references (may be present if routes are found)
 			if len(refRoutes) > 0 {
-				route := refRoutes[0].(map[string]interface{})
+				route := refRoutes[0].(map[string]any)
 				assert.NotEmpty(t, route)
 			}
 		}
@@ -690,17 +690,17 @@ func TestVehiclesForAgency_RouteIDUsesCombinedID(t *testing.T) {
 
 	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	tripRefs, ok := refs["trips"].([]interface{})
+	tripRefs, ok := refs["trips"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, tripRefs, "expected at least one trip reference — mock vehicle was not returned by VehiclesForAgencyID")
 
-	tripRef := tripRefs[0].(map[string]interface{})
+	tripRef := tripRefs[0].(map[string]any)
 	routeID, ok := tripRef["routeId"].(string)
 	require.True(t, ok, "routeId must be a string")
 

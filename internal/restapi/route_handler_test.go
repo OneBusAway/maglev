@@ -43,11 +43,11 @@ func TestRouteHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, data)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	assert.Equal(t, routeID, entry["id"])
@@ -64,13 +64,13 @@ func TestRouteHandlerEndToEnd(t *testing.T) {
 		assert.Fail(t, "Route type missing or not a number")
 	}
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok, "References section should exist")
 	assert.NotEmpty(t, references, "References section should not be nil")
 
-	agenciesRef, ok := references["agencies"].([]interface{})
+	agenciesRef, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies reference should exist and be an array")
-	agencyRef := agenciesRef[0].(map[string]interface{})
+	agencyRef := agenciesRef[0].(map[string]any)
 	assert.Equal(t, agencies[0].ID, agencyRef["id"])
 	assert.NotEmpty(t, agenciesRef, "Agencies reference should not be empty")
 }
@@ -106,17 +106,17 @@ func TestRouteHandlerVerifiesReferences(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route/"+routeID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
 	// Verify agencies are included
-	agenciesRef, ok := references["agencies"].([]interface{})
+	agenciesRef, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies should be in references")
 	if len(agenciesRef) > 0 {
-		agency, ok := agenciesRef[0].(map[string]interface{})
+		agency, ok := agenciesRef[0].(map[string]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, agency["id"], "Agency should have an ID")
 		assert.Equal(t, routes[0].AgencyID, agency["id"])
@@ -160,19 +160,19 @@ func TestRouteHandlerWithSituations(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "Response should have a data object")
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok, "Data should have a references object")
 
-	situations, ok := references["situations"].([]interface{})
+	situations, ok := references["situations"].([]any)
 	require.True(t, ok, "References should have a situations array")
 
 	require.NotEmpty(t, situations, "Situations array should NOT be empty when alerts exist")
 	require.Len(t, situations, 1, "Should have exactly 1 situation")
 
-	situationMap := situations[0].(map[string]interface{})
+	situationMap := situations[0].(map[string]any)
 	assert.Equal(t, "test-alert-123", situationMap["id"], "The alert ID should match our mocked alert")
 }
 

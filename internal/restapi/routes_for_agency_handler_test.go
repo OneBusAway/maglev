@@ -36,17 +36,17 @@ func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
 	// Check that we have a list of routes
-	_, ok = data["list"].([]interface{})
+	_, ok = data["list"].([]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	refAgencies, ok := refs["agencies"].([]interface{})
+	refAgencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Len(t, refAgencies, 1)
 }
@@ -88,15 +88,15 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	routes, ok := data["list"].([]interface{})
+	routes, ok := data["list"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, routes)
 
 	for _, r := range routes {
-		route, ok := r.(map[string]interface{})
+		route, ok := r.(map[string]any)
 		require.True(t, ok)
 
 		id, ok := route["id"].(string)
@@ -119,9 +119,9 @@ func TestRoutesForAgencyHandlerPagination(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=5")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.Len(t, list, 5)
 	assert.True(t, data["limitExceeded"].(bool), "limitExceeded should be true when more items exist")
@@ -130,24 +130,24 @@ func TestRoutesForAgencyHandlerPagination(t *testing.T) {
 	resp2, model2 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&offset=5&limit=5")
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
 
-	data2, ok := model2.Data.(map[string]interface{})
+	data2, ok := model2.Data.(map[string]any)
 	require.True(t, ok)
-	list2, ok := data2["list"].([]interface{})
+	list2, ok := data2["list"].([]any)
 	require.True(t, ok)
 	assert.Len(t, list2, 5)
 
 	// Verify items are different
-	firstItem1 := list[0].(map[string]interface{})
-	firstItem2 := list2[0].(map[string]interface{})
+	firstItem1 := list[0].(map[string]any)
+	firstItem2 := list2[0].(map[string]any)
 	assert.NotEqual(t, firstItem1["id"], firstItem2["id"])
 
 	// Case 3: Limit 100 (Should return all 13 items, limitExceeded=false)
 	resp3, model3 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=100")
 	assert.Equal(t, http.StatusOK, resp3.StatusCode)
 
-	data3, ok := model3.Data.(map[string]interface{})
+	data3, ok := model3.Data.(map[string]any)
 	require.True(t, ok)
-	list3, ok := data3["list"].([]interface{})
+	list3, ok := data3["list"].([]any)
 	require.True(t, ok)
 	// RABA has 13 routes
 	assert.Len(t, list3, 13)

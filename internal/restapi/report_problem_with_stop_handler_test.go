@@ -30,7 +30,7 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "Data should be a map")
 
 	assert.Empty(t, data, "Data should be an empty object")

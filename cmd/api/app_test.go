@@ -590,25 +590,25 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	output := buf.String()
 
 	// Parse and validate json
-	var parsed map[string]interface{}
+	var parsed map[string]any
 
 	err = json.Unmarshal([]byte(output), &parsed)
 	require.NoError(t, err, "Output is not a valid JSON")
 
 	assert.Equal(t, float64(cfg.Port), parsed["port"])
-	staticFeed, ok := parsed["gtfs-static-feed"].(map[string]interface{})
+	staticFeed, ok := parsed["gtfs-static-feed"].(map[string]any)
 	require.True(t, ok, "gtfs-static-feed should be a map")
 	assert.Equal(t, gtfsCfg.GtfsURL, staticFeed["url"])
 
-	feeds, ok := parsed["gtfs-rt-feeds"].([]interface{})
+	feeds, ok := parsed["gtfs-rt-feeds"].([]any)
 	require.True(t, ok, "gtfs-rt-feeds should be an array of maps")
 	assert.Equal(t, len(gtfsCfg.RTFeeds), len(feeds))
 
-	rtFeed, ok := feeds[0].(map[string]interface{})
+	rtFeed, ok := feeds[0].(map[string]any)
 	require.True(t, ok, "feeds[0] should be a map")
 
 	// Check that headers are redacted (:
-	headersMap, ok := rtFeed["headers"].(map[string]interface{})
+	headersMap, ok := rtFeed["headers"].(map[string]any)
 	require.True(t, ok, "headers should be a map")
 	assert.NotEqual(t, "my-secret-api-key", headersMap["X-API-Key"])
 	assert.Equal(t, "***REDACTED***", headersMap["X-API-Key"])

@@ -22,14 +22,14 @@ func TestAgenciesWithCoverageHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.Len(t, list, 1)
 
-	agencyCoverage, ok := list[0].(map[string]interface{})
+	agencyCoverage, ok := list[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "25", agencyCoverage["agencyId"])
 	assert.InDelta(t, 40.328705, agencyCoverage["lat"], 1e-8)
@@ -37,14 +37,14 @@ func TestAgenciesWithCoverageHandlerEndToEnd(t *testing.T) {
 	assert.InDelta(t, -122.101745, agencyCoverage["lon"], 1e-8)
 	assert.InDelta(t, 0.9914899999999989, agencyCoverage["lonSpan"], 1e-8)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	refAgencies, ok := refs["agencies"].([]interface{})
+	refAgencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Len(t, refAgencies, 1)
 
-	agencyRef, ok := refAgencies[0].(map[string]interface{})
+	agencyRef, ok := refAgencies[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "25", agencyRef["id"])
 	assert.Equal(t, "Redding Area Bus Authority", agencyRef["name"])
@@ -71,34 +71,34 @@ func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
 
 	// Case 1: Default (Offset 0, Limit -1) -> Should return 1
 	_, _, model1 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST")
-	data1, ok := model1.Data.(map[string]interface{})
+	data1, ok := model1.Data.(map[string]any)
 	require.True(t, ok, "expected Data to be map[string]interface{}")
-	list1, ok := data1["list"].([]interface{})
+	list1, ok := data1["list"].([]any)
 	require.True(t, ok, "expected list to be []interface{}")
 	assert.Len(t, list1, 1)
 
 	// Case 2: Limit 1 -> Should return 1
 	_, _, model2 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST&limit=1")
-	data2, ok := model2.Data.(map[string]interface{})
+	data2, ok := model2.Data.(map[string]any)
 	require.True(t, ok, "expected Data to be map[string]interface{}")
-	list2, ok := data2["list"].([]interface{})
+	list2, ok := data2["list"].([]any)
 	require.True(t, ok, "expected list to be []interface{}")
 	assert.Len(t, list2, 1)
 
 	// Case 3: Limit 0 (should default to -1/all) -> Should return 1
 	// Note: Our new logic treats limit=0 as invalid -> -1 (all)
 	_, _, model3 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST&limit=0")
-	data3, ok := model3.Data.(map[string]interface{})
+	data3, ok := model3.Data.(map[string]any)
 	require.True(t, ok, "expected Data to be map[string]interface{}")
-	list3, ok := data3["list"].([]interface{})
+	list3, ok := data3["list"].([]any)
 	require.True(t, ok, "expected list to be []interface{}")
 	assert.Len(t, list3, 1)
 
 	// Case 4: Offset 1 -> Should return 0
 	_, _, model4 := serveAndRetrieveEndpoint(t, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
-	data4, ok := model4.Data.(map[string]interface{})
+	data4, ok := model4.Data.(map[string]any)
 	require.True(t, ok, "expected Data to be map[string]interface{}")
-	list4, ok := data4["list"].([]interface{})
+	list4, ok := data4["list"].([]any)
 	require.True(t, ok, "expected list to be []interface{}")
 	assert.Len(t, list4, 0)
 }

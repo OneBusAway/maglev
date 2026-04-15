@@ -30,10 +30,10 @@ func TestStopIdsForAgencyEndToEnd(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, list)
 
@@ -44,10 +44,10 @@ func TestStopIdsForAgencyEndToEnd(t *testing.T) {
 			"Stop ID should start with agency ID prefix: %s", stopIdStr)
 	}
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agencyRefs, ok := refs["agencies"].([]interface{})
+	agencyRefs, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Len(t, agencyRefs, 0)
 }

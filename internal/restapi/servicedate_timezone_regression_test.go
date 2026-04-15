@@ -158,8 +158,8 @@ func TestServiceDateTimezoneRegression_ArrivalDeparture(t *testing.T) {
 	code, model := serveAndGet(t, api, endpoint)
 	require.Equal(t, http.StatusOK, code)
 
-	data := model.Data.(map[string]interface{})
-	entry := data["entry"].(map[string]interface{})
+	data := model.Data.(map[string]any)
+	entry := data["entry"].(map[string]any)
 
 	// scheduledArrivalTime should use local midnight (March 15 NZDT), not UTC (March 14)
 	expectedMidnight := time.Date(2024, 3, 15, 0, 0, 0, 0, loc)
@@ -240,9 +240,9 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 			code, model := serveAndGet(t, api, endpoint)
 			require.Equal(t, http.StatusOK, code)
 
-			data := model.Data.(map[string]interface{})
-			entry := data["entry"].(map[string]interface{})
-			status := entry["status"].(map[string]interface{})
+			data := model.Data.(map[string]any)
+			entry := data["entry"].(map[string]any)
+			status := entry["status"].(map[string]any)
 
 			blockTripSeq := int(status["blockTripSequence"].(float64))
 			assert.Equal(t, 1, blockTripSeq,

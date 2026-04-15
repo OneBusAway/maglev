@@ -54,12 +54,12 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-			data := model.Data.(map[string]interface{})
-			list, ok := data["list"].([]interface{})
+			data := model.Data.(map[string]any)
+			list, ok := data["list"].([]any)
 			assert.True(t, ok, "expected 'list' key in response data")
 
 			for _, item := range list {
-				trip, ok := item.(map[string]interface{})
+				trip, ok := item.(map[string]any)
 				require.True(t, ok)
 
 				assert.Contains(t, trip, "frequency")
@@ -67,16 +67,16 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 				assert.Contains(t, trip, "situationIds")
 				assert.Contains(t, trip, "tripId")
 
-				if schedule, hasSchedule := trip["schedule"].(map[string]interface{}); hasSchedule {
+				if schedule, hasSchedule := trip["schedule"].(map[string]any); hasSchedule {
 					assert.Contains(t, schedule, "frequency")
 					assert.Contains(t, schedule, "nextTripId")
 					assert.Contains(t, schedule, "previousTripId")
 					assert.Contains(t, schedule, "timeZone")
 
-					stopTimes, hasStopTimes := schedule["stopTimes"].([]interface{})
+					stopTimes, hasStopTimes := schedule["stopTimes"].([]any)
 					if hasStopTimes {
 						for _, st := range stopTimes {
-							stopTime := st.(map[string]interface{})
+							stopTime := st.(map[string]any)
 
 							assert.Contains(t, stopTime, "arrivalTime")
 							assert.Contains(t, stopTime, "departureTime")
@@ -95,9 +95,9 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 
 				assert.IsType(t, float64(0), trip["serviceDate"])
 				assert.IsType(t, "", trip["tripId"])
-				situationIds, ok := trip["situationIds"].([]interface{})
+				situationIds, ok := trip["situationIds"].([]any)
 				require.True(t, ok)
-				assert.IsType(t, []interface{}{}, situationIds)
+				assert.IsType(t, []any{}, situationIds)
 			}
 
 			assert.GreaterOrEqual(t, len(list), tt.minExpected)
@@ -143,22 +143,22 @@ func TestTripsForLocationHandler_ReferencesContainStopsAndRoutes(t *testing.T) {
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-			data, ok := model.Data.(map[string]interface{})
+			data, ok := model.Data.(map[string]any)
 			require.True(t, ok, "response data should be a map")
 
-			refs, ok := data["references"].(map[string]interface{})
+			refs, ok := data["references"].(map[string]any)
 			require.True(t, ok, "references should be present in response data")
 
-			stops, ok := refs["stops"].([]interface{})
+			stops, ok := refs["stops"].([]any)
 			require.True(t, ok, "references.stops should be a []interface{}, not null")
 
-			routes, ok := refs["routes"].([]interface{})
+			routes, ok := refs["routes"].([]any)
 			require.True(t, ok, "references.routes should be a []interface{}, not null")
 
 			if len(stops) > 0 {
 				routeIDSet := make(map[string]bool, len(routes))
 				for _, r := range routes {
-					route, ok := r.(map[string]interface{})
+					route, ok := r.(map[string]any)
 					require.True(t, ok, "each route in references.routes should be a map")
 					if id, ok := route["id"].(string); ok {
 						routeIDSet[id] = true
@@ -166,10 +166,10 @@ func TestTripsForLocationHandler_ReferencesContainStopsAndRoutes(t *testing.T) {
 				}
 
 				for _, s := range stops {
-					stop, ok := s.(map[string]interface{})
+					stop, ok := s.(map[string]any)
 					require.True(t, ok, "each stop in references.stops should be a map")
 
-					routeIds, ok := stop["routeIds"].([]interface{})
+					routeIds, ok := stop["routeIds"].([]any)
 					assert.True(t, ok, "stop.routeIds should be a []interface{}, not null (stop: %v)", stop["id"])
 
 					for _, rid := range routeIds {
@@ -213,12 +213,12 @@ func TestTripsForLocationHandler_ScheduleInclusion(t *testing.T) {
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-			data := model.Data.(map[string]interface{})
-			list := data["list"].([]interface{})
+			data := model.Data.(map[string]any)
+			list := data["list"].([]any)
 
 			for _, item := range list {
-				trip := item.(map[string]interface{})
-				schedule, hasSchedule := trip["schedule"].(map[string]interface{})
+				trip := item.(map[string]any)
+				schedule, hasSchedule := trip["schedule"].(map[string]any)
 
 				if tt.includeSchedule {
 					assert.True(t, hasSchedule)
@@ -265,17 +265,17 @@ func TestTripsForLocationHandler_StopIDsAreCombined(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok, "references should be present")
 
-	stops, ok := refs["stops"].([]interface{})
+	stops, ok := refs["stops"].([]any)
 	require.True(t, ok, "references.stops should be present")
 
 	for _, s := range stops {
-		stop, ok := s.(map[string]interface{})
+		stop, ok := s.(map[string]any)
 		require.True(t, ok)
 		id, ok := stop["id"].(string)
 		require.True(t, ok, "stop id should be a string")
@@ -293,17 +293,17 @@ func TestTripsForLocationHandler_OrphanedStopsNotInResponse(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok, "references should be present")
 
-	stops, ok := refs["stops"].([]interface{})
+	stops, ok := refs["stops"].([]any)
 	require.True(t, ok, "references.stops should be present")
 
 	for _, s := range stops {
-		stop, ok := s.(map[string]interface{})
+		stop, ok := s.(map[string]any)
 		require.True(t, ok)
 		id, ok := stop["id"].(string)
 		require.True(t, ok, "stop id should be a string")
@@ -321,21 +321,21 @@ func TestTripsForLocationHandler_AgenciesExistForAllRoutes(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok, "references should be present")
 
-	agencies, ok := refs["agencies"].([]interface{})
+	agencies, ok := refs["agencies"].([]any)
 	require.True(t, ok, "references.agencies should be present")
 
-	routes, ok := refs["routes"].([]interface{})
+	routes, ok := refs["routes"].([]any)
 	require.True(t, ok, "references.routes should be present")
 
 	agencyIDSet := make(map[string]bool, len(agencies))
 	for _, a := range agencies {
-		agency, ok := a.(map[string]interface{})
+		agency, ok := a.(map[string]any)
 		require.True(t, ok)
 		if id, ok := agency["id"].(string); ok {
 			agencyIDSet[id] = true
@@ -343,7 +343,7 @@ func TestTripsForLocationHandler_AgenciesExistForAllRoutes(t *testing.T) {
 	}
 
 	for _, r := range routes {
-		route, ok := r.(map[string]interface{})
+		route, ok := r.(map[string]any)
 		require.True(t, ok)
 		agencyID, ok := route["agencyId"].(string)
 		require.True(t, ok, "route should have agencyId")
@@ -363,20 +363,20 @@ func TestTripsForLocationHandler_StopDirectionsAreStrings(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok, "references should be present")
 
-	stops, ok := refs["stops"].([]interface{})
+	stops, ok := refs["stops"].([]any)
 	require.True(t, ok, "references.stops should be present")
 
 	require.NotEmpty(t, stops, "expected stops in references to verify directions")
 
 	nonEmptyCount := 0
 	for _, s := range stops {
-		stop, ok := s.(map[string]interface{})
+		stop, ok := s.(map[string]any)
 		require.True(t, ok)
 		_, ok = stop["direction"].(string)
 		assert.True(t, ok, "stop %q direction field should be a string, not absent or null", stop["id"])
@@ -415,14 +415,14 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-			data := model.Data.(map[string]interface{})
-			list := data["list"].([]interface{})
+			data := model.Data.(map[string]any)
+			list := data["list"].([]any)
 
 			assert.NotEmpty(t, list, "expected at least one trip in the response to verify status behavior")
 
 			for _, item := range list {
-				trip := item.(map[string]interface{})
-				status, hasStatus := trip["status"].(map[string]interface{})
+				trip := item.(map[string]any)
+				status, hasStatus := trip["status"].(map[string]any)
 
 				if tt.includeStatus {
 					assert.True(t, hasStatus, "expected status to be present when includeStatus=true")

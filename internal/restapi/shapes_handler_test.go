@@ -86,10 +86,10 @@ func TestShapesHandlerReturnsShapeWhenItExists(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "model.Data should be a map")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok, "entry should be a map")
 
 	// Verify shape entry has expected fields
@@ -154,10 +154,10 @@ func TestShapesHandlerWithLoopingRoute(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "model.Data should be a map")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok, "entry should be a map")
 
 	encodedPoints, ok := entry["points"].(string)
@@ -198,10 +198,10 @@ func TestShapesHandlerWithOutAndBackRoute(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "model.Data should be a map")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok, "entry should be a map")
 
 	encodedPoints, ok := entry["points"].(string)
@@ -245,10 +245,10 @@ func TestShapesHandlerWithConsecutiveDuplicatePoints(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "model.Data should be a map")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok, "entry should be a map")
 
 	encodedPoints, ok := entry["points"].(string)
@@ -312,10 +312,10 @@ func TestShapesHandlerLengthMatchesDecodedPoints(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "model.Data should be a map")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok, "entry should be a map")
 
 	assert.Equal(t, float64(7), entry["length"])
@@ -346,10 +346,10 @@ func TestShapesHandlerOrdersBySequence(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	assert.Equal(t, float64(6), entry["length"])

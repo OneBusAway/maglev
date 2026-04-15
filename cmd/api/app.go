@@ -290,7 +290,7 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	}
 
 	// Build JSON config structure
-	jsonConfig := map[string]interface{}{
+	jsonConfig := map[string]any{
 		"port":             cfg.Port,
 		"env":              envStr,
 		"api-keys":         fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
@@ -300,14 +300,14 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		"data-path":        gtfsCfg.GTFSDataPath,
 	}
 
-	var feeds []map[string]interface{}
+	var feeds []map[string]any
 	for _, feedCfg := range gtfsCfg.RTFeeds {
 		redactedHeaders := make(map[string]string)
 		for k := range feedCfg.Headers {
 			redactedHeaders[k] = "***REDACTED***"
 		}
 
-		feed := map[string]interface{}{
+		feed := map[string]any{
 			"id":                    feedCfg.ID,
 			"trip-updates-url":      feedCfg.TripUpdatesURL,
 			"vehicle-positions-url": feedCfg.VehiclePositionsURL,

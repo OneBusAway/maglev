@@ -112,7 +112,7 @@ func TestFrequencyJSON(t *testing.T) {
 	assert.Equal(t, expected, unmarshaled)
 
 	// Verify JSON field names
-	var raw map[string]interface{}
+	var raw map[string]any
 	err = json.Unmarshal(jsonData, &raw)
 	require.NoError(t, err)
 	assert.Contains(t, raw, "startTime")

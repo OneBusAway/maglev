@@ -179,17 +179,17 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusTooManyRequests)
 
 	// Send JSON error response consistent with OneBusAway API format
-	errorResponse := map[string]interface{}{
+	errorResponse := map[string]any{
 		"code": http.StatusTooManyRequests,
 		"text": "Rate limit exceeded. Please try again later.",
-		"data": map[string]interface{}{
+		"data": map[string]any{
 			"entry": nil,
-			"references": map[string]interface{}{
-				"agencies":  []interface{}{},
-				"routes":    []interface{}{},
-				"stops":     []interface{}{},
-				"trips":     []interface{}{},
-				"stopTimes": []interface{}{},
+			"references": map[string]any{
+				"agencies":  []any{},
+				"routes":    []any{},
+				"stops":     []any{},
+				"trips":     []any{},
+				"stopTimes": []any{},
 			},
 		},
 		"currentTime": rl.clock.Now().UnixMilli(),
