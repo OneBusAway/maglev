@@ -22,7 +22,7 @@ func TestPerformDatabaseMigration_Idempotency(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// 1. First run should succeed and create tables
 	err = performDatabaseMigration(ctx, db)
@@ -50,7 +50,7 @@ func TestPerformDatabaseMigration_ErrorHandling(t *testing.T) {
 	// Inject malformed SQL to simulate a corrupted migration file
 	ddl = "CREATE TABLE valid_table (id INT); -- migrate\n THIS IS INVALID SQL;"
 
-	ctx := context.Background()
+	ctx := t.Context()
 	err = performDatabaseMigration(ctx, db)
 
 	assert.Error(t, err, "Migration should fail on invalid SQL")
@@ -66,7 +66,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	err = performDatabaseMigration(ctx, db)
 	assert.NoError(t, err)
 
@@ -82,7 +82,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 		t.Skip("Skipping test: testdata/gtfs.zip not found")
 	}
 
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), validBytes, "test-source-valid")
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), validBytes, "test-source-valid")
 	assert.NoError(t, err, "First import should succeed")
 
 	counts, err := client.TableCounts()
@@ -118,7 +118,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 	invalidBytes := buf.Bytes()
 
 	// 3. Attempt to import structurally invalid data
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), invalidBytes, "test-source-invalid")
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), invalidBytes, "test-source-invalid")
 	assert.Error(t, err, "Import should fail structural validation")
 	assert.Contains(t, err.Error(), "validation failed")
 
@@ -126,6 +126,136 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 	countsAfter, err := client.TableCounts()
 	assert.NoError(t, err)
 	assert.Equal(t, originalRouteCount, countsAfter["routes"], "Database should remain intact after validation failure")
+}
+
+// TestSlowQueryDB_LogsSlowQueries verifies that slowQueryDB emits a log record
+// when a query exceeds the threshold, and is silent when it does not.
+func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+	require.NoError(t, err)
+
+	// Capture slog output via a custom handler.
+	logger, captured := newCaptureLogger(t)
+
+	ctx := t.Context()
+
+	// Threshold of 0 → logging disabled; no records should be emitted.
+	wrapper := newSlowQueryDB(db, 0)
+	wrapper.logger = logger
+	rows, err := wrapper.QueryContext(ctx, "SELECT 1")
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
+	assert.Empty(t, *captured, "threshold=0 must not emit any log records")
+
+	// Use a fake clock advancing 10 ms per call to ensure the query exceeds
+	// the threshold and avoid Windows timer resolution issues.
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+	wrapper.threshold = 1 * time.Nanosecond
+	rows, err = wrapper.QueryContext(ctx, "SELECT 1")
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
+	require.NotEmpty(t, *captured, "threshold=1ns must emit a slow_query record")
+	rec := (*captured)[0]
+	assert.Equal(t, "slow_query", rec.msg)
+	assert.Equal(t, slog.LevelWarn, rec.level)
+	assert.Equal(t, "QueryContext", rec.attrs["op"])
+	assert.Contains(t, rec.attrs, "duration")
+	assert.Contains(t, rec.attrs, "query")
+}
+
+func TestSlowQueryDB_LogsSlowExecContext(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+	require.NoError(t, err)
+
+	logger, captured := newCaptureLogger(t)
+
+	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
+	wrapper.logger = logger
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+
+	_, err = wrapper.ExecContext(t.Context(), "INSERT INTO t(v) VALUES (1)")
+	require.NoError(t, err)
+	require.Len(t, *captured, 1)
+	rec := (*captured)[0]
+	assert.Equal(t, "slow_query", rec.msg)
+	assert.Equal(t, "ExecContext", rec.attrs["op"])
+	assert.Contains(t, rec.attrs, "duration")
+	assert.Contains(t, rec.attrs, "query")
+}
+
+func TestSlowQueryDB_LogsSlowQueryRowContext(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	logger, captured := newCaptureLogger(t)
+
+	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
+	wrapper.logger = logger
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+
+	var v int
+	err = wrapper.QueryRowContext(t.Context(), "SELECT 1").Scan(&v)
+	require.NoError(t, err)
+	assert.Equal(t, 1, v)
+	require.Len(t, *captured, 1)
+	rec := (*captured)[0]
+	assert.Equal(t, "slow_query", rec.msg)
+	assert.Equal(t, "QueryRowContext", rec.attrs["op"])
+	assert.Contains(t, rec.attrs, "duration")
+	assert.Contains(t, rec.attrs, "query")
+}
+
+func TestSlowQueryDB_LogsSlowErrorsWithErrorAttribute(t *testing.T) {
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	logger, captured := newCaptureLogger(t)
+
+	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
+	wrapper.logger = logger
+	t0 := time.Unix(0, 0)
+	call := 0
+	wrapper.now = func() time.Time {
+		call++
+		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
+	}
+
+	_, err = wrapper.QueryContext(t.Context(), "SELECT * FROM missing_table")
+	require.Error(t, err)
+	require.Len(t, *captured, 1)
+	rec := (*captured)[0]
+	assert.Equal(t, "slow_query", rec.msg)
+	assert.Equal(t, "QueryContext", rec.attrs["op"])
+	assert.Contains(t, rec.attrs, "duration")
+	assert.Contains(t, rec.attrs, "query")
+	errAttr, ok := rec.attrs["error"].(string)
+	require.True(t, ok)
+	assert.Contains(t, errAttr, "no such table")
 }
 
 type queryMetricCall struct {
@@ -151,7 +281,7 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	recorder := &testQueryMetricsRecorder{}
 
 	wrapper := newMetricsWrapper(db)
@@ -205,7 +335,7 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
 		require.NoError(t, client.Close())
 	})
 
-	agencies, err := client.Queries.ListAgencies(context.Background())
+	agencies, err := client.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, agencies)
 

@@ -21,3 +21,4 @@ testdata/perf/
 loadtest/results/
 loadtest/k6/*-summary.json
 loadtest/profiles/
+*.cov

@@ -1,7 +1,6 @@
 package gtfsdb
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -77,12 +76,12 @@ func TestProcessAndStoreGTFSData_ErrorHandling(t *testing.T) {
 
 	// Test with invalid GTFS data
 	invalidData := []byte("invalid gtfs data")
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), invalidData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(invalidData, "test-source")
 	assert.Error(t, err, "processAndStoreGTFSDataWithSource should return error for invalid data")
 
 	// Test with empty data
 	emptyData := []byte{}
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), emptyData, "test-source")
+	err = client.processAndStoreGTFSDataWithSource(emptyData, "test-source")
 	assert.Error(t, err, "processAndStoreGTFSDataWithSource should return error for empty data")
 }
 
@@ -98,7 +97,7 @@ func TestImportFromFile_ErrorHandling(t *testing.T) {
 	require.NoError(t, err, "NewClient should succeed")
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test with non-existent file
 	err = client.ImportFromFile(ctx, "/nonexistent/file.zip")
@@ -117,7 +116,7 @@ func TestDownloadAndStore_ErrorHandling(t *testing.T) {
 	require.NoError(t, err, "NewClient should succeed")
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test with invalid URL
 	err = client.DownloadAndStore(ctx, "invalid-url", "", "")
@@ -160,7 +159,7 @@ func TestDownloadAndStore_AuthenticationHeaders(t *testing.T) {
 	require.NoError(t, err, "NewClient should succeed")
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test with authentication headers
 	_ = client.DownloadAndStore(ctx, server.URL, expectedHeaderName, expectedHeaderValue)
@@ -197,7 +196,7 @@ func TestDownloadAndStore_NoAuthHeaders(t *testing.T) {
 	require.NoError(t, err, "NewClient should succeed")
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test without authentication headers (empty strings)
 	_ = client.DownloadAndStore(ctx, server.URL, "", "")

@@ -23,7 +23,7 @@ func createFrequencyTestClient(t *testing.T) *Client {
 	client, err := NewClient(config)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err = client.Queries.CreateAgency(ctx, CreateAgencyParams{
 		ID:       "test_agency",
@@ -94,7 +94,7 @@ func TestBulkInsertFrequencies(t *testing.T) {
 			client := createFrequencyTestClient(t)
 			defer func() { _ = client.Close() }()
 
-			ctx := context.Background()
+			ctx := t.Context()
 
 			var frequencies []CreateFrequencyParams
 			if tc.name == "Multiple windows for one trip" {
@@ -172,7 +172,7 @@ func TestBulkInsertFrequencies_MultipleTrips(t *testing.T) {
 	client := createFrequencyTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	frequencies := []CreateFrequencyParams{
 		{TripID: "trip_1", StartTime: int64(6 * 3600 * 1e9), EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
@@ -207,7 +207,7 @@ func TestBulkInsertFrequencies_DuplicatePrimaryKey(t *testing.T) {
 	client := createFrequencyTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	startTime := int64(6 * 3600 * 1e9)
 	frequencies := []CreateFrequencyParams{
@@ -224,11 +224,34 @@ func TestBulkInsertFrequencies_DuplicatePrimaryKey(t *testing.T) {
 	assert.Equal(t, int64(600), rows[0].HeadwaySecs)
 	assert.Equal(t, int64(0), rows[0].ExactTimes)
 }
+
+func TestGetFrequencyTripIDs(t *testing.T) {
+	client := createFrequencyTestClient(t)
+	defer func() { _ = client.Close() }()
+
+	ctx := t.Context()
+
+	frequencies := []CreateFrequencyParams{
+		{TripID: "trip_1", StartTime: int64(6 * 3600 * 1e9), EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
+		{TripID: "trip_1", StartTime: int64(16 * 3600 * 1e9), EndTime: int64(19 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
+		{TripID: "trip_3", StartTime: int64(8 * 3600 * 1e9), EndTime: int64(12 * 3600 * 1e9), HeadwaySecs: 1200, ExactTimes: 0},
+	}
+
+	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
+	require.NoError(t, err)
+
+	tripIDs, err := client.Queries.GetFrequencyTripIDs(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(tripIDs), "Should return 2 distinct trip IDs")
+	assert.Contains(t, tripIDs, "trip_1")
+	assert.Contains(t, tripIDs, "trip_3")
+}
+
 func TestClearFrequencies(t *testing.T) {
 	client := createFrequencyTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	frequencies := []CreateFrequencyParams{
 		{TripID: "trip_1", StartTime: int64(6 * 3600 * 1e9), EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
@@ -258,7 +281,7 @@ func TestGetFrequenciesForTrips(t *testing.T) {
 	client := createFrequencyTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	frequencies := []CreateFrequencyParams{
 		{TripID: "trip_1", StartTime: int64(6 * 3600 * 1e9), EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},

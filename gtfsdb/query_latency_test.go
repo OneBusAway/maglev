@@ -68,7 +68,7 @@ func loadLatencyFixture(tb testing.TB) (*Client, string, string) {
 		tb.Fatalf("NewClient: %v", clientErr)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// GTFS import is skipped when the stops table is non-empty.
 	if latencyIsEmpty(ctx, tb, client.DB) {
@@ -76,7 +76,7 @@ func loadLatencyFixture(tb testing.TB) (*Client, string, string) {
 		if readErr != nil {
 			tb.Fatalf("reading %s: %v", filepath.Base(zipPath), readErr)
 		}
-		if impErr := client.processAndStoreGTFSDataWithSource(context.Background(), data, zipPath); impErr != nil {
+		if impErr := client.processAndStoreGTFSDataWithSource(t.Context(), data, zipPath); impErr != nil {
 			tb.Fatalf("importing GTFS data from %s: %v", filepath.Base(zipPath), impErr)
 		}
 	}
@@ -203,7 +203,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 	client, stopID, tripID := loadLatencyFixture(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	const (
 		concurrency = 25  // matches MaxOpenConns for file DBs
 		iterations  = 200 // per goroutine
@@ -346,7 +346,7 @@ func TestExplainQueryPlans(t *testing.T) {
 	client, stopID, tripID := loadLatencyFixture(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	now := time.Now()
 	dateStr := now.Format("20060102")
 	windowStart := int64(5 * time.Hour)
@@ -533,13 +533,13 @@ func TestConnectionPoolTuning(t *testing.T) {
 
 		data, readErr := os.ReadFile(rabaZip)
 		require.NoError(t, readErr)
-		require.NoError(t, client.processAndStoreGTFSDataWithSource(context.Background(), data, rabaZip))
+		require.NoError(t, client.processAndStoreGTFSDataWithSource(t.Context(), data, rabaZip))
 
 		// Apply the pool size under test.
 		client.DB.SetMaxOpenConns(maxConns)
 		client.DB.SetMaxIdleConns(maxConns / 2)
 
-		ctx := context.Background()
+		ctx := t.Context()
 		stopID := latencyPickFirstStop(ctx, t, client.DB)
 
 		var (
@@ -639,7 +639,7 @@ func BenchmarkQueryGetStopTimesForStopInWindow(b *testing.B) {
 	client, stopID, _ := loadLatencyFixture(b)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	windowStart := int64(5 * time.Hour)
 	windowEnd := int64(23 * time.Hour)
 
@@ -662,7 +662,7 @@ func BenchmarkQueryGetScheduleForStopOnDate(b *testing.B) {
 	client, stopID, _ := loadLatencyFixture(b)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	now := time.Now()
 	dateStr := now.Format("20060102")
 	weekday := strings.ToLower(now.Weekday().String())
@@ -691,7 +691,7 @@ func BenchmarkQueryGetStopTimesForTrip(b *testing.B) {
 	client, _, tripID := loadLatencyFixture(b)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -708,7 +708,7 @@ func BenchmarkQueryGetActiveRouteIDsForStopsOnDate(b *testing.B) {
 	client, stopID, _ := loadLatencyFixture(b)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	dateStr := time.Now().Format("20060102")
 	svcIDs := latencyFetchActiveServiceIDs(ctx, b, client.Queries, dateStr)
 	if len(svcIDs) == 0 {
@@ -733,7 +733,7 @@ func BenchmarkQuerySearchStopsByName(b *testing.B) {
 	client, _, _ := loadLatencyFixture(b)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -758,7 +758,7 @@ func BenchmarkQueryConcurrentMixed(b *testing.B) {
 	client, stopID, tripID := loadLatencyFixture(b)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	now := time.Now()
 	dateStr := now.Format("20060102")
 	weekday := strings.ToLower(now.Weekday().String())

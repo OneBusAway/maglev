@@ -51,7 +51,7 @@ func TestConnectionPoolBehavior(t *testing.T) {
 	db := client.DB
 
 	// Test that we can make sequential queries since :memory: uses 1 connection
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Make sequential queries to test that the single connection works
 	for i := 0; i < 10; i++ {
@@ -87,7 +87,7 @@ func TestConnectionLifetime(t *testing.T) {
 	initialStats := db.Stats()
 
 	// Make a query to create at least one connection
-	ctx := context.Background()
+	ctx := t.Context()
 	row := db.QueryRowContext(ctx, "SELECT 1")
 	var result int
 	err = row.Scan(&result)
@@ -115,7 +115,7 @@ func TestConnectionPoolConfiguration(t *testing.T) {
 	assert.Equal(t, 1, stats.MaxOpenConnections, "MaxOpenConns should be 1 for :memory: databases")
 
 	// Test that we can ping the database
-	ctx := context.Background()
+	ctx := t.Context()
 	err = db.PingContext(ctx)
 	assert.NoError(t, err, "Should be able to ping configured database")
 }

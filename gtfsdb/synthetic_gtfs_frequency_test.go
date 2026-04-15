@@ -94,10 +94,10 @@ func TestSyntheticGTFS_FrequencyIngestion(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	gtfsData := buildSyntheticGTFSZip(t, true)
 
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), gtfsData, "synthetic-test")
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), gtfsData, "synthetic-test")
 	require.NoError(t, err, "Ingestion of synthetic GTFS with frequencies should succeed")
 
 	// Verify basic data was imported
@@ -164,10 +164,10 @@ func TestSyntheticGTFS_NoFrequencyFile(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	gtfsData := buildSyntheticGTFSZip(t, false)
 
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), gtfsData, "synthetic-no-freq")
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), gtfsData, "synthetic-no-freq")
 	require.NoError(t, err, "Ingestion of GTFS without frequencies.txt should succeed")
 
 	// Verify trips were still imported
@@ -196,11 +196,11 @@ func TestSyntheticGTFS_FrequenciesClearedOnReimport(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// First import: with frequencies
 	dataWithFreqs := buildSyntheticGTFSZip(t, true)
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), dataWithFreqs, "source-a")
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), dataWithFreqs, "source-a")
 	require.NoError(t, err)
 
 	// Verify frequencies exist
@@ -210,7 +210,7 @@ func TestSyntheticGTFS_FrequenciesClearedOnReimport(t *testing.T) {
 
 	// Second import: same data without frequencies (different source triggers reimport)
 	dataNoFreqs := buildSyntheticGTFSZip(t, false)
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), dataNoFreqs, "source-b")
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), dataNoFreqs, "source-b")
 	require.NoError(t, err)
 
 	// Verify frequencies were cleared
@@ -235,7 +235,7 @@ func TestSyntheticGTFS_TableCountsIncludeFrequencies(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	gtfsData := buildSyntheticGTFSZip(t, true)
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), gtfsData, "synthetic-test")
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), gtfsData, "synthetic-test")
 	require.NoError(t, err)
 
 	counts, err := client.TableCounts()

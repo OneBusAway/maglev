@@ -98,8 +98,8 @@ func TestProcessGTFSWithoutShapes(t *testing.T) {
 	gtfsData := createMinimalGTFSWithoutShapes(t)
 
 	// This should NOT panic - trips without shapes are valid
-	ctx := context.Background()
-	err = client.processAndStoreGTFSDataWithSource(context.Background(), gtfsData, "test-source-no-shapes")
+	ctx := t.Context()
+	err = client.processAndStoreGTFSDataWithSource(t.Context(), gtfsData, "test-source-no-shapes")
 	require.NoError(t, err, "Should be able to import GTFS data without shapes")
 
 	// Verify trips were imported successfully

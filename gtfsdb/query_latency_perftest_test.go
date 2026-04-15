@@ -48,10 +48,10 @@ func loadPerfFixture(b *testing.B) *Client {
 	// Import GTFS data; skipped automatically when the hash matches an existing import.
 	zipData, err := os.ReadFile(zipPath)
 	require.NoError(b, err)
-	if importErr := client.processAndStoreGTFSDataWithSource(context.Background(), zipData, zipPath); importErr != nil {
+	if importErr := client.processAndStoreGTFSDataWithSource(t.Context(), zipData, zipPath); importErr != nil {
 		// A duplicate import fails the hash-match check; the error is non-fatal.
 		b.Logf("GTFS import: %v", importErr)
-		if latencyIsEmpty(context.Background(), b, client.DB) {
+		if latencyIsEmpty(t.Context(), b, client.DB) {
 			b.Fatalf("GTFS import failed and database is empty: %v", importErr)
 		}
 	}
@@ -63,7 +63,7 @@ func loadPerfFixture(b *testing.B) *Client {
 // query (arrivals inner loop) against the full TriMet dataset (~3 M stop_times).
 func BenchmarkLargeDatasetGetStopTimesForStopInWindow(b *testing.B) {
 	client := loadPerfFixture(b)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stopID := latencyPickFirstStop(ctx, b, client.DB)
 	windowStart := int64(5 * time.Hour)
@@ -88,7 +88,7 @@ func BenchmarkLargeDatasetGetStopTimesForStopInWindow(b *testing.B) {
 // query (the heaviest query by plan cost) against TriMet data.
 func BenchmarkLargeDatasetGetScheduleForStopOnDate(b *testing.B) {
 	client := loadPerfFixture(b)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stopID := latencyPickFirstStop(ctx, b, client.DB)
 	now := time.Now()
@@ -119,7 +119,7 @@ func BenchmarkLargeDatasetGetScheduleForStopOnDate(b *testing.B) {
 // TriMet stop corpus (~10 k stops).
 func BenchmarkLargeDatasetSearchStopsByName(b *testing.B) {
 	client := loadPerfFixture(b)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -138,7 +138,7 @@ func BenchmarkLargeDatasetSearchStopsByName(b *testing.B) {
 // BenchmarkLargeDatasetGetStopTimesForTrip benchmarks the trip-details path.
 func BenchmarkLargeDatasetGetStopTimesForTrip(b *testing.B) {
 	client := loadPerfFixture(b)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tripID := latencyPickFirstTrip(ctx, b, client.DB)
 
@@ -157,7 +157,7 @@ func BenchmarkLargeDatasetGetStopTimesForTrip(b *testing.B) {
 // stops-for-location batch query against TriMet data.
 func BenchmarkLargeDatasetGetActiveRouteIDsForStopsOnDate(b *testing.B) {
 	client := loadPerfFixture(b)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stopID := latencyPickFirstStop(ctx, b, client.DB)
 	dateStr := time.Now().Format("20060102")
@@ -184,7 +184,7 @@ func BenchmarkLargeDatasetGetActiveRouteIDsForStopsOnDate(b *testing.B) {
 // TriMet data with 25 parallel goroutines, mirroring the k6 scenario ratios.
 func BenchmarkLargeDatasetConcurrentMixed(b *testing.B) {
 	client := loadPerfFixture(b)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stopID := latencyPickFirstStop(ctx, b, client.DB)
 	tripID := latencyPickFirstTrip(ctx, b, client.DB)
