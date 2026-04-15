@@ -89,11 +89,11 @@ func TestTripForVehicleHandlerResponseSchemaValidation(t *testing.T) {
 	assert.Equal(t, 2, model.Version, "Response version should be 2")
 	assert.Greater(t, model.CurrentTime, int64(0), "CurrentTime should be set")
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "Data should be a map")
 
 	// Validate entry structure
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok, "Entry should exist")
 
 	// Required fields in entry
@@ -106,7 +106,7 @@ func TestTripForVehicleHandlerResponseSchemaValidation(t *testing.T) {
 	assert.Greater(t, serviceDate, float64(0), "serviceDate should be positive")
 
 	// Validate references structure
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok, "References should exist")
 
 	// Check required reference arrays exist
@@ -143,11 +143,11 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, data)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	assert.NotNil(t, entry["tripId"])
@@ -164,34 +164,34 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	expectedServiceDateMillis := expectedServiceDate.Unix() * 1000
 	assert.Equal(t, float64(expectedServiceDateMillis), entry["serviceDate"])
 
-	status, statusOk := entry["status"].(map[string]interface{})
+	status, statusOk := entry["status"].(map[string]any)
 	if statusOk {
 		assert.NotNil(t, status)
 		assert.NotNil(t, status["serviceDate"])
-		assert.Contains(t, []interface{}{"scheduled", "in_progress", "completed"}, status["phase"])
+		assert.Contains(t, []any{"scheduled", "in_progress", "completed"}, status["phase"])
 		assert.NotNil(t, status["predicted"])
 	}
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok, "References section should exist")
 	assert.NotNil(t, references, "References should not be nil")
 
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok, "Routes section should exist in references")
 	assert.NotEmpty(t, routes, "Routes should not be empty")
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies section should exist in references")
 	assert.NotEmpty(t, agencies, "Agencies should not be empty")
 
 	// Ensure trip is included by default
-	trips, ok := references["trips"].([]interface{})
+	trips, ok := references["trips"].([]any)
 	assert.True(t, ok, "Trips section should exist in references by default")
 	assert.NotEmpty(t, trips, "Trips should not be empty by default")
 
-	stops, stopsOk := references["stops"].([]interface{})
+	stops, stopsOk := references["stops"].([]any)
 	if stopsOk && len(stops) > 0 {
-		stop, ok := stops[0].(map[string]interface{})
+		stop, ok := stops[0].(map[string]any)
 		assert.True(t, ok)
 		assert.NotNil(t, stop["id"])
 		assert.NotNil(t, stop["name"])
@@ -323,10 +323,10 @@ func TestTripForVehicleHandlerWithServiceDate(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
 	agencyLoc, _ := time.LoadLocation("America/Los_Angeles")
@@ -357,10 +357,10 @@ func TestTripForVehicleHandlerWithIncludeStatusFalse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	status, statusExists := entry["status"]
@@ -390,17 +390,17 @@ func TestTripForVehicleHandlerWithIncludeTripFalse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok)
 
 	// Check that trips are NOT in references
 	trips, tripsExists := references["trips"]
 	if tripsExists {
 		// If the key exists, it should be nil or empty list
-		tripsList, isList := trips.([]interface{})
+		tripsList, isList := trips.([]any)
 		if isList {
 			assert.Empty(t, tripsList, "Trips should be empty when includeTrip=false")
 		} else {
@@ -430,10 +430,10 @@ func TestTripForVehicleHandlerWithIncludeScheduleTrue(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	// When includeSchedule=true, schedule may be present (depends on data)
@@ -465,10 +465,10 @@ func TestTripForVehicleHandlerWithTimeParameter(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 	assert.NotNil(t, entry["tripId"])
 }
@@ -494,10 +494,10 @@ func TestTripForVehicleHandlerWithAllParametersFalse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	// Basic fields should still exist
@@ -515,17 +515,17 @@ func TestTripForVehicleHandlerWithAllParametersFalse(t *testing.T) {
 		assert.Nil(t, status)
 	}
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok)
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, agencies)
 
 	// Ensure trip is missing from references
 	trips, tripsExists := references["trips"]
 	if tripsExists {
-		tripsList, ok := trips.([]interface{})
+		tripsList, ok := trips.([]any)
 		if ok {
 			assert.Empty(t, tripsList)
 		}
@@ -561,10 +561,10 @@ func TestTripForVehicleHandlerWithCombinedParameters(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
@@ -592,18 +592,18 @@ func TestTripForVehicleHandlerAgencyReferenceValidation(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&model)
 	require.NoError(t, err)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, agencies, "At least one agency should be referenced")
 
 	// Validate agency structure
-	agency, ok := agencies[0].(map[string]interface{})
+	agency, ok := agencies[0].(map[string]any)
 	require.True(t, ok)
 
 	assert.Contains(t, agency, "id", "Agency should have id")
@@ -629,18 +629,18 @@ func TestTripForVehicleHandlerTripReferenceValidation(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&model)
 	require.NoError(t, err)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	trips, ok := references["trips"].([]interface{})
+	trips, ok := references["trips"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, trips, "At least one trip should be referenced")
 
 	// Validate trip structure
-	trip, ok := trips[0].(map[string]interface{})
+	trip, ok := trips[0].(map[string]any)
 	require.True(t, ok)
 
 	assert.Contains(t, trip, "id", "Trip should have id")

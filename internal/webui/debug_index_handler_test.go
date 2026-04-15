@@ -53,7 +53,7 @@ func TestWriteDebugData(t *testing.T) {
 	tests := []struct {
 		name           string
 		title          string
-		data           interface{}
+		data           any
 		expectedInBody []string
 	}{
 		{

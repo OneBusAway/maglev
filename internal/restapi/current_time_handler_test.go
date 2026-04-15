@@ -37,11 +37,11 @@ func TestCurrentTimeHandler(t *testing.T) {
 
 	// Test the data structure
 	// First, we need to cast the interface{} to the expected type
-	responseData, ok := model.Data.(map[string]interface{})
+	responseData, ok := model.Data.(map[string]any)
 	assert.True(t, ok, "could not cast data to expected type")
 
 	// Check that entry exists
-	entry, ok := responseData["entry"].(map[string]interface{})
+	entry, ok := responseData["entry"].(map[string]any)
 	assert.True(t, ok, "could not find entry in response data")
 
 	// Check that time and readableTime exist in entry
@@ -52,13 +52,13 @@ func TestCurrentTimeHandler(t *testing.T) {
 	assert.True(t, ok, "could not find readableTime in entry")
 
 	// Check that references exist and have the expected structure
-	references, ok := responseData["references"].(map[string]interface{})
+	references, ok := responseData["references"].(map[string]any)
 	assert.True(t, ok, "could not find references in response data")
 
 	// Check that all expected arrays exist in references
 	referencesFields := []string{"agencies", "routes", "situations", "stopTimes", "stops", "trips"}
 	for _, field := range referencesFields {
-		array, ok := references[field].([]interface{})
+		array, ok := references[field].([]any)
 		assert.True(t, ok, "could not find %s array in references", field)
 		assert.Equal(t, 0, len(array), "expected empty %s array, got length %d", field, len(array))
 	}
@@ -80,8 +80,8 @@ func TestCurrentTimeHandler_DeterministicTime(t *testing.T) {
 	assert.Equal(t, expectedMs, response.CurrentTime, "Response currentTime should equal mock clock time")
 
 	// Entry time should also match
-	responseData := response.Data.(map[string]interface{})
-	entry := responseData["entry"].(map[string]interface{})
+	responseData := response.Data.(map[string]any)
+	entry := responseData["entry"].(map[string]any)
 	assert.Equal(t, float64(expectedMs), entry["time"], "Entry time should equal mock clock time")
 
 	// Readable time should match

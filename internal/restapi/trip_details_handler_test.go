@@ -33,11 +33,11 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, data)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	assert.Equal(t, tripID, entry["tripId"])
@@ -57,16 +57,16 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	_, exists := entry["situationIds"]
 	assert.True(t, exists)
 
-	schedule, ok := entry["schedule"].(map[string]interface{})
+	schedule, ok := entry["schedule"].(map[string]any)
 	if ok {
 		assert.NotNil(t, schedule)
 
-		stopTimes, stopTimesOk := schedule["stopTimes"].([]interface{})
+		stopTimes, stopTimesOk := schedule["stopTimes"].([]any)
 		if stopTimesOk {
 			assert.GreaterOrEqual(t, len(stopTimes), 0)
 
 			if len(stopTimes) > 0 {
-				stopTime, ok := stopTimes[0].(map[string]interface{})
+				stopTime, ok := stopTimes[0].(map[string]any)
 				assert.True(t, ok)
 				assert.NotNil(t, stopTime["stopId"])
 				assert.NotNil(t, stopTime["arrivalTime"])
@@ -78,50 +78,50 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 	}
 
 	// Test status section (if includeStatus=true by default)
-	status, statusOk := entry["status"].(map[string]interface{})
+	status, statusOk := entry["status"].(map[string]any)
 	if statusOk {
 		assert.NotNil(t, status)
 		assert.NotNil(t, status["serviceDate"])
-		assert.Contains(t, []interface{}{"scheduled", "in_progress", "completed"}, status["phase"])
+		assert.Contains(t, []any{"scheduled", "in_progress", "completed"}, status["phase"])
 		assert.NotNil(t, status["predicted"])
 	}
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok, "References section should exist")
 	assert.NotNil(t, references, "References should not be nil")
 
 	// Test trip references (if includeTrip=true by default)
-	tripsRef, tripsOk := references["trips"].([]interface{})
+	tripsRef, tripsOk := references["trips"].([]any)
 	if tripsOk {
 		assert.NotEmpty(t, tripsRef, "Trips should not be empty")
 
-		tripRef, ok := tripsRef[0].(map[string]interface{})
+		tripRef, ok := tripsRef[0].(map[string]any)
 		assert.True(t, ok)
 		assert.Equal(t, tripID, tripRef["id"])
 		assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), tripRef["routeId"])
 		assert.Equal(t, utils.FormCombinedID(agency.ID, trip.ServiceID), tripRef["serviceId"])
 	}
 
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok, "Routes section should exist in references")
 	assert.NotEmpty(t, routes, "Routes should not be empty")
 
 	assert.True(t, ok)
 	assert.NotEmpty(t, routes)
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies section should exist in references")
 	assert.NotEmpty(t, agencies, "Agencies should not be empty")
 
-	agencyRef, ok := agencies[0].(map[string]interface{})
+	agencyRef, ok := agencies[0].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, agency.ID, agencyRef["id"])
 	assert.Equal(t, agency.Name, agencyRef["name"])
 
 	// Test stop references (should exist if schedule is included)
-	stops, stopsOk := references["stops"].([]interface{})
+	stops, stopsOk := references["stops"].([]any)
 	if stopsOk && len(stops) > 0 {
-		stop, ok := stops[0].(map[string]interface{})
+		stop, ok := stops[0].(map[string]any)
 		assert.True(t, ok)
 		assert.NotNil(t, stop["id"])
 		assert.NotNil(t, stop["name"])
@@ -159,10 +159,10 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
 	agencyLoc, _ := time.LoadLocation("America/Los_Angeles")
@@ -186,16 +186,16 @@ func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok)
 
 	// When includeTrip=false, trips section should be empty or not exist
 	trips_ref, tripsOk := references["trips"]
 	if tripsOk {
-		tripsArray, ok := trips_ref.([]interface{})
+		tripsArray, ok := trips_ref.([]any)
 		if ok {
 			assert.Empty(t, tripsArray, "Trips should be empty when includeTrip=false")
 		}
@@ -216,10 +216,10 @@ func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	// When includeSchedule=false, schedule should be nil or not exist
@@ -229,12 +229,12 @@ func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
 	}
 
 	// Stops should also not be included in references
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok)
 
 	stops, stopsOk := references["stops"]
 	if stopsOk {
-		stopsArray, ok := stops.([]interface{})
+		stopsArray, ok := stops.([]any)
 		if ok {
 			assert.Empty(t, stopsArray, "Stops should be empty when includeSchedule=false")
 		}
@@ -255,10 +255,10 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	// When includeStatus=false, status should be nil or not exist
@@ -287,10 +287,10 @@ func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	// The response should be successful (time parameter affects internal calculations)
@@ -311,10 +311,10 @@ func TestTripDetailsHandlerWithAllParametersFalse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 
 	// Basic fields should still exist
@@ -332,15 +332,15 @@ func TestTripDetailsHandlerWithAllParametersFalse(t *testing.T) {
 		assert.Nil(t, status)
 	}
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok)
 
 	// Should still have route and agency references, but not trips or stops
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok)
 	assert.Empty(t, routes)
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, agencies)
 }

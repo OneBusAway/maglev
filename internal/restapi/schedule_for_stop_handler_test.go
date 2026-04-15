@@ -60,11 +60,11 @@ func TestScheduleForStopHandler(t *testing.T) {
 
 			if tt.expectValidResponse {
 				assert.Equal(t, "OK", model.Text)
-				data, ok := model.Data.(map[string]interface{})
+				data, ok := model.Data.(map[string]any)
 				assert.True(t, ok)
 				assert.NotNil(t, data["entry"])
 
-				entry, ok := data["entry"].(map[string]interface{})
+				entry, ok := data["entry"].(map[string]any)
 				assert.True(t, ok)
 				assert.Equal(t, tt.stopID, entry["stopId"])
 				assert.NotNil(t, entry["date"])
@@ -93,9 +93,9 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		assert.True(t, ok)
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 		assert.NotNil(t, entry["date"])
 	})
@@ -117,8 +117,8 @@ func TestScheduleForStopHandlerAgencyTimeZone(t *testing.T) {
 	endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST"
 	_, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
-	data := model.Data.(map[string]interface{})
-	entry, ok := data["entry"].(map[string]interface{})
+	data := model.Data.(map[string]any)
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 	assert.NotNil(t, entry["date"])
 
@@ -142,7 +142,7 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 		name           string
 		date           string
 		expectedStatus int
-		validateResult func(t *testing.T, entry map[string]interface{})
+		validateResult func(t *testing.T, entry map[string]any)
 	}{
 		// NOTE: These dates (2025-06-12, etc.) are chosen to match the validity period of the
 		// test GTFS data loaded in createTestApi. If the test data changes, these dates
@@ -151,7 +151,7 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 			name:           "Thursday date - query executes successfully",
 			date:           "2025-06-12",
 			expectedStatus: http.StatusOK,
-			validateResult: func(t *testing.T, entry map[string]interface{}) {
+			validateResult: func(t *testing.T, entry map[string]any) {
 				assert.Equal(t, stopID, entry["stopId"])
 				assert.NotNil(t, entry["date"])
 				_, exists := entry["stopRouteSchedules"]
@@ -162,7 +162,7 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 			name:           "Monday date - query executes successfully",
 			date:           "2025-06-09",
 			expectedStatus: http.StatusOK,
-			validateResult: func(t *testing.T, entry map[string]interface{}) {
+			validateResult: func(t *testing.T, entry map[string]any) {
 				assert.Equal(t, stopID, entry["stopId"])
 				_, exists := entry["stopRouteSchedules"]
 				assert.True(t, exists, "stopRouteSchedules field should exist")
@@ -172,7 +172,7 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 			name:           "Sunday date - query executes successfully",
 			date:           "2025-06-08",
 			expectedStatus: http.StatusOK,
-			validateResult: func(t *testing.T, entry map[string]interface{}) {
+			validateResult: func(t *testing.T, entry map[string]any) {
 				assert.Equal(t, stopID, entry["stopId"])
 				_, exists := entry["stopRouteSchedules"]
 				assert.True(t, exists, "stopRouteSchedules field should exist")
@@ -189,9 +189,9 @@ func TestScheduleForStopHandlerWithDateFiltering(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, model.Code)
 
 			if tt.expectedStatus == http.StatusOK {
-				data, ok := model.Data.(map[string]interface{})
+				data, ok := model.Data.(map[string]any)
 				assert.True(t, ok)
-				entry, ok := data["entry"].(map[string]interface{})
+				entry, ok := data["entry"].(map[string]any)
 				assert.True(t, ok)
 
 				tt.validateResult(t, entry)
@@ -215,31 +215,31 @@ func TestScheduleForStopHandlerReferences(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		assert.True(t, ok, "Data should be a map")
 
-		_, ok = data["references"].(map[string]interface{})
+		_, ok = data["references"].(map[string]any)
 		assert.True(t, ok, "References should exist")
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok, "Entry should exist")
 
 		assert.Contains(t, entry, "stopId", "Entry should have stopId")
 		assert.Contains(t, entry, "date", "Entry should have date")
 
-		references := data["references"].(map[string]interface{})
+		references := data["references"].(map[string]any)
 
-		agenciesRef, ok := references["agencies"].([]interface{})
+		agenciesRef, ok := references["agencies"].([]any)
 		assert.True(t, ok, "Agencies should exist")
 		assert.True(t, len(agenciesRef) >= 1, "Should Have at least one Agency")
 
-		stopsRef, ok := references["stops"].([]interface{})
+		stopsRef, ok := references["stops"].([]any)
 		assert.True(t, ok, "Stops should exist in references")
 		assert.Len(t, stopsRef, 1, "Should have exactly one stop")
 
-		_, ok = references["trips"].([]interface{})
+		_, ok = references["trips"].([]any)
 		assert.True(t, ok, "Trips should exist in references")
-		_, ok = references["routes"].([]interface{})
+		_, ok = references["routes"].([]any)
 		assert.True(t, ok, "Routes should exist in references")
 	})
 }
@@ -302,10 +302,10 @@ func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		assert.True(t, ok)
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 
 		assert.Contains(t, entry, "stopId")
@@ -330,10 +330,10 @@ func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		assert.True(t, ok)
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 
 		assert.NotNil(t, entry["stopRouteSchedules"])
@@ -356,11 +356,11 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 
 		require.Equal(http.StatusOK, resp.StatusCode)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		require.True(ok, "Response data should be a map")
 
 		// Validate references structure
-		references, ok := data["references"].(map[string]interface{})
+		references, ok := data["references"].(map[string]any)
 		require.True(ok, "References should exist and be a map")
 
 		// Check that all reference types exist (even if empty)
@@ -371,7 +371,7 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 		require.True(hasAgencies || hasRoutes || hasTrips, "At least one reference type should exist")
 
 		// Validate entry structure
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		require.True(ok, "Entry should exist")
 
 		// Verify critical fields
@@ -383,28 +383,28 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 		require.True(schedulesExists, "stopRouteSchedules should exist")
 
 		// If schedules exist, validate their structure
-		if scheduleList, ok := schedules.([]interface{}); ok && len(scheduleList) > 0 {
-			firstSchedule := scheduleList[0].(map[string]interface{})
+		if scheduleList, ok := schedules.([]any); ok && len(scheduleList) > 0 {
+			firstSchedule := scheduleList[0].(map[string]any)
 
 			// Verify route schedule has required fields
 			require.Contains(firstSchedule, "routeId", "Route schedule should have routeId")
 			require.Contains(firstSchedule, "stopRouteDirectionSchedules", "Route schedule should have stopRouteDirectionSchedules array")
 
 			// Check direction schedules
-			dirSchedules, ok := firstSchedule["stopRouteDirectionSchedules"].([]interface{})
+			dirSchedules, ok := firstSchedule["stopRouteDirectionSchedules"].([]any)
 			require.True(ok, "stopRouteDirectionSchedules should be an array")
 
 			if len(dirSchedules) > 0 {
-				dirSchedule := dirSchedules[0].(map[string]interface{})
+				dirSchedule := dirSchedules[0].(map[string]any)
 				require.Contains(dirSchedule, "tripHeadsign", "Direction schedule should have tripHeadsign")
 				require.Contains(dirSchedule, "scheduleStopTimes", "Direction schedule should have scheduleStopTimes")
 
 				// Validate stop times
-				stopTimes, ok := dirSchedule["scheduleStopTimes"].([]interface{})
+				stopTimes, ok := dirSchedule["scheduleStopTimes"].([]any)
 				require.True(ok, "scheduleStopTimes should be an array")
 
 				if len(stopTimes) > 0 {
-					stopTime := stopTimes[0].(map[string]interface{})
+					stopTime := stopTimes[0].(map[string]any)
 
 					// Verify all required fields from the new query
 					require.Contains(stopTime, "arrivalTime", "StopTime should have arrivalTime")
@@ -450,10 +450,10 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 				assert.Equal(t, http.StatusOK, resp.StatusCode, "Query should execute for %s", tt.weekday)
 				assert.Equal(t, http.StatusOK, model.Code, "Model code should be OK for %s", tt.weekday)
 
-				data, ok := model.Data.(map[string]interface{})
+				data, ok := model.Data.(map[string]any)
 				assert.True(t, ok, "Data should be a map for %s", tt.weekday)
 
-				entry, ok := data["entry"].(map[string]interface{})
+				entry, ok := data["entry"].(map[string]any)
 				assert.True(t, ok, "Entry should exist for %s", tt.weekday)
 
 				_, exists := entry["stopRouteSchedules"]
@@ -469,10 +469,10 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 
 		require.Equal(http.StatusOK, resp.StatusCode)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		require.True(ok)
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		require.True(ok)
 
 		// Verify date is a Unix timestamp in milliseconds
@@ -481,12 +481,12 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 		require.Greater(date, float64(0), "Date should be positive")
 
 		// Check if we have schedules with stop times
-		if schedules, ok := entry["stopRouteSchedules"].([]interface{}); ok && len(schedules) > 0 {
-			firstSchedule := schedules[0].(map[string]interface{})
-			if dirSchedules, ok := firstSchedule["schedules"].([]interface{}); ok && len(dirSchedules) > 0 {
-				dirSchedule := dirSchedules[0].(map[string]interface{})
-				if stopTimes, ok := dirSchedule["stopTimes"].([]interface{}); ok && len(stopTimes) > 0 {
-					stopTime := stopTimes[0].(map[string]interface{})
+		if schedules, ok := entry["stopRouteSchedules"].([]any); ok && len(schedules) > 0 {
+			firstSchedule := schedules[0].(map[string]any)
+			if dirSchedules, ok := firstSchedule["schedules"].([]any); ok && len(dirSchedules) > 0 {
+				dirSchedule := dirSchedules[0].(map[string]any)
+				if stopTimes, ok := dirSchedule["stopTimes"].([]any); ok && len(stopTimes) > 0 {
+					stopTime := stopTimes[0].(map[string]any)
 
 					// Verify arrival and departure times are timestamps
 					arrivalTime, ok := stopTime["arrivalTime"].(float64)

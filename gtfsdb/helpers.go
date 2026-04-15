@@ -37,7 +37,7 @@ func newMetricsWrapper(db *sql.DB) *metricsWrapper {
 	}
 }
 
-func (s *metricsWrapper) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (s *metricsWrapper) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	res, err := s.db.ExecContext(ctx, query, args...)
 	s.recordQueryMetrics("exec", query, err)
 	return res, err
@@ -49,13 +49,13 @@ func (s *metricsWrapper) PrepareContext(ctx context.Context, query string) (*sql
 	return s.db.PrepareContext(ctx, query)
 }
 
-func (s *metricsWrapper) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (s *metricsWrapper) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	s.recordQueryMetrics("query", query, err)
 	return rows, err
 }
 
-func (s *metricsWrapper) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (s *metricsWrapper) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	row := s.db.QueryRowContext(ctx, query, args...)
 	// Note: QueryRowContext defers errors to row.Scan(), so err is always nil here.
 	// query_row metrics always report status="ok". See PR description for follow-up plan.
@@ -719,7 +719,7 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams, 
 // preparedStopTimeBatch holds a prepared SQL statement with its arguments
 type preparedStopTimeBatch struct {
 	query string
-	args  []interface{}
+	args  []any
 	index int // Original index for ordering
 	end   int // End position for progress logging
 }
@@ -774,7 +774,7 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*stopTimeFieldsPerRow)
+				args := make([]any, 0, len(batch)*stopTimeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {
@@ -884,7 +884,7 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 // preparedShapeBatch holds a prepared SQL statement with its arguments
 type preparedShapeBatch struct {
 	query string
-	args  []interface{}
+	args  []any
 	index int // Original index for ordering
 	end   int // End position for progress logging
 }
@@ -938,7 +938,7 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*shapeFieldsPerRow)
+				args := make([]any, 0, len(batch)*shapeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {

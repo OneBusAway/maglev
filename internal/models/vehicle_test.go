@@ -30,7 +30,7 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		// Optional fields should be absent at the top level.
 		// Unmarshal to a map to avoid false positives from nested TripStatus JSON
 		// (which has its own phase/status/occupancyStatus without omitempty).
-		var top map[string]interface{}
+		var top map[string]any
 		require.NoError(t, json.Unmarshal(data, &top))
 		assert.Equal(t, float64(0), top["occupancyCapacity"])
 		assert.Equal(t, float64(0), top["occupancyCount"])
@@ -90,7 +90,7 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		data, err = json.Marshal(vs)
 		require.NoError(t, err)
 
-		var top map[string]interface{}
+		var top map[string]any
 		require.NoError(t, json.Unmarshal(data, &top))
 
 		assert.Equal(t, float64(0), top["occupancyCapacity"])

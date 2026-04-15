@@ -27,96 +27,96 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, 2, model.Version)
 	assert.Greater(t, model.CurrentTime, int64(0))
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "25_151", entry["routeId"])
 
-	polylines, ok := entry["polylines"].([]interface{})
+	polylines, ok := entry["polylines"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 2, len(polylines))
 
-	firstPolyline, ok := polylines[0].(map[string]interface{})
+	firstPolyline, ok := polylines[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, 250, int(firstPolyline["length"].(float64)))
 	assert.Equal(t, "", firstPolyline["levels"])
 	assert.Contains(t, firstPolyline["points"], "exhwFlt|")
 
-	secondPolyline, ok := polylines[1].(map[string]interface{})
+	secondPolyline, ok := polylines[1].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, 250, int(secondPolyline["length"].(float64)))
 	assert.Equal(t, "", secondPolyline["levels"])
 	assert.Contains(t, secondPolyline["points"], "exhwFlt|")
 
-	stopIds, ok := entry["stopIds"].([]interface{})
+	stopIds, ok := entry["stopIds"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 39, len(stopIds))
 	// Verify stopGroupings
-	stopGroupings, ok := entry["stopGroupings"].([]interface{})
+	stopGroupings, ok := entry["stopGroupings"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 1, len(stopGroupings))
 
-	grouping, ok := stopGroupings[0].(map[string]interface{})
+	grouping, ok := stopGroupings[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, true, grouping["ordered"])
 	assert.Equal(t, "direction", grouping["type"])
 
-	stopGroups, ok := grouping["stopGroups"].([]interface{})
+	stopGroups, ok := grouping["stopGroups"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 2, len(stopGroups))
 
 	// Verify inbound group (direction 1 in normalized 0-based index)
-	inboundGroup, ok := stopGroups[1].(map[string]interface{})
+	inboundGroup, ok := stopGroups[1].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "1", inboundGroup["id"])
 
-	inboundName, ok := inboundGroup["name"].(map[string]interface{})
+	inboundName, ok := inboundGroup["name"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "Shasta Lake", inboundName["name"])
 	assert.Equal(t, "destination", inboundName["type"])
 
-	inboundNames, ok := inboundName["names"].([]interface{})
+	inboundNames, ok := inboundName["names"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 1, len(inboundNames))
 	assert.Equal(t, "Shasta Lake", inboundNames[0])
 
-	inboundStopIds, ok := inboundGroup["stopIds"].([]interface{})
+	inboundStopIds, ok := inboundGroup["stopIds"].([]any)
 	require.True(t, ok)
 
 	// With deterministic sorting, checks should be consistent
 	assert.Equal(t, 22, len(inboundStopIds))
 
-	inboundPolylines, ok := inboundGroup["polylines"].([]interface{})
+	inboundPolylines, ok := inboundGroup["polylines"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 1, len(inboundPolylines))
 
 	// Verify outbound group (direction 0 in normalized 0-based index)
-	outboundGroup, ok := stopGroups[0].(map[string]interface{})
+	outboundGroup, ok := stopGroups[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "0", outboundGroup["id"])
 
-	outboundName, ok := outboundGroup["name"].(map[string]interface{})
+	outboundName, ok := outboundGroup["name"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "Shasta Lake", outboundName["name"])
 	assert.Equal(t, "destination", outboundName["type"])
 
-	outboundStopIds, ok := outboundGroup["stopIds"].([]interface{})
+	outboundStopIds, ok := outboundGroup["stopIds"].([]any)
 	require.True(t, ok)
 	// With deterministic sorting, checks should be consistent
 	assert.Equal(t, 21, len(outboundStopIds))
 
 	// Verify references
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
 	// Verify agencies
-	agencies, ok := refs["agencies"].([]interface{})
+	agencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 1, len(agencies))
 
-	agency, ok := agencies[0].(map[string]interface{})
+	agency, ok := agencies[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "25", agency["id"])
 	assert.Equal(t, "Redding Area Bus Authority", agency["name"])
@@ -126,26 +126,26 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, "530-241-2877", agency["phone"])
 	assert.Equal(t, false, agency["privateService"])
 
-	routes, ok := refs["routes"].([]interface{})
+	routes, ok := refs["routes"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 13, len(routes))
 
 	// Verify stops
-	stops, ok := refs["stops"].([]interface{})
+	stops, ok := refs["stops"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 39, len(stops))
 	require.True(t, ok)
 
 	// Verify empty arrays
-	situations, ok := refs["situations"].([]interface{})
+	situations, ok := refs["situations"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 0, len(situations))
 
-	stopTimes, ok := refs["stopTimes"].([]interface{})
+	stopTimes, ok := refs["stopTimes"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 0, len(stopTimes))
 
-	trips, ok := refs["trips"].([]interface{})
+	trips, ok := refs["trips"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, 0, len(trips))
 }
@@ -156,26 +156,26 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 func TestStopsForRouteNoDuplicateStopGroups(t *testing.T) {
 	_, _, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25_151.json?key=TEST")
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
-	stopGroupings, ok := entry["stopGroupings"].([]interface{})
+	stopGroupings, ok := entry["stopGroupings"].([]any)
 	require.True(t, ok)
 	require.Equal(t, 1, len(stopGroupings), "expected exactly one stopGrouping")
 
-	grouping, ok := stopGroupings[0].(map[string]interface{})
+	grouping, ok := stopGroupings[0].(map[string]any)
 	require.True(t, ok)
 
-	stopGroups, ok := grouping["stopGroups"].([]interface{})
+	stopGroups, ok := grouping["stopGroups"].([]any)
 	require.True(t, ok)
 	require.Equal(t, 2, len(stopGroups), "expected exactly 2 stop groups (one per direction)")
 
 	// Verify IDs are unique and normalized to "0" and "1"
 	ids := make(map[string]bool)
 	for _, g := range stopGroups {
-		group, ok := g.(map[string]interface{})
+		group, ok := g.(map[string]any)
 		require.True(t, ok)
 		id, ok := group["id"].(string)
 		require.True(t, ok)
@@ -311,31 +311,31 @@ func TestStopsForRouteNullDirectionID(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
-	stopIds, ok := entry["stopIds"].([]interface{})
+	stopIds, ok := entry["stopIds"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, stopIds, "stops-for-route must return stops even when direction_id is NULL")
 
-	stopGroupings, ok := entry["stopGroupings"].([]interface{})
+	stopGroupings, ok := entry["stopGroupings"].([]any)
 	require.True(t, ok)
 	require.Len(t, stopGroupings, 1)
 
-	grouping, ok := stopGroupings[0].(map[string]interface{})
+	grouping, ok := stopGroupings[0].(map[string]any)
 	require.True(t, ok)
 
-	stopGroups, ok := grouping["stopGroups"].([]interface{})
+	stopGroups, ok := grouping["stopGroups"].([]any)
 	require.True(t, ok)
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
 
-	group, ok := stopGroups[0].(map[string]interface{})
+	group, ok := stopGroups[0].(map[string]any)
 	require.True(t, ok)
 
-	groupStopIds, ok := group["stopIds"].([]interface{})
+	groupStopIds, ok := group["stopIds"].([]any)
 	require.True(t, ok)
 	assert.Len(t, groupStopIds, 2, "expected both stops to appear in the stop group")
 }

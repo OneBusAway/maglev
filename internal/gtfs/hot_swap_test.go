@@ -16,7 +16,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
-func loggerErrorf(format string, args ...interface{}) error {
+func loggerErrorf(format string, args ...any) error {
 	err := fmt.Errorf(format, args...)
 	return err
 }

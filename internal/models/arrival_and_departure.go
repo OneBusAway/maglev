@@ -12,17 +12,17 @@ type ArrivalAndDeparture struct {
 	NumberOfStopsAway          int         `json:"numberOfStopsAway"`
 	OccupancyStatus            string      `json:"occupancyStatus"`
 	Predicted                  bool        `json:"predicted"`
-	PredictedArrivalInterval   interface{} `json:"predictedArrivalInterval"`
+	PredictedArrivalInterval   any         `json:"predictedArrivalInterval"`
 	PredictedArrivalTime       int64       `json:"predictedArrivalTime"`
-	PredictedDepartureInterval interface{} `json:"predictedDepartureInterval"`
+	PredictedDepartureInterval any         `json:"predictedDepartureInterval"`
 	PredictedDepartureTime     int64       `json:"predictedDepartureTime"`
 	PredictedOccupancy         string      `json:"predictedOccupancy"`
 	RouteID                    string      `json:"routeId"`
 	RouteLongName              string      `json:"routeLongName"`
 	RouteShortName             string      `json:"routeShortName"`
-	ScheduledArrivalInterval   interface{} `json:"scheduledArrivalInterval"`
+	ScheduledArrivalInterval   any         `json:"scheduledArrivalInterval"`
 	ScheduledArrivalTime       int64       `json:"scheduledArrivalTime"`
-	ScheduledDepartureInterval interface{} `json:"scheduledDepartureInterval"`
+	ScheduledDepartureInterval any         `json:"scheduledDepartureInterval"`
 	ScheduledDepartureTime     int64       `json:"scheduledDepartureTime"`
 	ScheduledTrack             string      `json:"scheduledTrack"`
 	ServiceDate                int64       `json:"serviceDate"`

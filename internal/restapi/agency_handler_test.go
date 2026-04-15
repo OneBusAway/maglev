@@ -20,10 +20,10 @@ func TestAgencyHandlerReturnsAgencyWhenItExists(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	assert.Equal(t, agencies[0].ID, entry["id"])

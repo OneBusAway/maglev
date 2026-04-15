@@ -61,7 +61,7 @@ func getResponseSchema(t *testing.T, doc *openapi3.T, specEndpointPath string) *
 
 // validateJSONAgainstSchema validates a parsed JSON value against an OpenAPI schema.
 // Returns a list of validation errors (empty if conformant).
-func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue interface{}) []error {
+func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue any) []error {
 	err := schema.VisitJSON(jsonValue, openapi3.MultiErrors())
 	if err == nil {
 		return nil
@@ -74,7 +74,7 @@ func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue interface{}) [
 
 // serveAndCaptureRawJSON makes an HTTP request to the test server and returns
 // the status code and parsed JSON body.
-func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (int, map[string]interface{}) {
+func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (int, map[string]any) {
 	t.Helper()
 
 	client := &http.Client{}
@@ -85,7 +85,7 @@ func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (in
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	err = json.Unmarshal(body, &parsed)
 	require.NoError(t, err, "Failed to parse response JSON: %s", string(body))
 

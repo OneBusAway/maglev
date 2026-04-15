@@ -222,13 +222,13 @@ func TestStopsForLocationHandlerRouteTypeTooManyTokens(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "response data should be a map")
 
-	fieldErrors, ok := data["fieldErrors"].(map[string]interface{})
+	fieldErrors, ok := data["fieldErrors"].(map[string]any)
 	require.True(t, ok, "data should contain fieldErrors map")
 
-	routeTypeErrors, ok := fieldErrors["routeType"].([]interface{})
+	routeTypeErrors, ok := fieldErrors["routeType"].([]any)
 	require.True(t, ok, "fieldErrors should contain routeType errors list")
 
 	assert.Len(t, routeTypeErrors, 1, "Should return single error for too many tokens")
@@ -259,13 +259,13 @@ func TestStopsForLocationHandlerRouteTypeMixedValidInvalid(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "response data should be a map")
 
-	fieldErrors, ok := data["fieldErrors"].(map[string]interface{})
+	fieldErrors, ok := data["fieldErrors"].(map[string]any)
 	require.True(t, ok, "data should contain fieldErrors map")
 
-	routeTypeErrors, ok := fieldErrors["routeType"].([]interface{})
+	routeTypeErrors, ok := fieldErrors["routeType"].([]any)
 	require.True(t, ok, "fieldErrors should contain routeType errors list")
 
 	assert.Len(t, routeTypeErrors, 1, "Should return a single error for invalid routeType")

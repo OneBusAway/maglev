@@ -74,8 +74,8 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
 			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
 			ConsequenceMessage: "",
-			Consequences:       []interface{}{},
-			PublicationWindows: []interface{}{},
+			Consequences:       []any{},
+			PublicationWindows: []any{},
 			Reason:             mapAlertCauseToReason(alert.Cause),
 			Severity:           mapAlertEffectToSeverity(alert.Effect),
 		}
