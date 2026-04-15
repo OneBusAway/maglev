@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
@@ -193,8 +194,14 @@ func TestRoutesForLocationHandlerMaxCountLessThanOrEqualZero(t *testing.T) {
 
 func TestRoutesForLocationHandlerInRangeWithNoResults(t *testing.T) {
 	api := createTestApi(t)
-	lat, lon, _, _ := api.GtfsManager.GetRegionBounds()
-	resp, model := callAPIHandler[RoutesResponse](t, api, fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=1", lat, lon))
+	boundsMap := api.GtfsManager.GetRegionBounds()
+	// Pick any agency's bounds for the in-range test
+	var bounds gtfs.RegionBounds
+	for _, b := range boundsMap {
+		bounds = b
+		break
+	}
+	resp, model := callAPIHandler[RoutesResponse](t, api, fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=1", bounds.Lat, bounds.Lon))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "OK", model.Text)

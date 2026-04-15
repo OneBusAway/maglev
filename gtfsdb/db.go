@@ -270,6 +270,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStopStmt, err = db.PrepareContext(ctx, getStop); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStop: %w", err)
 	}
+	if q.getStopBoundsPerAgencyStmt, err = db.PrepareContext(ctx, getStopBoundsPerAgency); err != nil {
+		return nil, fmt.Errorf("error preparing query GetStopBoundsPerAgency: %w", err)
+	}
 	if q.getStopForAgencyStmt, err = db.PrepareContext(ctx, getStopForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopForAgency: %w", err)
 	}
@@ -787,6 +790,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStopStmt: %w", cerr)
 		}
 	}
+	if q.getStopBoundsPerAgencyStmt != nil {
+		if cerr := q.getStopBoundsPerAgencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getStopBoundsPerAgencyStmt: %w", cerr)
+		}
+	}
 	if q.getStopForAgencyStmt != nil {
 		if cerr := q.getStopForAgencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopForAgencyStmt: %w", cerr)
@@ -1078,6 +1086,7 @@ type Queries struct {
 	getShapePointsWithDistanceStmt                *sql.Stmt
 	getShapesGroupedByTripHeadSignStmt            *sql.Stmt
 	getStopStmt                                   *sql.Stmt
+	getStopBoundsPerAgencyStmt                    *sql.Stmt
 	getStopForAgencyStmt                          *sql.Stmt
 	getStopIDsForAgencyStmt                       *sql.Stmt
 	getStopIDsForRouteStmt                        *sql.Stmt
@@ -1200,6 +1209,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getShapePointsWithDistanceStmt:                q.getShapePointsWithDistanceStmt,
 		getShapesGroupedByTripHeadSignStmt:            q.getShapesGroupedByTripHeadSignStmt,
 		getStopStmt:                                   q.getStopStmt,
+		getStopBoundsPerAgencyStmt:                    q.getStopBoundsPerAgencyStmt,
 		getStopForAgencyStmt:                          q.getStopForAgencyStmt,
 		getStopIDsForAgencyStmt:                       q.getStopIDsForAgencyStmt,
 		getStopIDsForRouteStmt:                        q.getStopIDsForRouteStmt,

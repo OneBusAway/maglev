@@ -61,7 +61,7 @@ type Manager struct {
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
 	blockLayoverIndices            map[string][]*BlockLayoverIndex
-	regionBounds                   *RegionBounds
+	regionBounds                   map[string]*RegionBounds
 	isHealthy                      bool
 	systemETag                     string      // systemETag stores the SHA-256 hash of the currently loaded GTFS static dataset.
 	isReady                        atomic.Bool // Tracks whether initial data loading is complete
@@ -267,8 +267,8 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		}
 	}
 
-	manager.setStaticGTFS(staticData)
 	manager.GtfsDB = gtfsDB
+	manager.setStaticGTFS(staticData)
 	manager.PrintStatistics()
 
 	// Startup validation and logging for agency filtering

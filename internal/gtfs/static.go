@@ -265,7 +265,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 
 	newBlockLayoverIndices := buildBlockLayoverIndices(newStaticData)
-	newRegionBounds := ComputeRegionBounds(newStaticData.Shapes, newStaticData.Stops)
+	newRegionBounds := computeRegionBounds(ctx, newGtfsDB)
 
 	if err := ctx.Err(); err != nil {
 		if closeErr := newGtfsDB.Close(); closeErr != nil {
@@ -387,9 +387,9 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.isHealthy = true
 
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
-	manager.regionBounds = ComputeRegionBounds(staticData.Shapes, staticData.Stops)
 
 	ctx := context.Background()
+	manager.regionBounds = computeRegionBounds(ctx, manager.GtfsDB)
 
 	// GtfsDB may be nil during initial construction
 	if manager.GtfsDB != nil && manager.GtfsDB.Queries != nil {

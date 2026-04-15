@@ -3292,6 +3292,62 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 	return i, err
 }
 
+const getStopBoundsPerAgency = `-- name: GetStopBoundsPerAgency :many
+SELECT
+    r.agency_id,
+    COUNT(*) AS cnt,
+    CAST(MIN(s.lat) AS REAL) AS min_lat,
+    CAST(MAX(s.lat) AS REAL) AS max_lat,
+    CAST(MIN(s.lon) AS REAL) AS min_lon,
+    CAST(MAX(s.lon) AS REAL) AS max_lon
+FROM
+    routes r
+    JOIN trips t ON t.route_id = r.id
+    JOIN stop_times st ON st.trip_id = t.id
+    JOIN stops s ON s.id = st.stop_id
+GROUP BY
+    r.agency_id
+`
+
+type GetStopBoundsPerAgencyRow struct {
+	AgencyID string
+	Cnt      int64
+	MinLat   float64
+	MaxLat   float64
+	MinLon   float64
+	MaxLon   float64
+}
+
+func (q *Queries) GetStopBoundsPerAgency(ctx context.Context) ([]GetStopBoundsPerAgencyRow, error) {
+	rows, err := q.query(ctx, q.getStopBoundsPerAgencyStmt, getStopBoundsPerAgency)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopBoundsPerAgencyRow
+	for rows.Next() {
+		var i GetStopBoundsPerAgencyRow
+		if err := rows.Scan(
+			&i.AgencyID,
+			&i.Cnt,
+			&i.MinLat,
+			&i.MaxLat,
+			&i.MinLon,
+			&i.MaxLon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStopForAgency = `-- name: GetStopForAgency :one
 SELECT DISTINCT
     stops.id,

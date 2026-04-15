@@ -1272,4 +1272,20 @@ WHERE st.trip_id = (
 ORDER BY st.stop_sequence ASC
 LIMIT 1;
 
+-- name: GetStopBoundsPerAgency :many
+SELECT
+    r.agency_id,
+    COUNT(*) AS cnt,
+    CAST(MIN(s.lat) AS REAL) AS min_lat,
+    CAST(MAX(s.lat) AS REAL) AS max_lat,
+    CAST(MIN(s.lon) AS REAL) AS min_lon,
+    CAST(MAX(s.lon) AS REAL) AS max_lon
+FROM
+    routes r
+    JOIN trips t ON t.route_id = r.id
+    JOIN stop_times st ON st.trip_id = t.id
+    JOIN stops s ON s.id = st.stop_id
+GROUP BY
+    r.agency_id;
+
 
