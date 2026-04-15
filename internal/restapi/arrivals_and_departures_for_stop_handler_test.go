@@ -708,10 +708,6 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 	combinedStopID = utils.FormCombinedID(agencyID, stopCode)
 	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	scheduledArrivalMs = serviceMidnight.Add(time.Duration(arrivalNanos)).UnixMilli()
-
-	// Clear the service-IDs cache so the upcoming request sees the newly inserted
-	// calendar entry rather than a result cached by an earlier test in this package.
-	api.GtfsManager.MockClearServiceIDsCache()
 	return
 }
 
@@ -1168,10 +1164,6 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Clear the service-IDs cache so the upcoming request sees the newly inserted
-	// calendar entry rather than a result cached by an earlier test in this package.
-	api.GtfsManager.MockClearServiceIDsCache()
-
 	// Add a trip update WITHOUT any vehicle position.
 	delayDuration := 120 * time.Second
 	seq := uint32(1)
@@ -1231,12 +1223,6 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	// Clear the service-IDs cache so that the calendar inserted below is visible,
-	// even if a previous test already cached the result for this date.
-	api.GtfsManager.MockClearServiceIDsCache()
-
-	// Clear the service-IDs cache so the request sees the newly inserted calendar entry
-	api.GtfsManager.MockClearServiceIDsCache()
 
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -1301,14 +1287,9 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	api.GtfsManager.MockClearServiceIDsCache()
-
 	api.GtfsManager.MockAddVehicleWithOptions("", tripID, routeID, internalgtfs.MockVehicleOptions{
 		NoID: true,
 	})
-
-	// Clear the service-IDs cache so the upcoming request sees the newly inserted calendar entry.
-	api.GtfsManager.MockClearServiceIDsCache()
 
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	resp, model := serveApiAndRetrieveEndpoint(t, api,

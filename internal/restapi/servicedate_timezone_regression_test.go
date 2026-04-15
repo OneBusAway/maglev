@@ -227,9 +227,6 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 			defer api.Shutdown()
 
 			setupTzTestGTFS(t, api.GtfsManager.GtfsDB.Queries, td, days)
-			// Clear the service-IDs cache so the request below sees the newly
-			// inserted calendar entry rather than a result cached by an earlier test.
-			api.GtfsManager.MockClearServiceIDsCache()
 
 			combinedTrip := utils.FormCombinedID(td.AgencyID, td.TripID2)
 			endpoint := fmt.Sprintf(

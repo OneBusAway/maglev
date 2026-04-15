@@ -168,16 +168,3 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeTrips = nil
 	m.realTimeTripLookup = make(map[string]int)
 }
-
-// MockClearServiceIDsCache evicts all entries from the active-service-IDs cache.
-// Call this in tests that mutate the calendar tables of a shared Manager to ensure
-// the next request re-queries the database with the updated data.
-//
-// Safe to call without holding staticMutex. Acquires only activeServiceIDsCacheMutex,
-// consistent with the lock ordering: staticMutex → activeServiceIDsCacheMutex.
-func (m *Manager) MockClearServiceIDsCache() {
-	m.activeServiceIDsCacheMutex.Lock()
-	m.activeServiceIDsCache = make(map[string][]string)
-	m.cacheEpoch.Add(1)
-	m.activeServiceIDsCacheMutex.Unlock()
-}
