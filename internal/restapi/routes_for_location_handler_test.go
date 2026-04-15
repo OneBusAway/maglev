@@ -100,6 +100,19 @@ func TestRoutesForLocationCaseInsensitiveQuery(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
+func TestRoutesForLocationWildcardQueryDoesNotMatch(t *testing.T) {
+	// `%` should be treated as a literal character, not a SQL LIKE wildcard.
+	// Lat/Lon are for stop 2000 from the test data, which is on route 44X.
+	api := createTestApi(t)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583170&lon=-122.392586&query=%25")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+	assert.Empty(t, model.Data.List)
+}
+
 func TestRoutesForLocationHandlerValidatesParameters(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=invalid&lon=-121.74")

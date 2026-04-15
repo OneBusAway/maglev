@@ -73,23 +73,19 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			utils.NullStringOrEmpty(route.TextColor)))
 	}
 
-	var agencies []models.AgencyReference
-	for agencyID := range agencyIDs {
-		agency, err := api.GtfsManager.FindAgency(ctx, agencyID)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-		agencies = append(agencies, models.AgencyReferenceFromDatabase(agency))
+	references := models.NewEmptyReferences()
+
+	agencyIDList := slices.Collect(maps.Keys(agencyIDs))
+	agencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDList)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
 	}
+	references.Agencies = buildAgencyReferences(agencies)
 
 	// Populate situation references for alerts affecting the returned routes
 	alerts := api.collectAlertsForRoutes(slices.Collect(maps.Keys(routeIDs)))
-	situations := api.BuildSituationReferences(alerts)
-
-	references := models.NewEmptyReferences()
-	references.Agencies = agencies
-	references.Situations = situations
+	references.Situations = api.BuildSituationReferences(alerts)
 
 	// Results must be sorted by ID after maxCount limit is applied.
 	// See how response changes when calling java API with different maxCounts.

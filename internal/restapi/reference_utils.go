@@ -4,9 +4,18 @@ import (
 	"context"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
+
+func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
+	var refs []models.AgencyReference
+	for _, agency := range agencies {
+		refs = append(refs, models.AgencyReferenceFromDatabase(&agency))
+	}
+	return refs
+}
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {

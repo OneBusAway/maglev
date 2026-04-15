@@ -42,6 +42,7 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	var items []Stop
 	for rows.Next() {
@@ -66,9 +67,6 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 		}
 		items = append(items, i)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -76,8 +74,31 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 }
 
 const getActiveRoutesWithinBounds = `
+-- Calculate stop distance once per stop (not once per stop_time).
+WITH nearby_stops AS (
+    SELECT
+        stops.id AS stop_id,
+        -- Haversine distance in km between stop and the query's center.
+        6371 * acos(
+            cos(radians(?1)) *
+            cos(radians(stops.lat)) *
+            cos(radians(stops.lon) - radians(?2)) +
+            sin(radians(?1)) *
+            sin(radians(stops.lat))
+        ) AS distance
+    FROM stops
+    JOIN stops_rtree r ON r.id = stops.rowid
+    WHERE r.min_lat >= ?3 AND r.max_lat <= ?4
+      AND r.min_lon >= ?5 AND r.max_lon <= ?6
+),
+stop_routes AS (
+    SELECT DISTINCT stop_times.stop_id, trips.route_id
+    FROM stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    WHERE stop_times.stop_id IN (SELECT stop_id FROM nearby_stops)
+)
 SELECT
-	routes.id,
+    routes.id,
     routes.agency_id,
     routes.short_name,
     routes.long_name,
@@ -88,32 +109,18 @@ SELECT
     routes.text_color,
     routes.continuous_pickup,
     routes.continuous_drop_off,
-    -- Haversine distance in km betweeen stop and the query's center.
-    -- This column is not read from the response
-    MIN(6371 * acos(
-        cos(radians(?1)) *
-        cos(radians(stops.lat)) *
-        cos(radians(stops.lon) - radians(?2)) +
-        sin(radians(?1)) *
-        sin(radians(stops.lat))
-    )) AS min_distance
-FROM
-    stops
-    JOIN stop_times ON stops.id = stop_times.stop_id
-    JOIN stops_rtree r ON r.id = stops.rowid
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-WHERE
-    r.min_lat >= ?3 AND r.max_lat <= ?4
-    AND r.min_lon >= ?5 AND r.max_lon <= ?6
-    -- use LIKE for case-insensitive compare.
-    AND (?7 == "" OR routes.short_name LIKE ?7)
-GROUP BY
-    routes.id
-ORDER BY
-    min_distance ASC
-LIMIT
-    ?8
+    -- This column is not read from the response.
+    MIN(ns.distance) AS min_distance
+FROM stop_routes sr
+JOIN nearby_stops ns ON ns.stop_id = sr.stop_id
+JOIN routes ON routes.id = sr.route_id
+    -- COLLATE NOCASE gives case-insensitive equality without LIKE's wildcard
+    -- semantics. Note: NOCASE only folds ASCII A-Z; non-ASCII short names
+    -- will not match case-insensitively.
+WHERE ?7 == "" OR routes.short_name = ?7 COLLATE NOCASE
+GROUP BY routes.id
+ORDER BY min_distance ASC
+LIMIT ?8
 `
 
 type GetActiveRoutesWithinBoundsParams struct {
@@ -133,7 +140,7 @@ func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActive
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() //nolint:errcheck // closing is also checked explicitly below
+	defer rows.Close()
 	var items []Route
 	for rows.Next() {
 		var i Route
@@ -155,9 +162,6 @@ func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActive
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
