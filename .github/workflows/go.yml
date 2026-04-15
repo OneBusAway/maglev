@@ -6,6 +6,30 @@ on:
   pull_request:
 
 jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    if: github.repository == 'OneBusAway/maglev'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Check go fmt
+        run: |
+          unformatted=$(go fmt ./...)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted"
+            echo ""
+            echo "To fix, run locally: go fmt ./..."
+            exit 1
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
