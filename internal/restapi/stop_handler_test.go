@@ -18,13 +18,13 @@ func TestStopHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	assert.NotEmpty(t, stops, "Test data should contain at least one stop")
 
-	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+stopID+".json?key=invalid")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -36,50 +36,50 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	assert.NotEmpty(t, stops, "Test data should contain at least one stop")
 
-	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+stopID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 	assert.NotEmpty(t, data)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, stopID, entry["id"])
-	assert.Equal(t, stops[0].Name, entry["name"])
-	assert.Equal(t, stops[0].Code, entry["code"])
+	assert.Equal(t, stops[0].Name.String, entry["name"])
+	assert.Equal(t, stops[0].Code.String, entry["code"])
 	assert.Equal(t, models.UnknownValue, entry["wheelchairBoarding"])
-	assert.Equal(t, *stops[0].Latitude, entry["lat"])
-	assert.Equal(t, *stops[0].Longitude, entry["lon"])
+	assert.Equal(t, stops[0].Lat, entry["lat"])
+	assert.Equal(t, stops[0].Lon, entry["lon"])
 
 	assert.Contains(t, entry, "direction", "direction field should exist")
 
-	routeIds, ok := entry["routeIds"].([]interface{})
+	routeIds, ok := entry["routeIds"].([]any)
 	assert.True(t, ok, "routeIds should exist and be an array")
 	assert.NotEmpty(t, routeIds, "routeIds should not be empty")
 
-	staticRouteIds, ok := entry["staticRouteIds"].([]interface{})
+	staticRouteIds, ok := entry["staticRouteIds"].([]any)
 	assert.True(t, ok, "staticRouteIds should exist and be an array")
 	assert.NotEmpty(t, staticRouteIds, "staticRouteIds should not be empty")
 
 	assert.Equal(t, len(routeIds), len(staticRouteIds), "routeIds and staticRouteIds should have same length")
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 
 	assert.True(t, ok, "References section should exist")
 	assert.NotNil(t, references, "References should not be nil")
 
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok, "Routes section should exist in references")
 	assert.Equal(t, len(routeIds), len(routes), "Number of routes in references should match routeIds")
 }
@@ -88,10 +88,10 @@ func TestInvalidStopID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	invalidStopID := utils.FormCombinedID(agencies[0].Id, "invalid_stop_id")
+	invalidStopID := utils.FormCombinedID(agencies[0].ID, "invalid_stop_id")
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+invalidStopID+".json?key=TEST")
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -103,38 +103,38 @@ func TestStopHandlerVerifiesReferences(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	assert.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	assert.NotEmpty(t, stops, "Test data should contain at least one stop")
 
-	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+stopID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
 	// Verify routes are included
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok, "Routes should be in references")
 	if len(routes) > 0 {
-		route, ok := routes[0].(map[string]interface{})
+		route, ok := routes[0].(map[string]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, route["id"], "Route should have an ID")
 		assert.NotEmpty(t, route["shortName"], "Route should have a short name")
 	}
 
 	// Verify agencies are included
-	agenciesRef, ok := references["agencies"].([]interface{})
+	agenciesRef, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies should be in references")
 	if len(agenciesRef) > 0 {
-		agency, ok := agenciesRef[0].(map[string]interface{})
+		agency, ok := agenciesRef[0].(map[string]any)
 		assert.True(t, ok)
 		assert.NotEmpty(t, agency["id"], "Agency should have an ID")
 		assert.NotEmpty(t, agency["name"], "Agency should have a name")
@@ -264,27 +264,27 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 	// 6. Assertions
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	// Assert Route IDs use their respective correct Agency prefixes (The fix verification)
-	routeIDs, ok := entry["routeIds"].([]interface{})
+	routeIDs, ok := entry["routeIds"].([]any)
 	require.True(t, ok)
 	assert.Contains(t, routeIDs, agencyB+"_"+routeB_ID, "Route B ID should be prefixed with Agency B")
 	assert.Contains(t, routeIDs, agencyA+"_"+routeA_ID, "Route A ID should be prefixed with Agency A")
 
 	// Assert references.agencies contains BOTH Agency A and Agency B
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok)
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	require.True(t, ok)
 
 	foundA := false
 	foundB := false
 	for _, a := range agencies {
-		agencyMap := a.(map[string]interface{})
+		agencyMap := a.(map[string]any)
 		if agencyMap["id"] == agencyA {
 			foundA = true
 		}
@@ -300,18 +300,18 @@ func TestStopHandlerWithSituations(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	require.NotEmpty(t, stops, "Test data should contain at least one stop")
 
-	routes := api.GtfsManager.GetRoutes()
+	routes := mustGetRoutes(t, api)
 	require.NotEmpty(t, routes, "Test data should contain at least one route")
 
-	rawStopID := stops[0].Id
-	rawRouteID := routes[0].Id
-	combinedStopID := utils.FormCombinedID(agencies[0].Id, rawStopID)
+	rawStopID := stops[0].ID
+	rawRouteID := routes[0].ID
+	combinedStopID := utils.FormCombinedID(agencies[0].ID, rawStopID)
 
 	alert := gtfs.Alert{
 		ID: "test-cross-entity-alert-789",
@@ -321,23 +321,23 @@ func TestStopHandlerWithSituations(t *testing.T) {
 		},
 	}
 
-	api.GtfsManager.AddTestAlert(alert)
+	api.GtfsManager.AddAlertForTest(alert)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop/"+combinedStopID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "Response should have a data object")
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	require.True(t, ok, "Data should have a references object")
 
-	situations, ok := references["situations"].([]interface{})
+	situations, ok := references["situations"].([]any)
 	require.True(t, ok, "References should have a situations array")
 	require.NotEmpty(t, situations, "Situations array should NOT be empty")
 
 	require.Len(t, situations, 1, "Should have exactly 1 deduplicated situation despite matching multiple entities")
 
-	situationMap := situations[0].(map[string]interface{})
+	situationMap := situations[0].(map[string]any)
 	assert.Equal(t, "test-cross-entity-alert-789", situationMap["id"])
 }

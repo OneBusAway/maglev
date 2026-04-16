@@ -28,17 +28,12 @@ func NewClient(config Config) (*Client, error) {
 		log.Println("Successfully created tables")
 	}
 
-	// Wrap DB for query interception (slow-query logging and optional metrics).
-	// Using New() ensures sqlc queries go through slowQueryDB.
+	// Wrap DB for query interception (optional metrics).
 	var dbtx DBTX = db
-	if slowQueryThreshold > 0 || config.QueryMetricsRecorder != nil {
-		wrapper := newSlowQueryDB(db, slowQueryThreshold)
+	if config.QueryMetricsRecorder != nil {
+		wrapper := newMetricsWrapper(db)
 		wrapper.queryMetrics = config.QueryMetricsRecorder
 		dbtx = wrapper
-
-		if slowQueryThreshold > 0 {
-			log.Printf("Slow query logging enabled (threshold: %s)", slowQueryThreshold)
-		}
 	}
 	queries := New(dbtx)
 
@@ -52,10 +47,6 @@ func NewClient(config Config) (*Client, error) {
 
 func (c *Client) Close() error {
 	return c.DB.Close()
-}
-
-func (c *Client) GetDBPath() string {
-	return c.config.DBPath
 }
 
 // DownloadAndStore downloads GTFS data from the given URL and stores it in the database

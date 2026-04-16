@@ -23,18 +23,19 @@ func TestManager_GetAgencies(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	assert.NotNil(t, manager)
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
 
 	agency := agencies[0]
-	assert.Equal(t, "25", agency.Id)
+	assert.Equal(t, "25", agency.ID)
 	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
 	assert.Equal(t, "http://www.rabaride.com/", agency.Url)
 	assert.Equal(t, "America/Los_Angeles", agency.Timezone)
-	assert.Equal(t, "en", agency.Language)
-	assert.Equal(t, "530-241-2877", agency.Phone)
-	assert.Equal(t, "", agency.FareUrl)
-	assert.Equal(t, "", agency.Email)
+	assert.Equal(t, "en", agency.Lang.String)
+	assert.Equal(t, "530-241-2877", agency.Phone.String)
+	assert.Equal(t, "", agency.FareUrl.String)
+	assert.Equal(t, "", agency.Email.String)
 }
 
 func TestManager_RoutesForAgencyID(t *testing.T) {
@@ -42,13 +43,13 @@ func TestManager_RoutesForAgencyID(t *testing.T) {
 	assert.NotNil(t, manager)
 
 	manager.RLock()
-	routes := manager.RoutesForAgencyID("25")
+	routes, err := manager.RoutesForAgencyID(t.Context(), "25")
 	manager.RUnlock()
+	assert.Nil(t, err)
 	assert.Equal(t, 13, len(routes))
 
 	route := routes[0]
-	assert.Equal(t, "1", route.ShortName)
-	assert.Equal(t, "25", route.Agency.Id)
+	assert.Equal(t, "1", route.ShortName.String)
 }
 
 func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
@@ -83,7 +84,7 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 			assert.NotNil(t, manager)
 
 			// Get stops using the manager method
-			stops := manager.GetStopsForLocation(ctx, tc.lat, tc.lon, tc.radius, 0, 0, "", 100, false, nil, time.Time{})
+			stops := manager.GetStopsForLocation(ctx, tc.lat, tc.lon, tc.radius, 0, 0, "", 100, nil, time.Time{})
 
 			// The test expects that the spatial index query is used
 			assert.GreaterOrEqual(t, len(stops), tc.expectedStops, "Should find stops within radius")
@@ -103,7 +104,8 @@ func TestManager_GetTrips(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	assert.NotNil(t, manager)
 
-	trips := manager.GetTrips()
+	trips, err := manager.GetTrips(context.Background(), 100)
+	require.NoError(t, err)
 	assert.NotEmpty(t, trips)
 	assert.NotEmpty(t, trips[0].ID)
 }
@@ -111,13 +113,15 @@ func TestManager_GetTrips(t *testing.T) {
 func TestManager_FindAgency(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 
-	agency := manager.FindAgency("25")
+	agency, err := manager.FindAgency(context.Background(), "25")
+	assert.Nil(t, err)
 	assert.NotNil(t, agency)
-	assert.Equal(t, "25", agency.Id)
+	assert.Equal(t, "25", agency.ID)
 	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
 
-	agencyNotFound := manager.FindAgency("nonexistent")
-	assert.Nil(t, agencyNotFound)
+	agency, err = manager.FindAgency(context.Background(), "nonexistent")
+	assert.Nil(t, err)
+	assert.Nil(t, agency)
 }
 
 func TestManager_GetVehicleByID(t *testing.T) {
@@ -235,10 +239,11 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 
 	// Get a trip to find a valid service ID
-	trips := manager.GetTrips()
+	trips, err := manager.GetTrips(context.Background(), 100)
+	require.NoError(t, err)
 	assert.NotEmpty(t, trips)
 
-	serviceID := trips[0].Service.Id
+	serviceID := trips[0].ServiceID
 
 	testCases := []struct {
 		name    string
@@ -332,72 +337,24 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	assert.Nil(t, nilVehicle)
 }
 
-func TestBuildLookupMaps(t *testing.T) {
-	staticData := &gtfs.Static{
-		Agencies: []gtfs.Agency{
-			{Id: "agency_1", Name: "Metro"},
-			{Id: "agency_2", Name: "Bus"},
-		},
-		Routes: []gtfs.Route{
-			{Id: "route_101", ShortName: "101"},
-			{Id: "route_102", ShortName: "102"},
-		},
+func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
+	ctx := context.Background()
+
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
 	}
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err, "Failed to initialize manager")
+	defer manager.Shutdown()
 
-	agencyMap, routeMap := buildLookupMaps(staticData)
-
-	assert.Equal(t, 2, len(agencyMap))
-	assert.NotNil(t, agencyMap["agency_1"])
-	assert.Equal(t, "Metro", agencyMap["agency_1"].Name)
-	assert.Nil(t, agencyMap["agency_999"], "Should return nil for non-existent agency")
-
-	assert.Equal(t, 2, len(routeMap))
-	assert.NotNil(t, routeMap["route_101"])
-	assert.Equal(t, "101", routeMap["route_101"].ShortName)
-	assert.Nil(t, routeMap["route_999"], "Should return nil for non-existent route")
+	emptyRoutes, err := manager.RoutesForAgencyID(ctx, "nonexistent")
+	assert.Nil(t, err)
+	assert.Empty(t, emptyRoutes, "Non-existent agency should return empty slice")
 }
 
-func TestManager_FindAgency_UsesMap(t *testing.T) {
-	// This test proves we are using the Map, not the Slice.
-	// We populate the Map, but leave the Slice empty.
-	// If the code was still looping over the slice, this would fail.
-	manager := &Manager{
-		agenciesMap: map[string]*gtfs.Agency{
-			"A1": {Id: "A1", Name: "Fast Agency"},
-		},
-		// Empty Slice to ensure we aren't using the old linear search
-		gtfsData: &gtfs.Static{
-			Agencies: []gtfs.Agency{},
-		},
-	}
-
-	result := manager.FindAgency("A1")
-	assert.NotNil(t, result)
-	assert.Equal(t, "Fast Agency", result.Name)
-
-	result = manager.FindAgency("B2")
-	assert.Nil(t, result)
-}
-
-func TestManager_FindRoute_UsesMap(t *testing.T) {
-	manager := &Manager{
-		routesMap: map[string]*gtfs.Route{
-			"R1": {Id: "R1", LongName: "Express Route"},
-		},
-		gtfsData: &gtfs.Static{
-			Routes: []gtfs.Route{},
-		},
-	}
-
-	result := manager.FindRoute("R1")
-	assert.NotNil(t, result)
-	assert.Equal(t, "Express Route", result.LongName)
-
-	result = manager.FindRoute("Unknown")
-	assert.Nil(t, result)
-}
-
-func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
+func TestRoutesForAgencyID_ValidId(t *testing.T) {
 	ctx := context.Background()
 
 	gtfsConfig := Config{
@@ -412,26 +369,9 @@ func TestRoutesForAgencyID_MapOptimization(t *testing.T) {
 	targetAgencyID := "25"
 	expectedRouteCount := 13
 
-	// Consolidated lock region
-	manager.RLock()
-	assert.NotNil(t, manager.routesByAgencyID, "routesByAgencyID map should be initialized")
-
-	cachedRoutes, exists := manager.routesByAgencyID[targetAgencyID]
-	assert.True(t, exists, "Agency %s should exist in cache map", targetAgencyID)
-	assert.Len(t, cachedRoutes, expectedRouteCount, "Map should contain correct number of routes")
-
-	publicRoutes := manager.RoutesForAgencyID(targetAgencyID)
-	emptyRoutes := manager.RoutesForAgencyID("nonexistent")
-	manager.RUnlock()
-
+	publicRoutes, err := manager.RoutesForAgencyID(ctx, targetAgencyID)
+	assert.Nil(t, err)
 	assert.Len(t, publicRoutes, expectedRouteCount, "Public API should return correct route count")
-
-	for _, route := range publicRoutes {
-		assert.Equal(t, targetAgencyID, route.Agency.Id,
-			"Route %s should belong to agency %s", route.Id, targetAgencyID)
-	}
-
-	assert.Empty(t, emptyRoutes, "Non-existent agency should return empty slice")
 }
 
 func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
@@ -450,7 +390,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	errors := make(chan error, 10)
+	errorChan := make(chan error, 10)
 
 	// Spawn concurrent readers
 	for i := range 5 {
@@ -463,11 +403,17 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 					return
 				default:
 					manager.RLock()
-					routes := manager.RoutesForAgencyID("25")
+					routes, err := manager.RoutesForAgencyID(ctx, "25")
 					manager.RUnlock()
+					if errors.Is(err, context.DeadlineExceeded) {
+						return
+					} else if err != nil {
+						errorChan <- err
+						return
+					}
 
 					if routes == nil {
-						errors <- fmt.Errorf("reader %d: got nil routes slice", id)
+						errorChan <- fmt.Errorf("reader %d: got nil routes slice", id)
 						return
 					}
 					time.Sleep(1 * time.Microsecond)
@@ -476,31 +422,10 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 		}(i)
 	}
 
-	// Spawn writer (simulating reload)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		// Use safe access with mutex for the test writer
-		manager.RLock()
-		staticData := manager.gtfsData
-		manager.RUnlock()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				manager.setStaticGTFS(staticData)
-				time.Sleep(5 * time.Millisecond)
-			}
-		}
-	}()
-
 	wg.Wait()
-	close(errors)
+	close(errorChan)
 
-	for err := range errors {
+	for err := range errorChan {
 		t.Error(err)
 	}
 }
@@ -523,7 +448,7 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		manager.RLock()
-		_ = manager.RoutesForAgencyID("25")
+		_, _ = manager.RoutesForAgencyID(ctx, "25")
 		manager.RUnlock()
 	}
 }
@@ -638,7 +563,7 @@ func TestManager_DataFreshnessTracking(t *testing.T) {
 	assert.Equal(t, "UTC", gotStatic.Location().String())
 
 	// Test GetFeedUpdateTimes returns defensive map copy
-	manager.SetFeedUpdateTime("feed-1", now)
+	manager.SetFeedUpdateTimeForTest("feed-1", now)
 	feedTimes := manager.GetFeedUpdateTimes()
 	assert.Contains(t, feedTimes, "feed-1")
 	assert.Equal(t, now, feedTimes["feed-1"])
@@ -647,314 +572,4 @@ func TestManager_DataFreshnessTracking(t *testing.T) {
 	feedTimes["feed-1"] = time.Now().Add(time.Hour)
 	feedTimes2 := manager.GetFeedUpdateTimes()
 	assert.Equal(t, now, feedTimes2["feed-1"])
-}
-
-func TestActiveServiceIDsCacheInvalidation(t *testing.T) {
-	ctx := context.Background()
-
-	tempDir := t.TempDir()
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: tempDir + "/gtfs.db",
-		Env:          appconf.Development,
-	}
-
-	manager, err := InitGTFSManager(ctx, gtfsConfig)
-	require.NoError(t, err)
-	defer manager.Shutdown()
-
-	// Use a fixed date that has known calendar data in the RABA fixture.
-	// The RABA feed covers weekdays; pick a Monday.
-	date := "20240101"
-
-	// First call should hit the DB and populate the cache.
-	ids1, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	require.NotEmpty(t, ids1, "RABA fixture must have active services on 20240101; check the test date or fixture")
-
-	manager.activeServiceIDsCacheMutex.RLock()
-	cached, ok := manager.activeServiceIDsCache[date]
-	manager.activeServiceIDsCacheMutex.RUnlock()
-	assert.True(t, ok, "cache entry should exist after first call")
-	assert.Equal(t, ids1, cached, "cached value should match returned value")
-
-	// Second call should return the same result from cache without hitting the DB.
-	ids2, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	assert.Equal(t, ids1, ids2, "cached result should match original result")
-
-	// ForceUpdate should clear the cache.
-	err = manager.ForceUpdate(ctx)
-	require.NoError(t, err)
-
-	manager.activeServiceIDsCacheMutex.RLock()
-	cacheLen := len(manager.activeServiceIDsCache)
-	manager.activeServiceIDsCacheMutex.RUnlock()
-	assert.Equal(t, 0, cacheLen, "cache should be empty after ForceUpdate")
-
-	// After ForceUpdate the cache should repopulate on the next call.
-	ids3, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	assert.Equal(t, ids1, ids3, "result after cache invalidation should match original")
-
-	manager.activeServiceIDsCacheMutex.RLock()
-	_, repopulated := manager.activeServiceIDsCache[date]
-	manager.activeServiceIDsCacheMutex.RUnlock()
-	assert.True(t, repopulated, "cache should be repopulated after post-ForceUpdate call")
-}
-
-func TestActiveServiceIDsCache_ErrorPathLeavesNothingCached(t *testing.T) {
-	// Use an isolated manager so the cache is guaranteed cold for this date,
-	// regardless of test execution order in the package.
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
-	require.NoError(t, err)
-	defer manager.Shutdown()
-
-	cancelledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, queryErr := manager.GetActiveServiceIDsForDateCached(cancelledCtx, "20240101")
-
-	// mattn/go-sqlite3 (sqlite_fts5 build tag) propagates a cancelled context as an error.
-	// The pure-Go modernc driver (purego tag) may not; guard the assertion so the test
-	// remains valid if the build tag ever changes.
-	if errors.Is(queryErr, context.Canceled) || errors.Is(queryErr, context.DeadlineExceeded) {
-		manager.activeServiceIDsCacheMutex.RLock()
-		_, cached := manager.activeServiceIDsCache["20240101"]
-		manager.activeServiceIDsCacheMutex.RUnlock()
-		assert.False(t, cached, "cache must remain empty after a failed query")
-	} else {
-		t.Logf("driver did not propagate cancelled context as an error (%v); cache-pollution assertion skipped", queryErr)
-	}
-}
-
-func TestActiveServiceIDsCacheRace(t *testing.T) {
-	manager, _ := getSharedTestComponents(t)
-	ctx := context.Background()
-
-	// The primary goal is to exercise the race detector on the double-checked locking
-	// path; the equality assertions confirm all goroutines see consistent data.
-	const workers = 20
-	results := make([][]string, workers)
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		go func(idx int) {
-			defer wg.Done()
-			results[idx], _ = manager.GetActiveServiceIDsForDateCached(ctx, "20240101")
-		}(i)
-	}
-	wg.Wait()
-
-	for i := 1; i < workers; i++ {
-		assert.Equal(t, results[0], results[i], "goroutine %d returned inconsistent result", i)
-	}
-}
-
-func TestActiveServiceIDsCacheNilDB(t *testing.T) {
-	manager := &Manager{
-		activeServiceIDsCache: make(map[string][]string),
-		// GtfsDB is intentionally nil.
-	}
-	_, err := manager.GetActiveServiceIDsForDateCached(context.Background(), "20240101")
-	require.Error(t, err, "nil GtfsDB should return an error, not panic")
-}
-
-func TestActiveServiceIDsCacheMutationSafety(t *testing.T) {
-	// Use an isolated manager so the cache is cold, guaranteeing the first call is a
-	// genuine cache miss and that we exercise both the miss-path and hit-path copies.
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
-	require.NoError(t, err)
-	defer manager.Shutdown()
-
-	ctx := context.Background()
-	date := "20240101"
-
-	// First call: cache miss path — result must be a defensive copy.
-	ids1, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	require.NotEmpty(t, ids1, "need at least one service ID to test mutation safety")
-
-	original := ids1[0]
-	ids1[0] = "mutated-miss-path"
-
-	// Second call: cache hit path — must return a fresh copy of the stored value.
-	ids2, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	assert.Equal(t, original, ids2[0], "miss-path: mutating first result must not corrupt the cache")
-
-	ids2[0] = "mutated-hit-path"
-
-	// Third call: still must return the original value.
-	ids3, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	assert.Equal(t, original, ids3[0], "hit-path: mutating second result must not corrupt the cache")
-}
-
-func TestActiveServiceIDsCacheEmptyDate(t *testing.T) {
-	manager, _ := getSharedTestComponents(t)
-	ctx := context.Background()
-
-	// An empty date string is syntactically invalid for the calendar CTE. The call must
-	// return an error or an empty slice; it must never panic or cache garbage.
-	ids, err := manager.GetActiveServiceIDsForDateCached(ctx, "")
-	if err != nil {
-		// Acceptable: DB returned an error for a malformed date.
-		manager.activeServiceIDsCacheMutex.RLock()
-		_, cached := manager.activeServiceIDsCache[""]
-		manager.activeServiceIDsCacheMutex.RUnlock()
-		assert.False(t, cached, "a failed query for empty date must not populate the cache")
-	} else {
-		// Also acceptable: DB returned an empty result set.
-		assert.Empty(t, ids, "empty date should yield no active service IDs")
-	}
-}
-
-func TestActiveServiceIDsCacheConcurrentForceUpdate(t *testing.T) {
-	ctx := context.Background()
-
-	tempDir := t.TempDir()
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
-		GTFSDataPath: tempDir + "/gtfs.db",
-		Env:          appconf.Development,
-	}
-
-	manager, err := InitGTFSManager(ctx, gtfsConfig)
-	require.NoError(t, err)
-	defer manager.Shutdown()
-
-	date := "20240101"
-
-	// Warm the cache before the concurrent phase.
-	_, err = manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-
-	// Launch readers that race against ForceUpdate. With the epoch guard in place, no
-	// in-flight reader can write stale data from the old dataset into the freshly-cleared
-	// cache. The race detector will catch any unsynchronised access.
-	const readers = 10
-	var wg sync.WaitGroup
-	wg.Add(readers)
-	for i := 0; i < readers; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 5; j++ {
-				_, _ = manager.GetActiveServiceIDsForDateCached(ctx, date)
-			}
-		}()
-	}
-
-	err = manager.ForceUpdate(ctx)
-	require.NoError(t, err)
-
-	wg.Wait()
-
-	// The epoch must have advanced, confirming ForceUpdate cleared the cache.
-	assert.Greater(t, manager.cacheEpoch.Load(), uint64(0), "epoch should advance after ForceUpdate")
-
-	// Repeated queries after settling must return consistent results.
-	ids1, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	ids2, err := manager.GetActiveServiceIDsForDateCached(ctx, date)
-	require.NoError(t, err)
-	assert.Equal(t, ids1, ids2, "repeated queries after ForceUpdate must return consistent results")
-}
-
-func TestMockClearServiceIDsCache_IncrementsEpoch(t *testing.T) {
-	manager, _ := getSharedTestComponents(t)
-
-	before := manager.cacheEpoch.Load()
-	manager.MockClearServiceIDsCache()
-	after := manager.cacheEpoch.Load()
-
-	assert.Greater(t, after, before, "MockClearServiceIDsCache must increment cacheEpoch")
-}
-
-func TestActiveServiceIDsCacheConcurrentErrorAndReaders(t *testing.T) {
-	manager, _ := getSharedTestComponents(t)
-	// Clear the cache so the cancelled-context goroutine reaches the DB query path
-	// rather than returning a warm-cache hit before the context is inspected.
-	manager.MockClearServiceIDsCache()
-	ctx := context.Background()
-
-	cancelledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// One goroutine queries with a cancelled context; all others use a valid context.
-	// The error from the bad goroutine must not corrupt the cache for the rest.
-	const workers = 20
-	results := make([][]string, workers)
-	errs := make([]error, workers)
-
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		go func(idx int) {
-			defer wg.Done()
-			c := ctx
-			if idx == 0 {
-				c = cancelledCtx
-			}
-			results[idx], errs[idx] = manager.GetActiveServiceIDsForDateCached(c, "20240101")
-		}(i)
-	}
-	wg.Wait()
-
-	// All goroutines using a valid context must have succeeded with consistent results.
-	var reference []string
-	for i := 1; i < workers; i++ {
-		require.NoError(t, errs[i], "goroutine %d should not have gotten an error", i)
-		if reference == nil {
-			reference = results[i]
-		} else {
-			assert.Equal(t, reference, results[i], "goroutine %d returned inconsistent result", i)
-		}
-	}
-	assert.NotEmpty(t, reference, "valid goroutines must return non-empty results")
-}
-
-func BenchmarkGetActiveServiceIDsForDate(b *testing.B) {
-	ctx := context.Background()
-
-	gtfsConfig := Config{
-		GtfsURL:      models.GetFixturePath(b, "raba.zip"),
-		GTFSDataPath: ":memory:",
-		Env:          appconf.Test,
-	}
-	manager, err := InitGTFSManager(ctx, gtfsConfig)
-	if err != nil {
-		b.Fatalf("Failed to initialize: %v", err)
-	}
-	defer manager.Shutdown()
-
-	date := "20240101"
-
-	b.Run("uncached", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			_, _ = manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, date)
-		}
-	})
-
-	// Warm the cache once before benchmarking the cached path.
-	_, _ = manager.GetActiveServiceIDsForDateCached(ctx, date)
-
-	b.Run("cached", func(b *testing.B) {
-		b.ResetTimer()
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			_, _ = manager.GetActiveServiceIDsForDateCached(ctx, date)
-		}
-	})
 }

@@ -16,7 +16,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
-func loggerErrorf(format string, args ...interface{}) error {
+func loggerErrorf(format string, args ...any) error {
 	err := fmt.Errorf(format, args...)
 	return err
 }
@@ -41,9 +41,10 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
-	assert.Equal(t, "25", agencies[0].Id)
+	assert.Equal(t, "25", agencies[0].ID)
 
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,9 +63,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 					return
 				default:
 					manager.RLock()
-					if manager.gtfsData == nil {
-						errChan <- loggerErrorf("gtfsData is nil during read")
-					}
 					if manager.GtfsDB == nil {
 						errChan <- loggerErrorf("GtfsDB is nil during read")
 						manager.RUnlock()
@@ -103,9 +101,10 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 		t.Errorf("Reader error: %v", e)
 	}
 
-	agencies = manager.GetAgencies()
+	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
-	assert.Equal(t, "40", agencies[0].Id)
+	assert.Equal(t, "40", agencies[0].ID)
 }
 
 func TestHotSwap_FailureRecovery(t *testing.T) {
@@ -181,9 +180,10 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	err = manager.ForceUpdate(context.Background())
 	require.NoError(t, err, "ForceUpdate failed for new GTFS")
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	require.NotEmpty(t, agencies, "No agencies found after second update")
-	assert.Equal(t, "40", agencies[0].Id)
+	assert.Equal(t, "40", agencies[0].ID)
 
 	files, err := os.ReadDir(tempDir)
 	if err != nil {
@@ -221,16 +221,16 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 
 	// Verify initial state
 	manager.RLock()
-	assert.Equal(t, "25", manager.gtfsData.Agencies[0].Id)
-	assert.NotNil(t, manager.stopSpatialIndex)
+	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, initialAgencies)
+	assert.Equal(t, "25", initialAgencies[0].ID)
 	assert.NotNil(t, manager.blockLayoverIndices)
 	manager.RUnlock()
 
 	// Capture old references
 	manager.RLock()
-	oldStaticData := manager.gtfsData
 	oldGtfsDB := manager.GtfsDB
-	oldSpatialIndex := manager.stopSpatialIndex
 	oldBlockLayoverIndices := manager.blockLayoverIndices
 	manager.RUnlock()
 
@@ -240,15 +240,15 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 
 	// Verify Final State
 	manager.RLock()
-	assert.Equal(t, "40", manager.gtfsData.Agencies[0].Id)
+	updatedAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, listErr)
+	require.NotEmpty(t, updatedAgencies)
+	assert.Equal(t, "40", updatedAgencies[0].ID)
 
 	// Verify memory cleanup (references replaced)
-	assert.NotEqual(t, oldStaticData, manager.gtfsData, "StaticData Reference should have been replaced")
 	assert.NotEqual(t, oldGtfsDB, manager.GtfsDB, "GtfsDB Reference should have been replaced")
-	assert.NotEqual(t, oldSpatialIndex, manager.stopSpatialIndex, "SpatialIndex Reference should have been replaced")
 	assert.NotEqual(t, oldBlockLayoverIndices, manager.blockLayoverIndices, "BlockLayoverIndices Reference should have been replaced")
 
-	assert.NotNil(t, manager.stopSpatialIndex)
 	assert.NotNil(t, manager.blockLayoverIndices)
 
 	manager.RUnlock()
@@ -274,9 +274,10 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	defer manager.Shutdown()
 
 	// Verify initial state
-	manager.RLock()
-	assert.Equal(t, "25", manager.gtfsData.Agencies[0].Id)
-	manager.RUnlock()
+	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, initialAgencies)
+	assert.Equal(t, "25", initialAgencies[0].ID)
 
 	// Prepare to update to "gtfs.zip"
 	newSource := models.GetFixturePath(t, "gtfs.zip")
@@ -307,10 +308,10 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	}
 
 	// Verify final state matches "gtfs.zip" (agency ID 40)
-	manager.RLock()
-	defer manager.RUnlock()
-	if len(manager.gtfsData.Agencies) > 0 {
-		assert.Equal(t, "40", manager.gtfsData.Agencies[0].Id, "Should utilize new GTFS data")
+	finalAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, listErr)
+	if len(finalAgencies) > 0 {
+		assert.Equal(t, "40", finalAgencies[0].ID, "Should utilize new GTFS data")
 	} else {
 		t.Error("Agencies should not be empty after update")
 	}

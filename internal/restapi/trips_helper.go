@@ -574,7 +574,7 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	}
 
 	formattedDate := serviceDate.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, formattedDate)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		slog.Warn("calculateBlockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),
@@ -1021,7 +1021,7 @@ func (api *RestAPI) findNextStopBySequence(
 				if i+1 < len(stopTimes) {
 					nextStop = stopTimes[i+1]
 				} else {
-					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID, serviceDate)
+					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID)
 				}
 			} else {
 				nextStop = st
@@ -1040,7 +1040,7 @@ func (api *RestAPI) findNextStopBySequence(
 
 // getFirstStopOfNextTripInBlock uses LEAD() window function to find the next trip
 // in the block and directly fetches its first stop in a single SQL query.
-func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string, serviceDate time.Time) *gtfsdb.StopTime {
+func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string) *gtfsdb.StopTime {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, currentTripID)
 	if err != nil {
 		slog.Warn("getFirstStopOfNextTripInBlock: failed to get trip",

@@ -19,19 +19,19 @@ func TestRouteIdsForAgencyRequiresValidApiKey(t *testing.T) {
 func TestRouteIdsForAgencyEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].Id
+	agencyId := agencies[0].ID
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/route-ids-for-agency/"+agencyId+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 
 	require.True(t, ok)
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, list)
 
@@ -42,9 +42,9 @@ func TestRouteIdsForAgencyEndToEnd(t *testing.T) {
 			"Route ID should start with agency ID prefix: %s", routeIdStr)
 	}
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
-	agencyRefs, ok := refs["agencies"].([]interface{})
+	agencyRefs, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.Len(t, agencyRefs, 0)
 }

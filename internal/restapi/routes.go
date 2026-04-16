@@ -24,7 +24,7 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// First validate API key
 		if api.RequestHasInvalidAPIKey(r) {
-			api.invalidAPIKeyResponse(w, r)
+			api.invalidAPIKeyResponse(w)
 			return
 		}
 		// Then apply rate limiting

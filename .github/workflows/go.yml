@@ -3,15 +3,46 @@ name: Go CI
 on:
   push:
     branches: [main]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
   pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
 
 jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    if: github.repository == 'OneBusAway/maglev'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Check go fmt
+        run: |
+          unformatted=$(go fmt ./...)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted"
+            echo ""
+            echo "To fix, run locally: go fmt ./..."
+            exit 1
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: 1
-      CGO_CFLAGS: "-DSQLITE_ENABLE_FTS5"
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +59,7 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: latest
-          args: --timeout=5m --build-tags=sqlite_fts5
+          args: --timeout=5m --build-tags='sqlite_fts5 sqlite_math_functions'
 
   test:
     name: Test
@@ -38,7 +69,6 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     env:
       CGO_ENABLED: 1
-      CGO_CFLAGS: "-DSQLITE_ENABLE_FTS5"
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +90,7 @@ jobs:
 
       - name: Run tests (fast mode)
         if: matrix.os == 'ubuntu-latest'
-        run: go test -v -tags=sqlite_fts5 -coverprofile=profile.cov -timeout 40m ./...
+        run: go test -v -tags='sqlite_fts5 sqlite_math_functions' -coverprofile=profile.cov -timeout 40m ./...
         env:
           CGO_ENABLED: 1
         shell: bash
@@ -77,32 +107,26 @@ jobs:
         run: |
           # Strip ALL auto-generated SQL code and test mocks from coverage math
           grep -v "query.sql.go" profile.cov | grep -v "gtfsdb/db.go" | grep -v "gtfsdb/models.go" | grep -v "_mock.go" > clean_profile.cov
-          
+
           COVERAGE=$(go tool cover -func=clean_profile.cov | grep total: | grep -Eo '[0-9]+\.?[0-9]*')
           echo "Current Test Coverage is: $COVERAGE%"
-          
+
           if [ -z "$COVERAGE" ]; then
             echo "ERROR: Could not parse coverage percentage"
             exit 1
           fi
-          
+
           if [ "$(echo "$COVERAGE 75.0" | awk '{print ($1 < $2)}')" = "1" ]; then
             echo "Coverage dropped below 75% threshold!"
             exit 1
           fi
         shell: bash
 
-      # Coverage threshold enforcement above handles this; goveralls integration not currently needed
-#      - uses: shogo82148/actions-goveralls@v1
-#        with:
-#          path-to-profile: profile.cov
-
   test-race:
     name: Race Detector (Targeted)
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: 1
-      CGO_CFLAGS: "-DSQLITE_ENABLE_FTS5"
     steps:
       - uses: actions/checkout@v4
 
@@ -115,9 +139,6 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Verify dependencies
-        run: go mod verify
-
       - name: Run race detector on concurrent packages
-        run: go test -race -v -tags=sqlite_fts5 -timeout 20m ./internal/gtfs/...
+        run: go test -race -v -tags='sqlite_fts5 sqlite_math_functions' -timeout 20m ./internal/gtfs/...
         shell: bash

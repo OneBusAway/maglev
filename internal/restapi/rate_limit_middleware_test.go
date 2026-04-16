@@ -350,7 +350,7 @@ func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 	assert.Equal(t, "0", w.Header().Get("X-RateLimit-Remaining"), "Should include X-RateLimit-Remaining header")
 
 	// Check response body format
-	var responseBody map[string]interface{}
+	var responseBody map[string]any
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
 
 	assert.Contains(t, responseBody["text"].(string), "Rate limit")

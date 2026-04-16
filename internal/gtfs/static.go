@@ -265,19 +265,7 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 	}
 
 	newBlockLayoverIndices := buildBlockLayoverIndices(newStaticData)
-	newStopSpatialIndex, err := buildStopSpatialIndex(ctx, newGtfsDB.Queries)
-	if err != nil {
-		logging.LogError(logger, "Error building spatial index", err)
-		if closeErr := newGtfsDB.Close(); closeErr != nil {
-			logging.LogError(logger, "Failed to close new GTFS DB during cleanup", closeErr)
-		}
-		if removeErr := os.Remove(tempDBPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			logging.LogError(logger, "Failed to remove temp DB during cleanup", removeErr)
-		}
-		return err
-	}
-
-	newRegionBounds := ComputeRegionBounds(newStaticData.Shapes, newStaticData.Stops)
+	newRegionBounds := computeRegionBounds(ctx, newGtfsDB)
 
 	if err := ctx.Err(); err != nil {
 		if closeErr := newGtfsDB.Close(); closeErr != nil {
@@ -318,21 +306,20 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		dbConfig := newGTFSDBConfig(finalDBPath, manager.config)
 		if reopenedClient, reopenErr := gtfsdb.NewClient(dbConfig); reopenErr == nil {
 			manager.GtfsDB = reopenedClient
+			if manager.DirectionCalculator != nil {
+				manager.DirectionCalculator.UpdateQueries(reopenedClient.Queries)
+			}
 			logging.LogOperation(logger, "recovery_successful_old_db_reopened")
 		} else {
 			logging.LogError(logger, "CRITICAL: Failed to recover old DB after rename failure", reopenErr)
 			logging.LogOperation(logger, "setting manager.gtfsDB to nil")
 			manager.GtfsDB = nil
+			if manager.DirectionCalculator != nil {
+				manager.DirectionCalculator.UpdateQueries(nil)
+			}
 
 			manager.isHealthy = false
 		}
-
-		// The DB was briefly closed and may have been reopened. Flush the cache so the next
-		// caller re-queries against whichever DB is now active rather than using stale entries.
-		manager.activeServiceIDsCacheMutex.Lock()
-		manager.activeServiceIDsCache = make(map[string][]string)
-		manager.cacheEpoch.Add(1)
-		manager.activeServiceIDsCacheMutex.Unlock()
 
 		return err
 	}
@@ -347,39 +334,19 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 		manager.GtfsDB = nil
 
 		manager.isHealthy = false
-		// Intentionally skip cache invalidation here. GtfsDB is now nil, so any cache
-		// miss would immediately hit the nil-DB guard and return an error. Keeping stale
-		// entries means cached callers continue receiving answers rather than errors —
-		// the least-bad outcome until the next successful ForceUpdate clears the cache.
 		return fmt.Errorf("failed to update GTFS database client: %w", err)
 	}
 
-	manager.gtfsData = newStaticData
 	manager.GtfsDB = client
-	manager.agenciesMap, manager.routesMap = buildLookupMaps(newStaticData)
 	manager.blockLayoverIndices = newBlockLayoverIndices
-	manager.stopSpatialIndex = newStopSpatialIndex
 	manager.regionBounds = newRegionBounds
 
-	// Note: the epoch is incremented after GtfsDB is assigned. A narrow race exists where
-	// a reader snapshots epochBefore, then reads the new DB pointer (already live), queries
-	// the new DB, and writes to the cache before the epoch advances — only for this clear
-	// to immediately evict it. The outcome is one extra DB round-trip, not data corruption.
-	// Moving the epoch increment earlier would break the epoch guard's correctness guarantee,
-	// so this ordering is intentional.
-	manager.activeServiceIDsCacheMutex.Lock()
-	manager.activeServiceIDsCache = make(map[string][]string)
-	manager.cacheEpoch.Add(1)
-	manager.activeServiceIDsCacheMutex.Unlock()
-
-	manager.routesByAgencyID = buildRouteIndex(newStaticData)
-
-	if newCache, freqErr := buildFrequencyCache(ctx, client.Queries); freqErr == nil {
-		manager.frequencyTripIDs = newCache
-	} else {
-		logging.LogError(logger, "failed to reload frequency trip IDs during hot-swap; retaining previous cache", freqErr)
+	// Refresh the direction calculator's queries pointer so on-demand lookups
+	// use the new database. This also clears the direction result cache so stale
+	// entries from the old database are not served.
+	if manager.DirectionCalculator != nil {
+		manager.DirectionCalculator.UpdateQueries(client.Queries)
 	}
-
 	now := time.Now()
 	manager.lastUpdated = now
 	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
@@ -400,9 +367,9 @@ func (manager *Manager) ForceUpdate(ctx context.Context) error {
 
 	logging.LogOperation(logger, "gtfs_static_data_updated_hot_swap",
 		slog.String("source", manager.config.GtfsURL),
-		slog.String("db_path", finalDBPath),
-		slog.Int("route_index_agencies", len(manager.routesByAgencyID)))
+		slog.String("db_path", finalDBPath))
 
+	manager.PrintStatistics()
 	manager.parseAndLogFeedExpiryLocked(ctx, logger)
 
 	return nil
@@ -413,41 +380,19 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
-	manager.gtfsData = staticData
-
 	now := time.Now()
 	manager.lastUpdated = now
 	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
 
 	manager.isHealthy = true
 
-	manager.agenciesMap, manager.routesMap = buildLookupMaps(staticData)
-
-	manager.routesByAgencyID = buildRouteIndex(staticData)
-
 	manager.blockLayoverIndices = buildBlockLayoverIndices(staticData)
-	manager.regionBounds = ComputeRegionBounds(staticData.Shapes, staticData.Stops)
 
-	// Rebuild spatial index with updated data
 	ctx := context.Background()
+	manager.regionBounds = computeRegionBounds(ctx, manager.GtfsDB)
 
-	// GtfsDB may be nil during initial construction; frequency cache is populated by InitGTFSManager directly
+	// GtfsDB may be nil during initial construction
 	if manager.GtfsDB != nil && manager.GtfsDB.Queries != nil {
-		spatialIndex, err := buildStopSpatialIndex(ctx, manager.GtfsDB.Queries)
-		if err == nil {
-			manager.stopSpatialIndex = spatialIndex
-		} else if manager.config.Verbose {
-			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-			logging.LogError(logger, "Failed to rebuild spatial index", err)
-		}
-
-		if newCache, freqErr := buildFrequencyCache(ctx, manager.GtfsDB.Queries); freqErr == nil {
-			manager.frequencyTripIDs = newCache
-		} else {
-			logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-			logging.LogError(logger, "failed to load frequency trip IDs during initial load; retaining previous cache", freqErr)
-		}
-
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 		if err != nil {
@@ -465,52 +410,8 @@ func (manager *Manager) setStaticGTFS(staticData *gtfs.Static) {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogOperation(logger, "gtfs_data_set_successfully",
 			slog.String("source", manager.config.GtfsURL),
-			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)),
-			slog.Int("route_index_agencies", len(manager.routesByAgencyID)))
+			slog.Int("layover_indices_built", len(manager.blockLayoverIndices)))
 	}
-}
-
-// buildLookupMaps is used to create O(1) lookup maps for agencies and routes
-func buildLookupMaps(data *gtfs.Static) (map[string]*gtfs.Agency, map[string]*gtfs.Route) {
-	agencies := make(map[string]*gtfs.Agency, len(data.Agencies))
-	for i := range data.Agencies {
-		agencies[data.Agencies[i].Id] = &data.Agencies[i]
-	}
-
-	routes := make(map[string]*gtfs.Route, len(data.Routes))
-	for i := range data.Routes {
-		routes[data.Routes[i].Id] = &data.Routes[i]
-	}
-	return agencies, routes
-}
-
-func buildRouteIndex(staticData *gtfs.Static) map[string][]*gtfs.Route {
-	index := make(map[string][]*gtfs.Route, len(staticData.Agencies))
-
-	for i := range staticData.Routes {
-		route := &staticData.Routes[i]
-		agencyID := route.Agency.Id
-
-		index[agencyID] = append(index[agencyID], route)
-	}
-
-	return index
-}
-
-// buildFrequencyCache queries the DB for frequency trip IDs and returns a set.
-// It returns an error if the query fails, allowing the caller to retain the previous cache.
-func buildFrequencyCache(ctx context.Context, queries *gtfsdb.Queries) (map[string]struct{}, error) {
-	ids, err := queries.GetFrequencyTripIDs(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	cache := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		cache[id] = struct{}{}
-	}
-
-	return cache, nil
 }
 
 // parseAndLogFeedExpiryLocked checks the GTFS calendar for the last active service date

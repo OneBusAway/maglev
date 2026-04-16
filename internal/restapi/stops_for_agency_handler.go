@@ -27,7 +27,11 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate agency exists
-	agency := api.GtfsManager.FindAgency(id)
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if agency == nil {
 		api.sendNull(w, r)
 		return
@@ -47,20 +51,6 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build agency reference
-	agencyRef := models.NewAgencyReference(
-		agency.Id,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Language,
-		agency.Phone,
-		agency.Email,
-		agency.FareUrl,
-		"",
-		false,
-	)
-
 	// Build route references from stops
 	routeRefs, err := api.BuildRouteReferences(ctx, id, stopsList)
 	if err != nil {
@@ -70,7 +60,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 	// Build references
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{agencyRef}
+	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefs
 
 	response := models.NewListResponse(stopsList, *references, false, api.Clock)

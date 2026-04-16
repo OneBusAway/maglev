@@ -34,17 +34,13 @@ All commands are managed through the Makefile:
 - `make update-openapi` - Fetch latest upstream OpenAPI spec and overwrite `testdata/openapi.yml`
 - `make check-openapi` - Verify `testdata/openapi.yml` matches upstream (exits 1 if out of date)
 
-**Build tags**: When running `go` commands directly (not via Makefile), you must pass `-tags "sqlite_fts5"` for CGO builds or `-tags "purego"` for pure Go builds.
+**Build tags**: When running `go` commands directly (not via Makefile), you must pass `-tags "sqlite_fts5 sqlite_math_functions"` for CGO builds or `-tags "purego"` for pure Go builds.
 
 **OpenAPI spec**: CI checks that `testdata/openapi.yml` is in sync with [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every push and PR. If upstream has changed, CI fails — run `make update-openapi` locally and commit the updated file.
 
 ## Load Testing and Profiling
 
 See `loadtest/README.md`. Start with pprof enabled: `MAGLEV_ENABLE_PPROF=1 make run`, then run `k6 run loadtest/k6/scenarios.js`. Capture CPU profiles with `go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30`.
-
-## Slow Query Logging
-
-Set `MAGLEV_SLOW_QUERY_THRESHOLD_MS=<ms>` to log queries slower than that threshold (`0` disables slow-query logging).
 
 ## Docker Commands
 
