@@ -665,14 +665,6 @@ FROM
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'));
 
--- name: GetStopsWithActiveServiceOnDate :many
--- Returns stop IDs that have at least one trip with active service on the given date
-SELECT DISTINCT st.stop_id
-FROM stop_times st
-JOIN trips t ON st.trip_id = t.id
-WHERE st.stop_id IN (sqlc.slice('stop_ids'))
-  AND t.service_id IN (sqlc.slice('service_ids'));
-
 -- name: GetStopTimesForTrip :many
 SELECT
     *
