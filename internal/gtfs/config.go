@@ -26,12 +26,22 @@ type Config struct {
 	StaticAuthHeaderValue string
 	RTFeeds               []RTFeedConfig
 	GTFSDataPath          string
-	Env                   appconf.Environment
-	Verbose               bool
-	EnableGTFSTidy        bool
-	StartupRetries        []time.Duration
-	Metrics               *metrics.Metrics
+	// runningLateWindow and runningEarlyWindow tune trips-for-route time range selection.
+	RunningLateWindow  time.Duration
+	RunningEarlyWindow time.Duration
+	Env                appconf.Environment
+	Verbose            bool
+	EnableGTFSTidy     bool
+	StartupRetries     []time.Duration
+	Metrics            *metrics.Metrics
 }
+
+const (
+	// DefaultRunningLateWindow is how far behind "now" trips-for-route looks for still-relevant late trips.
+	DefaultRunningLateWindow = 30 * time.Minute
+	// DefaultRunningEarlyWindow is how far ahead "now" trips-for-route looks for early trips.
+	DefaultRunningEarlyWindow = 10 * time.Minute
+)
 
 // enabledFeeds returns only the enabled feeds that have at least one URL configured.
 func (config Config) enabledFeeds() []RTFeedConfig {

@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -336,4 +338,33 @@ func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 	stopIDsMap := map[string]bool{}
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 	assert.Empty(t, stopIDsMap)
+}
+
+func TestTripsForRouteWindowNanos_Defaults(t *testing.T) {
+	api := &RestAPI{
+		Application: &app.Application{
+			GtfsConfig: gtfs.Config{},
+		},
+	}
+
+	lateNanos, earlyNanos := api.tripsForRouteWindowNanos()
+
+	assert.Equal(t, gtfs.DefaultRunningLateWindow.Nanoseconds(), lateNanos)
+	assert.Equal(t, gtfs.DefaultRunningEarlyWindow.Nanoseconds(), earlyNanos)
+}
+
+func TestTripsForRouteWindowNanos_CustomConfig(t *testing.T) {
+	api := &RestAPI{
+		Application: &app.Application{
+			GtfsConfig: gtfs.Config{
+				RunningLateWindow:  45 * time.Minute,
+				RunningEarlyWindow: 3 * time.Minute,
+			},
+		},
+	}
+
+	lateNanos, earlyNanos := api.tripsForRouteWindowNanos()
+
+	assert.Equal(t, (45 * time.Minute).Nanoseconds(), lateNanos)
+	assert.Equal(t, (3 * time.Minute).Nanoseconds(), earlyNanos)
 }

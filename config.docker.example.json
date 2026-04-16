@@ -13,6 +13,8 @@
   ],
   "_comment": "WARNING: Change 'api-keys' before deploying to production! The default 'test' key is for development only.",
   "rate-limit": 100,
+  "running-late-window": 1800,
+  "running-early-window": 600,
   "gtfs-static-feed": {
     "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
     "enable-gtfs-tidy": false

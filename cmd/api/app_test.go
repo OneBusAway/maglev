@@ -414,6 +414,8 @@ func TestConfigFileLoading(t *testing.T) {
 		// Verify GTFS config
 		assert.Equal(t, appconf.Development, gtfsCfgData.Env)
 		assert.True(t, gtfsCfgData.Verbose)
+		assert.Equal(t, 1800, gtfsCfgData.RunningLateWindow)
+		assert.Equal(t, 600, gtfsCfgData.RunningEarlyWindow)
 	})
 
 	t.Run("loads full config file with GTFS-RT feed", func(t *testing.T) {
@@ -433,6 +435,8 @@ func TestConfigFileLoading(t *testing.T) {
 		assert.Equal(t, 50, appCfg.RateLimit)
 
 		// Verify GTFS config - feeds are now in RTFeeds
+		assert.Equal(t, 2400, gtfsCfgData.RunningLateWindow)
+		assert.Equal(t, 900, gtfsCfgData.RunningEarlyWindow)
 		require.NotEmpty(t, gtfsCfgData.RTFeeds)
 		feed0 := gtfsCfgData.RTFeeds[0]
 		assert.Equal(t, "https://api.example.com/trip-updates.pb", feed0.TripUpdatesURL)
@@ -624,4 +628,6 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 
 	assert.NotEqual(t, "", rtFeed["trip-updates-url"])
 	assert.Equal(t, gtfsCfg.GTFSDataPath, parsed["data-path"])
+	assert.Contains(t, parsed, "running-late-window")
+	assert.Contains(t, parsed, "running-early-window")
 }

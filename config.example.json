@@ -12,6 +12,8 @@
     "org.onebusaway.iphone"
   ],
   "rate-limit": 100,
+  "running-late-window": 1800,
+  "running-early-window": 600,
   "log-level": "info",
   "log-format": "text",
   "gtfs-static-feed": {

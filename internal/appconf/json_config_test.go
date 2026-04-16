@@ -20,6 +20,8 @@ func TestLoadFromFile_ValidConfig(t *testing.T) {
 	// Verify defaults were applied
 	assert.Equal(t, []string{"test"}, config.ApiKeys)
 	assert.Equal(t, 100, config.RateLimit)
+	assert.Equal(t, 1800, config.RunningLateWindow)
+	assert.Equal(t, 600, config.RunningEarlyWindow)
 	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "./gtfs.db", config.DataPath)
 	assert.Len(t, config.GtfsRtFeeds, 1)
@@ -38,6 +40,8 @@ func TestLoadFromFile_FullConfig(t *testing.T) {
 	assert.Equal(t, []string{"key1", "key2", "key3"}, config.ApiKeys)
 	assert.Equal(t, []string{"protected-key-1", "protected-key-2"}, config.ProtectedApiKeys)
 	assert.Equal(t, 50, config.RateLimit)
+	assert.Equal(t, 2400, config.RunningLateWindow)
+	assert.Equal(t, 900, config.RunningEarlyWindow)
 	assert.Equal(t, "debug", config.LogLevel)
 	assert.Equal(t, "json", config.LogFormat)
 	assert.Equal(t, "https://example.com/gtfs.zip", config.GtfsStaticFeed.URL)
@@ -126,6 +130,36 @@ func TestValidate_InvalidRateLimit(t *testing.T) {
 	err := config.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "rate-limit must be at least 1")
+}
+
+func TestValidate_InvalidRunningLateWindow(t *testing.T) {
+	config := &JSONConfig{
+		Port:               4000,
+		Env:                "development",
+		ApiKeys:            []string{"test"},
+		ProtectedApiKeys:   []string{"test"},
+		RateLimit:          100,
+		RunningLateWindow:  -1,
+		RunningEarlyWindow: 600,
+	}
+	err := config.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "running-late-window cannot be negative")
+}
+
+func TestValidate_InvalidRunningEarlyWindow(t *testing.T) {
+	config := &JSONConfig{
+		Port:               4000,
+		Env:                "development",
+		ApiKeys:            []string{"test"},
+		ProtectedApiKeys:   []string{"test"},
+		RateLimit:          100,
+		RunningLateWindow:  1800,
+		RunningEarlyWindow: -1,
+	}
+	err := config.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "running-early-window cannot be negative")
 }
 
 func TestValidate_InvalidLogLevel(t *testing.T) {
@@ -266,6 +300,8 @@ func TestToGtfsConfigData_NoFeeds(t *testing.T) {
 	assert.Equal(t, "X-API-Key", gtfsConfig.StaticAuthHeaderKey)
 	assert.Equal(t, "secret123", gtfsConfig.StaticAuthHeaderValue)
 	assert.Equal(t, "/data/gtfs.db", gtfsConfig.GTFSDataPath)
+	assert.Equal(t, 1800, gtfsConfig.RunningLateWindow)
+	assert.Equal(t, 600, gtfsConfig.RunningEarlyWindow)
 	assert.Equal(t, Development, gtfsConfig.Env)
 	assert.True(t, gtfsConfig.Verbose)
 
@@ -301,6 +337,8 @@ func TestToGtfsConfigData_WithMultipleFeeds(t *testing.T) {
 
 	// Both feeds should be present
 	require.Len(t, gtfsConfig.RTFeeds, 2)
+	assert.Equal(t, 1800, gtfsConfig.RunningLateWindow)
+	assert.Equal(t, 600, gtfsConfig.RunningEarlyWindow)
 
 	// First feed
 	feed0 := gtfsConfig.RTFeeds[0]
@@ -328,6 +366,8 @@ func TestSetDefaults(t *testing.T) {
 	assert.Equal(t, "development", config.Env)
 	assert.Equal(t, []string{"test"}, config.ApiKeys)
 	assert.Equal(t, 100, config.RateLimit)
+	assert.Equal(t, 1800, config.RunningLateWindow)
+	assert.Equal(t, 600, config.RunningEarlyWindow)
 	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 	assert.Equal(t, "./gtfs.db", config.DataPath)
 	assert.Len(t, config.GtfsRtFeeds, 1)
@@ -349,6 +389,8 @@ func TestSetDefaults_PartialConfig(t *testing.T) {
 	// Missing values should get defaults
 	assert.Equal(t, "development", config.Env)
 	assert.Equal(t, 100, config.RateLimit)
+	assert.Equal(t, 1800, config.RunningLateWindow)
+	assert.Equal(t, 600, config.RunningEarlyWindow)
 	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 }
 

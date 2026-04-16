@@ -67,6 +67,18 @@
       "default": 100,
       "minimum": 1
     },
+    "running-late-window": {
+      "type": "integer",
+      "description": "Trips-for-route late window in seconds (look behind now for late trips)",
+      "default": 1800,
+      "minimum": 0
+    },
+    "running-early-window": {
+      "type": "integer",
+      "description": "Trips-for-route early window in seconds (look ahead now for early trips)",
+      "default": 600,
+      "minimum": 0
+    },
     "gtfs-static-feed": {
       "type": "object",
       "description": "Configuration for the static GTFS feed",
@@ -181,6 +193,8 @@
       "api-keys": ["key1", "key2", "key3"],
       "protected-api-keys": ["secret1", "secret2"],
       "rate-limit": 50,
+      "running-late-window": 1800,
+      "running-early-window": 600,
       "gtfs-static-feed": {
         "url": "https://example.com/gtfs.zip",
         "auth-header-name": "Authorization",

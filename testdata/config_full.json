@@ -12,6 +12,8 @@
     "protected-key-2"
   ],
   "rate-limit": 50,
+  "running-late-window": 2400,
+  "running-early-window": 900,
   "gtfs-static-feed": {
     "url": "https://example.com/gtfs.zip",
     "auth-header-name": "Authorization",

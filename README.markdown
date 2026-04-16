@@ -89,6 +89,8 @@ Example `config.json`:
   "env": "production",
   "api-keys": ["key1", "key2", "key3"],
   "rate-limit": 50,
+  "running-late-window": 1800,
+  "running-early-window": 600,
   "log-level": "info",
   "log-format": "json",
   "gtfs-static-feed": {
@@ -156,6 +158,8 @@ A JSON schema file is provided at `config.schema.json` for IDE autocomplete and 
 | `log-level`          | string  | "info"          | Log level (debug, info, warn, error)        |
 | `log-format`         | string  | "text"          | Log format (text, json)                     |
 | `rate-limit`         | integer | 100             | Requests per second per API key             |
+| `running-late-window`  | integer | 1800            | Trips-for-route late window in seconds      |
+| `running-early-window` | integer | 600             | Trips-for-route early window in seconds     |
 | `gtfs-static-feed`   | object  | (Sound Transit) | Static GTFS feed configuration              |
 | `gtfs-rt-feeds`      | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
 | `data-path`          | string  | "./gtfs.db"     | Path to SQLite database                     |

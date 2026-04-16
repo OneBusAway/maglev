@@ -30,6 +30,8 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 		StaticAuthHeaderKey:   gtfsCfgData.StaticAuthHeaderKey,
 		StaticAuthHeaderValue: gtfsCfgData.StaticAuthHeaderValue,
 		GTFSDataPath:          gtfsCfgData.GTFSDataPath,
+		RunningLateWindow:     time.Duration(gtfsCfgData.RunningLateWindow) * time.Second,
+		RunningEarlyWindow:    time.Duration(gtfsCfgData.RunningEarlyWindow) * time.Second,
 		Env:                   gtfsCfgData.Env,
 		Verbose:               gtfsCfgData.Verbose,
 		EnableGTFSTidy:        gtfsCfgData.EnableGTFSTidy,
@@ -290,14 +292,16 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	}
 
 	// Build JSON config structure
-	jsonConfig := map[string]any{
-		"port":             cfg.Port,
-		"env":              envStr,
-		"api-keys":         fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
-		"exempt-api-keys":  fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
-		"rate-limit":       cfg.RateLimit,
-		"gtfs-static-feed": staticFeed,
-		"data-path":        gtfsCfg.GTFSDataPath,
+	jsonConfig := map[string]interface{}{
+		"port":                 cfg.Port,
+		"env":                  envStr,
+		"api-keys":             fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
+		"exempt-api-keys":      fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
+		"rate-limit":           cfg.RateLimit,
+		"running-late-window":  int(gtfsCfg.RunningLateWindow.Seconds()),
+		"running-early-window": int(gtfsCfg.RunningEarlyWindow.Seconds()),
+		"gtfs-static-feed":     staticFeed,
+		"data-path":            gtfsCfg.GTFSDataPath,
 	}
 
 	var feeds []map[string]any
