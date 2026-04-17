@@ -7,7 +7,7 @@ import (
 // Implemented manually because sqlc doesn't support the virtual tables from the RTree module.
 
 const getActiveStopsWithinBounds = `
-SELECT DISTINCT
+SELECT
     s.id,
     s.code,
     s.name,
@@ -23,10 +23,10 @@ SELECT DISTINCT
     s.direction,
     s.parent_station
 FROM stops s
-INNER JOIN stop_times st ON s.id = st.stop_id
-INNER JOIN stops_rtree r ON r.id = s.rowid
-WHERE r.min_lat >= ? AND r.max_lat <= ?
-  AND r.min_lon >= ? AND r.max_lon <= ?
+INNER JOIN stops_rtree sr ON sr.id = s.rowid
+WHERE sr.min_lat >= ? AND sr.max_lat <= ?
+  AND sr.min_lon >= ? AND sr.max_lon <= ?
+  AND EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = s.id)
 `
 
 type GetActiveStopsWithinBoundsParams struct {
