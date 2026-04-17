@@ -3,7 +3,7 @@ package restapi
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
+	"maglev.onebusaway.org/internal/logging"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,7 +21,7 @@ import (
 func setupTestApiWithMockVehicle(t *testing.T) (*RestAPI, string, string) {
 	api := createTestApi(t)
 	// Initialize the logger to prevent nil pointer panics during handler execution
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	api.Logger = logging.NewStructuredLogger(os.Stdout, -4)
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	// Note: caller is responsible for calling api.Shutdown()
@@ -256,7 +256,7 @@ func TestTripForVehicleHandlerWithIdleVehicle(t *testing.T) {
 func TestTripForVehicleHandlerWithNonExistentTrip(t *testing.T) {
 	api := createTestApi(t)
 	// Initialize the logger to prevent nil pointer panics during handler execution
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	api.Logger = logging.NewStructuredLogger(os.Stdout, -4)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
