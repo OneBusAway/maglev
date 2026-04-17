@@ -171,7 +171,19 @@
       "type": "string",
       "description": "Path to the SQLite database containing GTFS data (cannot contain '..' for security)",
       "default": "./gtfs.db"
+    },
+    "tls-cert-path": {
+      "type": "string",
+      "description": "Path to TLS certificate file. When set together with tls-key-path, the server serves HTTPS."
+    },
+    "tls-key-path": {
+      "type": "string",
+      "description": "Path to TLS private key file. When set together with tls-cert-path, the server serves HTTPS."
     }
+  },
+  "dependencies": {
+    "tls-cert-path": ["tls-key-path"],
+    "tls-key-path": ["tls-cert-path"]
   },
   "additionalProperties": false,
   "examples": [

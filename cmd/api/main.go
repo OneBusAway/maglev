@@ -73,6 +73,8 @@ func main() {
 	flag.StringVar(&cliFeedAuthHeaderValue, "realtime-auth-header-value", "", "Optional header value for GTFS-RT auth")
 	flag.StringVar(&cliFeedServiceAlertsURL, "service-alerts-url", "", "URL for a GTFS-RT service alerts feed")
 	flag.StringVar(&gtfsCfg.GTFSDataPath, "data-path", "./gtfs.db", "Path to the SQLite database containing GTFS data")
+	flag.StringVar(&cfg.TLSCertPath, "tls-cert-path", "", "Path to TLS certificate file (enables HTTPS when set with tls-key-path)")
+	flag.StringVar(&cfg.TLSKeyPath, "tls-key-path", "", "Path to TLS private key file (enables HTTPS when set with tls-cert-path)")
 	flag.Parse()
 
 	// Enforce mutual exclusivity between -f and other flags (except --dump-config)
@@ -134,7 +136,9 @@ func main() {
 					RefreshInterval:         30,
 				},
 			},
-			DataPath: gtfsCfg.GTFSDataPath,
+			DataPath:    gtfsCfg.GTFSDataPath,
+			TLSCertPath: cfg.TLSCertPath,
+			TLSKeyPath:  cfg.TLSKeyPath,
 		}
 
 		// Run the shared validation logic

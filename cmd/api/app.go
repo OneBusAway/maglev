@@ -210,7 +210,9 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 // and performs graceful shutdown with a 30-second timeout.
 // Returns an error if the server fails to start or shutdown fails.
 func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *restapi.RestAPI, logger *slog.Logger) error {
-	logger.Info("starting server", "addr", srv.Addr)
+	cfg := coreApp.Config
+	tlsEnabled := cfg.TLSCertPath != "" && cfg.TLSKeyPath != ""
+	logger.Info("starting server", "addr", srv.Addr, "tls", tlsEnabled)
 
 	// Set up signal handling for graceful shutdown, merging with provided context
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -221,7 +223,13 @@ func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *r
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if tlsEnabled {
+			err = srv.ListenAndServeTLS(cfg.TLSCertPath, cfg.TLSKeyPath)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			serverErrors <- err
 		}
 	}()
