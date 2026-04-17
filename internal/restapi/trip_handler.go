@@ -10,6 +10,8 @@ import (
 
 // tripHandler returns details for a single trip, including its route, stop times, and shape.
 func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences := r.URL.Query().Get("includeReferences") != "false"
+
 	agencyID, id, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -93,6 +95,11 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		"",
 		false,
 	))
+
+	if !includeReferences {
+		api.sendResponse(w, r, models.NewOKResponse(map[string]any{"entry": tripResponse}, api.Clock))
+		return
+	}
 
 	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, *references, api.Clock))
 }

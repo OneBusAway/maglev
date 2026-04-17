@@ -88,6 +88,32 @@ func TestTripHandlerWithInvalidTripID(t *testing.T) {
 	assert.Nil(t, model.Data)
 }
 
+func TestTripHandlerWithoutReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/"+tripID+".json?key=TEST&includeReferences=false")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	data, ok := model.Data.(map[string]any)
+	assert.True(t, ok)
+
+	_, hasReferences := data["references"]
+	assert.False(t, hasReferences, "references should be omitted when includeReferences=false")
+
+	entry, ok := data["entry"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, tripID, entry["id"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), entry["routeId"])
+}
+
 func TestTripHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
