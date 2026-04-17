@@ -417,26 +417,17 @@ func (manager *Manager) RoutesForAgencyID(ctx context.Context, agencyID string) 
 // It supports filtering by route types and querying for specific stop codes.
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
 //
-// TODO: split this into several functions backed by different database queries.
-// Some callers only want stop IDs, while others need to return Stops to the
-// client.
+// GetStopsForLocation is used by the stops-for-location endpoint.
+// BOUNDS mode (no routeTypes): shuffles stops then truncates before route-type filtering.
+// ORDERED_BY_CLOSEST mode (routeTypes present): sorts by distance, filters by route type, then truncates.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	lat, lon, radius, latSpan, lonSpan float64,
 	stopCodeQuery string,
 	maxCount int,
 	routeTypes []int,
-	shuffleBeforeLimit bool,
 ) ([]gtfsdb.Stop, bool) {
-	var bounds utils.CoordinateBounds
-	if latSpan > 0 && lonSpan > 0 {
-		bounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
-	} else {
-		if radius == 0 {
-			radius = models.DefaultSearchRadiusInMeters
-		}
-		bounds = utils.CalculateBounds(lat, lon, radius)
-	}
+	bounds := manager.boundsFromParams(lat, lon, radius, latSpan, lonSpan)
 
 	if ctx.Err() != nil {
 		return []gtfsdb.Stop{}, false
@@ -459,70 +450,81 @@ func (manager *Manager) GetStopsForLocation(
 		return nil, false
 	}
 
-	// Match Java's two query modes:
-	// BOUNDS mode (no routeType filter): shuffle then truncate BEFORE route filtering.
-	// ORDERED_BY_CLOSEST mode (routeType filter active): sort by distance, filter first, truncate AFTER.
 	var limitExceeded bool
 	if len(routeTypes) == 0 {
+		// BOUNDS mode: shuffle then truncate before route filtering.
 		limitExceeded = len(stops) > maxCount
-		if limitExceeded && shuffleBeforeLimit {
-			rand.Shuffle(len(stops), func(i, j int) { stops[i], stops[j] = stops[j], stops[i] })
-		}
 		if limitExceeded {
+			rand.Shuffle(len(stops), func(i, j int) { stops[i], stops[j] = stops[j], stops[i] })
 			stops = stops[:maxCount]
 		}
 	} else {
-		// ORDERED_BY_CLOSEST: sort by distance from search center before filtering
+		// ORDERED_BY_CLOSEST mode: sort by distance, filter by route type, then truncate.
 		sort.Slice(stops, func(i, j int) bool {
-			di := utils.Distance(lat, lon, stops[i].Lat, stops[i].Lon)
-			dj := utils.Distance(lat, lon, stops[j].Lat, stops[j].Lon)
-			return di < dj
+			return utils.Distance(lat, lon, stops[i].Lat, stops[i].Lon) <
+				utils.Distance(lat, lon, stops[j].Lat, stops[j].Lon)
 		})
-	}
 
-	// Get routes for all stops to filter out stops with no routes
-	stopIDs := make([]string, 0, len(stops))
-	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.ID)
-	}
-
-	routesForStops, err := manager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
-	if err == nil {
-		stopRouteTypes := make(map[string][]int)
-		for _, r := range routesForStops {
-			stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
+		stopIDs := make([]string, 0, len(stops))
+		for _, stop := range stops {
+			stopIDs = append(stopIDs, stop.ID)
 		}
 
-		filteredStops := make([]gtfsdb.Stop, 0, len(stops))
-		for _, stop := range stops {
-			types := stopRouteTypes[stop.ID]
-			if len(types) == 0 {
-				continue
+		routesForStops, err := manager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
+		if err == nil {
+			stopRouteTypes := make(map[string][]int)
+			for _, r := range routesForStops {
+				stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
 			}
-			if len(routeTypes) > 0 {
-				hasMatchingRouteType := false
-				for _, rt := range types {
+			filteredStops := make([]gtfsdb.Stop, 0, len(stops))
+			for _, stop := range stops {
+				for _, rt := range stopRouteTypes[stop.ID] {
 					if slices.Contains(routeTypes, rt) {
-						hasMatchingRouteType = true
+						filteredStops = append(filteredStops, stop)
 						break
 					}
 				}
-				if !hasMatchingRouteType {
-					continue
-				}
 			}
-			filteredStops = append(filteredStops, stop)
+			stops = filteredStops
 		}
-		stops = filteredStops
-	}
 
-	// ORDERED_BY_CLOSEST: truncate and compute limitExceeded AFTER route filtering
-	if len(routeTypes) > 0 && len(stops) > maxCount {
-		limitExceeded = true
-		stops = stops[:maxCount]
+		if len(stops) > maxCount {
+			limitExceeded = true
+			stops = stops[:maxCount]
+		}
 	}
 
 	return stops, limitExceeded
+}
+
+// GetStopsInBounds returns stops within the given bounds up to maxCount, without shuffling
+// or route-type filtering. Used internally by the arrivals and trips-for-location handlers.
+func (manager *Manager) GetStopsInBounds(
+	ctx context.Context,
+	lat, lon, radius, latSpan, lonSpan float64,
+	maxCount int,
+) []gtfsdb.Stop {
+	bounds := manager.boundsFromParams(lat, lon, radius, latSpan, lonSpan)
+	stops, err := manager.queryStopsInBounds(ctx, bounds)
+	if err != nil {
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+		logging.LogError(logger, "could not query stops within bounds", err)
+		return nil
+	}
+	if maxCount > 0 && len(stops) > maxCount {
+		stops = stops[:maxCount]
+	}
+	return stops
+}
+
+func (manager *Manager) boundsFromParams(lat, lon, radius, latSpan, lonSpan float64) utils.CoordinateBounds {
+	if latSpan > 0 && lonSpan > 0 {
+		return utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
+	}
+	if radius == 0 {
+		radius = models.DefaultSearchRadiusInMeters
+	}
+	return utils.CalculateBounds(lat, lon, radius)
 }
 
 // queryStopsInBounds retrieves all active stops within the given geographic bounds

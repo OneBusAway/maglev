@@ -39,7 +39,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
 	currentTime := api.Clock.Now().In(currentLocation)
 
-	stops, _ := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, []int{}, false)
+	stops := api.GtfsManager.GetStopsInBounds(ctx, lat, lon, -1, latSpan, lonSpan, 100)
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {

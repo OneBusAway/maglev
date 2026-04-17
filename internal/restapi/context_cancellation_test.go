@@ -120,7 +120,7 @@ func TestContextCancellationInGetStopsForLocation(t *testing.T) {
 
 	// This test verifies that our current implementation works normally
 	// since it uses context.Background() internally
-	stops, _ := api.GtfsManager.GetStopsForLocation(context.Background(), 38.9, -77.0, 1000, 0, 0, "", 10, nil, false)
+	stops := api.GtfsManager.GetStopsInBounds(context.Background(), 38.9, -77.0, 1000, 0, 0, 10)
 
 	// Current implementation should return a slice (possibly empty)
 	// The function should not panic and should return a valid slice

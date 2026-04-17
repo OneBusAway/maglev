@@ -641,7 +641,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
-	nearbyStops, _ := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, []int{}, false)
+	nearbyStops := api.GtfsManager.GetStopsInBounds(ctx, lat, lon, 10000, 100, 100, 5)
 	if len(nearbyStops) == 0 {
 		return nil
 	}
