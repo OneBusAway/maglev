@@ -77,12 +77,12 @@ func TestProcessAndStoreGTFSData_ErrorHandling(t *testing.T) {
 
 	// Test with invalid GTFS data
 	invalidData := []byte("invalid gtfs data")
-	err = client.processAndStoreGTFSDataWithSource(invalidData, "test-source")
+	_, err = client.processAndStoreGTFSDataWithSource(invalidData, "test-source")
 	assert.Error(t, err, "processAndStoreGTFSDataWithSource should return error for invalid data")
 
 	// Test with empty data
 	emptyData := []byte{}
-	err = client.processAndStoreGTFSDataWithSource(emptyData, "test-source")
+	_, err = client.processAndStoreGTFSDataWithSource(emptyData, "test-source")
 	assert.Error(t, err, "processAndStoreGTFSDataWithSource should return error for empty data")
 }
 
@@ -101,7 +101,7 @@ func TestImportFromFile_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// Test with non-existent file
-	err = client.ImportFromFile(ctx, "/nonexistent/file.zip")
+	_, err = client.ImportFromFile(ctx, "/nonexistent/file.zip")
 	assert.Error(t, err, "ImportFromFile should return error for non-existent file")
 }
 
@@ -120,11 +120,11 @@ func TestDownloadAndStore_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// Test with invalid URL
-	err = client.DownloadAndStore(ctx, "invalid-url", "", "")
+	_, err = client.DownloadAndStore(ctx, "invalid-url", "", "")
 	assert.Error(t, err, "DownloadAndStore should return error for invalid URL")
 
 	// Test with non-existent URL
-	err = client.DownloadAndStore(ctx, "http://nonexistent.example.com/data.zip", "", "")
+	_, err = client.DownloadAndStore(ctx, "http://nonexistent.example.com/data.zip", "", "")
 	assert.Error(t, err, "DownloadAndStore should return error for non-existent URL")
 }
 
@@ -163,7 +163,7 @@ func TestDownloadAndStore_AuthenticationHeaders(t *testing.T) {
 	ctx := context.Background()
 
 	// Test with authentication headers
-	_ = client.DownloadAndStore(ctx, server.URL, expectedHeaderName, expectedHeaderValue)
+	_, _ = client.DownloadAndStore(ctx, server.URL, expectedHeaderName, expectedHeaderValue)
 
 	// Verify the auth header was sent
 	assert.True(t, headerReceived, "Authentication header should be sent in HTTP request")
@@ -200,7 +200,7 @@ func TestDownloadAndStore_NoAuthHeaders(t *testing.T) {
 	ctx := context.Background()
 
 	// Test without authentication headers (empty strings)
-	_ = client.DownloadAndStore(ctx, server.URL, "", "")
+	_, _ = client.DownloadAndStore(ctx, server.URL, "", "")
 
 	// Verify no auth header was sent
 	assert.False(t, authHeaderReceived, "No authentication header should be sent when not configured")

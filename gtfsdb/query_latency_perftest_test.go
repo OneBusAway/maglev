@@ -48,7 +48,7 @@ func loadPerfFixture(b *testing.B) *Client {
 	// Import GTFS data; skipped automatically when the hash matches an existing import.
 	zipData, err := os.ReadFile(zipPath)
 	require.NoError(b, err)
-	if importErr := client.processAndStoreGTFSDataWithSource(zipData, zipPath); importErr != nil {
+	if _, importErr := client.processAndStoreGTFSDataWithSource(zipData, zipPath); importErr != nil {
 		// A duplicate import fails the hash-match check; the error is non-fatal.
 		b.Logf("GTFS import: %v", importErr)
 		if latencyIsEmpty(context.Background(), b, client.DB) {

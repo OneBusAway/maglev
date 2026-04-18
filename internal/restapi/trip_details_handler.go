@@ -112,9 +112,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
 		api.sendNotFound(w, r)
@@ -291,7 +288,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, response)
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
 	referencedTrips := []*models.Trip{}
 
@@ -389,7 +385,6 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	return referencedTrips, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, stopTimes []models.StopTime) ([]models.Stop, error) {
 	stopIDSet := make(map[string]bool)
 	originalStopIDs := make([]string, 0, len(stopTimes))
@@ -492,7 +487,6 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 	return modelStops, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildRouteReference(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
 
 	routeIDSet := make(map[string]bool)

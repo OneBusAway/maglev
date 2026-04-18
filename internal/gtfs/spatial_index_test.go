@@ -18,8 +18,6 @@ func TestQueryStopsInBounds_WithRABA(t *testing.T) {
 		MinLon: -122.50, MaxLon: -122.30,
 	}
 
-	manager.RLock()
-	defer manager.RUnlock()
 	results, err := manager.queryStopsInBounds(t.Context(), bounds)
 	require.NoError(t, err)
 	assert.NotEmpty(t, results, "Should find stops in the RABA service area")
@@ -38,8 +36,6 @@ func TestQueryStopsInBounds_SwappedLat(t *testing.T) {
 	require.NotNil(t, manager)
 	swappedLat := utils.CoordinateBounds{MinLat: 40.70, MaxLat: 40.50, MinLon: -122.50, MaxLon: -122.30}
 
-	manager.RLock()
-	defer manager.RUnlock()
 	_, err := manager.queryStopsInBounds(t.Context(), swappedLat)
 
 	require.ErrorContains(t, err, "lat")
@@ -50,8 +46,6 @@ func TestQueryStopsInBounds_SwappedLon(t *testing.T) {
 	require.NotNil(t, manager)
 	swappedLon := utils.CoordinateBounds{MinLat: 40.50, MaxLat: 40.70, MinLon: -122.30, MaxLon: -122.50}
 
-	manager.RLock()
-	defer manager.RUnlock()
 	_, err := manager.queryStopsInBounds(t.Context(), swappedLon)
 
 	require.ErrorContains(t, err, "lon")
@@ -67,8 +61,6 @@ func TestQueryStopsInBounds_NoStops(t *testing.T) {
 		MinLon: -80.00, MaxLon: -79.00,
 	}
 
-	manager.RLock()
-	defer manager.RUnlock()
 	results, err := manager.queryStopsInBounds(t.Context(), bounds)
 	require.NoError(t, err)
 	assert.Empty(t, results, "Should find no stops outside service area")

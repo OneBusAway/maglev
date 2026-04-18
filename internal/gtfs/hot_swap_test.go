@@ -3,9 +3,7 @@ package gtfs
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -62,13 +60,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					manager.RLock()
-					if manager.GtfsDB == nil {
-						errChan <- loggerErrorf("GtfsDB is nil during read")
-						manager.RUnlock()
-						continue
-					}
-
 					aps, err := manager.GtfsDB.Queries.ListAgencies(ctx)
 					if err != nil && ctx.Err() == nil {
 						errChan <- loggerErrorf("Failed to list agencies during read: %v", err)
@@ -78,7 +69,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 					}
 
 					time.Sleep(5 * time.Millisecond)
-					manager.RUnlock()
 				}
 			}
 		}()
@@ -87,12 +77,9 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	newSource := models.GetFixturePath(t, "gtfs.zip")
 	manager.SetGtfsURL(newSource)
 
-	time.Sleep(50 * time.Millisecond)
+	_, err = manager.ReloadStatic(context.Background())
+	assert.Nil(t, err, "reloadstatic should succeed with new file")
 
-	err = manager.ForceUpdate(context.Background())
-	assert.Nil(t, err, "ForceUpdate should succeed with new file")
-
-	time.Sleep(50 * time.Millisecond)
 	cancel()
 	wg.Wait()
 	close(errChan)
@@ -132,20 +119,8 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 
 	manager.SetGtfsURL("/path/to/non/existent/file.zip")
 
-	err = manager.ForceUpdate(context.Background())
-
-	assert.Error(t, err, "ForceUpdate should fail with invalid source")
-
-	// Verify temp file is cleaned up
-	files, err := os.ReadDir(tempDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		if strings.Contains(f.Name(), "temp.db") {
-			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
-		}
-	}
+	_, err = manager.ReloadStatic(context.Background())
+	assert.Error(t, err, "ReloadStatic should fail with invalid source")
 
 	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
 	assert.Nil(t, err)
@@ -177,23 +152,13 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	defer manager.Shutdown()
 
 	manager.SetGtfsURL(gtfsNew)
-	err = manager.ForceUpdate(context.Background())
-	require.NoError(t, err, "ForceUpdate failed for new GTFS")
+	_, err = manager.ReloadStatic(context.Background())
+	require.NoError(t, err, "ReloadStatic failed for new GTFS")
 
 	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
 	require.NoError(t, err)
 	require.NotEmpty(t, agencies, "No agencies found after second update")
 	assert.Equal(t, "40", agencies[0].ID)
-
-	files, err := os.ReadDir(tempDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		if strings.Contains(f.Name(), "temp.db") {
-			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
-		}
-	}
 }
 
 func TestHotSwap_MutexProtectedSwap(t *testing.T) {
@@ -220,38 +185,37 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	defer manager.Shutdown()
 
 	// Verify initial state
-	manager.RLock()
 	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
 	require.NoError(t, err)
 	require.NotEmpty(t, initialAgencies)
 	assert.Equal(t, "25", initialAgencies[0].ID)
+	manager.staticMutex.RLock()
 	assert.NotNil(t, manager.blockLayoverIndices)
-	manager.RUnlock()
+	manager.staticMutex.RUnlock()
 
 	// Capture old references
-	manager.RLock()
 	oldGtfsDB := manager.GtfsDB
+	manager.staticMutex.RLock()
 	oldBlockLayoverIndices := manager.blockLayoverIndices
-	manager.RUnlock()
+	manager.staticMutex.RUnlock()
 
 	manager.SetGtfsURL(gtfsNew)
-	err = manager.ForceUpdate(context.Background())
-	assert.Nil(t, err, "ForceUpdate should succeed")
+	_, err = manager.ReloadStatic(context.Background())
+	assert.Nil(t, err, "ReloadStatic should succeed")
 
 	// Verify Final State
-	manager.RLock()
 	updatedAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
 	require.NoError(t, listErr)
 	require.NotEmpty(t, updatedAgencies)
 	assert.Equal(t, "40", updatedAgencies[0].ID)
 
-	// Verify memory cleanup (references replaced)
-	assert.NotEqual(t, oldGtfsDB, manager.GtfsDB, "GtfsDB Reference should have been replaced")
-	assert.NotEqual(t, oldBlockLayoverIndices, manager.blockLayoverIndices, "BlockLayoverIndices Reference should have been replaced")
+	// DB is reused in-place: the client pointer is stable across reloads.
+	assert.Same(t, oldGtfsDB, manager.GtfsDB, "GtfsDB should be reused in place")
 
-	assert.NotNil(t, manager.blockLayoverIndices)
-
-	manager.RUnlock()
+	manager.staticMutex.RLock()
+	// Derived indices are rebuilt from the new data.
+	assert.NotEqual(t, manager.blockLayoverIndices, oldBlockLayoverIndices)
+	manager.staticMutex.RUnlock()
 }
 
 func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
@@ -292,8 +256,7 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer wg.Done()
-			// Calling ForceUpdate concurrently
-			err := manager.ForceUpdate(context.Background())
+			_, err := manager.ReloadStatic(context.Background())
 			errChan <- err
 		}()
 	}

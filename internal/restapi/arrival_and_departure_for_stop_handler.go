@@ -143,9 +143,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	// Capture parsing errors (syntax validation only — localization happens below
 	// once we know the agency timezone).
 	params, fieldErrors := api.parseArrivalAndDepartureParams(r)

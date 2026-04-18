@@ -24,8 +24,6 @@ import (
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
 // trip ID so the correct schedule data is used.
-//
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
@@ -211,7 +209,6 @@ func (api *RestAPI) BuildTripStatus(
 	return status, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
@@ -257,7 +254,6 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	}, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
 	if !trip.BlockID.Valid {
 		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
@@ -727,7 +723,6 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 	return d, r
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
 	var routeID string
 	var agencyID string

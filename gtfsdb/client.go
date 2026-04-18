@@ -49,11 +49,13 @@ func (c *Client) Close() error {
 	return c.DB.Close()
 }
 
-// DownloadAndStore downloads GTFS data from the given URL and stores it in the database
-func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authHeaderValue string) error {
+// DownloadAndStore downloads GTFS data from the given URL and stores it in the database.
+// Returns (changed, err) — changed is true when the import wrote new data, false if the
+// existing data matched the downloaded bytes by hash.
+func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authHeaderValue string) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Add auth header if provided
@@ -70,33 +72,31 @@ func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authH
 		}}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	const maxBodySize = 200 * 1024 * 1024
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
+		return false, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	if int64(len(body)) > maxBodySize {
-		return fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxBodySize)
+		return false, fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxBodySize)
 	}
 
-	err = c.processAndStoreGTFSDataWithSource(body, url)
-
-	return err
+	return c.processAndStoreGTFSDataWithSource(body, url)
 }
 
-// ImportFromFile imports GTFS data from a local zip file into the database
-func (c *Client) ImportFromFile(ctx context.Context, path string) error {
+// ImportFromFile imports GTFS data from a local zip file into the database.
+// Returns (changed, err) — changed is true when the import wrote new data, false if the
+// existing data matched the file's bytes by hash.
+func (c *Client) ImportFromFile(ctx context.Context, path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	err = c.processAndStoreGTFSDataWithSource(data, path)
-
-	return err
+	return c.processAndStoreGTFSDataWithSource(data, path)
 }

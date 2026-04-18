@@ -22,9 +22,6 @@ import (
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
