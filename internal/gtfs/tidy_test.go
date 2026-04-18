@@ -3,6 +3,7 @@ package gtfs
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func TestTidyGTFSData(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// Run tidy
-	outputData, err := tidyGTFSData(inputData, logger)
+	outputData, err := tidyGTFSData(context.Background(), inputData, logger)
 	if err != nil {
 		t.Fatalf("tidyGTFSData failed: %v", err)
 	}
