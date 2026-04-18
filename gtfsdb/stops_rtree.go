@@ -73,6 +73,44 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 	return items, nil
 }
 
+const getStopIDsWithinBounds = `
+SELECT s.id
+FROM stops s
+INNER JOIN stops_rtree sr ON sr.id = s.rowid
+WHERE sr.min_lat >= ? AND sr.max_lat <= ?
+  AND sr.min_lon >= ? AND sr.max_lon <= ?
+  AND EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = s.id)
+`
+
+type GetStopIDsWithinBoundsParams struct {
+	MinLat float64
+	MaxLat float64
+	MinLon float64
+	MaxLon float64
+}
+
+func (q *Queries) GetStopIDsWithinBounds(ctx context.Context, arg GetStopIDsWithinBoundsParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getStopIDsWithinBounds,
+		arg.MinLat, arg.MaxLat, arg.MinLon, arg.MaxLon)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 const getActiveRoutesWithinBounds = `
 -- Calculate stop distance once per stop (not once per stop_time).
 WITH nearby_stops AS (

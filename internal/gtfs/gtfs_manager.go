@@ -517,6 +517,30 @@ func (manager *Manager) GetStopsInBounds(
 	return stops
 }
 
+// GetStopIDsWithinBounds returns stop IDs within bounds, optimized for callers that only need IDs.
+func (manager *Manager) GetStopIDsWithinBounds(
+	ctx context.Context,
+	lat, lon, radius, latSpan, lonSpan float64,
+	maxCount int,
+) []string {
+	bounds := manager.boundsFromParams(lat, lon, radius, latSpan, lonSpan)
+	ids, err := manager.GtfsDB.Queries.GetStopIDsWithinBounds(ctx, gtfsdb.GetStopIDsWithinBoundsParams{
+		MinLat: bounds.MinLat,
+		MaxLat: bounds.MaxLat,
+		MinLon: bounds.MinLon,
+		MaxLon: bounds.MaxLon,
+	})
+	if err != nil {
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+		logging.LogError(logger, "could not query stop IDs within bounds", err)
+		return nil
+	}
+	if maxCount > 0 && len(ids) > maxCount {
+		ids = ids[:maxCount]
+	}
+	return ids
+}
+
 func (manager *Manager) boundsFromParams(lat, lon, radius, latSpan, lonSpan float64) utils.CoordinateBounds {
 	if latSpan > 0 && lonSpan > 0 {
 		return utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
