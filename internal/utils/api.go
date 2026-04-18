@@ -116,22 +116,10 @@ func ExtractAgencyIDAndCodeID(combinedID string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-// FormCombinedID forms a combined ID in the format `{agency_id}_{code_id}`.
-//
-// Consolidated/merged GTFS feeds (e.g. Puget Sound Consolidated GTFS) embed
-// the agency ID as a prefix to resolve conflicts, using either "_" or "-" as
-// the separator. This function detects both to avoid double-prefixing:
-//   - "40_1121"  (underscore prefix) → returned as-is         → "40_1121"
-//   - "40-455"   (hyphen prefix)     → separator normalized   → "40_455"
+// FormCombinedID forms a combined ID in the format `{agency_id}_{code_id}` using the given `agencyID` and `codeID`.
 func FormCombinedID(agencyID, codeID string) string {
 	if codeID == "" || agencyID == "" {
 		return ""
-	}
-	if strings.HasPrefix(codeID, agencyID+"_") {
-		return codeID
-	}
-	if strings.HasPrefix(codeID, agencyID+"-") {
-		return agencyID + "_" + codeID[len(agencyID)+1:]
 	}
 	return fmt.Sprintf("%s_%s", agencyID, codeID)
 }
