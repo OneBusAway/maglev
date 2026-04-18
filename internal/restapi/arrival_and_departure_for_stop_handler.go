@@ -411,6 +411,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		situationIDs,                                   // situationIds
 	)
 
+	// Populate frequency using the new helper
+	arrival.Frequency = api.lookupTripFrequency(ctx, tripID, serviceMidnight, currentTime)
+
 	references := models.NewEmptyReferences()
 
 	// Add Stop Agency Reference

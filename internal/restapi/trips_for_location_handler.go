@@ -10,6 +10,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -394,6 +395,29 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 		result = append(result, entry)
 	}
+
+	// Batch-fetch frequencies for all trips in the result to avoid N+1 queries
+	if len(validVehicleTrips) > 0 {
+		allFreqs, freqErr := api.GtfsManager.GetFrequenciesForTrips(ctx, validVehicleTrips)
+		if freqErr != nil {
+			api.Logger.Warn("failed to batch fetch frequencies", "error", freqErr)
+		}
+		if len(allFreqs) > 0 {
+			freqsByTrip := gtfsInternal.GroupFrequenciesByTrip(allFreqs)
+			for i := range result {
+				_, rawTripID, err := utils.ExtractAgencyIDAndCodeID(result[i].TripId)
+				if err != nil {
+					continue
+				}
+				if freqs, ok := freqsByTrip[rawTripID]; ok && len(freqs) > 0 {
+					// For trips-for-location, Frequency is *int64 (headway in seconds)
+					headway := freqs[0].HeadwaySecs
+					result[i].Frequency = &headway
+				}
+			}
+		}
+	}
+
 	return result
 }
 
@@ -422,8 +446,17 @@ func (api *RestAPI) buildScheduleForTrip(
 	}
 
 	stopTimesList := buildStopTimesList(api, ctx, stopTimes, shapePoints, agencyID)
+
+	// Look up frequency data for this trip's schedule
+	var scheduleFreq *models.Frequency
+	freqs, freqErr := api.GtfsManager.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr == nil && len(freqs) > 0 {
+		f := models.NewFrequencyFromDB(freqs[0], serviceDate)
+		scheduleFreq = &f
+	}
+
 	return &models.TripsSchedule{
-		Frequency:      nil,
+		Frequency:      scheduleFreq,
 		NextTripId:     nextTripID,
 		PreviousTripId: previousTripID,
 		StopTimes:      stopTimesList,
@@ -798,8 +831,19 @@ func (api *RestAPI) buildScheduleFromMemory(
 	// Calculate Distances using in-memory coords
 	stopTimesList := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
+	// Look up frequency data for this trip's schedule
+	var scheduleFreq *models.Frequency
+	freqs, freqErr := api.GtfsManager.GetFrequenciesForTrip(context.Background(), trip.ID)
+	if freqErr == nil && len(freqs) > 0 {
+		// Use midnight of current time for the service date
+		now := api.Clock.Now()
+		serviceDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, currentLocation)
+		f := models.NewFrequencyFromDB(freqs[0], serviceDate)
+		scheduleFreq = &f
+	}
+
 	return &models.TripsSchedule{
-		Frequency:      nil,
+		Frequency:      scheduleFreq,
 		NextTripId:     nextTripID,
 		PreviousTripId: previousTripID,
 		StopTimes:      stopTimesList,

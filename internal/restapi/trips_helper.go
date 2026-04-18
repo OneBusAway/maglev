@@ -11,6 +11,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -248,10 +249,13 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
+	// Look up frequency data for this trip using the new helper
+	freq := api.lookupTripFrequency(ctx, trip.ID, serviceDate, api.Clock.Now())
+
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
 		TimeZone:       loc.String(),
-		Frequency:      nil,
+		Frequency:      freq,
 		NextTripID:     nextTripID,
 		PreviousTripID: previousTripID,
 	}, nil
@@ -1197,4 +1201,19 @@ func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float6
 		degrees += 360
 	}
 	return degrees
+}
+
+func (api *RestAPI) lookupTripFrequency(ctx context.Context, tripID string, serviceDate time.Time, now time.Time) *models.Frequency {
+	frequencies, err := api.GtfsManager.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil || len(frequencies) == 0 {
+		return nil
+	}
+
+	active := gtfsInternal.GetActiveHeadwayForTime(frequencies, serviceDate, now)
+	if active == nil {
+		active = &frequencies[0]
+	}
+
+	freq := models.NewFrequencyFromDB(*active, serviceDate)
+	return &freq
 }

@@ -417,6 +417,28 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		result = []models.TripsForRouteListEntry{}
 	}
 
+	// Batch-fetch frequencies for all trips in the result to avoid N+1 queries
+	if len(tripIDs) > 0 {
+		allFreqs, freqErr := api.GtfsManager.GetFrequenciesForTrips(ctx, tripIDs)
+		if freqErr != nil {
+			api.Logger.Warn("failed to batch fetch frequencies", "error", freqErr)
+		}
+		if len(allFreqs) > 0 {
+			freqsByTrip := gtfsInternal.GroupFrequenciesByTrip(allFreqs)
+			for i := range result {
+				_, rawTripID, err := utils.ExtractAgencyIDAndCodeID(result[i].TripId)
+				if err != nil {
+					continue
+				}
+				if freqs, ok := freqsByTrip[rawTripID]; ok && len(freqs) > 0 {
+					// For trips-for-route, Frequency is *int64 (headway in seconds)
+					headway := freqs[0].HeadwaySecs
+					result[i].Frequency = &headway
+				}
+			}
+		}
+	}
+
 	var stops []gtfsdb.Stop
 	if len(stopIDsMap) > 0 {
 		stopIDs := make([]string, 0, len(stopIDsMap))
