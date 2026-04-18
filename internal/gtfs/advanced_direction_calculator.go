@@ -27,7 +27,9 @@ type AdvancedDirectionCalculator struct {
 	queries                    *gtfsdb.Queries
 	queriesMu                  sync.RWMutex // Protects queries pointer
 	standardDeviationThreshold float64
-	initialized                atomic.Bool // Tracks whether concurrent operations have started
+	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
+	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
+	cacheMutex                 sync.RWMutex                                      // Protects shapeCache map access
 	// directionResults caches computed stop directions.
 	// Only non-error results are cached; transient DB errors are never stored so that
 	// a recovered database will be retried on the next request.
@@ -57,6 +59,22 @@ func (adc *AdvancedDirectionCalculator) UpdateQueries(queries *gtfsdb.Queries) {
 
 	// Evict all cached directions so they are recomputed against the new DB.
 	adc.directionResults.Clear()
+}
+
+// SetShapeCache is retained exclusively for use by the DirectionPrecomputer during startup.
+// It sets a pre-loaded cache of shape data to avoid thousands of database queries during
+// the precomputation phase, significantly improving startup performance.
+// IMPORTANT: This must be called before any concurrent operations begin.
+// Returns an error if called after CalculateStopDirection has been invoked.
+func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) error {
+	adc.cacheMutex.Lock()
+	defer adc.cacheMutex.Unlock()
+
+	if adc.initialized.Load() {
+		return errors.New("SetShapeCache called after concurrent operations have started")
+	}
+	adc.shapeCache = cache
+	return nil
 }
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
@@ -291,17 +309,33 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 	var shapePoints []gtfsdb.GetShapePointsWithDistanceRow
 	var err error
 
-	adc.queriesMu.RLock()
-	q := adc.queries
-	adc.queriesMu.RUnlock()
-	shapePoints, err = q.GetShapePointsWithDistance(ctx, shapeID)
-	if err != nil {
-		return 0, err
+	adc.cacheMutex.RLock()
+	hasCache := adc.shapeCache != nil
+	var found bool
+	if hasCache {
+		shapePoints, found = adc.shapeCache[shapeID]
 	}
-	if len(shapePoints) < 2 {
-		// Insufficient points is a data condition, not a transient error.
-		// Return ErrNoRows so the caller treats this the same as "no shape data".
-		return 0, sql.ErrNoRows
+	adc.cacheMutex.RUnlock()
+
+	// Try cache first if available
+	if hasCache {
+		if !found || len(shapePoints) < 2 {
+			return 0, sql.ErrNoRows
+		}
+	} else {
+		// Fall back to database query if no cache
+		adc.queriesMu.RLock()
+		q := adc.queries
+		adc.queriesMu.RUnlock()
+		shapePoints, err = q.GetShapePointsWithDistance(ctx, shapeID)
+		if err != nil {
+			return 0, err
+		}
+		if len(shapePoints) < 2 {
+			// Insufficient points is a data condition, not a transient error.
+			// Return ErrNoRows so the caller treats this the same as "no shape data".
+			return 0, sql.ErrNoRows
+		}
 	}
 
 	closestIdx := 0
