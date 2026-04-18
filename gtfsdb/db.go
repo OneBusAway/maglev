@@ -303,9 +303,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStopsForRouteStmt, err = db.PrepareContext(ctx, getStopsForRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopsForRoute: %w", err)
 	}
-	if q.getStopsWithActiveServiceOnDateStmt, err = db.PrepareContext(ctx, getStopsWithActiveServiceOnDate); err != nil {
-		return nil, fmt.Errorf("error preparing query GetStopsWithActiveServiceOnDate: %w", err)
-	}
 	if q.getStopsWithShapeContextStmt, err = db.PrepareContext(ctx, getStopsWithShapeContext); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopsWithShapeContext: %w", err)
 	}
@@ -845,11 +842,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStopsForRouteStmt: %w", cerr)
 		}
 	}
-	if q.getStopsWithActiveServiceOnDateStmt != nil {
-		if cerr := q.getStopsWithActiveServiceOnDateStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getStopsWithActiveServiceOnDateStmt: %w", cerr)
-		}
-	}
 	if q.getStopsWithShapeContextStmt != nil {
 		if cerr := q.getStopsWithShapeContextStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopsWithShapeContextStmt: %w", cerr)
@@ -1097,7 +1089,6 @@ type Queries struct {
 	getStopTimesForTripIDsStmt                    *sql.Stmt
 	getStopsByIDsStmt                             *sql.Stmt
 	getStopsForRouteStmt                          *sql.Stmt
-	getStopsWithActiveServiceOnDateStmt           *sql.Stmt
 	getStopsWithShapeContextStmt                  *sql.Stmt
 	getStopsWithShapeContextByIDsStmt             *sql.Stmt
 	getStopsWithTripContextStmt                   *sql.Stmt
@@ -1220,7 +1211,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getStopTimesForTripIDsStmt:                    q.getStopTimesForTripIDsStmt,
 		getStopsByIDsStmt:                             q.getStopsByIDsStmt,
 		getStopsForRouteStmt:                          q.getStopsForRouteStmt,
-		getStopsWithActiveServiceOnDateStmt:           q.getStopsWithActiveServiceOnDateStmt,
 		getStopsWithShapeContextStmt:                  q.getStopsWithShapeContextStmt,
 		getStopsWithShapeContextByIDsStmt:             q.getStopsWithShapeContextByIDsStmt,
 		getStopsWithTripContextStmt:                   q.getStopsWithTripContextStmt,

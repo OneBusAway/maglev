@@ -7,7 +7,7 @@ import (
 // Implemented manually because sqlc doesn't support the virtual tables from the RTree module.
 
 const getActiveStopsWithinBounds = `
-SELECT DISTINCT
+SELECT
     s.id,
     s.code,
     s.name,
@@ -23,10 +23,10 @@ SELECT DISTINCT
     s.direction,
     s.parent_station
 FROM stops s
-INNER JOIN stop_times st ON s.id = st.stop_id
-INNER JOIN stops_rtree r ON r.id = s.rowid
-WHERE r.min_lat >= ? AND r.max_lat <= ?
-  AND r.min_lon >= ? AND r.max_lon <= ?
+INNER JOIN stops_rtree sr ON sr.id = s.rowid
+WHERE sr.min_lat >= ? AND sr.max_lat <= ?
+  AND sr.min_lon >= ? AND sr.max_lon <= ?
+  AND EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = s.id)
 `
 
 type GetActiveStopsWithinBoundsParams struct {
@@ -71,6 +71,44 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 		return nil, err
 	}
 	return items, nil
+}
+
+const getStopIDsWithinBounds = `
+SELECT s.id
+FROM stops s
+INNER JOIN stops_rtree sr ON sr.id = s.rowid
+WHERE sr.min_lat >= ? AND sr.max_lat <= ?
+  AND sr.min_lon >= ? AND sr.max_lon <= ?
+  AND EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = s.id)
+`
+
+type GetStopIDsWithinBoundsParams struct {
+	MinLat float64
+	MaxLat float64
+	MinLon float64
+	MaxLon float64
+}
+
+func (q *Queries) GetStopIDsWithinBounds(ctx context.Context, arg GetStopIDsWithinBoundsParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getStopIDsWithinBounds,
+		arg.MinLat, arg.MaxLat, arg.MinLon, arg.MaxLon)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 const getActiveRoutesWithinBounds = `

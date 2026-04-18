@@ -641,16 +641,16 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
-	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, []int{}, api.Clock.Now())
-	if len(nearbyStops) == 0 {
+	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, lat, lon, 10000, 100, 100, 5)
+	if len(nearbyIDs) == 0 {
 		return nil
 	}
 
-	// Collect nearby stop IDs (excluding the current stop) for a batch agency lookup.
+	// Exclude the current stop from nearby results
 	var candidateIDs []string
-	for _, s := range nearbyStops {
-		if s.ID != stopID {
-			candidateIDs = append(candidateIDs, s.ID)
+	for _, id := range nearbyIDs {
+		if id != stopID {
+			candidateIDs = append(candidateIDs, id)
 		}
 	}
 	if len(candidateIDs) == 0 {

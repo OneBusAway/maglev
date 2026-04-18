@@ -101,9 +101,9 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, loc.Radius, loc.LatSpan, loc.LonSpan, query, maxCount, routeTypes, queryTime)
+	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, loc.Radius, loc.LatSpan, loc.LonSpan, query, maxCount, routeTypes)
 
-	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"
+	// Sort by stop ID for deterministic results
 	sort.SliceStable(stops, func(i, j int) bool {
 		return stops[i].ID < stops[j].ID
 	})
@@ -199,7 +199,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	isLimitExceeded := false
+	isLimitExceeded := limitExceeded
 	var resultRawStopIDs []string
 
 	// Build results using the pre-fetched data
@@ -234,10 +234,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			rids,
 			rids,
 		))
-		if len(results) >= maxCount {
-			isLimitExceeded = true
-			break
-		}
 	}
 
 	if ctx.Err() != nil {
