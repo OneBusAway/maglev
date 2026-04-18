@@ -198,22 +198,6 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 				default:
 					requestsTotal.Add(1)
 
-					// Simulate realistic API operations
-					manager.RLock()
-
-					// Check data is accessible
-					if manager.gtfsData == nil {
-						requestsFailed.Add(1)
-						manager.RUnlock()
-						continue
-					}
-
-					if manager.GtfsDB == nil {
-						requestsFailed.Add(1)
-						manager.RUnlock()
-						continue
-					}
-
 					// Perform some actual queries
 					queryCtx, queryCancel := context.WithTimeout(readerCtx, 100*time.Millisecond)
 					_, err := manager.GtfsDB.Queries.ListAgencies(queryCtx)
@@ -227,7 +211,6 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 						requestsSuccess.Add(1)
 					}
 
-					manager.RUnlock()
 					time.Sleep(10 * time.Millisecond)
 				}
 			}

@@ -42,9 +42,7 @@ func TestManager_RoutesForAgencyID(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	assert.NotNil(t, manager)
 
-	manager.RLock()
 	routes, err := manager.RoutesForAgencyID(t.Context(), "25")
-	manager.RUnlock()
 	assert.Nil(t, err)
 	assert.Equal(t, 13, len(routes))
 
@@ -402,9 +400,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					manager.RLock()
 					routes, err := manager.RoutesForAgencyID(ctx, "25")
-					manager.RUnlock()
 					if errors.Is(err, context.DeadlineExceeded) {
 						return
 					} else if err != nil {
@@ -447,9 +443,7 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		manager.RLock()
 		_, _ = manager.RoutesForAgencyID(ctx, "25")
-		manager.RUnlock()
 	}
 }
 

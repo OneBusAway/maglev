@@ -90,9 +90,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	// Capture parsing errors
 	params, fieldErrors := api.parseArrivalsAndDeparturesParams(r)
 	if len(fieldErrors) > 0 {

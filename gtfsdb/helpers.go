@@ -172,7 +172,7 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 	return nil
 }
 
-func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) error {
+func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (bool, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
 
 	startTime := time.Now()
@@ -201,23 +201,23 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		if existingMetadata.FileHash == hashStr && existingMetadata.FileSource == source {
 			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
 				slog.String("hash", hashStr[:8]))
-			return nil
+			return false, nil
 		}
-	} else if err != nil && err != sql.ErrNoRows {
+	} else if err != sql.ErrNoRows {
 		// Some other error occurred
-		return fmt.Errorf("error checking import metadata: %w", err)
+		return false, fmt.Errorf("error checking import metadata: %w", err)
 	}
 
 	// 2. Parse the new data FIRST (before deleting the old working data)
 	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// 3. Perform Structural Validation
 	if err := ValidateAndFilterGTFSData(staticData, logger); err != nil {
 		logging.LogError(logger, "GTFS feed structural validation failed", err)
-		return fmt.Errorf("GTFS validation failed: %w", err)
+		return false, fmt.Errorf("GTFS validation failed: %w", err)
 	}
 
 	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(staticData.Warnings)))
@@ -231,7 +231,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("error starting import transaction: %w", err)
+		return false, fmt.Errorf("error starting import transaction: %w", err)
 	}
 	defer logging.SafeRollbackWithLogging(tx, logger, "processAndStoreGTFSDataWithSource")
 
@@ -243,7 +243,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			slog.String("old_hash", existingMetadata.FileHash[:8]),
 			slog.String("new_hash", hashStr[:8]))
 		if err := c.clearAllGTFSDataWithQueries(ctx, qtx); err != nil {
-			return fmt.Errorf("error clearing existing GTFS data: %w", err)
+			return false, fmt.Errorf("error clearing existing GTFS data: %w", err)
 		}
 	}
 
@@ -265,7 +265,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 		_, err := qtx.CreateAgency(ctx, params)
 		if err != nil {
-			return fmt.Errorf("unable to create agency: %w", err)
+			return false, fmt.Errorf("unable to create agency: %w", err)
 		}
 	}
 
@@ -292,7 +292,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		_, err := qtx.CreateRoute(ctx, route)
 
 		if err != nil {
-			return fmt.Errorf("unable to create route: %w", err)
+			return false, fmt.Errorf("unable to create route: %w", err)
 		}
 	}
 
@@ -335,7 +335,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		allStopParams = append(allStopParams, params)
 	}
 	if err := c.bulkInsertStops(ctx, allStopParams, tx); err != nil {
-		return fmt.Errorf("unable to create stops: %w", err)
+		return false, fmt.Errorf("unable to create stops: %w", err)
 	}
 
 	logging.LogOperation(logger, "agencies_and_routes_inserted",
@@ -360,7 +360,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 
 		_, err := qtx.CreateCalendar(ctx, params)
 		if err != nil {
-			return fmt.Errorf("unable to create calendar: %w", err)
+			return false, fmt.Errorf("unable to create calendar: %w", err)
 		}
 	}
 
@@ -390,7 +390,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		allTripParams = append(allTripParams, params)
 	}
 	if err := c.bulkInsertTrips(ctx, allTripParams, tx); err != nil {
-		return fmt.Errorf("unable to create trips: %w", err)
+		return false, fmt.Errorf("unable to create trips: %w", err)
 	}
 
 	var allStopTimeParams []CreateStopTimeParams
@@ -418,7 +418,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		}
 	}
 	if err := c.bulkInsertStopTimes(ctx, allStopTimeParams, tx); err != nil {
-		return fmt.Errorf("unable to create stop times: %w", err)
+		return false, fmt.Errorf("unable to create stop times: %w", err)
 	}
 
 	// Collect frequency entries from all trips
@@ -437,7 +437,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	}
 	if len(allFrequencyParams) > 0 {
 		if err := c.bulkInsertFrequencies(ctx, allFrequencyParams, tx); err != nil {
-			return fmt.Errorf("unable to create frequencies: %w", err)
+			return false, fmt.Errorf("unable to create frequencies: %w", err)
 		}
 	}
 
@@ -460,7 +460,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		}
 	}
 	if err := c.bulkInsertShapes(ctx, allShapeParams, tx); err != nil {
-		return fmt.Errorf("unable to create shapes: %w", err)
+		return false, fmt.Errorf("unable to create shapes: %w", err)
 	}
 
 	logging.LogOperation(logger, "updating_import_metadata",
@@ -474,7 +474,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	})
 	if err != nil {
 		logging.LogError(logger, "Error updating import metadata", err)
-		return fmt.Errorf("error updating import metadata: %w", err)
+		return false, fmt.Errorf("error updating import metadata: %w", err)
 	}
 
 	logging.LogOperation(logger, "import_metadata_updated_successfully")
@@ -506,31 +506,31 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 	if len(allCalendarDateParams) > 0 {
 		if err := c.bulkInsertCalendarDates(ctx, allCalendarDateParams, tx); err != nil {
 			logging.LogError(logger, "Unable to create calendar dates", err)
-			return fmt.Errorf("unable to create calendar dates: %w", err)
+			return false, fmt.Errorf("unable to create calendar dates: %w", err)
 		}
 	}
 
 	logging.LogOperation(logger, "building_block_trip_index")
 	if err := c.buildBlockTripIndex(ctx, staticData, tx); err != nil {
 		logging.LogError(logger, "Unable to build block trip index", err)
-		return fmt.Errorf("unable to build block trip index: %w", err)
+		return false, fmt.Errorf("unable to build block trip index: %w", err)
 	}
 	logging.LogOperation(logger, "block_trip_index_built")
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("error committing import transaction: %w", err)
+		return false, fmt.Errorf("error committing import transaction: %w", err)
 	}
 
 	counts, err := c.TableCounts()
 	if err != nil {
 		logging.LogError(logger, "Error getting table counts", err)
-		return fmt.Errorf("failed to get table counts: %w", err)
+		return false, fmt.Errorf("failed to get table counts: %w", err)
 	}
 	for k, v := range counts {
 		logging.LogOperation(logger, "table_count", slog.String("table", k), slog.Int("count", v), slog.Bool("static_matches", v == staticCounts[k]))
 	}
 
-	return nil
+	return true, nil
 }
 
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).

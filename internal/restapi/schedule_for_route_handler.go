@@ -28,9 +28,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
 		api.sendNotFound(w, r)

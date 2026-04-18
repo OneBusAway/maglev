@@ -97,7 +97,7 @@ func TestSyntheticGTFS_FrequencyIngestion(t *testing.T) {
 	ctx := context.Background()
 	gtfsData := buildSyntheticGTFSZip(t, true)
 
-	err = client.processAndStoreGTFSDataWithSource(gtfsData, "synthetic-test")
+	_, err = client.processAndStoreGTFSDataWithSource(gtfsData, "synthetic-test")
 	require.NoError(t, err, "Ingestion of synthetic GTFS with frequencies should succeed")
 
 	// Verify basic data was imported
@@ -167,7 +167,7 @@ func TestSyntheticGTFS_NoFrequencyFile(t *testing.T) {
 	ctx := context.Background()
 	gtfsData := buildSyntheticGTFSZip(t, false)
 
-	err = client.processAndStoreGTFSDataWithSource(gtfsData, "synthetic-no-freq")
+	_, err = client.processAndStoreGTFSDataWithSource(gtfsData, "synthetic-no-freq")
 	require.NoError(t, err, "Ingestion of GTFS without frequencies.txt should succeed")
 
 	// Verify trips were still imported
@@ -200,7 +200,7 @@ func TestSyntheticGTFS_FrequenciesClearedOnReimport(t *testing.T) {
 
 	// First import: with frequencies
 	dataWithFreqs := buildSyntheticGTFSZip(t, true)
-	err = client.processAndStoreGTFSDataWithSource(dataWithFreqs, "source-a")
+	_, err = client.processAndStoreGTFSDataWithSource(dataWithFreqs, "source-a")
 	require.NoError(t, err)
 
 	// Verify frequencies exist
@@ -210,7 +210,7 @@ func TestSyntheticGTFS_FrequenciesClearedOnReimport(t *testing.T) {
 
 	// Second import: same data without frequencies (different source triggers reimport)
 	dataNoFreqs := buildSyntheticGTFSZip(t, false)
-	err = client.processAndStoreGTFSDataWithSource(dataNoFreqs, "source-b")
+	_, err = client.processAndStoreGTFSDataWithSource(dataNoFreqs, "source-b")
 	require.NoError(t, err)
 
 	// Verify frequencies were cleared
@@ -235,7 +235,7 @@ func TestSyntheticGTFS_TableCountsIncludeFrequencies(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	gtfsData := buildSyntheticGTFSZip(t, true)
-	err = client.processAndStoreGTFSDataWithSource(gtfsData, "synthetic-test")
+	_, err = client.processAndStoreGTFSDataWithSource(gtfsData, "synthetic-test")
 	require.NoError(t, err)
 
 	counts, err := client.TableCounts()

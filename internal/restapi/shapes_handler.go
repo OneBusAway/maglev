@@ -16,9 +16,6 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	_, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 
 	if err != nil {

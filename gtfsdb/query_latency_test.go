@@ -76,7 +76,7 @@ func loadLatencyFixture(tb testing.TB) (*Client, string, string) {
 		if readErr != nil {
 			tb.Fatalf("reading %s: %v", filepath.Base(zipPath), readErr)
 		}
-		if impErr := client.processAndStoreGTFSDataWithSource(data, zipPath); impErr != nil {
+		if _, impErr := client.processAndStoreGTFSDataWithSource(data, zipPath); impErr != nil {
 			tb.Fatalf("importing GTFS data from %s: %v", filepath.Base(zipPath), impErr)
 		}
 	}
@@ -533,7 +533,8 @@ func TestConnectionPoolTuning(t *testing.T) {
 
 		data, readErr := os.ReadFile(rabaZip)
 		require.NoError(t, readErr)
-		require.NoError(t, client.processAndStoreGTFSDataWithSource(data, rabaZip))
+		_, impErr := client.processAndStoreGTFSDataWithSource(data, rabaZip)
+		require.NoError(t, impErr)
 
 		// Apply the pool size under test.
 		client.DB.SetMaxOpenConns(maxConns)

@@ -44,9 +44,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc.Lat, loc.Lon, radius, loc.LatSpan, loc.LonSpan, sanitizedQuery, maxCount, time.Time{})
 	if len(routes) == 0 {
 		references := models.NewEmptyReferences()
@@ -98,7 +95,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 // checkIfOutOfBounds returns true if the user's search area is completely
 // outside every agency's region bounds.
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
 	boundsMap := api.GtfsManager.GetRegionBounds()
 	if len(boundsMap) == 0 {
