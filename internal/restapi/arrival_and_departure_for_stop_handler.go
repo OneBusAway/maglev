@@ -358,7 +358,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 
 		if vehicle != nil && vehicle.Position != nil {
-			distanceFromStop = api.getBlockDistanceToStop(ctx, tripID, stopCode, vehicle, serviceDate)
+			distanceFromStop = api.getBlockDistanceToStop(ctx, tripID, stopCode, vehicle, serviceDate, nil)
 
 			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate)
 			if numberOfStopsAwayPtr != nil {
