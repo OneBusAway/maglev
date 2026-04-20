@@ -1,7 +1,6 @@
 package gtfs
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"errors"
