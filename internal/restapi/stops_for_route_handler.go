@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"context"
 	"net/http"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/twpayne/go-polyline"
