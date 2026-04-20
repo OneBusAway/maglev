@@ -67,8 +67,8 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	if includeReferences {
-	references := models.NewEmptyReferences()
-	references.Agencies = buildAgencyReferences(agencies)
+		references := models.NewEmptyReferences()
+		references.Agencies = buildAgencyReferences(agencies)
 		data["references"] = *references
 	}
 
