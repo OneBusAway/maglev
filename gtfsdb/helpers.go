@@ -8,9 +8,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"log/slog"
-	"os"
 	"runtime"
 	"slices"
 	"strconv"
@@ -26,103 +24,48 @@ import (
 //go:embed schema.sql
 var ddl string
 
-// Minimum query duration to log as slow.
-// Controlled by MAGLEV_SLOW_QUERY_THRESHOLD_MS (in ms).
-// Default = 0 → slow query logging disabled.
-const slowQueryThresholdEnv = "MAGLEV_SLOW_QUERY_THRESHOLD_MS"
-
-func parseSlowQueryThreshold(v string, warnf func(format string, args ...any)) time.Duration {
-	if v == "" {
-		return 0
-	}
-
-	ms, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || ms <= 0 {
-		if warnf != nil {
-			warnf("WARNING: ignoring invalid %s=%q (must be a positive integer)", slowQueryThresholdEnv, v)
-		}
-		return 0
-	}
-
-	return time.Duration(ms) * time.Millisecond
-}
-
-var slowQueryThreshold = parseSlowQueryThreshold(os.Getenv(slowQueryThresholdEnv), log.Printf)
-
-// slowQueryDB wraps *sql.DB and logs queries slower than slowQueryThreshold.
-type slowQueryDB struct {
-	db        *sql.DB
-	threshold time.Duration
-	logger    *slog.Logger
-	now       func() time.Time // Overridden in tests to avoid OS timer resolution issues.
-	// Optional per-query metrics recorder.
+// metricsWrapper wraps *sql.DB for metric reporting purposes
+type metricsWrapper struct {
+	db           *sql.DB
+	logger       *slog.Logger
 	queryMetrics DBQueryMetricsRecorder
 }
 
-func newSlowQueryDB(db *sql.DB, threshold time.Duration) *slowQueryDB {
-	return &slowQueryDB{
-		db:        db,
-		threshold: threshold,
-		logger:    slog.Default().With(slog.String("component", "slow_query")),
-		now:       time.Now,
+func newMetricsWrapper(db *sql.DB) *metricsWrapper {
+	return &metricsWrapper{
+		db:     db,
+		logger: slog.Default().With(slog.String("component", "db_metrics_wrapper")),
 	}
 }
 
-func (s *slowQueryDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	start := s.now()
+func (s *metricsWrapper) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	res, err := s.db.ExecContext(ctx, query, args...)
-	elapsed := s.now().Sub(start)
-	s.maybeLog("ExecContext", query, elapsed, err)
-	s.recordQueryMetrics("exec", query, elapsed, err)
+	s.recordQueryMetrics("exec", query, err)
 	return res, err
 }
 
-func (s *slowQueryDB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+func (s *metricsWrapper) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
 	// PrepareContext is not instrumented; latency-significant work happens
 	// at execution time via ExecContext/QueryContext/QueryRowContext.
 	return s.db.PrepareContext(ctx, query)
 }
 
-func (s *slowQueryDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	start := s.now()
+func (s *metricsWrapper) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
-	elapsed := s.now().Sub(start)
-	s.maybeLog("QueryContext", query, elapsed, err)
-	s.recordQueryMetrics("query", query, elapsed, err)
+	s.recordQueryMetrics("query", query, err)
 	return rows, err
 }
 
-func (s *slowQueryDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	start := s.now()
+func (s *metricsWrapper) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	row := s.db.QueryRowContext(ctx, query, args...)
-	elapsed := s.now().Sub(start)
-	s.maybeLog("QueryRowContext", query, elapsed, nil)
 	// Note: QueryRowContext defers errors to row.Scan(), so err is always nil here.
 	// query_row metrics always report status="ok". See PR description for follow-up plan.
-	s.recordQueryMetrics("query_row", query, elapsed, nil)
+	s.recordQueryMetrics("query_row", query, nil)
 	return row
 }
 
-func (s *slowQueryDB) maybeLog(op, query string, elapsed time.Duration, err error) {
-	if s.threshold <= 0 || elapsed < s.threshold {
-		return
-	}
-	attrs := []any{
-		slog.String("op", op),
-		slog.Duration("duration", elapsed),
-		slog.String("query", trimQuery(query)),
-	}
-	if err != nil {
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	s.logger.Warn("slow_query", attrs...)
-}
-
-func (s *slowQueryDB) recordQueryMetrics(op, query string, elapsed time.Duration, err error) {
-	if s.queryMetrics == nil {
-		return
-	}
-	s.queryMetrics.RecordDBQuery(extractQueryName(query), op, err, elapsed)
+func (s *metricsWrapper) recordQueryMetrics(op, query string, err error) {
+	s.queryMetrics.RecordDBQuery(extractQueryName(query), op, err)
 }
 
 func extractQueryName(query string) string {
@@ -369,6 +312,10 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 		if s.Latitude == nil || s.Longitude == nil {
 			continue
 		}
+		parentStation := ""
+		if s.Parent != nil {
+			parentStation = s.Parent.Id
+		}
 		params := CreateStopParams{
 			ID:                 s.Id,
 			Code:               toNullString(s.Code),
@@ -383,6 +330,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			WheelchairBoarding: toNullInt64(int64(s.WheelchairBoarding)),
 			PlatformCode:       toNullString(s.PlatformCode),
 			Direction:          sql.NullString{}, // Will be computed later
+			ParentStation:      toNullString(parentStation),
 		}
 
 		allStopParams = append(allStopParams, params)
@@ -434,7 +382,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			ServiceID:            t.Service.Id,
 			TripHeadsign:         toNullString(t.Headsign),
 			TripShortName:        toNullString(t.ShortName),
-			DirectionID:          toNullInt64(int64(t.DirectionId)),
+			DirectionID:          gtfsDirectionIDToDB(t.DirectionId),
 			BlockID:              toNullString(t.BlockID),
 			ShapeID:              toNullString(shapeID),
 			WheelchairAccessible: toNullInt64(int64(t.WheelchairAccessible)),
@@ -656,6 +604,23 @@ func toNullInt64(i int64) sql.NullInt64 {
 	return sql.NullInt64{}
 }
 
+// gtfsDirectionIDToDB converts a go-gtfs DirectionID enum back to the raw
+// GTFS CSV value (0 or 1) for database storage. The go-gtfs enum numbers
+// DirectionID_True=1 and DirectionID_False=2, which does not match the GTFS
+// spec (direction_id is 0 or 1). Storing the raw CSV value keeps downstream
+// code (ordering, Java-parity grouping, serialization) consistent with the
+// GTFS spec and with onebusaway-application-modules.
+func gtfsDirectionIDToDB(d gtfs.DirectionID) sql.NullInt64 {
+	switch d {
+	case gtfs.DirectionID_True:
+		return sql.NullInt64{Int64: 1, Valid: true}
+	case gtfs.DirectionID_False:
+		return sql.NullInt64{Int64: 0, Valid: true}
+	default:
+		return sql.NullInt64{}
+	}
+}
+
 func toNullFloat64(f float64) sql.NullFloat64 {
 	if f != 0 {
 		return sql.NullFloat64{
@@ -772,7 +737,7 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams, 
 // preparedStopTimeBatch holds a prepared SQL statement with its arguments
 type preparedStopTimeBatch struct {
 	query string
-	args  []interface{}
+	args  []any
 	index int // Original index for ordering
 	end   int // End position for progress logging
 }
@@ -827,7 +792,7 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*stopTimeFieldsPerRow)
+				args := make([]any, 0, len(batch)*stopTimeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {
@@ -937,7 +902,7 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 // preparedShapeBatch holds a prepared SQL statement with its arguments
 type preparedShapeBatch struct {
 	query string
-	args  []interface{}
+	args  []any
 	index int // Original index for ordering
 	end   int // End position for progress logging
 }
@@ -991,7 +956,7 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 				// into the query string to prevent SQL injection attacks.
 				var query strings.Builder
 				query.WriteString(baseQuery)
-				args := make([]interface{}, 0, len(batch)*shapeFieldsPerRow)
+				args := make([]any, 0, len(batch)*shapeFieldsPerRow)
 
 				for j, params := range batch {
 					if j > 0 {

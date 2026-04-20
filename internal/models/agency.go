@@ -1,5 +1,7 @@
 package models
 
+import "maglev.onebusaway.org/gtfsdb"
+
 // AgencyCoverage represents the geographical coverage area of a transit agency
 type AgencyCoverage struct {
 	AgencyID string  `json:"agencyId"`
@@ -46,5 +48,20 @@ func NewAgencyReference(id, name, url, timezone, lang, phone, email, fareUrl, di
 		FareUrl:        fareUrl,
 		Disclaimer:     disclaimer,
 		PrivateService: privateService,
+	}
+}
+
+func AgencyReferenceFromDatabase(agency *gtfsdb.Agency) AgencyReference {
+	return AgencyReference{
+		ID:             agency.ID,
+		Name:           agency.Name,
+		URL:            agency.Url,
+		Timezone:       agency.Timezone,
+		Lang:           gtfsdb.NullStringOrEmpty(agency.Lang),
+		Phone:          gtfsdb.NullStringOrEmpty(agency.Phone),
+		Email:          gtfsdb.NullStringOrEmpty(agency.Email),
+		FareUrl:        gtfsdb.NullStringOrEmpty(agency.FareUrl),
+		Disclaimer:     "",
+		PrivateService: false,
 	}
 }

@@ -1,11 +1,13 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -21,11 +23,14 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := api.GtfsManager.GetAgencies()[0]
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
 
-	trips := api.GtfsManager.GetTrips()
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
-	tripID := utils.FormCombinedID(agency.Id, trips[0].ID)
+	ctx := context.Background()
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	require.NoError(t, err)
 
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/"+tripID+".json?key=TEST")
 
@@ -33,44 +38,44 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 
 	assert.True(t, ok)
 	assert.NotEmpty(t, data)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, tripID, entry["id"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Route.Id), entry["routeId"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Service.Id), entry["serviceId"])
-	assert.Equal(t, fmt.Sprintf("%d", trips[0].DirectionId), entry["directionId"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].BlockID), entry["blockId"])
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Shape.ID), entry["shapeId"])
-	assert.Equal(t, trips[0].Headsign, entry["tripHeadsign"])
-	assert.Equal(t, trips[0].ShortName, entry["tripShortName"])
-	assert.Equal(t, trips[0].Route.ShortName, entry["routeShortName"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), entry["routeId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.ServiceID), entry["serviceId"])
+	assert.Equal(t, fmt.Sprintf("%d", utils.NullInt64OrDefault(trip.DirectionID, 0)), entry["directionId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, utils.NullStringOrEmpty(trip.BlockID)), entry["blockId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, utils.NullStringOrEmpty(trip.ShapeID)), entry["shapeId"])
+	assert.Equal(t, utils.NullStringOrEmpty(trip.TripHeadsign), entry["tripHeadsign"])
+	assert.Equal(t, utils.NullStringOrEmpty(trip.TripShortName), entry["tripShortName"])
+	assert.Equal(t, utils.NullStringOrEmpty(route.ShortName), entry["routeShortName"])
 
-	references, ok := data["references"].(map[string]interface{})
+	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok, "References section should exist")
 	assert.NotNil(t, references, "References should not be nil")
 
-	routes, ok := references["routes"].([]interface{})
+	routes, ok := references["routes"].([]any)
 	assert.True(t, ok, "Routes section should exist in references")
 	assert.NotEmpty(t, routes, "Routes should not be empty")
 
-	route, ok := routes[0].(map[string]interface{})
+	routeRef, ok := routes[0].(map[string]any)
 	assert.True(t, ok)
-	assert.Equal(t, utils.FormCombinedID(agency.Id, trips[0].Route.Id), route["id"])
-	assert.Equal(t, agency.Id, route["agencyId"])
-	assert.Equal(t, trips[0].Route.ShortName, route["shortName"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), routeRef["id"])
+	assert.Equal(t, agency.ID, routeRef["agencyId"])
+	assert.Equal(t, utils.NullStringOrEmpty(route.ShortName), routeRef["shortName"])
 
-	agencies, ok := references["agencies"].([]interface{})
+	agencies, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies section should exist in references")
 	assert.NotEmpty(t, agencies, "Agencies should not be empty")
 
-	agencyRef, ok := agencies[0].(map[string]interface{})
+	agencyRef, ok := agencies[0].(map[string]any)
 	assert.True(t, ok)
-	assert.Equal(t, agency.Id, agencyRef["id"])
+	assert.Equal(t, agency.ID, agencyRef["id"])
 	assert.Equal(t, agency.Name, agencyRef["name"])
 }
 

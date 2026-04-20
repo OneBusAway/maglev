@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -128,7 +129,8 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	postInitStats := getMemoryStats()
-	agencies := manager.GetAgencies()
+	agencies, agenciesErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, agenciesErr)
 
 	t.Logf("Manager initialized in %v", initDuration)
 	t.Logf("Agencies: %d", len(agencies))
@@ -328,11 +330,13 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 	}
 
 	// Verify data integrity after swap
-	newAgencies := manager.GetAgencies()
-	if len(newAgencies) == 0 {
+	newAgencies, newAgenciesErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	if newAgenciesErr != nil {
+		t.Errorf("Failed to list agencies after hot-swap: %v", newAgenciesErr)
+	} else if len(newAgencies) == 0 {
 		t.Error("No agencies found after hot-swap")
 	} else {
-		t.Logf("Post-swap agencies: %d (first: %s)", len(newAgencies), newAgencies[0].Id)
+		t.Logf("Post-swap agencies: %d (first: %s)", len(newAgencies), newAgencies[0].ID)
 	}
 }
 

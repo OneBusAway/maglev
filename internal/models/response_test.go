@@ -43,7 +43,7 @@ func TestNewEntryResponse(t *testing.T) {
 	assert.Equal(t, 2, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, entryData, responseData["entry"], "Entry in response data should match input entry")
 	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
@@ -77,7 +77,7 @@ func TestNewListResponse(t *testing.T) {
 	assert.Equal(t, 2, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, itemList, responseData["list"], "List in response data should match input list")
 	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
@@ -99,7 +99,7 @@ func TestNewListResponseWithRange(t *testing.T) {
 	assert.Equal(t, 2, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, itemList, responseData["list"], "List in response data should match input list")
 	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
@@ -115,7 +115,7 @@ func TestNewListResponseWithRangeFalseFlag(t *testing.T) {
 
 	response := NewListResponseWithRange(itemList, *references, false, clock, false)
 
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	assert.True(t, ok, "Response data should be a map")
 	assert.False(t, responseData["limitExceeded"].(bool), "limitExceeded should be false")
 	assert.False(t, responseData["outOfRange"].(bool), "outOfRange should be false")
@@ -148,11 +148,11 @@ func TestNewArrivalsAndDepartureResponse(t *testing.T) {
 	assert.Equal(t, 2, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	assert.True(t, ok, "Response data should be a map")
 	assert.Equal(t, *references, responseData["references"], "References in response data should match input references")
 
-	entryData, ok := responseData["entry"].(map[string]interface{})
+	entryData, ok := responseData["entry"].(map[string]any)
 	assert.True(t, ok, "Entry should be a map")
 	assert.Equal(t, arrivalsAndDepartures, entryData["arrivalsAndDepartures"])
 	assert.Equal(t, nearbyStopIDs, entryData["nearbyStopIds"])
@@ -171,10 +171,10 @@ func TestNewArrivalsAndDepartureResponseEmptyArrays(t *testing.T) {
 
 	response := NewArrivalsAndDepartureResponse(arrivalsAndDepartures, *references, nearbyStopIDs, situationIDs, stopID, clock)
 
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	assert.True(t, ok, "Response data should be a map")
 
-	entryData, ok := responseData["entry"].(map[string]interface{})
+	entryData, ok := responseData["entry"].(map[string]any)
 	assert.True(t, ok, "Entry should be a map")
 	assert.Empty(t, entryData["arrivalsAndDepartures"], "arrivalsAndDepartures should be empty")
 	assert.Empty(t, entryData["nearbyStopIds"], "nearbyStopIds should be empty")
@@ -224,7 +224,7 @@ func TestResponseModelJSON(t *testing.T) {
 	}
 
 	// Check that data was correctly marshaled/unmarshaled
-	responseData, ok := unmarshaledResponse.Data.(map[string]interface{})
+	responseData, ok := unmarshaledResponse.Data.(map[string]any)
 	if !ok {
 		t.Error("Failed to cast unmarshaled response data to map[string]interface{}")
 	} else {

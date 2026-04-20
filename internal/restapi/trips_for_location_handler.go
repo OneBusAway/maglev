@@ -39,7 +39,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
 	currentTime := api.Clock.Now().In(currentLocation)
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, api.Clock.Now())
+	stops := api.GtfsManager.GetStopsInBounds(ctx, lat, lon, -1, latSpan, lonSpan, 100)
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -147,13 +147,13 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
-	agencies := api.GtfsManager.GetAgencies()
-	if len(agencies) == 0 {
+	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
+	if agenciesErr != nil || len(agencies) == 0 {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, serverErr = loadAgencyLocation(currentAgency.Id, currentAgency.Timezone)
+	currentLocation, serverErr = loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if serverErr != nil {
 		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, serverErr
 	}
@@ -295,7 +295,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			}
 
 			dateStr := serviceDate.Format("20060102")
-			activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, dateStr)
+			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
 			if err != nil {
 				activeServiceIDs = []string{}
 				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
@@ -707,7 +707,6 @@ func (rb *referenceBuilder) createRoute(route gtfsdb.Route) models.Route {
 		route.TextColor.String)
 
 }
-
 
 func (rb *referenceBuilder) buildTripReferences() error {
 	rb.tripsRefList = make([]models.Trip, 0, len(rb.presentTrips))

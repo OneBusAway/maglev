@@ -355,7 +355,7 @@ func TestExplainQueryPlans(t *testing.T) {
 	plans := []struct {
 		name string
 		sql  string
-		args []interface{}
+		args []any
 	}{
 		{
 			name: "GetStopTimesForStopInWindow",
@@ -371,7 +371,7 @@ WHERE st.stop_id = ?
    OR (st.departure_time BETWEEN ? AND ?)
   )
 ORDER BY st.arrival_time`,
-			args: []interface{}{stopID, windowStart, windowEnd, windowStart, windowEnd},
+			args: []any{stopID, windowStart, windowEnd, windowStart, windowEnd},
 		},
 		{
 			name: "GetScheduleForStopOnDate",
@@ -382,13 +382,13 @@ JOIN trips t ON st.trip_id = t.id
 JOIN routes r ON t.route_id = r.id
 WHERE st.stop_id = ?
 ORDER BY r.id, st.arrival_time`,
-			args: []interface{}{stopID},
+			args: []any{stopID},
 		},
 		{
 			name: "GetStopTimesForTrip",
 			sql: `EXPLAIN QUERY PLAN
 SELECT * FROM stop_times WHERE trip_id = ? ORDER BY stop_sequence`,
-			args: []interface{}{tripID},
+			args: []any{tripID},
 		},
 		{
 			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location batch)",
@@ -399,7 +399,7 @@ FROM stop_times
 JOIN trips  ON stop_times.trip_id  = trips.id
 JOIN routes ON trips.route_id      = routes.id
 WHERE stop_times.stop_id = ?`,
-			args: []interface{}{stopID},
+			args: []any{stopID},
 		},
 		{
 			name: "GetActiveServiceIDsForDate (calendar CTE)",
@@ -414,7 +414,7 @@ base_services AS (
   WHERE c.start_date <= ?1 AND c.end_date >= ?1
 )
 SELECT DISTINCT service_id FROM base_services`,
-			args: []interface{}{dateStr},
+			args: []any{dateStr},
 		},
 	}
 
@@ -433,8 +433,8 @@ SELECT DISTINCT service_id FROM base_services`,
 			continue
 		}
 		for rows.Next() {
-			vals := make([]interface{}, len(cols))
-			ptrs := make([]interface{}, len(cols))
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
 			for i := range vals {
 				ptrs[i] = &vals[i]
 			}

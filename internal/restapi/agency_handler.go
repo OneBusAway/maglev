@@ -16,26 +16,17 @@ func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	agency := api.GtfsManager.FindAgency(id)
-
+	agency, err := api.GtfsManager.FindAgency(r.Context(), id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if agency == nil {
 		api.sendNotFound(w, r)
 		return
 	}
 
-	agencyData := models.NewAgencyReference(
-		agency.Id,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Language,
-		agency.Phone,
-		agency.Email,
-		agency.FareUrl,
-		"",
-		false,
-	)
-
+	agencyData := models.AgencyReferenceFromDatabase(agency)
 	response := models.NewEntryResponse(agencyData, *models.NewEmptyReferences(), api.Clock)
 	api.sendResponse(w, r, response)
 }

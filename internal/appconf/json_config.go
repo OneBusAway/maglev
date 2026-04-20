@@ -44,6 +44,8 @@ type JSONConfig struct {
 	DataPath         string         `json:"data-path"`
 	LogLevel         string         `json:"log-level"`
 	LogFormat        string         `json:"log-format"`
+	TLSCertPath      string         `json:"tls-cert-path"`
+	TLSKeyPath       string         `json:"tls-key-path"`
 }
 
 // setDefaults applies default values to the JSON config if fields are missing or zero
@@ -162,6 +164,17 @@ func (j *JSONConfig) Validate() error {
 		return err
 	}
 
+	// TLS: both cert and key must be provided together
+	if (j.TLSCertPath != "" && j.TLSKeyPath == "") || (j.TLSCertPath == "" && j.TLSKeyPath != "") {
+		return fmt.Errorf("both tls-cert-path and tls-key-path must be provided together")
+	}
+	if err := validatePath(j.TLSCertPath, "tls-cert-path"); err != nil {
+		return err
+	}
+	if err := validatePath(j.TLSKeyPath, "tls-key-path"); err != nil {
+		return err
+	}
+
 	// Validate that both auth header fields are provided together or neither
 	if (j.GtfsStaticFeed.AuthHeaderName != "" && j.GtfsStaticFeed.AuthHeaderValue == "") ||
 		(j.GtfsStaticFeed.AuthHeaderName == "" && j.GtfsStaticFeed.AuthHeaderValue != "") {
@@ -230,6 +243,8 @@ func (j *JSONConfig) ToAppConfig() Config {
 		RateLimit:        j.RateLimit,
 		LogLevel:         j.LogLevel,
 		LogFormat:        j.LogFormat,
+		TLSCertPath:      j.TLSCertPath,
+		TLSKeyPath:       j.TLSKeyPath,
 	}
 }
 

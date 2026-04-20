@@ -106,6 +106,9 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 	var directionCalculator *gtfs.AdvancedDirectionCalculator
 	if gtfsManager != nil {
 		directionCalculator = gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+		// Register the calculator on the manager so ForceUpdate can refresh its
+		// queries pointer (and evict the direction cache) after every DB hot-swap.
+		gtfsManager.DirectionCalculator = directionCalculator
 	}
 
 	// Select clock implementation based on environment
@@ -207,7 +210,9 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 // and performs graceful shutdown with a 30-second timeout.
 // Returns an error if the server fails to start or shutdown fails.
 func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *restapi.RestAPI, logger *slog.Logger) error {
-	logger.Info("starting server", "addr", srv.Addr)
+	cfg := coreApp.Config
+	tlsEnabled := cfg.TLSCertPath != "" && cfg.TLSKeyPath != ""
+	logger.Info("starting server", "addr", srv.Addr, "tls", tlsEnabled)
 
 	// Set up signal handling for graceful shutdown, merging with provided context
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -218,7 +223,13 @@ func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *r
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if tlsEnabled {
+			err = srv.ListenAndServeTLS(cfg.TLSCertPath, cfg.TLSKeyPath)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			serverErrors <- err
 		}
 	}()
@@ -287,7 +298,7 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	}
 
 	// Build JSON config structure
-	jsonConfig := map[string]interface{}{
+	jsonConfig := map[string]any{
 		"port":             cfg.Port,
 		"env":              envStr,
 		"api-keys":         fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
@@ -297,14 +308,14 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		"data-path":        gtfsCfg.GTFSDataPath,
 	}
 
-	var feeds []map[string]interface{}
+	var feeds []map[string]any
 	for _, feedCfg := range gtfsCfg.RTFeeds {
 		redactedHeaders := make(map[string]string)
 		for k := range feedCfg.Headers {
 			redactedHeaders[k] = "***REDACTED***"
 		}
 
-		feed := map[string]interface{}{
+		feed := map[string]any{
 			"id":                    feedCfg.ID,
 			"trip-updates-url":      feedCfg.TripUpdatesURL,
 			"vehicle-positions-url": feedCfg.VehiclePositionsURL,

@@ -14,6 +14,13 @@ func NullStringOrEmpty(ns sql.NullString) string {
 	return ""
 }
 
+func NullStringOrDefault(ns sql.NullString, defaultValue string) string {
+	if ns.Valid && ns.String != "" {
+		return ns.String
+	}
+	return defaultValue
+}
+
 // NullInt64OrDefault returns the int64 value if valid, otherwise returns the default value
 func NullInt64OrDefault(ni sql.NullInt64, defaultValue int64) int64 {
 	if ni.Valid {

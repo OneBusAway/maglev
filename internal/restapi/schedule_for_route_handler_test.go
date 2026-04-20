@@ -17,14 +17,13 @@ func TestScheduleForRouteHandler(t *testing.T) {
 	api := createTestApiWithClock(t, clk)
 	defer api.Shutdown()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies, "Test data should contain at least one agency")
 
-	static := api.GtfsManager.GetStaticData()
-	require.NotNil(t, static)
-	require.NotEmpty(t, static.Routes, "Test data should contain at least one route")
+	routes := mustGetRoutes(t, api)
+	require.NotEmpty(t, routes, "Test data should contain at least one route")
 
-	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
+	routeID := utils.FormCombinedID(agencies[0].ID, routes[0].ID)
 
 	t.Run("Valid route", func(t *testing.T) {
 		// Use a date known to be in the test data's service calendar
@@ -34,10 +33,10 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		require.True(t, ok)
 
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		require.True(t, ok)
 
 		// ScheduleForRouteEntry has only: routeId, scheduleDate, serviceIds, stopTripGroupings (no top-level stops/trips)
@@ -47,49 +46,49 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		assert.Greater(t, scheduleDate, float64(0))
 
 		// serviceIds should exist
-		svcIds, ok := entry["serviceIds"].([]interface{})
+		svcIds, ok := entry["serviceIds"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, svcIds)
 
 		// stopTripGroupings should exist and have expected structure
-		groupings, ok := entry["stopTripGroupings"].([]interface{})
+		groupings, ok := entry["stopTripGroupings"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, groupings)
 
-		firstGrouping, ok := groupings[0].(map[string]interface{})
+		firstGrouping, ok := groupings[0].(map[string]any)
 		require.True(t, ok)
 
 		// Check fields inside grouping
 		directionId, hasDir := firstGrouping["directionId"].(string)
 		assert.True(t, hasDir, "directionId should be a string")
 		assert.NotEmpty(t, directionId)
-		ths, hasTH := firstGrouping["tripHeadsigns"].([]interface{})
+		ths, hasTH := firstGrouping["tripHeadsigns"].([]any)
 		assert.True(t, hasTH)
 		assert.NotNil(t, ths)
 
-		stopIds, hasStops := firstGrouping["stopIds"].([]interface{})
+		stopIds, hasStops := firstGrouping["stopIds"].([]any)
 		assert.True(t, hasStops)
 		assert.NotEmpty(t, stopIds)
 
-		tripIds, hasTrips := firstGrouping["tripIds"].([]interface{})
+		tripIds, hasTrips := firstGrouping["tripIds"].([]any)
 		assert.True(t, hasTrips)
 		assert.NotEmpty(t, tripIds)
 
-		tripsWithStopTimes, hasT := firstGrouping["tripsWithStopTimes"].([]interface{})
+		tripsWithStopTimes, hasT := firstGrouping["tripsWithStopTimes"].([]any)
 		assert.True(t, hasT)
 		require.NotEmpty(t, tripsWithStopTimes)
 
-		firstTripWithStops := tripsWithStopTimes[0].(map[string]interface{})
+		firstTripWithStops := tripsWithStopTimes[0].(map[string]any)
 		tid, ok := firstTripWithStops["tripId"].(string)
 		require.True(t, ok)
 		require.Contains(t, tid, "_", "TripID should be combined with agency prefix")
 
-		stopTimesArr, ok := firstTripWithStops["stopTimes"].([]interface{})
+		stopTimesArr, ok := firstTripWithStops["stopTimes"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, stopTimesArr)
 
 		// Check a stop time inside entry trip stopTimes (arrival/departure should be numbers in seconds)
-		st0 := stopTimesArr[0].(map[string]interface{})
+		st0 := stopTimesArr[0].(map[string]any)
 		arr, ok := st0["arrivalTime"].(float64)
 		require.True(t, ok)
 		dep, ok := st0["departureTime"].(float64)
@@ -97,15 +96,15 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		require.GreaterOrEqual(t, dep, arr)
 
 		// References should include flattened stopTimes
-		refs, ok := data["references"].(map[string]interface{})
+		refs, ok := data["references"].(map[string]any)
 		require.True(t, ok)
 
-		stopTimesRef, ok := refs["stopTimes"].([]interface{})
+		stopTimesRef, ok := refs["stopTimes"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, stopTimesRef)
 
 		// Validate a reference stopTime contains stopId combined IDs
-		firstRefST := stopTimesRef[0].(map[string]interface{})
+		firstRefST := stopTimesRef[0].(map[string]any)
 
 		refTid, ok := firstRefST["tripId"].(string)
 		require.True(t, ok, "tripId should be present and be a string")
@@ -132,13 +131,12 @@ func TestScheduleForRouteHandler(t *testing.T) {
 func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	static := api.GtfsManager.GetStaticData()
-	require.NotNil(t, static)
-	require.NotEmpty(t, static.Routes)
+	routes := mustGetRoutes(t, api)
+	require.NotEmpty(t, routes)
 
-	routeID := utils.FormCombinedID(agencies[0].Id, static.Routes[0].Id)
+	routeID := utils.FormCombinedID(agencies[0].ID, routes[0].ID)
 
 	t.Run("Valid date parameter", func(t *testing.T) {
 		// Use a date known to be in the test data's service calendar
@@ -149,9 +147,9 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
-		data, ok := model.Data.(map[string]interface{})
+		data, ok := model.Data.(map[string]any)
 		require.True(t, ok)
-		entry, ok := data["entry"].(map[string]interface{})
+		entry, ok := data["entry"].(map[string]any)
 		require.True(t, ok)
 		scheduleDate, ok := entry["scheduleDate"].(float64)
 		require.True(t, ok, "scheduleDate should be a numeric Unix millisecond timestamp")
@@ -167,6 +165,93 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, model.Code)
 		}
 	})
+}
+
+// Regression for #790: serviceIds must be derived from the route's actual
+// trips, not from the agency's active service IDs for the day. Route 25_1885
+// uses only c_868_b_79978_d_31, while several other services are active on
+// the same weekday — the response must include only the route-scoped set.
+func TestScheduleForRouteHandler_ServiceIDsScopedToRoute(t *testing.T) {
+	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
+	defer api.Shutdown()
+
+	routeID := utils.FormCombinedID("25", "1885")
+	expectedServiceID := utils.FormCombinedID("25", "c_868_b_79978_d_31")
+
+	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	svcIdsRaw, ok := entry["serviceIds"].([]interface{})
+	require.True(t, ok)
+
+	svcIds := make([]string, 0, len(svcIdsRaw))
+	for _, v := range svcIdsRaw {
+		s, ok := v.(string)
+		require.True(t, ok)
+		svcIds = append(svcIds, s)
+	}
+
+	assert.ElementsMatch(t, []string{expectedServiceID}, svcIds,
+		"serviceIds must be scoped to the route's trips, not agency-wide active services")
+}
+
+// Regression: stopTripGroupings must follow the Java-OBA direction_id convention —
+// groups are sorted so the higher CSV direction_id ("1") becomes group "0" and the
+// lower ("0") becomes group "1". Trips inside each group must still carry their
+// original CSV direction_id in the references section.
+func TestScheduleForRouteHandler_DirectionIDJavaParity(t *testing.T) {
+	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
+	defer api.Shutdown()
+
+	routeID := utils.FormCombinedID("25", "1885")
+	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	groupings, ok := entry["stopTripGroupings"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, groupings, 2, "route 25_1885 has trips in both directions")
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+	tripRefs, ok := refs["trips"].([]interface{})
+	require.True(t, ok)
+
+	tripDirByID := make(map[string]string, len(tripRefs))
+	for _, tr := range tripRefs {
+		trMap := tr.(map[string]interface{})
+		tid, _ := trMap["id"].(string)
+		dir, _ := trMap["directionId"].(string)
+		tripDirByID[tid] = dir
+	}
+
+	// Expected Java-OBA mapping: group "0" ↔ CSV direction_id "1", group "1" ↔ CSV direction_id "0".
+	expected := map[string]string{"0": "1", "1": "0"}
+	for _, g := range groupings {
+		gMap := g.(map[string]interface{})
+		gid, _ := gMap["directionId"].(string)
+		tripIDs, _ := gMap["tripIds"].([]interface{})
+		require.NotEmpty(t, tripIDs)
+		for _, tid := range tripIDs {
+			ts, _ := tid.(string)
+			assert.Equal(t, expected[gid], tripDirByID[ts],
+				"group %s trip %s should have CSV direction_id %s", gid, ts, expected[gid])
+		}
+	}
 }
 
 func TestScheduleForRouteHandlerWithMalformedID(t *testing.T) {

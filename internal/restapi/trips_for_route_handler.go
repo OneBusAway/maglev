@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,7 +52,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	serviceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, formattedDate)
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -280,9 +281,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	fetchedTrips = fetchedTrips[:n]
 
 	tripAgencyMap := make(map[string]string)
-	for _, trip := range fetchedTrips {
-		if route := api.GtfsManager.FindRoute(trip.RouteID); route != nil && route.Agency != nil {
-			tripAgencyMap[trip.ID] = route.Agency.Id
+	if len(fetchedTrips) > 0 {
+		if route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID); err == nil {
+			for _, trip := range fetchedTrips {
+				tripAgencyMap[trip.ID] = route.AgencyID
+			}
 		}
 	}
 
@@ -562,19 +565,13 @@ func buildTripReferences(
 				route.TextColor.String)
 
 			if _, exists := presentAgencies[route.AgencyID]; !exists {
-				if agency := api.GtfsManager.FindAgency(route.AgencyID); agency != nil {
-					presentAgencies[agency.Id] = models.NewAgencyReference(
-						agency.Id,
-						agency.Name,
-						agency.Url,
-						agency.Timezone,
-						agency.Language,
-						agency.Phone,
-						agency.Email,
-						agency.FareUrl,
-						"",
-						false,
-					)
+				agency, err := api.GtfsManager.FindAgency(ctx, route.AgencyID)
+				if err != nil {
+					logging.LogError(api.Logger, "failed to fetch agency for references", err, slog.String("agency", route.AgencyID))
+				}
+
+				if agency != nil {
+					presentAgencies[agency.ID] = models.AgencyReferenceFromDatabase(agency)
 				}
 			}
 		}
@@ -635,7 +632,7 @@ func buildTripReferences(
 					TripHeadsign:  trip.TripHeadsign,
 					TripShortName: trip.TripShortName,
 					DirectionID:   trip.DirectionID,
-					BlockID: utils.FormCombinedID(currentAgency, trip.BlockID),
+					BlockID:       utils.FormCombinedID(currentAgency, trip.BlockID),
 					ShapeID:       utils.FormCombinedID(currentAgency, trip.ShapeID),
 					PeakOffPeak:   0,
 					TimeZone:      "",

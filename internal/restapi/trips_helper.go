@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -574,7 +576,7 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	}
 
 	formattedDate := serviceDate.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, formattedDate)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		slog.Warn("calculateBlockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),
@@ -1025,7 +1027,7 @@ func (api *RestAPI) findNextStopBySequence(
 				if i+1 < len(stopTimes) {
 					nextStop = stopTimes[i+1]
 				} else {
-					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID, serviceDate)
+					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID)
 				}
 			} else {
 				nextStop = st
@@ -1044,7 +1046,7 @@ func (api *RestAPI) findNextStopBySequence(
 
 // getFirstStopOfNextTripInBlock uses LEAD() window function to find the next trip
 // in the block and directly fetches its first stop in a single SQL query.
-func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string, serviceDate time.Time) *gtfsdb.StopTime {
+func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string) *gtfsdb.StopTime {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, currentTripID)
 	if err != nil {
 		slog.Warn("getFirstStopOfNextTripInBlock: failed to get trip",
@@ -1197,4 +1199,39 @@ func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float6
 		degrees += 360
 	}
 	return degrees
+}
+
+type directionGroup struct {
+	GroupID     string
+	DirectionID sql.NullInt64
+	Trips       []gtfsdb.Trip
+}
+
+func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
+	byDirID := make(map[int64][]gtfsdb.Trip)
+	for _, trip := range trips {
+		byDirID[trip.DirectionID.Int64] = append(byDirID[trip.DirectionID.Int64], trip)
+	}
+
+	dirIDs := make([]int64, 0, len(byDirID))
+	for dirID := range byDirID {
+		dirIDs = append(dirIDs, dirID)
+	}
+	// Descending so CSV direction_id=1 becomes group "0" and direction_id=0 becomes group "1" (Java OBA parity).
+	sort.Slice(dirIDs, func(i, j int) bool { return dirIDs[i] > dirIDs[j] })
+
+	groups := make([]directionGroup, 0, len(dirIDs))
+	for i, dirID := range dirIDs {
+		tripsInGroup := byDirID[dirID]
+		// Sort by trip ID so tripIds in the response is deterministic across runs.
+		sort.Slice(tripsInGroup, func(a, b int) bool {
+			return tripsInGroup[a].ID < tripsInGroup[b].ID
+		})
+		groups = append(groups, directionGroup{
+			GroupID:     strconv.Itoa(i),
+			DirectionID: tripsInGroup[0].DirectionID,
+			Trips:       tripsInGroup,
+		})
+	}
+	return groups
 }

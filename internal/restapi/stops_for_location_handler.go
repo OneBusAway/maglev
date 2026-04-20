@@ -93,10 +93,16 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, loc.Radius, loc.LatSpan, loc.LonSpan, query, maxCount, false, routeTypes, queryTime)
+	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, loc.Radius, loc.LatSpan, loc.LonSpan, query, maxCount, routeTypes)
 
 	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"
 	slices.SortStableFunc(stops, func(a, b gtfsdb.Stop) int {
@@ -116,7 +122,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
-		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 		if agencies == nil {
 			agencies = []models.AgencyReference{}
 		}
@@ -136,7 +142,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Get active service IDs for the requested queryTime
 	currentDate := queryTime.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, currentDate)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -194,7 +200,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	isLimitExceeded := false
+	isLimitExceeded := limitExceeded
 	var resultRawStopIDs []string
 
 	// Build results using the pre-fetched data
@@ -229,10 +235,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			rids,
 			rids,
 		))
-		if len(results) >= maxCount {
-			isLimitExceeded = true
-			break
-		}
 	}
 
 	if ctx.Err() != nil {
@@ -240,7 +242,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
 
 	if agencies == nil {

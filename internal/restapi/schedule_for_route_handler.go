@@ -69,7 +69,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		scheduleDate = startOfDay.UnixMilli()
 	}
 
-	serviceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, targetDate)
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -88,11 +88,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	combinedServiceIDs := make([]string, 0, len(serviceIDs))
-	for _, sid := range serviceIDs {
-		combinedServiceIDs = append(combinedServiceIDs, utils.FormCombinedID(agencyID, sid))
-	}
-
 	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsForRouteInActiveServiceIDs(ctx, gtfsdb.GetTripsForRouteInActiveServiceIDsParams{
 		RouteID:    routeID,
 		ServiceIds: serviceIDs,
@@ -100,6 +95,15 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
+	}
+
+	routeSvcIDs := make(map[string]bool)
+	combinedServiceIDs := make([]string, 0, len(trips))
+	for _, trip := range trips {
+		if !routeSvcIDs[trip.ServiceID] {
+			routeSvcIDs[trip.ServiceID] = true
+			combinedServiceIDs = append(combinedServiceIDs, utils.FormCombinedID(agencyID, trip.ServiceID))
+		}
 	}
 
 	// Handle case where service exists but this route has no trips today.
@@ -131,91 +135,115 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 	routeRefs[utils.FormCombinedID(agencyID, route.ID)] = routeModel
 
-	groupings := make(map[string][]gtfsdb.Trip)
-	for _, trip := range trips {
-		tripIDsSet[trip.ID] = true
-		// The go-gtfs library encodes direction_id as a 3-value enum:
-		//   0 = Unspecified, 1 = True (GTFS direction_id=1), 2 = False (GTFS direction_id=0)
-		dirID := "0"
-		if trip.DirectionID.Int64 == 1 {
-			dirID = "1"
-		}
-		groupings[dirID] = append(groupings[dirID], trip)
-	}
+	dirGroups := groupTripsByDirection(trips)
 	var stopTripGroupings []models.StopTripGrouping
 	globalStopIDSet := make(map[string]struct{})
 	var stopTimesRefs [][]models.RouteStopTime
-	for dirID, groupedTrips := range groupings {
+
+	for _, group := range dirGroups {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
-		stopIDSet := make(map[string]struct{})
-		headsignSet := make(map[string]struct{})
-		tripIDs := make([]string, 0, len(groupedTrips))
-		tripsWithStopTimes := make([]models.TripStopTimes, 0, len(groupedTrips))
+		tripsInGroup := group.Trips
 
-		rawTripIDs := make([]string, 0, len(groupedTrips))
-		for _, trip := range groupedTrips {
-			rawTripIDs = append(rawTripIDs, trip.ID)
-			if trip.TripHeadsign.String != "" {
-				headsignSet[trip.TripHeadsign.String] = struct{}{}
+		seenDirSvcIDs := make(map[string]bool)
+		var dirServiceIDs []string
+		for _, trip := range tripsInGroup {
+			if !seenDirSvcIDs[trip.ServiceID] {
+				seenDirSvcIDs[trip.ServiceID] = true
+				dirServiceIDs = append(dirServiceIDs, trip.ServiceID)
 			}
+		}
+
+		var orderedStopIDs []string
+		var err error
+		if !group.DirectionID.Valid {
+			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, tripsInGroup[0].ID)
+		} else {
+			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
+				gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
+					RouteID:     routeID,
+					DirectionID: group.DirectionID,
+					ServiceIds:  dirServiceIDs,
+				})
+		}
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		for _, stopID := range orderedStopIDs {
+			globalStopIDSet[stopID] = struct{}{}
+		}
+
+		seenHeadsigns := make(map[string]bool)
+		var headsigns []string
+		for _, trip := range tripsInGroup {
+			hs := trip.TripHeadsign.String
+			if hs != "" && !seenHeadsigns[hs] {
+				seenHeadsigns[hs] = true
+				headsigns = append(headsigns, hs)
+			}
+		}
+
+		rawTripIDs := make([]string, 0, len(tripsInGroup))
+		for _, trip := range tripsInGroup {
+			rawTripIDs = append(rawTripIDs, trip.ID)
 		}
 
 		allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, rawTripIDs)
 		if err != nil {
-			api.Logger.Warn("failed to fetch stop times for trips in direction group", "dir_id", dirID, "error", err)
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 
-		// Group stop times by trip ID (query returns rows ordered by trip_id, stop_sequence).
-		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(groupedTrips))
+		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripsInGroup))
 		for _, st := range allStopTimes {
 			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
 		}
 
-		for _, trip := range groupedTrips {
+		var tripIDs []string
+		var tripsWithStopTimes []models.TripStopTimes
+		for _, trip := range tripsInGroup {
 			stopTimes := stopTimesByTrip[trip.ID]
 			if len(stopTimes) == 0 {
 				continue
 			}
+			combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
+			tripIDsSet[trip.ID] = true
+			tripIDs = append(tripIDs, combinedTripID)
+
 			stopTimesList := make([]models.RouteStopTime, 0, len(stopTimes))
 			for _, st := range stopTimes {
-				arrivalSec := int(utils.NanosToSeconds(st.ArrivalTime))
-				departureSec := int(utils.NanosToSeconds(st.DepartureTime))
 				stopTimesList = append(stopTimesList, models.RouteStopTime{
 					ArrivalEnabled:   true,
-					ArrivalTime:      arrivalSec,
+					ArrivalTime:      int(utils.NanosToSeconds(st.ArrivalTime)),
 					DepartureEnabled: true,
-					DepartureTime:    departureSec,
+					DepartureTime:    int(utils.NanosToSeconds(st.DepartureTime)),
 					ServiceID:        utils.FormCombinedID(agencyID, trip.ServiceID),
 					StopHeadsign:     st.StopHeadsign.String,
 					StopID:           utils.FormCombinedID(agencyID, st.StopID),
-					TripID:           utils.FormCombinedID(agencyID, trip.ID),
+					TripID:           combinedTripID,
 				})
-				stopIDSet[st.StopID] = struct{}{}
-				globalStopIDSet[st.StopID] = struct{}{}
 			}
-			tripIDs = append(tripIDs, utils.FormCombinedID(agencyID, trip.ID))
 			tripsWithStopTimes = append(tripsWithStopTimes, models.TripStopTimes{
-				TripID:    utils.FormCombinedID(agencyID, trip.ID),
+				TripID:    combinedTripID,
 				StopTimes: stopTimesList,
 			})
 			stopTimesRefs = append(stopTimesRefs, stopTimesList)
 		}
-		stopIDsOrdered := make([]string, 0, len(stopIDSet))
-		for stopID := range stopIDSet {
-			stopIDsOrdered = append(stopIDsOrdered, utils.FormCombinedID(agencyID, stopID))
+
+		formattedStopIDs := make([]string, len(orderedStopIDs))
+		for i, sid := range orderedStopIDs {
+			formattedStopIDs[i] = utils.FormCombinedID(agencyID, sid)
 		}
-		headsigns := make([]string, 0, len(headsignSet))
-		for h := range headsignSet {
-			headsigns = append(headsigns, h)
-		}
+
 		stopTripGroupings = append(stopTripGroupings, models.StopTripGrouping{
-			DirectionID:        dirID,
+			DirectionID:        group.GroupID,
 			TripHeadsigns:      headsigns,
-			StopIDs:            stopIDsOrdered,
+			StopIDs:            formattedStopIDs,
 			TripIDs:            tripIDs,
 			TripsWithStopTimes: tripsWithStopTimes,
 		})
@@ -252,6 +280,9 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 		for _, t := range tripRows {
 			combinedTripID := utils.FormCombinedID(agencyID, t.ID)
+			// references.trips[].directionId carries the raw GTFS CSV value (0 or 1),
+			// matching Java OBA. stopTripGroupings[].directionId above is the Java-parity
+			// group index — the two fields share a name but have different semantics.
 			tripRef := models.NewTripReference(
 				combinedTripID,
 				t.RouteID,

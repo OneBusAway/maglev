@@ -17,14 +17,16 @@ func (api *RestAPI) routeIDsForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	agency := api.GtfsManager.FindAgency(id)
-
+	ctx := r.Context()
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if agency == nil {
 		api.sendNull(w, r)
 		return
 	}
-
-	ctx := r.Context()
 
 	routeIDs, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForAgency(ctx, id)
 

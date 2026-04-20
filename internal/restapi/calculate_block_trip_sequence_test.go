@@ -3,6 +3,7 @@ package restapi
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"math"
 	"slices"
 	"testing"
@@ -20,41 +21,46 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
 
-	trips := api.GtfsManager.GetTrips()
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	require.NoError(t, err)
 	require.NotEmpty(t, trips, "Should have test trips")
 
 	// Monday within the RABA dataset's active service period (calendar range covers this date)
 	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
-
 	// Find a block that has multiple active trips so we can verify sequencing
 	type blockInfo struct {
 		tripIDs []string
 	}
-	blocks := make(map[string]*blockInfo)
 
+	var multiTripBlock *blockInfo
+	seenBlocks := make(map[string]bool)
 	for _, trip := range trips {
 		tripRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, trip.ID)
 		if err != nil || !tripRow.BlockID.Valid || tripRow.BlockID.String == "" {
 			continue
 		}
+		bid := tripRow.BlockID.String
+		if seenBlocks[bid] {
+			continue
+		}
+		seenBlocks[bid] = true
 
-		isActive, err := api.GtfsManager.IsServiceActiveOnDate(ctx, tripRow.ServiceID, serviceDate)
-		if err != nil || isActive == 0 {
+		blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, sql.NullString{String: bid, Valid: true})
+		if err != nil {
 			continue
 		}
 
-		bid := tripRow.BlockID.String
-		if blocks[bid] == nil {
-			blocks[bid] = &blockInfo{}
+		var activeTripIDs []string
+		for _, bt := range blockTrips {
+			isActive, err := api.GtfsManager.IsServiceActiveOnDate(ctx, bt.ServiceID, serviceDate)
+			if err != nil || isActive == 0 {
+				continue
+			}
+			activeTripIDs = append(activeTripIDs, bt.ID)
 		}
-		blocks[bid].tripIDs = append(blocks[bid].tripIDs, trip.ID)
-	}
 
-	// Find a block with at least 2 active trips
-	var multiTripBlock *blockInfo
-	for _, b := range blocks {
-		if len(b.tripIDs) >= 2 {
-			multiTripBlock = b
+		if len(activeTripIDs) >= 2 {
+			multiTripBlock = &blockInfo{tripIDs: activeTripIDs}
 			break
 		}
 	}

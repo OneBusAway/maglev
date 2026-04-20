@@ -2,7 +2,6 @@ package logging
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 )
@@ -90,24 +89,4 @@ func FromContext(ctx context.Context) *slog.Logger {
 
 	// Return a default logger if none is found
 	return slog.Default()
-}
-
-// ReplaceLogPrint replaces log.Print calls with structured logging
-func ReplaceLogPrint(logger *slog.Logger, message string) {
-	if logger == nil {
-		slog.Default().Info("nil logger provided to ReplaceLogPrint", slog.String("message", message))
-		return
-	}
-	logger.Info(message)
-}
-
-// ReplaceLogFatal replaces log.Fatal calls with error logging and returns an error
-func ReplaceLogFatal(logger *slog.Logger, message string, err error) error {
-	wrappedErr := fmt.Errorf("%s: %w", message, err)
-
-	if logger != nil {
-		LogError(logger, message, err)
-	}
-
-	return wrappedErr
 }

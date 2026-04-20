@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
@@ -100,6 +101,45 @@ func createTestApi(t testing.TB) *RestAPI {
 	return createTestApiWithClock(t, clock.RealClock{})
 }
 
+// mustGetAgencies fetches agencies from the DB for use in tests.
+func mustGetAgencies(t testing.TB, api *RestAPI) []gtfsdb.Agency {
+	t.Helper()
+	agencies, err := api.GtfsManager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	return agencies
+}
+
+// mustGetTrip fetches a single trip from the DB for use in tests.
+func mustGetTrip(t testing.TB, api *RestAPI) gtfsdb.Trip {
+	t.Helper()
+	trips, err := api.GtfsManager.GetTrips(context.Background(), 1)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips, "test data should contain at least one trip")
+	return trips[0]
+}
+
+// mustGetTripIDWithBlockID returns the block_id of the first trip that has one set.
+func mustGetTripIDWithBlockID(t testing.TB, api *RestAPI) string {
+	t.Helper()
+	var blockID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+		`SELECT block_id FROM trips WHERE block_id IS NOT NULL AND block_id != '' LIMIT 1`,
+	).Scan(&blockID)
+	require.NoError(t, err, "test data should contain at least one trip with a block_id")
+	return blockID
+}
+
+// mustGetTripIDWithShapeID returns the shape_id of the first trip that has one set.
+func mustGetTripIDWithShapeID(t testing.TB, api *RestAPI) string {
+	t.Helper()
+	var shapeID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+		`SELECT shape_id FROM trips WHERE shape_id IS NOT NULL AND shape_id != '' LIMIT 1`,
+	).Scan(&shapeID)
+	require.NoError(t, err, "test data should contain at least one trip with a shape_id")
+	return shapeID
+}
+
 // serveAndRetrieveEndpoint sets up a test server, makes a request to the specified endpoint, and returns the response
 // and decoded model.
 // Accepts testing.TB to support both *testing.T and *testing.B
@@ -113,6 +153,10 @@ func serveAndRetrieveEndpoint(t testing.TB, endpoint string) (*RestAPI, *http.Re
 // serveApiAndRetrieveEndpoint performs the request against an existing API instance
 // Accepts testing.TB to support both *testing.T and *testing.B
 func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
+	return callAPIHandler[models.ResponseModel](t, api, endpoint)
+}
+
+func callAPIHandler[ResponseType any](t testing.TB, api *RestAPI, endpoint string) (*http.Response, ResponseType) {
 	// Use SetupAPIRoutes to ensure global middleware (like compression) is applied
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
@@ -122,11 +166,27 @@ func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*
 		slog.Default().With(slog.String("component", "test")),
 		"http_response_body")
 
-	var response models.ResponseModel
+	var response ResponseType
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	require.NoError(t, err)
 
 	return resp, response
+}
+
+// mustGetRoutes returns all routes from the DB, failing the test immediately on error.
+func mustGetRoutes(t testing.TB, api *RestAPI) []gtfsdb.Route {
+	t.Helper()
+	routes, err := api.GtfsManager.GetRoutes(context.Background())
+	require.NoError(t, err)
+	return routes
+}
+
+// mustGetStops returns all active stops from the DB (stops with stop times)
+func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
+	t.Helper()
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetActiveStops(context.Background())
+	require.NoError(t, err)
+	return stops
 }
 
 func TestCompressionMiddleware(t *testing.T) {

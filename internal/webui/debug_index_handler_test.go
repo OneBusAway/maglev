@@ -53,7 +53,7 @@ func TestWriteDebugData(t *testing.T) {
 	tests := []struct {
 		name           string
 		title          string
-		data           interface{}
+		data           any
 		expectedInBody []string
 	}{
 		{
@@ -107,14 +107,10 @@ func TestDebugIndexHandler_AllDataTypes(t *testing.T) {
 		expectedTitle string
 		expectedData  []string
 	}{
-		{"warnings", "warnings", "GTFS Static - Parse Warnings", nil},
 		{"agencies", "agencies", "GTFS Static - Agencies", []string{"Redding Area Bus Authority"}},
 		{"routes", "routes", "GTFS Static - Routes", []string{"Route 1"}},
 		{"stops", "stops", "GTFS Static - Stops", nil},
-		{"transfers", "transfers", "GTFS Static - Transfers", nil},
-		{"services", "services", "GTFS Static - Services", nil},
 		{"trips", "trips", "GTFS Static - Trips", nil},
-		{"shapes", "shapes", "GTFS Static - Shapes", nil},
 		{"realtime_trips", "realtime_trips", "GTFS Realtime - Trips", nil},
 		{"realtime_vehicles", "realtime_vehicles", "GTFS Realtime - Vehicles", nil},
 		{"default_empty", "", "Choose a data type", nil},

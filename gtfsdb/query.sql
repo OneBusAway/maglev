@@ -24,6 +24,14 @@ FROM
 ORDER BY
     id;
 
+-- name: ListAgencyIds :many
+SELECT
+    id
+FROM
+    agencies
+ORDER BY
+    id;
+
 -- name: CreateAgency :one
 INSERT
 OR REPLACE INTO agencies (
@@ -72,10 +80,11 @@ OR REPLACE INTO stops (
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: CreateCalendar :one
 INSERT
@@ -210,6 +219,21 @@ FROM
 WHERE
     stop_times.stop_id = ?;
 
+-- name: GetRoutesForAgency :many
+SELECT
+    routes.id,
+    routes.short_name,
+    routes.long_name,
+    routes."desc",
+    routes.type,
+    routes.url,
+    routes.color,
+    routes.text_color
+FROM
+    routes
+WHERE
+    routes.agency_id = ?;
+
 -- name: GetAgencyForStop :one
 SELECT DISTINCT
     a.id,
@@ -279,7 +303,8 @@ SELECT
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 FROM
     stops
 WHERE
@@ -321,6 +346,13 @@ FROM
 ORDER BY
     id;
 
+-- name: GetActiveStops :many
+SELECT DISTINCT
+    s.*
+FROM
+    stops s
+    INNER JOIN stop_times st ON s.id = st.stop_id;
+
 -- name: GetRoutesForStop :many
 SELECT DISTINCT
     routes.id,
@@ -338,25 +370,6 @@ FROM
     JOIN routes ON trips.route_id = routes.id
 WHERE
     stop_times.stop_id = ?;
-
--- name: GetActiveStops :many
-SELECT DISTINCT
-    s.id,
-    s.code,
-    s.name,
-    s."desc",
-    s.lat,
-    s.lon,
-    s.zone_id,
-    s.url,
-    s.location_type,
-    s.timezone,
-    s.wheelchair_boarding,
-    s.platform_code,
-    s.direction,
-    s.parent_station
-FROM stops s
-INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetAllShapes :many
 SELECT
@@ -652,14 +665,6 @@ FROM
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'));
 
--- name: GetStopsWithActiveServiceOnDate :many
--- Returns stop IDs that have at least one trip with active service on the given date
-SELECT DISTINCT st.stop_id
-FROM stop_times st
-JOIN trips t ON st.trip_id = t.id
-WHERE st.stop_id IN (sqlc.slice('stop_ids'))
-  AND t.service_id IN (sqlc.slice('service_ids'));
-
 -- name: GetStopTimesForTrip :many
 SELECT
     *
@@ -839,6 +844,25 @@ SELECT
     *
 FROM
     trips;
+
+-- name: ListTripsWithLimit :many
+SELECT
+    *
+FROM
+    trips
+LIMIT ?;
+
+-- name: CountAgencies :one
+SELECT COUNT(*) FROM agencies;
+
+-- name: CountRoutes :one
+SELECT COUNT(*) FROM routes;
+
+-- name: CountStops :one
+SELECT COUNT(*) FROM stops;
+
+-- name: CountTrips :one
+SELECT COUNT(*) FROM trips;
 
 -- name: GetArrivalsAndDeparturesForStop :many
 SELECT
@@ -1239,5 +1263,21 @@ WHERE st.trip_id = (
 )
 ORDER BY st.stop_sequence ASC
 LIMIT 1;
+
+-- name: GetStopBoundsPerAgency :many
+SELECT
+    r.agency_id,
+    COUNT(*) AS cnt,
+    CAST(MIN(s.lat) AS REAL) AS min_lat,
+    CAST(MAX(s.lat) AS REAL) AS max_lat,
+    CAST(MIN(s.lon) AS REAL) AS min_lon,
+    CAST(MAX(s.lon) AS REAL) AS max_lon
+FROM
+    routes r
+    JOIN trips t ON t.route_id = r.id
+    JOIN stop_times st ON st.trip_id = t.id
+    JOIN stops s ON s.id = st.stop_id
+GROUP BY
+    r.agency_id;
 
 

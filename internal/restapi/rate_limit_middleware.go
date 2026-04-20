@@ -141,7 +141,7 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 
 		// Check if request is allowed
 		if !limiter.Allow() {
-			rl.sendRateLimitExceeded(w, r)
+			rl.sendRateLimitExceeded(w)
 			return
 		}
 
@@ -159,7 +159,7 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 }
 
 // sendRateLimitExceeded sends a 429 Too Many Requests response
-func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *http.Request) {
+func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter) {
 	// Calculate retry-after based on rate limit
 	var retryAfter time.Duration
 	switch rl.rateLimit {
@@ -179,17 +179,17 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	w.WriteHeader(http.StatusTooManyRequests)
 
 	// Send JSON error response consistent with OneBusAway API format
-	errorResponse := map[string]interface{}{
+	errorResponse := map[string]any{
 		"code": http.StatusTooManyRequests,
 		"text": "Rate limit exceeded. Please try again later.",
-		"data": map[string]interface{}{
+		"data": map[string]any{
 			"entry": nil,
-			"references": map[string]interface{}{
-				"agencies":  []interface{}{},
-				"routes":    []interface{}{},
-				"stops":     []interface{}{},
-				"trips":     []interface{}{},
-				"stopTimes": []interface{}{},
+			"references": map[string]any{
+				"agencies":  []any{},
+				"routes":    []any{},
+				"stops":     []any{},
+				"trips":     []any{},
+				"stopTimes": []any{},
 			},
 		},
 		"currentTime": rl.clock.Now().UnixMilli(),

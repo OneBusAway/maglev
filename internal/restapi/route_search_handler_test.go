@@ -23,16 +23,16 @@ func TestRouteSearchHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, list)
 
 	found := false
 	for _, item := range list {
-		route, ok := item.(map[string]interface{})
+		route, ok := item.(map[string]any)
 		require.True(t, ok)
 		assert.Contains(t, route, "id")
 		assert.Contains(t, route, "agencyId")
@@ -48,10 +48,10 @@ func TestRouteSearchHandlerEndToEnd(t *testing.T) {
 	}
 	assert.True(t, found, "expected Shasta route to be returned")
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agencies, ok := refs["agencies"].([]interface{})
+	agencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, agencies)
 }
@@ -72,10 +72,10 @@ func TestRouteSearchHandlerNoResults(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok)
 	assert.Empty(t, list)
 }
