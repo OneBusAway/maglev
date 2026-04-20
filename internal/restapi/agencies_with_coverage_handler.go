@@ -1,7 +1,9 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -10,6 +12,16 @@ import (
 // agenciesWithCoverageHandler returns all transit agencies along with their geographic coverage areas.
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	queryParams := r.URL.Query()
+
+	// Validate version parameter
+	if versionStr := queryParams.Get("version"); versionStr != "" {
+		version, err := strconv.Atoi(versionStr)
+		if err != nil || (version != 1 && version != 2) {
+			api.sendError(w, r, http.StatusInternalServerError, fmt.Sprintf("unknown version: %s", versionStr))
+			return
+		}
+	}
 
 	api.GtfsManager.RLock()
 	defer api.GtfsManager.RUnlock()
