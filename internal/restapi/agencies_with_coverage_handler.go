@@ -41,8 +41,25 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 		)
 	}
 
+	// Parse includeReferences
+	includeReferences := true
+	if val := queryParams.Get("includeReferences"); val != "" {
+		if parsed, parseErr := strconv.ParseBool(val); parseErr == nil {
+			includeReferences = parsed
+		}
+	}
+
+	data := map[string]any{
+		"limitExceeded": limitExceeded,
+		"list":          agenciesWithCoverage,
+	}
+
+	if includeReferences {
 	references := models.NewEmptyReferences()
 	references.Agencies = buildAgencyReferences(agencies)
-	response := models.NewListResponse(agenciesWithCoverage, *references, limitExceeded, api.Clock)
+		data["references"] = *references
+	}
+
+	response := models.NewOKResponse(data, api.Clock)
 	api.sendResponse(w, r, response)
 }
