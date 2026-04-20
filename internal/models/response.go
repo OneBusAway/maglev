@@ -8,7 +8,7 @@ import (
 type ResponseModel struct {
 	Code        int    `json:"code"`
 	CurrentTime int64  `json:"currentTime"`
-	Data        any    `json:"data,omitempty"`
+	Data        any    `json:"data"`
 	Text        string `json:"text"`
 	Version     int    `json:"version"`
 }

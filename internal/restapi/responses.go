@@ -74,6 +74,7 @@ func (api *RestAPI) sendError(w http.ResponseWriter, r *http.Request, code int, 
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        message,
 		Version:     2,
+		Data:        nil,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
