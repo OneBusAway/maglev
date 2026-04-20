@@ -167,6 +167,93 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	})
 }
 
+// Regression for #790: serviceIds must be derived from the route's actual
+// trips, not from the agency's active service IDs for the day. Route 25_1885
+// uses only c_868_b_79978_d_31, while several other services are active on
+// the same weekday — the response must include only the route-scoped set.
+func TestScheduleForRouteHandler_ServiceIDsScopedToRoute(t *testing.T) {
+	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
+	defer api.Shutdown()
+
+	routeID := utils.FormCombinedID("25", "1885")
+	expectedServiceID := utils.FormCombinedID("25", "c_868_b_79978_d_31")
+
+	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	svcIdsRaw, ok := entry["serviceIds"].([]interface{})
+	require.True(t, ok)
+
+	svcIds := make([]string, 0, len(svcIdsRaw))
+	for _, v := range svcIdsRaw {
+		s, ok := v.(string)
+		require.True(t, ok)
+		svcIds = append(svcIds, s)
+	}
+
+	assert.ElementsMatch(t, []string{expectedServiceID}, svcIds,
+		"serviceIds must be scoped to the route's trips, not agency-wide active services")
+}
+
+// Regression: stopTripGroupings must follow the Java-OBA direction_id convention —
+// groups are sorted so the higher CSV direction_id ("1") becomes group "0" and the
+// lower ("0") becomes group "1". Trips inside each group must still carry their
+// original CSV direction_id in the references section.
+func TestScheduleForRouteHandler_DirectionIDJavaParity(t *testing.T) {
+	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
+	defer api.Shutdown()
+
+	routeID := utils.FormCombinedID("25", "1885")
+	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+
+	groupings, ok := entry["stopTripGroupings"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, groupings, 2, "route 25_1885 has trips in both directions")
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+	tripRefs, ok := refs["trips"].([]interface{})
+	require.True(t, ok)
+
+	tripDirByID := make(map[string]string, len(tripRefs))
+	for _, tr := range tripRefs {
+		trMap := tr.(map[string]interface{})
+		tid, _ := trMap["id"].(string)
+		dir, _ := trMap["directionId"].(string)
+		tripDirByID[tid] = dir
+	}
+
+	// Expected Java-OBA mapping: group "0" ↔ CSV direction_id "1", group "1" ↔ CSV direction_id "0".
+	expected := map[string]string{"0": "1", "1": "0"}
+	for _, g := range groupings {
+		gMap := g.(map[string]interface{})
+		gid, _ := gMap["directionId"].(string)
+		tripIDs, _ := gMap["tripIds"].([]interface{})
+		require.NotEmpty(t, tripIDs)
+		for _, tid := range tripIDs {
+			ts, _ := tid.(string)
+			assert.Equal(t, expected[gid], tripDirByID[ts],
+				"group %s trip %s should have CSV direction_id %s", gid, ts, expected[gid])
+		}
+	}
+}
+
 func TestScheduleForRouteHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

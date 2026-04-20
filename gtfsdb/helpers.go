@@ -381,7 +381,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) erro
 			ServiceID:            t.Service.Id,
 			TripHeadsign:         toNullString(t.Headsign),
 			TripShortName:        toNullString(t.ShortName),
-			DirectionID:          toNullInt64(int64(t.DirectionId)),
+			DirectionID:          gtfsDirectionIDToDB(t.DirectionId),
 			BlockID:              toNullString(t.BlockID),
 			ShapeID:              toNullString(shapeID),
 			WheelchairAccessible: toNullInt64(int64(t.WheelchairAccessible)),
@@ -601,6 +601,23 @@ func toNullInt64(i int64) sql.NullInt64 {
 		}
 	}
 	return sql.NullInt64{}
+}
+
+// gtfsDirectionIDToDB converts a go-gtfs DirectionID enum back to the raw
+// GTFS CSV value (0 or 1) for database storage. The go-gtfs enum numbers
+// DirectionID_True=1 and DirectionID_False=2, which does not match the GTFS
+// spec (direction_id is 0 or 1). Storing the raw CSV value keeps downstream
+// code (ordering, Java-parity grouping, serialization) consistent with the
+// GTFS spec and with onebusaway-application-modules.
+func gtfsDirectionIDToDB(d gtfs.DirectionID) sql.NullInt64 {
+	switch d {
+	case gtfs.DirectionID_True:
+		return sql.NullInt64{Int64: 1, Valid: true}
+	case gtfs.DirectionID_False:
+		return sql.NullInt64{Int64: 0, Valid: true}
+	default:
+		return sql.NullInt64{}
+	}
 }
 
 func toNullFloat64(f float64) sql.NullFloat64 {
