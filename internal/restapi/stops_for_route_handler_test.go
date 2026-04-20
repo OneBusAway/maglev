@@ -67,10 +67,11 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 2, len(stopGroups))
 
-	// Verify inbound group (direction 1 in normalized 0-based index)
-	inboundGroup, ok := stopGroups[1].(map[string]any)
+	// Java-OBA direction_id convention: CSV direction_id=1 maps to group "0"
+	// (first entry), CSV direction_id=0 maps to group "1" (second entry).
+	inboundGroup, ok := stopGroups[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "1", inboundGroup["id"])
+	assert.Equal(t, "0", inboundGroup["id"])
 
 	inboundName, ok := inboundGroup["name"].(map[string]any)
 	require.True(t, ok)
@@ -92,10 +93,9 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 1, len(inboundPolylines))
 
-	// Verify outbound group (direction 0 in normalized 0-based index)
-	outboundGroup, ok := stopGroups[0].(map[string]any)
+	outboundGroup, ok := stopGroups[1].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "0", outboundGroup["id"])
+	assert.Equal(t, "1", outboundGroup["id"])
 
 	outboundName, ok := outboundGroup["name"].(map[string]any)
 	require.True(t, ok)

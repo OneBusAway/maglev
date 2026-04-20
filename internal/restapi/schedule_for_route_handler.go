@@ -97,16 +97,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	seenSvcIDs := make(map[string]bool)
-	var combinedServiceIDs []string
+	routeSvcIDs := make(map[string]bool)
+	combinedServiceIDs := make([]string, 0, len(trips))
 	for _, trip := range trips {
-		if !seenSvcIDs[trip.ServiceID] {
-			seenSvcIDs[trip.ServiceID] = true
+		if !routeSvcIDs[trip.ServiceID] {
+			routeSvcIDs[trip.ServiceID] = true
 			combinedServiceIDs = append(combinedServiceIDs, utils.FormCombinedID(agencyID, trip.ServiceID))
 		}
-	}
-	if combinedServiceIDs == nil {
-		combinedServiceIDs = []string{}
 	}
 
 	// Handle case where service exists but this route has no trips today.
@@ -151,11 +148,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 		tripsInGroup := group.Trips
 
-		seenSvcIDs := make(map[string]bool)
+		seenDirSvcIDs := make(map[string]bool)
 		var dirServiceIDs []string
 		for _, trip := range tripsInGroup {
-			if !seenSvcIDs[trip.ServiceID] {
-				seenSvcIDs[trip.ServiceID] = true
+			if !seenDirSvcIDs[trip.ServiceID] {
+				seenDirSvcIDs[trip.ServiceID] = true
 				dirServiceIDs = append(dirServiceIDs, trip.ServiceID)
 			}
 		}
@@ -173,8 +170,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				})
 		}
 		if err != nil {
-			api.Logger.Warn("failed to fetch ordered stop IDs for route direction", "route_id", routeID, "group_id", group.GroupID, "error", err)
-			continue
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 
 		for _, stopID := range orderedStopIDs {
@@ -198,7 +195,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 		allStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, rawTripIDs)
 		if err != nil {
-			api.Logger.Warn("failed to fetch stop times for trips in direction group", "group_id", group.GroupID, "error", err)
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 
 		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripsInGroup))
@@ -282,6 +280,9 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 		for _, t := range tripRows {
 			combinedTripID := utils.FormCombinedID(agencyID, t.ID)
+			// references.trips[].directionId carries the raw GTFS CSV value (0 or 1),
+			// matching Java OBA. stopTripGroupings[].directionId above is the Java-parity
+			// group index — the two fields share a name but have different semantics.
 			tripRef := models.NewTripReference(
 				combinedTripID,
 				t.RouteID,

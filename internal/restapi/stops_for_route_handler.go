@@ -118,10 +118,14 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		if err != nil {
 			return models.RouteEntry{}, nil, err
 		}
-		processTripGroups(ctx, api, agencyID, routeID, allTrips, &stopGroupings, allStops, &allPolylines)
+		if err := processTripGroups(ctx, api, agencyID, routeID, allTrips, &stopGroupings, allStops, &allPolylines); err != nil {
+			return models.RouteEntry{}, nil, err
+		}
 	} else {
 		// Process trips for the current service date
-		processTripGroups(ctx, api, agencyID, routeID, trips, &stopGroupings, allStops, &allPolylines)
+		if err := processTripGroups(ctx, api, agencyID, routeID, trips, &stopGroupings, allStops, &allPolylines); err != nil {
+			return models.RouteEntry{}, nil, err
+		}
 	}
 
 	if !includePolylines {
@@ -237,14 +241,14 @@ func processTripGroups(
 	stopGroupings *[]models.StopGrouping,
 	allStops map[string]bool,
 	allPolylines *[]models.Polyline,
-) {
+) error {
 	dirGroups := groupTripsByDirection(trips)
 
 	var allStopGroups []models.StopGroup
 
 	for _, group := range dirGroups {
 		if ctx.Err() != nil {
-			return
+			return ctx.Err()
 		}
 
 		tripsInGroup := group.Trips
@@ -278,8 +282,7 @@ func processTripGroups(
 				})
 		}
 		if err != nil {
-			api.Logger.Warn("failed to fetch ordered stop IDs for route direction", "route_id", routeID, "group_id", group.GroupID, "error", err)
-			continue
+			return err
 		}
 		for _, stopID := range orderedStopIDs {
 			allStops[stopID] = true
@@ -347,6 +350,7 @@ func processTripGroups(
 			Type:       "direction",
 		})
 	}
+	return nil
 }
 
 func generatePolylines(shapes []gtfsdb.GetShapesGroupedByTripHeadSignRow) []models.Polyline {

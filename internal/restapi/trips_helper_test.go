@@ -2194,6 +2194,33 @@ func TestGroupTripsByDirection_NullDirectionID(t *testing.T) {
 	assert.Equal(t, []string{"t-1", "t-2"}, testTripIDs(groups[0].Trips))
 }
 
+// TestGroupTripsByDirection_MixedNullAndValid pins current behavior when a route
+// has trips with both valid direction_id and NULL direction_id. NULL values
+// decode to Int64=0 via sql.NullInt64, so they bucket together with valid
+// direction_id=0 trips. The group's DirectionID mirrors the lexicographically
+// first trip in that bucket — exposing the NULL when that trip is NULL.
+func TestGroupTripsByDirection_MixedNullAndValid(t *testing.T) {
+	trips := []gtfsdb.Trip{
+		makeTestTrip("t-out", dir(1)),
+		makeTestTrip("t-in", dir(0)),
+		makeTestTrip("a-null", nullDir()),
+	}
+
+	groups := groupTripsByDirection(trips)
+
+	require.Len(t, groups, 2)
+
+	assert.Equal(t, "0", groups[0].GroupID)
+	assert.True(t, groups[0].DirectionID.Valid)
+	assert.Equal(t, int64(1), groups[0].DirectionID.Int64)
+	assert.Equal(t, []string{"t-out"}, testTripIDs(groups[0].Trips))
+
+	assert.Equal(t, "1", groups[1].GroupID)
+	assert.False(t, groups[1].DirectionID.Valid,
+		"NULL direction_id collides with direction_id=0; first trip by ID determines group DirectionID")
+	assert.Equal(t, []string{"a-null", "t-in"}, testTripIDs(groups[1].Trips))
+}
+
 // TestGroupTripsByDirection_TripsWithinGroupSortedByID verifies deterministic trip order.
 func TestGroupTripsByDirection_TripsWithinGroupSortedByID(t *testing.T) {
 	trips := []gtfsdb.Trip{
