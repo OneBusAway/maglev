@@ -52,3 +52,60 @@ func TestAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
 }
+
+func TestAgencyHandlerReturns400OnBlankID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/ .json?key=TEST")
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, "id contains invalid characters", model.Text) // Matches Maglev's exact validator output
+
+	data, ok := model.Data.(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, data, "fieldErrors")
+}
+
+func TestAgencyHandlerRejectsInvalidVersion(t *testing.T) {
+	// Extension 5b: The caller supplies an unrecognised version parameter value.
+	api := createTestApi(t)
+	defer api.Shutdown()
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].ID
+
+	// Supply an explicitly invalid version (e.g., 3)
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/"+agencyID+".json?key=TEST&version=3")
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Contains(t, model.Text, "unknown version")
+	assert.Nil(t, model.Data)
+}
+
+func TestAgencyHandlerIgnoresIncludeReferencesFlag(t *testing.T) {
+	// The includeReferences flag should have no observable effect, and references should remain empty.
+	api := createTestApi(t)
+	defer api.Shutdown()
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].ID
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/"+agencyID+".json?key=TEST&includeReferences=false")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]any)
+	require.True(t, ok)
+
+	// Assert references is present and empty
+	references, ok := data["references"].(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, references["agencies"])
+	assert.Empty(t, references["routes"])
+	assert.Empty(t, references["stops"])
+	assert.Empty(t, references["trips"])
+	assert.Empty(t, references["situations"])
+}

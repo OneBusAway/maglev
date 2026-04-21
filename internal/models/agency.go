@@ -1,6 +1,10 @@
 package models
 
-import "maglev.onebusaway.org/gtfsdb"
+import (
+	"database/sql"
+
+	"maglev.onebusaway.org/gtfsdb"
+)
 
 // AgencyCoverage represents the geographical coverage area of a transit agency
 type AgencyCoverage struct {
@@ -23,16 +27,16 @@ func NewAgencyCoverage(agencyID string, lat, latSpan, lon, lonSpan float64) Agen
 }
 
 type AgencyReference struct {
-	Disclaimer     string `json:"disclaimer"`
-	Email          string `json:"email"`
-	FareUrl        string `json:"fareUrl"`
 	ID             string `json:"id"`
-	Lang           string `json:"lang"`
 	Name           string `json:"name"`
-	Phone          string `json:"phone"`
-	PrivateService bool   `json:"privateService"`
-	Timezone       string `json:"timezone"`
 	URL            string `json:"url"`
+	Timezone       string `json:"timezone"`
+	Lang           string `json:"lang,omitempty"`
+	Phone          string `json:"phone,omitempty"`
+	Email          string `json:"email,omitempty"`
+	FareUrl        string `json:"fareUrl,omitempty"`
+	Disclaimer     string `json:"disclaimer,omitempty"`
+	PrivateService bool   `json:"privateService"`
 }
 
 // NewAgencyReference creates a new AgencyReference instance with the provided values
@@ -51,16 +55,24 @@ func NewAgencyReference(id, name, url, timezone, lang, phone, email, fareUrl, di
 	}
 }
 
+// nullStringOrEmpty safely extracts a string from sql.NullString, returning "" if invalid.
+func nullStringOrEmpty(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
+}
+
 func AgencyReferenceFromDatabase(agency *gtfsdb.Agency) AgencyReference {
 	return AgencyReference{
 		ID:             agency.ID,
 		Name:           agency.Name,
 		URL:            agency.Url,
 		Timezone:       agency.Timezone,
-		Lang:           gtfsdb.NullStringOrEmpty(agency.Lang),
-		Phone:          gtfsdb.NullStringOrEmpty(agency.Phone),
-		Email:          gtfsdb.NullStringOrEmpty(agency.Email),
-		FareUrl:        gtfsdb.NullStringOrEmpty(agency.FareUrl),
+		Lang:           nullStringOrEmpty(agency.Lang),
+		Phone:          nullStringOrEmpty(agency.Phone),
+		Email:          nullStringOrEmpty(agency.Email),
+		FareUrl:        nullStringOrEmpty(agency.FareUrl),
 		Disclaimer:     "",
 		PrivateService: false,
 	}

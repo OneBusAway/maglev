@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"errors"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
@@ -10,6 +11,19 @@ import (
 func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
+		return
+	}
+
+	// Extension 5b: Validate version parameter
+	versionStr := r.URL.Query().Get("version")
+	if versionStr != "" && versionStr != "1" && versionStr != "2" {
+		api.sendError(w, r, http.StatusInternalServerError, "unknown version: "+versionStr)
+		return
+	}
+
+	// Protect against nil pointer panics if the DB fails to load or is hot-swapping
+	if api.GtfsManager == nil {
+		api.serverErrorResponse(w, r, errors.New("GTFS database is currently unavailable"))
 		return
 	}
 
