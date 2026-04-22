@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/twpayne/go-polyline"
@@ -339,8 +340,8 @@ func processTripGroups(
 	}
 
 	if len(allStopGroups) > 0 {
-		slices.SortFunc(*stopGroupings, func(a, b models.StopGrouping) int {
-			return cmp.Compare(a.StopGroups[0].ID, b.StopGroups[0].ID)
+		slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
+			return cmp.Compare(strings.Join(a.Name.Names, ""), strings.Join(b.Name.Names, ""))
 		})
 
 		*stopGroupings = append(*stopGroupings, models.StopGrouping{

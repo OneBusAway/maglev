@@ -67,45 +67,40 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 2, len(stopGroups))
 
-	// Java-OBA direction_id convention: CSV direction_id=1 maps to group "0"
-	// (first entry), CSV direction_id=0 maps to group "1" (second entry).
-	inboundGroup, ok := stopGroups[0].(map[string]any)
+	outboundGroup, ok := stopGroups[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "0", inboundGroup["id"])
-
-	inboundName, ok := inboundGroup["name"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "Shasta Lake", inboundName["name"])
-	assert.Equal(t, "destination", inboundName["type"])
-
-	inboundNames, ok := inboundName["names"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(inboundNames))
-	assert.Equal(t, "Shasta Lake", inboundNames[0])
-
-	inboundStopIds, ok := inboundGroup["stopIds"].([]any)
-	require.True(t, ok)
-
-	// With deterministic sorting, checks should be consistent
-	assert.Equal(t, 22, len(inboundStopIds))
-
-	inboundPolylines, ok := inboundGroup["polylines"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(inboundPolylines))
-
-	outboundGroup, ok := stopGroups[1].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "1", outboundGroup["id"])
+	assert.Equal(t, "0", outboundGroup["id"])
 
 	outboundName, ok := outboundGroup["name"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "Shasta Lake", outboundName["name"])
 	assert.Equal(t, "destination", outboundName["type"])
 
+	outboundNames, ok := outboundName["names"].([]any)
+	require.True(t, ok)
+	assert.Equal(t, 1, len(outboundNames))
+	assert.Equal(t, "Shasta Lake", outboundNames[0])
+
 	outboundStopIds, ok := outboundGroup["stopIds"].([]any)
 	require.True(t, ok)
-	// With deterministic sorting, checks should be consistent
 	assert.Equal(t, 21, len(outboundStopIds))
+
+	outboundPolylines, ok := outboundGroup["polylines"].([]any)
+	require.True(t, ok)
+	assert.Equal(t, 1, len(outboundPolylines))
+
+	inboundGroup, ok := stopGroups[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "1", inboundGroup["id"])
+
+	inboundName, ok := inboundGroup["name"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "Shasta Lake", inboundName["name"])
+	assert.Equal(t, "destination", inboundName["type"])
+
+	inboundStopIds, ok := inboundGroup["stopIds"].([]any)
+	require.True(t, ok)
+	assert.Equal(t, 22, len(inboundStopIds))
 
 	// Verify references
 	refs, ok := data["references"].(map[string]any)
