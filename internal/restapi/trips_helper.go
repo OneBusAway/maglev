@@ -1217,18 +1217,16 @@ func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 	for dirID := range byDirID {
 		dirIDs = append(dirIDs, dirID)
 	}
-	// Descending so CSV direction_id=1 becomes group "0" and direction_id=0 becomes group "1" (Java OBA parity).
-	sort.Slice(dirIDs, func(i, j int) bool { return dirIDs[i] > dirIDs[j] })
+	sort.Slice(dirIDs, func(i, j int) bool { return dirIDs[i] < dirIDs[j] })
 
 	groups := make([]directionGroup, 0, len(dirIDs))
-	for i, dirID := range dirIDs {
+	for _, dirID := range dirIDs {
 		tripsInGroup := byDirID[dirID]
-		// Sort by trip ID so tripIds in the response is deterministic across runs.
 		sort.Slice(tripsInGroup, func(a, b int) bool {
 			return tripsInGroup[a].ID < tripsInGroup[b].ID
 		})
 		groups = append(groups, directionGroup{
-			GroupID:     strconv.Itoa(i),
+			GroupID:     strconv.FormatInt(dirID, 10),
 			DirectionID: tripsInGroup[0].DirectionID,
 			Trips:       tripsInGroup,
 		})
