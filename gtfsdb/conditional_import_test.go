@@ -109,7 +109,6 @@ func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Perform second import with same data
-	require.NoError(t, err)
 	startTime := time.Now()
 	_, err = client.StoreGtfsData(t.Context(), parsedOriginal)
 	duration := time.Since(startTime)
