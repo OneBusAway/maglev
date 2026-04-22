@@ -189,15 +189,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 			continue
 		}
 
-		// Final attempt failed. If the DB was pre-populated from a previous run,
-		// we can still serve data; otherwise bail out.
-		if metadata, metaErr := gtfsDB.Queries.GetImportMetadata(ctx); metaErr == nil && metadata.FileHash != "" {
-			logging.LogError(logger, "Failed to refresh GTFS data on startup; continuing with previously imported data", reloadErr,
-				slog.Int("attempts", maxAttempts),
-			)
-			break
+		err = gtfsDB.Close()
+		if err != nil {
+			logging.LogError(logger, "closing DB failed", err)
 		}
-		_ = gtfsDB.Close()
 		return nil, fmt.Errorf("failed to load GTFS data after %d attempts: %w", maxAttempts, reloadErr)
 	}
 

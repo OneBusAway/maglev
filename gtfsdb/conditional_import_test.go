@@ -258,7 +258,6 @@ func TestConditionalImport_FileImport(t *testing.T) {
 	// Import same file again - should skip
 	startTime := time.Now()
 	_, err = client.StoreGtfsData(t.Context(), data)
-	require.NoError(t, err, "File import should succeed")
 	duration := time.Since(startTime)
 	require.NoError(t, err, "Second file import should succeed")
 
