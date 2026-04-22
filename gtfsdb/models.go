@@ -19,6 +19,17 @@ type Agency struct {
 	Email    sql.NullString
 }
 
+type BlockLayover struct {
+	ID            int64
+	BlockID       string
+	ServiceID     string
+	RouteID       string
+	LayoverStopID string
+	LayoverStart  int64
+	LayoverEnd    int64
+	NextTripID    string
+}
+
 type BlockTripEntry struct {
 	ID                int64
 	BlockTripIndexID  int64

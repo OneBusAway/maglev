@@ -376,6 +376,27 @@ CREATE INDEX IF NOT EXISTS idx_block_trip_entry_trip_id ON block_trip_entry (tri
 CREATE INDEX IF NOT EXISTS idx_block_trip_entry_service_id ON block_trip_entry (service_id);
 
 -- migrate
+CREATE TABLE
+    IF NOT EXISTS block_layover (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_id TEXT NOT NULL,
+        service_id TEXT NOT NULL,
+        route_id TEXT NOT NULL, -- route of the trip DEPARTING from the layover
+        layover_stop_id TEXT NOT NULL,
+        layover_start INTEGER NOT NULL, -- nanoseconds since service-day midnight
+        layover_end INTEGER NOT NULL,
+        next_trip_id TEXT NOT NULL,
+        FOREIGN KEY (next_trip_id) REFERENCES trips (id)
+    );
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_block_layover_route_service_time
+    ON block_layover (route_id, service_id, layover_end, layover_start);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_block_layover_block ON block_layover (block_id);
+
+-- migrate
 CREATE INDEX IF NOT EXISTS idx_trips_block_id ON trips (block_id);
 
 -- migrate
