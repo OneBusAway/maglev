@@ -3877,61 +3877,6 @@ func (q *Queries) GetStopsForRoute(ctx context.Context, id string) ([]GetStopsFo
 	return items, nil
 }
 
-const getStopsWithActiveServiceOnDate = `-- name: GetStopsWithActiveServiceOnDate :many
-SELECT DISTINCT st.stop_id
-FROM stop_times st
-JOIN trips t ON st.trip_id = t.id
-WHERE st.stop_id IN (/*SLICE:stop_ids*/?)
-  AND t.service_id IN (/*SLICE:service_ids*/?)
-`
-
-type GetStopsWithActiveServiceOnDateParams struct {
-	StopIds    []string
-	ServiceIds []string
-}
-
-// Returns stop IDs that have at least one trip with active service on the given date
-func (q *Queries) GetStopsWithActiveServiceOnDate(ctx context.Context, arg GetStopsWithActiveServiceOnDateParams) ([]string, error) {
-	query := getStopsWithActiveServiceOnDate
-	var queryParams []interface{}
-	if len(arg.StopIds) > 0 {
-		for _, v := range arg.StopIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
-	}
-	if len(arg.ServiceIds) > 0 {
-		for _, v := range arg.ServiceIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
-	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var stop_id string
-		if err := rows.Scan(&stop_id); err != nil {
-			return nil, err
-		}
-		items = append(items, stop_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getStopsWithShapeContext = `-- name: GetStopsWithShapeContext :many
 SELECT
     s.id, s.lat, s.lon, s.name, s.code, s.direction,

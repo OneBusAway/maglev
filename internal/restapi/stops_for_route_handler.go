@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/twpayne/go-polyline"
@@ -119,10 +118,14 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		if err != nil {
 			return models.RouteEntry{}, nil, err
 		}
-		processTripGroups(ctx, api, agencyID, routeID, allTrips, &stopGroupings, allStops, &allPolylines)
+		if err := processTripGroups(ctx, api, agencyID, routeID, allTrips, &stopGroupings, allStops, &allPolylines); err != nil {
+			return models.RouteEntry{}, nil, err
+		}
 	} else {
 		// Process trips for the current service date
-		processTripGroups(ctx, api, agencyID, routeID, trips, &stopGroupings, allStops, &allPolylines)
+		if err := processTripGroups(ctx, api, agencyID, routeID, trips, &stopGroupings, allStops, &allPolylines); err != nil {
+			return models.RouteEntry{}, nil, err
+		}
 	}
 
 	if !includePolylines {
@@ -238,39 +241,17 @@ func processTripGroups(
 	stopGroupings *[]models.StopGrouping,
 	allStops map[string]bool,
 	allPolylines *[]models.Polyline,
-) {
-	tripGroups := make(map[int64][]gtfsdb.Trip)
-	for _, trip := range trips {
-		dirID := trip.DirectionID.Int64
-		tripGroups[dirID] = append(tripGroups[dirID], trip)
-	}
+) error {
+	dirGroups := groupTripsByDirection(trips)
 
 	var allStopGroups []models.StopGroup
 
-	var directionIDs []int64
-	for dirID := range tripGroups {
-		directionIDs = append(directionIDs, dirID)
-	}
-
-	// Sort descending so index 0 maps to the highest direction_id value. This
-	// produces normalized group IDs "0", "1", … that match the Java OBA server's
-	// convention where outbound (direction_id=1) is group "0" and inbound
-	// (direction_id=0) is group "1".
-	sort.Slice(directionIDs, func(i, j int) bool {
-		return directionIDs[i] > directionIDs[j]
-	})
-
-	for i, dirID := range directionIDs {
+	for _, group := range dirGroups {
 		if ctx.Err() != nil {
-			return
+			return ctx.Err()
 		}
 
-		tripsInGroup := tripGroups[dirID]
-
-		// Sort trips by ID to ensure we always pick the same representative trip
-		sort.Slice(tripsInGroup, func(i, j int) bool {
-			return tripsInGroup[i].ID < tripsInGroup[j].ID
-		})
+		tripsInGroup := group.Trips
 
 		headsignCounts := make(map[string]int)
 		var dirServiceIDs []string
@@ -285,7 +266,7 @@ func processTripGroups(
 
 		var orderedStopIDs []string
 		var err error
-		if !tripsInGroup[0].DirectionID.Valid {
+		if !group.DirectionID.Valid {
 			/*
 				direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
 				UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
@@ -296,13 +277,12 @@ func processTripGroups(
 			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
 				gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
 					RouteID:     routeID,
-					DirectionID: tripsInGroup[0].DirectionID,
+					DirectionID: group.DirectionID,
 					ServiceIds:  dirServiceIDs,
 				})
 		}
 		if err != nil {
-			api.Logger.Warn("failed to fetch ordered stop IDs for route direction", "route_id", routeID, "direction_id", dirID, "error", err)
-			continue
+			return err
 		}
 		for _, stopID := range orderedStopIDs {
 			allStops[stopID] = true
@@ -344,9 +324,7 @@ func processTripGroups(
 			formattedStopIDs[idx] = utils.FormCombinedID(agencyID, id)
 		}
 
-		// i is the 0-based index over descending-sorted direction IDs, giving
-		// normalized group IDs "0", "1", … regardless of raw GTFS direction_id values.
-		groupID := strconv.Itoa(i)
+		groupID := group.GroupID
 
 		stopGroup := models.StopGroup{
 			ID: groupID,
@@ -372,6 +350,7 @@ func processTripGroups(
 			Type:       "direction",
 		})
 	}
+	return nil
 }
 
 func generatePolylines(shapes []gtfsdb.GetShapesGroupedByTripHeadSignRow) []models.Polyline {
