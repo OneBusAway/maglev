@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,7 +43,6 @@ type RegionBounds struct {
 type Manager struct {
 	GtfsDB                         *gtfsdb.Client
 	lastUpdatedUnixNanos           atomic.Int64 // Lock-free freshness tracking
-	isLocalFile                    bool
 	realTimeTrips                  []gtfs.Trip
 	realTimeVehicles               []gtfs.Vehicle
 	realTimeMutex                  sync.RWMutex
@@ -120,8 +118,6 @@ func (manager *Manager) MarkReady() {
 // InitGTFSManager initializes the Manager with the GTFS data from the given source
 // The source can be either a URL or a local file path
 func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
-	isLocalFile := !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
-
 	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 
 	// Use configurable backoffs or default to production values
@@ -132,7 +128,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	maxAttempts := len(backoffs) + 1
 
 	// Skip retries for local files - they will fail identically every time
-	if isLocalFile {
+	if config.isLocalFile() {
 		maxAttempts = 1
 	}
 
@@ -143,7 +139,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 
 	manager := &Manager{
 		GtfsDB:                         gtfsDB,
-		isLocalFile:                    isLocalFile,
 		config:                         config,
 		shutdownChan:                   make(chan struct{}),
 		realTimeTripLookup:             make(map[string]int),
@@ -254,7 +249,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	// Everything is now warm and ready for traffic
 	manager.MarkReady()
 
-	if !isLocalFile {
+	if !config.isLocalFile() {
 		manager.wg.Add(1)
 		go manager.updateStaticGTFS()
 	}
@@ -274,7 +269,6 @@ func (manager *Manager) SetGtfsURL(url string) {
 	manager.staticUpdateMutex.Lock()
 	defer manager.staticUpdateMutex.Unlock()
 	manager.config.GtfsURL = url
-	manager.isLocalFile = !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://")
 }
 
 // Shutdown gracefully shuts down the manager and its background goroutines
@@ -723,7 +717,6 @@ func (manager *Manager) PrintStatistics() {
 
 	logging.LogOperation(logger, "gtfs_statistics",
 		slog.String("source", manager.config.GtfsURL),
-		slog.Bool("local_file", manager.isLocalFile),
 		slog.Time("last_updated", manager.lastUpdated),
 		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
 		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),

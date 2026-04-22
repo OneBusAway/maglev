@@ -1,13 +1,9 @@
 package gtfsdb
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"os"
 	"time"
 )
 
@@ -47,56 +43,4 @@ func NewClient(config Config) (*Client, error) {
 
 func (c *Client) Close() error {
 	return c.DB.Close()
-}
-
-// DownloadAndStore downloads GTFS data from the given URL and stores it in the database.
-// Returns (changed, err) — changed is true when the import wrote new data, false if the
-// existing data matched the downloaded bytes by hash.
-func (c *Client) DownloadAndStore(ctx context.Context, url, authHeaderKey, authHeaderValue string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false, err
-	}
-
-	// Add auth header if provided
-	if authHeaderKey != "" && authHeaderValue != "" {
-		req.Header.Set(authHeaderKey, authHeaderValue)
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
-		Transport: &http.Transport{
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-			IdleConnTimeout:       90 * time.Second,
-		}}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	const maxBodySize = 200 * 1024 * 1024
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
-	if err != nil {
-		return false, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if int64(len(body)) > maxBodySize {
-		return false, fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxBodySize)
-	}
-
-	return c.processAndStoreGTFSDataWithSource(body, url)
-}
-
-// ImportFromFile imports GTFS data from a local zip file into the database.
-// Returns (changed, err) — changed is true when the import wrote new data, false if the
-// existing data matched the file's bytes by hash.
-func (c *Client) ImportFromFile(ctx context.Context, path string) (bool, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
-	}
-
-	return c.processAndStoreGTFSDataWithSource(data, path)
 }

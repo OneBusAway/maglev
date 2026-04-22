@@ -23,6 +23,33 @@ import (
 //go:embed schema.sql
 var ddl string
 
+// GtfsData bundles parsed static GTFS data with the sha256 hash of the
+// bytes it was parsed from. The hash is used to skip reimport when the
+// source data is unchanged.
+type GtfsData struct {
+	Static *gtfs.Static
+	Hash   string
+	Source string
+}
+
+// ParseGtfsData hashes, parses, and structurally validates GTFS zip bytes.
+// The given source is stored on the returned struct for later use by StoreGtfsData.
+func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
+	hash := sha256.Sum256(b)
+	hashStr := hex.EncodeToString(hash[:])
+
+	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
+	}
+
+	if err := ValidateAndFilterGTFSData(staticData, slog.Default()); err != nil {
+		return nil, fmt.Errorf("GTFS validation failed: %w", err)
+	}
+
+	return &GtfsData{Static: staticData, Hash: hashStr, Source: source}, nil
+}
+
 // metricsWrapper wraps *sql.DB for metric reporting purposes
 type metricsWrapper struct {
 	db           *sql.DB
@@ -172,7 +199,7 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 	return nil
 }
 
-func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (bool, error) {
+func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
 
 	startTime := time.Now()
@@ -183,14 +210,8 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 
 		logging.LogOperation(logger, "gtfs_data_import_completed",
 			slog.Duration("duration", c.importRuntime),
-			slog.String("source", source))
+			slog.String("source", data.Source))
 	}()
-
-	// Calculate hash of the GTFS data
-	hash := sha256.Sum256(b)
-	hashStr := hex.EncodeToString(hash[:])
-
-	ctx := context.Background()
 
 	// 1. Check if we already have this data imported
 	var hasExisting bool
@@ -198,9 +219,9 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	if err == nil {
 		hasExisting = true
 		// We have existing metadata, check if hash matches
-		if existingMetadata.FileHash == hashStr && existingMetadata.FileSource == source {
+		if existingMetadata.FileHash == data.Hash && existingMetadata.FileSource == data.Source {
 			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
-				slog.String("hash", hashStr[:8]))
+				slog.String("hash", data.Hash[:8]))
 			return false, nil
 		}
 	} else if err != sql.ErrNoRows {
@@ -208,21 +229,9 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 		return false, fmt.Errorf("error checking import metadata: %w", err)
 	}
 
-	// 2. Parse the new data FIRST (before deleting the old working data)
-	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
-	if err != nil {
-		return false, err
-	}
+	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(data.Static.Warnings)))
 
-	// 3. Perform Structural Validation
-	if err := ValidateAndFilterGTFSData(staticData, logger); err != nil {
-		logging.LogError(logger, "GTFS feed structural validation failed", err)
-		return false, fmt.Errorf("GTFS validation failed: %w", err)
-	}
-
-	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(staticData.Warnings)))
-
-	staticCounts := c.staticDataCounts(staticData)
+	staticCounts := c.staticDataCounts(data.Static)
 	for k, v := range staticCounts {
 		logging.LogOperation(logger, "static_data_count", slog.String("entity_type", k), slog.Int("count", v))
 	}
@@ -233,7 +242,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	if err != nil {
 		return false, fmt.Errorf("error starting import transaction: %w", err)
 	}
-	defer logging.SafeRollbackWithLogging(tx, logger, "processAndStoreGTFSDataWithSource")
+	defer logging.SafeRollbackWithLogging(tx, logger, "StoreGtfsData")
 
 	qtx := c.Queries.WithTx(tx)
 
@@ -241,17 +250,17 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	if hasExisting {
 		logging.LogOperation(logger, "gtfs_data_changed_reimporting",
 			slog.String("old_hash", existingMetadata.FileHash[:8]),
-			slog.String("new_hash", hashStr[:8]))
+			slog.String("new_hash", data.Hash[:8]))
 		if err := c.clearAllGTFSDataWithQueries(ctx, qtx); err != nil {
 			return false, fmt.Errorf("error clearing existing GTFS data: %w", err)
 		}
 	}
 
 	logging.LogOperation(logger, "inserting_agencies_and_routes",
-		slog.Int("agencies", len(staticData.Agencies)),
-		slog.Int("routes", len(staticData.Routes)))
+		slog.Int("agencies", len(data.Static.Agencies)),
+		slog.Int("routes", len(data.Static.Routes)))
 
-	for _, a := range staticData.Agencies {
+	for _, a := range data.Static.Agencies {
 		params := CreateAgencyParams{
 			ID:       a.Id,
 			Name:     a.Name,
@@ -270,11 +279,11 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	singleAgencyID := ""
-	if len(staticData.Agencies) == 1 {
-		singleAgencyID = staticData.Agencies[0].Id
+	if len(data.Static.Agencies) == 1 {
+		singleAgencyID = data.Static.Agencies[0].Id
 	}
 
-	for _, r := range staticData.Routes {
+	for _, r := range data.Static.Routes {
 		route := CreateRouteParams{
 			ID:                r.Id,
 			AgencyID:          pickFirstAvailable(r.Agency.Id, singleAgencyID),
@@ -297,7 +306,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	var allStopParams []CreateStopParams
-	for _, s := range staticData.Stops {
+	for _, s := range data.Static.Stops {
 		// Skip stops without coordinates to prevent nil pointer dereference and avoid
 		// storing invalid (0,0) placeholder coordinates that would contaminate spatial
 		// indexing and API responses. Per GTFS spec, lat/lon are optional for generic
@@ -339,12 +348,12 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	logging.LogOperation(logger, "agencies_and_routes_inserted",
-		slog.Int("agencies", len(staticData.Agencies)),
-		slog.Int("routes", len(staticData.Routes)))
+		slog.Int("agencies", len(data.Static.Agencies)),
+		slog.Int("routes", len(data.Static.Routes)))
 	logging.LogOperation(logger, "inserting_calendar",
-		slog.Int("count", len(staticData.Services)))
+		slog.Int("count", len(data.Static.Services)))
 
-	for _, s := range staticData.Services {
+	for _, s := range data.Static.Services {
 		params := CreateCalendarParams{
 			ID:        s.Id,
 			Monday:    boolToInt(s.Monday),
@@ -365,10 +374,10 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	logging.LogOperation(logger, "calendar_inserted",
-		slog.Int("count", len(staticData.Services)))
+		slog.Int("count", len(data.Static.Services)))
 
 	var allTripParams []CreateTripParams
-	for _, t := range staticData.Trips {
+	for _, t := range data.Static.Trips {
 		// Handle optional shape - shapes.txt is optional in GTFS spec
 		var shapeID string
 		if t.Shape != nil {
@@ -394,7 +403,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	var allStopTimeParams []CreateStopTimeParams
-	for _, t := range staticData.Trips {
+	for _, t := range data.Static.Trips {
 		for _, st := range t.StopTimes {
 			var shapeDistTraveled float64
 			if st.ShapeDistanceTraveled != nil {
@@ -423,7 +432,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 
 	// Collect frequency entries from all trips
 	var allFrequencyParams []CreateFrequencyParams
-	for _, t := range staticData.Trips {
+	for _, t := range data.Static.Trips {
 		for _, f := range t.Frequencies {
 			params := CreateFrequencyParams{
 				TripID:      t.ID,
@@ -442,7 +451,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	var allShapeParams []CreateShapeParams
-	for _, s := range staticData.Shapes {
+	for _, s := range data.Static.Shapes {
 		for idx, pt := range s.Points {
 			var distance float64
 			if pt.Distance != nil {
@@ -464,13 +473,13 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	logging.LogOperation(logger, "updating_import_metadata",
-		slog.String("hash", hashStr[:8]),
-		slog.String("source", source))
+		slog.String("hash", data.Hash[:8]),
+		slog.String("source", data.Source))
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
-		FileHash:   hashStr,
+		FileHash:   data.Hash,
 		ImportTime: time.Now().Unix(),
-		FileSource: source,
+		FileSource: data.Source,
 	})
 	if err != nil {
 		logging.LogError(logger, "Error updating import metadata", err)
@@ -481,7 +490,7 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 
 	var allCalendarDateParams []CreateCalendarDateParams
 
-	for _, service := range staticData.Services {
+	for _, service := range data.Static.Services {
 		// Process added dates (exception type 1)
 		for _, date := range service.AddedDates {
 			params := CreateCalendarDateParams{
@@ -511,11 +520,16 @@ func (c *Client) processAndStoreGTFSDataWithSource(b []byte, source string) (boo
 	}
 
 	logging.LogOperation(logger, "building_block_trip_index")
-	if err := c.buildBlockTripIndex(ctx, staticData, tx); err != nil {
+	if err := c.buildBlockTripIndex(ctx, data.Static, tx); err != nil {
 		logging.LogError(logger, "Unable to build block trip index", err)
 		return false, fmt.Errorf("unable to build block trip index: %w", err)
 	}
 	logging.LogOperation(logger, "block_trip_index_built")
+
+	logging.LogOperation(logger, "calculating_trip_time_bounds")
+	if err := qtx.BulkUpdateTripTimeBounds(ctx); err != nil {
+		return false, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("error committing import transaction: %w", err)

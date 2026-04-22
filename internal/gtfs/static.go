@@ -15,13 +15,13 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-func rawGtfsData(ctx context.Context, source string, isLocalFile bool, config Config) ([]byte, error) {
+func rawGtfsData(ctx context.Context, source string, config Config) ([]byte, error) {
 	var b []byte
 	var err error
 
 	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
 
-	if isLocalFile {
+	if config.isLocalFile() {
 		b, err = os.ReadFile(source)
 		if err != nil {
 			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
@@ -91,19 +91,12 @@ func openGtfsDB(config Config) (*gtfsdb.Client, error) {
 	return client, nil
 }
 
-// importStaticIntoDB fetches GTFS data and imports it into the provided client.
+// importStaticIntoDB imports the already-parsed GTFS data into the provided client.
 // Returns (changed, err): changed is true when the DB was actually updated. When changed,
-// it also runs the post-import derived-column backfills (trip time bounds, stop directions).
-func importStaticIntoDB(ctx context.Context, client *gtfsdb.Client, config Config, isLocalFile bool) (bool, error) {
-	var (
-		changed bool
-		err     error
-	)
-	if isLocalFile {
-		changed, err = client.ImportFromFile(ctx, config.GtfsURL)
-	} else {
-		changed, err = client.DownloadAndStore(ctx, config.GtfsURL, config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
-	}
+// it also precomputes stop directions. Trip time bounds are now computed inside the
+// import transaction by ImportParsedGTFS itself.
+func importStaticIntoDB(ctx context.Context, client *gtfsdb.Client, data *gtfsdb.GtfsData) (bool, error) {
+	changed, err := client.StoreGtfsData(ctx, data)
 	if err != nil {
 		return false, err
 	}
@@ -113,11 +106,6 @@ func importStaticIntoDB(ctx context.Context, client *gtfsdb.Client, config Confi
 	}
 
 	logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
-	logging.LogOperation(logger, "calculating_trip_time_bounds")
-	if err := client.Queries.BulkUpdateTripTimeBounds(ctx); err != nil {
-		return true, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
-	}
-
 	precomputer := NewDirectionPrecomputer(client.Queries, client.DB)
 	if err := precomputer.PrecomputeAllDirections(ctx); err != nil {
 		// Log error but don't fail the entire import
@@ -135,23 +123,23 @@ func newGTFSDBConfig(dbPath string, config Config) gtfsdb.Config {
 	return dbConfig
 }
 
-// loadGTFSData loads and parses GTFS data from either a URL or a local file
-func loadGTFSData(ctx context.Context, source string, isLocalFile bool, config Config) (*gtfs.Static, error) {
-	b, err := rawGtfsData(ctx, source, isLocalFile, config)
+// loadGTFSData loads, parses, hashes, and validates GTFS data from either a URL or a local file.
+func loadGTFSData(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
+	b, err := rawGtfsData(ctx, config.GtfsURL, config)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
 
-	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
+	data, err := gtfsdb.ParseGtfsData(b, config.GtfsURL)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
+		return nil, err
 	}
 
-	if err := validateStaticAgencyTimezones(staticData); err != nil {
+	if err := validateStaticAgencyTimezones(data.Static); err != nil {
 		return nil, fmt.Errorf("invalid GTFS agency timezone: %w", err)
 	}
 
-	return staticData, nil
+	return data, nil
 }
 
 func validateStaticAgencyTimezones(staticData *gtfs.Static) error {
@@ -176,13 +164,6 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 
 	// Create a logger for this goroutine
 	logger := slog.Default().With(slog.String("component", "gtfs_static_updater"))
-
-	// If it's a local file, don't update periodically
-	if manager.isLocalFile {
-		logging.LogOperation(logger, "gtfs_source_is_local_file_skipping_periodic_updates",
-			slog.String("source", manager.config.GtfsURL))
-		return
-	}
 
 	// Update every 24 hours
 	ticker := time.NewTicker(24 * time.Hour)
@@ -217,23 +198,18 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	defer manager.staticUpdateMutex.Unlock()
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
-	newStaticData, err := loadGTFSData(ctx, manager.config.GtfsURL, manager.isLocalFile, manager.config)
+	newData, err := loadGTFSData(ctx, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error loading GTFS data", err,
 			slog.String("source", manager.config.GtfsURL))
 		return false, err
 	}
 
-	if err := gtfsdb.ValidateAndFilterGTFSData(newStaticData, logger); err != nil {
-		logging.LogError(logger, "GTFS structural validation failed", err)
-		return false, fmt.Errorf("GTFS validation failed: %w", err)
-	}
-
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 
-	changed, err := importStaticIntoDB(ctx, manager.GtfsDB, manager.config, manager.isLocalFile)
+	changed, err := importStaticIntoDB(ctx, manager.GtfsDB, newData)
 	if err != nil {
 		logging.LogError(logger, "Error importing GTFS data", err)
 		return false, err
@@ -241,13 +217,13 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 
 	if !changed {
 		logging.LogOperation(logger, "gtfs_static_data_unchanged",
-			slog.String("source", manager.config.GtfsURL))
+			slog.String("source", newData.Source))
 	}
 
 	// Rebuild in-memory derived state from the freshly parsed data and the DB.
 	// We do this even when the import was a no-op so that startup can rely on a
 	// single code path to populate indices/ETag/lastUpdated.
-	newBlockLayoverIndices := buildBlockLayoverIndices(newStaticData)
+	newBlockLayoverIndices := buildBlockLayoverIndices(newData.Static)
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
 
 	manager.staticMutex.Lock()

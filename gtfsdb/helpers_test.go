@@ -82,7 +82,9 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 		t.Skip("Skipping test: testdata/gtfs.zip not found")
 	}
 
-	_, err = client.processAndStoreGTFSDataWithSource(validBytes, "test-source-valid")
+	parsedValid, err := ParseGtfsData(validBytes, "test-source-valid")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedValid)
 	assert.NoError(t, err, "First import should succeed")
 
 	counts, err := client.TableCounts()
@@ -117,9 +119,11 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 
 	invalidBytes := buf.Bytes()
 
-	// 3. Attempt to import structurally invalid data
-	_, err = client.processAndStoreGTFSDataWithSource(invalidBytes, "test-source-invalid")
-	assert.Error(t, err, "Import should fail structural validation")
+	// 3. Attempt to parse+validate structurally invalid data.
+	// Validation now happens during ParseGtfsData, before the DB is touched,
+	// so the original working data must remain intact.
+	_, err = ParseGtfsData(invalidBytes, "test-source-invalid")
+	assert.Error(t, err, "Parse should fail structural validation")
 	assert.Contains(t, err.Error(), "validation failed")
 
 	// 4. Verify original data was NOT cleared
