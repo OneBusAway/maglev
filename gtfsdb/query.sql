@@ -1000,6 +1000,35 @@ DELETE FROM block_trip_entry;
 -- name: ClearBlockTripIndices :exec
 DELETE FROM block_trip_index;
 
+-- name: CreateBlockLayover :exec
+INSERT INTO block_layover (
+    block_id,
+    service_id,
+    route_id,
+    layover_stop_id,
+    layover_start,
+    layover_end,
+    next_trip_id
+)
+VALUES
+    (?, ?, ?, ?, ?, ?, ?);
+
+-- name: ClearBlockLayovers :exec
+DELETE FROM block_layover;
+
+-- name: GetActiveLayoverBlockIDsForRoute :many
+-- Return distinct block IDs whose layover overlaps the given time window for the
+-- specified route + active service IDs. Replaces the in-memory
+-- GetBlocksInTimeRange traversal with one indexed range scan per call.
+-- Slice param is last so non-slice param numbering stays contiguous (?1, ?2, ?3)
+-- when the slice is empty and sqlc expands it to NULL.
+SELECT DISTINCT block_id
+FROM block_layover
+WHERE route_id = sqlc.arg('route_id')
+  AND layover_start < sqlc.arg('time_range_end')
+  AND layover_end > sqlc.arg('time_range_start')
+  AND service_id IN (sqlc.slice('service_ids'));
+
 -- name: GetBlockTripIndexIDsForRoute :many
 -- Get all block_trip_index IDs that contain trips for the specified route and service IDs
 SELECT DISTINCT bti.id
@@ -1051,12 +1080,18 @@ WHERE bte.block_id IN (sqlc.slice('block_ids'))
 ORDER BY bte.block_trip_index_id;
 
 -- name: GetBlocksForBlockTripIndexIDs :many
--- Get all distinct block_ids that have trips in the specified BlockTripIndex IDs
+-- Get distinct block_ids whose schedule window overlaps [from_time, to_time] within the
+-- specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+-- which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
+-- whose trips are hours away from the requested time.
 SELECT DISTINCT bte.block_id
 FROM block_trip_entry bte
-WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
-  AND bte.service_id IN (sqlc.slice('service_ids'))
-  AND bte.block_id IS NOT NULL;
+JOIN trips t ON bte.trip_id = t.id
+WHERE t.max_departure_time >= sqlc.arg('from_time')
+  AND t.min_arrival_time <= sqlc.arg('to_time')
+  AND bte.block_id IS NOT NULL
+  AND bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetActiveTripInBlockAtTime :one
 -- Find the currently active trip in a specific block at the given time
@@ -1074,13 +1109,6 @@ LIMIT 1;
 -- name: GetTripsInBlock :many
 -- Get all trip IDs in a specific block for the given service IDs
 SELECT id
-FROM trips
-WHERE block_id = sqlc.arg('block_id')
-  AND service_id IN (sqlc.slice('service_ids'));
-
--- name: GetTripsInBlockWithTimeBounds :many
--- Get all trips in a block with their time bounds for best-trip selection in Go
-SELECT id, min_arrival_time, max_departure_time
 FROM trips
 WHERE block_id = sqlc.arg('block_id')
   AND service_id IN (sqlc.slice('service_ids'));
