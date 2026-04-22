@@ -416,15 +416,12 @@ func TestVehiclesForAgencyHandler_SituationsPopulatedInReferences(t *testing.T) 
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencies := api.GtfsManager.GetAgencies()
-	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencies := mustGetAgencies(t, api)
+	agencyID := agencies[0].ID
 
-	trips := api.GtfsManager.GetTrips()
-	require.NotEmpty(t, trips)
-
-	rawTripID := trips[0].ID
-	rawRouteID := trips[0].Route.Id
+	trip := mustGetTrip(t, api)
+	rawTripID := trip.ID
+	rawRouteID := trip.RouteID
 
 	const alertID = "alert-vehicles-test"
 	// MockAddAlert must precede MockAddVehicleWithOptions: it triggers rebuildMergedRealtimeLocked,
@@ -472,13 +469,10 @@ func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testi
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	agencies := api.GtfsManager.GetAgencies()
-	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencies := mustGetAgencies(t, api)
+	agencyID := agencies[0].ID
 
-	trips := api.GtfsManager.GetTrips()
-	require.NotEmpty(t, trips)
-
+	trip := mustGetTrip(t, api)
 	const alertID = "alert-agency-wide-test"
 	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
 		ID: alertID,
@@ -487,7 +481,7 @@ func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testi
 		},
 	})
 
-	api.GtfsManager.MockAddVehicleWithOptions("v_agency_alert_test", trips[0].ID, trips[0].Route.Id, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_agency_alert_test", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
 
 	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
 
