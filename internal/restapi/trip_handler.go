@@ -44,11 +44,6 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if trip.ID == "" {
-		api.sendNull(w, r)
-		return
-	}
-
 	var blockID, shapeID string
 	if trip.BlockID.Valid {
 		blockID = utils.FormCombinedID(agencyID, trip.BlockID.String)
