@@ -11,6 +11,10 @@ import (
 // tripHandler returns details for a single trip, including its route, stop times, and shape.
 func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 	includeReferences := r.URL.Query().Get("includeReferences") != "false"
+	if version := r.URL.Query().Get("version"); version != "" && version != "2" {
+		api.sendError(w, r, http.StatusInternalServerError, "unknown version: "+version)
+		return
+	}
 
 	agencyID, id, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {

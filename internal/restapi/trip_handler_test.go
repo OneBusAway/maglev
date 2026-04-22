@@ -114,6 +114,23 @@ func TestTripHandlerWithoutReferences(t *testing.T) {
 	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), entry["routeId"])
 }
 
+func TestTripHandlerWithUnsupportedVersion(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/agency_invalid.json?key=TEST&version=1")
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Equal(t, "unknown version: 1", model.Text)
+	assert.Nil(t, model.Data)
+}
+
+func TestTripHandlerWithDefaultVersionExplicitlySet(t *testing.T) {
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/agency_invalid.json?key=TEST&version=2")
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
+}
+
 func TestTripHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
