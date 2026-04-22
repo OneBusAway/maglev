@@ -54,6 +54,8 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, utils.NullStringOrEmpty(trip.TripHeadsign), entry["tripHeadsign"])
 	assert.Equal(t, utils.NullStringOrEmpty(trip.TripShortName), entry["tripShortName"])
 	assert.Equal(t, utils.NullStringOrEmpty(route.ShortName), entry["routeShortName"])
+	_, hasTimeZone := entry["timeZone"]
+	assert.False(t, hasTimeZone, "timeZone should be omitted from trip entry")
 
 	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok, "References section should exist")
@@ -112,6 +114,8 @@ func TestTripHandlerWithoutReferences(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, tripID, entry["id"])
 	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), entry["routeId"])
+	_, hasTimeZone := entry["timeZone"]
+	assert.False(t, hasTimeZone, "timeZone should be omitted from trip entry")
 }
 
 func TestTripHandlerWithUnsupportedVersion(t *testing.T) {

@@ -68,11 +68,19 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		TripShortName:  trip.TripShortName.String,
 		RouteShortName: route.ShortName.String,
 	}
-	tripResponse := models.NewTripResponse(
-		tripModel,
-		"",
-		0,
-	)
+
+	tripEntry := map[string]any{
+		"id":             tripModel.ID,
+		"routeId":        tripModel.RouteID,
+		"routeShortName": tripModel.RouteShortName,
+		"tripHeadsign":   tripModel.TripHeadsign,
+		"tripShortName":  tripModel.TripShortName,
+		"directionId":    tripModel.DirectionID,
+		"serviceId":      tripModel.ServiceID,
+		"shapeId":        tripModel.ShapeID,
+		"blockId":        tripModel.BlockID,
+		"peakOffpeak":    tripModel.PeakOffPeak,
+	}
 
 	references := models.NewEmptyReferences()
 
@@ -101,9 +109,9 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 	))
 
 	if !includeReferences {
-		api.sendResponse(w, r, models.NewOKResponse(map[string]any{"entry": tripResponse}, api.Clock))
+		api.sendResponse(w, r, models.NewOKResponse(map[string]any{"entry": tripEntry}, api.Clock))
 		return
 	}
 
-	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, *references, api.Clock))
+	api.sendResponse(w, r, models.NewEntryResponse(tripEntry, *references, api.Clock))
 }
