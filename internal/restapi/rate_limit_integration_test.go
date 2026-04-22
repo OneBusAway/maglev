@@ -208,8 +208,8 @@ func TestRateLimitingErrorResponse(t *testing.T) {
 		// Once we hit rate limit, check the error response
 		if response.StatusCode == http.StatusTooManyRequests {
 			assert.Equal(t, http.StatusTooManyRequests, model.Code)
-			assert.Contains(t, model.Text, "Rate limit",
-				"Error response should mention rate limiting")
+			assert.Equal(t, "rate limit exceeded", model.Text,
+				"Error response should use the OneBusAway rate-limit message")
 			assert.NotNil(t, model.Data, "Error response should include data structure")
 			return // Test passed
 		}

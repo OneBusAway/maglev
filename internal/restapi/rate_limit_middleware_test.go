@@ -353,7 +353,8 @@ func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 	var responseBody map[string]any
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
 
-	assert.Contains(t, responseBody["text"].(string), "Rate limit")
+	assert.Equal(t, "rate limit exceeded", responseBody["text"].(string))
+	assert.Equal(t, float64(1), responseBody["version"].(float64))
 
 	// check currentTime
 	assert.Equal(t, mockClock.Now().UnixMilli(), int64(responseBody["currentTime"].(float64)))
