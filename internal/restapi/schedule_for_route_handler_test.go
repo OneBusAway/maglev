@@ -213,28 +213,38 @@ func TestScheduleForRouteHandler_DirectionIDMatchesCSV(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, _ := model.Data.(map[string]interface{})
-	entry, _ := data["entry"].(map[string]interface{})
-	groupings, _ := entry["stopTripGroupings"].([]interface{})
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok, "model.Data should be a map")
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok, "entry should be a map")
+	groupings, ok := entry["stopTripGroupings"].([]interface{})
+	require.True(t, ok, "stopTripGroupings should be a slice")
 	require.Len(t, groupings, 2)
 
-	refs, _ := data["references"].(map[string]interface{})
-	tripRefs, _ := refs["trips"].([]interface{})
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok, "references should be a map")
+	tripRefs, ok := refs["trips"].([]interface{})
+	require.True(t, ok, "trips should be a slice")
+
 	tripDirByID := make(map[string]string, len(tripRefs))
 	for _, tr := range tripRefs {
-		trMap := tr.(map[string]interface{})
+		trMap, ok := tr.(map[string]interface{})
+		require.True(t, ok, "trip ref should be a map")
 		tid, _ := trMap["id"].(string)
 		dir, _ := trMap["directionId"].(string)
 		tripDirByID[tid] = dir
 	}
 
-	first, _ := groupings[0].(map[string]interface{})
-	second, _ := groupings[1].(map[string]interface{})
+	first, ok := groupings[0].(map[string]interface{})
+	require.True(t, ok, "first grouping should be a map")
+	second, ok := groupings[1].(map[string]interface{})
+	require.True(t, ok, "second grouping should be a map")
 	assert.Equal(t, "0", first["directionId"])
 	assert.Equal(t, "1", second["directionId"])
 
 	for _, g := range groupings {
-		gMap := g.(map[string]interface{})
+		gMap, ok := g.(map[string]interface{})
+		require.True(t, ok, "grouping should be a map")
 		gid, _ := gMap["directionId"].(string)
 		tripIDs, _ := gMap["tripIds"].([]interface{})
 		require.NotEmpty(t, tripIDs)
