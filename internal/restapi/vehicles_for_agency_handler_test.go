@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -406,6 +407,107 @@ func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
 		v := item.(map[string]any)
 		assert.NotEqual(t, "", v["vehicleId"], "vehicle with nil ID must be skipped, not returned with empty vehicleId")
 	}
+}
+
+// TestVehiclesForAgencyHandler_SituationsPopulatedInReferences verifies that route-level
+// alerts are reflected in references.situations for vehicles serving that route.
+func TestVehiclesForAgencyHandler_SituationsPopulatedInReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := mustGetAgencies(t, api)
+	agencyID := agencies[0].ID
+
+	trip := mustGetTrip(t, api)
+	rawTripID := trip.ID
+	rawRouteID := trip.RouteID
+
+	const alertID = "alert-vehicles-test"
+	// MockAddAlert must precede MockAddVehicleWithOptions: it triggers rebuildMergedRealtimeLocked,
+	// which rebuilds realTimeVehicles from feedVehicles (empty), wiping any vehicle added first.
+	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gogtfs.AlertInformedEntity{
+			{RouteID: &rawRouteID},
+		},
+	})
+
+	api.GtfsManager.MockAddVehicleWithOptions("v_situation_test", rawTripID, rawRouteID, gtfs.MockVehicleOptions{})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	vehiclesList, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, vehiclesList, "mock vehicle not returned by VehiclesForAgencyID")
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+
+	situations, ok := refs["situations"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, situations, "expected at least one situation in references")
+
+	found := false
+	for _, s := range situations {
+		sit := s.(map[string]interface{})
+		if sit["id"] == alertID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected situation with id %q in references.situations", alertID)
+}
+
+// TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences verifies that
+// agency-wide alerts are reflected in references.situations.
+func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencies := mustGetAgencies(t, api)
+	agencyID := agencies[0].ID
+
+	trip := mustGetTrip(t, api)
+	const alertID = "alert-agency-wide-test"
+	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gogtfs.AlertInformedEntity{
+			{AgencyID: &agencyID},
+		},
+	})
+
+	api.GtfsManager.MockAddVehicleWithOptions("v_agency_alert_test", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST")
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+
+	vehiclesList, ok := data["list"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, vehiclesList, "mock vehicle not returned by VehiclesForAgencyID")
+
+	refs, ok := data["references"].(map[string]interface{})
+	require.True(t, ok)
+
+	situations, ok := refs["situations"].([]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, situations, "expected agency-wide alert in references.situations")
+
+	found := false
+	for _, s := range situations {
+		sit := s.(map[string]interface{})
+		if sit["id"] == alertID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected situation with id %q in references.situations", alertID)
 }
 
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files

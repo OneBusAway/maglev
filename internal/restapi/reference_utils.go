@@ -17,7 +17,6 @@ func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
 	return refs
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
 	routeIDSet := make(map[string]bool)
 	originalRouteIDs := make([]string, 0)

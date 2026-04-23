@@ -106,8 +106,8 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 	var directionCalculator *gtfs.AdvancedDirectionCalculator
 	if gtfsManager != nil {
 		directionCalculator = gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
-		// Register the calculator on the manager so ForceUpdate can refresh its
-		// queries pointer (and evict the direction cache) after every DB hot-swap.
+		// Register the calculator on the manager so ForceUpdate can evict the
+		// direction cache after every DB update.
 		gtfsManager.DirectionCalculator = directionCalculator
 	}
 
@@ -127,8 +127,6 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 	// Start DB stats collector using a provider so metrics follow DB hot-swap.
 	if gtfsManager != nil {
 		appMetrics.StartDBStatsCollector(func() *sql.DB {
-			gtfsManager.RLock()
-			defer gtfsManager.RUnlock()
 			if gtfsManager.GtfsDB == nil {
 				return nil
 			}

@@ -18,11 +18,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	ctx := r.Context()
 
-	// Acquire static lock only for the agency lookup; release immediately.
-	// VehiclesForAgencyID manages its own locking internally.
-	api.GtfsManager.RLock()
 	agency, err := api.GtfsManager.FindAgency(ctx, id)
-	api.GtfsManager.RUnlock()
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -227,6 +223,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefList
 	references.Trips = tripRefList
+
+	alerts := deduplicateAlerts(
+		api.collectAlertsForRoutes(routeIDs),
+		api.GtfsManager.GetAlertsByIDs("", "", id),
+	)
+	references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
 
 	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)

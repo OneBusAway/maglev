@@ -33,8 +33,9 @@ func computeRegionBounds(ctx context.Context, gtfsDB *gtfsdb.Client) map[string]
 	return result
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetRegionBounds() map[string]RegionBounds {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
 	if manager.regionBounds == nil {
 		return nil
 	}

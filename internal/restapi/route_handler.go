@@ -16,9 +16,6 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	ctx := r.Context()
 
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)

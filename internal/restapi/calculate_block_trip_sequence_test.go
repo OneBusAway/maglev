@@ -17,9 +17,6 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
 	require.NoError(t, err)
 	require.NotEmpty(t, trips, "Should have test trips")

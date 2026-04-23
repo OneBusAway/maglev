@@ -1049,9 +1049,7 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 
 	// Call getNearbyStopIDs with a wrong fallback agency.
 	// If batch resolution works, nearby stops should not use the fallback.
-	api.GtfsManager.RLock()
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, result, "should find nearby stops")
 
 	for _, combinedID := range result {
@@ -1069,16 +1067,12 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 
 	ctx := context.Background()
 
-	api.GtfsManager.RLock()
 	stops := api.GtfsManager.GetStopsInBounds(ctx, 40.589123, -122.390830, 2000, 0, 0, 10)
-	api.GtfsManager.RUnlock()
 	require.NotEmpty(t, stops)
 
 	currentStop := stops[0]
 
-	api.GtfsManager.RLock()
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
-	api.GtfsManager.RUnlock()
 
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
