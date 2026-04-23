@@ -1,6 +1,7 @@
 package gtfs
 
 import (
+	"strings"
 	"time"
 
 	"maglev.onebusaway.org/internal/appconf"
@@ -42,4 +43,8 @@ func (config Config) enabledFeeds() []RTFeedConfig {
 		}
 	}
 	return feeds
+}
+
+func (config Config) isLocalFile() bool {
+	return !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
 }

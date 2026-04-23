@@ -25,7 +25,6 @@ const (
 // AdvancedDirectionCalculator implements the OneBusAway Java algorithm for stop direction calculation
 type AdvancedDirectionCalculator struct {
 	queries                    *gtfsdb.Queries
-	queriesMu                  sync.RWMutex // Protects queries pointer
 	standardDeviationThreshold float64
 	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
@@ -48,16 +47,9 @@ func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionC
 	}
 }
 
-// UpdateQueries replaces the queries pointer used for on-demand DB lookups.
-// Call this after a GTFS hot-swap so the calculator queries the new database.
-// It also clears the direction result cache so stale entries from the old database
-// are not served.
-func (adc *AdvancedDirectionCalculator) UpdateQueries(queries *gtfsdb.Queries) {
-	adc.queriesMu.Lock()
-	adc.queries = queries
-	adc.queriesMu.Unlock()
-
-	// Evict all cached directions so they are recomputed against the new DB.
+// ClearCache clears the direction result cache so stale entries from old GTFS
+// data are not served.
+func (adc *AdvancedDirectionCalculator) ClearCache() {
 	adc.directionResults.Clear()
 }
 
@@ -169,12 +161,7 @@ func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string)
 // data for the stop (safe to cache), or ("", err) on a transient database error
 // (must NOT be cached so the next request retries the DB).
 func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, stopID string) (string, error) {
-
-	adc.queriesMu.RLock()
-	q := adc.queries
-	adc.queriesMu.RUnlock()
-
-	stopTrips, err := q.GetStopsWithShapeContext(ctx, stopID)
+	stopTrips, err := adc.queries.GetStopsWithShapeContext(ctx, stopID)
 	if err != nil {
 		slog.Warn("failed to get stop shape context",
 			slog.String("stopID", stopID),
@@ -324,10 +311,7 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 		}
 	} else {
 		// Fall back to database query if no cache
-		adc.queriesMu.RLock()
-		q := adc.queries
-		adc.queriesMu.RUnlock()
-		shapePoints, err = q.GetShapePointsWithDistance(ctx, shapeID)
+		shapePoints, err = adc.queries.GetShapePointsWithDistance(ctx, shapeID)
 		if err != nil {
 			return 0, err
 		}

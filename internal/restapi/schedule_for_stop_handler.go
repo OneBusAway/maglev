@@ -21,9 +21,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	// Get the date parameter or use current date
 	dateParam := r.URL.Query().Get("date")
 
