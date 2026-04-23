@@ -68,8 +68,9 @@ func TestAgencyHandlerReturns400OnBlankID(t *testing.T) {
 	assert.Contains(t, data, "fieldErrors")
 }
 
-func TestAgencyHandlerRejectsInvalidVersion(t *testing.T) {
+func TestAgencyHandlerDefaultsToV2OnInvalidVersion(t *testing.T) {
 	// Extension 5b: The caller supplies an unrecognised version parameter value.
+	// We now gracefully default to version 2 instead of throwing a 500.
 	api := createTestApi(t)
 	defer api.Shutdown()
 	agencies := mustGetAgencies(t, api)
@@ -79,10 +80,11 @@ func TestAgencyHandlerRejectsInvalidVersion(t *testing.T) {
 	// Supply an explicitly invalid version (e.g., 3)
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/"+agencyID+".json?key=TEST&version=3")
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	assert.Equal(t, http.StatusInternalServerError, model.Code)
-	assert.Contains(t, model.Text, "unknown version")
-	assert.Nil(t, model.Data)
+	// Assert it gracefully ignores the bad version, returns 200 OK, and defaults the payload to v2
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, 2, model.Version)
+	assert.NotNil(t, model.Data)
 }
 
 func TestAgencyHandlerIgnoresIncludeReferencesFlag(t *testing.T) {

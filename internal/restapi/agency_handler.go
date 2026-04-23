@@ -14,13 +14,6 @@ func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extension 5b: Validate version parameter
-	versionStr := r.URL.Query().Get("version")
-	if versionStr != "" && versionStr != "1" && versionStr != "2" {
-		api.sendError(w, r, http.StatusInternalServerError, "unknown version: "+versionStr)
-		return
-	}
-
 	// Protect against nil pointer panics if the DB fails to load
 	if api.GtfsManager == nil {
 		api.serverErrorResponse(w, r, errors.New("GTFS database is currently unavailable"))
@@ -38,6 +31,7 @@ func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agencyData := models.AgencyReferenceFromDatabase(agency)
+	// NewEntryResponse naturally defaults to the v2 response envelope format
 	response := models.NewEntryResponse(agencyData, *models.NewEmptyReferences(), api.Clock)
 	api.sendResponse(w, r, response)
 }
