@@ -85,9 +85,8 @@ TRIP2,09:15:00,09:15:00,STOP1,2
 func TestProcessGTFSWithoutShapes(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)

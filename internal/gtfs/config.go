@@ -28,7 +28,6 @@ type Config struct {
 	RTFeeds               []RTFeedConfig
 	GTFSDataPath          string
 	Env                   appconf.Environment
-	Verbose               bool
 	EnableGTFSTidy        bool
 	StartupRetries        []time.Duration
 	Metrics               *metrics.Metrics

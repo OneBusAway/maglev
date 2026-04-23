@@ -116,7 +116,7 @@ func importStaticIntoDB(ctx context.Context, client *gtfsdb.Client, data *gtfsdb
 }
 
 func newGTFSDBConfig(dbPath string, config Config) gtfsdb.Config {
-	dbConfig := gtfsdb.NewConfig(dbPath, config.Env, config.Verbose)
+	dbConfig := gtfsdb.NewConfig(dbPath, config.Env)
 	if config.Metrics != nil {
 		dbConfig.QueryMetricsRecorder = config.Metrics
 	}

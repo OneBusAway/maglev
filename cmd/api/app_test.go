@@ -78,17 +78,16 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 	}
 
 	cfg := appconf.Config{
-		Port:      4000,
-		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
-		Verbose:   false,
+		Port:    4000,
+		Env:     appconf.Test,
+		ApiKeys: []string{"test"},
+
 		RateLimit: 100,
 	}
 
 	gtfsCfg := gtfs.Config{
 		GTFSDataPath: ":memory:",
 		GtfsURL:      testDataPath,
-		Verbose:      false,
 	}
 
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
@@ -116,17 +115,16 @@ func TestBuildApplicationWithTestData(t *testing.T) {
 	}
 
 	cfg := appconf.Config{
-		Port:      4000,
-		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
-		Verbose:   false,
+		Port:    4000,
+		Env:     appconf.Test,
+		ApiKeys: []string{"test"},
+
 		RateLimit: 100,
 	}
 
 	gtfsCfg := gtfs.Config{
 		GTFSDataPath: ":memory:",
 		GtfsURL:      testDataPath,
-		Verbose:      false,
 	}
 
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
@@ -149,17 +147,16 @@ func TestCreateServer(t *testing.T) {
 	}
 
 	cfg := appconf.Config{
-		Port:      8080,
-		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
-		Verbose:   false,
+		Port:    8080,
+		Env:     appconf.Test,
+		ApiKeys: []string{"test"},
+
 		RateLimit: 100,
 	}
 
 	gtfsCfg := gtfs.Config{
 		GTFSDataPath: ":memory:",
 		GtfsURL:      testDataPath,
-		Verbose:      false,
 	}
 
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
@@ -188,17 +185,16 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 	}
 
 	cfg := appconf.Config{
-		Port:      8080,
-		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
-		Verbose:   false,
+		Port:    8080,
+		Env:     appconf.Test,
+		ApiKeys: []string{"test"},
+
 		RateLimit: 100,
 	}
 
 	gtfsCfg := gtfs.Config{
 		GTFSDataPath: ":memory:",
 		GtfsURL:      testDataPath,
-		Verbose:      false,
 	}
 
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
@@ -234,17 +230,16 @@ func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 	}
 
 	cfg := appconf.Config{
-		Port:      0, // Use port 0 to get a random available port
-		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
-		Verbose:   false,
+		Port:    0, // Use port 0 to get a random available port
+		Env:     appconf.Test,
+		ApiKeys: []string{"test"},
+
 		RateLimit: 100,
 	}
 
 	gtfsCfg := gtfs.Config{
 		GTFSDataPath: ":memory:",
 		GtfsURL:      testDataPath,
-		Verbose:      false,
 	}
 
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
@@ -320,17 +315,16 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 	}
 
 	cfg := appconf.Config{
-		Port:      0, // Use random port to avoid conflicts
-		Env:       appconf.Test,
-		ApiKeys:   []string{"test"},
-		Verbose:   false,
+		Port:    0, // Use random port to avoid conflicts
+		Env:     appconf.Test,
+		ApiKeys: []string{"test"},
+
 		RateLimit: 100,
 	}
 
 	gtfsCfg := gtfs.Config{
 		GTFSDataPath: ":memory:",
 		GtfsURL:      testDataPath,
-		Verbose:      false,
 	}
 
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
@@ -374,17 +368,16 @@ func TestBuildApplicationErrorHandling(t *testing.T) {
 
 	t.Run("handles invalid GTFS path", func(t *testing.T) {
 		cfg := appconf.Config{
-			Port:      4000,
-			Env:       appconf.Test,
-			ApiKeys:   []string{"test"},
-			Verbose:   false,
+			Port:    4000,
+			Env:     appconf.Test,
+			ApiKeys: []string{"test"},
+
 			RateLimit: 100,
 		}
 
 		gtfsCfg := gtfs.Config{
 			GTFSDataPath: ":memory:",
 			GtfsURL:      "/nonexistent/path/to/gtfs.zip",
-			Verbose:      false,
 		}
 
 		_, err := BuildApplication(ctx, cfg, gtfsCfg)
@@ -409,11 +402,9 @@ func TestConfigFileLoading(t *testing.T) {
 		assert.Equal(t, appconf.Development, appCfg.Env)
 		assert.Equal(t, []string{"test"}, appCfg.ApiKeys)
 		assert.Equal(t, 100, appCfg.RateLimit)
-		assert.True(t, appCfg.Verbose)
 
 		// Verify GTFS config
 		assert.Equal(t, appconf.Development, gtfsCfgData.Env)
-		assert.True(t, gtfsCfgData.Verbose)
 	})
 
 	t.Run("loads full config file with GTFS-RT feed", func(t *testing.T) {
@@ -521,8 +512,9 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	coreApp := &app.Application{}
+	coreApp := &app.Application{
+		Logger: logger,
+	}
 
 	srv := &http.Server{
 		Addr: "127.0.0.1:0",
@@ -534,7 +526,7 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- Run(ctx, srv, coreApp, nil, logger)
+		errCh <- Run(ctx, srv, coreApp, nil)
 	}()
 
 	// Small delay so ListenAndServe starts

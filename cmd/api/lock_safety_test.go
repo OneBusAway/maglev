@@ -58,7 +58,7 @@ func TestHandlerLockSafety(t *testing.T) {
 
 	serverErrChan := make(chan error, 1)
 	go func() {
-		serverErrChan <- Run(serverCtx, srv, application, api, application.Logger)
+		serverErrChan <- Run(serverCtx, srv, application, api)
 	}()
 
 	// Wait for server to become ready
