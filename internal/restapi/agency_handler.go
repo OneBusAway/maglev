@@ -21,14 +21,11 @@ func (api *RestAPI) agencyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Protect against nil pointer panics if the DB fails to load or is hot-swapping
+	// Protect against nil pointer panics if the DB fails to load
 	if api.GtfsManager == nil {
 		api.serverErrorResponse(w, r, errors.New("GTFS database is currently unavailable"))
 		return
 	}
-
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
 
 	agency, err := api.GtfsManager.FindAgency(r.Context(), id)
 	if err != nil {
