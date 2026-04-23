@@ -390,8 +390,12 @@ CREATE TABLE
     );
 
 -- migrate
+-- Covering index: route_id + service_id seek equality, layover_end drives the range,
+-- layover_start is an in-index residual filter (saves table reads for rows failing the
+-- layover_start predicate), block_id makes the index covering for the DISTINCT block_id
+-- projection in GetActiveLayoverBlockIDsForRoute.
 CREATE INDEX IF NOT EXISTS idx_block_layover_route_service_time
-    ON block_layover (route_id, service_id, layover_end, layover_start);
+    ON block_layover (route_id, service_id, layover_end, layover_start, block_id);
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_block_layover_block ON block_layover (block_id);

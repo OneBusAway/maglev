@@ -1084,6 +1084,9 @@ ORDER BY bte.block_trip_index_id;
 -- specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
 -- which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
 -- whose trips are hours away from the requested time.
+-- Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
+-- no stop_times rows) are implicitly excluded: SQL NULL comparisons return UNKNOWN, which
+-- WHERE treats as false. A trip with no stop_times cannot be "active" in any time range.
 SELECT DISTINCT bte.block_id
 FROM block_trip_entry bte
 JOIN trips t ON bte.trip_id = t.id
