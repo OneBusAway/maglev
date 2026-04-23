@@ -301,6 +301,11 @@ func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockL
 }
 
 func (manager *Manager) FindAgency(ctx context.Context, id string) (*gtfsdb.Agency, error) {
+	// Defensively check if the DB or Queries object is nil during a hot-swap or failed load
+	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
+		return nil, errors.New("GTFS database is currently unavailable")
+	}
+
 	agency, err := manager.GtfsDB.Queries.GetAgency(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
