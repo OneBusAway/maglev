@@ -282,18 +282,28 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	tripAgencyMap := make(map[string]string)
 	if len(fetchedTrips) > 0 {
-		routeAgencyCache := make(map[string]string)
+		routeIDSet := make(map[string]struct{})
 		for _, trip := range fetchedTrips {
-			agencyID, cached := routeAgencyCache[trip.RouteID]
-			if !cached {
-				route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
-				if err != nil {
-					continue
-				}
-				agencyID = route.AgencyID
-				routeAgencyCache[trip.RouteID] = agencyID
+			routeIDSet[trip.RouteID] = struct{}{}
+		}
+		routeIDs := make([]string, 0, len(routeIDSet))
+		for id := range routeIDSet {
+			routeIDs = append(routeIDs, id)
+		}
+
+		routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
+		if err != nil {
+			api.Logger.Warn("trips-for-route: failed to fetch routes for agency mapping", "error", err)
+		}
+
+		routeAgencyMap := make(map[string]string, len(routes))
+		for _, route := range routes {
+			routeAgencyMap[route.ID] = route.AgencyID
+		}
+		for _, trip := range fetchedTrips {
+			if agencyID, ok := routeAgencyMap[trip.RouteID]; ok {
+				tripAgencyMap[trip.ID] = agencyID
 			}
-			tripAgencyMap[trip.ID] = agencyID
 		}
 	}
 
