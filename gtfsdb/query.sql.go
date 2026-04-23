@@ -1868,6 +1868,9 @@ type GetBlocksForBlockTripIndexIDsParams struct {
 // specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
 // which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
 // whose trips are hours away from the requested time.
+// Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
+// no stop_times rows) are implicitly excluded: SQL NULL comparisons return UNKNOWN, which
+// WHERE treats as false. A trip with no stop_times cannot be "active" in any time range.
 func (q *Queries) GetBlocksForBlockTripIndexIDs(ctx context.Context, arg GetBlocksForBlockTripIndexIDsParams) ([]sql.NullString, error) {
 	query := getBlocksForBlockTripIndexIDs
 	var queryParams []interface{}
