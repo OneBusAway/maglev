@@ -8,8 +8,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
+
+type scheduleForRouteResponse struct {
+	Code int                  `json:"code"`
+	Data scheduleForRouteData `json:"data"`
+	Text string               `json:"text"`
+}
+
+type scheduleForRouteData struct {
+	Entry      models.ScheduleForRouteEntry `json:"entry"`
+	References models.ReferencesModel       `json:"references"`
+}
 
 func TestScheduleForRouteHandler(t *testing.T) {
 
@@ -210,48 +222,25 @@ func TestScheduleForRouteHandler_DirectionIDMatchesCSV(t *testing.T) {
 
 	routeID := utils.FormCombinedID("25", "1885")
 	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
-	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	resp, model := callAPIHandler[scheduleForRouteResponse](t, api, endpoint)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
-	require.True(t, ok, "model.Data should be a map")
-	entry, ok := data["entry"].(map[string]interface{})
-	require.True(t, ok, "entry should be a map")
-	groupings, ok := entry["stopTripGroupings"].([]interface{})
-	require.True(t, ok, "stopTripGroupings should be a slice")
-	require.Len(t, groupings, 2)
+	groupings := model.Data.Entry.StopTripGroupings
+	require.Len(t, groupings, 2, "route 25_1885 has trips in both directions")
 
-	refs, ok := data["references"].(map[string]interface{})
-	require.True(t, ok, "references should be a map")
-	tripRefs, ok := refs["trips"].([]interface{})
-	require.True(t, ok, "trips should be a slice")
-
-	tripDirByID := make(map[string]string, len(tripRefs))
-	for _, tr := range tripRefs {
-		trMap, ok := tr.(map[string]interface{})
-		require.True(t, ok, "trip ref should be a map")
-		tid, _ := trMap["id"].(string)
-		dir, _ := trMap["directionId"].(string)
-		tripDirByID[tid] = dir
+	tripDirByID := make(map[string]string, len(model.Data.References.Trips))
+	for _, tr := range model.Data.References.Trips {
+		tripDirByID[tr.ID] = tr.DirectionID
 	}
 
-	first, ok := groupings[0].(map[string]interface{})
-	require.True(t, ok, "first grouping should be a map")
-	second, ok := groupings[1].(map[string]interface{})
-	require.True(t, ok, "second grouping should be a map")
-	assert.Equal(t, "0", first["directionId"])
-	assert.Equal(t, "1", second["directionId"])
+	assert.Equal(t, "0", groupings[0].DirectionID)
+	assert.Equal(t, "1", groupings[1].DirectionID)
 
 	for _, g := range groupings {
-		gMap, ok := g.(map[string]interface{})
-		require.True(t, ok, "grouping should be a map")
-		gid, _ := gMap["directionId"].(string)
-		tripIDs, _ := gMap["tripIds"].([]interface{})
-		require.NotEmpty(t, tripIDs)
-		for _, tid := range tripIDs {
-			ts, _ := tid.(string)
-			assert.Equal(t, gid, tripDirByID[ts],
-				"group %q trip %q should have CSV direction_id %q, got %q", gid, ts, gid, tripDirByID[ts])
+		require.NotEmpty(t, g.TripIDs)
+		for _, tid := range g.TripIDs {
+			assert.Equal(t, g.DirectionID, tripDirByID[tid],
+				"group %q trip %q should have CSV direction_id %q, got %q", g.DirectionID, tid, g.DirectionID, tripDirByID[tid])
 		}
 	}
 }
