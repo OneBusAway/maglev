@@ -96,4 +96,3 @@ func TestAgencyHandlerReturns400OnBlankID(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, data, "fieldErrors")
 }
-
