@@ -339,7 +339,7 @@ func processTripGroups(
 
 	if len(allStopGroups) > 0 {
 		sort.Slice(allStopGroups, func(i, j int) bool {
-			return allStopGroups[i].ID < allStopGroups[j].ID
+			return allStopGroups[i].Name.Name < allStopGroups[j].Name.Name
 		})
 		*stopGroupings = append(*stopGroupings, models.StopGrouping{
 			Ordered:    true,

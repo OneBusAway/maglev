@@ -2137,8 +2137,6 @@ func makeTestTrip(id string, directionID sql.NullInt64) gtfsdb.Trip {
 func nullDir() sql.NullInt64    { return sql.NullInt64{Valid: false} }
 func dir(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true} }
 
-// TestGroupTripsByDirection_TwoDirections verifies that direction_id=1 becomes
-// group "0" and direction_id=0 becomes group "1", matching the Java OBA convention.
 func TestGroupTripsByDirection_TwoDirections(t *testing.T) {
 	trips := []gtfsdb.Trip{
 		makeTestTrip("t-inbound-2", dir(0)),
@@ -2151,17 +2149,15 @@ func TestGroupTripsByDirection_TwoDirections(t *testing.T) {
 
 	require.Len(t, groups, 2)
 
-	// Highest direction_id (1) → group "0"
 	assert.Equal(t, "0", groups[0].GroupID)
-	assert.Equal(t, int64(1), groups[0].DirectionID.Int64)
+	assert.Equal(t, int64(0), groups[0].DirectionID.Int64)
 	assert.True(t, groups[0].DirectionID.Valid)
-	assert.Equal(t, []string{"t-outbound-1", "t-outbound-2"}, testTripIDs(groups[0].Trips))
+	assert.Equal(t, []string{"t-inbound-1", "t-inbound-2"}, testTripIDs(groups[0].Trips))
 
-	// direction_id=0 → group "1"
 	assert.Equal(t, "1", groups[1].GroupID)
-	assert.Equal(t, int64(0), groups[1].DirectionID.Int64)
+	assert.Equal(t, int64(1), groups[1].DirectionID.Int64)
 	assert.True(t, groups[1].DirectionID.Valid)
-	assert.Equal(t, []string{"t-inbound-1", "t-inbound-2"}, testTripIDs(groups[1].Trips))
+	assert.Equal(t, []string{"t-outbound-1", "t-outbound-2"}, testTripIDs(groups[1].Trips))
 }
 
 // TestGroupTripsByDirection_SingleDirection verifies single-direction routes produce one group "0".
@@ -2211,14 +2207,14 @@ func TestGroupTripsByDirection_MixedNullAndValid(t *testing.T) {
 	require.Len(t, groups, 2)
 
 	assert.Equal(t, "0", groups[0].GroupID)
-	assert.True(t, groups[0].DirectionID.Valid)
-	assert.Equal(t, int64(1), groups[0].DirectionID.Int64)
-	assert.Equal(t, []string{"t-out"}, testTripIDs(groups[0].Trips))
+	assert.False(t, groups[0].DirectionID.Valid,
+		"NULL direction_id collides with direction_id=0; first trip by ID determines group DirectionID")
+	assert.Equal(t, []string{"a-null", "t-in"}, testTripIDs(groups[0].Trips))
 
 	assert.Equal(t, "1", groups[1].GroupID)
-	assert.False(t, groups[1].DirectionID.Valid,
-		"NULL direction_id collides with direction_id=0; first trip by ID determines group DirectionID")
-	assert.Equal(t, []string{"a-null", "t-in"}, testTripIDs(groups[1].Trips))
+	assert.True(t, groups[1].DirectionID.Valid)
+	assert.Equal(t, int64(1), groups[1].DirectionID.Int64)
+	assert.Equal(t, []string{"t-out"}, testTripIDs(groups[1].Trips))
 }
 
 // TestGroupTripsByDirection_TripsWithinGroupSortedByID verifies deterministic trip order.

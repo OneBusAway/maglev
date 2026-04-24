@@ -277,9 +277,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 		for _, t := range tripRows {
 			combinedTripID := utils.FormCombinedID(agencyID, t.ID)
-			// references.trips[].directionId carries the raw GTFS CSV value (0 or 1),
-			// matching Java OBA. stopTripGroupings[].directionId above is the Java-parity
-			// group index — the two fields share a name but have different semantics.
 			tripRef := models.NewTripReference(
 				combinedTripID,
 				t.RouteID,
