@@ -41,10 +41,11 @@ func TestBuildBlockLayoverIndex_PopulatesTable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, total, 0, "RABA feed should produce at least one block layover")
 
-	// Invariants: every row has the required fields and layover_start <= layover_end.
+	// NOT NULL and the layover_start <= layover_end invariant are enforced by the
+	// table schema. Here we only verify the builder doesn't emit empty-string keys
+	// (NOT NULL still allows "").
 	rows, err := client.DB.QueryContext(ctx, `
-		SELECT block_id, route_id, service_id, layover_stop_id, next_trip_id,
-		       layover_start, layover_end
+		SELECT block_id, route_id, service_id, layover_stop_id, next_trip_id
 		FROM block_layover`)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -52,15 +53,13 @@ func TestBuildBlockLayoverIndex_PopulatesTable(t *testing.T) {
 	checked := 0
 	for rows.Next() {
 		var blockID, routeID, serviceID, stopID, nextTripID string
-		var start, end int64
-		require.NoError(t, rows.Scan(&blockID, &routeID, &serviceID, &stopID, &nextTripID, &start, &end))
+		require.NoError(t, rows.Scan(&blockID, &routeID, &serviceID, &stopID, &nextTripID))
 
 		assert.NotEmpty(t, blockID)
 		assert.NotEmpty(t, routeID)
 		assert.NotEmpty(t, serviceID)
 		assert.NotEmpty(t, stopID)
 		assert.NotEmpty(t, nextTripID)
-		assert.LessOrEqual(t, start, end, "layover_start must not exceed layover_end")
 		checked++
 	}
 	require.NoError(t, rows.Err())
