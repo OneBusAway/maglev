@@ -226,6 +226,10 @@ func TestSearchStopsByName(t *testing.T) {
 			ID: "s3", Name: toNullString("Main Street Mall"),
 			Lat: 40.2, Lon: -74.2,
 		},
+		{
+			ID: "hub1", Name: toNullString("Main Street Hub"),
+			Lat: 40.0, Lon: -74.0,
+		},
 	}
 	for _, s := range stops {
 		_, err := client.Queries.CreateStop(ctx, s)
@@ -238,7 +242,7 @@ func TestSearchStopsByName(t *testing.T) {
 			Limit:       10,
 		})
 		require.NoError(t, err)
-		assert.Len(t, results, 2)
+		assert.Len(t, results, 3)
 	})
 
 	t.Run("results ordered alphabetically", func(t *testing.T) {
@@ -247,9 +251,10 @@ func TestSearchStopsByName(t *testing.T) {
 			Limit:       10,
 		})
 		require.NoError(t, err)
-		require.Len(t, results, 2)
-		assert.Equal(t, "Main Street Mall", results[0].Name.String)
-		assert.Equal(t, "Main Street Station", results[1].Name.String)
+		require.Len(t, results, 3)
+		assert.Equal(t, "Main Street Hub", results[0].Name.String)
+		assert.Equal(t, "Main Street Mall", results[1].Name.String)
+		assert.Equal(t, "Main Street Station", results[2].Name.String)
 	})
 
 	t.Run("respects limit", func(t *testing.T) {

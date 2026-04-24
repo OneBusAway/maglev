@@ -706,6 +706,9 @@ func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams, 
 		for _, params := range stops {
 			_, err := qtx.CreateStop(ctx, params)
 			if err != nil {
+				if isConstraintErr(err) {
+					return fmt.Errorf("constraint violation inserting stop %+v: %w", params, err)
+				}
 				return err
 			}
 		}
@@ -733,6 +736,9 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams, 
 		for _, params := range trips {
 			_, err := qtx.CreateTrip(ctx, params)
 			if err != nil {
+				if isConstraintErr(err) {
+					return fmt.Errorf("constraint violation inserting trip %+v: %w", params, err)
+				}
 				return err
 			}
 		}
@@ -1090,6 +1096,9 @@ func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []Create
 		for _, params := range frequencies {
 			err := qtx.CreateFrequency(ctx, params)
 			if err != nil {
+				if isConstraintErr(err) {
+					return fmt.Errorf("constraint violation inserting frequency %+v: %w", params, err)
+				}
 				return err
 			}
 		}
@@ -1117,6 +1126,9 @@ func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []Cr
 		for _, params := range calendarDates {
 			_, err := qtx.CreateCalendarDate(ctx, params)
 			if err != nil {
+				if isConstraintErr(err) {
+					return fmt.Errorf("constraint violation inserting calendar date %+v: %w", params, err)
+				}
 				return err
 			}
 		}
@@ -1353,6 +1365,32 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 	}
 	if !hasService {
 		return fmt.Errorf("validation failed: no service calendars or calendar_dates found")
+	}
+
+	// Validate parent_station references: clear any that point to a non-existent stop.
+	stopIDs := make(map[string]struct{}, len(data.Stops))
+	for _, s := range data.Stops {
+		stopIDs[s.Id] = struct{}{}
+	}
+	orphanedParentRefs := 0
+	for i := range data.Stops {
+		parent := data.Stops[i].Parent
+		if parent == nil || parent.Id == "" {
+			continue
+		}
+		if _, ok := stopIDs[parent.Id]; !ok {
+			logger.Warn("stop references missing parent_station, clearing reference",
+				slog.String("stop_id", data.Stops[i].Id),
+				slog.String("parent_station", parent.Id),
+			)
+			data.Stops[i].Parent = nil
+			orphanedParentRefs++
+		}
+	}
+	if orphanedParentRefs > 0 {
+		logger.Warn("cleared orphaned parent_station references",
+			slog.Int("count", orphanedParentRefs),
+		)
 	}
 
 	// Foreign Key / Relationship Checks (Warnings & Filtering)

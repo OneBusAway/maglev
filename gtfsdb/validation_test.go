@@ -236,3 +236,55 @@ func TestValidateAndFilterGTFSData_ForeignKeys_Filtering(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAndFilterGTFSData_OrphanedParentStation(t *testing.T) {
+	data := createValidGTFS()
+
+	// Add a second stop that references a non-existent parent station.
+	lat, lon := 47.61, -122.31
+	orphanParent := gtfs.Stop{Id: "missing-parent"}
+	data.Stops = append(data.Stops, gtfs.Stop{
+		Id:        "stop2",
+		Latitude:  &lat,
+		Longitude: &lon,
+		Parent:    &orphanParent,
+	})
+
+	// Add a third stop with a valid parent_station reference; it should be preserved.
+	validParent := data.Stops[0]
+	data.Stops = append(data.Stops, gtfs.Stop{
+		Id:        "stop3",
+		Latitude:  &lat,
+		Longitude: &lon,
+		Parent:    &validParent,
+	})
+
+	if err := ValidateAndFilterGTFSData(data, nil); err != nil {
+		t.Fatalf("expected validation to succeed, got error: %v", err)
+	}
+
+	// stop2's orphan parent should be cleared.
+	var stop2, stop3 *gtfs.Stop
+	for i := range data.Stops {
+		switch data.Stops[i].Id {
+		case "stop2":
+			stop2 = &data.Stops[i]
+		case "stop3":
+			stop3 = &data.Stops[i]
+		}
+	}
+	if stop2 == nil {
+		t.Fatal("stop2 was unexpectedly removed")
+	}
+	if stop2.Parent != nil {
+		t.Errorf("expected stop2.Parent to be cleared, got %+v", stop2.Parent)
+	}
+
+	// stop3's valid parent reference should be preserved.
+	if stop3 == nil {
+		t.Fatal("stop3 was unexpectedly removed")
+	}
+	if stop3.Parent == nil || stop3.Parent.Id != validParent.Id {
+		t.Errorf("expected stop3.Parent to reference %q, got %+v", validParent.Id, stop3.Parent)
+	}
+}
