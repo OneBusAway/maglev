@@ -289,7 +289,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
 		if err != nil {
-			api.Logger.Warn("trips-for-route: failed to fetch routes for agency mapping", "error", err)
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 
 		routeAgencyMap := make(map[string]string, len(routes))

@@ -386,7 +386,8 @@ CREATE TABLE
         layover_start INTEGER NOT NULL, -- nanoseconds since service-day midnight
         layover_end INTEGER NOT NULL,
         next_trip_id TEXT NOT NULL,
-        FOREIGN KEY (next_trip_id) REFERENCES trips (id)
+        FOREIGN KEY (next_trip_id) REFERENCES trips (id),
+        CHECK (layover_start <= layover_end)
     );
 
 -- migrate
