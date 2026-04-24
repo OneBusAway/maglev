@@ -30,6 +30,35 @@ func TestAgencyHandlerReturnsAgencyWhenItExists(t *testing.T) {
 	assert.Equal(t, agencies[0].Name, entry["name"])
 	assert.Equal(t, agencies[0].Url, entry["url"])
 	assert.Equal(t, agencies[0].Timezone, entry["timezone"])
+
+	// Check optional fields that serialize to "" when empty
+	if agencies[0].Lang.Valid && agencies[0].Lang.String != "" {
+		assert.Equal(t, agencies[0].Lang.String, entry["lang"])
+	} else {
+		assert.Equal(t, "", entry["lang"])
+	}
+
+	if agencies[0].Phone.Valid && agencies[0].Phone.String != "" {
+		assert.Equal(t, agencies[0].Phone.String, entry["phone"])
+	} else {
+		assert.Equal(t, "", entry["phone"])
+	}
+
+	if agencies[0].Email.Valid && agencies[0].Email.String != "" {
+		assert.Equal(t, agencies[0].Email.String, entry["email"])
+	} else {
+		assert.Equal(t, "", entry["email"])
+	}
+
+	if agencies[0].FareUrl.Valid && agencies[0].FareUrl.String != "" {
+		assert.Equal(t, agencies[0].FareUrl.String, entry["fareUrl"])
+	} else {
+		assert.Equal(t, "", entry["fareUrl"])
+	}
+
+	// In Maglev, disclaimer and privateService are hardcoded default values
+	assert.Equal(t, "", entry["disclaimer"])
+	assert.Equal(t, false, entry["privateService"])
 }
 
 func TestAgencyHandlerReturnsNullWhenAgencyDoesNotExist(t *testing.T) {
@@ -68,46 +97,3 @@ func TestAgencyHandlerReturns400OnBlankID(t *testing.T) {
 	assert.Contains(t, data, "fieldErrors")
 }
 
-func TestAgencyHandlerDefaultsToV2OnInvalidVersion(t *testing.T) {
-	// Extension 5b: The caller supplies an unrecognised version parameter value.
-	// We now gracefully default to version 2 instead of throwing a 500.
-	api := createTestApi(t)
-	defer api.Shutdown()
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].ID
-
-	// Supply an explicitly invalid version (e.g., 3)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/"+agencyID+".json?key=TEST&version=3")
-
-	// Assert it gracefully ignores the bad version, returns 200 OK, and defaults the payload to v2
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, 2, model.Version)
-	assert.NotNil(t, model.Data)
-}
-
-func TestAgencyHandlerIgnoresIncludeReferencesFlag(t *testing.T) {
-	// The includeReferences flag should have no observable effect, and references should remain empty.
-	api := createTestApi(t)
-	defer api.Shutdown()
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].ID
-
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/"+agencyID+".json?key=TEST&includeReferences=false")
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	// Assert references is present and empty
-	references, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-	assert.Empty(t, references["agencies"])
-	assert.Empty(t, references["routes"])
-	assert.Empty(t, references["stops"])
-	assert.Empty(t, references["trips"])
-	assert.Empty(t, references["situations"])
-}

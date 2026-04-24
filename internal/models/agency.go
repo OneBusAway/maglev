@@ -31,11 +31,11 @@ type AgencyReference struct {
 	Name           string `json:"name"`
 	URL            string `json:"url"`
 	Timezone       string `json:"timezone"`
-	Lang           string `json:"lang,omitempty"`
-	Phone          string `json:"phone,omitempty"`
-	Email          string `json:"email,omitempty"`
-	FareUrl        string `json:"fareUrl,omitempty"`
-	Disclaimer     string `json:"disclaimer,omitempty"`
+	Lang           string `json:"lang"`
+	Phone          string `json:"phone"`
+	Email          string `json:"email"`
+	FareUrl        string `json:"fareUrl"`
+	Disclaimer     string `json:"disclaimer"`
 	PrivateService bool   `json:"privateService"`
 }
 
