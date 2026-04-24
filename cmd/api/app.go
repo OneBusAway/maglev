@@ -92,10 +92,7 @@ func newLogHandler(format string, level slog.Level) slog.Handler {
 // This includes creating the logger, initializing the GTFS manager, and creating the direction calculator.
 // Returns an error if GTFS manager initialization fails.
 func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
-	level := parseLogLevel(cfg.LogLevel)
-	logger := slog.New(newLogHandler(cfg.LogFormat, level))
-	slog.SetDefault(logger)
-
+	logger := slog.Default()
 	appMetrics := metrics.NewWithLogger(logger)
 	gtfsCfg.Metrics = appMetrics
 

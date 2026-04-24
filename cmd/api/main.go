@@ -170,10 +170,14 @@ func main() {
 		os.Exit(0)
 	}
 
+	level := parseLogLevel(cfg.LogLevel)
+	logger := slog.New(newLogHandler(cfg.LogFormat, level))
+	slog.SetDefault(logger)
+
 	// Build application with dependencies
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	if err != nil {
-		startupLogger.Error("failed to build application", "error", err)
+		logger.Error("failed to build application", "error", err)
 		os.Exit(1)
 	}
 
@@ -182,7 +186,7 @@ func main() {
 
 	// Run server with graceful shutdown
 	if err := Run(ctx, srv, coreApp, api); err != nil {
-		startupLogger.Error("server error", "error", err)
+		logger.Error("server error", "error", err)
 		os.Exit(1)
 	}
 }
