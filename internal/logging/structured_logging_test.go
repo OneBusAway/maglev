@@ -85,7 +85,7 @@ func TestLoggerHelpers(t *testing.T) {
 
 	t.Run("LogOperation logs structured operation info", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := NewStructuredLogger(&buf, slog.LevelDebug)
 
 		LogOperation(logger, "gtfs_data_imported",
 			slog.String("source", "file.zip"),
@@ -93,7 +93,7 @@ func TestLoggerHelpers(t *testing.T) {
 			slog.Duration("duration", 0)) // Will be ignored if zero
 
 		output := buf.String()
-		assert.Contains(t, output, `"level":"INFO"`)
+		assert.Contains(t, output, `"level":"DEBUG"`)
 		assert.Contains(t, output, `"msg":"gtfs_data_imported"`)
 		assert.Contains(t, output, `"source":"file.zip"`)
 		assert.Contains(t, output, `"stops_count":150`)

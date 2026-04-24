@@ -20,7 +20,6 @@ func TestManagerShutdown(t *testing.T) {
 		GtfsURL:      testDataPath,
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
-		Verbose:      false,
 	}
 
 	// Initialize manager
@@ -66,8 +65,7 @@ func TestManagerShutdownWithRealtime(t *testing.T) {
 				Enabled:             true,
 			},
 		},
-		Env:     appconf.Test,
-		Verbose: false,
+		Env: appconf.Test,
 	}
 
 	// Initialize manager
@@ -103,7 +101,6 @@ func TestManagerShutdownIdempotent(t *testing.T) {
 		GtfsURL:      testDataPath,
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
-		Verbose:      false,
 	}
 
 	// Initialize manager

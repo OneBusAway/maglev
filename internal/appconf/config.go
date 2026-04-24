@@ -11,7 +11,6 @@ type Config struct {
 	ApiKeys          []string
 	ProtectedApiKeys []string
 	ExemptApiKeys    []string
-	Verbose          bool
 	RateLimit        int // Requests per second per API key for rate limiting
 	LogLevel         string
 	LogFormat        string

@@ -239,7 +239,6 @@ func (j *JSONConfig) ToAppConfig() Config {
 		ApiKeys:          j.ApiKeys,
 		ProtectedApiKeys: j.ProtectedApiKeys,
 		ExemptApiKeys:    j.ExemptApiKeys,
-		Verbose:          true, // Always set to true like in main.go
 		RateLimit:        j.RateLimit,
 		LogLevel:         j.LogLevel,
 		LogFormat:        j.LogFormat,
@@ -269,7 +268,6 @@ type GtfsConfigData struct {
 	RTFeeds               []RTFeedConfigData
 	GTFSDataPath          string
 	Env                   Environment
-	Verbose               bool
 	EnableGTFSTidy        bool
 }
 
@@ -281,7 +279,6 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 		StaticAuthHeaderValue: j.GtfsStaticFeed.AuthHeaderValue,
 		GTFSDataPath:          j.DataPath,
 		Env:                   EnvFlagToEnvironment(j.Env),
-		Verbose:               true, // Always set to true like in main.go
 		EnableGTFSTidy:        j.GtfsStaticFeed.EnableGTFSTidy,
 	}
 

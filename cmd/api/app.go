@@ -31,8 +31,8 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 		StaticAuthHeaderValue: gtfsCfgData.StaticAuthHeaderValue,
 		GTFSDataPath:          gtfsCfgData.GTFSDataPath,
 		Env:                   gtfsCfgData.Env,
-		Verbose:               gtfsCfgData.Verbose,
-		EnableGTFSTidy:        gtfsCfgData.EnableGTFSTidy,
+
+		EnableGTFSTidy: gtfsCfgData.EnableGTFSTidy,
 	}
 
 	for _, feedData := range gtfsCfgData.RTFeeds {
@@ -92,9 +92,7 @@ func newLogHandler(format string, level slog.Level) slog.Handler {
 // This includes creating the logger, initializing the GTFS manager, and creating the direction calculator.
 // Returns an error if GTFS manager initialization fails.
 func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
-	level := parseLogLevel(cfg.LogLevel)
-	logger := slog.New(newLogHandler(cfg.LogFormat, level))
-
+	logger := slog.Default()
 	appMetrics := metrics.NewWithLogger(logger)
 	gtfsCfg.Metrics = appMetrics
 
@@ -207,9 +205,10 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 // Starts the server in a goroutine, waits for shutdown signals (SIGINT, SIGTERM) or context cancellation,
 // and performs graceful shutdown with a 30-second timeout.
 // Returns an error if the server fails to start or shutdown fails.
-func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *restapi.RestAPI, logger *slog.Logger) error {
+func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *restapi.RestAPI) error {
 	cfg := coreApp.Config
 	tlsEnabled := cfg.TLSCertPath != "" && cfg.TLSKeyPath != ""
+	logger := coreApp.Logger
 	logger.Info("starting server", "addr", srv.Addr, "tls", tlsEnabled)
 
 	// Set up signal handling for graceful shutdown, merging with provided context

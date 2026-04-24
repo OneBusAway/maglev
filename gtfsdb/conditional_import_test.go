@@ -43,9 +43,8 @@ func createTestData(t *testing.T) ([]byte, []byte) {
 func TestConditionalImport_InitialImport(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -78,9 +77,8 @@ func TestConditionalImport_InitialImport(t *testing.T) {
 func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -134,9 +132,8 @@ func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 func TestConditionalImport_ReloadChangedData(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -181,9 +178,8 @@ func TestConditionalImport_ReloadChangedData(t *testing.T) {
 func TestConditionalImport_DifferentSources(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -221,9 +217,8 @@ func TestConditionalImport_DifferentSources(t *testing.T) {
 func TestConditionalImport_FileImport(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -267,9 +262,8 @@ func TestConditionalImport_FileImport(t *testing.T) {
 func TestClearAllGTFSData(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
