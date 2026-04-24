@@ -421,7 +421,7 @@ func TestVehicleMerge_StaleIgnored(t *testing.T) {
 
 	// capture logs for verification
 	var buf bytes.Buffer
-	logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+	logger := logging.NewStructuredLogger(&buf, slog.LevelDebug)
 	ctx = logging.WithLogger(ctx, logger)
 
 	// create a server whose response can be modified between polls

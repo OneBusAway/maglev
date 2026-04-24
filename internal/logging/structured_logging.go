@@ -51,7 +51,7 @@ func LogOperation(logger *slog.Logger, operation string, attrs ...slog.Attr) {
 		args = append(args, attr)
 	}
 
-	logger.Info(operation, args...)
+	logger.Debug(operation, args...)
 }
 
 // LogHTTPRequest logs HTTP request details

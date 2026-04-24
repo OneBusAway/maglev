@@ -3,7 +3,7 @@ package gtfsdb
 import (
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -20,9 +20,8 @@ func NewClient(config Config) (*Client, error) {
 	db, err := createDB(config)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create DB: %w", err)
-	} else if config.verbose {
-		log.Println("Successfully created tables")
 	}
+	slog.Default().Debug("successfully created DB")
 
 	// Wrap DB for query interception (optional metrics).
 	var dbtx DBTX = db

@@ -216,7 +216,6 @@ func TestToAppConfig(t *testing.T) {
 	assert.Equal(t, Production, appConfig.Env)
 	assert.Equal(t, []string{"key1", "key2"}, appConfig.ApiKeys)
 	assert.Equal(t, 50, appConfig.RateLimit)
-	assert.True(t, appConfig.Verbose)
 	assert.Equal(t, []string{"exempt-key-1"}, appConfig.ExemptApiKeys)
 }
 
@@ -267,7 +266,6 @@ func TestToGtfsConfigData_NoFeeds(t *testing.T) {
 	assert.Equal(t, "secret123", gtfsConfig.StaticAuthHeaderValue)
 	assert.Equal(t, "/data/gtfs.db", gtfsConfig.GTFSDataPath)
 	assert.Equal(t, Development, gtfsConfig.Env)
-	assert.True(t, gtfsConfig.Verbose)
 
 	// No feeds should result in empty RTFeeds
 	assert.Empty(t, gtfsConfig.RTFeeds)

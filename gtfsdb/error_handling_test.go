@@ -12,9 +12,8 @@ func TestNewClient_InvalidConfigHandling(t *testing.T) {
 	// Test that NewClient returns an error instead of calling log.Fatal
 	// when configuration is invalid (test env with file DB)
 	config := Config{
-		DBPath:  "/tmp/invalid_test_db.sqlite",
-		Env:     appconf.Test,
-		verbose: false,
+		DBPath: "/tmp/invalid_test_db.sqlite",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -26,9 +25,8 @@ func TestNewClient_InvalidConfigHandling(t *testing.T) {
 func TestNewClient_ValidConfig(t *testing.T) {
 	// Test that NewClient works correctly with valid configuration
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: false,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -44,9 +42,8 @@ func TestNewClient_ValidConfig(t *testing.T) {
 func TestTableCounts_ErrorHandling(t *testing.T) {
 	// Create a client with a valid config
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: false,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -63,9 +60,8 @@ func TestTableCounts_ErrorHandling(t *testing.T) {
 func TestProcessAndStoreGTFSData_ErrorHandling(t *testing.T) {
 	// Create a client with a valid config
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: false,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)

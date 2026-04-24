@@ -85,9 +85,8 @@ func buildSyntheticGTFSZip(t *testing.T, includeFrequencies bool) []byte {
 
 func TestSyntheticGTFS_FrequencyIngestion(t *testing.T) {
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -157,9 +156,8 @@ func TestSyntheticGTFS_FrequencyIngestion(t *testing.T) {
 
 func TestSyntheticGTFS_NoFrequencyFile(t *testing.T) {
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -191,9 +189,8 @@ func TestSyntheticGTFS_NoFrequencyFile(t *testing.T) {
 
 func TestSyntheticGTFS_FrequenciesClearedOnReimport(t *testing.T) {
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -233,9 +230,8 @@ func TestSyntheticGTFS_FrequenciesClearedOnReimport(t *testing.T) {
 
 func TestSyntheticGTFS_TableCountsIncludeFrequencies(t *testing.T) {
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)

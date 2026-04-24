@@ -468,7 +468,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		}
 
 		if fullSuccess {
-			logger.Info("updated realtime feed successfully",
+			logger.Debug("updated realtime feed successfully",
 				slog.String("feed", feedID),
 				slog.Int("trips", len(manager.feedTrips[feedID])),
 				slog.Int("vehicles", len(manager.feedVehicles[feedID])),
