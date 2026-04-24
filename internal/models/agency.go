@@ -1,8 +1,6 @@
 package models
 
 import (
-	"database/sql"
-
 	"maglev.onebusaway.org/gtfsdb"
 )
 
@@ -55,13 +53,6 @@ func NewAgencyReference(id, name, url, timezone, lang, phone, email, fareUrl, di
 	}
 }
 
-// nullStringOrEmpty safely extracts a string from sql.NullString, returning "" if invalid.
-func nullStringOrEmpty(ns sql.NullString) string {
-	if ns.Valid {
-		return ns.String
-	}
-	return ""
-}
 
 func AgencyReferenceFromDatabase(agency *gtfsdb.Agency) AgencyReference {
 	return AgencyReference{
@@ -69,10 +60,10 @@ func AgencyReferenceFromDatabase(agency *gtfsdb.Agency) AgencyReference {
 		Name:           agency.Name,
 		URL:            agency.Url,
 		Timezone:       agency.Timezone,
-		Lang:           nullStringOrEmpty(agency.Lang),
-		Phone:          nullStringOrEmpty(agency.Phone),
-		Email:          nullStringOrEmpty(agency.Email),
-		FareUrl:        nullStringOrEmpty(agency.FareUrl),
+		Lang:           gtfsdb.NullStringOrEmpty(agency.Lang),
+		Phone:          gtfsdb.NullStringOrEmpty(agency.Phone),
+		Email:          gtfsdb.NullStringOrEmpty(agency.Email),
+		FareUrl:        gtfsdb.NullStringOrEmpty(agency.FareUrl),
 		Disclaimer:     "",
 		PrivateService: false,
 	}

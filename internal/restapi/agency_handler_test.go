@@ -82,7 +82,7 @@ func TestAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	assert.Equal(t, "permission denied", model.Text)
 }
 
-func TestAgencyHandlerReturns400OnBlankID(t *testing.T) {
+func TestAgencyHandlerReturns400OnInvalidCharacterID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
@@ -90,7 +90,7 @@ func TestAgencyHandlerReturns400OnBlankID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
-	assert.Equal(t, "id contains invalid characters", model.Text) // Matches Maglev's exact validator output
+	assert.Equal(t, "id contains invalid characters", model.Text)
 
 	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
