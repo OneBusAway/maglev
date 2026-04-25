@@ -67,7 +67,7 @@ func TestParseAPIKeys(t *testing.T) {
 }
 
 func TestBuildApplicationWithMemoryDB(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
@@ -104,7 +104,7 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 }
 
 func TestBuildApplicationWithTestData(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
@@ -136,7 +136,7 @@ func TestBuildApplicationWithTestData(t *testing.T) {
 }
 
 func TestCreateServer(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
@@ -174,7 +174,7 @@ func TestCreateServer(t *testing.T) {
 }
 
 func TestCreateServerHandlerResponds(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Get path to test data
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
@@ -216,7 +216,7 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 }
 
 func TestRunServerStartsAndStopsCleanly(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// This is a lightweight integration test to verify the Run function can start and stop
 	// We use a test HTTP server to avoid binding to real ports
@@ -257,7 +257,7 @@ func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 	assert.NotNil(t, srv, "Server should be created")
 
 	// Test the shutdown mechanism
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer shutdownCancel()
 
 	err = srv.Shutdown(shutdownCtx)
@@ -306,7 +306,7 @@ func TestParseAPIKeysEdgeCases(t *testing.T) {
 }
 
 func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// This test verifies Run() can start and shutdown gracefully
 	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
@@ -340,7 +340,7 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 		go func() {
 			time.Sleep(50 * time.Millisecond)
 			// Trigger shutdown
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			shutdownCtx, shutdownCancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer shutdownCancel()
 			_ = srv.Shutdown(shutdownCtx)
 		}()
@@ -364,7 +364,7 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 }
 
 func TestBuildApplicationErrorHandling(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("handles invalid GTFS path", func(t *testing.T) {
 		cfg := appconf.Config{
@@ -455,7 +455,7 @@ func TestConfigFileLoading(t *testing.T) {
 }
 
 func TestBuildApplicationWithConfigFile(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("builds app from valid config file", func(t *testing.T) {
 		// Skip if test data not available
@@ -479,7 +479,7 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
   "gtfs-url": "` + absTestDataPath + `",
   "data-path": ":memory:"
 }`
-		err = os.WriteFile(testConfigPath, []byte(testConfigContent), 0644)
+		err = os.WriteFile(testConfigPath, []byte(testConfigContent), 0o644)
 		require.NoError(t, err)
 		defer func() {
 			_ = os.Remove(testConfigPath)
@@ -509,7 +509,7 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
 }
 
 func TestRun_GracefulShutdown(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	coreApp := &app.Application{

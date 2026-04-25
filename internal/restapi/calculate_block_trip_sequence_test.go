@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"cmp"
-	"context"
 	"database/sql"
 	"math"
 	"slices"
@@ -16,7 +15,7 @@ import (
 func TestCalculateBlockTripSequence(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
 	require.NoError(t, err)

@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -137,7 +136,7 @@ func setupTestClientWithRoutes(t *testing.T) (*gtfsdb.Client, func()) {
 	require.NoError(t, err, "Failed to create test client")
 	require.NotNil(t, client, "Client should not be nil")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert test agencies
 	_, err = client.DB.ExecContext(ctx, `
@@ -168,7 +167,7 @@ func TestFilterRoutes(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tests := []struct {
 		name     string
@@ -232,7 +231,7 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	present := map[string]bool{"agency1_route1": true}
 
 	result := FilterRoutes(client.Queries, ctx, present)
@@ -264,7 +263,7 @@ func TestFilterRoutes_DatabaseError(t *testing.T) {
 	err = client.Close()
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	present := map[string]bool{"route1": true}
 
 	result := FilterRoutes(client.Queries, ctx, present)
@@ -276,7 +275,7 @@ func TestGetAllRoutesRefs(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("Get all routes", func(t *testing.T) {
 		result := GetAllRoutesRefs(client.Queries, ctx)
@@ -309,7 +308,7 @@ func TestGetAllRoutesRefs_VerifyFields(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	result := GetAllRoutesRefs(client.Queries, ctx)
 	require.Len(t, result, 3)
@@ -347,7 +346,7 @@ func TestGetAllRoutesRefs_DatabaseError(t *testing.T) {
 	err = client.Close()
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	result := GetAllRoutesRefs(client.Queries, ctx)
 
@@ -363,7 +362,7 @@ func TestGetAllRoutesRefs_EmptyDatabase(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	result := GetAllRoutesRefs(client.Queries, ctx)
 

@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -121,7 +120,7 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
 	defer api.Shutdown()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	require.NoError(t, err)
 	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)

@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -19,7 +18,6 @@ func TestTripHandlerRequiresValidApiKey(t *testing.T) {
 }
 
 func TestTripHandlerEndToEnd(t *testing.T) {
-
 	api := createTestApi(t)
 	defer api.Shutdown()
 
@@ -28,7 +26,7 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
 	require.NoError(t, err)
 

@@ -23,7 +23,7 @@ func TestManager_GetAgencies(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	assert.NotNil(t, manager)
 
-	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
 
@@ -51,7 +51,7 @@ func TestManager_RoutesForAgencyID(t *testing.T) {
 }
 
 func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testCases := []struct {
 		name          string
@@ -102,7 +102,7 @@ func TestManager_GetTrips(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	assert.NotNil(t, manager)
 
-	trips, err := manager.GetTrips(context.Background(), 100)
+	trips, err := manager.GetTrips(t.Context(), 100)
 	require.NoError(t, err)
 	assert.NotEmpty(t, trips)
 	assert.NotEmpty(t, trips[0].ID)
@@ -111,13 +111,13 @@ func TestManager_GetTrips(t *testing.T) {
 func TestManager_FindAgency(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 
-	agency, err := manager.FindAgency(context.Background(), "25")
+	agency, err := manager.FindAgency(t.Context(), "25")
 	assert.Nil(t, err)
 	assert.NotNil(t, agency)
 	assert.Equal(t, "25", agency.ID)
 	assert.Equal(t, "Redding Area Bus Authority", agency.Name)
 
-	agency, err = manager.FindAgency(context.Background(), "nonexistent")
+	agency, err = manager.FindAgency(t.Context(), "nonexistent")
 	assert.Nil(t, err)
 	assert.Nil(t, agency)
 }
@@ -162,7 +162,7 @@ func TestGetVehicleForTrip_DirectTripIDLookup(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	got := manager.GetVehicleForTrip(ctx, tripID)
 	require.NotNil(t, got)
 	assert.Equal(t, vehicleID, got.ID.ID)
@@ -237,7 +237,7 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 
 	// Get a trip to find a valid service ID
-	trips, err := manager.GetTrips(context.Background(), 100)
+	trips, err := manager.GetTrips(t.Context(), 100)
 	require.NoError(t, err)
 	assert.NotEmpty(t, trips)
 
@@ -289,7 +289,7 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.weekday, tc.date.Weekday().String())
 
-			active, err := manager.IsServiceActiveOnDate(context.Background(), serviceID, tc.date)
+			active, err := manager.IsServiceActiveOnDate(t.Context(), serviceID, tc.date)
 			if err == nil {
 				assert.GreaterOrEqual(t, active, int64(0))
 			}
@@ -298,7 +298,7 @@ func TestManager_IsServiceActiveOnDate(t *testing.T) {
 }
 
 func TestManager_GetVehicleForTrip(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
@@ -324,19 +324,19 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 
 	manager.rebuildMergedRealtimeLocked()
 
-	vehicle := manager.GetVehicleForTrip(context.Background(), "5735633")
+	vehicle := manager.GetVehicleForTrip(t.Context(), "5735633")
 	if vehicle != nil {
 		assert.NotNil(t, vehicle)
 		assert.Equal(t, "vehicle1", vehicle.ID.ID)
 	}
 
 	// Test Not Found
-	nilVehicle := manager.GetVehicleForTrip(context.Background(), "nonexistent")
+	nilVehicle := manager.GetVehicleForTrip(t.Context(), "nonexistent")
 	assert.Nil(t, nilVehicle)
 }
 
 func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
@@ -353,7 +353,7 @@ func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
 }
 
 func TestRoutesForAgencyID_ValidId(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
@@ -373,7 +373,7 @@ func TestRoutesForAgencyID_ValidId(t *testing.T) {
 }
 
 func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
@@ -384,7 +384,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer manager.Shutdown()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -427,7 +427,7 @@ func TestRoutesForAgencyID_ConcurrentAccess(t *testing.T) {
 }
 
 func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
-	ctx := context.Background()
+	ctx := b.Context()
 
 	gtfsConfig := Config{
 		GtfsURL:      models.GetFixturePath(b, "raba.zip"),
@@ -448,7 +448,7 @@ func BenchmarkRoutesForAgencyID_MapLookup(b *testing.B) {
 }
 
 func TestInitGTFSManager_RetryLogic(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Use an ultra-fast backoff schedule for the test to prevent it from hanging
 	backoffs := []time.Duration{
@@ -479,7 +479,7 @@ func TestInitGTFSManager_RetryLogic(t *testing.T) {
 }
 
 func TestParseAndLogFeedExpiryLocked(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// In-memory sqlite db to mock
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")

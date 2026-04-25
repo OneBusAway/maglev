@@ -3,7 +3,6 @@ package gtfsdb
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -22,7 +21,7 @@ func TestPerformDatabaseMigration_Idempotency(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// 1. First run should succeed and create tables
 	err = performDatabaseMigration(ctx, db)
@@ -50,7 +49,7 @@ func TestPerformDatabaseMigration_ErrorHandling(t *testing.T) {
 	// Inject malformed SQL to simulate a corrupted migration file
 	ddl = "CREATE TABLE valid_table (id INT); -- migrate\n THIS IS INVALID SQL;"
 
-	ctx := context.Background()
+	ctx := t.Context()
 	err = performDatabaseMigration(ctx, db)
 
 	assert.Error(t, err, "Migration should fail on invalid SQL")
@@ -66,7 +65,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	err = performDatabaseMigration(ctx, db)
 	assert.NoError(t, err)
 
@@ -155,7 +154,7 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	recorder := &testQueryMetricsRecorder{}
 
 	wrapper := newMetricsWrapper(db)
@@ -209,7 +208,7 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
 		require.NoError(t, client.Close())
 	})
 
-	agencies, err := client.Queries.ListAgencies(context.Background())
+	agencies, err := client.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, agencies)
 
