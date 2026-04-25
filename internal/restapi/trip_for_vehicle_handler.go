@@ -67,7 +67,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
+	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
 	var status *models.TripStatus
 	if params.IncludeStatus {
@@ -120,7 +120,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:  serviceDateMillis,
+		ServiceDate:  models.NewModelTime(midnight),
 		Frequency:    nil,
 		Status:       status,
 		Schedule:     schedule,

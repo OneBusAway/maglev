@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,13 +15,13 @@ func TestNewTripDetails(t *testing.T) {
 	}
 
 	tripID := trip.ID
-	serviceDate := int64(1609459200000)
+	serviceDate := time.UnixMilli(1609459200000)
 
 	frequency := &Frequency{
-		StartTime:   28800,
-		EndTime:     32400,
-		Headway:     300,
-		ServiceDate: serviceDate,
+		StartTime:   NewModelTime(serviceDate.Add(8 * time.Hour)),
+		EndTime:     NewModelTime(serviceDate.Add(9 * time.Hour)),
+		Headway:     NewModelDuration(300 * time.Second),
+		ServiceDate: NewModelTime(serviceDate),
 		ServiceID:   "service_789",
 		TripID:      tripID,
 	}
@@ -43,7 +44,7 @@ func TestNewTripDetails(t *testing.T) {
 	tripDetails := NewTripDetails(tripID, serviceDate, frequency, status, schedule, situationIDs)
 
 	assert.Equal(t, tripID, tripDetails.TripID)
-	assert.Equal(t, serviceDate, tripDetails.ServiceDate)
+	assert.Equal(t, serviceDate, tripDetails.ServiceDate.Time)
 	assert.Equal(t, frequency, tripDetails.Frequency)
 	assert.Equal(t, status, tripDetails.Status)
 	assert.Equal(t, schedule, tripDetails.Schedule)
@@ -54,7 +55,7 @@ func TestNewEmptyTripDetails(t *testing.T) {
 	tripDetails := NewEmptyTripDetails()
 
 	assert.Equal(t, "", tripDetails.TripID)
-	assert.Equal(t, int64(0), tripDetails.ServiceDate)
+	assert.True(t, tripDetails.ServiceDate.Time.IsZero())
 	assert.Nil(t, tripDetails.Frequency)
 	assert.Nil(t, tripDetails.Status)
 	assert.Nil(t, tripDetails.Schedule)
@@ -63,11 +64,12 @@ func TestNewEmptyTripDetails(t *testing.T) {
 }
 
 func TestTripDetailsJSON(t *testing.T) {
+	serviceDate := time.UnixMilli(1609459200000)
 	frequency := &Frequency{
-		StartTime:   28800,
-		EndTime:     32400,
-		Headway:     300,
-		ServiceDate: 1609459200000,
+		StartTime:   NewModelTime(serviceDate.Add(8 * time.Hour)),
+		EndTime:     NewModelTime(serviceDate.Add(9 * time.Hour)),
+		Headway:     NewModelDuration(300 * time.Second),
+		ServiceDate: NewModelTime(serviceDate),
 		ServiceID:   "service_789",
 		TripID:      "trip_123",
 	}
@@ -86,7 +88,7 @@ func TestTripDetailsJSON(t *testing.T) {
 
 	tripDetails := TripDetails{
 		TripID:       "trip_123",
-		ServiceDate:  1609459200000,
+		ServiceDate:  NewModelTime(serviceDate),
 		Frequency:    frequency,
 		Status:       status,
 		Schedule:     schedule,
@@ -110,11 +112,12 @@ func TestTripDetailsJSON(t *testing.T) {
 
 func TestTripDetailsWithNilValues(t *testing.T) {
 	trip := Trip{ID: "trip_123"}
+	serviceDate := time.UnixMilli(1609459200000)
 
-	tripDetails := NewTripDetails(trip.ID, 1609459200000, nil, nil, nil, nil)
+	tripDetails := NewTripDetails(trip.ID, serviceDate, nil, nil, nil, nil)
 
 	assert.Equal(t, trip.ID, tripDetails.TripID)
-	assert.Equal(t, int64(1609459200000), tripDetails.ServiceDate)
+	assert.Equal(t, serviceDate, tripDetails.ServiceDate.Time)
 	assert.Nil(t, tripDetails.Frequency)
 	assert.Nil(t, tripDetails.Status)
 	assert.Nil(t, tripDetails.Schedule)
@@ -135,8 +138,8 @@ func TestTripStatusJSON(t *testing.T) {
 			Lon: -121.743914,
 		},
 		LastKnownOrientation:   90.0,
-		LastLocationUpdateTime: 1609462700000,
-		LastUpdateTime:         1609462800000,
+		LastLocationUpdateTime: NewModelTime(time.UnixMilli(1609462700000)),
+		LastUpdateTime:         NewModelTime(time.UnixMilli(1609462800000)),
 		NextStop:               "stop_789",
 		NextStopTimeOffset:     240,
 		OccupancyCapacity:      50,
@@ -151,7 +154,7 @@ func TestTripStatusJSON(t *testing.T) {
 		Predicted:                  true,
 		ScheduleDeviation:          60,
 		ScheduledDistanceAlongTrip: 1450.0,
-		ServiceDate:                1609459200000,
+		ServiceDate:                NewModelTime(time.UnixMilli(1609459200000)),
 		SituationIDs:               []string{"situation_1"},
 		Status:                     "SCHEDULED",
 		TotalDistanceAlongTrip:     5000.0,

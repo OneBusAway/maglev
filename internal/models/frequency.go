@@ -8,15 +8,15 @@ import (
 
 // Frequency represents a GTFS frequency entry in API responses.
 type Frequency struct {
-	StartTime int64 `json:"startTime"`
-	EndTime   int64 `json:"endTime"`
-	// Headway is the time between departures in seconds
-	Headway int `json:"headway"`
+	StartTime ModelTime `json:"startTime"`
+	EndTime   ModelTime `json:"endTime"`
+	// Headway is the time between departures.
+	Headway ModelDuration `json:"headway"`
 	// ExactTimes is used internally for business logic but omitted from API responses
-	ExactTimes  int    `json:"-"`
-	ServiceDate int64  `json:"serviceDate"`
-	ServiceID   string `json:"serviceId"`
-	TripID      string `json:"tripId"`
+	ExactTimes  int       `json:"-"`
+	ServiceDate ModelTime `json:"serviceDate"`
+	ServiceID   string    `json:"serviceId"`
+	TripID      string    `json:"tripId"`
 }
 
 // NewFrequencyFromDB converts a database Frequency row into an API Frequency model.
@@ -28,9 +28,9 @@ func NewFrequencyFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Frequenc
 	startOfDay := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, serviceDate.Location())
 
 	return Frequency{
-		StartTime:  startOfDay.Add(time.Duration(dbFreq.StartTime)).UnixMilli(),
-		EndTime:    startOfDay.Add(time.Duration(dbFreq.EndTime)).UnixMilli(),
-		Headway:    int(dbFreq.HeadwaySecs),
+		StartTime:  NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
+		EndTime:    NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
+		Headway:    NewModelDuration(time.Duration(dbFreq.HeadwaySecs) * time.Second),
 		ExactTimes: int(dbFreq.ExactTimes),
 	}
 }

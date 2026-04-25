@@ -400,8 +400,8 @@ func TestParseArrivalsAndDeparturesParams_AllParameters(t *testing.T) {
 	params, errs := api.parseArrivalsAndDeparturesParams(req)
 
 	assert.Nil(t, errs)
-	assert.Equal(t, 60, params.MinutesAfter)
-	assert.Equal(t, 15, params.MinutesBefore)
+	assert.Equal(t, 60*time.Minute, params.After)
+	assert.Equal(t, 15*time.Minute, params.Before)
 	assert.False(t, params.Time.IsZero())
 }
 
@@ -414,8 +414,8 @@ func TestParseArrivalsAndDeparturesParams_DefaultValues(t *testing.T) {
 	params, errs := api.parseArrivalsAndDeparturesParams(req)
 
 	assert.Nil(t, errs)
-	assert.Equal(t, 35, params.MinutesAfter) // Default for plural handler
-	assert.Equal(t, 5, params.MinutesBefore) // Default
+	assert.Equal(t, 35*time.Minute, params.After) // Default for plural handler
+	assert.Equal(t, 5*time.Minute, params.Before) // Default
 	assert.WithinDuration(t, api.Clock.Now(), params.Time, 1*time.Second)
 }
 

@@ -34,12 +34,12 @@ func TestNewFrequencyFromDB(t *testing.T) {
 
 	freq := NewFrequencyFromDB(dbFreq, serviceDate)
 
-	expectedStart := time.Date(2024, 1, 15, 6, 0, 0, 0, loc).UnixMilli()
-	expectedEnd := time.Date(2024, 1, 15, 9, 0, 0, 0, loc).UnixMilli()
+	expectedStart := time.Date(2024, 1, 15, 6, 0, 0, 0, loc)
+	expectedEnd := time.Date(2024, 1, 15, 9, 0, 0, 0, loc)
 
-	assert.Equal(t, expectedStart, freq.StartTime)
-	assert.Equal(t, expectedEnd, freq.EndTime)
-	assert.Equal(t, 600, freq.Headway)
+	assert.Equal(t, expectedStart, freq.StartTime.Time)
+	assert.Equal(t, expectedEnd, freq.EndTime.Time)
+	assert.Equal(t, 600*time.Second, freq.Headway.Duration)
 	assert.Equal(t, 1, freq.ExactTimes)
 }
 
@@ -56,9 +56,9 @@ func TestNewFrequencyFromDB_FrequencyBased(t *testing.T) {
 
 	freq := NewFrequencyFromDB(dbFreq, serviceDate)
 
-	assert.Equal(t, 300, freq.Headway)
+	assert.Equal(t, 300*time.Second, freq.Headway.Duration)
 	assert.Equal(t, 0, freq.ExactTimes)
-	assert.Greater(t, freq.EndTime, freq.StartTime)
+	assert.Greater(t, freq.EndTime.Time, freq.StartTime.Time)
 }
 
 func TestNewFrequencyFromDB_OverMidnight(t *testing.T) {
@@ -81,20 +81,20 @@ func TestNewFrequencyFromDB_OverMidnight(t *testing.T) {
 	freq := NewFrequencyFromDB(dbFreq, serviceDate)
 
 	// Should resolve to Jan 16 at 1:00 AM and 3:00 AM
-	expectedStart := time.Date(2024, 1, 16, 1, 0, 0, 0, time.UTC).UnixMilli()
-	expectedEnd := time.Date(2024, 1, 16, 3, 0, 0, 0, time.UTC).UnixMilli()
+	expectedStart := time.Date(2024, 1, 16, 1, 0, 0, 0, time.UTC)
+	expectedEnd := time.Date(2024, 1, 16, 3, 0, 0, 0, time.UTC)
 
-	assert.Equal(t, expectedStart, freq.StartTime)
-	assert.Equal(t, expectedEnd, freq.EndTime)
+	assert.Equal(t, expectedStart, freq.StartTime.Time)
+	assert.Equal(t, expectedEnd, freq.EndTime.Time)
 }
 
 func TestFrequencyJSON(t *testing.T) {
 	freq := Frequency{
-		StartTime:   1705305600000,
-		EndTime:     1705316400000,
-		Headway:     600,
+		StartTime:   NewModelTime(time.UnixMilli(1705305600000)),
+		EndTime:     NewModelTime(time.UnixMilli(1705316400000)),
+		Headway:     NewModelDuration(600 * time.Second),
 		ExactTimes:  1, // This shouldn't be serialized to API clients
-		ServiceDate: 1705305600000,
+		ServiceDate: NewModelTime(time.UnixMilli(1705305600000)),
 		ServiceID:   "service_123",
 		TripID:      "trip_67",
 	}
