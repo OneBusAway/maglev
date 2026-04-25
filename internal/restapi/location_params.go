@@ -3,18 +3,11 @@ package restapi
 import (
 	"net/http"
 
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
 )
 
-type LocationParams struct {
-	Lat     float64
-	Lon     float64
-	Radius  float64
-	LatSpan float64
-	LonSpan float64
-}
-
-func (api *RestAPI) parseLocationParams(r *http.Request, fieldErrors map[string][]string) (*LocationParams, map[string][]string) {
+func (api *RestAPI) parseLocationParams(r *http.Request, fieldErrors map[string][]string) (*gtfs.LocationParams, map[string][]string) {
 	queryParams := r.URL.Query()
 
 	lat, fieldErrors := utils.ParseRequiredFloatParam(queryParams, "lat", fieldErrors)
@@ -38,7 +31,7 @@ func (api *RestAPI) parseLocationParams(r *http.Request, fieldErrors map[string]
 		return nil, fieldErrors
 	}
 
-	return &LocationParams{
+	return &gtfs.LocationParams{
 		Lat:     lat,
 		Lon:     lon,
 		Radius:  radius,

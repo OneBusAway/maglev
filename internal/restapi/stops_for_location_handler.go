@@ -98,7 +98,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, loc.Radius, loc.LatSpan, loc.LonSpan, query, maxCount, routeTypes)
+	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
 
 	// Sort by stop ID for deterministic results
 	sort.SliceStable(stops, func(i, j int) bool {
@@ -131,7 +131,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
 		references.Routes = routes
-		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, loc.Radius), api.Clock, false)
+		response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -257,6 +257,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	references.Routes = routes
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, loc.Radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

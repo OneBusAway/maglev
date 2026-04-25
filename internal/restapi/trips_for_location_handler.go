@@ -10,6 +10,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -36,7 +37,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
 	currentTime := api.Clock.Now().In(currentLocation)
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, lat, lon, -1, latSpan, lonSpan, 100)
+	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: -1, LatSpan: latSpan, LonSpan: lonSpan}, 100)
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -116,7 +117,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		Stops:       stops,
 		Trips:       result,
 	})
-	response := models.NewListResponseWithRange(result, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, 0), api.Clock, false)
+	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(&internalgtfs.LocationParams{Lat: lat, Lon: lon, LatSpan: latSpan, LonSpan: lonSpan}), api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
@@ -129,7 +130,7 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	fieldErrors map[string][]string,
 	serverErr error,
 ) {
-	var loc *LocationParams
+	var loc *internalgtfs.LocationParams
 	loc, fieldErrors = api.parseLocationParams(r, nil)
 
 	if loc != nil {
