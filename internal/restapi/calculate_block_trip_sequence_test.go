@@ -1,10 +1,11 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"math"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
@@ -112,8 +113,8 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 			}
 			results = append(results, tripSeq{sequence: seq, earliestDepart: minDepart})
 		}
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].sequence < results[j].sequence
+		slices.SortFunc(results, func(a, b tripSeq) int {
+			return cmp.Compare(a.sequence, b.sequence)
 		})
 		for i := 1; i < len(results); i++ {
 			assert.LessOrEqual(t, results[i-1].earliestDepart, results[i].earliestDepart)

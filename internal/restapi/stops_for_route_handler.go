@@ -1,9 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"net/http"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/twpayne/go-polyline"
@@ -338,9 +339,10 @@ func processTripGroups(
 	}
 
 	if len(allStopGroups) > 0 {
-		sort.Slice(allStopGroups, func(i, j int) bool {
-			return allStopGroups[i].ID < allStopGroups[j].ID
+		slices.SortFunc(*stopGroupings, func(a, b models.StopGrouping) int {
+			return cmp.Compare(a.StopGroups[0].ID, b.StopGroups[0].ID)
 		})
+
 		*stopGroupings = append(*stopGroupings, models.StopGrouping{
 			Ordered:    true,
 			StopGroups: allStopGroups,
@@ -371,6 +373,7 @@ func formatStopIDs(agencyID string, stops map[string]bool) []string {
 	for key := range stops {
 		stopIDs = append(stopIDs, utils.FormCombinedID(agencyID, key))
 	}
-	sort.Strings(stopIDs)
+	slices.Sort(stopIDs)
+
 	return stopIDs
 }

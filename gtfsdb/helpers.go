@@ -1,6 +1,7 @@
 package gtfsdb
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,7 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -875,8 +876,8 @@ func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStop
 	}
 
 	// Sort batches by index to maintain insertion order
-	sort.Slice(preparedBatches, func(i, j int) bool {
-		return preparedBatches[i].index < preparedBatches[j].index
+	slices.SortFunc(preparedBatches, func(a, b preparedStopTimeBatch) int {
+		return cmp.Compare(a.index, b.index)
 	})
 
 	logging.LogOperation(
@@ -1047,8 +1048,8 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParam
 	}
 
 	// Sort batches by index to maintain insertion order
-	sort.Slice(preparedBatches, func(i, j int) bool {
-		return preparedBatches[i].index < preparedBatches[j].index
+	slices.SortFunc(preparedBatches, func(a, b preparedShapeBatch) int {
+		return cmp.Compare(a.index, b.index)
 	})
 
 	// ===== PHASE 3: SEQUENTIAL DATABASE EXECUTION =====
@@ -1284,11 +1285,11 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 			}
 
 			// Sort trips within the group by block_id and then trip_id for deterministic ordering
-			sort.Slice(trips, func(i, j int) bool {
-				if trips[i].blockID != trips[j].blockID {
-					return trips[i].blockID < trips[j].blockID
+			slices.SortFunc(trips, func(a, b *tripInfo) int {
+				if c := cmp.Compare(a.blockID, b.blockID); c != 0 {
+					return c
 				}
-				return trips[i].tripID < trips[j].tripID
+				return cmp.Compare(a.tripID, b.tripID)
 			})
 
 			// Insert block_trip_entry records for each trip in this index

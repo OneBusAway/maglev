@@ -23,7 +23,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -175,7 +175,7 @@ func (s *queryLatencyStat) report(t *testing.T) {
 	}
 	sorted := make([]time.Duration, len(s.samples))
 	copy(sorted, s.samples)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	slices.Sort(sorted)
 
 	idx := func(pct float64) int {
 		i := int(math.Round(float64(len(sorted))*pct)) - 1

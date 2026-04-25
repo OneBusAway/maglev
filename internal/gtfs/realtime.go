@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -593,7 +593,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		feedIDs = append(feedIDs, id)
 		totalTrips += len(trips)
 	}
-	sort.Strings(feedIDs)
+	slices.Sort(feedIDs)
 
 	allTrips := make([]gtfs.Trip, 0, totalTrips)
 	for _, id := range feedIDs {
@@ -606,7 +606,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehicleFeedIDs = append(vehicleFeedIDs, id)
 		totalVehicles += len(vehicles)
 	}
-	sort.Strings(vehicleFeedIDs)
+	slices.Sort(vehicleFeedIDs)
 
 	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
 	for _, id := range vehicleFeedIDs {
@@ -617,7 +617,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	for id := range manager.feedAlerts {
 		alertFeedIDs = append(alertFeedIDs, id)
 	}
-	sort.Strings(alertFeedIDs)
+	slices.Sort(alertFeedIDs)
 
 	tripLookup := make(map[string]int, len(allTrips))
 	for i, trip := range allTrips {
