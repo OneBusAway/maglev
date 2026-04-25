@@ -32,7 +32,7 @@ func getSharedTestComponents(t *testing.T) (*Manager, *AdvancedDirectionCalculat
 		}
 
 		var err error
-		// Pass context.Background() here to satisfy the new cancellable startup logic
+		// Pass t.Context() here to satisfy the new cancellable startup logic
 		sharedManager, err = InitGTFSManager(t.Context(), gtfsConfig)
 		if err != nil {
 			panic("Failed to init shared GTFS manager: " + err.Error())
