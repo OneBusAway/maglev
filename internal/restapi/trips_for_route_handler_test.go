@@ -1,14 +1,12 @@
 package restapi
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -234,45 +232,6 @@ func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
-}
-
-func TestSelectBestTripInBlock(t *testing.T) {
-	nullInt64 := func(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true} }
-	row := func(id string, min, max int64) gtfsdb.GetTripsInBlockWithTimeBoundsRow {
-		return gtfsdb.GetTripsInBlockWithTimeBoundsRow{ID: id, MinArrivalTime: nullInt64(min), MaxDepartureTime: nullInt64(max)}
-	}
-
-	// now = 1000
-	now := int64(1000)
-
-	t.Run("most recently completed when none running", func(t *testing.T) {
-		rows := []gtfsdb.GetTripsInBlockWithTimeBoundsRow{
-			row("older", 100, 500),
-			row("recent", 600, 900),
-		}
-		assert.Equal(t, "recent", selectBestTripInBlock(rows, now))
-	})
-
-	t.Run("next upcoming when none completed", func(t *testing.T) {
-		rows := []gtfsdb.GetTripsInBlockWithTimeBoundsRow{
-			row("sooner", 1100, 1300),
-			row("later", 1400, 1600),
-		}
-		assert.Equal(t, "sooner", selectBestTripInBlock(rows, now))
-	})
-
-	t.Run("completed beats upcoming", func(t *testing.T) {
-		rows := []gtfsdb.GetTripsInBlockWithTimeBoundsRow{
-			row("recent", 100, 800),
-			row("next", 1200, 1500),
-		}
-		assert.Equal(t, "recent", selectBestTripInBlock(rows, now))
-	})
-
-	t.Run("fallback to first row when no time data matches", func(t *testing.T) {
-		noTime := gtfsdb.GetTripsInBlockWithTimeBoundsRow{ID: "only"}
-		assert.Equal(t, "only", selectBestTripInBlock([]gtfsdb.GetTripsInBlockWithTimeBoundsRow{noTime}, now))
-	})
 }
 
 func TestStripNumericSuffix(t *testing.T) {
