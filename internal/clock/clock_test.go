@@ -134,7 +134,6 @@ func TestEnvironmentClock_FromFile(t *testing.T) {
 	// Create a temp file with the time
 	tmpFile, err := os.CreateTemp(t.TempDir(), "clock_test_*.txt")
 	assert.NoError(t, err)
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(expectedTime.Format(time.RFC3339))
 	assert.NoError(t, err)
@@ -152,7 +151,6 @@ func TestEnvironmentClock_FromFile_WithNewline(t *testing.T) {
 	// Create a temp file with the time and trailing newline
 	tmpFile, err := os.CreateTemp(t.TempDir(), "clock_test_*.txt")
 	assert.NoError(t, err)
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(expectedTime.Format(time.RFC3339) + "\n")
 	assert.NoError(t, err)
@@ -175,7 +173,6 @@ func TestEnvironmentClock_EnvVarPriorityOverFile(t *testing.T) {
 	// Create file
 	tmpFile, err := os.CreateTemp(t.TempDir(), "clock_test_*.txt")
 	assert.NoError(t, err)
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(fileTime.Format(time.RFC3339))
 	assert.NoError(t, err)
@@ -240,7 +237,6 @@ func TestEnvironmentClock_ParseTimeFormats(t *testing.T) {
 		t.Run("file_"+tt.name, func(t *testing.T) {
 			tmpFile, err := os.CreateTemp(t.TempDir(), "clock_test_*.txt")
 			assert.NoError(t, err)
-			defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 			_, err = tmpFile.WriteString(tt.input)
 			assert.NoError(t, err)
@@ -296,7 +292,6 @@ func TestEnvironmentClock_InvalidTimeFormat(t *testing.T) {
 		t.Run("file_"+tt, func(t *testing.T) {
 			tmpFile, err := os.CreateTemp(t.TempDir(), "clock_test_*.txt")
 			assert.NoError(t, err)
-			defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 			_, err = tmpFile.WriteString(tt)
 			assert.NoError(t, err)

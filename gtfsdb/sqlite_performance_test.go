@@ -2,7 +2,6 @@ package gtfsdb
 
 import (
 	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -64,7 +63,6 @@ func TestMemoryDatabaseConnectionPool(t *testing.T) {
 func TestFileDatabaseConnectionPool(t *testing.T) {
 	// Create temporary directory for test database
 	tmpDir := t.TempDir()
-	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -93,7 +91,6 @@ func TestFileDatabaseConnectionPool(t *testing.T) {
 func TestConnectionPoolBehaviorWithFileDatabase(t *testing.T) {
 	// Create temporary directory for test database
 	tmpDir := t.TempDir()
-	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dbPath := filepath.Join(tmpDir, "test_concurrent.db")
 
