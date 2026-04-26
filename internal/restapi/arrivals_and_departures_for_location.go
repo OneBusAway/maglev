@@ -11,6 +11,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -210,21 +211,20 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
-	// Find stops inside the bounding box using the in-memory R-tree spatial index.
-	// Pass params.Time so that a historical `time=` override is respected.
-	stops := api.GtfsManager.GetStopsForLocation(
+	// Find stops inside the bounding box using the spatial index.
+	// GetStopsForLocation manages its own locking and returns (stops, limitExceeded).
+	stops, _ := api.GtfsManager.GetStopsForLocation(
 		ctx,
-		params.Lat, params.Lon,
-		params.Radius,
-		params.LatSpan, params.LonSpan,
+		&internalgtfs.LocationParams{
+			Lat:     params.Lat,
+			Lon:     params.Lon,
+			Radius:  params.Radius,
+			LatSpan: params.LatSpan,
+			LonSpan: params.LonSpan,
+		},
 		"",
 		params.MaxCount,
-		false,
-		params.RouteTypes, // Pass parsed routeTypes
-		params.Time,
+		params.RouteTypes,
 	)
 
 	if len(stops) == 0 {
@@ -346,7 +346,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 			serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, stopLoc)
 			serviceDateStr := targetDate.Format("20060102")
 
-			activeServiceIDs, svcErr := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, serviceDateStr)
+			activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 			if svcErr != nil {
 				api.Logger.Warn("failed to query active service IDs",
 					slog.String("date", serviceDateStr),
@@ -461,7 +461,6 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 			st := ast.GetStopTimesForStopInWindowRow
 			serviceMidnight := ast.ServiceDate
-			serviceDateMillis := serviceMidnight.UnixMilli()
 
 			route, routeOK := routesLookup[st.RouteID]
 			if !routeOK {
@@ -481,18 +480,18 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 			tCopy := trip
 			tripIDSet[trip.ID] = &tCopy
 
-			scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime)).UnixMilli()
-			scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime)).UnixMilli()
+			scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime))
+			scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime))
 
 			var (
-				predictedArrivalTime   int64
-				predictedDepartureTime int64
+				predictedArrivalTime   time.Time
+				predictedDepartureTime time.Time
 				predicted              = false
 				vehicleID              string
 				tripStatus             *models.TripStatus
 				distanceFromStop       = 0.0
 				numberOfStopsAway      = 0
-				lastUpdateTime         int64 // always emitted; 0 when no vehicle
+				lastUpdateTime         time.Time
 
 				// FIX #4: derive status from schedule deviation instead of
 				// always emitting "default". Falls back to "default" when
@@ -505,19 +504,16 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 				vehicleID = vehicle.ID.ID
 			}
 
-			schedArrTime := serviceMidnight.Add(time.Duration(st.ArrivalTime))
-			schedDepTime := serviceMidnight.Add(time.Duration(st.DepartureTime))
-
 			predArr, predDep, isPredicted := api.getPredictedTimes(
 				st.TripID, stopCode, int64(st.StopSequence),
-				schedArrTime, schedDepTime,
+				scheduledArrivalTime, scheduledDepartureTime,
 			)
 			if isPredicted {
 				predicted = true
 				predictedArrivalTime = predArr
 				predictedDepartureTime = predDep
 			}
-			// When not predicted, leave predictedArrivalTime/predictedDepartureTime as 0
+			// When not predicted, leave predictedArrivalTime/predictedDepartureTime as zero time.Time
 			// (matches Java which emits 0 for unpredicted arrivals).
 
 			// Gate BuildTripStatus on vehicle presence — matches the stop handler convention.
@@ -581,10 +577,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 					}
 				}
 
-				rawUpdate := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-				if rawUpdate > 0 {
-					lastUpdateTime = rawUpdate
-				}
+				lastUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 			}
 
 			totalStopsInTrip := tripStopCountMap[st.TripID]
@@ -605,24 +598,15 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 				}
 			}
 
-			// lastUpdateTimePtr: use a pointer so the model's omitempty drops it only
-			// when the value is truly absent. We pass nil when lastUpdateTime==0 to
-			// preserve the existing model behaviour (field omitted rather than 0).
-			var lastUpdateTimePtr *int64
-			if lastUpdateTime > 0 {
-				lastUpdateTimePtr = utils.Int64Ptr(lastUpdateTime)
-			}
-
 			// vehicleID must carry the agency prefix to match Java output ("1_6853").
 			formattedVehicleID := ""
 			if vehicleID != "" {
 				formattedVehicleID = utils.FormCombinedID(route.AgencyID, vehicleID)
 			}
 
-			// FIX #2: use raw GTFS stop_sequence (1-based) — do NOT subtract 1.
-			// Java's ArrivalAndDepartureBean.getStopSequence() returns the raw
-			// GTFS value directly; there is no zero-indexing in the wire format.
-			rawStopSequence := int(st.StopSequence)
+			// stopSequence is zero-based on the wire (matching Java OBA and the
+			// arrivals-and-departures-for-stop handler which uses StopSequence-1).
+			rawStopSequence := int(st.StopSequence) - 1
 
 			arrivals = append(arrivals, *models.NewArrivalAndDeparture(
 				utils.FormCombinedID(route.AgencyID, route.ID),  // routeID
@@ -632,16 +616,16 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 				st.TripHeadsign.String,                          // tripHeadsign
 				combinedStopID,                                  // stopID
 				formattedVehicleID,                              // vehicleID (agency-prefixed or empty)
-				serviceDateMillis,                               // serviceDate
+				serviceMidnight,                                 // serviceDate
 				scheduledArrivalTime,                            // scheduledArrivalTime
 				scheduledDepartureTime,                          // scheduledDepartureTime
-				predictedArrivalTime,                            // predictedArrivalTime  (0 when unpredicted)
-				predictedDepartureTime,                          // predictedDepartureTime (0 when unpredicted)
-				lastUpdateTimePtr,                               // lastUpdateTime
+				predictedArrivalTime,                            // predictedArrivalTime  (zero when unpredicted)
+				predictedDepartureTime,                          // predictedDepartureTime (zero when unpredicted)
+				lastUpdateTime,                                  // lastUpdateTime
 				predicted,                                       // predicted
 				true,                                            // arrivalEnabled
 				true,                                            // departureEnabled
-				rawStopSequence,                                 // FIX #2: raw GTFS stop_sequence, not zero-based
+				rawStopSequence,                                 // stopSequence (zero-based, matching stop handler)
 				totalStopsInTrip,                                // totalStopsInTrip
 				numberOfStopsAway,                               // numberOfStopsAway
 				blockTripSequence,                               // blockTripSequence
@@ -664,15 +648,20 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// Sort arrivals by predicted (or scheduled) arrival time ascending.
 	// Matches Java's ArrivalAndDepartureComparator.
 	sort.Slice(arrivals, func(i, j int) bool {
-		ti := arrivals[i].PredictedArrivalTime
-		if ti == 0 {
-			ti = arrivals[i].ScheduledArrivalTime
+		ai := arrivals[i]
+		aj := arrivals[j]
+		var ti, tj time.Time
+		if !ai.PredictedArrivalTime.IsZero() {
+			ti = ai.PredictedArrivalTime.Time
+		} else {
+			ti = ai.ScheduledArrivalTime.Time
 		}
-		tj := arrivals[j].PredictedArrivalTime
-		if tj == 0 {
-			tj = arrivals[j].ScheduledArrivalTime
+		if !aj.PredictedArrivalTime.IsZero() {
+			tj = aj.PredictedArrivalTime.Time
+		} else {
+			tj = aj.ScheduledArrivalTime.Time
 		}
-		return ti < tj
+		return ti.Before(tj)
 	})
 
 	// Build references block (agencies, routes, stops, trips, situations).
@@ -879,8 +868,16 @@ func getLocationNearbyStops(
 	queryTime time.Time,
 ) []models.StopWithDistance {
 
-	nearby := api.GtfsManager.GetStopsForLocation(
-		ctx, centerLat, centerLon, 100, 0, 0, "", 250, false, []int{}, queryTime,
+	nearby, _ := api.GtfsManager.GetStopsForLocation(
+		ctx,
+		&internalgtfs.LocationParams{
+			Lat:    centerLat,
+			Lon:    centerLon,
+			Radius: models.DefaultSearchRadiusInMeters,
+		},
+		"",
+		250,
+		[]int{},
 	)
 
 	if len(nearby) == 0 {
