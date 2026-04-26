@@ -4,12 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 )
+
+// hoursAfterMidnight returns the int64 nanoseconds-since-midnight value
+// that the database uses to represent a GTFS time of `h:00:00`.
+func hoursAfterMidnight(h int) int64 {
+	return (time.Duration(h) * time.Hour).Nanoseconds()
+}
 
 // createFrequencyTestClient sets up a test client with the prerequisite data
 func createFrequencyTestClient(t *testing.T) *Client {
@@ -102,22 +109,22 @@ func TestBulkInsertFrequencies(t *testing.T) {
 				frequencies = []CreateFrequencyParams{
 					{
 						TripID:      "trip_1",
-						StartTime:   int64(6 * 3600 * 1e9), // 6 AM in nanoseconds
-						EndTime:     int64(9 * 3600 * 1e9), // 9 AM
+						StartTime:   hoursAfterMidnight(6), // 6 AM in nanoseconds
+						EndTime:     hoursAfterMidnight(9), // 9 AM
 						HeadwaySecs: 600,                   // 10 minutes
 						ExactTimes:  0,
 					},
 					{
 						TripID:      "trip_1",
-						StartTime:   int64(11 * 3600 * 1e9), // 11 AM
-						EndTime:     int64(14 * 3600 * 1e9), // 2 PM
+						StartTime:   hoursAfterMidnight(11), // 11 AM
+						EndTime:     hoursAfterMidnight(14), // 2 PM
 						HeadwaySecs: 900,                    // 15 minutes
 						ExactTimes:  0,
 					},
 					{
 						TripID:      "trip_1",
-						StartTime:   int64(16 * 3600 * 1e9), // 4 PM
-						EndTime:     int64(19 * 3600 * 1e9), // 7 PM
+						StartTime:   hoursAfterMidnight(16), // 4 PM
+						EndTime:     hoursAfterMidnight(19), // 7 PM
 						HeadwaySecs: 600,                    // 10 minutes
 						ExactTimes:  1,
 					},
@@ -127,8 +134,8 @@ func TestBulkInsertFrequencies(t *testing.T) {
 				for i := 0; i < tc.count; i++ {
 					frequencies[i] = CreateFrequencyParams{
 						TripID:      "trip_1",
-						StartTime:   int64(i) * int64(3600*1e9), // Each hour
-						EndTime:     int64(i+1) * int64(3600*1e9),
+						StartTime:   hoursAfterMidnight(i),
+						EndTime:     hoursAfterMidnight(i + 1),
 						HeadwaySecs: 600,
 						ExactTimes:  int64(i % 2), // Alternate between 0 and 1
 					}
@@ -175,10 +182,10 @@ func TestBulkInsertFrequencies_MultipleTrips(t *testing.T) {
 	ctx := context.Background()
 
 	frequencies := []CreateFrequencyParams{
-		{TripID: "trip_1", StartTime: int64(6 * 3600 * 1e9), EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
-		{TripID: "trip_1", StartTime: int64(16 * 3600 * 1e9), EndTime: int64(19 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
-		{TripID: "trip_2", StartTime: int64(7 * 3600 * 1e9), EndTime: int64(10 * 3600 * 1e9), HeadwaySecs: 300, ExactTimes: 1},
-		{TripID: "trip_3", StartTime: int64(8 * 3600 * 1e9), EndTime: int64(12 * 3600 * 1e9), HeadwaySecs: 1200, ExactTimes: 0},
+		{TripID: "trip_1", StartTime: hoursAfterMidnight(6), EndTime: hoursAfterMidnight(9), HeadwaySecs: 600, ExactTimes: 0},
+		{TripID: "trip_1", StartTime: hoursAfterMidnight(16), EndTime: hoursAfterMidnight(19), HeadwaySecs: 600, ExactTimes: 0},
+		{TripID: "trip_2", StartTime: hoursAfterMidnight(7), EndTime: hoursAfterMidnight(10), HeadwaySecs: 300, ExactTimes: 1},
+		{TripID: "trip_3", StartTime: hoursAfterMidnight(8), EndTime: hoursAfterMidnight(12), HeadwaySecs: 1200, ExactTimes: 0},
 	}
 
 	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
@@ -209,10 +216,10 @@ func TestBulkInsertFrequencies_DuplicatePrimaryKey(t *testing.T) {
 
 	ctx := context.Background()
 
-	startTime := int64(6 * 3600 * 1e9)
+	startTime := hoursAfterMidnight(6)
 	frequencies := []CreateFrequencyParams{
-		{TripID: "trip_1", StartTime: startTime, EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
-		{TripID: "trip_1", StartTime: startTime, EndTime: int64(10 * 3600 * 1e9), HeadwaySecs: 900, ExactTimes: 1},
+		{TripID: "trip_1", StartTime: startTime, EndTime: hoursAfterMidnight(9), HeadwaySecs: 600, ExactTimes: 0},
+		{TripID: "trip_1", StartTime: startTime, EndTime: hoursAfterMidnight(10), HeadwaySecs: 900, ExactTimes: 1},
 	}
 
 	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
@@ -231,8 +238,8 @@ func TestClearFrequencies(t *testing.T) {
 	ctx := context.Background()
 
 	frequencies := []CreateFrequencyParams{
-		{TripID: "trip_1", StartTime: int64(6 * 3600 * 1e9), EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
-		{TripID: "trip_2", StartTime: int64(7 * 3600 * 1e9), EndTime: int64(10 * 3600 * 1e9), HeadwaySecs: 300, ExactTimes: 1},
+		{TripID: "trip_1", StartTime: hoursAfterMidnight(6), EndTime: hoursAfterMidnight(9), HeadwaySecs: 600, ExactTimes: 0},
+		{TripID: "trip_2", StartTime: hoursAfterMidnight(7), EndTime: hoursAfterMidnight(10), HeadwaySecs: 300, ExactTimes: 1},
 	}
 
 	err := client.bulkInsertFrequencies(ctx, frequencies, nil)
@@ -261,9 +268,9 @@ func TestGetFrequenciesForTrips(t *testing.T) {
 	ctx := context.Background()
 
 	frequencies := []CreateFrequencyParams{
-		{TripID: "trip_1", StartTime: int64(6 * 3600 * 1e9), EndTime: int64(9 * 3600 * 1e9), HeadwaySecs: 600, ExactTimes: 0},
-		{TripID: "trip_2", StartTime: int64(7 * 3600 * 1e9), EndTime: int64(10 * 3600 * 1e9), HeadwaySecs: 300, ExactTimes: 1},
-		{TripID: "trip_3", StartTime: int64(8 * 3600 * 1e9), EndTime: int64(12 * 3600 * 1e9), HeadwaySecs: 1200, ExactTimes: 0},
+		{TripID: "trip_1", StartTime: hoursAfterMidnight(6), EndTime: hoursAfterMidnight(9), HeadwaySecs: 600, ExactTimes: 0},
+		{TripID: "trip_2", StartTime: hoursAfterMidnight(7), EndTime: hoursAfterMidnight(10), HeadwaySecs: 300, ExactTimes: 1},
+		{TripID: "trip_3", StartTime: hoursAfterMidnight(8), EndTime: hoursAfterMidnight(12), HeadwaySecs: 1200, ExactTimes: 0},
 	}
 
 	err := client.bulkInsertFrequencies(ctx, frequencies, nil)

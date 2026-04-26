@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
@@ -78,7 +79,7 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 	for _, alert := range alerts {
 		situation := models.Situation{
 			ID:                 alert.ID,
-			CreationTime:       0,
+			CreationTime:       models.NewModelTime(time.Time{}),
 			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
 			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
 			ConsequenceMessage: "",

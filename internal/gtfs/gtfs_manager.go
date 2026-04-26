@@ -651,11 +651,11 @@ func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	return updates
 }
 
-func (manager *Manager) GetVehicleLastUpdateTime(vehicle *gtfs.Vehicle) int64 {
+func (manager *Manager) GetVehicleLastUpdateTime(vehicle *gtfs.Vehicle) time.Time {
 	if vehicle == nil || vehicle.Timestamp == nil {
-		return 0
+		return time.Time{}
 	}
-	return vehicle.Timestamp.UnixMilli()
+	return *vehicle.Timestamp
 }
 
 func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {

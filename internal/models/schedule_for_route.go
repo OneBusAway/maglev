@@ -1,14 +1,14 @@
 package models
 
 type RouteStopTime struct {
-	ArrivalEnabled   bool   `json:"arrivalEnabled"`
-	ArrivalTime      int    `json:"arrivalTime"`
-	DepartureEnabled bool   `json:"departureEnabled"`
-	DepartureTime    int    `json:"departureTime"`
-	ServiceID        string `json:"serviceId"`
-	StopHeadsign     string `json:"stopHeadsign"`
-	StopID           string `json:"stopId"`
-	TripID           string `json:"tripId"`
+	ArrivalEnabled   bool          `json:"arrivalEnabled"`
+	ArrivalTime      ModelDuration `json:"arrivalTime"`
+	DepartureEnabled bool          `json:"departureEnabled"`
+	DepartureTime    ModelDuration `json:"departureTime"`
+	ServiceID        string        `json:"serviceId"`
+	StopHeadsign     string        `json:"stopHeadsign"`
+	StopID           string        `json:"stopId"`
+	TripID           string        `json:"tripId"`
 }
 
 type TripStopTimes struct {

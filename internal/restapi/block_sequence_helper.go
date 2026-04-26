@@ -1,9 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"math"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -52,8 +53,8 @@ func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID 
 		}
 	}
 
-	sort.Slice(activeTrips, func(i, j int) bool {
-		return activeTrips[i].StartTime < activeTrips[j].StartTime
+	slices.SortFunc(activeTrips, func(a, b TripWithDetails) int {
+		return cmp.Compare(a.StartTime, b.StartTime)
 	})
 
 	blockSequence := 0

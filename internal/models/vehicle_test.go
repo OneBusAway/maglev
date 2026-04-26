@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +49,7 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 	t.Run("optional fields appear only when set", func(t *testing.T) {
 		capacity := 50
 		count := 30
-		ts := int64(1000)
+		ts := NewModelTime(time.UnixMilli(1000))
 
 		tripStatus := NewTripStatus()
 		tripStatus.ActiveTripID = "trip_1"

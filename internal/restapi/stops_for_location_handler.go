@@ -1,9 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -100,9 +101,9 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
 
-	// Sort by stop ID for deterministic results
-	sort.SliceStable(stops, func(i, j int) bool {
-		return stops[i].ID < stops[j].ID
+	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"
+	slices.SortStableFunc(stops, func(a, b gtfsdb.Stop) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	results := []models.Stop{}

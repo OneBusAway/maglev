@@ -2,7 +2,7 @@ package models
 
 type Situation struct {
 	ID                 string            `json:"id"`
-	CreationTime       int64             `json:"creationTime"`
+	CreationTime       ModelTime         `json:"creationTime"`
 	ActiveWindows      []ActiveWindow    `json:"activeWindows"`
 	AllAffects         []AffectedEntity  `json:"allAffects"`
 	ConsequenceMessage string            `json:"consequenceMessage"`

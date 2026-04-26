@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -15,12 +16,12 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 	tripHeadsign := "Downtown Terminal"
 	stopID := "stop_456"
 	vehicleID := "vehicle_789"
-	serviceDate := int64(1609459200000)
-	scheduledArrivalTime := int64(1609462800000)
-	scheduledDepartureTime := int64(1609462900000)
-	predictedArrivalTime := int64(1609462850000)
-	predictedDepartureTime := int64(1609462950000)
-	lastUpdateTime := int64(1609462700000)
+	serviceDate := time.UnixMilli(1609459200000)
+	scheduledArrivalTime := time.UnixMilli(1609462800000)
+	scheduledDepartureTime := time.UnixMilli(1609462900000)
+	predictedArrivalTime := time.UnixMilli(1609462850000)
+	predictedDepartureTime := time.UnixMilli(1609462950000)
+	lastUpdateTime := time.UnixMilli(1609462700000)
 	predicted := true
 	arrivalEnabled := true
 	departureEnabled := true
@@ -41,7 +42,7 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 	arrival := NewArrivalAndDeparture(
 		routeID, routeShortName, routeLongName, tripID, tripHeadsign, stopID, vehicleID,
 		serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime,
-		&lastUpdateTime,
+		lastUpdateTime,
 		predicted, arrivalEnabled, departureEnabled,
 		stopSequence, totalStopsInTrip, numberOfStopsAway, blockTripSequence,
 		distanceFromStop,
@@ -57,12 +58,12 @@ func TestNewArrivalAndDeparture(t *testing.T) {
 	assert.Equal(t, tripHeadsign, arrival.TripHeadsign)
 	assert.Equal(t, stopID, arrival.StopID)
 	assert.Equal(t, vehicleID, arrival.VehicleID)
-	assert.Equal(t, serviceDate, arrival.ServiceDate)
-	assert.Equal(t, scheduledArrivalTime, arrival.ScheduledArrivalTime)
-	assert.Equal(t, scheduledDepartureTime, arrival.ScheduledDepartureTime)
-	assert.Equal(t, predictedArrivalTime, arrival.PredictedArrivalTime)
-	assert.Equal(t, predictedDepartureTime, arrival.PredictedDepartureTime)
-	assert.Equal(t, lastUpdateTime, *arrival.LastUpdateTime)
+	assert.Equal(t, serviceDate, arrival.ServiceDate.Time)
+	assert.Equal(t, scheduledArrivalTime, arrival.ScheduledArrivalTime.Time)
+	assert.Equal(t, scheduledDepartureTime, arrival.ScheduledDepartureTime.Time)
+	assert.Equal(t, predictedArrivalTime, arrival.PredictedArrivalTime.Time)
+	assert.Equal(t, predictedDepartureTime, arrival.PredictedDepartureTime.Time)
+	assert.Equal(t, lastUpdateTime, arrival.LastUpdateTime.Time)
 	assert.Equal(t, predicted, arrival.Predicted)
 	assert.Equal(t, arrivalEnabled, arrival.ArrivalEnabled)
 	assert.Equal(t, departureEnabled, arrival.DepartureEnabled)
@@ -91,7 +92,7 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 	tripStatus.VehicleID = "vehicle_789"
 	tripStatus.Status = "in_progress"
 
-	lastUpdateTime := int64(1609462700000)
+	lastUpdateTime := time.UnixMilli(1609462700000)
 	arrival := ArrivalAndDeparture{
 		ActualTrack:                "",
 		ArrivalEnabled:             true,
@@ -100,24 +101,24 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 		DistanceFromStop:           500.75,
 		Frequency:                  nil,
 		HistoricalOccupancy:        "STANDING_ROOM_ONLY",
-		LastUpdateTime:             &lastUpdateTime,
+		LastUpdateTime:             NewModelTime(lastUpdateTime),
 		NumberOfStopsAway:          3,
 		OccupancyStatus:            "MANY_SEATS_AVAILABLE",
 		Predicted:                  true,
 		PredictedArrivalInterval:   nil,
-		PredictedArrivalTime:       1609462850000,
+		PredictedArrivalTime:       NewModelTime(time.UnixMilli(1609462850000)),
 		PredictedDepartureInterval: nil,
-		PredictedDepartureTime:     1609462950000,
+		PredictedDepartureTime:     NewModelTime(time.UnixMilli(1609462950000)),
 		PredictedOccupancy:         "FEW_SEATS_AVAILABLE",
 		RouteID:                    "unitrans_FMS",
 		RouteLongName:              "Fremont Station",
 		RouteShortName:             "FMS",
 		ScheduledArrivalInterval:   nil,
-		ScheduledArrivalTime:       1609462800000,
+		ScheduledArrivalTime:       NewModelTime(time.UnixMilli(1609462800000)),
 		ScheduledDepartureInterval: nil,
-		ScheduledDepartureTime:     1609462900000,
+		ScheduledDepartureTime:     NewModelTime(time.UnixMilli(1609462900000)),
 		ScheduledTrack:             "",
-		ServiceDate:                1609459200000,
+		ServiceDate:                NewModelTime(time.UnixMilli(1609459200000)),
 		SituationIDs:               []string{"situation_1", "situation_2"},
 		Status:                     "SCHEDULED",
 		StopID:                     "stop_456",
@@ -149,8 +150,8 @@ func TestArrivalAndDepartureJSON(t *testing.T) {
 func TestArrivalAndDepartureWithEmptyValues(t *testing.T) {
 	arrival := NewArrivalAndDeparture(
 		"", "", "", "", "", "", "",
-		0, 0, 0, 0, 0,
-		nil,
+		time.Time{}, time.Time{}, time.Time{}, time.Time{}, time.Time{},
+		time.Time{},
 		false, false, false,
 		0, 0, 0, 0,
 		0.0,
@@ -166,21 +167,25 @@ func TestArrivalAndDepartureWithEmptyValues(t *testing.T) {
 	assert.Equal(t, "", arrival.TripHeadsign)
 	assert.Equal(t, "", arrival.StopID)
 	assert.Equal(t, "", arrival.VehicleID)
-	assert.Equal(t, int64(0), arrival.ServiceDate)
+	assert.Equal(t, time.Time{}, arrival.ServiceDate.Time)
 	assert.Equal(t, false, arrival.Predicted)
 	assert.Equal(t, false, arrival.ArrivalEnabled)
 	assert.Equal(t, false, arrival.DepartureEnabled)
 	assert.Nil(t, arrival.TripStatus)
 	assert.Nil(t, arrival.SituationIDs)
-	assert.Nil(t, arrival.LastUpdateTime)
+	assert.Equal(t, time.Time{}, arrival.LastUpdateTime.Time)
 }
 
 func TestArrivalAndDepartureWithNilTripStatus(t *testing.T) {
-	lastUpdateTime := int64(1609462700000)
+	lastUpdateTime := time.UnixMilli(1609462700000)
 	arrival := NewArrivalAndDeparture(
 		"route_1", "R1", "Route One", "trip_1", "Terminal", "stop_1", "vehicle_1",
-		1609459200000, 1609462800000, 1609462900000, 1609462850000, 1609462950000,
-		&lastUpdateTime,
+		time.UnixMilli(1609459200000),
+		time.UnixMilli(1609462800000),
+		time.UnixMilli(1609462900000),
+		time.UnixMilli(1609462850000),
+		time.UnixMilli(1609462950000),
+		lastUpdateTime,
 		true, true, true,
 		1, 10, 2, 1,
 		250.5,

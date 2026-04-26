@@ -151,7 +151,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
+	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
 	var schedule *models.Schedule
 	var status *models.TripStatus
@@ -198,7 +198,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
 		// we take the first row which gives us the frequency with the earliest start_time
 		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
-		converted.ServiceDate = serviceDateMillis
+		converted.ServiceDate = models.NewModelTime(midnight)
 		converted.ServiceID = utils.FormCombinedID(agencyID, trip.ServiceID)
 		converted.TripID = utils.FormCombinedID(agencyID, trip.ID)
 		frequency = &converted
@@ -206,7 +206,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	tripDetails := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
-		ServiceDate:  serviceDateMillis,
+		ServiceDate:  models.NewModelTime(midnight),
 		Schedule:     schedule,
 		Frequency:    frequency,
 		SituationIDs: situationsIDs,

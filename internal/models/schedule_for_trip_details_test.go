@@ -3,16 +3,23 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewSchedule(t *testing.T) {
-	freq := &Frequency{StartTime: 1000, EndTime: 2000, Headway: 300, ExactTimes: 0}
+	date := time.Date(2024, 6, 15, 8, 0, 0, 0, time.UTC)
+	freq := &Frequency{
+		StartTime:  NewModelTime(date),
+		EndTime:    NewModelTime(date.Add(time.Hour)),
+		Headway:    NewModelDuration(300 * time.Second),
+		ExactTimes: 0,
+	}
 	nextTripID := "next_trip_123"
 	previousTripID := "prev_trip_456"
-	stopTime1 := NewStopTime(28800, 28900, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
-	stopTime2 := NewStopTime(29000, 29100, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE")
+	stopTime1 := NewStopTime(8*time.Hour, 8*time.Hour+time.Minute, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
+	stopTime2 := NewStopTime(9*time.Hour, 9*time.Hour+time.Minute, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE")
 	stopTimes := []StopTime{stopTime1, stopTime2}
 	timeZone := "America/Los_Angeles"
 
@@ -27,7 +34,7 @@ func TestNewSchedule(t *testing.T) {
 }
 
 func TestScheduleJSON(t *testing.T) {
-	stopTime := NewStopTime(28800, 28900, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
+	stopTime := NewStopTime(8*time.Hour, 8*time.Hour+time.Minute, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
 
 	schedule := Schedule{
 		Frequency:      nil,
@@ -64,9 +71,9 @@ func TestScheduleWithEmptyValues(t *testing.T) {
 
 func TestScheduleWithMultipleStopTimes(t *testing.T) {
 	stopTimes := []StopTime{
-		NewStopTime(28800, 28900, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE"),
-		NewStopTime(29000, 29100, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE"),
-		NewStopTime(29200, 29300, "stop_3", "Midtown", 300.0, "STANDING_ROOM_ONLY"),
+		NewStopTime(8*time.Hour, 8*time.Hour+time.Minute, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE"),
+		NewStopTime(9*time.Hour, 9*time.Hour+time.Minute, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE"),
+		NewStopTime(10*time.Hour, 10*time.Hour+time.Minute, "stop_3", "Midtown", 300.0, "STANDING_ROOM_ONLY"),
 	}
 
 	schedule := NewSchedule(nil, "trip_next", "trip_prev", stopTimes, "America/New_York")

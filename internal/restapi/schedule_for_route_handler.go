@@ -216,9 +216,9 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			for _, st := range stopTimes {
 				stopTimesList = append(stopTimesList, models.RouteStopTime{
 					ArrivalEnabled:   true,
-					ArrivalTime:      int(utils.NanosToSeconds(st.ArrivalTime)),
+					ArrivalTime:      models.NewModelDuration(time.Duration(st.ArrivalTime)),
 					DepartureEnabled: true,
-					DepartureTime:    int(utils.NanosToSeconds(st.DepartureTime)),
+					DepartureTime:    models.NewModelDuration(time.Duration(st.DepartureTime)),
 					ServiceID:        utils.FormCombinedID(agencyID, trip.ServiceID),
 					StopHeadsign:     st.StopHeadsign.String,
 					StopID:           utils.FormCombinedID(agencyID, st.StopID),

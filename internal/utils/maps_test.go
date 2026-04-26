@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -42,7 +42,7 @@ func TestMapValues(t *testing.T) {
 		if len(result) != 3 {
 			t.Errorf("expected 3 elements, got %d", len(result))
 		}
-		sort.Ints(result)
+		slices.Sort(result)
 		expected := []int{1, 2, 3}
 		for i, v := range result {
 			if v != expected[i] {
