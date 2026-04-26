@@ -526,8 +526,21 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 				if status != nil {
 					tripStatus = status
 
-					// Only set a meaningful status when the arrival is predicted.
-					// Unpredicted arrivals stay "default".
+					// Block-based prediction propagation: when the GTFS-RT feed only
+					// has data for the active (preceding) block trip, getPredictedTimes
+					// above returns isPredicted=false for the scheduled (future) trip.
+					// If tripStatus.Predicted is true, the vehicle IS tracked — apply
+					// the active trip's schedule deviation to the scheduled times.
+					// This matches Java OBA's ArrivalAndDepartureServiceImpl which
+					// propagates block-level delay to future block trips.
+					if !predicted && status.Predicted {
+						dev := time.Duration(status.ScheduleDeviation) * time.Second
+						predictedArrivalTime = scheduledArrivalTime.Add(dev)
+						predictedDepartureTime = scheduledDepartureTime.Add(dev)
+						predicted = true
+					}
+
+					// status field: derive from deviation only when predicted (direct or block-propagated).
 					if predicted {
 						arrivalStatus = arrivalStatusFromDeviation(status.ScheduleDeviation)
 					}
@@ -561,15 +574,25 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 					}
 
 					// Ensure the active trip (if different from scheduled) is in references.
+					// Also override tripStatus.BlockTripSequence to use the ACTIVE trip's
+					// block sequence — BuildTripStatus computes it from the scheduled (target)
+					// tripID, but Java OBA emits the active trip's sequence on the wire.
 					if status.ActiveTripID != "" {
-						if _, atID, atErr := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID); atErr == nil && atID != st.TripID {
-							if _, exists := tripIDSet[atID]; !exists {
-								if at, atFetchErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, atID); atFetchErr == nil {
-									atCopy := at
-									tripIDSet[at.ID] = &atCopy
-									if ar, arFetchErr := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, at.RouteID); arFetchErr == nil {
-										arCopy := ar
-										routeIDSet[ar.ID] = &arCopy
+						if _, atID, atErr := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID); atErr == nil {
+							// Override BlockTripSequence to the active trip's sequence.
+							if activeSeq := api.calculateBlockTripSequence(ctx, atID, serviceMidnight); activeSeq > 0 {
+								status.BlockTripSequence = activeSeq
+							}
+
+							if atID != st.TripID {
+								if _, exists := tripIDSet[atID]; !exists {
+									if at, atFetchErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, atID); atFetchErr == nil {
+										atCopy := at
+										tripIDSet[at.ID] = &atCopy
+										if ar, arFetchErr := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, at.RouteID); arFetchErr == nil {
+											arCopy := ar
+											routeIDSet[ar.ID] = &arCopy
+										}
 									}
 								}
 							}
