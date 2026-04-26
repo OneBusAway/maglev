@@ -21,7 +21,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if agency == nil {
-		api.sendNull(w, r)
+		api.sendNotFound(w, r)
 		return
 	}
 
