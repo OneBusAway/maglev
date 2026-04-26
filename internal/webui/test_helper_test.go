@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,7 +28,7 @@ func createTestWebUI(t testing.TB) *WebUI {
 	t.Helper()
 	var initErr error
 	testDbSetupOnce.Do(func() {
-		ctx := context.Background()
+		ctx := t.Context()
 		gtfsConfig := gtfs.Config{
 			GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
 			GTFSDataPath: testDbPath,

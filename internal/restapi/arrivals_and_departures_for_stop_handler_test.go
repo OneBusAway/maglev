@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
@@ -463,7 +462,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	agencyA := "AgencyA"
@@ -638,7 +637,7 @@ func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 // stopSeq is the stop_sequence value written to the DB for the stop being queried.
 func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode, combinedStopID, tripID string, scheduledArrivalMs int64) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	q := api.GtfsManager.GtfsDB.Queries
 
 	agencyID := "dp-agency"
@@ -1039,7 +1038,7 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// RABA test data has stops near Redding, CA (~40.589, -122.39).
 	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
@@ -1065,7 +1064,7 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
 	require.NotEmpty(t, stops)
@@ -1090,7 +1089,7 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	// Create custom data so we control the service dates and times.
@@ -1215,7 +1214,7 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	const (

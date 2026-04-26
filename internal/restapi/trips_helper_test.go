@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -192,7 +191,7 @@ func TestDistanceToLineSegment_GeographicCoordinates(t *testing.T) {
 func TestCalculatePreciseDistanceAlongTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Get a test trip with shape data
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
@@ -251,7 +250,7 @@ func TestCalculatePreciseDistanceAlongTrip(t *testing.T) {
 func TestCalculatePreciseDistanceAlongTrip_EdgeCases(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("Empty shape points", func(t *testing.T) {
 		emptyShape := []gtfs.ShapePoint{}
@@ -290,7 +289,7 @@ func TestCalculatePreciseDistanceAlongTrip_EdgeCases(t *testing.T) {
 func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a simple linear shape: three points in a line
 	// Point 1: (40.0, -122.0)
@@ -325,7 +324,6 @@ func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
 
 // TestCalculateBatchStopDistances verifies the new Monotonic Search logic
 func TestCalculateBatchStopDistances(t *testing.T) {
-
 	api := createTestApi(t)
 	defer api.Shutdown()
 
@@ -423,7 +421,7 @@ func TestCalculatePreciseDistanceAlongTripWithCoords_Validation(t *testing.T) {
 func TestBuildStopTimesList_ErrorHandling(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Get real stop times to work with
 	trip := mustGetTrip(t, api)
@@ -502,7 +500,7 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
@@ -568,7 +566,7 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
@@ -603,7 +601,7 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
@@ -631,7 +629,7 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
@@ -709,7 +707,7 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
 	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
 	api.GtfsManager.MockAddVehicle(vehicleID, tripID, routeID)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	currentTime := time.Now()
 	model, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, currentTime, currentTime)
@@ -819,7 +817,7 @@ func TestFindNextStopByTimeWithDelays_WithDelay(t *testing.T) {
 func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	trip := mustGetTrip(t, api)
 	agencies := mustGetAgencies(t, api)
@@ -846,7 +844,7 @@ func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	trip := mustGetTrip(t, api)
 	agencies := mustGetAgencies(t, api)
@@ -874,7 +872,7 @@ func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 func TestFillStopsFromSchedule_InvalidTripID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	status := models.NewTripStatus()
@@ -1025,7 +1023,7 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
@@ -1101,11 +1099,12 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	require.NotNil(t, status.LastKnownLocation, "LastKnownLocation should be set from vehicle position")
 	assert.NotZero(t, status.LastKnownLocation.Lat, "LastKnownLocation should be set from vehicle position")
 }
+
 func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
@@ -1163,7 +1162,7 @@ func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
@@ -1217,7 +1216,7 @@ func BenchmarkCalculatePreciseDistanceAlongTrip(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := b.Context()
 
 	// Find a trip with shape data
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
@@ -1272,7 +1271,7 @@ func BenchmarkBuildTripSchedule(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := b.Context()
 
 	// Find a trip
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
@@ -1315,7 +1314,7 @@ func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 	t := &testing.T{}
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := b.Context()
 
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
 	if err != nil {
@@ -1495,7 +1494,7 @@ func TestFindClosestStopBySequence_NoMatch(t *testing.T) {
 
 func TestFindNextStopBySequence_InTransit(t *testing.T) {
 	api := &RestAPI{}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := time.Date(2024, 1, 1, 8, 0, 0, 0, time.UTC)
@@ -1518,7 +1517,7 @@ func TestFindNextStopBySequence_InTransit(t *testing.T) {
 
 func TestFindNextStopBySequence_StoppedAt(t *testing.T) {
 	api := &RestAPI{}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := time.Date(2024, 1, 1, 8, 0, 0, 0, time.UTC)
@@ -1543,7 +1542,7 @@ func TestFindNextStopBySequence_StoppedAt(t *testing.T) {
 func TestFindNextStopBySequence_StoppedAtLastStop(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
@@ -1564,7 +1563,7 @@ func TestFindNextStopBySequence_StoppedAtLastStop(t *testing.T) {
 
 func TestFindNextStopBySequence_NoMatch(t *testing.T) {
 	api := &RestAPI{}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := time.Date(2024, 1, 1, 8, 0, 0, 0, time.UTC)
@@ -1803,7 +1802,7 @@ func TestFindStopsByScheduleDeviation_Early(t *testing.T) {
 func TestGetFirstStopOfNextTripInBlock_WithBlockContinuation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Find a trip that belongs to a block with at least two trips.
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
@@ -2054,7 +2053,7 @@ func floatPtr(f float64) *float64 { return &f }
 func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	tripID := "trip_single_block"
@@ -2102,7 +2101,7 @@ func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	tripID := "trip_not_in_block"

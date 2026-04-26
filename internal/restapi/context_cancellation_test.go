@@ -55,7 +55,7 @@ func TestContextCancellationHandling(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create a context with timeout
-			ctx, cancel := context.WithTimeout(context.Background(), tt.timeout)
+			ctx, cancel := context.WithTimeout(t.Context(), tt.timeout)
 			defer cancel()
 			req = req.WithContext(ctx)
 
@@ -99,7 +99,7 @@ func TestLongerTimeoutContextHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create context with reasonable timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		req = req.WithContext(ctx)
 
@@ -120,8 +120,8 @@ func TestContextCancellationInGetStopsForLocation(t *testing.T) {
 	defer api.Shutdown()
 
 	// This test verifies that our current implementation works normally
-	// since it uses context.Background() internally
-	stops := api.GtfsManager.GetStopsInBounds(context.Background(), &gtfs.LocationParams{Lat: 38.9, Lon: -77.0, Radius: 1000}, 10)
+	// since it uses t.Context() internally
+	stops := api.GtfsManager.GetStopsInBounds(t.Context(), &gtfs.LocationParams{Lat: 38.9, Lon: -77.0, Radius: 1000}, 10)
 
 	// Current implementation should return a slice (possibly empty)
 	// The function should not panic and should return a valid slice
@@ -138,12 +138,11 @@ func TestContextCancellationDuringDatabaseQueries(t *testing.T) {
 
 	t.Run("cancelled context in database query should be handled", func(t *testing.T) {
 		// Create a context that's already cancelled
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		// Try to execute a database query with cancelled context
 		_, err := api.GtfsManager.GtfsDB.Queries.ListAgencies(ctx)
-
 		// The query should either succeed (if fast enough) or return a context error
 		if err != nil {
 			assert.Equal(t, context.Canceled, err)
@@ -152,7 +151,7 @@ func TestContextCancellationDuringDatabaseQueries(t *testing.T) {
 
 	t.Run("timeout context in database query should be handled", func(t *testing.T) {
 		// Create a context with very short timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 1*time.Nanosecond)
 		defer cancel()
 
 		// Add a small delay to ensure timeout
@@ -160,7 +159,6 @@ func TestContextCancellationDuringDatabaseQueries(t *testing.T) {
 
 		// Try to execute a database query with timeout context
 		_, err := api.GtfsManager.GtfsDB.Queries.ListAgencies(ctx)
-
 		// The query should either succeed (if very fast) or return a timeout error
 		if err != nil {
 			assert.Equal(t, context.DeadlineExceeded, err)

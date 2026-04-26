@@ -34,16 +34,7 @@ func TestMarketingHandler_PathTraversal(t *testing.T) {
 		t.Fatalf("failed to create secret file: %v", err)
 	}
 
-	originalWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-	if err := os.Chdir(tempDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWd)
-	})
+	t.Chdir(tempDir)
 
 	webUI := &WebUI{}
 

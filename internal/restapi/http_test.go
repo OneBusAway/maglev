@@ -3,7 +3,6 @@ package restapi
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -51,7 +50,7 @@ func TestMain(m *testing.M) {
 // createTestApiWithClock creates a new restAPI instance with a custom clock for deterministic testing.
 // The GTFS database is created once and reused across all tests for performance.
 func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Initialize the shared GTFS manager only once
 	testDbSetupOnce.Do(func() {
@@ -104,7 +103,7 @@ func createTestApi(t testing.TB) *RestAPI {
 // mustGetAgencies fetches agencies from the DB for use in tests.
 func mustGetAgencies(t testing.TB, api *RestAPI) []gtfsdb.Agency {
 	t.Helper()
-	agencies, err := api.GtfsManager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err := api.GtfsManager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	return agencies
 }
@@ -112,7 +111,7 @@ func mustGetAgencies(t testing.TB, api *RestAPI) []gtfsdb.Agency {
 // mustGetTrip fetches a single trip from the DB for use in tests.
 func mustGetTrip(t testing.TB, api *RestAPI) gtfsdb.Trip {
 	t.Helper()
-	trips, err := api.GtfsManager.GetTrips(context.Background(), 1)
+	trips, err := api.GtfsManager.GetTrips(t.Context(), 1)
 	require.NoError(t, err)
 	require.NotEmpty(t, trips, "test data should contain at least one trip")
 	return trips[0]
@@ -122,7 +121,7 @@ func mustGetTrip(t testing.TB, api *RestAPI) gtfsdb.Trip {
 func mustGetTripIDWithBlockID(t testing.TB, api *RestAPI) string {
 	t.Helper()
 	var blockID string
-	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(t.Context(),
 		`SELECT block_id FROM trips WHERE block_id IS NOT NULL AND block_id != '' LIMIT 1`,
 	).Scan(&blockID)
 	require.NoError(t, err, "test data should contain at least one trip with a block_id")
@@ -133,7 +132,7 @@ func mustGetTripIDWithBlockID(t testing.TB, api *RestAPI) string {
 func mustGetTripIDWithShapeID(t testing.TB, api *RestAPI) string {
 	t.Helper()
 	var shapeID string
-	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(t.Context(),
 		`SELECT shape_id FROM trips WHERE shape_id IS NOT NULL AND shape_id != '' LIMIT 1`,
 	).Scan(&shapeID)
 	require.NoError(t, err, "test data should contain at least one trip with a shape_id")
@@ -176,7 +175,7 @@ func callAPIHandler[ResponseType any](t testing.TB, api *RestAPI, endpoint strin
 // mustGetRoutes returns all routes from the DB, failing the test immediately on error.
 func mustGetRoutes(t testing.TB, api *RestAPI) []gtfsdb.Route {
 	t.Helper()
-	routes, err := api.GtfsManager.GetRoutes(context.Background())
+	routes, err := api.GtfsManager.GetRoutes(t.Context())
 	require.NoError(t, err)
 	return routes
 }
@@ -184,7 +183,7 @@ func mustGetRoutes(t testing.TB, api *RestAPI) []gtfsdb.Route {
 // mustGetStops returns all active stops from the DB (stops with stop times)
 func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
 	t.Helper()
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetActiveStops(context.Background())
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetActiveStops(t.Context())
 	require.NoError(t, err)
 	return stops
 }

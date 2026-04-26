@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,7 +20,7 @@ import (
 
 // createTestApiForValidationTests creates a test API with higher rate limit for validation tests
 func createTestApiForValidationTests(t *testing.T) *RestAPI {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Initialize the shared GTFS manager only once
 	testDbSetupOnce.Do(func() {

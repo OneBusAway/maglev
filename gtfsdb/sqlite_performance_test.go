@@ -1,9 +1,7 @@
 package gtfsdb
 
 import (
-	"context"
 	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -22,7 +20,7 @@ func TestSQLitePerformancePragmasApplied(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Verify cache_size PRAGMA
 	var cacheSize int
@@ -64,9 +62,7 @@ func TestMemoryDatabaseConnectionPool(t *testing.T) {
 
 func TestFileDatabaseConnectionPool(t *testing.T) {
 	// Create temporary directory for test database
-	tmpDir, err := os.MkdirTemp("", "gtfsdb_test_*")
-	require.NoError(t, err)
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -86,7 +82,7 @@ func TestFileDatabaseConnectionPool(t *testing.T) {
 
 	// Verify WAL mode is enabled for file databases
 	var journalMode string
-	err = client.DB.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&journalMode)
+	err = client.DB.QueryRowContext(t.Context(), "PRAGMA journal_mode").Scan(&journalMode)
 	require.NoError(t, err)
 	// Should be set to 'wal' based on our performance pragmas
 	assert.Equal(t, "wal", journalMode, "File databases should have WAL journal mode enabled")
@@ -94,9 +90,7 @@ func TestFileDatabaseConnectionPool(t *testing.T) {
 
 func TestConnectionPoolBehaviorWithFileDatabase(t *testing.T) {
 	// Create temporary directory for test database
-	tmpDir, err := os.MkdirTemp("", "gtfsdb_test_*")
-	require.NoError(t, err)
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test_concurrent.db")
 
@@ -109,7 +103,7 @@ func TestConnectionPoolBehaviorWithFileDatabase(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Make concurrent queries to verify pooling works
 	done := make(chan error, 10)
@@ -151,7 +145,7 @@ func TestMemoryDatabaseIsolation(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert a test agency
 	_, err = client.Queries.CreateAgency(ctx, CreateAgencyParams{
@@ -179,7 +173,7 @@ func TestPerformancePragmasDoNotBreakFunctionality(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test CRUD operations work with pragmas applied
 
@@ -263,7 +257,7 @@ func TestSQLitePerformanceWithBulkOperations(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create prerequisite data (agency, route, calendar/service)
 	_, err = client.Queries.CreateAgency(ctx, CreateAgencyParams{

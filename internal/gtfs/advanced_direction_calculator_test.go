@@ -1,7 +1,6 @@
 package gtfs
 
 import (
-	"context"
 	"database/sql"
 	"math"
 	"os"
@@ -33,8 +32,8 @@ func getSharedTestComponents(t *testing.T) (*Manager, *AdvancedDirectionCalculat
 		}
 
 		var err error
-		// Pass context.Background() here to satisfy the new cancellable startup logic
-		sharedManager, err = InitGTFSManager(context.Background(), gtfsConfig)
+		// Pass t.Context() here to satisfy the new cancellable startup logic
+		sharedManager, err = InitGTFSManager(t.Context(), gtfsConfig)
 		if err != nil {
 			panic("Failed to init shared GTFS manager: " + err.Error())
 		}
@@ -109,12 +108,12 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// First call: precomputed direction "NE" from DB should be recognized
-	result := calc.CalculateStopDirection(context.Background(), "stop-1", sql.NullString{String: "NE", Valid: true})
+	result := calc.CalculateStopDirection(t.Context(), "stop-1", sql.NullString{String: "NE", Valid: true})
 	assert.Equal(t, "NE", result, "should recognize compass abbreviation NE from precomputed direction")
 
 	// Verify that a stop with no GTFS direction falls through to computeFromShapes,
 	// gets an empty result (no data in cache for nonexistent stop), and caches the empty result.
-	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{Valid: false})
+	result = calc.CalculateStopDirection(t.Context(), "nonexistent-stop", sql.NullString{Valid: false})
 	assert.Equal(t, "", result, "should return empty for stop with no direction data")
 
 	// The empty result should be cached (negative cache) — verify via sync.Map
@@ -123,7 +122,7 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	assert.Equal(t, "", cached.(string), "cached value should be empty string")
 
 	// Second call for same stop should return from cache without recomputation
-	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{Valid: false})
+	result = calc.CalculateStopDirection(t.Context(), "nonexistent-stop", sql.NullString{Valid: false})
 	assert.Equal(t, "", result, "second call should return cached empty result")
 }
 
@@ -143,7 +142,7 @@ func TestTransientDBError_NotCached(t *testing.T) {
 	stopID := "transient-error-stop"
 
 	// The query will fail, gracefully returning an empty direction
-	result := calc.CalculateStopDirection(context.Background(), stopID)
+	result := calc.CalculateStopDirection(t.Context(), stopID)
 	assert.Equal(t, "", result, "should return empty string on DB error")
 
 	// Critical check: ensure the failure was NOT permanently cached
@@ -164,7 +163,7 @@ func TestCalculateStopDirectionPrecomputedAbbreviations(t *testing.T) {
 	for abbr, expected := range abbreviations {
 		t.Run("precomputed_"+abbr, func(t *testing.T) {
 			result := calc.CalculateStopDirection(
-				context.Background(),
+				t.Context(),
 				"stop-"+abbr,
 				sql.NullString{String: abbr, Valid: true},
 			)
@@ -275,7 +274,7 @@ func TestStatisticalFunctions(t *testing.T) {
 }
 
 func TestCalculateStopDirection_WithShapeData(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Optimization: Reuse shared DB
 	_, calc := getSharedTestComponents(t)
 
@@ -286,7 +285,7 @@ func TestCalculateStopDirection_WithShapeData(t *testing.T) {
 }
 
 func TestComputeFromShapes_NoShapeData(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Optimization: Reuse shared DB
 	_, calc := getSharedTestComponents(t)
 
@@ -297,7 +296,7 @@ func TestComputeFromShapes_NoShapeData(t *testing.T) {
 }
 
 func TestComputeFromShapes_SingleOrientation(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Optimization: Reuse shared DB
 	_, calc := getSharedTestComponents(t)
 
@@ -309,7 +308,7 @@ func TestComputeFromShapes_SingleOrientation(t *testing.T) {
 }
 
 func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Note: We reuse the Shared Manager (DB) but create a NEW Calculator.
 	// This is because we modify the variance threshold and don't want to break other tests.
 	manager, _ := getSharedTestComponents(t)
@@ -327,7 +326,7 @@ func TestComputeFromShapes_StandardDeviationThreshold(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	manager, calc := getSharedTestComponents(t)
 
 	// Get a shape ID from the database
@@ -344,7 +343,7 @@ func TestCalculateOrientationAtStop_WithDistanceTraveled(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	manager, calc := getSharedTestComponents(t)
 
 	// Get a shape ID from the database
@@ -363,7 +362,7 @@ func TestCalculateOrientationAtStop_GeographicMatching(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	_, calc := getSharedTestComponents(t)
 
 	// Test with non-existent shape - should return error
@@ -373,7 +372,7 @@ func TestCalculateOrientationAtStop_NoShapePoints(t *testing.T) {
 }
 
 func TestCalculateOrientationAtStop_EdgeCases(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	manager, calc := getSharedTestComponents(t)
 
 	// Test with shape that has points at the boundaries
@@ -443,7 +442,7 @@ func TestTranslateGtfsDirection_NumericEdgeCases(t *testing.T) {
 }
 
 func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	_, calc := getSharedTestComponents(t)
 
 	// Case 1: Caller provides the optimized direction (should be used instantly)
@@ -460,7 +459,7 @@ func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
 
 // TestBulkQuery_GetStopsWithShapeContextByIDs verifies the bulk optimization
 func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	manager, _ := getSharedTestComponents(t)
 
 	// DYNAMICALLY fetch valid Stop IDs
@@ -507,13 +506,12 @@ func TestBulkQuery_GetStopsWithShapeContextByIDs(t *testing.T) {
 
 // TestBulkQuery_GetShapePointsByIDs verifies fetching shape points in bulk.
 func TestBulkQuery_GetShapePointsByIDs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	manager, _ := getSharedTestComponents(t)
 
 	// DYNAMICALLY fetch a real Shape ID from the DB
 	var shapeID string
 	err := manager.GtfsDB.DB.QueryRowContext(ctx, "SELECT shape_id FROM shapes LIMIT 1").Scan(&shapeID)
-
 	// Stop immediately on error
 	if err != nil {
 		t.Fatalf("Failed to query shapes: %v", err)

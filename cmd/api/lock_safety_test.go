@@ -20,7 +20,7 @@ import (
 )
 
 func TestHandlerLockSafety(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -53,7 +53,7 @@ func TestHandlerLockSafety(t *testing.T) {
 
 	srv, api := CreateServer(application, appConfig)
 
-	serverCtx, serverCancel := context.WithCancel(context.Background())
+	serverCtx, serverCancel := context.WithCancel(t.Context())
 	defer serverCancel()
 
 	serverErrChan := make(chan error, 1)
@@ -106,7 +106,7 @@ func TestHandlerLockSafety(t *testing.T) {
 	var successCount uint64
 
 	// We use a separate context for readers so we can stop them before stopping the server
-	readerCtx, readerCancel := context.WithCancel(context.Background())
+	readerCtx, readerCancel := context.WithCancel(t.Context())
 
 	t.Log("Starting readers...")
 	client := &http.Client{
@@ -167,7 +167,7 @@ func TestHandlerLockSafety(t *testing.T) {
 	application.GtfsManager.SetGtfsURL(gtfsZipPath)
 
 	t.Log("Triggering GTFS reload...")
-	_, updateErr := application.GtfsManager.ReloadStatic(context.Background())
+	_, updateErr := application.GtfsManager.ReloadStatic(t.Context())
 	if updateErr != nil {
 		readerCancel()
 		wg.Wait()
