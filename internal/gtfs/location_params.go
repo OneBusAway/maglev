@@ -13,10 +13,10 @@ type LocationParams struct {
 	LonSpan float64
 }
 
-// boundsFromParams converts LocationParams into a CoordinateBounds bounding box.
+// BoundsFromParams converts LocationParams into a CoordinateBounds bounding box.
 // If LatSpan and LonSpan are both positive, they define the box; otherwise the
 // box is computed from Radius (defaulting to DefaultSearchRadiusInMeters).
-func boundsFromParams(loc *LocationParams) utils.CoordinateBounds {
+func BoundsFromParams(loc *LocationParams) utils.CoordinateBounds {
 	if loc.LatSpan > 0 && loc.LonSpan > 0 {
 		return utils.CalculateBoundsFromSpan(loc.Lat, loc.Lon, loc.LatSpan/2, loc.LonSpan/2)
 	}
@@ -35,7 +35,7 @@ func (manager *Manager) CheckIfOutOfBounds(loc *LocationParams) bool {
 		return false
 	}
 
-	innerBounds := boundsFromParams(loc)
+	innerBounds := BoundsFromParams(loc)
 
 	for _, region := range boundsMap {
 		outerBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)

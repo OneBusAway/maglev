@@ -333,7 +333,7 @@ func (manager *Manager) GetStopsForLocation(
 	maxCount int,
 	routeTypes []int,
 ) ([]gtfsdb.Stop, bool) {
-	bounds := boundsFromParams(loc)
+	bounds := BoundsFromParams(loc)
 	if ctx.Err() != nil {
 		return []gtfsdb.Stop{}, false
 	}
@@ -410,7 +410,7 @@ func (manager *Manager) GetStopsInBounds(
 	loc *LocationParams,
 	maxCount int,
 ) []gtfsdb.Stop {
-	bounds := boundsFromParams(loc)
+	bounds := BoundsFromParams(loc)
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
@@ -429,7 +429,7 @@ func (manager *Manager) GetStopIDsWithinBounds(
 	loc *LocationParams,
 	maxCount int,
 ) []string {
-	bounds := boundsFromParams(loc)
+	bounds := BoundsFromParams(loc)
 	ids, err := manager.GtfsDB.Queries.GetStopIDsWithinBounds(ctx, gtfsdb.GetStopIDsWithinBoundsParams{
 		MinLat: bounds.MinLat,
 		MaxLat: bounds.MaxLat,
@@ -473,7 +473,7 @@ func (manager *Manager) GetRoutesForLocation(
 	maxCount int,
 	queryTime time.Time,
 ) ([]gtfsdb.Route, bool) {
-	bounds := boundsFromParams(loc)
+	bounds := BoundsFromParams(loc)
 	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, loc.Lat, loc.Lon, maxCount, routeShortName)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
