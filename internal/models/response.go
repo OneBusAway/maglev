@@ -77,14 +77,14 @@ func NewArrivalsAndDeparturesForLocationResponse(
 	if stopIds == nil {
 		stopIds = []string{}
 	}
-	entryData := map[string]interface{}{
+	entryData := map[string]any{
 		"arrivalsAndDepartures": arrivalsAndDepartures,
 		"limitExceeded":         limitExceeded,
 		"nearbyStopIds":         nearbyStopIds,
 		"situationIds":          situationIds,
 		"stopIds":               stopIds,
 	}
-	data := map[string]interface{}{
+	data := map[string]any{
 		"entry":      entryData,
 		"references": references,
 	}
