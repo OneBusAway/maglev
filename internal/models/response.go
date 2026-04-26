@@ -72,5 +72,5 @@ func NewResponse(code int, data any, text string, c clock.Clock) ResponseModel {
 
 // ResponseCurrentTime returns the current time from the provided clock as Unix milliseconds.
 func ResponseCurrentTime(c clock.Clock) int64 {
-	return c.NowUnixMilli()
+	return c.Now().UnixMilli()
 }

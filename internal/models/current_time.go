@@ -4,8 +4,8 @@ import "time"
 
 // CurrentTimeModel Current time specific model
 type CurrentTimeModel struct {
-	ReadableTime string `json:"readableTime"`
-	Time         int64  `json:"time"`
+	ReadableTime string    `json:"readableTime"`
+	Time         ModelTime `json:"time"`
 }
 
 // CurrentTimeData Combined data structure for current time endpoint
@@ -16,12 +16,10 @@ type CurrentTimeData struct {
 
 // NewCurrentTimeData creates a CurrentTimeData structure based on a provided Time
 func NewCurrentTimeData(t time.Time) CurrentTimeData {
-	timeMillis := t.UnixNano() / int64(time.Millisecond)
-
 	return CurrentTimeData{
 		Entry: CurrentTimeModel{
 			ReadableTime: t.Format(time.RFC3339),
-			Time:         timeMillis,
+			Time:         NewModelTime(t),
 		},
 		References: *NewEmptyReferences(),
 	}

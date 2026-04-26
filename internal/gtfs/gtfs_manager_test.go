@@ -200,14 +200,14 @@ func TestManager_GetVehicleLastUpdateTime(t *testing.T) {
 
 	manager := &Manager{}
 	timestamp := manager.GetVehicleLastUpdateTime(vehicle)
-	assert.Equal(t, now.UnixMilli(), timestamp)
+	assert.Equal(t, now, timestamp)
 
 	nilTimestamp := manager.GetVehicleLastUpdateTime(nil)
-	assert.Equal(t, int64(0), nilTimestamp)
+	assert.True(t, nilTimestamp.IsZero())
 
 	vehicleNoTimestamp := &gtfs.Vehicle{}
 	noTimestamp := manager.GetVehicleLastUpdateTime(vehicleNoTimestamp)
-	assert.Equal(t, int64(0), noTimestamp)
+	assert.True(t, noTimestamp.IsZero())
 }
 
 func TestManager_GetTripUpdateByID(t *testing.T) {

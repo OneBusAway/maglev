@@ -30,7 +30,7 @@ func CalculateServiceDate(currentTime time.Time) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, currentTime.Location())
 }
 
-func ServiceDateMillis(explicitServiceDate *time.Time, currentTime time.Time) (time.Time, int64) {
+func ServiceDateMidnight(explicitServiceDate *time.Time, currentTime time.Time) (time.Time, time.Time) {
 	var serviceDate time.Time
 	if explicitServiceDate != nil {
 		serviceDate = *explicitServiceDate
@@ -41,7 +41,7 @@ func ServiceDateMillis(explicitServiceDate *time.Time, currentTime time.Time) (t
 	// This ensures all endpoints return a consistent serviceDate millis value.
 	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
 		0, 0, 0, 0, serviceDate.Location())
-	return serviceDate, midnight.UnixMilli()
+	return serviceDate, midnight
 }
 
 // CalculateSecondsSinceServiceDate returns the number of wall-clock seconds elapsed
@@ -76,7 +76,7 @@ func CalculateSecondsSinceServiceDate(currentTime time.Time, serviceDate time.Ti
 // Converts a GTFS stop-time value (stored as nanoseconds in db since midnight)
 // to seconds since midnight.
 func NanosToSeconds(nanos int64) int64 {
-	return nanos / 1e9
+	return int64(time.Duration(nanos) / time.Second)
 }
 
 // EffectiveStopTimeSeconds returns the effective stop time in seconds since midnight,
@@ -84,9 +84,9 @@ func NanosToSeconds(nanos int64) int64 {
 // Both inputs are nanoseconds since midnight (the GTFS database storage format).
 func EffectiveStopTimeSeconds(arrivalTimeNanos, departureTimeNanos int64) int64 {
 	if arrivalTimeNanos > 0 {
-		return arrivalTimeNanos / 1e9
+		return int64(time.Duration(arrivalTimeNanos) / time.Second)
 	}
-	return departureTimeNanos / 1e9
+	return int64(time.Duration(departureTimeNanos) / time.Second)
 }
 
 // ExtractCodeID extracts the `code_id` from a string in the format `{agency_id}_{code_id}`.

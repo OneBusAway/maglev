@@ -55,13 +55,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Calculate nanoseconds since midnight of the service day
+	// Time since midnight of the service day, as a duration.
 	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
-	nanosSinceMidnight := currentTime.Sub(serviceDayMidnight).Nanoseconds()
-	if nanosSinceMidnight < 0 {
-		nanosSinceMidnight = 0
-	}
-	currentNanosSinceMidnight := nanosSinceMidnight
+	currentSinceMidnight := max(currentTime.Sub(serviceDayMidnight), 0)
 
 	// Check the previous day's service for trips running past midnight.
 	// GTFS allows departure times > 24:00:00 (e.g., 25:30:00 = 1:30 AM next day).
@@ -69,9 +65,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	// TODO: We should add config for runningLateWindow and runningEarlyWindow like Java OBA
 	// source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
 	const (
-		oneDayNanos       = int64(24 * 60 * 60 * 1_000_000_000)
-		runningLateNanos  = int64(30 * 60 * 1_000_000_000) // runningLateWindow
-		runningEarlyNanos = int64(10 * 60 * 1_000_000_000) // runningEarlyWindow
+		runningLate  = 30 * time.Minute // runningLateWindow
+		runningEarly = 10 * time.Minute // runningEarlyWindow
 	)
 	prevDay := currentTime.AddDate(0, 0, -1)
 	prevFormattedDate := prevDay.Format("20060102")
@@ -80,7 +75,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		api.Logger.Warn("trips-for-route: failed to fetch previous-day service IDs", "date", prevFormattedDate, "error", err)
 		prevServiceIDs = nil
 	}
-	prevDayNanosSinceMidnight := currentNanosSinceMidnight + oneDayNanos
+	// I'm confused by adding 24 hours to get the previous day here, but that's the existing behavior.
+	prevDaySinceMidnight := currentSinceMidnight + (24 * time.Hour)
 
 	indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
 		RouteID:    routeID,
@@ -94,10 +90,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	layoverIndices := api.GtfsManager.GetBlockLayoverIndicesForRoute(routeID)
 
 	// Match Java OBA: look back 30 min (catch late vehicles) and ahead 10 min (catch early vehicles).
-	timeRangeStart := currentNanosSinceMidnight - runningLateNanos
-	timeRangeEnd := currentNanosSinceMidnight + runningEarlyNanos
+	timeRangeStart := currentSinceMidnight - runningLate
+	timeRangeEnd := currentSinceMidnight + runningEarly
 
-	layoverBlocks := gtfsInternal.GetBlocksInTimeRange(layoverIndices, timeRangeStart, timeRangeEnd)
+	layoverBlocks := gtfsInternal.GetBlocksInTimeRange(layoverIndices, timeRangeStart.Nanoseconds(), timeRangeEnd.Nanoseconds())
 
 	allLinkedBlocks := make(map[string]bool)
 
@@ -150,8 +146,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	nullBlockTrips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForRoute(ctx, gtfsdb.GetActiveTripsWithNullBlockForRouteParams{
 		RouteID:        routeID,
 		ServiceIds:     serviceIDs,
-		TimeRangeStart: sql.NullInt64{Int64: timeRangeStart, Valid: true},
-		TimeRangeEnd:   sql.NullInt64{Int64: timeRangeEnd, Valid: true},
+		TimeRangeStart: sql.NullInt64{Int64: timeRangeStart.Nanoseconds(), Valid: true},
+		TimeRangeEnd:   sql.NullInt64{Int64: timeRangeEnd.Nanoseconds(), Valid: true},
 	})
 	if err != nil {
 		api.Logger.Warn("trips-for-route: failed to fetch null-block trips", "route_id", routeID, "error", err)
@@ -162,8 +158,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		prevNullBlockTrips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForRoute(ctx, gtfsdb.GetActiveTripsWithNullBlockForRouteParams{
 			RouteID:        routeID,
 			ServiceIds:     prevServiceIDs,
-			TimeRangeStart: sql.NullInt64{Int64: prevDayNanosSinceMidnight + timeRangeStart - currentNanosSinceMidnight, Valid: true},
-			TimeRangeEnd:   sql.NullInt64{Int64: prevDayNanosSinceMidnight + timeRangeEnd - currentNanosSinceMidnight, Valid: true},
+			TimeRangeStart: sql.NullInt64{Int64: (prevDaySinceMidnight + timeRangeStart - currentSinceMidnight).Nanoseconds(), Valid: true},
+			TimeRangeEnd:   sql.NullInt64{Int64: (prevDaySinceMidnight + timeRangeEnd - currentSinceMidnight).Nanoseconds(), Valid: true},
 		})
 		if err != nil {
 			api.Logger.Warn("trips-for-route: failed to fetch previous-day null-block trips", "error", err)
@@ -182,16 +178,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	var activeTrips []string
 
 	type serviceDayEntry struct {
-		serviceIDs         []string
-		nanosSinceMidnight int64
+		serviceIDs    []string
+		sinceMidnight time.Duration
 	}
 	serviceDays := []serviceDayEntry{
-		{serviceIDs: serviceIDs, nanosSinceMidnight: currentNanosSinceMidnight},
+		{serviceIDs: serviceIDs, sinceMidnight: currentSinceMidnight},
 	}
 	if len(prevServiceIDs) > 0 {
 		serviceDays = append(serviceDays, serviceDayEntry{
-			serviceIDs:         prevServiceIDs,
-			nanosSinceMidnight: prevDayNanosSinceMidnight,
+			serviceIDs:    prevServiceIDs,
+			sinceMidnight: prevDaySinceMidnight,
 		})
 	}
 
@@ -219,7 +215,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 				BlockID:     blockIDNullStr,
 				ServiceIds:  sd.serviceIDs,
-				CurrentTime: sql.NullInt64{Int64: sd.nanosSinceMidnight, Valid: true}})
+				CurrentTime: sql.NullInt64{Int64: sd.sinceMidnight.Nanoseconds(), Valid: true}})
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				api.Logger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
 				continue
@@ -238,7 +234,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				if len(candidates) == 0 {
 					continue
 				}
-				activeTrip = selectBestTripInBlock(candidates, sd.nanosSinceMidnight)
+				activeTrip = selectBestTripInBlock(candidates, sd.sinceMidnight.Nanoseconds())
 			}
 
 			activeTrips = append(activeTrips, activeTrip)
