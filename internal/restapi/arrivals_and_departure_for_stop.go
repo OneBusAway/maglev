@@ -9,6 +9,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -630,7 +631,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
-	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, lat, lon, 10000, 100, 100, 5)
+	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: 10000, LatSpan: 100, LonSpan: 100}
+	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, 5)
 	if len(nearbyIDs) == 0 {
 		return nil
 	}
