@@ -34,20 +34,18 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
-	radius := loc.Radius
-	if radius == 0 {
-		radius = models.DefaultSearchRadiusInMeters
+	if loc.Radius == 0 {
+		loc.Radius = models.DefaultSearchRadiusInMeters
 		if query != "" {
-			radius = models.QuerySearchRadiusInMeters
+			loc.Radius = models.QuerySearchRadiusInMeters
 		}
 	}
 
 	ctx := r.Context()
-
-	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc.Lat, loc.Lon, radius, loc.LatSpan, loc.LonSpan, sanitizedQuery, maxCount, time.Time{})
+	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc, sanitizedQuery, maxCount, time.Time{})
 	if len(routes) == 0 {
 		references := models.NewEmptyReferences()
-		response := models.NewListResponseWithRange([]models.Route{}, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, false)
+		response := models.NewListResponseWithRange([]models.Route{}, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -89,31 +87,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	slices.SortFunc(results, func(a, b models.Route) int {
 		return strings.Compare(a.ID, b.ID)
 	})
-	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
-}
-
-// checkIfOutOfBounds returns true if the user's search area is completely
-// outside every agency's region bounds.
-func checkIfOutOfBounds(api *RestAPI, lat float64, lon float64, latSpan float64, lonSpan float64, radius float64) bool {
-	boundsMap := api.GtfsManager.GetRegionBounds()
-	if len(boundsMap) == 0 {
-		return false
-	}
-
-	var innerBounds utils.CoordinateBounds
-	if latSpan > 0 && lonSpan > 0 {
-		innerBounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
-	} else {
-		innerBounds = utils.CalculateBounds(lat, lon, radius)
-	}
-
-	for _, region := range boundsMap {
-		outerBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
-		if !utils.IsOutOfBounds(innerBounds, outerBounds) {
-			return false
-		}
-	}
-
-	return true
 }

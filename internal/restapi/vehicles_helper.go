@@ -114,11 +114,8 @@ func (api *RestAPI) BuildVehicleStatus(
 		return
 	}
 
-	var lastUpdateTime int64
-	if vehicle.Timestamp != nil {
-		lastUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-		status.LastUpdateTime = lastUpdateTime
-	}
+	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
+	status.LastUpdateTime = models.NewModelTime(lastUpdateTime)
 
 	if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 		actualPosition := models.Location{
@@ -132,9 +129,7 @@ func (api *RestAPI) BuildVehicleStatus(
 		// makes its own GetShapePointsByTripID call; these two fetches are separate.
 		status.Position = actualPosition
 
-		if vehicle.Timestamp != nil {
-			status.LastLocationUpdateTime = lastUpdateTime
-		}
+		status.LastLocationUpdateTime = models.NewModelTime(lastUpdateTime)
 	}
 
 	if vehicle.Position != nil && vehicle.Position.Bearing != nil {

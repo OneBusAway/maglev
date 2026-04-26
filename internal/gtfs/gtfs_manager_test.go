@@ -82,7 +82,7 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 			assert.NotNil(t, manager)
 
 			// Get stops using the manager method
-			stops := manager.GetStopsInBounds(ctx, tc.lat, tc.lon, tc.radius, 0, 0, 100)
+			stops := manager.GetStopsInBounds(ctx, &LocationParams{Lat: tc.lat, Lon: tc.lon, Radius: tc.radius}, 100)
 
 			// The test expects that the spatial index query is used
 			assert.GreaterOrEqual(t, len(stops), tc.expectedStops, "Should find stops within radius")
@@ -200,14 +200,14 @@ func TestManager_GetVehicleLastUpdateTime(t *testing.T) {
 
 	manager := &Manager{}
 	timestamp := manager.GetVehicleLastUpdateTime(vehicle)
-	assert.Equal(t, now.UnixMilli(), timestamp)
+	assert.Equal(t, now, timestamp)
 
 	nilTimestamp := manager.GetVehicleLastUpdateTime(nil)
-	assert.Equal(t, int64(0), nilTimestamp)
+	assert.True(t, nilTimestamp.IsZero())
 
 	vehicleNoTimestamp := &gtfs.Vehicle{}
 	noTimestamp := manager.GetVehicleLastUpdateTime(vehicleNoTimestamp)
-	assert.Equal(t, int64(0), noTimestamp)
+	assert.True(t, noTimestamp.IsZero())
 }
 
 func TestManager_GetTripUpdateByID(t *testing.T) {

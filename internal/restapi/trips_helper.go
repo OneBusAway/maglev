@@ -41,7 +41,7 @@ func (api *RestAPI) BuildTripStatus(
 		0, 0, 0, 0, serviceDate.Location())
 	status := models.NewTripStatus()
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
-	status.ServiceDate = sdMidnight.UnixMilli()
+	status.ServiceDate = models.NewModelTime(sdMidnight)
 	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
 	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
@@ -829,8 +829,8 @@ func (api *RestAPI) calculateBatchStopDistances(
 		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         int(utils.NanosToSeconds(stopTime.ArrivalTime)),
-				DepartureTime:       int(utils.NanosToSeconds(stopTime.DepartureTime)),
+				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
+				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
 				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
@@ -845,8 +845,8 @@ func (api *RestAPI) calculateBatchStopDistances(
 		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         int(utils.NanosToSeconds(stopTime.ArrivalTime)),
-				DepartureTime:       int(utils.NanosToSeconds(stopTime.DepartureTime)),
+				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
+				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
 				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
@@ -915,8 +915,8 @@ func (api *RestAPI) calculateBatchStopDistances(
 
 		stopTimesList = append(stopTimesList, models.StopTime{
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-			ArrivalTime:         int(utils.NanosToSeconds(stopTime.ArrivalTime)),
-			DepartureTime:       int(utils.NanosToSeconds(stopTime.DepartureTime)),
+			ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
+			DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
 			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
 			DistanceAlongTrip:   distanceAlongTrip,
 			HistoricalOccupancy: "",

@@ -409,7 +409,7 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1&includeStatus=%v",
+			url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=40.5865&lon=-122.3917&latSpan=0.2&lonSpan=0.2&includeStatus=%v",
 				tt.includeStatus)
 
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)

@@ -1,5 +1,9 @@
 package models
 
+import (
+	"time"
+)
+
 type ArrivalAndDeparture struct {
 	ActualTrack                string      `json:"actualTrack"`
 	ArrivalEnabled             bool        `json:"arrivalEnabled"`
@@ -8,24 +12,24 @@ type ArrivalAndDeparture struct {
 	DistanceFromStop           float64     `json:"distanceFromStop"`
 	Frequency                  *Frequency  `json:"frequency"`
 	HistoricalOccupancy        string      `json:"historicalOccupancy"`
-	LastUpdateTime             *int64      `json:"lastUpdateTime,omitempty"`
+	LastUpdateTime             ModelTime   `json:"lastUpdateTime,omitzero"`
 	NumberOfStopsAway          int         `json:"numberOfStopsAway"`
 	OccupancyStatus            string      `json:"occupancyStatus"`
 	Predicted                  bool        `json:"predicted"`
 	PredictedArrivalInterval   any         `json:"predictedArrivalInterval"`
-	PredictedArrivalTime       int64       `json:"predictedArrivalTime"`
+	PredictedArrivalTime       ModelTime   `json:"predictedArrivalTime"`
 	PredictedDepartureInterval any         `json:"predictedDepartureInterval"`
-	PredictedDepartureTime     int64       `json:"predictedDepartureTime"`
+	PredictedDepartureTime     ModelTime   `json:"predictedDepartureTime"`
 	PredictedOccupancy         string      `json:"predictedOccupancy"`
 	RouteID                    string      `json:"routeId"`
 	RouteLongName              string      `json:"routeLongName"`
 	RouteShortName             string      `json:"routeShortName"`
 	ScheduledArrivalInterval   any         `json:"scheduledArrivalInterval"`
-	ScheduledArrivalTime       int64       `json:"scheduledArrivalTime"`
+	ScheduledArrivalTime       ModelTime   `json:"scheduledArrivalTime"`
 	ScheduledDepartureInterval any         `json:"scheduledDepartureInterval"`
-	ScheduledDepartureTime     int64       `json:"scheduledDepartureTime"`
+	ScheduledDepartureTime     ModelTime   `json:"scheduledDepartureTime"`
 	ScheduledTrack             string      `json:"scheduledTrack"`
-	ServiceDate                int64       `json:"serviceDate"`
+	ServiceDate                ModelTime   `json:"serviceDate"`
 	SituationIDs               []string    `json:"situationIds"`
 	Status                     string      `json:"status"`
 	StopID                     string      `json:"stopId"`
@@ -39,8 +43,7 @@ type ArrivalAndDeparture struct {
 
 func NewArrivalAndDeparture(
 	routeID, routeShortName, routeLongName, tripID, tripHeadsign, stopID, vehicleID string,
-	serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime int64,
-	lastUpdateTime *int64,
+	serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime, lastUpdateTime time.Time,
 	predicted, arrivalEnabled, departureEnabled bool,
 	stopSequence, totalStopsInTrip, numberOfStopsAway, blockTripSequence int,
 	distanceFromStop float64,
@@ -56,24 +59,24 @@ func NewArrivalAndDeparture(
 		DistanceFromStop:           distanceFromStop,
 		Frequency:                  nil,
 		HistoricalOccupancy:        historicalOccupancy,
-		LastUpdateTime:             lastUpdateTime,
+		LastUpdateTime:             NewModelTime(lastUpdateTime),
 		NumberOfStopsAway:          numberOfStopsAway,
 		OccupancyStatus:            occupancyStatus,
 		Predicted:                  predicted,
 		PredictedArrivalInterval:   nil,
-		PredictedArrivalTime:       predictedArrivalTime,
+		PredictedArrivalTime:       NewModelTime(predictedArrivalTime),
 		PredictedDepartureInterval: nil,
-		PredictedDepartureTime:     predictedDepartureTime,
+		PredictedDepartureTime:     NewModelTime(predictedDepartureTime),
 		PredictedOccupancy:         predictedOccupancy,
 		RouteID:                    routeID,
 		RouteLongName:              routeLongName,
 		RouteShortName:             routeShortName,
 		ScheduledArrivalInterval:   nil,
-		ScheduledArrivalTime:       scheduledArrivalTime,
+		ScheduledArrivalTime:       NewModelTime(scheduledArrivalTime),
 		ScheduledDepartureInterval: nil,
-		ScheduledDepartureTime:     scheduledDepartureTime,
+		ScheduledDepartureTime:     NewModelTime(scheduledDepartureTime),
 		ScheduledTrack:             "",
-		ServiceDate:                serviceDate,
+		ServiceDate:                NewModelTime(serviceDate),
 		SituationIDs:               situationIDs,
 		Status:                     status,
 		StopID:                     stopID,

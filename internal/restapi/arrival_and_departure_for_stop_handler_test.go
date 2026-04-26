@@ -528,8 +528,8 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	// When there's no real-time data, should return 0, 0, false
 	predArrival, predDeparture, predicted := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
 
-	assert.Equal(t, int64(0), predArrival)
-	assert.Equal(t, int64(0), predDeparture)
+	assert.True(t, predArrival.IsZero())
+	assert.True(t, predDeparture.IsZero())
 	assert.False(t, predicted)
 }
 
@@ -545,8 +545,8 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	predArrival, predDeparture, predicted := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime)
 
 	// Without real-time data, returns 0, 0, false
-	assert.Equal(t, int64(0), predArrival)
-	assert.Equal(t, int64(0), predDeparture)
+	assert.True(t, predArrival.IsZero())
+	assert.True(t, predDeparture.IsZero())
 	assert.False(t, predicted)
 }
 
@@ -853,8 +853,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	scheduledTime := time.Now()
 	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
-	expectedTime := scheduledTime.Add(delayDuration).UnixMilli()
-
+	expectedTime := scheduledTime.Add(delayDuration)
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 120s delay")
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 120s delay")
 	assert.True(t, predicted, "Should be predicted when delay propagation is available")
@@ -882,8 +881,7 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	scheduledTime := time.Now()
 	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
-	expectedTime := scheduledTime.Add(delayDuration).UnixMilli()
-
+	expectedTime := scheduledTime.Add(delayDuration)
 	assert.True(t, predicted, "Should be predicted when trip-level delay is available")
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 300s trip-level delay")
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 300s trip-level delay")

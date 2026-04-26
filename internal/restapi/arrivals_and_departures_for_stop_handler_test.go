@@ -399,8 +399,8 @@ func TestParseArrivalsAndDeparturesParams_AllParameters(t *testing.T) {
 	params, errs := api.parseArrivalsAndDeparturesParams(req)
 
 	assert.Nil(t, errs)
-	assert.Equal(t, 60, params.MinutesAfter)
-	assert.Equal(t, 15, params.MinutesBefore)
+	assert.Equal(t, 60*time.Minute, params.After)
+	assert.Equal(t, 15*time.Minute, params.Before)
 	assert.False(t, params.Time.IsZero())
 }
 
@@ -413,8 +413,8 @@ func TestParseArrivalsAndDeparturesParams_DefaultValues(t *testing.T) {
 	params, errs := api.parseArrivalsAndDeparturesParams(req)
 
 	assert.Nil(t, errs)
-	assert.Equal(t, 35, params.MinutesAfter) // Default for plural handler
-	assert.Equal(t, 5, params.MinutesBefore) // Default
+	assert.Equal(t, 35*time.Minute, params.After) // Default for plural handler
+	assert.Equal(t, 5*time.Minute, params.Before) // Default
 	assert.WithinDuration(t, api.Clock.Now(), params.Time, 1*time.Second)
 }
 
@@ -1041,7 +1041,7 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	ctx := t.Context()
 
 	// RABA test data has stops near Redding, CA (~40.589, -122.39).
-	stops := api.GtfsManager.GetStopsInBounds(ctx, 40.589123, -122.390830, 2000, 0, 0, 10)
+	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
 	require.NotEmpty(t, stops, "precondition: RABA should have stops near Redding, CA")
 
 	currentStop := stops[0]
@@ -1066,7 +1066,7 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 
 	ctx := t.Context()
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, 40.589123, -122.390830, 2000, 0, 0, 10)
+	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
 	require.NotEmpty(t, stops)
 
 	currentStop := stops[0]

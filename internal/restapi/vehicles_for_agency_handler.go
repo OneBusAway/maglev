@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -82,14 +81,14 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Set timestamps
-		currentTime := api.Clock.NowUnixMilli()
+		currentTime := models.NewModelTime(api.Clock.Now())
 		vehicleStatus.LastLocationUpdateTime = currentTime
 		vehicleStatus.LastUpdateTime = currentTime
 
 		if vehicle.Timestamp != nil {
-			timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-			vehicleStatus.LastLocationUpdateTime = timestampMs
-			vehicleStatus.LastUpdateTime = timestampMs
+			ts := models.NewModelTime(*vehicle.Timestamp)
+			vehicleStatus.LastLocationUpdateTime = ts
+			vehicleStatus.LastUpdateTime = ts
 		}
 
 		// Set location if available
@@ -137,13 +136,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			tripStatus.LastLocationUpdateTime = currentTime
 
 			if vehicle.Timestamp != nil {
-				timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-				tripStatus.LastUpdateTime = timestampMs
-				tripStatus.LastLocationUpdateTime = timestampMs
+				ts := models.NewModelTime(*vehicle.Timestamp)
+				tripStatus.LastUpdateTime = ts
+				tripStatus.LastLocationUpdateTime = ts
 			}
 
 			// Set service date (use current date for now)
-			tripStatus.ServiceDate = api.Clock.NowUnixMilli()
+			tripStatus.ServiceDate = currentTime
 
 			// Propagate occupancy status from GTFS-RT to both TripStatus and VehicleStatus.
 			// There is no source for occupancyCapacity or occupancyCount anywhere in maglev — not in the SQLite DB,

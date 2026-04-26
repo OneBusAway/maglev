@@ -1,6 +1,7 @@
 package gtfs
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -8,14 +9,12 @@ import (
 	"log/slog"
 	"math/rand"
 	"slices"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/metrics"
-	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -329,13 +328,12 @@ func (manager *Manager) RoutesForAgencyID(ctx context.Context, agencyID string) 
 // ORDERED_BY_CLOSEST mode (routeTypes present): sorts by distance, filters by route type, then truncates.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
-	lat, lon, radius, latSpan, lonSpan float64,
+	loc *LocationParams,
 	stopCodeQuery string,
 	maxCount int,
 	routeTypes []int,
 ) ([]gtfsdb.Stop, bool) {
-	bounds := manager.boundsFromParams(lat, lon, radius, latSpan, lonSpan)
-
+	bounds := BoundsFromParams(loc)
 	if ctx.Err() != nil {
 		return []gtfsdb.Stop{}, false
 	}
@@ -367,9 +365,10 @@ func (manager *Manager) GetStopsForLocation(
 		}
 	} else {
 		// ORDERED_BY_CLOSEST mode: sort by distance, filter by route type, then truncate.
-		sort.Slice(stops, func(i, j int) bool {
-			return utils.Distance(lat, lon, stops[i].Lat, stops[i].Lon) <
-				utils.Distance(lat, lon, stops[j].Lat, stops[j].Lon)
+		slices.SortFunc(stops, func(a, b gtfsdb.Stop) int {
+			aDist := utils.Distance(loc.Lat, loc.Lon, a.Lat, a.Lon)
+			bDist := utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon)
+			return cmp.Compare(aDist, bDist)
 		})
 
 		stopIDs := make([]string, 0, len(stops))
@@ -408,10 +407,10 @@ func (manager *Manager) GetStopsForLocation(
 // or route-type filtering. Used internally by the arrivals and trips-for-location handlers.
 func (manager *Manager) GetStopsInBounds(
 	ctx context.Context,
-	lat, lon, radius, latSpan, lonSpan float64,
+	loc *LocationParams,
 	maxCount int,
 ) []gtfsdb.Stop {
-	bounds := manager.boundsFromParams(lat, lon, radius, latSpan, lonSpan)
+	bounds := BoundsFromParams(loc)
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
@@ -427,10 +426,10 @@ func (manager *Manager) GetStopsInBounds(
 // GetStopIDsWithinBounds returns stop IDs within bounds, optimized for callers that only need IDs.
 func (manager *Manager) GetStopIDsWithinBounds(
 	ctx context.Context,
-	lat, lon, radius, latSpan, lonSpan float64,
+	loc *LocationParams,
 	maxCount int,
 ) []string {
-	bounds := manager.boundsFromParams(lat, lon, radius, latSpan, lonSpan)
+	bounds := BoundsFromParams(loc)
 	ids, err := manager.GtfsDB.Queries.GetStopIDsWithinBounds(ctx, gtfsdb.GetStopIDsWithinBoundsParams{
 		MinLat: bounds.MinLat,
 		MaxLat: bounds.MaxLat,
@@ -446,16 +445,6 @@ func (manager *Manager) GetStopIDsWithinBounds(
 		ids = ids[:maxCount]
 	}
 	return ids
-}
-
-func (manager *Manager) boundsFromParams(lat, lon, radius, latSpan, lonSpan float64) utils.CoordinateBounds {
-	if latSpan > 0 && lonSpan > 0 {
-		return utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
-	}
-	if radius == 0 {
-		radius = models.DefaultSearchRadiusInMeters
-	}
-	return utils.CalculateBounds(lat, lon, radius)
 }
 
 // queryStopsInBounds retrieves all active stops within the given geographic bounds
@@ -479,22 +468,13 @@ func (manager *Manager) queryStopsInBounds(ctx context.Context, bounds utils.Coo
 // It supports filtering by route types and querying for specific route shortNames.
 func (manager *Manager) GetRoutesForLocation(
 	ctx context.Context,
-	lat, lon, radius, latSpan, lonSpan float64,
+	loc *LocationParams,
 	routeShortName string,
 	maxCount int,
 	queryTime time.Time,
 ) ([]gtfsdb.Route, bool) {
-	var bounds utils.CoordinateBounds
-	if latSpan > 0 && lonSpan > 0 {
-		bounds = utils.CalculateBoundsFromSpan(lat, lon, latSpan/2, lonSpan/2)
-	} else {
-		if radius == 0 {
-			radius = models.DefaultSearchRadiusInMeters
-		}
-		bounds = utils.CalculateBounds(lat, lon, radius)
-	}
-
-	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, lat, lon, maxCount, routeShortName)
+	bounds := BoundsFromParams(loc)
+	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, loc.Lat, loc.Lon, maxCount, routeShortName)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogError(logger, "could not query routes within bounds", err)
@@ -671,11 +651,11 @@ func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	return updates
 }
 
-func (manager *Manager) GetVehicleLastUpdateTime(vehicle *gtfs.Vehicle) int64 {
+func (manager *Manager) GetVehicleLastUpdateTime(vehicle *gtfs.Vehicle) time.Time {
 	if vehicle == nil || vehicle.Timestamp == nil {
-		return 0
+		return time.Time{}
 	}
-	return vehicle.Timestamp.UnixMilli()
+	return *vehicle.Timestamp
 }
 
 func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {

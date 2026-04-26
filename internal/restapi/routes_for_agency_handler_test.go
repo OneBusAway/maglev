@@ -71,9 +71,9 @@ func TestRoutesForAgencyHandlerNonExistentAgency(t *testing.T) {
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/non-existent-agency.json?key=TEST")
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "", model.Text)
-	assert.Nil(t, model.Data)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
