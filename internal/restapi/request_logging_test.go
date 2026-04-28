@@ -47,7 +47,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		assert.Contains(t, output, `"method":"GET"`)
 		assert.Contains(t, output, `"path":"/api/where/stops"`)
 		assert.Contains(t, output, `"status":200`)
-		assert.Contains(t, output, `"user_agent":"test-client/1.0"`)
+		assert.Contains(t, output, `"client_platform":"other"`)
 		assert.Contains(t, output, `"duration_ms":`)
 		assert.Contains(t, output, `"component":"http_server"`)
 	})
@@ -127,7 +127,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		assert.LessOrEqual(t, actualDuration.Milliseconds(), int64(100)) // Allow for some variance
 	})
 
-	t.Run("handles requests without User-Agent header", func(t *testing.T) {
+	t.Run("classifies iOS User-Agent", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
 
@@ -139,13 +139,79 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		handler := middleware(testHandler)
 
 		req := httptest.NewRequest("GET", "/test", nil)
-		// Don't set User-Agent header
+		req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X)")
 
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, req)
 
 		output := buf.String()
-		assert.Contains(t, output, `"user_agent":""`)
+		assert.Contains(t, output, `"client_platform":"ios"`)
+	})
+
+	t.Run("classifies request as sdk when X-Stainless-Lang is present", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+
+		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		middleware := NewRequestLoggingMiddleware(logger)
+		handler := middleware(testHandler)
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		// SDK request with iPhone-looking UA — header should win.
+		req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4)")
+		req.Header.Set("X-Stainless-Lang", "python")
+
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		output := buf.String()
+		assert.Contains(t, output, `"client_platform":"sdk"`)
+		assert.Contains(t, output, `"sdk_lang":"python"`)
+	})
+
+	t.Run("does not log sdk_lang when X-Stainless-Lang is absent", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+
+		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		middleware := NewRequestLoggingMiddleware(logger)
+		handler := middleware(testHandler)
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		output := buf.String()
+		assert.NotContains(t, output, `"sdk_lang"`)
+	})
+
+	t.Run("logs unknown platform when User-Agent is missing", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
+
+		testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		middleware := NewRequestLoggingMiddleware(logger)
+		handler := middleware(testHandler)
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Del("User-Agent")
+
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		output := buf.String()
+		assert.Contains(t, output, `"client_platform":"unknown"`)
 	})
 
 	t.Run("strips query parameters from logged path", func(t *testing.T) {

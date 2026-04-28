@@ -43,14 +43,17 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 
 			reqID, _ := r.Context().Value(RequestIDKey).(string)
 
+			attrs := append([]slog.Attr{
+				slog.String("request_id", reqID),
+				slog.String("component", "http_server"),
+			}, classifyClient(r)...)
+
 			logging.LogHTTPRequest(logger,
 				r.Method,
 				r.URL.Path,
 				wrapped.statusCode,
 				float64(duration.Nanoseconds())/1e6,
-				slog.String("request_id", reqID),
-				slog.String("user_agent", r.Header.Get("User-Agent")),
-				slog.String("component", "http_server"))
+				attrs...)
 		})
 	}
 }
