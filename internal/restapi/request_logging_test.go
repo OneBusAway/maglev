@@ -47,7 +47,8 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		assert.Contains(t, output, `"method":"GET"`)
 		assert.Contains(t, output, `"path":"/api/where/stops"`)
 		assert.Contains(t, output, `"status":200`)
-		assert.Contains(t, output, `"user_agent":"test-client/1.0"`)
+		assert.NotContains(t, output, `"user_agent"`)
+		assert.NotContains(t, output, "test-client/1.0")
 		assert.Contains(t, output, `"duration_ms":`)
 		assert.Contains(t, output, `"component":"http_server"`)
 	})
@@ -127,7 +128,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		assert.LessOrEqual(t, actualDuration.Milliseconds(), int64(100)) // Allow for some variance
 	})
 
-	t.Run("handles requests without User-Agent header", func(t *testing.T) {
+	t.Run("does not log User-Agent header", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := logging.NewStructuredLogger(&buf, slog.LevelInfo)
 
@@ -139,13 +140,14 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		handler := middleware(testHandler)
 
 		req := httptest.NewRequest("GET", "/test", nil)
-		// Don't set User-Agent header
+		req.Header.Set("User-Agent", "should-not-appear/1.0")
 
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, req)
 
 		output := buf.String()
-		assert.Contains(t, output, `"user_agent":""`)
+		assert.NotContains(t, output, `"user_agent"`)
+		assert.NotContains(t, output, "should-not-appear/1.0")
 	})
 
 	t.Run("strips query parameters from logged path", func(t *testing.T) {
