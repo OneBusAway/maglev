@@ -21,6 +21,8 @@ func TestClassifyUserAgent(t *testing.T) {
 		{"Desktop Firefox", "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0", "web"},
 		{"curl", "curl/8.4.0", "other"},
 		{"Go http client", "Go-http-client/1.1", "other"},
+		{"lowercased iPhone UA", "mozilla/5.0 (iphone; cpu iphone os 17_4 like mac os x)", "ios"},
+		{"uppercased Android UA", "MOZILLA/5.0 (LINUX; ANDROID 14; PIXEL 8)", "android"},
 	}
 
 	for _, tt := range tests {
@@ -71,6 +73,20 @@ func TestClassifyClient(t *testing.T) {
 		}
 		if got["sdk_lang"] != "python" {
 			t.Errorf("sdk_lang = %q, want python", got["sdk_lang"])
+		}
+	})
+
+	t.Run("whitespace-only SDK header falls back to UA classification", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Stainless-Lang", "   ")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4)")
+
+		attrs := classifyClient(req)
+		if len(attrs) != 1 {
+			t.Fatalf("expected 1 attr (no sdk_lang), got %d", len(attrs))
+		}
+		if attrs[0].Key != "client_platform" || attrs[0].Value.String() != "ios" {
+			t.Errorf("got %v, want client_platform=ios", attrs[0])
 		}
 	})
 

@@ -31,7 +31,7 @@ func normalizeSDKLang(raw string) string {
 // OneBusAway SDKs) include both client_platform="sdk" and a normalized
 // sdk_lang. Other requests fall back to coarse User-Agent classification.
 func classifyClient(r *http.Request) []slog.Attr {
-	if raw := r.Header.Get("X-Stainless-Lang"); raw != "" {
+	if raw := strings.TrimSpace(r.Header.Get("X-Stainless-Lang")); raw != "" {
 		return []slog.Attr{
 			slog.String("client_platform", "sdk"),
 			slog.String("sdk_lang", normalizeSDKLang(raw)),
@@ -49,15 +49,16 @@ func classifyUserAgent(ua string) string {
 	if ua == "" {
 		return "unknown"
 	}
+	ua = strings.ToLower(ua)
 	// iOS markers must be checked before the generic "web" markers because
-	// iOS Safari User-Agents also contain "Mozilla" and "Safari".
-	if strings.Contains(ua, "iPhone") || strings.Contains(ua, "iPad") || strings.Contains(ua, "CFNetwork") {
+	// iOS Safari User-Agents also contain "mozilla" and "safari".
+	if strings.Contains(ua, "iphone") || strings.Contains(ua, "ipad") || strings.Contains(ua, "cfnetwork") {
 		return "ios"
 	}
-	if strings.Contains(ua, "Android") || strings.Contains(ua, "okhttp") {
+	if strings.Contains(ua, "android") || strings.Contains(ua, "okhttp") {
 		return "android"
 	}
-	if strings.Contains(ua, "Mozilla") || strings.Contains(ua, "Chrome") || strings.Contains(ua, "Safari") || strings.Contains(ua, "Firefox") {
+	if strings.Contains(ua, "mozilla") || strings.Contains(ua, "chrome") || strings.Contains(ua, "safari") || strings.Contains(ua, "firefox") {
 		return "web"
 	}
 	return "other"
