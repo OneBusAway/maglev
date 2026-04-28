@@ -1,6 +1,9 @@
 package restapi
 
-import "testing"
+import (
+	"net/http/httptest"
+	"testing"
+)
 
 func TestClassifyUserAgent(t *testing.T) {
 	tests := []struct {
@@ -27,4 +30,76 @@ func TestClassifyUserAgent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNormalizeSDKLang(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"known js", "js", "js"},
+		{"known python", "python", "python"},
+		{"uppercase normalized", "JAVA", "java"},
+		{"surrounding whitespace trimmed", "  go  ", "go"},
+		{"unknown bucketed", "rust", "other"},
+		{"injection attempt bucketed", "javascript\n{\"pii\":\"leak\"}", "other"},
+		{"empty bucketed", "", "other"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeSDKLang(tt.raw); got != tt.want {
+				t.Errorf("normalizeSDKLang(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyClient(t *testing.T) {
+	t.Run("normalizes known SDK lang", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Stainless-Lang", "Python")
+
+		attrs := classifyClient(req)
+		got := map[string]string{}
+		for _, a := range attrs {
+			got[a.Key] = a.Value.String()
+		}
+		if got["client_platform"] != "sdk" {
+			t.Errorf("client_platform = %q, want sdk", got["client_platform"])
+		}
+		if got["sdk_lang"] != "python" {
+			t.Errorf("sdk_lang = %q, want python", got["sdk_lang"])
+		}
+	})
+
+	t.Run("buckets unknown SDK lang as other", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Stainless-Lang", "<script>alert(1)</script>")
+
+		attrs := classifyClient(req)
+		var sdkLang string
+		for _, a := range attrs {
+			if a.Key == "sdk_lang" {
+				sdkLang = a.Value.String()
+			}
+		}
+		if sdkLang != "other" {
+			t.Errorf("sdk_lang = %q, want other", sdkLang)
+		}
+	})
+
+	t.Run("falls back to UA classification when header absent", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+
+		attrs := classifyClient(req)
+		if len(attrs) != 1 {
+			t.Fatalf("expected 1 attr, got %d", len(attrs))
+		}
+		if attrs[0].Key != "client_platform" || attrs[0].Value.String() != "android" {
+			t.Errorf("got %v, want client_platform=android", attrs[0])
+		}
+	})
 }

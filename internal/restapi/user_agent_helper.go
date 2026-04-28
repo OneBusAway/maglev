@@ -6,15 +6,35 @@ import (
 	"strings"
 )
 
+var knownSDKLangs = map[string]bool{
+	"js":     true,
+	"node":   true,
+	"python": true,
+	"java":   true,
+	"kotlin": true,
+	"go":     true,
+	"ruby":   true,
+}
+
+// normalizeSDKLang lower-cases the header value and bucket-maps anything
+// outside the known SDK language set to "other".
+func normalizeSDKLang(raw string) string {
+	lang := strings.ToLower(strings.TrimSpace(raw))
+	if knownSDKLangs[lang] {
+		return lang
+	}
+	return "other"
+}
+
 // classifyClient returns slog attributes describing the client platform.
 // SDK requests (identified by the X-Stainless-Lang header set by all
-// OneBusAway SDKs) include both client_platform="sdk" and sdk_lang.
-// Other requests fall back to coarse User-Agent classification.
+// OneBusAway SDKs) include both client_platform="sdk" and a normalized
+// sdk_lang. Other requests fall back to coarse User-Agent classification.
 func classifyClient(r *http.Request) []slog.Attr {
-	if sdkLang := r.Header.Get("X-Stainless-Lang"); sdkLang != "" {
+	if raw := r.Header.Get("X-Stainless-Lang"); raw != "" {
 		return []slog.Attr{
 			slog.String("client_platform", "sdk"),
-			slog.String("sdk_lang", sdkLang),
+			slog.String("sdk_lang", normalizeSDKLang(raw)),
 		}
 	}
 	return []slog.Attr{
