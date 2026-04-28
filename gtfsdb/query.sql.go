@@ -33,6 +33,15 @@ func (q *Queries) ClearAgencies(ctx context.Context) error {
 	return err
 }
 
+const clearBlockLayovers = `-- name: ClearBlockLayovers :exec
+DELETE FROM block_layover
+`
+
+func (q *Queries) ClearBlockLayovers(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearBlockLayoversStmt, clearBlockLayovers)
+	return err
+}
+
 const clearBlockTripEntries = `-- name: ClearBlockTripEntries :exec
 DELETE FROM block_trip_entry
 `
@@ -217,6 +226,43 @@ func (q *Queries) CreateAgency(ctx context.Context, arg CreateAgencyParams) (Age
 		&i.Email,
 	)
 	return i, err
+}
+
+const createBlockLayover = `-- name: CreateBlockLayover :exec
+INSERT INTO block_layover (
+    block_id,
+    service_id,
+    route_id,
+    layover_stop_id,
+    layover_start,
+    layover_end,
+    next_trip_id
+)
+VALUES
+    (?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateBlockLayoverParams struct {
+	BlockID       string
+	ServiceID     string
+	RouteID       string
+	LayoverStopID string
+	LayoverStart  int64
+	LayoverEnd    int64
+	NextTripID    string
+}
+
+func (q *Queries) CreateBlockLayover(ctx context.Context, arg CreateBlockLayoverParams) error {
+	_, err := q.exec(ctx, q.createBlockLayoverStmt, createBlockLayover,
+		arg.BlockID,
+		arg.ServiceID,
+		arg.RouteID,
+		arg.LayoverStopID,
+		arg.LayoverStart,
+		arg.LayoverEnd,
+		arg.NextTripID,
+	)
+	return err
 }
 
 const createBlockTripEntry = `-- name: CreateBlockTripEntry :exec
@@ -786,6 +832,63 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 		&i.MaxDepartureTime,
 	)
 	return i, err
+}
+
+const getActiveLayoverBlockIDsForRoute = `-- name: GetActiveLayoverBlockIDsForRoute :many
+SELECT DISTINCT block_id
+FROM block_layover
+WHERE route_id = ?1
+  AND layover_start < ?2
+  AND layover_end > ?3
+  AND service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetActiveLayoverBlockIDsForRouteParams struct {
+	RouteID        string
+	TimeRangeEnd   int64
+	TimeRangeStart int64
+	ServiceIds     []string
+}
+
+// Return distinct block IDs whose layover overlaps the given time window for the
+// specified route + active service IDs. Replaces the in-memory
+// GetBlocksInTimeRange traversal with one indexed range scan per call.
+// Slice param is last so non-slice param numbering stays contiguous (?1, ?2, ?3)
+// when the slice is empty and sqlc expands it to NULL.
+func (q *Queries) GetActiveLayoverBlockIDsForRoute(ctx context.Context, arg GetActiveLayoverBlockIDsForRouteParams) ([]string, error) {
+	query := getActiveLayoverBlockIDsForRoute
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.RouteID)
+	queryParams = append(queryParams, arg.TimeRangeEnd)
+	queryParams = append(queryParams, arg.TimeRangeStart)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var block_id string
+		if err := rows.Scan(&block_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getActiveRouteIDsForStopsOnDate = `-- name: GetActiveRouteIDsForStopsOnDate :many
@@ -1746,20 +1849,33 @@ func (q *Queries) GetBlockTripSequence(ctx context.Context, arg GetBlockTripSequ
 const getBlocksForBlockTripIndexIDs = `-- name: GetBlocksForBlockTripIndexIDs :many
 SELECT DISTINCT bte.block_id
 FROM block_trip_entry bte
-WHERE bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
-  AND bte.service_id IN (/*SLICE:service_ids*/?)
+JOIN trips t ON bte.trip_id = t.id
+WHERE t.max_departure_time >= ?1
+  AND t.min_arrival_time <= ?2
   AND bte.block_id IS NOT NULL
+  AND bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
 `
 
 type GetBlocksForBlockTripIndexIDsParams struct {
+	FromTime   sql.NullInt64
+	ToTime     sql.NullInt64
 	IndexIds   []int64
 	ServiceIds []string
 }
 
-// Get all distinct block_ids that have trips in the specified BlockTripIndex IDs
+// Get distinct block_ids whose schedule window overlaps [from_time, to_time] within the
+// specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+// which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
+// whose trips are hours away from the requested time.
+// Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
+// no stop_times rows) are implicitly excluded: SQL NULL comparisons return UNKNOWN, which
+// WHERE treats as false. A trip with no stop_times cannot be "active" in any time range.
 func (q *Queries) GetBlocksForBlockTripIndexIDs(ctx context.Context, arg GetBlocksForBlockTripIndexIDsParams) ([]sql.NullString, error) {
 	query := getBlocksForBlockTripIndexIDs
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.FromTime)
+	queryParams = append(queryParams, arg.ToTime)
 	if len(arg.IndexIds) > 0 {
 		for _, v := range arg.IndexIds {
 			queryParams = append(queryParams, v)
@@ -4707,59 +4823,6 @@ func (q *Queries) GetTripsInBlock(ctx context.Context, arg GetTripsInBlockParams
 			return nil, err
 		}
 		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getTripsInBlockWithTimeBounds = `-- name: GetTripsInBlockWithTimeBounds :many
-SELECT id, min_arrival_time, max_departure_time
-FROM trips
-WHERE block_id = ?1
-  AND service_id IN (/*SLICE:service_ids*/?)
-`
-
-type GetTripsInBlockWithTimeBoundsParams struct {
-	BlockID    sql.NullString
-	ServiceIds []string
-}
-
-type GetTripsInBlockWithTimeBoundsRow struct {
-	ID               string
-	MinArrivalTime   sql.NullInt64
-	MaxDepartureTime sql.NullInt64
-}
-
-// Get all trips in a block with their time bounds for best-trip selection in Go
-func (q *Queries) GetTripsInBlockWithTimeBounds(ctx context.Context, arg GetTripsInBlockWithTimeBoundsParams) ([]GetTripsInBlockWithTimeBoundsRow, error) {
-	query := getTripsInBlockWithTimeBounds
-	var queryParams []interface{}
-	queryParams = append(queryParams, arg.BlockID)
-	if len(arg.ServiceIds) > 0 {
-		for _, v := range arg.ServiceIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
-	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetTripsInBlockWithTimeBoundsRow
-	for rows.Next() {
-		var i GetTripsInBlockWithTimeBoundsRow
-		if err := rows.Scan(&i.ID, &i.MinArrivalTime, &i.MaxDepartureTime); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

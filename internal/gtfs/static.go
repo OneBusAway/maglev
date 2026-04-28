@@ -220,16 +220,11 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 			slog.String("source", newData.Source))
 	}
 
-	// Rebuild in-memory derived state from the freshly parsed data and the DB.
-	// We do this even when the import was a no-op so that startup can rely on a
-	// single code path to populate indices/ETag/lastUpdated.
-	newBlockLayoverIndices := buildBlockLayoverIndices(newData.Static)
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
-	manager.blockLayoverIndices = newBlockLayoverIndices
 	manager.regionBounds = newRegionBounds
 
 	// Clear the direction calculator's cached results so stale entries from the
