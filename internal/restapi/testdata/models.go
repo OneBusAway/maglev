@@ -79,3 +79,123 @@ var Route11 = models.Route{
 	Type:              3,
 	URL:               "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route11.pdf",
 }
+
+var Route1 = models.Route{
+	AgencyID:          "25",
+	Color:             "55d1b0",
+	Description:       "",
+	ID:                "25_151",
+	LongName:          "Route 1",
+	NullSafeShortName: "1",
+	ShortName:         "1",
+	TextColor:         "000000",
+	Type:              3,
+	URL:               "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf",
+}
+
+var Route299x = models.Route{
+	AgencyID:          "25",
+	Color:             "00dffb",
+	Description:       "",
+	ID:                "25_161",
+	LongName:          "Route 299X",
+	NullSafeShortName: "299X",
+	ShortName:         "299X",
+	TextColor:         "ffffff",
+	Type:              3,
+	URL:               "https://rabaride.com/services/burney_express.php",
+}
+
+var Route17 = models.Route{
+	AgencyID:          "25",
+	Color:             "fbef00",
+	Description:       "",
+	ID:                "25_1885",
+	LongName:          "Shasta View/Shasta College",
+	NullSafeShortName: "17",
+	ShortName:         "17",
+	TextColor:         "0e0e0e",
+	Type:              3,
+	URL:               "https://cms3.revize.com/revize/reddingbusauthority/17.pdf",
+}
+
+var Route3 = models.Route{
+	AgencyID:          "25",
+	Color:             "1bb1f6",
+	Description:       "",
+	ID:                "25_153",
+	LongName:          "Route 3",
+	NullSafeShortName: "3",
+	ShortName:         "3",
+	TextColor:         "ffffff",
+	Type:              3,
+	URL:               "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route03.pdf",
+}
+
+var Route4 = models.Route{
+	AgencyID:          "25",
+	Color:             "bdadd1",
+	Description:       "",
+	ID:                "25_154",
+	LongName:          "Route 4",
+	NullSafeShortName: "4",
+	ShortName:         "4",
+	TextColor:         "ffffff",
+	Type:              3,
+	URL:               "https://rabaride.com/Document%20Center/Services/Bus/Route04.pdf",
+}
+
+var Route7 = models.Route{
+	AgencyID:          "25",
+	Color:             "1886c7",
+	Description:       "",
+	ID:                "25_157",
+	LongName:          "Route 7",
+	NullSafeShortName: "7",
+	ShortName:         "7",
+	TextColor:         "ffffff",
+	Type:              3,
+	URL:               "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route07.pdf",
+}
+
+var Route9 = models.Route{
+	AgencyID:          "25",
+	Color:             "ec191c",
+	Description:       "",
+	ID:                "25_6446",
+	LongName:          "Route 9",
+	NullSafeShortName: "9",
+	ShortName:         "9",
+	TextColor:         "000000",
+	Type:              3,
+	URL:               "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route09.pdf",
+}
+
+var Route99x = models.Route{
+	AgencyID:          "25",
+	Color:             "9F472E",
+	Description:       "",
+	ID:                "25_24",
+	LongName:          "Route 99X/Amtrak Thruway Route 3",
+	NullSafeShortName: "99X",
+	ShortName:         "99X",
+	TextColor:         "FFFFFF",
+	Type:              3,
+	URL:               "",
+}
+
+var RabaRoutes = []models.Route{
+	Route1,
+	Route3,
+	Route4,
+	Route7,
+	Route9,
+	Route11,
+	Route14,
+	Route15,
+	Route17,
+	Route19,
+	Route44x,
+	Route99x,
+	Route299x,
+}
