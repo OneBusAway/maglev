@@ -6,11 +6,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
 func TestStopIdsForAgencyRequiresValidApiKey(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stop-ids-for-agency/test.json?key=invalid")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, "/api/where/stop-ids-for-agency/test.json?key=invalid")
+
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
@@ -19,41 +23,27 @@ func TestStopIdsForAgencyRequiresValidApiKey(t *testing.T) {
 func TestStopIdsForAgencyEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].ID
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stop-ids-for-agency/"+agencyId+".json?key=TEST")
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, "/api/where/stop-ids-for-agency/"+testdata.Raba.ID+".json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	assert.Equal(t, 200, model.Code)
+	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, list)
-
-	for _, stopId := range list {
-		stopIdStr, ok := stopId.(string)
-		require.True(t, ok)
-		assert.True(t, strings.HasPrefix(stopIdStr, agencyId+"_"),
-			"Stop ID should start with agency ID prefix: %s", stopIdStr)
+	assert.NotEmpty(t, model.Data.List)
+	for _, stopID := range model.Data.List {
+		assert.True(t, strings.HasPrefix(stopID, testdata.Raba.ID+"_"),
+			"Stop ID should start with agency ID prefix: %s", stopID)
 	}
-
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	agencyRefs, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	assert.Len(t, agencyRefs, 0)
+	assert.Empty(t, model.Data.References.Agencies)
 }
 
 func TestInvalidAgencyId(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stop-ids-for-agency/invalid.json?key=TEST")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, "/api/where/stop-ids-for-agency/invalid.json?key=TEST")
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "", model.Text)
 }
