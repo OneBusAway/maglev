@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"sort"
 	"testing"
 	"time"
 
@@ -27,9 +26,13 @@ func TestScheduleForRouteHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		expectedScheduleDate, _ := time.ParseInLocation("2006-01-02", "2025-06-12", loc)
+
 		entry := model.Data.Entry
 		assert.Equal(t, routeID, entry.RouteID)
-		assert.Greater(t, entry.ScheduleDate, int64(0))
+		assert.Equal(t, expectedScheduleDate.UnixMilli(), entry.ScheduleDate)
 
 		require.NotEmpty(t, entry.ServiceIDs)
 
@@ -66,20 +69,25 @@ func TestScheduleForRouteHandler(t *testing.T) {
 }
 
 func TestScheduleForRouteHandlerDateParam(t *testing.T) {
-	api := createTestApi(t)
+	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
 	defer api.Shutdown()
 
 	routeID := testdata.Route1.ID
 
-	t.Run("Valid date parameter", func(t *testing.T) {
-		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
+	t.Run("No date param uses current date", func(t *testing.T) {
+		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST"
 		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, "OK", model.Text)
 
-		assert.Greater(t, model.Data.Entry.ScheduleDate, int64(0))
+		// Clock is 2025-06-12 12:00 UTC = 2025-06-12 05:00 PDT, so start of day in LA is 2025-06-12.
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		expectedScheduleDate, _ := time.ParseInLocation("2006-01-02", "2025-06-12", loc)
+		assert.Equal(t, expectedScheduleDate.UnixMilli(), model.Data.Entry.ScheduleDate)
 	})
 
 	t.Run("Invalid date format", func(t *testing.T) {
@@ -171,14 +179,7 @@ func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	for _, grouping := range model.Data.Entry.StopTripGroupings {
-		tripIDs := grouping.TripIDs
-		if len(tripIDs) < 2 {
-			continue
-		}
-		sortedTripIDs := make([]string, len(tripIDs))
-		copy(sortedTripIDs, tripIDs)
-		sort.Strings(sortedTripIDs)
-		assert.Equal(t, sortedTripIDs, tripIDs, "tripIDs should be sorted lexicographically")
+		assert.IsNonDecreasing(t, grouping.TripIDs, "tripIDs should be sorted lexicographically")
 	}
 }
 
