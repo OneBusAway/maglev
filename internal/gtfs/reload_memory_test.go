@@ -59,8 +59,8 @@ func formatBytes(b uint64) string {
 	return fmt.Sprintf("%.2f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// HotSwapMemoryResults holds all the measurements from a hot-swap test
-type HotSwapMemoryResults struct {
+// ReloadMemoryResults holds all the measurements from a reload test
+type ReloadMemoryResults struct {
 	BaselineGoSys   uint64
 	PeakGoSys       uint64
 	PostSwapGoSys   uint64
@@ -74,13 +74,13 @@ type HotSwapMemoryResults struct {
 	GCCyclesDuring  uint32 // GC cycles that occurred during the swap
 }
 
-// TestHotSwapMemory_LargeAgency tests memory behavior during a hot-swap with large agency data.
+// TestReloadMemory_LargeAgency tests memory behavior during a reload with large agency data.
 // This test requires the perftest build tag and TriMet data from scripts/download-perf-data.sh.
 //
 // Run with:
 //
-//	go test -tags=perftest -v -run TestHotSwapMemory_LargeAgency ./internal/gtfs/
-func TestHotSwapMemory_LargeAgency(t *testing.T) {
+//	go test -tags=perftest -v -run TestReloadMemory_LargeAgency ./internal/gtfs/
+func TestReloadMemory_LargeAgency(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
 	}
@@ -223,13 +223,12 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 	// Record pre-swap GC count
 	preSwapStats := getMemoryStats()
 
-	t.Log("=== Starting ForceUpdate (hot-swap) ===")
+	t.Log("=== Starting ReloadStatic ===")
 	swapStart := time.Now()
 
-	// Trigger the hot-swap
-	err = manager.ForceUpdate(ctx)
+	_, err = manager.ReloadStatic(ctx)
 	if err != nil {
-		t.Fatalf("ForceUpdate failed: %v", err)
+		t.Fatalf("ReloadStatic failed: %v", err)
 	}
 
 	swapDuration := time.Since(swapStart)
@@ -256,7 +255,7 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 	gcSettleTime := time.Since(gcStart)
 
 	// Compile results
-	results := HotSwapMemoryResults{
+	results := ReloadMemoryResults{
 		BaselineGoSys:   baselineGoSys,
 		PeakGoSys:       peakGoSys.Load(),
 		PostSwapGoSys:   postSwapStats.Sys,
@@ -271,7 +270,7 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 	}
 
 	// Print detailed results
-	t.Log("=== HOT-SWAP MEMORY ANALYSIS ===")
+	t.Log("=== RELOAD MEMORY ANALYSIS ===")
 	t.Logf("Baseline Go Sys:    %s", formatBytes(results.BaselineGoSys))
 	t.Logf("Peak Go Sys:        %s", formatBytes(results.PeakGoSys))
 	t.Logf("Post-Swap Go Sys:   %s", formatBytes(results.PostSwapGoSys))
@@ -312,19 +311,19 @@ func TestHotSwapMemory_LargeAgency(t *testing.T) {
 			float64(results.RequestsFailed)/float64(results.RequestsTotal)*100)
 	}
 
-	// Verify data integrity after swap
+	// Verify data integrity after reload
 	newAgencies, newAgenciesErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
 	if newAgenciesErr != nil {
-		t.Errorf("Failed to list agencies after hot-swap: %v", newAgenciesErr)
+		t.Errorf("Failed to list agencies after reload: %v", newAgenciesErr)
 	} else if len(newAgencies) == 0 {
-		t.Error("No agencies found after hot-swap")
+		t.Error("No agencies found after reload")
 	} else {
 		t.Logf("Post-swap agencies: %d (first: %s)", len(newAgencies), newAgencies[0].ID)
 	}
 }
 
-// TestHotSwapMemory_SmallAgencyBaseline establishes a baseline with small test data
-func TestHotSwapMemory_SmallAgencyBaseline(t *testing.T) {
+// TestReloadMemory_SmallAgencyBaseline establishes a baseline with small test data
+func TestReloadMemory_SmallAgencyBaseline(t *testing.T) {
 	ctx := context.Background()
 
 	tempDir := t.TempDir()
@@ -364,9 +363,9 @@ func TestHotSwapMemory_SmallAgencyBaseline(t *testing.T) {
 	// Trigger swap
 	preSwapStats := getMemoryStats()
 
-	err = manager.ForceUpdate(ctx)
+	_, err = manager.ReloadStatic(ctx)
 	if err != nil {
-		t.Fatalf("ForceUpdate failed: %v", err)
+		t.Fatalf("ReloadStatic failed: %v", err)
 	}
 
 	postSwapStats := getMemoryStats()
@@ -386,8 +385,8 @@ func TestHotSwapMemory_SmallAgencyBaseline(t *testing.T) {
 	t.Logf("  Peak multiplier: %.2fx", multiplier)
 }
 
-// BenchmarkHotSwapMemory_LargeAgency benchmarks the hot-swap with memory tracking
-func BenchmarkHotSwapMemory_LargeAgency(b *testing.B) {
+// BenchmarkReloadMemory_LargeAgency benchmarks the reload with memory tracking
+func BenchmarkReloadMemory_LargeAgency(b *testing.B) {
 	if runtime.GOOS == "windows" {
 		b.Skip("Skipping on Windows")
 	}
@@ -421,9 +420,9 @@ func BenchmarkHotSwapMemory_LargeAgency(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		err := manager.ForceUpdate(ctx)
+		_, err := manager.ReloadStatic(ctx)
 		if err != nil {
-			b.Fatalf("ForceUpdate failed: %v", err)
+			b.Fatalf("ReloadStatic failed: %v", err)
 		}
 	}
 }

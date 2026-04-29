@@ -19,7 +19,7 @@ func loggerErrorf(format string, args ...any) error {
 	return err
 }
 
-func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
+func TestReload_QueriesCompleteDuringSwap(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
@@ -94,7 +94,7 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	assert.Equal(t, "40", agencies[0].ID)
 }
 
-func TestHotSwap_FailureRecovery(t *testing.T) {
+func TestReload_FailureRecovery(t *testing.T) {
 	ctx := context.Background()
 
 	tempDir := t.TempDir()
@@ -128,7 +128,7 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 	assert.Equal(t, "25", agencies[0].ID, "Should still be using original agency")
 }
 
-func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
+func TestReload_OldDatabaseCleanup(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
@@ -161,7 +161,7 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	assert.Equal(t, "40", agencies[0].ID)
 }
 
-func TestHotSwap_MutexProtectedSwap(t *testing.T) {
+func TestReload_MutexProtectedSwap(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
@@ -220,7 +220,7 @@ func countBlockLayovers(t *testing.T, manager *Manager) int {
 	return n
 }
 
-func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
+func TestReload_ConcurrentForceUpdate(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
