@@ -60,16 +60,6 @@ func newTestManagerNoData(t testing.TB) *gtfs.Manager {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
-
-	// Seed the singleton import_metadata row so the metadata accessors return
-	// zero values instead of sql.ErrNoRows.
-	_, err = client.Queries.UpsertImportMetadata(context.Background(), gtfsdb.UpsertImportMetadataParams{
-		FileHash:   "",
-		ImportTime: 0,
-		FileSource: "",
-	})
-	require.NoError(t, err)
-
 	return &gtfs.Manager{GtfsDB: client}
 }
 

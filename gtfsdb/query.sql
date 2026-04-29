@@ -576,10 +576,14 @@ VALUES
     (1, ?, ?, ?) RETURNING *;
 
 -- name: UpdateFeedExpiresAt :exec
-UPDATE import_metadata SET feed_expires_at = ? WHERE id = 1;
+INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
+VALUES (1, '', 0, '', ?)
+ON CONFLICT(id) DO UPDATE SET feed_expires_at = excluded.feed_expires_at;
 
 -- name: UpdateImportTime :exec
-UPDATE import_metadata SET import_time = ? WHERE id = 1;
+INSERT INTO import_metadata (id, file_hash, import_time, file_source)
+VALUES (1, '', ?, '')
+ON CONFLICT(id) DO UPDATE SET import_time = excluded.import_time;
 
 -- name: ClearStopTimes :exec
 DELETE FROM stop_times;

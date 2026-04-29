@@ -5097,7 +5097,9 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 }
 
 const updateFeedExpiresAt = `-- name: UpdateFeedExpiresAt :exec
-UPDATE import_metadata SET feed_expires_at = ? WHERE id = 1
+INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
+VALUES (1, '', 0, '', ?)
+ON CONFLICT(id) DO UPDATE SET feed_expires_at = excluded.feed_expires_at
 `
 
 func (q *Queries) UpdateFeedExpiresAt(ctx context.Context, feedExpiresAt sql.NullInt64) error {
@@ -5106,7 +5108,9 @@ func (q *Queries) UpdateFeedExpiresAt(ctx context.Context, feedExpiresAt sql.Nul
 }
 
 const updateImportTime = `-- name: UpdateImportTime :exec
-UPDATE import_metadata SET import_time = ? WHERE id = 1
+INSERT INTO import_metadata (id, file_hash, import_time, file_source)
+VALUES (1, '', ?, '')
+ON CONFLICT(id) DO UPDATE SET import_time = excluded.import_time
 `
 
 func (q *Queries) UpdateImportTime(ctx context.Context, importTime int64) error {
