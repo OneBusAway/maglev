@@ -193,7 +193,8 @@ func TestScheduleForRouteHandler_NoServiceOrOutOfRange(t *testing.T) {
 	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.NotEmpty(t, model.Text)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
 }
 
 func TestScheduleForRouteHandlerWithMalformedID(t *testing.T) {
