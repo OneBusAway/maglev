@@ -47,3 +47,13 @@ func TestInvalidAgencyId(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "", model.Text)
 }
+
+func TestMalformedAgencyIdForStopIds(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, "/api/where/stop-ids-for-agency/bad@agency.json?key=TEST")
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
