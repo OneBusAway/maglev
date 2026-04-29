@@ -54,13 +54,14 @@ func TestFreshnessMiddleware(t *testing.T) {
 	})
 
 	t.Run("GtfsManager has valid lastUpdated", func(t *testing.T) {
+		manager := newTestManagerNoData(t)
 		api := &RestAPI{
 			Application: &app.Application{
-				GtfsManager: &gtfs.Manager{},
+				GtfsManager: manager,
 			},
 		}
 
-		// Inject a specific time for the test
+		// Inject a specific time for the test (truncate to seconds — DB stores unix seconds)
 		expectedTime := time.Date(2023, 10, 27, 10, 0, 0, 0, time.UTC)
 		api.GtfsManager.SetStaticLastUpdatedForTest(expectedTime)
 

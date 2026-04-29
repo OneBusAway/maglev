@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestMetadataHandler_NilManager(t *testing.T) {
@@ -35,7 +34,7 @@ func TestMetadataHandler_NilManager(t *testing.T) {
 func TestMetadataHandler(t *testing.T) {
 	api := &RestAPI{
 		Application: &app.Application{
-			GtfsManager: &gtfs.Manager{},
+			GtfsManager: newTestManagerNoData(t),
 		},
 	}
 

@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
-	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestHealthHandlerWithNilApplication(t *testing.T) {
@@ -37,18 +34,7 @@ func TestHealthHandlerWithNilApplication(t *testing.T) {
 }
 
 func TestHealthHandlerReturnsOK(t *testing.T) {
-	// Use in-memory DB to test the health check successfully
-	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	// Create a minimal Application with the DB
-	manager := &gtfs.Manager{
-		GtfsDB: &gtfsdb.Client{
-			DB: db,
-		},
-	}
-
+	manager := newTestManagerNoData(t)
 	manager.SetFeedExpiresAtForTest(time.Now().Add(24 * time.Hour))
 
 	// Mark the manager as ready (simulating completed initialization)
@@ -82,17 +68,7 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 }
 
 func TestHealthHandlerReturnsExpired(t *testing.T) {
-
-	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	manager := &gtfs.Manager{
-		GtfsDB: &gtfsdb.Client{
-			DB: db,
-		},
-	}
-
+	manager := newTestManagerNoData(t)
 	manager.SetFeedExpiresAtForTest(time.Now().Add(-24 * time.Hour))
 
 	manager.MarkReady()
@@ -125,19 +101,8 @@ func TestHealthHandlerReturnsExpired(t *testing.T) {
 }
 
 func TestHealthHandlerStarting(t *testing.T) {
-	// Use in-memory DB to test the health check during startup
-	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	// Create a minimal Application with the DB but DON'T mark as ready
-	manager := &gtfs.Manager{
-		GtfsDB: &gtfsdb.Client{
-			DB: db,
-		},
-	}
-
-	// Explicitly NOT calling manager.MarkReady() to simulate startup phase
+	// Create a minimal manager but DON'T mark as ready to simulate startup phase
+	manager := newTestManagerNoData(t)
 
 	app := &app.Application{
 		GtfsManager: manager,
@@ -166,16 +131,7 @@ func TestHealthHandlerStarting(t *testing.T) {
 }
 
 func TestHealthHandlerVerboseMode(t *testing.T) {
-	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	manager := &gtfs.Manager{
-		GtfsDB: &gtfsdb.Client{
-			DB: db,
-		},
-	}
-
+	manager := newTestManagerNoData(t)
 	manager.MarkReady()
 	manager.SetStaticLastUpdatedForTest(time.Now().UTC())
 	manager.SetFeedUpdateTimeForTest("feed-1", time.Now().UTC())

@@ -486,7 +486,18 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, db.Close()) }()
 
-	_, err = db.Exec("CREATE TABLE calendar (end_date TEXT); CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);")
+	_, err = db.Exec(`
+		CREATE TABLE calendar (end_date TEXT);
+		CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);
+		CREATE TABLE import_metadata (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			file_hash TEXT NOT NULL,
+			import_time INTEGER NOT NULL,
+			file_source TEXT NOT NULL,
+			feed_expires_at INTEGER
+		);
+		INSERT INTO import_metadata (id, file_hash, import_time, file_source) VALUES (1, '', 0, '');
+	`)
 	require.NoError(t, err)
 
 	manager := &Manager{
@@ -496,29 +507,27 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 		},
 	}
 
-	// 1. Empty calendar
-	// Set an initial value to prove it gets reset
-	manager.feedExpiresAt = time.Now()
+	// 1. Empty calendar — feed_expires_at should be reset to NULL
 	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.True(t, manager.feedExpiresAt.IsZero(), "Should be zero when no dates exist")
+	assert.True(t, manager.FeedExpiresAt().IsZero(), "Should be zero when no dates exist")
 
 	// 2. Insert valid end date into calendar
 	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
 	require.NoError(t, err)
 
 	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.False(t, manager.feedExpiresAt.IsZero(), "Should parse end date")
+	assert.False(t, manager.FeedExpiresAt().IsZero(), "Should parse end date")
 
 	// Valid end date should be 2026-04-01 23:59:59
 	expectedTime, _ := time.Parse("20060102150405", "20260401235959")
-	assert.Equal(t, expectedTime.Unix(), manager.feedExpiresAt.Unix())
+	assert.Equal(t, expectedTime.Unix(), manager.FeedExpiresAt().Unix())
 
-	// 3. Hot-swap scenario: Clear calendar (feed expires at should reset to zero)
+	// 3. Reload scenario: Clear calendar (feed expires at should reset to zero)
 	_, err = db.Exec("DELETE FROM calendar")
 	require.NoError(t, err)
 
 	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.True(t, manager.feedExpiresAt.IsZero(), "Should reset to zero after hot swap to empty feed")
+	assert.True(t, manager.FeedExpiresAt().IsZero(), "Should reset to zero after reload with empty feed")
 
 	// 4. Test calendar_dates exception_type = 1 branch
 	// Insert a valid calendar date
@@ -533,28 +542,38 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 	require.NoError(t, err)
 
 	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.False(t, manager.feedExpiresAt.IsZero(), "Should parse end date")
+	assert.False(t, manager.FeedExpiresAt().IsZero(), "Should parse end date")
 
 	// Valid end date should be 2026-04-05 23:59:59 (from calendar_dates exception_type = 1)
 	expectedTime2, _ := time.Parse("20060102150405", "20260405235959")
-	assert.Equal(t, expectedTime2.Unix(), manager.feedExpiresAt.Unix())
+	assert.Equal(t, expectedTime2.Unix(), manager.FeedExpiresAt().Unix())
 }
 
 func TestManager_DataFreshnessTracking(t *testing.T) {
+	// nil DB returns zero
+	nilManager := &Manager{}
+	assert.True(t, nilManager.GetStaticLastUpdated().IsZero())
+
+	// Set and test StaticLastUpdated via DB roundtrip
+	tempDir := t.TempDir()
+	cfg := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: tempDir + "/gtfs.db",
+		Env:          appconf.Development,
+	}
+	dbManager, err := InitGTFSManager(context.Background(), cfg)
+	require.NoError(t, err)
+	defer dbManager.Shutdown()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	dbManager.SetStaticLastUpdatedForTest(now)
+	gotStatic := dbManager.GetStaticLastUpdated()
+	assert.Equal(t, now.Unix(), gotStatic.Unix())
+	assert.Equal(t, "UTC", gotStatic.Location().String())
+
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
 	}
-
-	// Test GetStaticLastUpdated logic (zero case)
-	zeroStatic := manager.GetStaticLastUpdated()
-	assert.True(t, zeroStatic.IsZero())
-
-	// Set and test StaticLastUpdated (verify normalization to UTC & atomic persistence)
-	now := time.Now().UTC()
-	manager.SetStaticLastUpdatedForTest(now)
-	gotStatic := manager.GetStaticLastUpdated()
-	assert.Equal(t, now.UnixNano(), gotStatic.UnixNano())
-	assert.Equal(t, "UTC", gotStatic.Location().String())
 
 	// Test GetFeedUpdateTimes returns defensive map copy
 	manager.SetFeedUpdateTimeForTest("feed-1", now)
