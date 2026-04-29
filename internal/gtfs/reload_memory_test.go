@@ -79,7 +79,11 @@ type ReloadMemoryResults struct {
 //
 // Run with:
 //
-//	go test -tags=perftest -v -run TestReloadMemory_LargeAgency ./internal/gtfs/
+//	go test -tags="perftest sqlite_fts5 sqlite_math_functions" -v -run TestReloadMemory_LargeAgency ./internal/gtfs/
+//
+// Or for pure-Go builds:
+//
+//	go test -tags="perftest purego" -v -run TestReloadMemory_LargeAgency ./internal/gtfs/
 func TestReloadMemory_LargeAgency(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
