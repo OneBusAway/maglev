@@ -40,8 +40,8 @@ type RegionBounds struct {
 // When both locks are needed, staticMutex MUST be acquired first.
 // Never acquire staticMutex while holding realTimeMutex.
 type Manager struct {
-	GtfsDB        *gtfsdb.Client
-	realTimeTrips []gtfs.Trip
+	GtfsDB                         *gtfsdb.Client
+	realTimeTrips                  []gtfs.Trip
 	realTimeVehicles               []gtfs.Vehicle
 	realTimeMutex                  sync.RWMutex
 	realTimeTripLookup             map[string]int
