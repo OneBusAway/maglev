@@ -575,6 +575,12 @@ OR REPLACE INTO import_metadata (
 VALUES
     (1, ?, ?, ?) RETURNING *;
 
+-- name: UpdateFeedExpiresAt :exec
+UPDATE import_metadata SET feed_expires_at = ? WHERE id = 1;
+
+-- name: UpdateImportTime :exec
+UPDATE import_metadata SET import_time = ? WHERE id = 1;
+
 -- name: ClearStopTimes :exec
 DELETE FROM stop_times;
 

@@ -372,6 +372,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listTripsWithLimitStmt, err = db.PrepareContext(ctx, listTripsWithLimit); err != nil {
 		return nil, fmt.Errorf("error preparing query ListTripsWithLimit: %w", err)
 	}
+	if q.updateFeedExpiresAtStmt, err = db.PrepareContext(ctx, updateFeedExpiresAt); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateFeedExpiresAt: %w", err)
+	}
+	if q.updateImportTimeStmt, err = db.PrepareContext(ctx, updateImportTime); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateImportTime: %w", err)
+	}
 	if q.updateStopDirectionStmt, err = db.PrepareContext(ctx, updateStopDirection); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateStopDirection: %w", err)
 	}
@@ -963,6 +969,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listTripsWithLimitStmt: %w", cerr)
 		}
 	}
+	if q.updateFeedExpiresAtStmt != nil {
+		if cerr := q.updateFeedExpiresAtStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateFeedExpiresAtStmt: %w", cerr)
+		}
+	}
+	if q.updateImportTimeStmt != nil {
+		if cerr := q.updateImportTimeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateImportTimeStmt: %w", cerr)
+		}
+	}
 	if q.updateStopDirectionStmt != nil {
 		if cerr := q.updateStopDirectionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateStopDirectionStmt: %w", cerr)
@@ -1128,6 +1144,8 @@ type Queries struct {
 	listStopsStmt                                 *sql.Stmt
 	listTripsStmt                                 *sql.Stmt
 	listTripsWithLimitStmt                        *sql.Stmt
+	updateFeedExpiresAtStmt                       *sql.Stmt
+	updateImportTimeStmt                          *sql.Stmt
 	updateStopDirectionStmt                       *sql.Stmt
 	upsertImportMetadataStmt                      *sql.Stmt
 }
@@ -1252,6 +1270,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listStopsStmt:                                 q.listStopsStmt,
 		listTripsStmt:                                 q.listTripsStmt,
 		listTripsWithLimitStmt:                        q.listTripsWithLimitStmt,
+		updateFeedExpiresAtStmt:                       q.updateFeedExpiresAtStmt,
+		updateImportTimeStmt:                          q.updateImportTimeStmt,
 		updateStopDirectionStmt:                       q.updateStopDirectionStmt,
 		upsertImportMetadataStmt:                      q.upsertImportMetadataStmt,
 	}
