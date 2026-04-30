@@ -11,7 +11,7 @@ type Config struct {
 	ApiKeys          []string
 	ProtectedApiKeys []string
 	ExemptApiKeys    []string
-	RateLimit        int // Requests per second per API key for rate limiting
+	RateLimit        int // Requests per second across the entire service (global shared bucket; exempt keys bypass it)
 	LogLevel         string
 	LogFormat        string
 	TLSCertPath      string
