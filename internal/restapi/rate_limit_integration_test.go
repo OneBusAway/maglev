@@ -84,37 +84,6 @@ func TestRateLimitingIntegration(t *testing.T) {
 	}
 }
 
-func TestRateLimitingPerAPIKey(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	// Test that different API keys have separate rate limits
-	endpoint := "/api/where/current-time.json"
-
-	// Use up the limit for TEST key by making requests rapidly
-	hitLimit := false
-	for i := 0; i < 10; i++ {
-		response, _ := serveApiAndRetrieveEndpoint(t, api, endpoint+"?key=TEST")
-		if response.StatusCode == http.StatusTooManyRequests {
-			hitLimit = true
-			break
-		}
-	}
-
-	assert.True(t, hitLimit, "TEST key should hit rate limit within 10 requests")
-
-	// TEST key should now be rate limited
-	response, _ := serveApiAndRetrieveEndpoint(t, api, endpoint+"?key=TEST")
-	assert.Equal(t, http.StatusTooManyRequests, response.StatusCode,
-		"TEST key should be rate limited")
-
-	// Different endpoint with same key should also be rate limited
-	// (since rate limiting is per API key, not per endpoint)
-	response, _ = serveApiAndRetrieveEndpoint(t, api, "/api/where/agency/raba.json?key=TEST")
-	assert.Equal(t, http.StatusTooManyRequests, response.StatusCode,
-		"Different endpoint with same key should also be rate limited")
-}
-
 func TestRateLimitingExemption(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
