@@ -36,6 +36,9 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 		rateLimit = rate.Every(interval / time.Duration(ratePerSecond))
 	}
 
+	// Clamp burst to 0 for the unlimited case so burstSize is never negative.
+	burst := max(ratePerSecond, 0)
+
 	exemptMap := make(map[string]bool)
 	for _, key := range exemptKeys {
 		trimmedKey := strings.TrimSpace(key)
@@ -45,9 +48,9 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 	}
 
 	return &RateLimitMiddleware{
-		limiter:    rate.NewLimiter(rateLimit, ratePerSecond),
+		limiter:    rate.NewLimiter(rateLimit, burst),
 		rateLimit:  rateLimit,
-		burstSize:  ratePerSecond,
+		burstSize:  burst,
 		exemptKeys: exemptMap,
 	}
 }
@@ -71,12 +74,14 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 			return
 		}
 
-		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.burstSize))
-		remaining := int(math.Floor(rl.limiter.Tokens()))
-		if remaining < 0 {
-			remaining = 0
+		if rl.rateLimit != rate.Inf {
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.burstSize))
+			remaining := int(math.Floor(rl.limiter.Tokens()))
+			if remaining < 0 {
+				remaining = 0
+			}
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		}
-		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 
 		next.ServeHTTP(w, r)
 	})
@@ -87,9 +92,9 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter) {
 	var retryAfter time.Duration
 	switch rl.rateLimit {
 	case 0:
-		retryAfter = time.Hour
+		retryAfter = time.Hour // suggest retrying much later when all requests are blocked
 	case rate.Inf:
-		retryAfter = time.Second
+		retryAfter = time.Second // should not happen, but fallback
 	default:
 		retryAfter = time.Duration(float64(time.Second) / float64(rl.rateLimit))
 	}
