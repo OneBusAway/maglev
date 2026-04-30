@@ -61,17 +61,16 @@ func formatBytes(b uint64) string {
 
 // ReloadMemoryResults holds all the measurements from a reload test
 type ReloadMemoryResults struct {
-	BaselineGoSys   uint64
-	PeakGoSys       uint64
-	PostSwapGoSys   uint64
-	PostGCGoSys     uint64
-	PeakMultiplier  float64 // PeakGoSys / BaselineGoSys
-	GCSettleTimeMs  int64   // Time for memory to settle after swap
-	SwapDurationMs  int64   // Time to complete ForceUpdate
-	RequestsTotal   int64
-	RequestsFailed  int64
-	RequestsSuccess int64
-	GCCyclesDuring  uint32 // GC cycles that occurred during the swap
+	BaselineGoSys    uint64
+	PeakGoSys        uint64
+	PostReloadGoSys  uint64
+	PeakMultiplier   float64 // PeakGoSys / BaselineGoSys
+	GCSettleTimeMs   int64   // Time for memory to settle after reload
+	ReloadDurationMs int64   // Time to complete ReloadStatic
+	RequestsTotal    int64
+	RequestsFailed   int64
+	RequestsSuccess  int64
+	GCCyclesDuring   uint32 // GC cycles that occurred during the reload
 }
 
 // TestReloadMemory_LargeAgency tests memory behavior during a reload with large agency data.
@@ -141,10 +140,10 @@ func TestReloadMemory_LargeAgency(t *testing.T) {
 	t.Logf("Post-init memory: HeapAlloc=%s, Sys=%s",
 		formatBytes(postInitStats.HeapAlloc), formatBytes(postInitStats.Sys))
 
-	// This is our baseline for the swap test
+	// This is our baseline for the reload test
 	baselineGoSys := postInitStats.Sys
 
-	// Capture peak memory during the swap
+	// Capture peak memory during the reload
 	var peakGoSys atomic.Uint64
 	peakGoSys.Store(baselineGoSys)
 
@@ -224,23 +223,23 @@ func TestReloadMemory_LargeAgency(t *testing.T) {
 	// Let readers warm up
 	time.Sleep(500 * time.Millisecond)
 
-	// Record pre-swap GC count
-	preSwapStats := getMemoryStats()
+	// Record pre-reload GC count
+	preReloadStats := getMemoryStats()
 
 	t.Log("=== Starting ReloadStatic ===")
-	swapStart := time.Now()
+	reloadStart := time.Now()
 
 	_, err = manager.ReloadStatic(ctx)
 	if err != nil {
 		t.Fatalf("ReloadStatic failed: %v", err)
 	}
 
-	swapDuration := time.Since(swapStart)
-	t.Logf("ForceUpdate completed in %v", swapDuration)
+	reloadDuration := time.Since(reloadStart)
+	t.Logf("ReloadStatic completed in %v", reloadDuration)
 
-	// Capture post-swap memory before any explicit GC
-	postSwapStats := getMemoryStats()
-	gcCyclesDuring := postSwapStats.NumGC - preSwapStats.NumGC
+	// Capture post-reload memory before any explicit GC
+	postReloadStats := getMemoryStats()
+	gcCyclesDuring := postReloadStats.NumGC - preReloadStats.NumGC
 
 	// Stop readers
 	cancelReaders()
@@ -260,28 +259,28 @@ func TestReloadMemory_LargeAgency(t *testing.T) {
 
 	// Compile results
 	results := ReloadMemoryResults{
-		BaselineGoSys:   baselineGoSys,
-		PeakGoSys:       peakGoSys.Load(),
-		PostSwapGoSys:   postSwapStats.Sys,
-		PostGCGoSys:     postGCStats.Sys,
-		PeakMultiplier:  float64(peakGoSys.Load()) / float64(baselineGoSys),
-		GCSettleTimeMs:  gcSettleTime.Milliseconds(),
-		SwapDurationMs:  swapDuration.Milliseconds(),
-		RequestsTotal:   requestsTotal.Load(),
-		RequestsFailed:  requestsFailed.Load(),
-		RequestsSuccess: requestsSuccess.Load(),
-		GCCyclesDuring:  gcCyclesDuring,
+		BaselineGoSys:    baselineGoSys,
+		PeakGoSys:        peakGoSys.Load(),
+		PostReloadGoSys:  postReloadStats.Sys,
+		PostGCGoSys:      postGCStats.Sys,
+		PeakMultiplier:   float64(peakGoSys.Load()) / float64(baselineGoSys),
+		GCSettleTimeMs:   gcSettleTime.Milliseconds(),
+		ReloadDurationMs: reloadDuration.Milliseconds(),
+		RequestsTotal:    requestsTotal.Load(),
+		RequestsFailed:   requestsFailed.Load(),
+		RequestsSuccess:  requestsSuccess.Load(),
+		GCCyclesDuring:   gcCyclesDuring,
 	}
 
 	// Print detailed results
 	t.Log("=== RELOAD MEMORY ANALYSIS ===")
 	t.Logf("Baseline Go Sys:    %s", formatBytes(results.BaselineGoSys))
 	t.Logf("Peak Go Sys:        %s", formatBytes(results.PeakGoSys))
-	t.Logf("Post-Swap Go Sys:   %s", formatBytes(results.PostSwapGoSys))
+	t.Logf("Post-Reload Go Sys:   %s", formatBytes(results.PostReloadGoSys))
 	t.Logf("Post-GC Go Sys:     %s", formatBytes(results.PostGCGoSys))
 	t.Logf("Peak Multiplier:    %.2fx baseline", results.PeakMultiplier)
 	t.Logf("GC Settle Time:     %d ms", results.GCSettleTimeMs)
-	t.Logf("Swap Duration:      %d ms", results.SwapDurationMs)
+	t.Logf("Reload Duration:      %d ms", results.ReloadDurationMs)
 	t.Logf("GC Cycles During:   %d", results.GCCyclesDuring)
 	t.Log("=== REQUEST METRICS ===")
 	t.Logf("Total Requests:     %d", results.RequestsTotal)
@@ -297,7 +296,7 @@ func TestReloadMemory_LargeAgency(t *testing.T) {
 	memSamplesMu.Lock()
 	for i, sample := range memSamples {
 		if i%10 == 0 { // Print every 10th sample to keep output manageable
-			elapsed := sample.Timestamp.Sub(swapStart).Milliseconds()
+			elapsed := sample.Timestamp.Sub(reloadStart).Milliseconds()
 			t.Logf("T+%dms: HeapAlloc=%s, Sys=%s",
 				elapsed, formatBytes(sample.HeapAlloc), formatBytes(sample.Sys))
 		}
@@ -322,7 +321,7 @@ func TestReloadMemory_LargeAgency(t *testing.T) {
 	} else if len(newAgencies) == 0 {
 		t.Error("No agencies found after reload")
 	} else {
-		t.Logf("Post-swap agencies: %d (first: %s)", len(newAgencies), newAgencies[0].ID)
+		t.Logf("Post-reload agencies: %d (first: %s)", len(newAgencies), newAgencies[0].ID)
 	}
 }
 
@@ -364,15 +363,15 @@ func TestReloadMemory_SmallAgencyBaseline(t *testing.T) {
 	t.Logf("  Post-init: HeapAlloc=%s, Sys=%s",
 		formatBytes(postInitStats.HeapAlloc), formatBytes(postInitStats.Sys))
 
-	// Trigger swap
-	preSwapStats := getMemoryStats()
+	// Trigger reload
+	preReloadStats := getMemoryStats()
 
 	_, err = manager.ReloadStatic(ctx)
 	if err != nil {
 		t.Fatalf("ReloadStatic failed: %v", err)
 	}
 
-	postSwapStats := getMemoryStats()
+	postReloadStats := getMemoryStats()
 
 	runtime.GC()
 	debug.FreeOSMemory()
@@ -380,11 +379,11 @@ func TestReloadMemory_SmallAgencyBaseline(t *testing.T) {
 
 	postGCStats := getMemoryStats()
 
-	multiplier := float64(postSwapStats.Sys) / float64(preSwapStats.Sys)
+	multiplier := float64(postReloadStats.Sys) / float64(preReloadStats.Sys)
 
-	t.Logf("Swap results:")
-	t.Logf("  Pre-swap:  Sys=%s", formatBytes(preSwapStats.Sys))
-	t.Logf("  Post-swap: Sys=%s", formatBytes(postSwapStats.Sys))
+	t.Logf("Reload results:")
+	t.Logf("  Pre-reload:  Sys=%s", formatBytes(preReloadStats.Sys))
+	t.Logf("  Post-reload: Sys=%s", formatBytes(postReloadStats.Sys))
 	t.Logf("  Post-GC:   Sys=%s", formatBytes(postGCStats.Sys))
 	t.Logf("  Peak multiplier: %.2fx", multiplier)
 }
