@@ -167,9 +167,9 @@ func TestReload_OldDatabaseCleanup(t *testing.T) {
 	assert.Equal(t, "40", agencies[0].ID)
 }
 
-// TestReload_MutexProtectedReload verifies that concurrent reload operations
-// are properly serialized using a mutex to prevent data corruption.
-func TestReload_MutexProtectedReload(t *testing.T) {
+// TestReload_ReplacesDataAndRebuildsState verifies that a reload correctly
+// replaces static data and rebuilds derived state (e.g. block_layover rows).
+func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {

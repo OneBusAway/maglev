@@ -64,6 +64,7 @@ type ReloadMemoryResults struct {
 	BaselineGoSys    uint64
 	PeakGoSys        uint64
 	PostReloadGoSys  uint64
+	PostGCGoSys      uint64
 	PeakMultiplier   float64 // PeakGoSys / BaselineGoSys
 	GCSettleTimeMs   int64   // Time for memory to settle after reload
 	ReloadDurationMs int64   // Time to complete ReloadStatic
