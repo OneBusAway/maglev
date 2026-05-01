@@ -26,7 +26,7 @@ type ArrivalAndDepartureParams struct {
 
 // parseArrivalAndDepartureParams parses and validates request parameters.
 // Returns parameters and a map of validation errors if any.
-func (api *RestAPI) parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (ArrivalAndDepartureParams, map[string][]string) {
+func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (ArrivalAndDepartureParams, map[string][]string) {
 	params := ArrivalAndDepartureParams{
 		MinutesAfter:  30, // Default 30 minutes after
 		MinutesBefore: 5,  // Default 5 minutes before
@@ -145,7 +145,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Capture parsing errors (syntax validation only — localization happens below
 	// once we know the agency timezone).
-	params, fieldErrors := api.parseArrivalAndDepartureParams(r)
+	params, fieldErrors := parseArrivalAndDepartureParams(r)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -605,14 +605,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 //  3. Trip-level delay — falls back to TripUpdate.Delay when no per-stop data exists
 //
 // Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
-// Returns (0, 0, false) if no prediction can be made.
+// Returns (time.Time{}, time.Time{}, false) if no prediction can be made.
 func (api *RestAPI) getPredictedTimes(
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
-
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	// trip-level delay exists but StopTimeUpdates is empty
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
