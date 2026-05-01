@@ -215,7 +215,7 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 func countBlockLayovers(t *testing.T, manager *Manager) int {
 	t.Helper()
 	var n int
-	err := manager.GtfsDB.DB.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM block_layover").Scan(&n)
+	err := manager.GtfsDB.DB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM block_layover").Scan(&n)
 	require.NoError(t, err)
 	return n
 }
