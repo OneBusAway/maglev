@@ -57,12 +57,11 @@ type Manager struct {
 	shutdownOnce                   sync.Once
 	isReady                        atomic.Bool // Tracks whether initial data loading is complete
 
-	staticMutex         sync.RWMutex
-	feedExpiresAt       time.Time // Holds the max valid service date for the static feed
-	blockLayoverIndices map[string][]*BlockLayoverIndex
-	regionBounds        map[string]*RegionBounds
-	systemETag          string // systemETag stores the SHA-256 hash of the currently loaded GTFS static dataset.
-	lastUpdated         time.Time
+	staticMutex   sync.RWMutex
+	feedExpiresAt time.Time // Holds the max valid service date for the static feed
+	regionBounds  map[string]*RegionBounds
+	systemETag    string // systemETag stores the SHA-256 hash of the currently loaded GTFS static dataset.
+	lastUpdated   time.Time
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -293,12 +292,7 @@ func (manager *Manager) GetStops(ctx context.Context) ([]gtfsdb.Stop, error) {
 	return manager.GtfsDB.Queries.ListStops(ctx)
 }
 
-func (manager *Manager) GetBlockLayoverIndicesForRoute(routeID string) []*BlockLayoverIndex {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
-	return getBlockLayoverIndicesForRoute(manager.blockLayoverIndices, routeID)
-}
-
+// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) FindAgency(ctx context.Context, id string) (*gtfsdb.Agency, error) {
 	agency, err := manager.GtfsDB.Queries.GetAgency(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {

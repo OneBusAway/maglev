@@ -532,6 +532,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
+	logging.LogOperation(logger, "building_block_layover_index")
+	if err := c.buildBlockLayoverIndex(ctx, data.Static, tx); err != nil {
+		logging.LogError(logger, "Unable to build block layover index", err)
+		return false, fmt.Errorf("unable to build block layover index: %w", err)
+	}
+	logging.LogOperation(logger, "block_layover_index_built")
+
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("error committing import transaction: %w", err)
 	}
@@ -551,6 +558,9 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
 // Delete order respects foreign key constraints.
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
+	if err := q.ClearBlockLayovers(ctx); err != nil {
+		return fmt.Errorf("error clearing block_layover: %w", err)
+	}
 	if err := q.ClearBlockTripEntries(ctx); err != nil {
 		return fmt.Errorf("error clearing block_trip_entry: %w", err)
 	}
@@ -1320,6 +1330,81 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 	logging.LogOperation(logger, "block_trip_index_creation_complete",
 		slog.Int("indices_created", len(indexGroups)),
 		slog.Int("entries_created", totalEntries))
+
+	return nil
+}
+
+// buildBlockLayoverIndex populates the block_layover table: one row per layover
+// (the gap between two consecutive trips in the same block that share a terminal
+// stop). Layover bounds are stored as nanoseconds since service-day midnight so
+// handlers can match against the same units used by stop_times.
+func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.Static, tx *sql.Tx) error {
+	logger := slog.Default().With(slog.String("component", "block_layover_builder"))
+
+	type blockKey struct {
+		blockID   string
+		serviceID string
+	}
+	blockTrips := make(map[blockKey][]*gtfs.ScheduledTrip)
+
+	for i := range staticData.Trips {
+		trip := &staticData.Trips[i]
+		if trip.BlockID == "" || len(trip.StopTimes) == 0 {
+			continue
+		}
+		key := blockKey{blockID: trip.BlockID, serviceID: trip.Service.Id}
+		blockTrips[key] = append(blockTrips[key], trip)
+	}
+
+	q := c.Queries
+	layoverCount := 0
+
+	if err := c.withTransaction(ctx, tx, "build_block_layover_index", func(tx *sql.Tx) error {
+		qtx := q.WithTx(tx)
+
+		for key, trips := range blockTrips {
+			if len(trips) < 2 {
+				continue
+			}
+
+			slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
+				return cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime)
+			})
+
+			for i := 0; i < len(trips)-1; i++ {
+				currentTrip := trips[i]
+				nextTrip := trips[i+1]
+
+				lastStopCurrent := currentTrip.StopTimes[len(currentTrip.StopTimes)-1]
+				firstStopNext := nextTrip.StopTimes[0]
+
+				if lastStopCurrent.Stop.Id != firstStopNext.Stop.Id {
+					continue
+				}
+
+				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
+					BlockID:       key.blockID,
+					ServiceID:     key.serviceID,
+					RouteID:       nextTrip.Route.Id,
+					LayoverStopID: lastStopCurrent.Stop.Id,
+					LayoverStart:  int64(lastStopCurrent.DepartureTime),
+					LayoverEnd:    int64(firstStopNext.ArrivalTime),
+					NextTripID:    nextTrip.ID,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to create block layover: %w", err)
+				}
+				layoverCount++
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "block_layover_index_creation_complete",
+		slog.Int("layovers_created", layoverCount))
 
 	return nil
 }

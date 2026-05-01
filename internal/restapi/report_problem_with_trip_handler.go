@@ -53,13 +53,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		slog.String("code", code),
 		slog.String("service_date", serviceDate),
 		slog.String("vehicle_id", vehicleID),
-		slog.String("stop_id", stopID),
-		slog.String("user_comment", userComment),
-		slog.String("user_on_vehicle", userOnVehicle),
-		slog.String("user_vehicle_number", userVehicleNumber),
-		slog.String("user_lat", userLatStr),
-		slog.String("user_lon", userLonStr),
-		slog.String("user_location_accuracy", userLocationAccuracy))
+		slog.String("stop_id", stopID))
 
 	// Store the problem report in the database
 	now := api.Clock.Now().UnixMilli()

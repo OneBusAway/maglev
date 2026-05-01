@@ -9,21 +9,6 @@ import (
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
-type CoverageResponse struct {
-	Code        int          `json:"code"`
-	CurrentTime int64        `json:"currentTime"`
-	Data        CoverageData `json:"data,omitempty"`
-	Text        string       `json:"text"`
-	Version     int          `json:"version"`
-}
-
-type CoverageData struct {
-	LimitExceeded bool                    `json:"limitExceeded"`
-	List          []models.AgencyCoverage `json:"list"`
-	OutOfRange    bool                    `json:"outOfRange"`
-	References    models.ReferencesModel  `json:"references"`
-}
-
 func TestAgenciesWithCoverageHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 

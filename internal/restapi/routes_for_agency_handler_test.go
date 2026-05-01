@@ -2,20 +2,20 @@ package restapi
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
 func TestRoutesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].ID
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=invalid")
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=invalid")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
@@ -25,30 +25,15 @@ func TestRoutesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 func TestRoutesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].ID
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST")
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	assert.Equal(t, 200, model.Code)
+	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	// Check that we have a list of routes
-	_, ok = data["list"].([]any)
-	require.True(t, ok)
-
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	refAgencies, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	assert.Len(t, refAgencies, 1)
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
 }
 
 func TestRoutesForAgencyHandlerInvalidID(t *testing.T) {
@@ -58,7 +43,7 @@ func TestRoutesForAgencyHandlerInvalidID(t *testing.T) {
 	malformedID := "11@10"
 	endpoint := "/api/where/routes-for-agency/" + malformedID + ".json?key=TEST"
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	resp, model := callAPIHandler[RoutesResponse](t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 	assert.Equal(t, http.StatusBadRequest, model.Code)
@@ -69,7 +54,7 @@ func TestRoutesForAgencyHandlerNonExistentAgency(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/non-existent-agency.json?key=TEST")
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/non-existent-agency.json?key=TEST")
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
@@ -80,30 +65,13 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].ID
-
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST")
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST")
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	routes, ok := data["list"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, routes)
-
-	for _, r := range routes {
-		route, ok := r.(map[string]any)
-		require.True(t, ok)
-
-		id, ok := route["id"].(string)
-		require.True(t, ok)
-
-		// Check that agencyId is prepended to id
-		assert.Contains(t, id, agencyId+"_", "route id must be in {agencyId}_{routeId} format")
+	for _, route := range model.Data.List {
+		assert.True(t, strings.HasPrefix(route.ID, "25_"), "route id must be in {agencyId}_{routeId} format")
 	}
 }
 
@@ -111,45 +79,39 @@ func TestRoutesForAgencyHandlerPagination(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyId := agencies[0].ID
-
-	// Case 1: Limit 5 (Should return 5 items, limitExceeded=true)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=5")
+	var results []models.Route
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&limit=5")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Len(t, model.Data.List, 5)
+	assert.True(t, model.Data.LimitExceeded)
+	results = append(results, model.Data.List...)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-	assert.Len(t, list, 5)
-	assert.True(t, data["limitExceeded"].(bool), "limitExceeded should be true when more items exist")
+	resp, model = callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&offset=5&limit=5")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Len(t, model.Data.List, 5)
+	assert.True(t, model.Data.LimitExceeded)
+	results = append(results, model.Data.List...)
 
-	// Case 2: Offset 5, Limit 5 (Should return next 5 items)
-	resp2, model2 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&offset=5&limit=5")
-	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	resp, model = callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&offset=10&limit=5")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Len(t, model.Data.List, 3)
+	assert.False(t, model.Data.LimitExceeded)
+	results = append(results, model.Data.List...)
 
-	data2, ok := model2.Data.(map[string]any)
-	require.True(t, ok)
-	list2, ok := data2["list"].([]any)
-	require.True(t, ok)
-	assert.Len(t, list2, 5)
+	assert.ElementsMatch(t, testdata.RabaRoutes, results)
+}
 
-	// Verify items are different
-	firstItem1 := list[0].(map[string]any)
-	firstItem2 := list2[0].(map[string]any)
-	assert.NotEqual(t, firstItem1["id"], firstItem2["id"])
+func TestRoutesForAgencyHandlerLimitExceedsMax(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	// Case 3: Limit 100 (Should return all 13 items, limitExceeded=false)
-	resp3, model3 := serveApiAndRetrieveEndpoint(t, api, "/api/where/routes-for-agency/"+agencyId+".json?key=TEST&limit=100")
-	assert.Equal(t, http.StatusOK, resp3.StatusCode)
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&limit=100")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
 
-	data3, ok := model3.Data.(map[string]any)
-	require.True(t, ok)
-	list3, ok := data3["list"].([]any)
-	require.True(t, ok)
-	// RABA has 13 routes
-	assert.Len(t, list3, 13)
-	assert.False(t, data3["limitExceeded"].(bool), "limitExceeded should be false when all items returned")
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List)
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded should be false when all items returned")
 }

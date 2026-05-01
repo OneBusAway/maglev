@@ -188,6 +188,14 @@ func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
 	return stops
 }
 
+// mustGetStop return an active stop from the DB (stop with stop times)
+func mustGetStop(t testing.TB, api *RestAPI) gtfsdb.Stop {
+	t.Helper()
+	stops := mustGetStops(t, api)
+	require.NotEmpty(t, stops)
+	return stops[0]
+}
+
 func TestCompressionMiddleware(t *testing.T) {
 	// Create a test handler that returns a large response
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -189,15 +189,10 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, initialAgencies)
 	assert.Equal(t, "25", initialAgencies[0].ID)
-	manager.staticMutex.RLock()
-	assert.NotNil(t, manager.blockLayoverIndices)
-	manager.staticMutex.RUnlock()
+	initialLayoverCount := countBlockLayovers(t, manager)
 
 	// Capture old references
 	oldGtfsDB := manager.GtfsDB
-	manager.staticMutex.RLock()
-	oldBlockLayoverIndices := manager.blockLayoverIndices
-	manager.staticMutex.RUnlock()
 
 	manager.SetGtfsURL(gtfsNew)
 	_, err = manager.ReloadStatic(t.Context())
@@ -211,11 +206,18 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 
 	// DB is reused in-place: the client pointer is stable across reloads.
 	assert.Same(t, oldGtfsDB, manager.GtfsDB, "GtfsDB should be reused in place")
+	// block_layover rows are rebuilt from the new feed.
+	updatedLayoverCount := countBlockLayovers(t, manager)
+	assert.NotEqual(t, initialLayoverCount, updatedLayoverCount, "block_layover rows should be rebuilt from the new feed")
+}
 
-	manager.staticMutex.RLock()
-	// Derived indices are rebuilt from the new data.
-	assert.NotEqual(t, manager.blockLayoverIndices, oldBlockLayoverIndices)
-	manager.staticMutex.RUnlock()
+// countBlockLayovers returns the number of rows in the block_layover table.
+func countBlockLayovers(t *testing.T, manager *Manager) int {
+	t.Helper()
+	var n int
+	err := manager.GtfsDB.DB.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM block_layover").Scan(&n)
+	require.NoError(t, err)
+	return n
 }
 
 func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {

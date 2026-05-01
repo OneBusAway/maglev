@@ -339,8 +339,8 @@ func processTripGroups(
 	}
 
 	if len(allStopGroups) > 0 {
-		slices.SortFunc(*stopGroupings, func(a, b models.StopGrouping) int {
-			return cmp.Compare(a.StopGroups[0].ID, b.StopGroups[0].ID)
+		slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
+			return cmp.Compare(a.Name.Name, b.Name.Name)
 		})
 
 		*stopGroupings = append(*stopGroupings, models.StopGrouping{
