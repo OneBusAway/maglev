@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -512,7 +511,7 @@ func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testi
 
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
 func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create HTTP server to serve GTFS-RT files
 	mux := http.NewServeMux()
@@ -608,7 +607,7 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 	t.Logf("Loaded %d real-time vehicles", len(realTimeVehicles))
 
 	// Debug vehicle-to-agency matching
-	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(context.Background(), agencyId)
+	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(t.Context(), agencyId)
 	require.Nil(t, err)
 	t.Logf("Found %d vehicles for agency %s", len(vehiclesForAgency), agencyId)
 

@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -35,7 +34,7 @@ type tzTestData struct {
 // The calendar activeDays is a [7]int (Mon-Sun) so the test can control which day is active.
 func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activeDays [7]int) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID: td.AgencyID, Name: td.AgencyID, Url: "http://test.example.com", Timezone: td.Timezone,

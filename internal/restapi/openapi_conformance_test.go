@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -74,7 +73,7 @@ func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue any) []error {
 
 // serveAndCaptureRawJSON makes an HTTP request to the test server and returns
 // the status code and parsed JSON body.
-func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (int, map[string]any) {
+func serveAndCaptureRawJSON(t *testing.T, serverURL, endpoint string) (int, map[string]any) {
 	t.Helper()
 
 	client := &http.Client{}
@@ -95,7 +94,7 @@ func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (in
 // assertConformance is the core validation helper. It makes a request to the given endpoint,
 // validates the response against the OpenAPI spec schema for the specPath, and reports
 // any schema violations as test failures.
-func assertConformance(t *testing.T, serverURL string, doc *openapi3.T, endpointURL string, specEndpointPath string) {
+func assertConformance(t *testing.T, serverURL string, doc *openapi3.T, endpointURL, specEndpointPath string) {
 	t.Helper()
 
 	statusCode, jsonBody := serveAndCaptureRawJSON(t, serverURL, endpointURL)
@@ -115,7 +114,7 @@ func assertConformance(t *testing.T, serverURL string, doc *openapi3.T, endpoint
 // createConformanceTestApi creates a test API with a high rate limit suitable for conformance testing
 // where many sequential requests are made.
 func createConformanceTestApi(t *testing.T) *RestAPI {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Initialize the shared GTFS manager only once (reuses the same testDbSetupOnce from http_test.go)
 	testDbSetupOnce.Do(func() {
@@ -386,7 +385,7 @@ func TestOpenAPIConformance_SearchEndpoints(t *testing.T) {
 
 // TestOpenAPIConformance_RealTimeEndpoints tests endpoints that require real-time GTFS-RT data.
 func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create HTTP server to serve GTFS-RT protobuf files
 	mux := http.NewServeMux()

@@ -516,7 +516,7 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 
 		// Use a deadline in the past — context.Err() is DeadlineExceeded immediately,
 		// no timer resolution dependency (avoids Windows ~15ms minimum sleep issue).
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer cancel()
 		req = req.WithContext(ctx)
 

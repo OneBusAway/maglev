@@ -1,7 +1,6 @@
 package gtfs
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -22,7 +21,7 @@ func TestShapeCacheLoading(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert test shapes
 	testShapes := []struct {
@@ -85,7 +84,7 @@ func TestShapeCacheUsage(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert test shapes
 	shapes := []gtfsdb.CreateShapeParams{
@@ -131,7 +130,7 @@ func TestShapeCacheFallbackToDatabase(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert test shapes
 	shapes := []gtfsdb.CreateShapeParams{
@@ -164,7 +163,7 @@ func TestShapeCacheMiss(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create calculator with empty cache
 	calc := NewAdvancedDirectionCalculator(client.Queries)
@@ -189,7 +188,7 @@ func TestShapeCacheDataIntegrity(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert shapes with specific coordinates
 	testShapes := []gtfsdb.CreateShapeParams{
@@ -269,7 +268,7 @@ func TestEmptyShapeCache(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Load cache from empty database
 	precomputer := NewDirectionPrecomputer(client.Queries, client.DB)

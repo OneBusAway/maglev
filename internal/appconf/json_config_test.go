@@ -570,7 +570,7 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
         ]
     }`
 
-	tmpFile, err := os.CreateTemp("", "config_test_*.json")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "config_test_*.json")
 	require.NoError(t, err)
 
 	t.Cleanup(func() {

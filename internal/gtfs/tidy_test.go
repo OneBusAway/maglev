@@ -3,7 +3,6 @@ package gtfs
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,16 +10,13 @@ import (
 )
 
 func TestTidyGTFSData(t *testing.T) {
-
 	projectRoot, err := findProjectRoot()
 	if err != nil {
 		t.Logf("Could not find project root: %v", err)
 	} else {
 		binDir := filepath.Join(projectRoot, "bin")
 		currentPath := os.Getenv("PATH")
-		if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+currentPath); err != nil {
-			t.Logf("Failed to set PATH: %v", err)
-		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+currentPath)
 	}
 
 	path, err := checkGTFSTidyAvailable()
@@ -38,7 +34,7 @@ func TestTidyGTFSData(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// Run tidy
-	outputData, err := tidyGTFSData(context.Background(), inputData, logger)
+	outputData, err := tidyGTFSData(t.Context(), inputData, logger)
 	if err != nil {
 		t.Fatalf("tidyGTFSData failed: %v", err)
 	}

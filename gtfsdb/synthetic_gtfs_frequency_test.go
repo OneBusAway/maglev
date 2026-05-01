@@ -3,7 +3,6 @@ package gtfsdb
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -93,7 +92,7 @@ func TestSyntheticGTFS_FrequencyIngestion(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	gtfsData := buildSyntheticGTFSZip(t, true)
 
 	parsed, err := ParseGtfsData(gtfsData, "synthetic-test")
@@ -164,7 +163,7 @@ func TestSyntheticGTFS_NoFrequencyFile(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	gtfsData := buildSyntheticGTFSZip(t, false)
 
 	parsed, err := ParseGtfsData(gtfsData, "synthetic-no-freq")
@@ -197,7 +196,7 @@ func TestSyntheticGTFS_FrequenciesClearedOnReimport(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// First import: with frequencies
 	dataWithFreqs := buildSyntheticGTFSZip(t, true)

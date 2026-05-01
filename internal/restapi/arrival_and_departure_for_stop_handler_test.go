@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -253,7 +252,7 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testin
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]
-	ctx := context.Background()
+	ctx := t.Context()
 
 	trips, err := api.GtfsManager.GetTrips(ctx, 100)
 	require.NoError(t, err)
@@ -357,7 +356,7 @@ func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
 func TestGetBlockDistanceToStop_NoPosition(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	vehicle := &gtfs.Vehicle{
 		Position: nil,
@@ -372,7 +371,7 @@ func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
 	api := createTestApi(t)
 	vehicle := &gtfs.Vehicle{}
 
-	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now())
+	result := api.getNumberOfStopsAway(t.Context(), "test_trip", 5, vehicle, time.Now())
 
 	assert.Nil(t, result)
 }

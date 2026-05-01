@@ -3,7 +3,6 @@ package restapi
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -201,7 +200,7 @@ func TestStopsForRouteHandlerWithInvalidTimeFormats(t *testing.T) {
 		"yesterday",       // Relative time
 		"16868172xx",      // Invalid epoch
 		"not-a-timestamp", // Random string
-		"2099-01-01",      //Time in the future
+		"2099-01-01",      // Time in the future
 	}
 
 	for _, format := range invalidFormats {
@@ -229,7 +228,7 @@ func TestStopsForRouteHandlerWithMalformedID(t *testing.T) {
 // GTFS dataset whose trips intentionally omit direction_id (NULL in the database).
 func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Build a minimal GTFS zip. Omitting direction_id from trips.txt causes the
 	// column to be NULL in the database, which is the case we need to guard against.
@@ -263,7 +262,7 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 	require.NoError(t, w.Close())
 
 	zipPath := filepath.Join(t.TempDir(), "null-direction.zip")
-	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0o600))
 
 	gtfsConfig := gtfs.Config{
 		GtfsURL:      zipPath,

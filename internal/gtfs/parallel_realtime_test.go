@@ -78,7 +78,7 @@ func TestParallelRealtimeUpdates(t *testing.T) {
 		manager := newTestManager()
 
 		start := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		manager.updateFeedRealtime(ctx, feedCfg)
@@ -119,7 +119,7 @@ func TestParallelRealtimeUpdatesWithErrors(t *testing.T) {
 
 	manager := newTestManager()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// Should not panic or hang when both endpoints fail
@@ -154,7 +154,7 @@ func TestParallelRealtimeUpdatesWithContextCancellation(t *testing.T) {
 	manager := newTestManager()
 
 	// Create a context with a very short timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	start := time.Now()
@@ -171,7 +171,7 @@ func TestRealTimeDataConsistency(t *testing.T) {
 
 	// Run multiple parallel updates to test for race conditions
 	var wg sync.WaitGroup
-	ctx := context.Background()
+	ctx := t.Context()
 
 	feedCfg := RTFeedConfig{
 		ID:                  "race-feed",

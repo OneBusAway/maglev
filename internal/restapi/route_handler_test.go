@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"net/http"
 	"testing"
 
@@ -180,7 +179,7 @@ func TestRouteHandlerAgencyNotFound(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	routes, err := api.GtfsManager.GetRoutes(context.Background())
+	routes, err := api.GtfsManager.GetRoutes(t.Context())
 	require.NoError(t, err)
 	require.NotEmpty(t, routes, "Test data should contain at least one route")
 
