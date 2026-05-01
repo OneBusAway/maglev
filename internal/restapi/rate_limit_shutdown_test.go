@@ -3,37 +3,7 @@ package restapi
 import (
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"maglev.onebusaway.org/internal/clock"
 )
-
-func TestRateLimitMiddleware_Shutdown(t *testing.T) {
-	middleware := NewRateLimitMiddleware(10, time.Second, nil, clock.RealClock{})
-
-	assert.NotNil(t, middleware)
-	assert.NotNil(t, middleware.Handler())
-
-	done := make(chan struct{})
-	go func() {
-		middleware.Stop()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Shutdown took too long")
-	}
-}
-
-func TestRateLimitMiddleware_ShutdownIdempotent(t *testing.T) {
-	middleware := NewRateLimitMiddleware(10, time.Second, nil, clock.RealClock{})
-
-	middleware.Stop()
-	middleware.Stop()
-	middleware.Stop()
-}
 
 func TestRestAPI_Shutdown(t *testing.T) {
 	api := createTestApi(t)

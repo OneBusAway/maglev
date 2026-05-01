@@ -65,7 +65,7 @@ func main() {
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
 	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
 	flag.StringVar(&exemptApiKeysFlag, "exempt-api-keys", "org.onebusaway.iphone", "Comma separated list of API keys exempt from rate limiting")
-	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second per API key for rate limiting")
+	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second across the entire service (global shared bucket; exempt keys bypass it)")
 	flag.StringVar(&gtfsCfg.GtfsURL, "gtfs-url", "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", "URL for a static GTFS zip file")
 	flag.StringVar(&gtfsCfg.StaticAuthHeaderKey, "gtfs-static-auth-header-name", "", "Optional header name for static GTFS feed auth")
 	flag.StringVar(&gtfsCfg.StaticAuthHeaderValue, "gtfs-static-auth-header-value", "", "Optional header value for static GTFS feed auth")
