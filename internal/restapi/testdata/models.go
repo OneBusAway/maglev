@@ -199,3 +199,14 @@ var RabaRoutes = []models.Route{
 	Route99x,
 	Route299x,
 }
+
+var Stop4062 = models.Stop{
+	Direction:          "SE",
+	ID:                 "25_4062",
+	Lat:                40.539367,
+	Lon:                -122.34952,
+	Name:               "Churn Creek Rd at Hillmonte Dr (FS)",
+	RouteIDs:           []string{"25_154"},
+	StaticRouteIDs:     []string{"25_154"},
+	WheelchairBoarding: "UNKNOWN",
+}
