@@ -34,3 +34,11 @@ type StopsResponse struct {
 	List       []Stop `json:"list"`
 	OutOfRange bool   `json:"outOfRange"`
 }
+
+// StopWithDistance represents a nearby stop together with its distance from the
+// centre of the query bounds. It matches the Java StopWithDistanceV2Bean and is
+// used by the arrivals-and-departures-for-location endpoint.
+type StopWithDistance struct {
+	StopID            string  `json:"stopId"`
+	DistanceFromQuery float64 `json:"distanceFromQuery"`
+}
