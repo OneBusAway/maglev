@@ -90,12 +90,23 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 		assert.Equal(t, expectedScheduleDate.UnixMilli(), model.Data.Entry.ScheduleDate)
 	})
 
-	t.Run("Invalid date format", func(t *testing.T) {
+	t.Run("Invalid date format returns ServiceDateOutOfRange", func(t *testing.T) {
 		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025/06/12"
 		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
 
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-		assert.Equal(t, http.StatusBadRequest, model.Code)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 510, model.Code)
+		assert.Equal(t, "ServiceDateOutOfRange", model.Text)
+	})
+
+	t.Run("Epoch ms date parsed as Java OBA compatibility", func(t *testing.T) {
+		// date=0 → epoch start (1970-01-01 00:00:00 UTC) → before any RABA service → NoServiceThatDay
+		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=0"
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 510, model.Code)
+		assert.Equal(t, "NoServiceThatDay", model.Text)
 	})
 }
 
@@ -183,18 +194,74 @@ func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
 	}
 }
 
-func TestScheduleForRouteHandler_NoServiceOrOutOfRange(t *testing.T) {
+func TestScheduleForRouteHandler_ServiceDateOutOfRange(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
 	routeID := testdata.Route1.ID
-	futureDate := "2099-01-01"
-	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=" + futureDate
+
+	t.Run("Future date beyond feed returns ServiceDateOutOfRange", func(t *testing.T) {
+		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2099-01-01"
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 510, model.Code)
+		assert.Equal(t, "ServiceDateOutOfRange", model.Text)
+		assert.Empty(t, model.Data.Entry.RouteID, "data.entry should be absent for ServiceDateOutOfRange")
+	})
+
+	t.Run("Garbage date string returns ServiceDateOutOfRange", func(t *testing.T) {
+		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=not-a-date"
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 510, model.Code)
+		assert.Equal(t, "ServiceDateOutOfRange", model.Text)
+	})
+}
+
+func TestScheduleForRouteHandler_NoServiceThatDay(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+
+	t.Run("Early date before feed returns NoServiceThatDay with references", func(t *testing.T) {
+		// 1970-01-01 is before any RABA calendar data but not after the feed end date.
+		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=1970-01-01"
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 510, model.Code)
+		assert.Equal(t, "NoServiceThatDay", model.Text)
+
+		entry := model.Data.Entry
+		assert.NotEmpty(t, entry.RouteID, "routeId should be present in NoServiceThatDay")
+		assert.Empty(t, entry.ServiceIDs)
+		assert.Empty(t, entry.StopTripGroupings)
+
+		refs := model.Data.References
+		assert.NotEmpty(t, refs.Agencies, "references.agencies should be populated for NoServiceThatDay")
+		assert.NotEmpty(t, refs.Routes, "references.routes should be populated for NoServiceThatDay")
+	})
+}
+
+func TestScheduleForRouteHandler_TripReferenceCombinedIDs(t *testing.T) {
+	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clk)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
 	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, "OK", model.Text)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.References.Trips)
+
+	for _, tr := range model.Data.References.Trips {
+		assert.Contains(t, tr.RouteID, "_", "trip reference routeId must be a combined ID")
+		assert.Contains(t, tr.ServiceID, "_", "trip reference serviceId must be a combined ID")
+	}
 }
 
 func TestScheduleForRouteHandlerWithMalformedID(t *testing.T) {
