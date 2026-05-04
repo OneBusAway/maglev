@@ -781,7 +781,7 @@ func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
 	if errors.Is(err, sql.ErrNoRows) || err != nil || metadata.ImportTime == 0 {
 		return time.Time{}
 	}
-	return time.Unix(metadata.ImportTime, 0).UTC()
+	return time.Unix(0, metadata.ImportTime).UTC()
 }
 
 // GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.

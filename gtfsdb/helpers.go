@@ -479,7 +479,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   data.Hash,
-		ImportTime: time.Now().Unix(),
+		ImportTime: time.Now().UnixNano(),
 		FileSource: data.Source,
 	})
 	if err != nil {
