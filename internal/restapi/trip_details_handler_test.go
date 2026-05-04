@@ -99,7 +99,8 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	tomorrow := time.Now().AddDate(0, 0, 1)
 	serviceDateMs := tomorrow.Unix() * 1000
 	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
-	agencyLoc, _ := time.LoadLocation("America/Los_Angeles")
+	agencyLoc, err := time.LoadLocation(agency.Timezone)
+	require.NoError(t, err)
 	sdInAgencyTz := tomorrow.In(agencyLoc)
 	expectedMidnight := time.Date(sdInAgencyTz.Year(), sdInAgencyTz.Month(), sdInAgencyTz.Day(),
 		0, 0, 0, 0, agencyLoc)
@@ -167,7 +168,7 @@ func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
 	trip := mustGetTrip(t, api)
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
-	timeMs := time.Now().Add(1 * time.Hour).Unix() * 1000
+	timeMs := time.Now().Add(1*time.Hour).Unix() * 1000
 
 	resp, model := callAPIHandler[TripDetailsResponse](t, api,
 		"/api/where/trip-details/"+tripID+".json?key=TEST&time="+strconv.FormatInt(timeMs, 10))
