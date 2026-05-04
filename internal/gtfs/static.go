@@ -221,7 +221,12 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 			slog.String("source", newData.Source))
 	}
 
-	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	// Use a fresh context for all post-import bookkeeping. The caller's ctx may
+	// expire after StoreGtfsData commits, which would silently leave feed_expires_at
+	// and the ETag stale even though the import succeeded.
+	postCtx := context.Background()
+
+	newRegionBounds := computeRegionBounds(postCtx, manager.GtfsDB)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
@@ -234,7 +239,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		manager.DirectionCalculator.ClearCache()
 	}
 
-	if eTag := manager.GetSystemETag(ctx); eTag != "" {
+	if eTag := manager.GetSystemETag(postCtx); eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
 	}
 
@@ -244,7 +249,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		slog.Bool("changed", changed))
 
 	manager.PrintStatistics()
-	manager.parseAndLogFeedExpiry(ctx, logger)
+	manager.parseAndLogFeedExpiry(postCtx, logger)
 
 	return changed, nil
 }
