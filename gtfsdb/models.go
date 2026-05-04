@@ -75,10 +75,11 @@ type Frequency struct {
 }
 
 type ImportMetadatum struct {
-	ID         int64
-	FileHash   string
-	ImportTime int64
-	FileSource string
+	ID            int64
+	FileHash      string
+	ImportTime    int64
+	FileSource    string
+	FeedExpiresAt sql.NullInt64
 }
 
 type ProblemReportsStop struct {

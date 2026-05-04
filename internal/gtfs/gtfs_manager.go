@@ -41,7 +41,6 @@ type RegionBounds struct {
 // Never acquire staticMutex while holding realTimeMutex.
 type Manager struct {
 	GtfsDB                         *gtfsdb.Client
-	lastUpdatedUnixNanos           atomic.Int64 // Lock-free freshness tracking
 	realTimeTrips                  []gtfs.Trip
 	realTimeVehicles               []gtfs.Vehicle
 	realTimeMutex                  sync.RWMutex
@@ -57,11 +56,8 @@ type Manager struct {
 	shutdownOnce                   sync.Once
 	isReady                        atomic.Bool // Tracks whether initial data loading is complete
 
-	staticMutex   sync.RWMutex
-	feedExpiresAt time.Time // Holds the max valid service date for the static feed
-	regionBounds  map[string]*RegionBounds
-	systemETag    string // systemETag stores the SHA-256 hash of the currently loaded GTFS static dataset.
-	lastUpdated   time.Time
+	staticMutex  sync.RWMutex
+	regionBounds map[string]*RegionBounds
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -686,7 +682,7 @@ func (manager *Manager) PrintStatistics() {
 
 	logging.LogOperation(logger, "gtfs_statistics",
 		slog.String("source", manager.config.GtfsURL),
-		slog.Time("last_updated", manager.lastUpdated),
+		slog.Time("last_updated", manager.GetStaticLastUpdated(ctx)),
 		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
 		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),
 		slog.Int64("trips", countOrZero(manager.GtfsDB.Queries.CountTrips(ctx))),
@@ -739,26 +735,32 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 	}
 }
 
-// GetSystemETag retrieves the SystemETag in a thread-safe manner.
-// It acquires the static data read lock to prevent data races during GTFS reloads.
-func (manager *Manager) GetSystemETag() string {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
-	return manager.systemETag
+// GetSystemETag reads the system ETag from the database.
+func (manager *Manager) GetSystemETag(ctx context.Context) string {
+	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
+	if err != nil || metadata.FileHash == "" {
+		return ""
+	}
+
+	return metadata.FileHash
 }
 
-// FeedExpiresAt returns the parsed feed expiry time.
-func (manager *Manager) FeedExpiresAt() time.Time {
-	manager.staticMutex.RLock()
-	defer manager.staticMutex.RUnlock()
-	return manager.feedExpiresAt
+// FeedExpiresAt reads the feed expiry time from the database.
+func (manager *Manager) FeedExpiresAt(ctx context.Context) time.Time {
+	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
+	if err != nil || !metadata.FeedExpiresAt.Valid {
+		return time.Time{}
+	}
+	return time.Unix(metadata.FeedExpiresAt.Int64, 0)
 }
 
-// SetFeedExpiresAtForTest implicitly sets the parsed feed expiry time for tests.
-func (manager *Manager) SetFeedExpiresAtForTest(t time.Time) {
-	manager.staticMutex.Lock()
-	defer manager.staticMutex.Unlock()
-	manager.feedExpiresAt = t
+// SetFeedExpiresAtForTest sets the feed expiry time in the database for testing purposes.
+func (manager *Manager) SetFeedExpiresAtForTest(ctx context.Context, t time.Time) {
+	var v sql.NullInt64
+	if !t.IsZero() {
+		v = sql.NullInt64{Int64: t.Unix(), Valid: true}
+	}
+	_ = manager.GtfsDB.Queries.UpdateFeedExpiresAt(ctx, v)
 }
 
 // SetRealTimeTripsForTest manually sets realtime trips for testing purposes.
@@ -773,14 +775,13 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 	manager.rebuildMergedRealtimeLocked()
 }
 
-// GetStaticLastUpdated returns the timestamp when static GTFS data was last loaded lock-free.
-func (manager *Manager) GetStaticLastUpdated() time.Time {
-	nanos := manager.lastUpdatedUnixNanos.Load()
-	if nanos == 0 {
+// GetStaticLastUpdated reads the timestamp when static GTFS data was last loaded from the database.
+func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
+	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
+	if errors.Is(err, sql.ErrNoRows) || err != nil || metadata.ImportTime == 0 {
 		return time.Time{}
 	}
-	// Append .UTC() here to ensure the RFC3339 string always ends in 'Z'
-	return time.Unix(0, nanos).UTC()
+	return time.Unix(0, metadata.ImportTime).UTC()
 }
 
 // GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.
@@ -809,12 +810,9 @@ func (manager *Manager) SetFeedUpdateTimeForTest(feedID string, t time.Time) {
 	manager.feedLastUpdate[feedID] = t
 }
 
-// SetStaticLastUpdatedForTest manually sets the static data timestamp for testing purposes.
-func (manager *Manager) SetStaticLastUpdatedForTest(t time.Time) {
-	manager.staticMutex.Lock()
-	defer manager.staticMutex.Unlock()
-	manager.lastUpdated = t
-	manager.lastUpdatedUnixNanos.Store(t.UnixNano())
+// SetStaticLastUpdatedForTest writes the static data timestamp to the database for testing purposes.
+func (manager *Manager) SetStaticLastUpdatedForTest(ctx context.Context, t time.Time) {
+	_ = manager.GtfsDB.Queries.UpdateImportTime(ctx, t.UnixNano())
 }
 
 // AddAlertForTest is a helper method used ONLY for testing to inject mock alerts safely.

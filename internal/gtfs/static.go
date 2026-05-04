@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -220,7 +221,12 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 			slog.String("source", newData.Source))
 	}
 
-	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	// Use a fresh context for all post-import bookkeeping. The caller's ctx may
+	// expire after StoreGtfsData commits, which would silently leave feed_expires_at
+	// and the ETag stale even though the import succeeded.
+	postCtx := context.Background()
+
+	newRegionBounds := computeRegionBounds(postCtx, manager.GtfsDB)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
@@ -233,19 +239,8 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		manager.DirectionCalculator.ClearCache()
 	}
 
-	now := time.Now()
-	manager.lastUpdated = now
-	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
-
-	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
-	if err != nil {
-		logging.LogError(logger, "Failed to fetch import metadata for ETag generation", err)
-		manager.systemETag = ""
-	} else if metadata.FileHash != "" {
-		manager.systemETag = fmt.Sprintf(`"%s"`, metadata.FileHash)
-		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", manager.systemETag))
-	} else {
-		manager.systemETag = ""
+	if eTag := manager.GetSystemETag(postCtx); eTag != "" {
+		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
 	}
 
 	logging.LogOperation(logger, "gtfs_static_data_reloaded",
@@ -254,21 +249,19 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		slog.Bool("changed", changed))
 
 	manager.PrintStatistics()
-	manager.parseAndLogFeedExpiryLocked(ctx, logger)
+	manager.parseAndLogFeedExpiry(postCtx, logger)
 
 	return changed, nil
 }
 
-// parseAndLogFeedExpiryLocked checks the GTFS calendar for the last active service date
-// NOTE: Caller must guarantee thread-safety
-func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger *slog.Logger) {
-	manager.feedExpiresAt = time.Time{}
+// parseAndLogFeedExpiry checks the GTFS calendar for the last active service date
+func (manager *Manager) parseAndLogFeedExpiry(ctx context.Context, logger *slog.Logger) {
 	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
 		manager.Metrics.FeedExpiresAt.Set(-1)
 	}
 
-	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
-		return
+	if err := manager.GtfsDB.Queries.UpdateFeedExpiresAt(ctx, sql.NullInt64{}); err != nil {
+		logging.LogError(logger, "Failed to reset feed_expires_at in DB", err)
 	}
 
 	val, err := manager.GtfsDB.Queries.GetFeedEndDate(ctx)
@@ -301,7 +294,9 @@ func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger 
 		// 23:59:59 end date
 		expiresAt := parsedTime.Add(24 * time.Hour).Add(-time.Second)
 
-		manager.feedExpiresAt = expiresAt
+		if err := manager.GtfsDB.Queries.UpdateFeedExpiresAt(ctx, sql.NullInt64{Int64: expiresAt.Unix(), Valid: true}); err != nil {
+			logging.LogError(logger, "Failed to persist feed_expires_at to DB", err)
+		}
 
 		if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
 			manager.Metrics.FeedExpiresAt.Set(float64(expiresAt.Unix()))

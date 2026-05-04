@@ -63,7 +63,7 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	// Fetch data freshness from the manager only if verbose=true is passed
 	var freshness *DataFreshness
 	if r.URL.Query().Get("verbose") == "true" {
-		t := api.GtfsManager.GetStaticLastUpdated()
+		t := api.GtfsManager.GetStaticLastUpdated(r.Context())
 		var staticTime *time.Time
 		if !t.IsZero() {
 			staticTime = &t
@@ -80,7 +80,7 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 		DataFreshness: freshness,
 	}
 
-	expiresAt := api.GtfsManager.FeedExpiresAt()
+	expiresAt := api.GtfsManager.FeedExpiresAt(r.Context())
 	if !expiresAt.IsZero() {
 		response.FeedExpiresAt = expiresAt.Format(time.RFC3339)
 		response.DataExpired = time.Now().After(expiresAt)
