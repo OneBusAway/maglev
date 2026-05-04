@@ -29,11 +29,12 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 
 	loc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
-	now := time.Now().In(loc)
-	y, m, d := now.Date()
-	expectedServiceDate := time.Date(y, m, d, 0, 0, 0, 0, loc)
 
 	resp, model := callAPIHandler[TripDetailsResponse](t, api, "/api/where/trip-details/"+tripID+".json?key=TEST")
+
+	now := time.UnixMilli(model.CurrentTime).In(loc)
+	y, m, d := now.Date()
+	expectedServiceDate := time.Date(y, m, d, 0, 0, 0, 0, loc)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
