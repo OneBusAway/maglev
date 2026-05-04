@@ -508,26 +508,26 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 	}
 
 	// 1. Empty calendar — feed_expires_at should be reset to NULL
-	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.True(t, manager.FeedExpiresAt().IsZero(), "Should be zero when no dates exist")
+	manager.parseAndLogFeedExpiry(ctx, slog.Default())
+	assert.True(t, manager.FeedExpiresAt(ctx).IsZero(), "Should be zero when no dates exist")
 
 	// 2. Insert valid end date into calendar
 	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
 	require.NoError(t, err)
 
-	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.False(t, manager.FeedExpiresAt().IsZero(), "Should parse end date")
+	manager.parseAndLogFeedExpiry(ctx, slog.Default())
+	assert.False(t, manager.FeedExpiresAt(ctx).IsZero(), "Should parse end date")
 
 	// Valid end date should be 2026-04-01 23:59:59
 	expectedTime, _ := time.Parse("20060102150405", "20260401235959")
-	assert.Equal(t, expectedTime.Unix(), manager.FeedExpiresAt().Unix())
+	assert.Equal(t, expectedTime.Unix(), manager.FeedExpiresAt(ctx).Unix())
 
 	// 3. Reload scenario: Clear calendar (feed expires at should reset to zero)
 	_, err = db.Exec("DELETE FROM calendar")
 	require.NoError(t, err)
 
-	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.True(t, manager.FeedExpiresAt().IsZero(), "Should reset to zero after reload with empty feed")
+	manager.parseAndLogFeedExpiry(ctx, slog.Default())
+	assert.True(t, manager.FeedExpiresAt(ctx).IsZero(), "Should reset to zero after reload with empty feed")
 
 	// 4. Test calendar_dates exception_type = 1 branch
 	// Insert a valid calendar date
@@ -541,18 +541,16 @@ func TestParseAndLogFeedExpiryLocked(t *testing.T) {
 	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260410', 2)")
 	require.NoError(t, err)
 
-	manager.parseAndLogFeedExpiryLocked(ctx, slog.Default())
-	assert.False(t, manager.FeedExpiresAt().IsZero(), "Should parse end date")
+	manager.parseAndLogFeedExpiry(ctx, slog.Default())
+	assert.False(t, manager.FeedExpiresAt(ctx).IsZero(), "Should parse end date")
 
 	// Valid end date should be 2026-04-05 23:59:59 (from calendar_dates exception_type = 1)
 	expectedTime2, _ := time.Parse("20060102150405", "20260405235959")
-	assert.Equal(t, expectedTime2.Unix(), manager.FeedExpiresAt().Unix())
+	assert.Equal(t, expectedTime2.Unix(), manager.FeedExpiresAt(ctx).Unix())
 }
 
 func TestManager_DataFreshnessTracking(t *testing.T) {
-	// nil DB returns zero
-	nilManager := &Manager{}
-	assert.True(t, nilManager.GetStaticLastUpdated().IsZero())
+	ctx := context.Background()
 
 	// Set and test StaticLastUpdated via DB roundtrip
 	tempDir := t.TempDir()
@@ -561,13 +559,13 @@ func TestManager_DataFreshnessTracking(t *testing.T) {
 		GTFSDataPath: tempDir + "/gtfs.db",
 		Env:          appconf.Development,
 	}
-	dbManager, err := InitGTFSManager(context.Background(), cfg)
+	dbManager, err := InitGTFSManager(ctx, cfg)
 	require.NoError(t, err)
 	defer dbManager.Shutdown()
 
 	now := time.Now().UTC().Truncate(time.Second)
-	dbManager.SetStaticLastUpdatedForTest(now)
-	gotStatic := dbManager.GetStaticLastUpdated()
+	dbManager.SetStaticLastUpdatedForTest(ctx, now)
+	gotStatic := dbManager.GetStaticLastUpdated(ctx)
 	assert.Equal(t, now.Unix(), gotStatic.Unix())
 	assert.Equal(t, "UTC", gotStatic.Location().String())
 

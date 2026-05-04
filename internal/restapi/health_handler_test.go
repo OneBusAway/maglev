@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func TestHealthHandlerWithNilApplication(t *testing.T) {
 
 func TestHealthHandlerReturnsOK(t *testing.T) {
 	manager := newTestManagerNoData(t)
-	manager.SetFeedExpiresAtForTest(time.Now().Add(24 * time.Hour))
+	manager.SetFeedExpiresAtForTest(context.Background(), time.Now().Add(24*time.Hour))
 
 	// Mark the manager as ready (simulating completed initialization)
 	manager.MarkReady()
@@ -69,7 +70,7 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 
 func TestHealthHandlerReturnsExpired(t *testing.T) {
 	manager := newTestManagerNoData(t)
-	manager.SetFeedExpiresAtForTest(time.Now().Add(-24 * time.Hour))
+	manager.SetFeedExpiresAtForTest(context.Background(), time.Now().Add(-24*time.Hour))
 
 	manager.MarkReady()
 
@@ -133,7 +134,7 @@ func TestHealthHandlerStarting(t *testing.T) {
 func TestHealthHandlerVerboseMode(t *testing.T) {
 	manager := newTestManagerNoData(t)
 	manager.MarkReady()
-	manager.SetStaticLastUpdatedForTest(time.Now().UTC())
+	manager.SetStaticLastUpdatedForTest(context.Background(), time.Now().UTC())
 	manager.SetFeedUpdateTimeForTest("feed-1", time.Now().UTC())
 
 	app := &app.Application{

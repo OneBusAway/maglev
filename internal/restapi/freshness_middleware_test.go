@@ -1,13 +1,13 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestFreshnessMiddleware(t *testing.T) {
@@ -38,7 +38,7 @@ func TestFreshnessMiddleware(t *testing.T) {
 	t.Run("GtfsManager exists but lastUpdated is zero", func(t *testing.T) {
 		api := &RestAPI{
 			Application: &app.Application{
-				GtfsManager: &gtfs.Manager{}, // Default empty manager (time.Time is zero)
+				GtfsManager: newTestManagerNoData(t), // Empty DB — import_metadata has no row, so zero time
 			},
 		}
 
@@ -63,7 +63,7 @@ func TestFreshnessMiddleware(t *testing.T) {
 
 		// Inject a specific time for the test (truncate to seconds — DB stores unix seconds)
 		expectedTime := time.Date(2023, 10, 27, 10, 0, 0, 0, time.UTC)
-		api.GtfsManager.SetStaticLastUpdatedForTest(expectedTime)
+		api.GtfsManager.SetStaticLastUpdatedForTest(context.Background(), expectedTime)
 
 		req := httptest.NewRequest("GET", "/", nil)
 		rr := httptest.NewRecorder()

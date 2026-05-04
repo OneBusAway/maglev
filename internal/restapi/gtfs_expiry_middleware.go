@@ -15,7 +15,7 @@ func GtfsExpiryMiddleware(manager *gtfs.Manager) func(http.Handler) http.Handler
 			if manager != nil {
 				// Only apply this header to API routes to reduce noise on other endpoints
 				if strings.HasPrefix(r.URL.Path, "/api/") {
-					expiresAt := manager.FeedExpiresAt()
+					expiresAt := manager.FeedExpiresAt(r.Context())
 					if !expiresAt.IsZero() && time.Now().After(expiresAt) {
 						w.Header().Set("X-Data-Expired", "true")
 					}

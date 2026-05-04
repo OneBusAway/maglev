@@ -52,10 +52,10 @@ func (w *cacheControlWriter) Write(b []byte) (int, error) {
 
 // ETagMiddleware handles Conditional HTTP requests by comparing the incoming
 // If-None-Match header against the current system ETag.
-func ETagMiddleware(getETag func() string) func(http.Handler) http.Handler {
+func ETagMiddleware(getETag func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			etag := getETag()
+			etag := getETag(r)
 			if etag != "" {
 				inm := r.Header.Get("If-None-Match")
 				// Check for wildcard or iterate through parsed comma-separated parts

@@ -682,7 +682,7 @@ func (manager *Manager) PrintStatistics() {
 
 	logging.LogOperation(logger, "gtfs_statistics",
 		slog.String("source", manager.config.GtfsURL),
-		slog.Time("last_updated", manager.GetStaticLastUpdated()),
+		slog.Time("last_updated", manager.GetStaticLastUpdated(ctx)),
 		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
 		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),
 		slog.Int64("trips", countOrZero(manager.GtfsDB.Queries.CountTrips(ctx))),
@@ -736,26 +736,17 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 }
 
 // GetSystemETag reads the system ETag from the database.
-func (manager *Manager) GetSystemETag() string {
-	if manager.GtfsDB == nil {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+func (manager *Manager) GetSystemETag(ctx context.Context) string {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil || metadata.FileHash == "" {
 		return ""
 	}
-	return fmt.Sprintf(`"%s"`, metadata.FileHash)
+
+	return metadata.FileHash
 }
 
 // FeedExpiresAt reads the feed expiry time from the database.
-func (manager *Manager) FeedExpiresAt() time.Time {
-	if manager.GtfsDB == nil {
-		return time.Time{}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+func (manager *Manager) FeedExpiresAt(ctx context.Context) time.Time {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil || !metadata.FeedExpiresAt.Valid {
 		return time.Time{}
@@ -764,12 +755,7 @@ func (manager *Manager) FeedExpiresAt() time.Time {
 }
 
 // SetFeedExpiresAtForTest sets the feed expiry time in the database for testing purposes.
-func (manager *Manager) SetFeedExpiresAtForTest(t time.Time) {
-	if manager.GtfsDB == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+func (manager *Manager) SetFeedExpiresAtForTest(ctx context.Context, t time.Time) {
 	var v sql.NullInt64
 	if !t.IsZero() {
 		v = sql.NullInt64{Int64: t.Unix(), Valid: true}
@@ -790,12 +776,7 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 }
 
 // GetStaticLastUpdated reads the timestamp when static GTFS data was last loaded from the database.
-func (manager *Manager) GetStaticLastUpdated() time.Time {
-	if manager.GtfsDB == nil {
-		return time.Time{}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if errors.Is(err, sql.ErrNoRows) || err != nil || metadata.ImportTime == 0 {
 		return time.Time{}
@@ -830,13 +811,8 @@ func (manager *Manager) SetFeedUpdateTimeForTest(feedID string, t time.Time) {
 }
 
 // SetStaticLastUpdatedForTest writes the static data timestamp to the database for testing purposes.
-func (manager *Manager) SetStaticLastUpdatedForTest(t time.Time) {
-	if manager.GtfsDB == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = manager.GtfsDB.Queries.UpdateImportTime(ctx, t.Unix())
+func (manager *Manager) SetStaticLastUpdatedForTest(ctx context.Context, t time.Time) {
+	_ = manager.GtfsDB.Queries.UpdateImportTime(ctx, t.UnixNano())
 }
 
 // AddAlertForTest is a helper method used ONLY for testing to inject mock alerts safely.

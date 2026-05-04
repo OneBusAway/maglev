@@ -234,7 +234,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		manager.DirectionCalculator.ClearCache()
 	}
 
-	if eTag := manager.GetSystemETag(); eTag != "" {
+	if eTag := manager.GetSystemETag(ctx); eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
 	}
 
@@ -244,20 +244,15 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		slog.Bool("changed", changed))
 
 	manager.PrintStatistics()
-	manager.parseAndLogFeedExpiryLocked(ctx, logger)
+	manager.parseAndLogFeedExpiry(ctx, logger)
 
 	return changed, nil
 }
 
-// parseAndLogFeedExpiryLocked checks the GTFS calendar for the last active service date
-// NOTE: Caller must guarantee thread-safety
-func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger *slog.Logger) {
+// parseAndLogFeedExpiry checks the GTFS calendar for the last active service date
+func (manager *Manager) parseAndLogFeedExpiry(ctx context.Context, logger *slog.Logger) {
 	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
 		manager.Metrics.FeedExpiresAt.Set(-1)
-	}
-
-	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
-		return
 	}
 
 	if err := manager.GtfsDB.Queries.UpdateFeedExpiresAt(ctx, sql.NullInt64{}); err != nil {
