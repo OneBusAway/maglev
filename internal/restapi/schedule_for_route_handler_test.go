@@ -108,6 +108,17 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 		assert.Equal(t, 510, model.Code)
 		assert.Equal(t, "NoServiceThatDay", model.Text)
 	})
+
+	t.Run("Epoch ms for valid service date returns schedule", func(t *testing.T) {
+		// 1749711600000 = 2025-06-12 00:00:00 PDT (America/Los_Angeles), which has RABA service.
+		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=1749711600000"
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.NotEqual(t, "NoServiceThatDay", model.Text)
+		assert.NotEmpty(t, model.Data.Entry.StopTripGroupings)
+	})
 }
 
 // Regression for #790: serviceIds must be derived from the route's actual
