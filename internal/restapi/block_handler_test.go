@@ -4,12 +4,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
 func TestBlockHandlerEndToEnd(t *testing.T) {
@@ -53,11 +55,14 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 	}
 
 	refs := model.Data.References
-	require.NotEmpty(t, refs.Agencies)
-	assert.Equal(t, "25", refs.Agencies[0].ID)
-	assert.NotEmpty(t, refs.Agencies[0].Name)
-	assert.NotEmpty(t, refs.Agencies[0].URL)
-	assert.NotEmpty(t, refs.Agencies[0].Timezone)
+	idx := slices.IndexFunc(refs.Agencies, func(a models.AgencyReference) bool {
+		return a.ID == testdata.Raba.ID
+	})
+	require.GreaterOrEqual(t, idx, 0, "agency %s should be in references", testdata.Raba.ID)
+	agency := refs.Agencies[idx]
+	assert.Equal(t, testdata.Raba.Name, agency.Name)
+	assert.Equal(t, testdata.Raba.URL, agency.URL)
+	assert.Equal(t, testdata.Raba.Timezone, agency.Timezone)
 
 	require.NotEmpty(t, refs.Stops)
 	assert.NotEmpty(t, refs.Stops[0].ID)
