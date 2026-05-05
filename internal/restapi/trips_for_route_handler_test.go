@@ -55,6 +55,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 
 			assert.Equal(t, tt.expectStatus, resp.StatusCode)
 			if tt.expectStatus != http.StatusOK {
+				assert.Equal(t, tt.expectStatus, model.Code)
 				return
 			}
 
