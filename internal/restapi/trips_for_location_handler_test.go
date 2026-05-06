@@ -140,8 +140,8 @@ func TestTripsForLocationHandler_ScheduleInclusion(t *testing.T) {
 					if assert.NotNil(t, entry.Schedule, "schedule should be present when includeSchedule=true") {
 						assert.NotEmpty(t, entry.Schedule.TimeZone)
 					}
-				} else if entry.Schedule != nil {
-					assert.Empty(t, entry.Schedule.StopTimes, "stopTimes should be empty when includeSchedule=false")
+				} else {
+					assert.Nil(t, entry.Schedule, "schedule should be omitted when includeSchedule=false")
 				}
 			}
 		})
