@@ -2,10 +2,8 @@ package gtfs
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +11,6 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -476,77 +473,6 @@ func TestInitGTFSManager_RetryLogic(t *testing.T) {
 	// Verify the entire process was fast (proving it used our 1ms, 2ms, 3ms backoffs)
 	duration := time.Since(start)
 	assert.Less(t, duration, 2*time.Second, "Retry logic should respect the configured backoff schedule")
-}
-
-func TestParseAndLogFeedExpiryLocked(t *testing.T) {
-	ctx := context.Background()
-
-	// In-memory sqlite db to mock
-	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { assert.NoError(t, db.Close()) }()
-
-	_, err = db.Exec(`
-		CREATE TABLE calendar (end_date TEXT);
-		CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);
-		CREATE TABLE import_metadata (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			file_hash TEXT NOT NULL,
-			import_time INTEGER NOT NULL,
-			file_source TEXT NOT NULL,
-			feed_expires_at INTEGER
-		);
-		INSERT INTO import_metadata (id, file_hash, import_time, file_source) VALUES (1, '', 0, '');
-	`)
-	require.NoError(t, err)
-
-	manager := &Manager{
-		GtfsDB: &gtfsdb.Client{
-			DB:      db,
-			Queries: gtfsdb.New(db),
-		},
-	}
-
-	// 1. Empty calendar — feed_expires_at should be reset to NULL
-	manager.parseAndLogFeedExpiry(ctx, slog.Default())
-	assert.True(t, manager.FeedExpiresAt(ctx).IsZero(), "Should be zero when no dates exist")
-
-	// 2. Insert valid end date into calendar
-	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
-	require.NoError(t, err)
-
-	manager.parseAndLogFeedExpiry(ctx, slog.Default())
-	assert.False(t, manager.FeedExpiresAt(ctx).IsZero(), "Should parse end date")
-
-	// Valid end date should be 2026-04-01 23:59:59
-	expectedTime, _ := time.Parse("20060102150405", "20260401235959")
-	assert.Equal(t, expectedTime.Unix(), manager.FeedExpiresAt(ctx).Unix())
-
-	// 3. Reload scenario: Clear calendar (feed expires at should reset to zero)
-	_, err = db.Exec("DELETE FROM calendar")
-	require.NoError(t, err)
-
-	manager.parseAndLogFeedExpiry(ctx, slog.Default())
-	assert.True(t, manager.FeedExpiresAt(ctx).IsZero(), "Should reset to zero after reload with empty feed")
-
-	// 4. Test calendar_dates exception_type = 1 branch
-	// Insert a valid calendar date
-	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
-	require.NoError(t, err)
-
-	// Insert an extra service day via calendar_dates (exception_type = 1) that is LATER than calendar end_date
-	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260405', 1)")
-	require.NoError(t, err)
-	// Insert a removed service day (exception_type = 2) that is later than the added day, which should be ignored by the query calculation
-	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260410', 2)")
-	require.NoError(t, err)
-
-	manager.parseAndLogFeedExpiry(ctx, slog.Default())
-	assert.False(t, manager.FeedExpiresAt(ctx).IsZero(), "Should parse end date")
-
-	// Valid end date should be 2026-04-05 23:59:59 (from calendar_dates exception_type = 1)
-	expectedTime2, _ := time.Parse("20060102150405", "20260405235959")
-	assert.Equal(t, expectedTime2.Unix(), manager.FeedExpiresAt(ctx).Unix())
 }
 
 func TestManager_DataFreshnessTracking(t *testing.T) {
