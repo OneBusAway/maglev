@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -258,4 +259,68 @@ func TestTrimQuery(t *testing.T) {
 	assert.LessOrEqual(t, len(result), 124, "trimQuery must truncate to ≤120 chars + ellipsis")
 	assert.True(t, len(trimQuery("  SELECT\n  1  ")) < len("  SELECT\n  1  "),
 		"trimQuery must collapse whitespace")
+}
+
+func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, db.Close()) }()
+
+	_, err = db.Exec(`
+		CREATE TABLE calendar (end_date TEXT);
+		CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);
+		CREATE TABLE import_metadata (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			file_hash TEXT NOT NULL,
+			import_time INTEGER NOT NULL,
+			file_source TEXT NOT NULL,
+			feed_expires_at INTEGER
+		);
+		INSERT INTO import_metadata (id, file_hash, import_time, file_source) VALUES (1, '', 0, '');
+	`)
+	require.NoError(t, err)
+
+	q := New(db)
+	readExpiresAt := func(t *testing.T) sql.NullInt64 {
+		t.Helper()
+		md, err := q.GetImportMetadata(ctx)
+		require.NoError(t, err)
+		return md.FeedExpiresAt
+	}
+
+	// 1. Empty calendar → feed_expires_at stays NULL.
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	assert.False(t, readExpiresAt(t).Valid, "Should be NULL when no calendar dates exist")
+
+	// 2. Valid calendar end date → parse and persist.
+	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
+	require.NoError(t, err)
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	expected, _ := time.Parse("20060102150405", "20260401235959")
+	got := readExpiresAt(t)
+	require.True(t, got.Valid)
+	assert.Equal(t, expected.Unix(), got.Int64)
+
+	// 3. Re-running with empty calendar resets to NULL.
+	_, err = db.Exec("DELETE FROM calendar")
+	require.NoError(t, err)
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	assert.False(t, readExpiresAt(t).Valid, "Should reset to NULL after empty re-import")
+
+	// 4. calendar_dates exception_type=1 with later date overrides calendar end_date.
+	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260405', 1)")
+	require.NoError(t, err)
+	// exception_type=2 (removed) should NOT extend the expiry.
+	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260410', 2)")
+	require.NoError(t, err)
+
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	expected2, _ := time.Parse("20060102150405", "20260405235959")
+	got = readExpiresAt(t)
+	require.True(t, got.Valid)
+	assert.Equal(t, expected2.Unix(), got.Int64)
 }

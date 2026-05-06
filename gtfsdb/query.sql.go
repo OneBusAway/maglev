@@ -2150,7 +2150,7 @@ func (q *Queries) GetFrequencyTripIDs(ctx context.Context) ([]string, error) {
 
 const getImportMetadata = `-- name: GetImportMetadata :one
 SELECT
-    id, file_hash, import_time, file_source
+    id, file_hash, import_time, file_source, feed_expires_at
 FROM
     import_metadata
 WHERE
@@ -2165,6 +2165,7 @@ func (q *Queries) GetImportMetadata(ctx context.Context) (ImportMetadatum, error
 		&i.FileHash,
 		&i.ImportTime,
 		&i.FileSource,
+		&i.FeedExpiresAt,
 	)
 	return i, err
 }
@@ -5095,6 +5096,28 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 	return items, nil
 }
 
+const updateFeedExpiresAt = `-- name: UpdateFeedExpiresAt :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
+VALUES (1, '', 0, '', ?)
+ON CONFLICT(id) DO UPDATE SET feed_expires_at = excluded.feed_expires_at
+`
+
+func (q *Queries) UpdateFeedExpiresAt(ctx context.Context, feedExpiresAt sql.NullInt64) error {
+	_, err := q.exec(ctx, q.updateFeedExpiresAtStmt, updateFeedExpiresAt, feedExpiresAt)
+	return err
+}
+
+const updateImportTime = `-- name: UpdateImportTime :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source)
+VALUES (1, '', ?, '')
+ON CONFLICT(id) DO UPDATE SET import_time = excluded.import_time
+`
+
+func (q *Queries) UpdateImportTime(ctx context.Context, importTime int64) error {
+	_, err := q.exec(ctx, q.updateImportTimeStmt, updateImportTime, importTime)
+	return err
+}
+
 const updateStopDirection = `-- name: UpdateStopDirection :exec
 UPDATE stops
 SET direction = ?
@@ -5120,7 +5143,7 @@ OR REPLACE INTO import_metadata (
     file_source
 )
 VALUES
-    (1, ?, ?, ?) RETURNING id, file_hash, import_time, file_source
+    (1, ?, ?, ?) RETURNING id, file_hash, import_time, file_source, feed_expires_at
 `
 
 type UpsertImportMetadataParams struct {
@@ -5137,6 +5160,7 @@ func (q *Queries) UpsertImportMetadata(ctx context.Context, arg UpsertImportMeta
 		&i.FileHash,
 		&i.ImportTime,
 		&i.FileSource,
+		&i.FeedExpiresAt,
 	)
 	return i, err
 }
