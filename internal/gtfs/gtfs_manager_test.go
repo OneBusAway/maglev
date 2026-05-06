@@ -476,7 +476,7 @@ func TestInitGTFSManager_RetryLogic(t *testing.T) {
 }
 
 func TestManager_DataFreshnessTracking(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Set and test StaticLastUpdated via DB roundtrip
 	tempDir := t.TempDir()
