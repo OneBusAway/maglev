@@ -78,7 +78,7 @@ func TestCacheControlWriter_304PreservesCache(t *testing.T) {
 // TestETagMiddleware proves the conditional request logic works
 func TestETagMiddleware(t *testing.T) {
 	mockETag := `"test-hash-123"`
-	getETag := func() string { return mockETag }
+	getETag := func(_ *http.Request) string { return mockETag }
 
 	handlerCalled := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +148,7 @@ func TestETagMiddleware(t *testing.T) {
 
 	t.Run("Empty ETag from system gracefully falls back", func(t *testing.T) {
 		handlerCalled = false
-		emptyETagWrapped := ETagMiddleware(func() string { return "" })(handler)
+		emptyETagWrapped := ETagMiddleware(func(_ *http.Request) string { return "" })(handler)
 
 		req := httptest.NewRequest("GET", "/", nil)
 		rr := httptest.NewRecorder()

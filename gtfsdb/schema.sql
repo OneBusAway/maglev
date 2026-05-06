@@ -368,7 +368,8 @@ CREATE TABLE
         id INTEGER PRIMARY KEY CHECK (id = 1), -- Only allow one row
         file_hash TEXT NOT NULL,
         import_time INTEGER NOT NULL,
-        file_source TEXT NOT NULL
+        file_source TEXT NOT NULL,
+        feed_expires_at INTEGER
     ) STRICT;
 
 -- migrate

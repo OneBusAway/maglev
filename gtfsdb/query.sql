@@ -575,6 +575,16 @@ OR REPLACE INTO import_metadata (
 VALUES
     (1, ?, ?, ?) RETURNING *;
 
+-- name: UpdateFeedExpiresAt :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
+VALUES (1, '', 0, '', ?)
+ON CONFLICT(id) DO UPDATE SET feed_expires_at = excluded.feed_expires_at;
+
+-- name: UpdateImportTime :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source)
+VALUES (1, '', ?, '')
+ON CONFLICT(id) DO UPDATE SET import_time = excluded.import_time;
+
 -- name: ClearStopTimes :exec
 DELETE FROM stop_times;
 

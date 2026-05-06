@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/internal/app"
-	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestMetadataHandler_NilManager(t *testing.T) {
@@ -35,7 +35,7 @@ func TestMetadataHandler_NilManager(t *testing.T) {
 func TestMetadataHandler(t *testing.T) {
 	api := &RestAPI{
 		Application: &app.Application{
-			GtfsManager: &gtfs.Manager{},
+			GtfsManager: newTestManagerNoData(t),
 		},
 	}
 
@@ -45,7 +45,7 @@ func TestMetadataHandler(t *testing.T) {
 
 	// Set static last updated
 	staticTime := now.Add(-1 * time.Hour)
-	api.GtfsManager.SetStaticLastUpdatedForTest(staticTime)
+	api.GtfsManager.SetStaticLastUpdatedForTest(context.Background(), staticTime)
 
 	// Ensure the map is initialized since we mock the Manager
 	api.GtfsManager.SetFeedUpdateTimeForTest("trip_updates", now)
