@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +44,7 @@ func TestMetadataHandler(t *testing.T) {
 
 	// Set static last updated
 	staticTime := now.Add(-1 * time.Hour)
-	api.GtfsManager.SetStaticLastUpdatedForTest(context.Background(), staticTime)
+	api.GtfsManager.SetStaticLastUpdatedForTest(t.Context(), staticTime)
 
 	// Ensure the map is initialized since we mock the Manager
 	api.GtfsManager.SetFeedUpdateTimeForTest("trip_updates", now)

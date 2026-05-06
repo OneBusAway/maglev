@@ -262,7 +262,7 @@ func TestTrimQuery(t *testing.T) {
 }
 
 func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db, err := sql.Open(DriverName, ":memory:")
 	require.NoError(t, err)

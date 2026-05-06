@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,14 +22,14 @@ func TestGtfsExpiryMiddleware(t *testing.T) {
 			name:           "Valid feed data - no header",
 			path:           "/api/where/agencies-with-coverage.json",
 			manager:        newTestManagerNoData(t),
-			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(context.Background(), time.Now().Add(24*time.Hour)) },
+			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(t.Context(), time.Now().Add(24*time.Hour)) },
 			expectedHeader: "",
 		},
 		{
 			name:           "Expired feed data - adds header",
 			path:           "/api/where/agencies-with-coverage.json",
 			manager:        newTestManagerNoData(t),
-			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(context.Background(), time.Now().Add(-24*time.Hour)) },
+			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(t.Context(), time.Now().Add(-24*time.Hour)) },
 			expectedHeader: "true",
 		},
 		{
@@ -44,21 +43,21 @@ func TestGtfsExpiryMiddleware(t *testing.T) {
 			name:           "Zero expiry time (no calendar data) - no header",
 			path:           "/api/where/agencies-with-coverage.json",
 			manager:        newTestManagerNoData(t),
-			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(context.Background(), time.Time{}) },
+			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(t.Context(), time.Time{}) },
 			expectedHeader: "",
 		},
 		{
 			name:           "Expired feed data on non-API path - no header",
 			path:           "/healthz",
 			manager:        newTestManagerNoData(t),
-			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(context.Background(), time.Now().Add(-24*time.Hour)) },
+			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(t.Context(), time.Now().Add(-24*time.Hour)) },
 			expectedHeader: "",
 		},
 		{
 			name:           "Non-API path /api (without trailing slash) is intentionally excluded",
 			path:           "/api",
 			manager:        newTestManagerNoData(t),
-			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(context.Background(), time.Now().Add(-24*time.Hour)) },
+			setupManager:   func(m *gtfs.Manager) { m.SetFeedExpiresAtForTest(t.Context(), time.Now().Add(-24*time.Hour)) },
 			expectedHeader: "",
 		},
 	}
