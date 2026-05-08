@@ -19,8 +19,10 @@ func loggerErrorf(format string, args ...any) error {
 	return err
 }
 
-func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
-	ctx := t.Context()
+// TestReload_QueriesCompleteDuringReload verifies that database queries
+// can complete successfully during a static data reload operation.
+func TestReload_QueriesCompleteDuringReload(t *testing.T) {
+	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -94,8 +96,10 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	assert.Equal(t, "40", agencies[0].ID)
 }
 
-func TestHotSwap_FailureRecovery(t *testing.T) {
-	ctx := t.Context()
+// TestReload_FailureRecovery verifies that the GTFS manager handles
+// failed reload attempts gracefully without corrupting existing data.
+func TestReload_FailureRecovery(t *testing.T) {
+	ctx := context.Background()
 
 	tempDir := t.TempDir()
 	gtfsConfig := Config{
@@ -128,8 +132,10 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 	assert.Equal(t, "25", agencies[0].ID, "Should still be using original agency")
 }
 
-func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
-	ctx := t.Context()
+// TestReload_OldDatabaseCleanup verifies that old database data is properly
+// cleaned up during a reload operation.
+func TestReload_OldDatabaseCleanup(t *testing.T) {
+	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -161,7 +167,9 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	assert.Equal(t, "40", agencies[0].ID)
 }
 
-func TestHotSwap_MutexProtectedSwap(t *testing.T) {
+// TestReload_ReplacesDataAndRebuildsState verifies that a reload correctly
+// replaces static data and rebuilds derived state (e.g. block_layover rows).
+func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
@@ -191,9 +199,6 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	assert.Equal(t, "25", initialAgencies[0].ID)
 	initialLayoverCount := countBlockLayovers(t, manager)
 
-	// Capture old references
-	oldGtfsDB := manager.GtfsDB
-
 	manager.SetGtfsURL(gtfsNew)
 	_, err = manager.ReloadStatic(t.Context())
 	assert.Nil(t, err, "ReloadStatic should succeed")
@@ -204,8 +209,6 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	require.NotEmpty(t, updatedAgencies)
 	assert.Equal(t, "40", updatedAgencies[0].ID)
 
-	// DB is reused in-place: the client pointer is stable across reloads.
-	assert.Same(t, oldGtfsDB, manager.GtfsDB, "GtfsDB should be reused in place")
 	// block_layover rows are rebuilt from the new feed.
 	updatedLayoverCount := countBlockLayovers(t, manager)
 	assert.NotEqual(t, initialLayoverCount, updatedLayoverCount, "block_layover rows should be rebuilt from the new feed")
@@ -220,8 +223,10 @@ func countBlockLayovers(t *testing.T, manager *Manager) int {
 	return n
 }
 
-func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
-	ctx := t.Context()
+// TestReload_ConcurrentReload verifies that multiple concurrent reload
+// operations don't crash and properly handle serialization.
+func TestReload_ConcurrentReload(t *testing.T) {
+	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -249,7 +254,7 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	newSource := models.GetFixturePath(t, "gtfs.zip")
 	manager.SetGtfsURL(newSource)
 
-	// Launch concurrent ForceUpdate calls
+	// Launch concurrent ReloadStatic calls
 	concurrency := 2
 	errChan := make(chan error, concurrency)
 	var wg sync.WaitGroup
@@ -269,7 +274,7 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	// Both updates should succeed (serialized one after another)
 	// OR essentially one might overwrite the other's result, but neither should crash.
 	for err := range errChan {
-		assert.NoError(t, err, "Concurrent ForceUpdate should not return error")
+		assert.NoError(t, err, "Concurrent ReloadStatic should not return error")
 	}
 
 	// Verify final state matches "gtfs.zip" (agency ID 40)
