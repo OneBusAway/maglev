@@ -10,6 +10,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -220,12 +221,12 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
 		results = append(results, models.NewStop(
-			utils.NullStringOrEmpty(stop.Code),
+			nulls.StringOrEmpty(stop.Code),
 			direction,
 			utils.FormCombinedID(agency.ID, stop.ID),
-			utils.NullStringOrEmpty(stop.Name),
+			nulls.StringOrEmpty(stop.Name),
 			"",
-			utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			stop.Lat,
 			stop.Lon,
 			0,

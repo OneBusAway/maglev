@@ -13,6 +13,7 @@ import (
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -564,17 +565,17 @@ func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) mode
 	direction := rb.api.DirectionCalculator.CalculateStopDirection(rb.ctx, stop.ID, stop.Direction)
 
 	return models.Stop{
-		Code:               utils.NullStringOrEmpty(stop.Code),
+		Code:               nulls.StringOrEmpty(stop.Code),
 		Direction:          direction,
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		LocationType:       0,
-		Name:               utils.NullStringOrEmpty(stop.Name),
+		Name:               nulls.StringOrEmpty(stop.Name),
 		Parent:             "",
 		RouteIDs:           routeIds,
 		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 	}
 }
 

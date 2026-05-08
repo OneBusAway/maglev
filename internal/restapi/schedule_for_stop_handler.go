@@ -8,6 +8,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -184,7 +185,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 				a.Name,
 				a.Url,
 				a.Timezone,
-				utils.NullStringOrEmpty(a.Lang),
+				nulls.StringOrEmpty(a.Lang),
 				a.Phone.String,
 				a.Email.String,
 				a.FareUrl.String,
@@ -300,12 +301,12 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	stopRef := models.NewStop(
-		utils.NullStringOrEmpty(stop.Code),
-		utils.NullStringOrEmpty(stop.Direction),
+		nulls.StringOrEmpty(stop.Code),
+		nulls.StringOrEmpty(stop.Direction),
 		utils.FormCombinedID(agencyID, stop.ID),
-		utils.NullStringOrEmpty(stop.Name),
+		nulls.StringOrEmpty(stop.Name),
 		"",
-		utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		stop.Lat,
 		stop.Lon,
 		int(stop.LocationType.Int64),
