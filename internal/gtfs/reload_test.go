@@ -22,7 +22,7 @@ func loggerErrorf(format string, args ...any) error {
 // TestReload_QueriesCompleteDuringReload verifies that database queries
 // can complete successfully during a static data reload operation.
 func TestReload_QueriesCompleteDuringReload(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -99,7 +99,7 @@ func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 // TestReload_FailureRecovery verifies that the GTFS manager handles
 // failed reload attempts gracefully without corrupting existing data.
 func TestReload_FailureRecovery(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tempDir := t.TempDir()
 	gtfsConfig := Config{
@@ -135,7 +135,7 @@ func TestReload_FailureRecovery(t *testing.T) {
 // TestReload_OldDatabaseCleanup verifies that old database data is properly
 // cleaned up during a reload operation.
 func TestReload_OldDatabaseCleanup(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -226,7 +226,7 @@ func countBlockLayovers(t *testing.T, manager *Manager) int {
 // TestReload_ConcurrentReload verifies that multiple concurrent reload
 // operations don't crash and properly handle serialization.
 func TestReload_ConcurrentReload(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
