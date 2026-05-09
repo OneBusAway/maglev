@@ -277,7 +277,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 			blockIDsNull := make([]sql.NullString, len(blockIDs))
 			for i, id := range blockIDs {
-				blockIDsNull[i] = sql.NullString{String: id, Valid: true}
+				blockIDsNull[i] = nulls.String(id)
 			}
 
 			params := gtfsdb.GetTripsByBlockIDsParams{

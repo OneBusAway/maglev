@@ -342,13 +342,11 @@ When a single feed refreshes, only its per-feed sub-map is overwritten; other fe
 
 ### Working with sqlc Models
 
-Database models use `sql.NullString` for optional fields:
+Database models use `sql.NullString` for optional fields. Use helpers in the
+nulls package for working with nullable SQL types.
 
 ```go
-// Always check .Valid before accessing .String
-if route.ShortName.Valid {
-    shortName = route.ShortName.String
-}
+shortName := nulls.StringOrEmpty(route.ShortName)
 ```
 
 Common nullable fields: `ShortName`, `LongName`, `Desc`, `Url`, `Color`, `TextColor`

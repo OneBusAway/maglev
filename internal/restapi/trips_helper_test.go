@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -2069,7 +2070,7 @@ func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 		ID:        tripID,
 		RouteID:   "1",
 		ServiceID: "1",
-		BlockID:   sql.NullString{String: "single_trip_block", Valid: true},
+		BlockID:   nulls.String("single_trip_block"),
 	})
 	require.NoError(t, err)
 
@@ -2087,7 +2088,7 @@ func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 	err = queries.CreateBlockTripEntry(ctx, gtfsdb.CreateBlockTripEntryParams{
 		BlockTripIndexID:  indexID,
 		TripID:            tripID,
-		BlockID:           sql.NullString{String: "single_trip_block", Valid: true},
+		BlockID:           nulls.String("single_trip_block"),
 		ServiceID:         "1",
 		BlockTripSequence: 0,
 	})
@@ -2117,7 +2118,7 @@ func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
 		ID:        tripID,
 		RouteID:   "1",
 		ServiceID: "1",
-		BlockID:   sql.NullString{String: "missing_block", Valid: true},
+		BlockID:   nulls.String("missing_block"),
 	})
 	require.NoError(t, err)
 
