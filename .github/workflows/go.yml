@@ -142,3 +142,23 @@ jobs:
       - name: Run race detector on concurrent packages
         run: go test -race -v -tags='sqlite_fts5 sqlite_math_functions' -timeout 20m ./internal/gtfs/...
         shell: bash
+
+  vuln_check:
+    name: Vulnerability Check
+    runs-on: ubuntu-latest
+    continue-on-error: true 
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+          check-latest: true
+
+      - name: Check for vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
