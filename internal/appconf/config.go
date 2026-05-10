@@ -7,7 +7,7 @@ package appconf
 // configuration settings from command-line flags when the Application starts.
 type Config struct {
 	Port             int
-	Host 			 string
+	Host             string
 	Env              Environment
 	ApiKeys          []string
 	ProtectedApiKeys []string
