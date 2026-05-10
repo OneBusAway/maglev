@@ -34,6 +34,7 @@ type GtfsRtFeed struct {
 // JSONConfig represents the JSON configuration file structure
 type JSONConfig struct {
 	Port             int            `json:"port"`
+	Host             string         `json:"host"`
 	Env              string         `json:"env"`
 	ApiKeys          []string       `json:"api-keys"`
 	ProtectedApiKeys []string       `json:"protected-api-keys"`
@@ -235,6 +236,7 @@ func validatePath(path, fieldName string) error {
 func (j *JSONConfig) ToAppConfig() Config {
 	return Config{
 		Port:             j.Port,
+		Host:             j.Host,
 		Env:              EnvFlagToEnvironment(j.Env),
 		ApiKeys:          j.ApiKeys,
 		ProtectedApiKeys: j.ProtectedApiKeys,
