@@ -233,19 +233,8 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		manager.DirectionCalculator.ClearCache()
 	}
 
-	now := time.Now()
-	manager.lastUpdated = now
-	manager.lastUpdatedUnixNanos.Store(now.UnixNano())
-
-	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
-	if err != nil {
-		logging.LogError(logger, "Failed to fetch import metadata for ETag generation", err)
-		manager.systemETag = ""
-	} else if metadata.FileHash != "" {
-		manager.systemETag = fmt.Sprintf(`"%s"`, metadata.FileHash)
-		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", manager.systemETag))
-	} else {
-		manager.systemETag = ""
+	if eTag := manager.GetSystemETag(ctx); eTag != "" {
+		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
 	}
 
 	logging.LogOperation(logger, "gtfs_static_data_reloaded",
@@ -254,72 +243,41 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		slog.Bool("changed", changed))
 
 	manager.PrintStatistics()
-	manager.parseAndLogFeedExpiryLocked(ctx, logger)
+	manager.logFeedExpiry(ctx, logger)
 
 	return changed, nil
 }
 
-// parseAndLogFeedExpiryLocked checks the GTFS calendar for the last active service date
-// NOTE: Caller must guarantee thread-safety
-func (manager *Manager) parseAndLogFeedExpiryLocked(ctx context.Context, logger *slog.Logger) {
-	manager.feedExpiresAt = time.Time{}
+// logFeedExpiry reads the feed_expires_at value persisted by StoreGtfsData
+// and updates the metrics gauge / emits warning logs about how soon the feed
+// will expire. The DB write itself happens atomically inside the import
+// transaction; this function is read-only.
+func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger) {
 	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
 		manager.Metrics.FeedExpiresAt.Set(-1)
 	}
 
-	if manager.GtfsDB == nil || manager.GtfsDB.Queries == nil {
-		return
-	}
-
-	val, err := manager.GtfsDB.Queries.GetFeedEndDate(ctx)
-	if err != nil {
-		logging.LogError(logger, "Failed to get feed end date from DB", err)
-		return
-	}
-
-	var strVal string
-	switch v := val.(type) {
-	case nil:
-		// No calendar data; strVal remains "" and falls through
-		// to the "no active calendar dates" warning below.
-	case string:
-		strVal = v
-	case []byte:
-		strVal = string(v)
-	default:
-		logging.LogError(logger, "Unexpected type from GetFeedEndDate", fmt.Errorf("expected string, got %T", val))
-		return
-	}
-
-	if strVal != "" {
-		parsedTime, err := time.Parse("20060102", strVal)
-		if err != nil {
-			logging.LogError(logger, "Failed to parse feed end date", err, slog.String("date", strVal))
-			return
-		}
-
-		// 23:59:59 end date
-		expiresAt := parsedTime.Add(24 * time.Hour).Add(-time.Second)
-
-		manager.feedExpiresAt = expiresAt
-
-		if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
-			manager.Metrics.FeedExpiresAt.Set(float64(expiresAt.Unix()))
-		}
-
-		daysUntil := int(time.Until(expiresAt).Hours() / 24)
-		if daysUntil < 0 {
-			logger.Warn("GTFS feed has expired", slog.Time("expires_at", expiresAt), slog.Int("days_overdue", -daysUntil))
-		} else if daysUntil <= 1 {
-			logger.Warn("GTFS feed expires in 1 day or less", slog.Time("expires_at", expiresAt))
-		} else if daysUntil <= 3 {
-			logger.Warn("GTFS feed expires in 3 days or less", slog.Time("expires_at", expiresAt))
-		} else if daysUntil <= 7 {
-			logger.Warn("GTFS feed expires in 7 days or less", slog.Time("expires_at", expiresAt))
-		} else {
-			logger.Info("GTFS feed valid", slog.Time("expires_at", expiresAt), slog.Int("days_until_expiry", daysUntil))
-		}
-	} else {
+	expiresAt := manager.FeedExpiresAt(ctx)
+	if expiresAt.IsZero() {
 		logger.Warn("GTFS feed has no active calendar dates")
+		return
+	}
+
+	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
+		manager.Metrics.FeedExpiresAt.Set(float64(expiresAt.Unix()))
+	}
+
+	daysUntil := int(time.Until(expiresAt).Hours() / 24)
+	switch {
+	case daysUntil < 0:
+		logger.Warn("GTFS feed has expired", slog.Time("expires_at", expiresAt), slog.Int("days_overdue", -daysUntil))
+	case daysUntil <= 1:
+		logger.Warn("GTFS feed expires in 1 day or less", slog.Time("expires_at", expiresAt))
+	case daysUntil <= 3:
+		logger.Warn("GTFS feed expires in 3 days or less", slog.Time("expires_at", expiresAt))
+	case daysUntil <= 7:
+		logger.Warn("GTFS feed expires in 7 days or less", slog.Time("expires_at", expiresAt))
+	default:
+		logger.Info("GTFS feed valid", slog.Time("expires_at", expiresAt), slog.Int("days_until_expiry", daysUntil))
 	}
 }

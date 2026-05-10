@@ -479,7 +479,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   data.Hash,
-		ImportTime: time.Now().Unix(),
+		ImportTime: time.Now().UnixNano(),
 		FileSource: data.Source,
 	})
 	if err != nil {
@@ -539,6 +539,12 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 	logging.LogOperation(logger, "block_layover_index_built")
 
+	// Persist feed_expires_at inside the same transaction so it's atomic with
+	// the calendar data it was derived from.
+	if err := updateFeedExpiresAtFromCalendar(ctx, qtx); err != nil {
+		return false, fmt.Errorf("failed to update feed_expires_at: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("error committing import transaction: %w", err)
 	}
@@ -553,6 +559,45 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	return true, nil
+}
+
+// updateFeedExpiresAtFromCalendar reads the latest active service date from
+// calendar / calendar_dates, parses it, and persists feed_expires_at to
+// import_metadata. Intended to be called from within the StoreGtfsData
+// transaction so the value is atomic with the calendar data it was derived from.
+func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
+	val, err := qtx.GetFeedEndDate(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get feed end date: %w", err)
+	}
+
+	var dateStr string
+	switch v := val.(type) {
+	case nil:
+		// No calendar data — feed_expires_at will be NULL.
+	case string:
+		dateStr = v
+	case []byte:
+		dateStr = string(v)
+	default:
+		return fmt.Errorf("unexpected type from GetFeedEndDate: %T", val)
+	}
+
+	var expires sql.NullInt64
+	if dateStr != "" {
+		parsedTime, err := time.Parse("20060102", dateStr)
+		if err != nil {
+			return fmt.Errorf("failed to parse feed end date %q: %w", dateStr, err)
+		}
+		// 23:59:59 of the end date.
+		expiresAt := parsedTime.Add(24*time.Hour - time.Second)
+		expires = sql.NullInt64{Int64: expiresAt.Unix(), Valid: true}
+	}
+
+	if err := qtx.UpdateFeedExpiresAt(ctx, expires); err != nil {
+		return fmt.Errorf("failed to persist feed_expires_at: %w", err)
+	}
+	return nil
 }
 
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
