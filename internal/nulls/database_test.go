@@ -13,6 +13,12 @@ func TestNullStringOrEmpty(t *testing.T) {
 	assert.Equal(t, "", StringOrEmpty(sql.NullString{String: "test", Valid: false}))
 }
 
+func TestNullStringOrDefault(t *testing.T) {
+	assert.Equal(t, "test", StringOrDefault(sql.NullString{String: "test", Valid: true}, "fallback"))
+	assert.Equal(t, "", StringOrDefault(sql.NullString{String: "", Valid: true}, "fallback"))
+	assert.Equal(t, "fallback", StringOrDefault(sql.NullString{String: "test", Valid: false}, "fallback"))
+}
+
 func TestNullInt64OrDefault(t *testing.T) {
 	assert.Equal(t, int64(42), Int64OrDefault(sql.NullInt64{Int64: 42, Valid: true}, 10))
 	assert.Equal(t, int64(10), Int64OrDefault(sql.NullInt64{Int64: 42, Valid: false}, 10))

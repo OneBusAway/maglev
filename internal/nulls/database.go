@@ -19,7 +19,7 @@ func StringOrEmpty(ns sql.NullString) string {
 }
 
 func StringOrDefault(ns sql.NullString, defaultValue string) string {
-	if ns.Valid && ns.String != "" {
+	if ns.Valid {
 		return ns.String
 	}
 	return defaultValue
