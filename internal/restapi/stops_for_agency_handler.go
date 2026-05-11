@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -104,7 +105,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 
 		stopsList = append(stopsList, models.Stop{
 			Code:               stop.Code.String,
-			Direction:          utils.NullStringOrEmpty(stop.Direction),
+			Direction:          nulls.StringOrEmpty(stop.Direction),
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
@@ -112,7 +113,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			Name:               stop.Name.String,
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 
