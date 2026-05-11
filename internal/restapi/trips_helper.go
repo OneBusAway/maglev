@@ -651,25 +651,6 @@ func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
 	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
 }
 
-// calculatePreciseDistanceAlongTrip is the legacy version that fetches stop coordinates from the database
-// Deprecated: Use calculatePreciseDistanceAlongTripWithCoords with batch-fetched coordinates instead
-func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopID string, shapePoints []gtfs.ShapePoint) float64 {
-	if len(shapePoints) == 0 {
-		return 0.0
-	}
-
-	// Get stop coordinates
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil {
-		return 0.0
-	}
-
-	// Pre-calculate cumulative distances (this is inefficient for multiple stops)
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-
-	return api.calculatePreciseDistanceAlongTripWithCoords(stop.Lat, stop.Lon, shapePoints, cumulativeDistances)
-}
-
 // preCalculateCumulativeDistances pre-calculates cumulative distances along shape points
 // Returns an array where cumulativeDistances[i] is the cumulative distance up to (but not including) segment i
 func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
