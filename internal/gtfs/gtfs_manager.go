@@ -22,8 +22,6 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-const NoRadiusLimit = -1
-
 // RegionBounds represents the geographic boundaries of the GTFS region
 type RegionBounds struct {
 	Lat     float64
