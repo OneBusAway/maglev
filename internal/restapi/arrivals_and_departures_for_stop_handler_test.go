@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -478,7 +478,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
 		ID:   stopID,
-		Name: sql.NullString{String: "Shared Transit Center", Valid: true},
+		Name: nulls.String("Shared Transit Center"),
 		Lat:  47.6062,
 		Lon:  -122.3321,
 	})
@@ -497,8 +497,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID:        routeB_ID,
 		AgencyID:  agencyB,
-		ShortName: sql.NullString{String: "B-Line", Valid: true},
-		LongName:  sql.NullString{String: "Agency B Express", Valid: true},
+		ShortName: nulls.String("B-Line"),
+		LongName:  nulls.String("Agency B Express"),
 		Type:      3,
 	})
 	require.NoError(t, err)
@@ -522,7 +522,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 		ID:           tripB_ID,
 		RouteID:      routeB_ID,
 		ServiceID:    "service1",
-		TripHeadsign: sql.NullString{String: "Downtown", Valid: true},
+		TripHeadsign: nulls.String("Downtown"),
 	})
 	require.NoError(t, err)
 
@@ -657,7 +657,7 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 
 	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
 		ID:   stopCode,
-		Name: sql.NullString{String: "Delay Test Stop", Valid: true},
+		Name: nulls.String("Delay Test Stop"),
 		Lat:  47.0,
 		Lon:  -122.0,
 	})
@@ -666,8 +666,8 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID:        routeID,
 		AgencyID:  agencyID,
-		ShortName: sql.NullString{String: "DT", Valid: true},
-		LongName:  sql.NullString{String: "Delay Test Route", Valid: true},
+		ShortName: nulls.String("DT"),
+		LongName:  nulls.String("Delay Test Route"),
 		Type:      3,
 	})
 	require.NoError(t, err)
@@ -691,7 +691,7 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 		ID:        tripID,
 		RouteID:   routeID,
 		ServiceID: serviceID,
-		BlockID:   sql.NullString{String: "dp-block", Valid: true},
+		BlockID:   nulls.String("dp-block"),
 	})
 	require.NoError(t, err)
 
@@ -1109,7 +1109,7 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
 		ID:   stopID,
-		Name: sql.NullString{String: "Trip Update Test Stop", Valid: true},
+		Name: nulls.String("Trip Update Test Stop"),
 		Lat:  40.5865,
 		Lon:  -122.3917,
 	})
@@ -1118,8 +1118,8 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID:        routeID,
 		AgencyID:  agencyID,
-		ShortName: sql.NullString{String: "TU", Valid: true},
-		LongName:  sql.NullString{String: "Trip Update Line", Valid: true},
+		ShortName: nulls.String("TU"),
+		LongName:  nulls.String("Trip Update Line"),
 		Type:      3,
 	})
 	require.NoError(t, err)
@@ -1142,7 +1142,7 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 		ID:           tripID,
 		RouteID:      routeID,
 		ServiceID:    "tu_service",
-		TripHeadsign: sql.NullString{String: "Test Destination", Valid: true},
+		TripHeadsign: nulls.String("Test Destination"),
 	})
 	require.NoError(t, err)
 
@@ -1235,7 +1235,7 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
 		ID:   stopID,
-		Name: sql.NullString{String: "Nil ID Test Stop", Valid: true},
+		Name: nulls.String("Nil ID Test Stop"),
 		Lat:  40.5865,
 		Lon:  -122.3917,
 	})

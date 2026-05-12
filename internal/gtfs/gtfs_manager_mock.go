@@ -2,11 +2,11 @@ package gtfs
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func (m *Manager) MockAddAgency(id, name string) {
@@ -32,7 +32,7 @@ func (m *Manager) MockAddRoute(id, agencyID, name string) {
 	_, _ = m.GtfsDB.Queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID:        id,
 		AgencyID:  agencyID,
-		ShortName: sql.NullString{String: name, Valid: true},
+		ShortName: nulls.String(name),
 	})
 }
 func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {

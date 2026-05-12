@@ -3,7 +3,6 @@ package restapi
 import (
 	"cmp"
 	"context"
-	"database/sql"
 	"net/http"
 	"slices"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -35,7 +35,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
+	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
 	if err != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())

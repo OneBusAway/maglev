@@ -2,7 +2,6 @@ package gtfsdb
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // hoursAfterMidnight returns the int64 nanoseconds-since-midnight value
@@ -43,7 +43,7 @@ func createFrequencyTestClient(t *testing.T) *Client {
 	_, err = client.Queries.CreateRoute(ctx, CreateRouteParams{
 		ID:        "test_route",
 		AgencyID:  "test_agency",
-		ShortName: sql.NullString{String: "TEST", Valid: true},
+		ShortName: nulls.String("TEST"),
 		Type:      3,
 	})
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func createFrequencyTestClient(t *testing.T) *Client {
 
 	_, err = client.Queries.CreateStop(ctx, CreateStopParams{
 		ID:   "stop_1",
-		Name: sql.NullString{String: "Test Stop", Valid: true},
+		Name: nulls.String("Test Stop"),
 		Lat:  40.0,
 		Lon:  -74.0,
 	})
@@ -76,7 +76,7 @@ func createFrequencyTestClient(t *testing.T) *Client {
 			ID:           tripID,
 			RouteID:      "test_route",
 			ServiceID:    "test_service",
-			TripHeadsign: sql.NullString{String: "Test", Valid: true},
+			TripHeadsign: nulls.String("Test"),
 		})
 		require.NoError(t, err)
 	}

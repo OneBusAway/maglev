@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func createFTSTestClient(t *testing.T) *Client {
@@ -42,27 +43,27 @@ func TestSearchRoutesByFullText(t *testing.T) {
 	routes := []CreateRouteParams{
 		{
 			ID: "r1", AgencyID: "agency1",
-			ShortName: toNullString("10"), LongName: toNullString("Downtown Express"),
-			Desc: toNullString("Express service through downtown"),
-			Type: 3, Url: toNullString("http://test.com/r1"),
-			Color: toNullString("FF0000"), TextColor: toNullString("FFFFFF"),
+			ShortName: nulls.String("10"), LongName: nulls.String("Downtown Express"),
+			Desc: nulls.String("Express service through downtown"),
+			Type: 3, Url: nulls.String("http://test.com/r1"),
+			Color: nulls.String("FF0000"), TextColor: nulls.String("FFFFFF"),
 			ContinuousPickup:  sql.NullInt64{Int64: 1, Valid: true},
 			ContinuousDropOff: sql.NullInt64{Int64: 2, Valid: true},
 		},
 		{
 			ID: "r2", AgencyID: "agency1",
-			ShortName: toNullString("20"), LongName: toNullString("Airport Shuttle"),
+			ShortName: nulls.String("20"), LongName: nulls.String("Airport Shuttle"),
 			Type: 3,
 		},
 		{
 			ID: "r3", AgencyID: "agency1",
-			ShortName: toNullString("30"), LongName: toNullString("Downtown Local"),
+			ShortName: nulls.String("30"), LongName: nulls.String("Downtown Local"),
 			Type: 3,
 		},
 		// Route with NULL short_name to verify FTS trigger coalesce + nullable scan
 		{
 			ID: "r4", AgencyID: "agency1",
-			LongName: toNullString("Riverfront Circulator"),
+			LongName: nulls.String("Riverfront Circulator"),
 			Type:     3,
 		},
 	}
@@ -211,23 +212,23 @@ func TestSearchStopsByName(t *testing.T) {
 	// Insert test stops with varied fields to verify correct column scanning
 	stops := []CreateStopParams{
 		{
-			ID: "s1", Name: toNullString("Main Street Station"),
-			Code: toNullString("MS01"),
+			ID: "s1", Name: nulls.String("Main Street Station"),
+			Code: nulls.String("MS01"),
 			Lat:  40.0, Lon: -74.0,
 			LocationType:       sql.NullInt64{Int64: 1, Valid: true},
 			WheelchairBoarding: sql.NullInt64{Int64: 1, Valid: true},
-			Direction:          toNullString("N"),
+			Direction:          nulls.String("N"),
 		},
 		{
-			ID: "s2", Name: toNullString("Airport Terminal"),
+			ID: "s2", Name: nulls.String("Airport Terminal"),
 			Lat: 40.1, Lon: -74.1,
 		},
 		{
-			ID: "s3", Name: toNullString("Main Street Mall"),
+			ID: "s3", Name: nulls.String("Main Street Mall"),
 			Lat: 40.2, Lon: -74.2,
 		},
 		{
-			ID: "hub1", Name: toNullString("Main Street Hub"),
+			ID: "hub1", Name: nulls.String("Main Street Hub"),
 			Lat: 40.0, Lon: -74.0,
 		},
 	}
