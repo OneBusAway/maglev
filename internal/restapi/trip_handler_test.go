@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -46,12 +47,12 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, tripID, entry["id"])
 	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), entry["routeId"])
 	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.ServiceID), entry["serviceId"])
-	assert.Equal(t, fmt.Sprintf("%d", utils.NullInt64OrDefault(trip.DirectionID, 0)), entry["directionId"])
-	assert.Equal(t, utils.FormCombinedID(agency.ID, utils.NullStringOrEmpty(trip.BlockID)), entry["blockId"])
-	assert.Equal(t, utils.FormCombinedID(agency.ID, utils.NullStringOrEmpty(trip.ShapeID)), entry["shapeId"])
-	assert.Equal(t, utils.NullStringOrEmpty(trip.TripHeadsign), entry["tripHeadsign"])
-	assert.Equal(t, utils.NullStringOrEmpty(trip.TripShortName), entry["tripShortName"])
-	assert.Equal(t, utils.NullStringOrEmpty(route.ShortName), entry["routeShortName"])
+	assert.Equal(t, fmt.Sprintf("%d", nulls.Int64OrDefault(trip.DirectionID, 0)), entry["directionId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, nulls.StringOrEmpty(trip.BlockID)), entry["blockId"])
+	assert.Equal(t, utils.FormCombinedID(agency.ID, nulls.StringOrEmpty(trip.ShapeID)), entry["shapeId"])
+	assert.Equal(t, nulls.StringOrEmpty(trip.TripHeadsign), entry["tripHeadsign"])
+	assert.Equal(t, nulls.StringOrEmpty(trip.TripShortName), entry["tripShortName"])
+	assert.Equal(t, nulls.StringOrEmpty(route.ShortName), entry["routeShortName"])
 
 	references, ok := data["references"].(map[string]any)
 	assert.True(t, ok, "References section should exist")
@@ -65,7 +66,7 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), routeRef["id"])
 	assert.Equal(t, agency.ID, routeRef["agencyId"])
-	assert.Equal(t, utils.NullStringOrEmpty(route.ShortName), routeRef["shortName"])
+	assert.Equal(t, nulls.StringOrEmpty(route.ShortName), routeRef["shortName"])
 
 	agencies, ok := references["agencies"].([]any)
 	assert.True(t, ok, "Agencies section should exist in references")

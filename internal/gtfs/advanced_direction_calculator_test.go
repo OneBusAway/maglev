@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // This uses a Singleton pattern to load the DB and Warm the Cache exactly ONCE
@@ -108,12 +109,12 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// First call: precomputed direction "NE" from DB should be recognized
-	result := calc.CalculateStopDirection(t.Context(), "stop-1", sql.NullString{String: "NE", Valid: true})
+	result := calc.CalculateStopDirection(context.Background(), "stop-1", nulls.String("NE"))
 	assert.Equal(t, "NE", result, "should recognize compass abbreviation NE from precomputed direction")
 
 	// Verify that a stop with no GTFS direction falls through to computeFromShapes,
 	// gets an empty result (no data in cache for nonexistent stop), and caches the empty result.
-	result = calc.CalculateStopDirection(t.Context(), "nonexistent-stop", sql.NullString{Valid: false})
+	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{})
 	assert.Equal(t, "", result, "should return empty for stop with no direction data")
 
 	// The empty result should be cached (negative cache) — verify via sync.Map
@@ -122,7 +123,7 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	assert.Equal(t, "", cached.(string), "cached value should be empty string")
 
 	// Second call for same stop should return from cache without recomputation
-	result = calc.CalculateStopDirection(t.Context(), "nonexistent-stop", sql.NullString{Valid: false})
+	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{})
 	assert.Equal(t, "", result, "second call should return cached empty result")
 }
 
@@ -165,7 +166,7 @@ func TestCalculateStopDirectionPrecomputedAbbreviations(t *testing.T) {
 			result := calc.CalculateStopDirection(
 				t.Context(),
 				"stop-"+abbr,
-				sql.NullString{String: abbr, Valid: true},
+				nulls.String(abbr),
 			)
 			assert.Equal(t, expected, result)
 		})
@@ -210,22 +211,22 @@ func TestCalculateStopDirectionWithGtfsDirection(t *testing.T) {
 	}{
 		{
 			name:          "Valid text direction",
-			gtfsDirection: sql.NullString{String: "North", Valid: true},
+			gtfsDirection: nulls.String("North"),
 			expected:      "N",
 		},
 		{
 			name:          "Valid numeric direction",
-			gtfsDirection: sql.NullString{String: "90", Valid: true},
+			gtfsDirection: nulls.String("90"),
 			expected:      "E", // 90° in GTFS = East
 		},
 		{
 			name:          "Invalid direction falls through",
-			gtfsDirection: sql.NullString{String: "invalid", Valid: true},
+			gtfsDirection: nulls.String("invalid"),
 			expected:      "", // Would need shape data to compute
 		},
 		{
 			name:          "Null direction falls through",
-			gtfsDirection: sql.NullString{Valid: false},
+			gtfsDirection: sql.NullString{},
 			expected:      "", // Would need shape data to compute
 		},
 	}
@@ -279,7 +280,7 @@ func TestCalculateStopDirection_WithShapeData(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// Test with a real stop from RABA data
-	direction := calc.CalculateStopDirection(ctx, "7000", sql.NullString{Valid: false})
+	direction := calc.CalculateStopDirection(ctx, "7000", sql.NullString{})
 	// Should return a valid direction or empty string
 	assert.True(t, direction == "" || len(direction) <= 2)
 }
@@ -447,7 +448,7 @@ func TestCalculateStopDirection_VariadicSignature(t *testing.T) {
 
 	// Case 1: Caller provides the optimized direction (should be used instantly)
 	// We pass "North", expect "N"
-	dirProvided := calc.CalculateStopDirection(ctx, "any_stop", sql.NullString{String: "North", Valid: true})
+	dirProvided := calc.CalculateStopDirection(ctx, "any_stop", nulls.String("North"))
 	assert.Equal(t, "N", dirProvided, "Should use provided direction argument")
 
 	// Case 2: Caller omits the argument (should fall back to DB)

@@ -1,7 +1,7 @@
 package restapi
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +15,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -496,7 +497,7 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
 		ID:   stopID,
-		Name: sql.NullString{String: "Shared Transit Center", Valid: true},
+		Name: nulls.String("Shared Transit Center"),
 		Lat:  47.6062,
 		Lon:  -122.3321,
 	})
@@ -516,8 +517,8 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID:        routeB_ID,
 		AgencyID:  agencyB,
-		ShortName: sql.NullString{String: "B-Line", Valid: true},
-		LongName:  sql.NullString{String: "Agency B Express", Valid: true},
+		ShortName: nulls.String("B-Line"),
+		LongName:  nulls.String("Agency B Express"),
 		Type:      3,
 	})
 	require.NoError(t, err)
@@ -541,7 +542,7 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 		ID:           tripB_ID,
 		RouteID:      routeB_ID,
 		ServiceID:    "service1",
-		TripHeadsign: sql.NullString{String: "Downtown", Valid: true},
+		TripHeadsign: nulls.String("Downtown"),
 	})
 	require.NoError(t, err)
 
@@ -745,13 +746,10 @@ func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
-		ID: stopID,
-		Name: sql.NullString{
-			String: "Loop Stop",
-			Valid:  true,
-		},
-		Lat: 47.0,
-		Lon: -122.0,
+		ID:   stopID,
+		Name: nulls.String("Loop Stop"),
+		Lat:  47.0,
+		Lon:  -122.0,
 	})
 	require.NoError(t, err)
 

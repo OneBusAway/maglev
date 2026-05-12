@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -209,7 +210,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
+		blockIDNullStr := nulls.String(blockID)
 
 		for _, sd := range serviceDays {
 			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
@@ -620,17 +621,17 @@ func buildTripReferences(
 		}
 
 		stopList = append(stopList, models.Stop{
-			Code:               utils.NullStringOrEmpty(stop.Code),
+			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
 			ID:                 stop.ID,
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       0,
-			Name:               utils.NullStringOrEmpty(stop.Name),
+			Name:               nulls.StringOrEmpty(stop.Name),
 			Parent:             "",
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 

@@ -1,7 +1,7 @@
 package restapi
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -43,14 +44,14 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID: td.RouteID, AgencyID: td.AgencyID,
-		ShortName: sql.NullString{String: "TZ", Valid: true},
-		LongName:  sql.NullString{String: "TZ Route", Valid: true},
+		ShortName: nulls.String("TZ"),
+		LongName:  nulls.String("TZ Route"),
 		Type:      3,
 	})
 	require.NoError(t, err)
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
-		ID: td.StopID, Name: sql.NullString{String: "TZ Stop", Valid: true},
+		ID: td.StopID, Name: nulls.String("TZ Stop"),
 		Lat: -36.8485, Lon: 174.7633,
 	})
 	require.NoError(t, err)
@@ -72,8 +73,8 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 	// Trip 1: departs 06:00 (earlier in block)
 	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID: td.TripID1, RouteID: td.RouteID, ServiceID: td.ServiceID,
-		TripHeadsign: sql.NullString{String: "Early", Valid: true},
-		BlockID:      sql.NullString{String: td.BlockID, Valid: true},
+		TripHeadsign: nulls.String("Early"),
+		BlockID:      nulls.String(td.BlockID),
 	})
 	require.NoError(t, err)
 
@@ -86,8 +87,8 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 	// Trip 2: departs 09:00 (later in block, our target)
 	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID: td.TripID2, RouteID: td.RouteID, ServiceID: td.ServiceID,
-		TripHeadsign: sql.NullString{String: "Late", Valid: true},
-		BlockID:      sql.NullString{String: td.BlockID, Valid: true},
+		TripHeadsign: nulls.String("Late"),
+		BlockID:      nulls.String(td.BlockID),
 	})
 	require.NoError(t, err)
 
