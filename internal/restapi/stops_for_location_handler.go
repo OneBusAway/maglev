@@ -87,7 +87,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 
-	// Check if context is already cancelled
+	// Check if context is already canceled
 	if ctx.Err() != nil {
 		api.clientCanceledResponse(w, r, ctx.Err())
 		return

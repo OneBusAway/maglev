@@ -11,7 +11,7 @@ import (
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Check if context is already cancelled
+	// Check if context is already canceled
 	if ctx.Err() != nil {
 		api.clientCanceledResponse(w, r, ctx.Err())
 		return

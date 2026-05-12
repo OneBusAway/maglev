@@ -162,7 +162,7 @@ func TestParallelRealtimeUpdatesWithContextCancellation(t *testing.T) {
 	elapsed := time.Since(start)
 
 	// Should return quickly due to context cancellation
-	assert.Less(t, elapsed, 150*time.Millisecond, "Should return quickly when context is cancelled")
+	assert.Less(t, elapsed, 150*time.Millisecond, "Should return quickly when context is canceled")
 }
 
 func TestRealTimeDataConsistency(t *testing.T) {

@@ -510,7 +510,7 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	t.Run("cancelled context should be handled gracefully", func(t *testing.T) {
+	t.Run("canceled context should be handled gracefully", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "/api/where/block/25_1.json?key=TEST", nil)
 		require.NoError(t, err)
 

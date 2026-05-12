@@ -678,7 +678,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 				}
 				// Only match route-level entities that have no stop or trip restriction.
 				// Entities with {routeId + stopId} are stop-specific alerts and are filed
-				// in byStop only (matching Java's inverted index bucket behaviour).
+				// in byStop only (matching Java's inverted index bucket behavior).
 				if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seenRoute[*entity.RouteID] {
 					seenRoute[*entity.RouteID] = true
 					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], alert)

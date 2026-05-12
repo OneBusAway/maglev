@@ -122,7 +122,7 @@ func TestHandlerLockSafety(t *testing.T) {
 			for {
 				select {
 				case <-readerCtx.Done():
-					t.Log("cancelled reader context for reader", id)
+					t.Log("canceled reader context for reader", id)
 					return
 				default:
 					req, err := http.NewRequestWithContext(readerCtx, "GET", url, nil)

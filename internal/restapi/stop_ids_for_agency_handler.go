@@ -26,7 +26,7 @@ func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check if context is already cancelled
+	// Check if context is already canceled
 	if ctx.Err() != nil {
 		api.clientCanceledResponse(w, r, ctx.Err())
 		return

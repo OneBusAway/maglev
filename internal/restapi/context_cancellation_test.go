@@ -72,8 +72,8 @@ func TestContextCancellationHandling(t *testing.T) {
 			// Execute the request
 			mux.ServeHTTP(w, req)
 
-			// The request should either complete normally or be cancelled
-			// If cancelled, we expect a timeout or cancellation error response
+			// The request should either complete normally or be canceled
+			// If canceled, we expect a timeout or cancellation error response
 			statusCode := w.Code
 
 			// Valid responses: 200 (completed), 401 (API validation), 500 (error), or timeout-related
@@ -136,12 +136,12 @@ func TestContextCancellationDuringDatabaseQueries(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	t.Run("cancelled context in database query should be handled", func(t *testing.T) {
-		// Create a context that's already cancelled
+	t.Run("canceled context in database query should be handled", func(t *testing.T) {
+		// Create a context that's already canceled
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		// Try to execute a database query with cancelled context
+		// Try to execute a database query with canceled context
 		_, err := api.GtfsManager.GtfsDB.Queries.ListAgencies(ctx)
 
 		// The query should either succeed (if fast enough) or return a context error
