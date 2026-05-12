@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
 
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -172,7 +173,7 @@ func verifyReferences(t *testing.T, references map[string]any) {
 }
 
 func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)

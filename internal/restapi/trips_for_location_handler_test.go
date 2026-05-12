@@ -8,10 +8,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -107,7 +108,7 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_ReferencesContainStopsAndRoutes(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -186,7 +187,7 @@ func TestTripsForLocationHandler_ReferencesContainStopsAndRoutes(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_ScheduleInclusion(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -256,7 +257,7 @@ func TestTripsForLocationMissingBothLatAndLon(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_StopIDsAreCombined(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -284,7 +285,7 @@ func TestTripsForLocationHandler_StopIDsAreCombined(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_OrphanedStopsNotInResponse(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -312,7 +313,7 @@ func TestTripsForLocationHandler_OrphanedStopsNotInResponse(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_AgenciesExistForAllRoutes(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -354,7 +355,7 @@ func TestTripsForLocationHandler_AgenciesExistForAllRoutes(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_StopDirectionsAreStrings(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -388,7 +389,7 @@ func TestTripsForLocationHandler_StopDirectionsAreStrings(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
