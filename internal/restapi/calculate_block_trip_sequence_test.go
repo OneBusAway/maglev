@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"cmp"
-	"context"
 	"math"
 	"slices"
 	"testing"

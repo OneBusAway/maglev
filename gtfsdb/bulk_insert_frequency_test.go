@@ -1,7 +1,6 @@
 package gtfsdb
 
 import (
-	"context"
 	"testing"
 	"time"
 

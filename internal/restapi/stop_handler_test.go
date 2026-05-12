@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"net/http"
 	"testing"
 

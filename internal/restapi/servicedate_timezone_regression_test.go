@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"

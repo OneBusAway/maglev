@@ -109,12 +109,12 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	_, calc := getSharedTestComponents(t)
 
 	// First call: precomputed direction "NE" from DB should be recognized
-	result := calc.CalculateStopDirection(context.Background(), "stop-1", nulls.String("NE"))
+	result := calc.CalculateStopDirection(t.Context(), "stop-1", nulls.String("NE"))
 	assert.Equal(t, "NE", result, "should recognize compass abbreviation NE from precomputed direction")
 
 	// Verify that a stop with no GTFS direction falls through to computeFromShapes,
 	// gets an empty result (no data in cache for nonexistent stop), and caches the empty result.
-	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{})
+	result = calc.CalculateStopDirection(t.Context(), "nonexistent-stop", sql.NullString{})
 	assert.Equal(t, "", result, "should return empty for stop with no direction data")
 
 	// The empty result should be cached (negative cache) — verify via sync.Map
@@ -123,7 +123,7 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	assert.Equal(t, "", cached.(string), "cached value should be empty string")
 
 	// Second call for same stop should return from cache without recomputation
-	result = calc.CalculateStopDirection(context.Background(), "nonexistent-stop", sql.NullString{})
+	result = calc.CalculateStopDirection(t.Context(), "nonexistent-stop", sql.NullString{})
 	assert.Equal(t, "", result, "second call should return cached empty result")
 }
 
