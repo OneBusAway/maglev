@@ -4,7 +4,6 @@ run:
   build-tags:
     - sqlite_fts5
     - sqlite_math_functions
-    - integration
   allow-parallel-runners: true
 linters:
   default: none
