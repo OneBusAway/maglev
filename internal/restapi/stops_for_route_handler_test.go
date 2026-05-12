@@ -16,6 +16,7 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
@@ -64,15 +65,7 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	assert.Len(t, inbound.StopIds, 22)
 
 	refs := model.Data.References
-	require.Len(t, refs.Agencies, 1)
-	agency := refs.Agencies[0]
-	assert.Equal(t, testdata.Raba.ID, agency.ID)
-	assert.Equal(t, testdata.Raba.Name, agency.Name)
-	assert.Equal(t, testdata.Raba.URL, agency.URL)
-	assert.Equal(t, testdata.Raba.Timezone, agency.Timezone)
-	assert.Equal(t, testdata.Raba.Lang, agency.Lang)
-	assert.Equal(t, testdata.Raba.Phone, agency.Phone)
-	assert.Equal(t, testdata.Raba.PrivateService, agency.PrivateService)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, refs.Agencies)
 
 	assert.Len(t, refs.Routes, len(testdata.RabaRoutes))
 	assert.Len(t, refs.Stops, 39)
@@ -90,7 +83,7 @@ func TestStopsForRouteNoDuplicateStopGroups(t *testing.T) {
 
 	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
 
-	require.Len(t, model.Data.Entry.StopGroupings, 1, "expected exactly one stopGrouping")
+	require.Len(t, model.Data.Entry.StopGroupings, 1)
 	stopGroups := model.Data.Entry.StopGroupings[0].StopGroups
 	require.Len(t, stopGroups, 2, "expected exactly 2 stop groups (one per direction)")
 
