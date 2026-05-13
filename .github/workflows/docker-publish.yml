@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v6
       - name: Check if build is needed
         id: check
+        if: github.event_name == 'push'
         run: |
           LATEST_SHA=$(git ls-remote origin refs/heads/main | awk '{print $1}')
           if [ "${{ github.sha }}" != "$LATEST_SHA" ]; then
