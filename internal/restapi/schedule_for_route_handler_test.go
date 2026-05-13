@@ -43,9 +43,9 @@ func assertScheduleErr(t *testing.T, resp *http.Response, model ScheduleForRoute
 	assert.Equal(t, wantText, model.Text)
 }
 
-func laDate(t *testing.T, ymd string) time.Time {
+func agencyDate(t *testing.T, ymd string) time.Time {
 	t.Helper()
-	loc, err := time.LoadLocation("America/Los_Angeles")
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
 	require.NoError(t, err)
 	d, err := time.ParseInLocation("2006-01-02", ymd, loc)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestScheduleForRouteHandler(t *testing.T) {
 
 		assertScheduleOK(t, resp, model)
 
-		expectedScheduleDate := laDate(t, "2025-06-12")
+		expectedScheduleDate := agencyDate(t, "2025-06-12")
 
 		entry := model.Data.Entry
 		assert.Equal(t, routeID, entry.RouteID)
@@ -115,7 +115,7 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 		assertScheduleOK(t, resp, model)
 
 		// Clock is 2025-06-12 12:00 UTC = 2025-06-12 05:00 PDT, so start of day in LA is 2025-06-12.
-		expectedScheduleDate := laDate(t, "2025-06-12")
+		expectedScheduleDate := agencyDate(t, "2025-06-12")
 		assert.Equal(t, expectedScheduleDate.UnixMilli(), model.Data.Entry.ScheduleDate)
 	})
 
