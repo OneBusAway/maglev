@@ -509,9 +509,11 @@ func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testi
 	assert.True(t, found, "expected situation with id %q in references.situations", alertID)
 }
 
-// createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files
-func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
-	ctx := t.Context()
+// createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served from local files.
+// The provided clock dictates the time used by the API; pass clock.RealClock{} for wall-clock behavior
+// or a clock.MockClock to deterministically place tests inside the RABA service window.
+func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func()) {
+	ctx := context.Background()
 
 	// Create HTTP server to serve GTFS-RT files
 	mux := http.NewServeMux()
@@ -575,7 +577,7 @@ func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 		GtfsConfig:          gtfsConfig,
 		GtfsManager:         gtfsManager,
 		DirectionCalculator: dirCalc,
-		Clock:               clock.RealClock{},
+		Clock:               c,
 	}
 
 	api := NewRestAPI(application)
@@ -591,7 +593,7 @@ func createTestApiWithRealTimeData(t testing.TB) (*RestAPI, func()) {
 }
 
 func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	agencies := mustGetAgencies(t, api)
