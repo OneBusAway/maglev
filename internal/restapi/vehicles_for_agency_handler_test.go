@@ -513,7 +513,7 @@ func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testi
 // The provided clock dictates the time used by the API; pass clock.RealClock{} for wall-clock behavior
 // or a clock.MockClock to deterministically place tests inside the RABA service window.
 func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func()) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create HTTP server to serve GTFS-RT files
 	mux := http.NewServeMux()
