@@ -1415,13 +1415,20 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 					continue
 				}
 
+				layoverStart := int64(lastStopCurrent.ArrivalTime)
+				layoverEnd := int64(firstStopNext.DepartureTime)
+
+				if layoverStart > layoverEnd {
+					continue
+				}
+
 				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
 					BlockID:       key.blockID,
 					ServiceID:     key.serviceID,
 					RouteID:       nextTrip.Route.Id,
 					LayoverStopID: lastStopCurrent.Stop.Id,
-					LayoverStart:  int64(lastStopCurrent.DepartureTime),
-					LayoverEnd:    int64(firstStopNext.ArrivalTime),
+					LayoverStart:  layoverStart,
+					LayoverEnd:    layoverEnd,
 					NextTripID:    nextTrip.ID,
 				})
 				if err != nil {
