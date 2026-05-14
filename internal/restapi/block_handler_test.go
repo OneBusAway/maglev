@@ -14,11 +14,17 @@ import (
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
+// blockURL builds the /block endpoint URL with key=TEST baked in. Tests that
+// want a different key (auth checks) build their URL inline.
+func blockURL(blockID string) string {
+	return "/api/where/block/" + blockID + ".json?key=TEST"
+}
+
 func TestBlockHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[BlockEntryResponse](t, api, "/api/where/block/25_1.json?key=TEST")
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
@@ -82,7 +88,7 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[BlockEntryResponse](t, api, "/api/where/block/25_1.json?key=TEST")
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotEmpty(t, model.Data.Entry.Configurations)
@@ -112,7 +118,7 @@ func TestBlockHandlerNonExistentBlock(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[BlockEntryResponse](t, api, "/api/where/block/25_nonexistent.json?key=TEST")
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_nonexistent"))
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
@@ -130,10 +136,10 @@ func TestBlockHandlerInvalidBlockID(t *testing.T) {
 		endpoint       string
 		expectedStatus int
 	}{
-		{"Empty block ID", "/api/where/block/.json?key=TEST", http.StatusBadRequest},
-		{"Missing agency separator", "/api/where/block/invalidblock.json?key=TEST", http.StatusBadRequest},
-		{"Disallowed characters in code ID", "/api/where/block/25_@%23$.json?key=TEST", http.StatusBadRequest},
-		{"Only underscore", "/api/where/block/_.json?key=TEST", http.StatusBadRequest},
+		{"Empty block ID", blockURL(""), http.StatusBadRequest},
+		{"Missing agency separator", blockURL("invalidblock"), http.StatusBadRequest},
+		{"Disallowed characters in code ID", blockURL("25_@%23$"), http.StatusBadRequest},
+		{"Only underscore", blockURL("_"), http.StatusBadRequest},
 	}
 
 	for _, tc := range testCases {
@@ -154,18 +160,15 @@ func TestBlockHandlerReferencesConsistency(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[BlockEntryResponse](t, api, "/api/where/block/25_1.json?key=TEST")
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	entry := model.Data.Entry
-	if len(entry.Configurations) == 0 || len(entry.Configurations[0].Trips) == 0 {
-		t.Skip("no trips in block to verify")
-	}
+	require.NotEmpty(t, entry.Configurations)
+	require.NotEmpty(t, entry.Configurations[0].Trips)
 	blockStopTimes := entry.Configurations[0].Trips[0].BlockStopTimes
-	if len(blockStopTimes) == 0 {
-		t.Skip("no block stop times to verify")
-	}
+	require.NotEmpty(t, blockStopTimes)
 	stopID := blockStopTimes[0].StopTime.StopID
 
 	refStopIDs := make(map[string]bool, len(model.Data.References.Stops))
@@ -199,7 +202,7 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	req, err := http.NewRequest("GET", "/api/where/block/25_1.json?key=TEST", nil)
+	req, err := http.NewRequest("GET", blockURL("25_1"), nil)
 	require.NoError(t, err)
 	// Use a deadline in the past — context.Err() is DeadlineExceeded immediately,
 	// no timer resolution dependency (avoids Windows ~15ms minimum sleep issue).
@@ -218,10 +221,9 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 func BenchmarkBlockHandler(b *testing.B) {
 	api := createTestApi(b)
 	defer api.Shutdown()
-	endpoint := "/api/where/block/25_1.json?key=TEST"
+	endpoint := blockURL("25_1")
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = callAPIHandler[BlockEntryResponse](b, api, endpoint)
 	}
 }
