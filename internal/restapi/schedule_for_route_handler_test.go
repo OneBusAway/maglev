@@ -12,23 +12,58 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// scheduleForRouteFixedClock is the mock-clock instant used across schedule-for-route
+// tests; 2025-06-12 12:00 UTC corresponds to a known service date in the RABA test data.
+var scheduleForRouteFixedClock = time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC)
+
+func newScheduleForRouteAPI(t *testing.T) *RestAPI {
+	t.Helper()
+	return createTestApiWithClock(t, clock.NewMockClock(scheduleForRouteFixedClock))
+}
+
+func scheduleForRouteURL(routeID, date string) string {
+	u := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST"
+	if date != "" {
+		u += "&date=" + date
+	}
+	return u
+}
+
+func assertScheduleOK(t *testing.T, resp *http.Response, model ScheduleForRouteResponse) {
+	t.Helper()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+}
+
+func assertScheduleErr(t *testing.T, resp *http.Response, model ScheduleForRouteResponse, wantCode int, wantText string) {
+	t.Helper()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, wantCode, model.Code)
+	assert.Equal(t, wantText, model.Text)
+}
+
+func agencyDate(t *testing.T, ymd string) time.Time {
+	t.Helper()
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	d, err := time.ParseInLocation("2006-01-02", ymd, loc)
+	require.NoError(t, err)
+	return d
+}
+
 func TestScheduleForRouteHandler(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, clk)
+	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
 
 	routeID := testdata.Route1.ID
 
 	t.Run("Valid route", func(t *testing.T) {
-		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, "/api/where/schedule-for-route/"+routeID+".json?key=TEST&date=2025-06-12")
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
 
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, http.StatusOK, model.Code)
-		assert.Equal(t, "OK", model.Text)
+		assertScheduleOK(t, resp, model)
 
-		loc, err := time.LoadLocation("America/Los_Angeles")
-		require.NoError(t, err)
-		expectedScheduleDate, _ := time.ParseInLocation("2006-01-02", "2025-06-12", loc)
+		expectedScheduleDate := agencyDate(t, "2025-06-12")
 
 		entry := model.Data.Entry
 		assert.Equal(t, routeID, entry.RouteID)
@@ -62,40 +97,47 @@ func TestScheduleForRouteHandler(t *testing.T) {
 	})
 
 	t.Run("Invalid route", func(t *testing.T) {
-		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, "/api/where/schedule-for-route/"+routeID+"notexist.json?key=TEST")
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID+"notexist", ""))
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 		assert.Equal(t, http.StatusNotFound, model.Code)
 	})
 }
 
 func TestScheduleForRouteHandlerDateParam(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, clk)
+	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
 
 	routeID := testdata.Route1.ID
 
 	t.Run("No date param uses current date", func(t *testing.T) {
-		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST"
-		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, ""))
 
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, http.StatusOK, model.Code)
-		assert.Equal(t, "OK", model.Text)
+		assertScheduleOK(t, resp, model)
 
 		// Clock is 2025-06-12 12:00 UTC = 2025-06-12 05:00 PDT, so start of day in LA is 2025-06-12.
-		loc, err := time.LoadLocation("America/Los_Angeles")
-		require.NoError(t, err)
-		expectedScheduleDate, _ := time.ParseInLocation("2006-01-02", "2025-06-12", loc)
+		expectedScheduleDate := agencyDate(t, "2025-06-12")
 		assert.Equal(t, expectedScheduleDate.UnixMilli(), model.Data.Entry.ScheduleDate)
 	})
 
-	t.Run("Invalid date format", func(t *testing.T) {
-		endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025/06/12"
-		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+	t.Run("Invalid date format returns ServiceDateOutOfRange", func(t *testing.T) {
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025/06/12"))
+		assertScheduleErr(t, resp, model, 510, "ServiceDateOutOfRange")
+	})
 
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-		assert.Equal(t, http.StatusBadRequest, model.Code)
+	t.Run("Epoch ms date parsed as Java OBA compatibility", func(t *testing.T) {
+		// date=0 → epoch start (1970-01-01 00:00:00 UTC) → before any RABA service → NoServiceThatDay
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "0"))
+		assertScheduleErr(t, resp, model, 510, "NoServiceThatDay")
+	})
+
+	t.Run("Epoch ms for valid service date returns schedule", func(t *testing.T) {
+		// 1749711600000 = 2025-06-12 00:00:00 PDT (America/Los_Angeles), which has RABA service.
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "1749711600000"))
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.NotEqual(t, "NoServiceThatDay", model.Text)
+		assert.NotEmpty(t, model.Data.Entry.StopTripGroupings)
 	})
 }
 
@@ -104,15 +146,13 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 // uses only c_868_b_79978_d_31, while several other services are active on
 // the same weekday — the response must include only the route-scoped set.
 func TestScheduleForRouteHandler_ServiceIDsScopedToRoute(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, clk)
+	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
 
 	routeID := utils.FormCombinedID("25", "1885")
 	expectedServiceID := utils.FormCombinedID("25", "c_868_b_79978_d_31")
 
-	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
-	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -121,13 +161,11 @@ func TestScheduleForRouteHandler_ServiceIDsScopedToRoute(t *testing.T) {
 }
 
 func TestScheduleForRouteHandler_DirectionIDMatchesCSV(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, clk)
+	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
 
 	routeID := utils.FormCombinedID("25", "1885")
-	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
-	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	groupings := model.Data.Entry.StopTripGroupings
@@ -151,13 +189,11 @@ func TestScheduleForRouteHandler_DirectionIDMatchesCSV(t *testing.T) {
 }
 
 func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, clk)
+	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
 
 	routeID := testdata.Route1.ID
-	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
-	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotEmpty(t, model.Data.References.Agencies)
@@ -168,13 +204,11 @@ func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
 }
 
 func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, clk)
+	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
 
 	routeID := testdata.Route1.ID
-	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=2025-06-12"
-	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -183,28 +217,68 @@ func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
 	}
 }
 
-func TestScheduleForRouteHandler_NoServiceOrOutOfRange(t *testing.T) {
+func TestScheduleForRouteHandler_ServiceDateOutOfRange(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
 	routeID := testdata.Route1.ID
-	futureDate := "2099-01-01"
-	endpoint := "/api/where/schedule-for-route/" + routeID + ".json?key=TEST&date=" + futureDate
-	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, "OK", model.Text)
+	t.Run("Future date beyond feed returns ServiceDateOutOfRange", func(t *testing.T) {
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2099-01-01"))
+		assertScheduleErr(t, resp, model, 510, "ServiceDateOutOfRange")
+		assert.Empty(t, model.Data.Entry.RouteID, "data.entry should be absent for ServiceDateOutOfRange")
+	})
+
+	t.Run("Garbage date string returns ServiceDateOutOfRange", func(t *testing.T) {
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "not-a-date"))
+		assertScheduleErr(t, resp, model, 510, "ServiceDateOutOfRange")
+	})
+}
+
+func TestScheduleForRouteHandler_NoServiceThatDay(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+
+	t.Run("Early date before feed returns NoServiceThatDay with references", func(t *testing.T) {
+		// 1970-01-01 is before any RABA calendar data but not after the feed end date.
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "1970-01-01"))
+
+		assertScheduleErr(t, resp, model, 510, "NoServiceThatDay")
+
+		entry := model.Data.Entry
+		assert.NotEmpty(t, entry.RouteID, "routeId should be present in NoServiceThatDay")
+		assert.Empty(t, entry.ServiceIDs)
+		assert.Empty(t, entry.StopTripGroupings)
+
+		refs := model.Data.References
+		assert.NotEmpty(t, refs.Agencies, "references.agencies should be populated for NoServiceThatDay")
+		assert.NotEmpty(t, refs.Routes, "references.routes should be populated for NoServiceThatDay")
+	})
+}
+
+func TestScheduleForRouteHandler_TripReferenceCombinedIDs(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.References.Trips)
+
+	for _, tr := range model.Data.References.Trips {
+		assert.Contains(t, tr.RouteID, "_", "trip reference routeId must be a combined ID")
+		assert.Contains(t, tr.ServiceID, "_", "trip reference serviceId must be a combined ID")
+	}
 }
 
 func TestScheduleForRouteHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	malformedID := "1110"
-	endpoint := "/api/where/schedule-for-route/" + malformedID + ".json?key=TEST"
-
-	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, endpoint)
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL("1110", ""))
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 	assert.Equal(t, http.StatusBadRequest, model.Code)

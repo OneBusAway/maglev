@@ -16,166 +16,81 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
 func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25_151.json?key=TEST")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
-	assert.Equal(t, 2, model.Version)
-	assert.Greater(t, model.CurrentTime, int64(0))
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
+	entry := model.Data.Entry
+	assert.Equal(t, testdata.Route1.ID, entry.RouteID)
 
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "25_151", entry["routeId"])
+	assert.Len(t, entry.Polylines, 2)
+	assert.Equal(t, 250, entry.Polylines[0].Length)
+	assert.Equal(t, "", entry.Polylines[0].Levels)
+	assert.Contains(t, entry.Polylines[0].Points, "exhwFlt|")
+	assert.Equal(t, 250, entry.Polylines[1].Length)
+	assert.Equal(t, "", entry.Polylines[1].Levels)
+	assert.Contains(t, entry.Polylines[1].Points, "exhwFlt|")
 
-	polylines, ok := entry["polylines"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 2, len(polylines))
+	assert.Len(t, entry.StopIds, 39)
 
-	firstPolyline, ok := polylines[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, 250, int(firstPolyline["length"].(float64)))
-	assert.Equal(t, "", firstPolyline["levels"])
-	assert.Contains(t, firstPolyline["points"], "exhwFlt|")
+	require.Len(t, entry.StopGroupings, 1)
+	grouping := entry.StopGroupings[0]
+	assert.True(t, grouping.Ordered)
+	assert.Equal(t, "direction", grouping.Type)
 
-	secondPolyline, ok := polylines[1].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, 250, int(secondPolyline["length"].(float64)))
-	assert.Equal(t, "", secondPolyline["levels"])
-	assert.Contains(t, secondPolyline["points"], "exhwFlt|")
+	require.Len(t, grouping.StopGroups, 2)
 
-	stopIds, ok := entry["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 39, len(stopIds))
-	// Verify stopGroupings
-	stopGroupings, ok := entry["stopGroupings"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(stopGroupings))
+	outbound := grouping.StopGroups[0]
+	assert.Equal(t, "0", outbound.ID)
+	assert.Equal(t, "Shasta Lake", outbound.Name.Name)
+	assert.Equal(t, "destination", outbound.Name.Type)
+	assert.Equal(t, []string{"Shasta Lake"}, outbound.Name.Names)
+	assert.Len(t, outbound.StopIds, 21)
+	assert.Len(t, outbound.Polylines, 1)
 
-	grouping, ok := stopGroupings[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, true, grouping["ordered"])
-	assert.Equal(t, "direction", grouping["type"])
+	inbound := grouping.StopGroups[1]
+	assert.Equal(t, "1", inbound.ID)
+	assert.Equal(t, "Shasta Lake", inbound.Name.Name)
+	assert.Equal(t, "destination", inbound.Name.Type)
+	assert.Len(t, inbound.StopIds, 22)
 
-	stopGroups, ok := grouping["stopGroups"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 2, len(stopGroups))
+	refs := model.Data.References
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, refs.Agencies)
 
-	outboundGroup, ok := stopGroups[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "0", outboundGroup["id"])
-
-	outboundName, ok := outboundGroup["name"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "Shasta Lake", outboundName["name"])
-	assert.Equal(t, "destination", outboundName["type"])
-
-	outboundNames, ok := outboundName["names"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(outboundNames))
-	assert.Equal(t, "Shasta Lake", outboundNames[0])
-
-	outboundStopIds, ok := outboundGroup["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 21, len(outboundStopIds))
-
-	outboundPolylines, ok := outboundGroup["polylines"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(outboundPolylines))
-
-	inboundGroup, ok := stopGroups[1].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "1", inboundGroup["id"])
-
-	inboundName, ok := inboundGroup["name"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "Shasta Lake", inboundName["name"])
-	assert.Equal(t, "destination", inboundName["type"])
-
-	inboundStopIds, ok := inboundGroup["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 22, len(inboundStopIds))
-
-	// Verify references
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	// Verify agencies
-	agencies, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(agencies))
-
-	agency, ok := agencies[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "25", agency["id"])
-	assert.Equal(t, "Redding Area Bus Authority", agency["name"])
-	assert.Equal(t, "http://www.rabaride.com/", agency["url"])
-	assert.Equal(t, "America/Los_Angeles", agency["timezone"])
-	assert.Equal(t, "en", agency["lang"])
-	assert.Equal(t, "530-241-2877", agency["phone"])
-	assert.Equal(t, false, agency["privateService"])
-
-	routes, ok := refs["routes"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 13, len(routes))
-
-	// Verify stops
-	stops, ok := refs["stops"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 39, len(stops))
-	require.True(t, ok)
-
-	// Verify empty arrays
-	situations, ok := refs["situations"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 0, len(situations))
-
-	stopTimes, ok := refs["stopTimes"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 0, len(stopTimes))
-
-	trips, ok := refs["trips"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 0, len(trips))
+	assert.Len(t, refs.Routes, len(testdata.RabaRoutes))
+	assert.Len(t, refs.Stops, 39)
+	assert.Empty(t, refs.Situations)
+	assert.Empty(t, refs.StopTimes)
+	assert.Empty(t, refs.Trips)
 }
 
 // TestStopsForRouteNoDuplicateStopGroups guards against the regression where
 // trips with different headsigns in the same direction produced duplicate group
 // IDs (e.g. "0", "0", "1" instead of "0", "1").
 func TestStopsForRouteNoDuplicateStopGroups(t *testing.T) {
-	_, _, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25_151.json?key=TEST")
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
 
-	stopGroupings, ok := entry["stopGroupings"].([]any)
-	require.True(t, ok)
-	require.Equal(t, 1, len(stopGroupings), "expected exactly one stopGrouping")
+	require.Len(t, model.Data.Entry.StopGroupings, 1)
+	stopGroups := model.Data.Entry.StopGroupings[0].StopGroups
+	require.Len(t, stopGroups, 2, "expected exactly 2 stop groups (one per direction)")
 
-	grouping, ok := stopGroupings[0].(map[string]any)
-	require.True(t, ok)
-
-	stopGroups, ok := grouping["stopGroups"].([]any)
-	require.True(t, ok)
-	require.Equal(t, 2, len(stopGroups), "expected exactly 2 stop groups (one per direction)")
-
-	// Verify IDs are unique and normalized to "0" and "1"
 	ids := make(map[string]bool)
 	for _, g := range stopGroups {
-		group, ok := g.(map[string]any)
-		require.True(t, ok)
-		id, ok := group["id"].(string)
-		require.True(t, ok)
-		assert.False(t, ids[id], "duplicate stop group ID: %s", id)
-		ids[id] = true
+		assert.False(t, ids[g.ID], "duplicate stop group ID: %s", g.ID)
+		ids[g.ID] = true
 	}
 	assert.True(t, ids["0"], "expected stop group with id '0'")
 	assert.True(t, ids["1"], "expected stop group with id '1'")
@@ -217,12 +132,10 @@ func TestStopsForRouteHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	malformedID := "1110"
-	endpoint := "/api/where/stops-for-route/" + malformedID + ".json?key=TEST"
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/1110.json?key=TEST")
 
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
 // createTestApiWithNullDirectionID creates a RestAPI backed by a minimal in-memory
@@ -302,35 +215,15 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 func TestStopsForRouteNullDirectionID(t *testing.T) {
 	api := createTestApiWithNullDirectionID(t)
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-route/agencyA_routeA.json?key=TEST")
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/agencyA_routeA.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.StopIds, "stops-for-route must return stops even when direction_id is NULL")
 
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-
-	stopIds, ok := entry["stopIds"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, stopIds, "stops-for-route must return stops even when direction_id is NULL")
-
-	stopGroupings, ok := entry["stopGroupings"].([]any)
-	require.True(t, ok)
-	require.Len(t, stopGroupings, 1)
-
-	grouping, ok := stopGroupings[0].(map[string]any)
-	require.True(t, ok)
-
-	stopGroups, ok := grouping["stopGroups"].([]any)
-	require.True(t, ok)
+	require.Len(t, entry.StopGroupings, 1)
+	stopGroups := entry.StopGroupings[0].StopGroups
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
-
-	group, ok := stopGroups[0].(map[string]any)
-	require.True(t, ok)
-
-	groupStopIds, ok := group["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Len(t, groupStopIds, 2, "expected both stops to appear in the stop group")
+	assert.Len(t, stopGroups[0].StopIds, 2, "expected both stops to appear in the stop group")
 }

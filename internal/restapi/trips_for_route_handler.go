@@ -210,7 +210,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
+		blockIDNullStr := nulls.String(blockID)
 
 		for _, sd := range serviceDays {
 			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{

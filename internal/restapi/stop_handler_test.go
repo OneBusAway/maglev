@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"testing"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -171,7 +171,7 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
 		ID:   stopID,
-		Name: sql.NullString{String: "Shared Transit Center", Valid: true},
+		Name: nulls.String("Shared Transit Center"),
 		Lat:  47.6062,
 		Lon:  -122.3321,
 	})
@@ -191,7 +191,7 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID:        routeB_ID,
 		AgencyID:  agencyB,
-		ShortName: sql.NullString{String: "B-Line", Valid: true},
+		ShortName: nulls.String("B-Line"),
 		Type:      3, // Bus
 	})
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID:        routeA_ID,
 		AgencyID:  agencyA,
-		ShortName: sql.NullString{String: "A-Line", Valid: true},
+		ShortName: nulls.String("A-Line"),
 		Type:      3,
 	})
 	require.NoError(t, err)
