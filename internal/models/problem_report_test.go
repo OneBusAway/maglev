@@ -6,17 +6,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestNewProblemReportTrip(t *testing.T) {
 	dbReport := gtfsdb.ProblemReportsTrip{
 		ID:            1,
 		TripID:        "trip-1",
-		ServiceDate:   sql.NullString{String: "20230101", Valid: true},
-		VehicleID:     sql.NullString{String: "veh-1", Valid: true},
-		StopID:        sql.NullString{String: "stop-1", Valid: true},
-		Code:          sql.NullString{String: "code-1", Valid: true},
-		UserComment:   sql.NullString{String: "late", Valid: true},
+		ServiceDate:   nulls.String("20230101"),
+		VehicleID:     nulls.String("veh-1"),
+		StopID:        nulls.String("stop-1"),
+		Code:          nulls.String("code-1"),
+		UserComment:   nulls.String("late"),
 		UserOnVehicle: sql.NullInt64{Int64: 1, Valid: true},
 	}
 	apiReport := NewProblemReportTrip(dbReport)
@@ -32,7 +33,7 @@ func TestNewProblemReportStop(t *testing.T) {
 	dbReport := gtfsdb.ProblemReportsStop{
 		ID:          2,
 		StopID:      "stop-2",
-		UserComment: sql.NullString{String: "dirty", Valid: true},
+		UserComment: nulls.String("dirty"),
 	}
 	apiReport := NewProblemReportStop(dbReport)
 

@@ -7,9 +7,6 @@ import (
 )
 
 func TestNullHelpersCoverage(t *testing.T) {
-	assert.True(t, ToNullString("val").Valid)
-	assert.False(t, ToNullString("").Valid)
-
 	f := ParseNullFloat("1.23")
 	assert.True(t, f.Valid)
 	assert.Equal(t, 1.23, f.Float64)

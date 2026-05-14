@@ -40,3 +40,18 @@ func WheelchairBoardingOrUnknown(ni sql.NullInt64) gtfs.WheelchairBoarding {
 	}
 	return gtfs.WheelchairBoarding_NotSpecified
 }
+
+func String(value string) sql.NullString {
+	return sql.NullString{
+		String: value,
+		Valid:  true,
+	}
+}
+
+// NonEmptyString creates a sql.NullString from the given string, converting empty values to null.
+func NonEmptyString(value string) sql.NullString {
+	return sql.NullString{
+		String: value,
+		Valid:  value != "",
+	}
+}

@@ -5,12 +5,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 // Benchmark arrivals endpoint (hot path).
 func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b)
+	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
 	defer cleanup()
 
 	agencies := mustGetAgencies(b, api)
@@ -63,7 +64,7 @@ func BenchmarkStopsForLocation(b *testing.B) {
 
 // Benchmark vehicles-for-agency with real-time data.
 func BenchmarkVehiclesForAgency(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b)
+	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
 	defer cleanup()
 
 	agencies := mustGetAgencies(b, api)
@@ -92,7 +93,7 @@ func BenchmarkVehiclesForAgency(b *testing.B) {
 
 // Benchmark trip-details with real-time data.
 func BenchmarkTripDetails(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b)
+	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
 	defer cleanup()
 
 	agencies := mustGetAgencies(b, api)
