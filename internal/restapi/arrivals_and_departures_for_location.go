@@ -73,6 +73,25 @@ func newLocationArrivalsState() *locationArrivalsState {
 	}
 }
 
+type arrivalContext struct {
+	st                     gtfsdb.GetStopTimesForStopInWindowRow
+	serviceMidnight        time.Time
+	scheduledArrivalTime   time.Time
+	scheduledDepartureTime time.Time
+	predictedArrivalTime   time.Time
+	predictedDepartureTime time.Time
+	predicted              bool
+	vehicleID              string
+	tripStatus             *models.TripStatus
+	distanceFromStop       float64
+	numberOfStopsAway      int
+	lastUpdateTime         time.Time
+	arrivalStatus          string
+	totalStopsInTrip       int
+	blockTripSequence      int
+	situationIDs           []string
+}
+
 // Error message constants shared by the parameter-parsing helpers below.
 const (
 	errMustBeValidInteger       = "must be a valid integer"
@@ -552,7 +571,6 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 		}
 
 		st := ast.GetStopTimesForStopInWindowRow
-		serviceMidnight := ast.ServiceDate
 
 		route, routeOK := routesLookup[st.RouteID]
 		if !routeOK {
@@ -568,159 +586,189 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 		tCopy := trip
 		state.tripIDSet[trip.ID] = &tCopy
 
-		scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime))
-		scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime))
-
-		var (
-			predictedArrivalTime   time.Time
-			predictedDepartureTime time.Time
-			predicted              = false
-			vehicleID              string
-			tripStatus             *models.TripStatus
-			distanceFromStop       = 0.0
-			numberOfStopsAway      = 0
-			lastUpdateTime         time.Time
-			arrivalStatus          = "default"
-		)
-
-		vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
-		if vehicle != nil && vehicle.Trip != nil && vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
-		}
-
-		predArr, predDep, isPredicted := api.getPredictedTimes(
-			st.TripID, stopCode, int64(st.StopSequence),
-			scheduledArrivalTime, scheduledDepartureTime,
-		)
-		if isPredicted {
-			predicted = true
-			predictedArrivalTime = predArr
-			predictedDepartureTime = predDep
-		}
-
-		if vehicle != nil {
-			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, vehicle, serviceMidnight, stopQueryTime)
-			if statusErr != nil {
-				api.Logger.Warn("BuildTripStatus failed", "tripID", st.TripID, "error", statusErr)
-			}
-			if status != nil {
-				tripStatus = status
-
-				if !predicted && status.Predicted {
-					dev := time.Duration(status.ScheduleDeviation) * time.Second
-					predictedArrivalTime = scheduledArrivalTime.Add(dev)
-					predictedDepartureTime = scheduledDepartureTime.Add(dev)
-					predicted = true
-				}
-
-				if predicted {
-					arrivalStatus = arrivalStatusFromDeviation(status.ScheduleDeviation)
-				}
-
-				if status.NextStop != "" {
-					if nsAgency, nsID, nsErr := utils.ExtractAgencyIDAndCodeID(status.NextStop); nsErr == nil {
-						state.stopIDSet[nsID] = true
-						if nsAgency != "" {
-							state.stopAgencyOverride[nsID] = nsAgency
-						}
-					}
-				}
-				if status.ClosestStop != "" {
-					if csAgency, csID, csErr := utils.ExtractAgencyIDAndCodeID(status.ClosestStop); csErr == nil {
-						state.stopIDSet[csID] = true
-						if csAgency != "" {
-							state.stopAgencyOverride[csID] = csAgency
-						}
-					}
-				}
-
-				if vehicle.Position != nil {
-					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, stopQueryTime)
-					nsa := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, stopQueryTime)
-					if nsa != nil {
-						numberOfStopsAway = *nsa
-					} else {
-						numberOfStopsAway = -1
-					}
-				}
-
-				if status.ActiveTripID != "" {
-					if _, atID, atErr := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID); atErr == nil {
-						if activeSeq := api.calculateBlockTripSequence(ctx, atID, serviceMidnight); activeSeq > 0 {
-							status.BlockTripSequence = activeSeq
-						}
-
-						if atID != st.TripID {
-							if _, exists := state.tripIDSet[atID]; !exists {
-								if at, atFetchErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, atID); atFetchErr == nil {
-									atCopy := at
-									state.tripIDSet[at.ID] = &atCopy
-									if ar, arFetchErr := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, at.RouteID); arFetchErr == nil {
-										arCopy := ar
-										state.routeIDSet[ar.ID] = &arCopy
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			lastUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-		}
-
-		totalStopsInTrip := tripStopCountMap[st.TripID]
-		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
-
-		tripAlerts := api.GtfsManager.GetAlertsForTrip(ctx, st.TripID)
-		situationIDs := make([]string, 0, len(tripAlerts))
-		for _, alert := range tripAlerts {
-			if alert.ID == "" {
-				continue
-			}
-			situationIDs = append(situationIDs, alert.ID)
-			if _, seen := state.collectedAlerts[alert.ID]; !seen {
-				state.collectedAlerts[alert.ID] = alert
-			}
-		}
-
-		formattedVehicleID := ""
-		if vehicleID != "" {
-			formattedVehicleID = utils.FormCombinedID(route.AgencyID, vehicleID)
-		}
-
-		rawStopSequence := int(st.StopSequence) - 1
-
-		state.arrivals = append(state.arrivals, *models.NewArrivalAndDeparture(
-			utils.FormCombinedID(route.AgencyID, route.ID),
-			route.ShortName.String,
-			route.LongName.String,
-			utils.FormCombinedID(route.AgencyID, st.TripID),
-			st.TripHeadsign.String,
-			combinedStopID,
-			formattedVehicleID,
-			serviceMidnight,
-			scheduledArrivalTime,
-			scheduledDepartureTime,
-			predictedArrivalTime,
-			predictedDepartureTime,
-			lastUpdateTime,
-			predicted,
-			true,
-			true,
-			rawStopSequence,
-			totalStopsInTrip,
-			numberOfStopsAway,
-			blockTripSequence,
-			distanceFromStop,
-			arrivalStatus,
-			"", "", "",
-			tripStatus,
-			situationIDs,
-		))
+		api.buildSingleArrival(ctx, stopCode, combinedStopID, ast, stopQueryTime, state, route, tripStopCountMap[st.TripID])
 		stopProducedArrival = true
 	}
 
 	return stopProducedArrival, nil
+}
+
+func (api *RestAPI) buildSingleArrival(
+	ctx context.Context,
+	stopCode string,
+	combinedStopID string,
+	ast activeStopTime,
+	stopQueryTime time.Time,
+	state *locationArrivalsState,
+	route gtfsdb.Route,
+	totalStopsInTrip int,
+) {
+	st := ast.GetStopTimesForStopInWindowRow
+	ac := &arrivalContext{
+		st:               st,
+		serviceMidnight:  ast.ServiceDate,
+		totalStopsInTrip: totalStopsInTrip,
+		arrivalStatus:    "default",
+	}
+
+	ac.scheduledArrivalTime = ac.serviceMidnight.Add(time.Duration(ac.st.ArrivalTime))
+	ac.scheduledDepartureTime = ac.serviceMidnight.Add(time.Duration(ac.st.DepartureTime))
+
+	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, ac.st.TripID)
+	if vehicle != nil && vehicle.Trip != nil && vehicle.ID != nil {
+		ac.vehicleID = vehicle.ID.ID
+	}
+
+	api.applyPredictedTimes(ac, stopCode)
+
+	if vehicle != nil {
+		api.applyTripStatus(ctx, ac, route, vehicle, stopQueryTime, stopCode, state)
+	}
+
+	ac.blockTripSequence = api.calculateBlockTripSequence(ctx, ac.st.TripID, ac.serviceMidnight)
+	api.applyAlerts(ctx, ac, state)
+
+	formattedVehicleID := ""
+	if ac.vehicleID != "" {
+		formattedVehicleID = utils.FormCombinedID(route.AgencyID, ac.vehicleID)
+	}
+
+	rawStopSequence := int(ac.st.StopSequence) - 1
+
+	state.arrivals = append(state.arrivals, *models.NewArrivalAndDeparture(
+		utils.FormCombinedID(route.AgencyID, route.ID),
+		route.ShortName.String,
+		route.LongName.String,
+		utils.FormCombinedID(route.AgencyID, ac.st.TripID),
+		ac.st.TripHeadsign.String,
+		combinedStopID,
+		formattedVehicleID,
+		ac.serviceMidnight,
+		ac.scheduledArrivalTime,
+		ac.scheduledDepartureTime,
+		ac.predictedArrivalTime,
+		ac.predictedDepartureTime,
+		ac.lastUpdateTime,
+		ac.predicted,
+		true,
+		true,
+		rawStopSequence,
+		ac.totalStopsInTrip,
+		ac.numberOfStopsAway,
+		ac.blockTripSequence,
+		ac.distanceFromStop,
+		ac.arrivalStatus,
+		"", "", "",
+		ac.tripStatus,
+		ac.situationIDs,
+	))
+}
+
+func (api *RestAPI) applyPredictedTimes(ac *arrivalContext, stopCode string) {
+	predArr, predDep, isPredicted := api.getPredictedTimes(
+		ac.st.TripID, stopCode, int64(ac.st.StopSequence),
+		ac.scheduledArrivalTime, ac.scheduledDepartureTime,
+	)
+	if isPredicted {
+		ac.predicted = true
+		ac.predictedArrivalTime = predArr
+		ac.predictedDepartureTime = predDep
+	}
+}
+
+func (api *RestAPI) applyTripStatus(ctx context.Context, ac *arrivalContext, route gtfsdb.Route, vehicle *gtfs.Vehicle, stopQueryTime time.Time, stopCode string, state *locationArrivalsState) {
+	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, ac.st.TripID, vehicle, ac.serviceMidnight, stopQueryTime)
+	if statusErr != nil {
+		api.Logger.Warn("BuildTripStatus failed", "tripID", ac.st.TripID, "error", statusErr)
+	}
+	if status != nil {
+		ac.tripStatus = status
+
+		if !ac.predicted && status.Predicted {
+			dev := time.Duration(status.ScheduleDeviation) * time.Second
+			ac.predictedArrivalTime = ac.scheduledArrivalTime.Add(dev)
+			ac.predictedDepartureTime = ac.scheduledDepartureTime.Add(dev)
+			ac.predicted = true
+		}
+
+		if ac.predicted {
+			ac.arrivalStatus = arrivalStatusFromDeviation(status.ScheduleDeviation)
+		}
+
+		api.applyTripStatusStops(ac, state)
+
+		if vehicle.Position != nil {
+			ac.distanceFromStop = api.getBlockDistanceToStop(ctx, ac.st.TripID, stopCode, vehicle, stopQueryTime)
+			nsa := api.getNumberOfStopsAway(ctx, ac.st.TripID, int(ac.st.StopSequence), vehicle, stopQueryTime)
+			if nsa != nil {
+				ac.numberOfStopsAway = *nsa
+			} else {
+				ac.numberOfStopsAway = -1
+			}
+		}
+
+		api.applyActiveTrip(ctx, ac, state)
+	}
+	ac.lastUpdateTime = api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
+}
+
+func (api *RestAPI) applyTripStatusStops(ac *arrivalContext, state *locationArrivalsState) {
+	if ac.tripStatus.NextStop != "" {
+		if nsAgency, nsID, nsErr := utils.ExtractAgencyIDAndCodeID(ac.tripStatus.NextStop); nsErr == nil {
+			state.stopIDSet[nsID] = true
+			if nsAgency != "" {
+				state.stopAgencyOverride[nsID] = nsAgency
+			}
+		}
+	}
+	if ac.tripStatus.ClosestStop != "" {
+		if csAgency, csID, csErr := utils.ExtractAgencyIDAndCodeID(ac.tripStatus.ClosestStop); csErr == nil {
+			state.stopIDSet[csID] = true
+			if csAgency != "" {
+				state.stopAgencyOverride[csID] = csAgency
+			}
+		}
+	}
+}
+
+func (api *RestAPI) applyActiveTrip(ctx context.Context, ac *arrivalContext, state *locationArrivalsState) {
+	if ac.tripStatus.ActiveTripID == "" {
+		return
+	}
+	_, atID, atErr := utils.ExtractAgencyIDAndCodeID(ac.tripStatus.ActiveTripID)
+	if atErr != nil {
+		return
+	}
+	if activeSeq := api.calculateBlockTripSequence(ctx, atID, ac.serviceMidnight); activeSeq > 0 {
+		ac.tripStatus.BlockTripSequence = activeSeq
+	}
+
+	if atID != ac.st.TripID {
+		if _, exists := state.tripIDSet[atID]; !exists {
+			if at, atFetchErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, atID); atFetchErr == nil {
+				atCopy := at
+				state.tripIDSet[at.ID] = &atCopy
+				if ar, arFetchErr := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, at.RouteID); arFetchErr == nil {
+					arCopy := ar
+					state.routeIDSet[ar.ID] = &arCopy
+				}
+			}
+		}
+	}
+}
+
+func (api *RestAPI) applyAlerts(ctx context.Context, ac *arrivalContext, state *locationArrivalsState) {
+	tripAlerts := api.GtfsManager.GetAlertsForTrip(ctx, ac.st.TripID)
+	ac.situationIDs = make([]string, 0, len(tripAlerts))
+	for _, alert := range tripAlerts {
+		if alert.ID == "" {
+			continue
+		}
+		ac.situationIDs = append(ac.situationIDs, alert.ID)
+		if _, seen := state.collectedAlerts[alert.ID]; !seen {
+			state.collectedAlerts[alert.ID] = alert
+		}
+	}
 }
 
 func (api *RestAPI) sortLocationArrivalsByTime(arrivals []models.ArrivalAndDeparture) {
