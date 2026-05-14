@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,17 +38,21 @@ type ArrivalsAndDeparturesForLocationParams struct {
 	RouteTypes           []int
 }
 
+// Error message constants shared by the parameter-parsing helpers below.
+const (
+	errMustBeValidInteger       = "must be a valid integer"
+	errMustBeNonNegativeInteger = "must be a non-negative integer"
+)
+
 // parseArrivalsAndDeparturesForLocationParams parses and validates all query
 // parameters for this endpoint in one place.
 func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request) (ArrivalsAndDeparturesForLocationParams, map[string][]string) {
 	const (
-		defaultMinutesBefore        = 5
-		defaultMinutesAfter         = 35
-		maxMinutesBefore            = 60
-		maxMinutesAfter             = 240
-		defaultMaxCount             = 250
-		errMustBeValidInteger       = "must be a valid integer"
-		errMustBeNonNegativeInteger = "must be a non-negative integer"
+		defaultMinutesBefore = 5
+		defaultMinutesAfter  = 35
+		maxMinutesBefore     = 60
+		maxMinutesAfter      = 240
+		defaultMaxCount      = 250
 	)
 
 	params := ArrivalsAndDeparturesForLocationParams{
@@ -68,12 +73,7 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	// Spatial params (required) — reuse the shared location parser.
 	loc, locErrors := api.parseLocationParams(r, nil)
 	if len(locErrors) > 0 {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
-		for k, v := range locErrors {
-			fieldErrors[k] = append(fieldErrors[k], v...)
-		}
+		mergeFieldErrors(&fieldErrors, locErrors)
 	} else {
 		params.Lat = loc.Lat
 		params.Lon = loc.Lon
@@ -83,103 +83,129 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	}
 
 	q := r.URL.Query()
+	params.Time = parseTimeParam(q, params.Time, addError)
+	parseMinutesCappedParam(q, "minutesBefore", maxMinutesBefore, &params.MinutesBefore, addError)
+	parseMinutesCappedParam(q, "minutesAfter", maxMinutesAfter, &params.MinutesAfter, addError)
+	parseMinutesUncappedParam(q, "frequencyMinutesBefore", &params.FrequencyMinutesBefore, addError)
+	parseMinutesUncappedParam(q, "frequencyMinutesAfter", &params.FrequencyMinutesAfter, addError)
+	params.EmptyReturnsNotFound = parseEmptyReturnsNotFoundParam(q, addError)
+	params.RouteTypes = parseRouteTypesParam(q, addError)
 
-	// time
-	if val := q.Get("time"); val != "" {
-		if ms, err := strconv.ParseInt(val, 10, 64); err == nil {
-			params.Time = time.Unix(ms/1000, (ms%1000)*1_000_000)
-		} else {
-			addError("time", "must be a valid Unix timestamp in milliseconds")
-		}
-	}
-
-	// minutesBefore
-	if val := q.Get("minutesBefore"); val != "" {
-		if n, err := strconv.Atoi(val); err != nil {
-			addError("minutesBefore", errMustBeValidInteger)
-		} else if n < 0 {
-			addError("minutesBefore", errMustBeNonNegativeInteger)
-		} else if n > maxMinutesBefore {
-			params.MinutesBefore = maxMinutesBefore
-		} else {
-			params.MinutesBefore = n
-		}
-	}
-
-	// minutesAfter
-	if val := q.Get("minutesAfter"); val != "" {
-		if n, err := strconv.Atoi(val); err != nil {
-			addError("minutesAfter", errMustBeValidInteger)
-		} else if n < 0 {
-			addError("minutesAfter", errMustBeNonNegativeInteger)
-		} else if n > maxMinutesAfter {
-			params.MinutesAfter = maxMinutesAfter
-		} else {
-			params.MinutesAfter = n
-		}
-	}
-
-	// frequencyMinutesBefore
-	if val := q.Get("frequencyMinutesBefore"); val != "" {
-		if n, err := strconv.Atoi(val); err != nil {
-			addError("frequencyMinutesBefore", errMustBeValidInteger)
-		} else if n < 0 {
-			addError("frequencyMinutesBefore", errMustBeNonNegativeInteger)
-		} else {
-			params.FrequencyMinutesBefore = n
-		}
-	}
-
-	// frequencyMinutesAfter
-	if val := q.Get("frequencyMinutesAfter"); val != "" {
-		if n, err := strconv.Atoi(val); err != nil {
-			addError("frequencyMinutesAfter", errMustBeValidInteger)
-		} else if n < 0 {
-			addError("frequencyMinutesAfter", errMustBeNonNegativeInteger)
-		} else {
-			params.FrequencyMinutesAfter = n
-		}
-	}
-
-	// emptyReturnsNotFound
-	if val := q.Get("emptyReturnsNotFound"); val != "" {
-		if b, err := strconv.ParseBool(val); err == nil {
-			params.EmptyReturnsNotFound = b
-		} else {
-			addError("emptyReturnsNotFound", "must be true or false")
-		}
-	}
-
-	// routeType
-	if val := q.Get("routeType"); val != "" {
-		parts := strings.Split(val, ",")
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			if rt, err := strconv.Atoi(p); err == nil {
-				params.RouteTypes = append(params.RouteTypes, rt)
-			} else {
-				addError("routeType", "must be a comma-delimited list of integers")
-				break
-			}
-		}
-	}
-
-	// maxCount — reuse the shared parser.
 	var maxCountErrors map[string][]string
 	params.MaxCount, maxCountErrors = utils.ParseMaxCount(q, defaultMaxCount, nil)
-	if len(maxCountErrors) > 0 {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
-		for k, v := range maxCountErrors {
-			fieldErrors[k] = append(fieldErrors[k], v...)
-		}
-	}
+	mergeFieldErrors(&fieldErrors, maxCountErrors)
 
 	return params, fieldErrors
+}
+
+// parseTimeParam parses the "time" query parameter as a Unix timestamp in
+// milliseconds. Returns defaultTime unchanged when the parameter is absent.
+func parseTimeParam(q url.Values, defaultTime time.Time, addError func(string, string)) time.Time {
+	val := q.Get("time")
+	if val == "" {
+		return defaultTime
+	}
+	ms, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		addError("time", "must be a valid Unix timestamp in milliseconds")
+		return defaultTime
+	}
+	return time.Unix(ms/1000, (ms%1000)*1_000_000)
+}
+
+// parseMinutesCappedParam parses an integer minutes query parameter and writes
+// the result into dest. Values above maxVal are silently capped; negative
+// values and non-integer values are rejected via addError.
+func parseMinutesCappedParam(q url.Values, key string, maxVal int, dest *int, addError func(string, string)) {
+	val := q.Get(key)
+	if val == "" {
+		return
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		addError(key, errMustBeValidInteger)
+		return
+	}
+	if n < 0 {
+		addError(key, errMustBeNonNegativeInteger)
+		return
+	}
+	if n > maxVal {
+		*dest = maxVal
+		return
+	}
+	*dest = n
+}
+
+// parseMinutesUncappedParam parses an integer minutes query parameter with no
+// upper bound and writes the result into dest.
+func parseMinutesUncappedParam(q url.Values, key string, dest *int, addError func(string, string)) {
+	val := q.Get(key)
+	if val == "" {
+		return
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		addError(key, errMustBeValidInteger)
+		return
+	}
+	if n < 0 {
+		addError(key, errMustBeNonNegativeInteger)
+		return
+	}
+	*dest = n
+}
+
+// parseEmptyReturnsNotFoundParam parses the "emptyReturnsNotFound" boolean
+// query parameter. Returns false when absent or invalid.
+func parseEmptyReturnsNotFoundParam(q url.Values, addError func(string, string)) bool {
+	val := q.Get("emptyReturnsNotFound")
+	if val == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(val)
+	if err != nil {
+		addError("emptyReturnsNotFound", "must be true or false")
+		return false
+	}
+	return b
+}
+
+// parseRouteTypesParam parses the "routeType" comma-delimited integer list
+// query parameter. Returns nil when absent; stops and errors at the first
+// invalid token.
+func parseRouteTypesParam(q url.Values, addError func(string, string)) []int {
+	val := q.Get("routeType")
+	if val == "" {
+		return nil
+	}
+	var routeTypes []int
+	for _, p := range strings.Split(val, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		rt, err := strconv.Atoi(p)
+		if err != nil {
+			addError("routeType", "must be a comma-delimited list of integers")
+			return nil
+		}
+		routeTypes = append(routeTypes, rt)
+	}
+	return routeTypes
+}
+
+// mergeFieldErrors merges src into *dst, initialising *dst lazily if nil.
+func mergeFieldErrors(dst *map[string][]string, src map[string][]string) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = make(map[string][]string)
+	}
+	for k, v := range src {
+		(*dst)[k] = append((*dst)[k], v...)
+	}
 }
 
 // arrivalStatusFromDeviation derives a human-readable status string from a
