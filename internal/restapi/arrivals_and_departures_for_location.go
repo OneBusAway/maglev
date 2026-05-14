@@ -454,7 +454,7 @@ func (api *RestAPI) fetchActiveStopTimesForLocationWindow(ctx context.Context, s
 
 	var allActiveStopTimes []activeStopTime
 	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
-		err := api.fetchStopTimesForDayOffset(ctx, stopCode, stopLoc, stopQueryTime, params, dayOffset, stopWindowStart, stopWindowEnd, &allActiveStopTimes)
+		err := api.fetchStopTimesForDayOffset(ctx, stopCode, stopLoc, stopQueryTime, dayOffset, stopWindowStart, stopWindowEnd, &allActiveStopTimes)
 		if err != nil {
 			return nil, err
 		}
@@ -499,6 +499,11 @@ func (api *RestAPI) batchFetchLocationRoutesAndTrips(
 		tripsLookup[tr.ID] = tr
 	}
 
+	tripStopCountMap := api.buildTripStopCountMap(ctx, uniqueTripIDs)
+	return routesLookup, tripsLookup, tripStopCountMap, nil
+}
+
+func (api *RestAPI) buildTripStopCountMap(ctx context.Context, uniqueTripIDs []string) map[string]int {
 	tripStopCountMap := make(map[string]int, len(uniqueTripIDs))
 	if len(uniqueTripIDs) > 0 {
 		allST, countErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, uniqueTripIDs)
@@ -510,13 +515,13 @@ func (api *RestAPI) batchFetchLocationRoutesAndTrips(
 			}
 		}
 	}
-	return routesLookup, tripsLookup, tripStopCountMap, nil
+	return tripStopCountMap
 }
 
 func (api *RestAPI) fetchStopTimesForDayOffset(
 	ctx context.Context, stopCode string, stopLoc *time.Location,
-	stopQueryTime time.Time, params ArrivalsAndDeparturesForLocationParams,
-	dayOffset int, stopWindowStart, stopWindowEnd time.Time,
+	stopQueryTime time.Time, dayOffset int,
+	stopWindowStart, stopWindowEnd time.Time,
 	allActiveStopTimes *[]activeStopTime,
 ) error {
 	if ctx.Err() != nil {
