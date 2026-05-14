@@ -332,20 +332,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	api.sortLocationArrivalsByTime(state.arrivals)
 
-	// Collect stop-level service alerts.
-	rawStopCodes := make([]string, 0, len(stops))
-	for _, s := range stops {
-		rawStopCodes = append(rawStopCodes, s.ID)
-	}
-	for _, sc := range rawStopCodes {
-		for _, alert := range api.GtfsManager.GetAlertsForStop(sc) {
-			if alert.ID != "" {
-				if _, seen := state.collectedAlerts[alert.ID]; !seen {
-					state.collectedAlerts[alert.ID] = alert
-				}
-			}
-		}
-	}
+	api.collectStopLevelAlerts(stops, state)
 
 	references, topLevelSituationIDs := api.buildLocationReferencesBlock(ctx, state)
 	queriedStopIDs := api.buildLocationQueriedStopIDs(stops, state)
@@ -376,6 +363,22 @@ func (api *RestAPI) handleEmptyStopsResponseForLocation(w http.ResponseWriter, r
 		false,
 		api.Clock,
 	))
+}
+
+func (api *RestAPI) collectStopLevelAlerts(stops []gtfsdb.Stop, state *locationArrivalsState) {
+	rawStopCodes := make([]string, 0, len(stops))
+	for _, s := range stops {
+		rawStopCodes = append(rawStopCodes, s.ID)
+	}
+	for _, sc := range rawStopCodes {
+		for _, alert := range api.GtfsManager.GetAlertsForStop(sc) {
+			if alert.ID != "" {
+				if _, seen := state.collectedAlerts[alert.ID]; !seen {
+					state.collectedAlerts[alert.ID] = alert
+				}
+			}
+		}
+	}
 }
 
 func (api *RestAPI) resolveAgenciesForStopsLocation(ctx context.Context, stops []gtfsdb.Stop, state *locationArrivalsState) error {
@@ -451,66 +454,17 @@ func (api *RestAPI) fetchActiveStopTimesForLocationWindow(ctx context.Context, s
 
 	var allActiveStopTimes []activeStopTime
 	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		targetDate := stopQueryTime.AddDate(0, 0, dayOffset)
-		serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, stopLoc)
-		serviceDateStr := targetDate.Format("20060102")
-
-		activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
-		if svcErr != nil {
-			api.Logger.Warn("failed to query active service IDs", slog.String("date", serviceDateStr), slog.Any("error", svcErr))
-			continue
-		}
-		if len(activeServiceIDs) == 0 {
-			continue
-		}
-
-		activeServiceIDSet := make(map[string]bool, len(activeServiceIDs))
-		for _, sid := range activeServiceIDs {
-			activeServiceIDSet[sid] = true
-		}
-
-		startNanos := stopWindowStart.Sub(serviceMidnight).Nanoseconds()
-		endNanos := stopWindowEnd.Sub(serviceMidnight).Nanoseconds()
-		if endNanos < 0 {
-			continue
-		}
-
-		stopTimes, stErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopInWindow(ctx, gtfsdb.GetStopTimesForStopInWindowParams{
-			StopID:           stopCode,
-			WindowStartNanos: startNanos,
-			WindowEndNanos:   endNanos,
-		})
-		if stErr != nil {
-			api.Logger.Warn("failed to query stop times in window", slog.String("stopID", stopCode), slog.Any("error", stErr))
-			continue
-		}
-
-		for _, st := range stopTimes {
-			if activeServiceIDSet[st.ServiceID] {
-				allActiveStopTimes = append(allActiveStopTimes, activeStopTime{
-					GetStopTimesForStopInWindowRow: st,
-					ServiceDate:                    serviceMidnight,
-				})
-			}
+		err := api.fetchStopTimesForDayOffset(ctx, stopCode, stopLoc, stopQueryTime, params, dayOffset, stopWindowStart, stopWindowEnd, &allActiveStopTimes)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return allActiveStopTimes, nil
 }
 
-func (api *RestAPI) buildArrivalsFromLocationStopTimes(
-	ctx context.Context,
-	w http.ResponseWriter,
-	r *http.Request,
-	stopCode string,
-	agencyID string,
-	allActiveStopTimes []activeStopTime,
-	params ArrivalsAndDeparturesForLocationParams,
-	stopQueryTime time.Time,
-	state *locationArrivalsState,
-) (bool, error) {
+func (api *RestAPI) batchFetchLocationRoutesAndTrips(
+	ctx context.Context, stopCode string, allActiveStopTimes []activeStopTime,
+) (map[string]gtfsdb.Route, map[string]gtfsdb.Trip, map[string]int, error) {
 	batchRouteIDs := make(map[string]bool)
 	batchTripIDs := make(map[string]bool)
 	for _, ast := range allActiveStopTimes {
@@ -528,12 +482,12 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 	fetchedRoutes, rErr := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, uniqueRouteIDs)
 	if rErr != nil {
 		api.Logger.Warn("failed to batch fetch routes", slog.String("stopID", stopCode), slog.Any("error", rErr))
-		return false, nil
+		return nil, nil, nil, rErr
 	}
 	fetchedTrips, tErr := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
 	if tErr != nil {
 		api.Logger.Warn("failed to batch fetch trips", slog.String("stopID", stopCode), slog.Any("error", tErr))
-		return false, nil
+		return nil, nil, nil, tErr
 	}
 
 	routesLookup := make(map[string]gtfsdb.Route, len(fetchedRoutes))
@@ -555,6 +509,78 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 				tripStopCountMap[st.TripID]++
 			}
 		}
+	}
+	return routesLookup, tripsLookup, tripStopCountMap, nil
+}
+
+func (api *RestAPI) fetchStopTimesForDayOffset(
+	ctx context.Context, stopCode string, stopLoc *time.Location,
+	stopQueryTime time.Time, params ArrivalsAndDeparturesForLocationParams,
+	dayOffset int, stopWindowStart, stopWindowEnd time.Time,
+	allActiveStopTimes *[]activeStopTime,
+) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	targetDate := stopQueryTime.AddDate(0, 0, dayOffset)
+	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, stopLoc)
+	serviceDateStr := targetDate.Format("20060102")
+
+	activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	if svcErr != nil {
+		api.Logger.Warn("failed to query active service IDs", slog.String("date", serviceDateStr), slog.Any("error", svcErr))
+		return nil
+	}
+	if len(activeServiceIDs) == 0 {
+		return nil
+	}
+
+	activeServiceIDSet := make(map[string]bool, len(activeServiceIDs))
+	for _, sid := range activeServiceIDs {
+		activeServiceIDSet[sid] = true
+	}
+
+	startNanos := stopWindowStart.Sub(serviceMidnight).Nanoseconds()
+	endNanos := stopWindowEnd.Sub(serviceMidnight).Nanoseconds()
+	if endNanos < 0 {
+		return nil
+	}
+
+	stopTimes, stErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopInWindow(ctx, gtfsdb.GetStopTimesForStopInWindowParams{
+		StopID:           stopCode,
+		WindowStartNanos: startNanos,
+		WindowEndNanos:   endNanos,
+	})
+	if stErr != nil {
+		api.Logger.Warn("failed to query stop times in window", slog.String("stopID", stopCode), slog.Any("error", stErr))
+		return nil
+	}
+
+	for _, st := range stopTimes {
+		if activeServiceIDSet[st.ServiceID] {
+			*allActiveStopTimes = append(*allActiveStopTimes, activeStopTime{
+				GetStopTimesForStopInWindowRow: st,
+				ServiceDate:                    serviceMidnight,
+			})
+		}
+	}
+	return nil
+}
+
+func (api *RestAPI) buildArrivalsFromLocationStopTimes(
+	ctx context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	stopCode string,
+	agencyID string,
+	allActiveStopTimes []activeStopTime,
+	params ArrivalsAndDeparturesForLocationParams,
+	stopQueryTime time.Time,
+	state *locationArrivalsState,
+) (bool, error) {
+	routesLookup, tripsLookup, tripStopCountMap, bErr := api.batchFetchLocationRoutesAndTrips(ctx, stopCode, allActiveStopTimes)
+	if bErr != nil {
+		return false, nil
 	}
 
 	stopProducedArrival := false
@@ -794,6 +820,24 @@ func (api *RestAPI) buildLocationReferencesBlock(ctx context.Context, state *loc
 	references := models.NewEmptyReferences()
 	addedAgencyIDs := make(map[string]bool)
 
+	api.addTripReferences(ctx, state, references)
+	api.addRouteAndAgencyReferences(ctx, state, references, addedAgencyIDs)
+	api.addStopReferences(ctx, state, references)
+
+	topLevelSituationIDs := make([]string, 0, len(state.collectedAlerts))
+	if len(state.collectedAlerts) > 0 {
+		alertSlice := make([]gtfs.Alert, 0, len(state.collectedAlerts))
+		for alertID, a := range state.collectedAlerts {
+			alertSlice = append(alertSlice, a)
+			topLevelSituationIDs = append(topLevelSituationIDs, alertID)
+		}
+		references.Situations = append(references.Situations, api.BuildSituationReferences(alertSlice)...)
+	}
+
+	return references, topLevelSituationIDs
+}
+
+func (api *RestAPI) addTripReferences(ctx context.Context, state *locationArrivalsState, references *models.ReferencesModel) {
 	for _, trip := range state.tripIDSet {
 		routeForTrip, ok := state.routeIDSet[trip.RouteID]
 		if !ok {
@@ -817,7 +861,9 @@ func (api *RestAPI) buildLocationReferencesBlock(ctx context.Context, state *loc
 			utils.FormCombinedID(routeForTrip.AgencyID, trip.ShapeID.String),
 		))
 	}
+}
 
+func (api *RestAPI) addRouteAndAgencyReferences(ctx context.Context, state *locationArrivalsState, references *models.ReferencesModel, addedAgencyIDs map[string]bool) {
 	for _, route := range state.routeIDSet {
 		references.Routes = append(references.Routes, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
@@ -840,7 +886,9 @@ func (api *RestAPI) buildLocationReferencesBlock(ctx context.Context, state *loc
 			}
 		}
 	}
+}
 
+func (api *RestAPI) addStopReferences(ctx context.Context, state *locationArrivalsState, references *models.ReferencesModel) {
 	stopIDsSlice := stringMapKeys(state.stopIDSet)
 	batchStops, _ := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
 	batchRoutesForStops, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
@@ -898,18 +946,6 @@ func (api *RestAPI) buildLocationReferencesBlock(ctx context.Context, state *loc
 			StaticRouteIDs:     combinedRouteIDs,
 		})
 	}
-
-	topLevelSituationIDs := make([]string, 0, len(state.collectedAlerts))
-	if len(state.collectedAlerts) > 0 {
-		alertSlice := make([]gtfs.Alert, 0, len(state.collectedAlerts))
-		for alertID, a := range state.collectedAlerts {
-			alertSlice = append(alertSlice, a)
-			topLevelSituationIDs = append(topLevelSituationIDs, alertID)
-		}
-		references.Situations = append(references.Situations, api.BuildSituationReferences(alertSlice)...)
-	}
-
-	return references, topLevelSituationIDs
 }
 
 func (api *RestAPI) buildLocationQueriedStopIDs(stops []gtfsdb.Stop, state *locationArrivalsState) []string {
