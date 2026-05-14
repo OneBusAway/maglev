@@ -14,22 +14,6 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
-type StopsResponse struct {
-	Code        int       `json:"code"`
-	CurrentTime int64     `json:"currentTime"`
-	Data        StopsData `json:"data,omitempty"`
-	Text        string    `json:"text"`
-	Version     int       `json:"version"`
-}
-
-type StopsData struct {
-	LimitExceeded bool                   `json:"limitExceeded"`
-	Stops         []models.Stop          `json:"list"`
-	OutOfRange    bool                   `json:"outOfRange"`
-	References    models.ReferencesModel `json:"references"`
-	FieldErrors   map[string][]string    `json:"fieldErrors"`
-}
-
 func TestStopsForLocationHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=invalid&lat=47.586556&lon=-122.190396")
@@ -52,9 +36,9 @@ func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	assert.NotEmpty(t, model.Data.Stops)
+	assert.NotEmpty(t, model.Data.List)
 
-	for i, stop := range model.Data.Stops {
+	for i, stop := range model.Data.List {
 		assert.NotEmpty(t, stop.ID)
 		assert.NotEmpty(t, stop.Name)
 		assert.NotZero(t, stop.Lat)
@@ -63,7 +47,7 @@ func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
 		assert.NotNil(t, stop.StaticRouteIDs)
 
 		if i > 0 {
-			assert.GreaterOrEqualf(t, stop.ID, model.Data.Stops[i-1].ID, "stops should be returned in sorted order by id")
+			assert.GreaterOrEqualf(t, stop.ID, model.Data.List[i-1].ID, "stops should be returned in sorted order by id")
 		}
 	}
 
@@ -73,7 +57,7 @@ func TestStopsForLocationHandlerEndToEnd(t *testing.T) {
 
 	// Verify all referenced route IDs exist in references
 	referencedRouteIDs := make(map[string]bool)
-	for _, stop := range model.Data.Stops {
+	for _, stop := range model.Data.List {
 		for _, id := range stop.RouteIDs {
 			referencedRouteIDs[id] = true
 		}
@@ -113,9 +97,9 @@ func TestStopsForLocationQuery(t *testing.T) {
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Len(t, model.Data.Stops, 1)
-	assert.Equal(t, "2042", model.Data.Stops[0].Code)
-	assert.Equal(t, "Buenaventura Blvd at Eureka Way", model.Data.Stops[0].Name)
+	assert.Len(t, model.Data.List, 1)
+	assert.Equal(t, "2042", model.Data.List[0].Code)
+	assert.Equal(t, "Buenaventura Blvd at Eureka Way", model.Data.List[0].Name)
 }
 
 func TestStopsForLocationLatSpanAndLonSpan(t *testing.T) {
@@ -123,7 +107,7 @@ func TestStopsForLocationLatSpanAndLonSpan(t *testing.T) {
 	api := createTestApiWithClock(t, clock)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&latSpan=0.045&lonSpan=0.059")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.NotEmpty(t, model.Data.Stops)
+	assert.NotEmpty(t, model.Data.List)
 }
 
 func TestStopsForLocationRadius(t *testing.T) {
@@ -131,7 +115,7 @@ func TestStopsForLocationRadius(t *testing.T) {
 	api := createTestApiWithClock(t, clock)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=5000")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.NotEmpty(t, model.Data.Stops)
+	assert.NotEmpty(t, model.Data.List)
 }
 
 func TestStopsForLocationLatAndLan(t *testing.T) {
@@ -139,7 +123,7 @@ func TestStopsForLocationLatAndLan(t *testing.T) {
 	api := createTestApiWithClock(t, clock)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&radius=1000")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.NotEmpty(t, model.Data.Stops)
+	assert.NotEmpty(t, model.Data.List)
 }
 
 func TestStopsForLocationIsLimitExceeded(t *testing.T) {
@@ -147,7 +131,7 @@ func TestStopsForLocationIsLimitExceeded(t *testing.T) {
 	api := createTestApiWithClock(t, clock)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&radius=1000&maxCount=1")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Len(t, model.Data.Stops, 1)
+	assert.Len(t, model.Data.List, 1)
 	assert.True(t, model.Data.LimitExceeded)
 }
 
@@ -157,7 +141,7 @@ func TestStopsForLocationActiveRoutesOnly(t *testing.T) {
 
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=5000")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, model.Data.Stops, "Should return empty stops when no routes are active")
+	assert.Empty(t, model.Data.List, "Should return empty stops when no routes are active")
 }
 
 func TestStopsForLocationHandlerValidatesParameters(t *testing.T) {
@@ -285,7 +269,7 @@ func TestStopsForLocationHandlerRouteTypeValidMultiple(t *testing.T) {
 		"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500&routeType=1,2,3")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "Valid route types should be accepted")
-	assert.NotNil(t, model.Data.Stops)
+	assert.NotNil(t, model.Data.List)
 	assert.NotEmpty(t, model.Data.References.Agencies)
 	assert.NotEmpty(t, model.Data.References.Routes)
 }
@@ -301,7 +285,7 @@ func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 
 	// curl https://api.pugetsound.onebusaway.org/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&query=10914
 	// returns no results.
-	assert.Empty(t, model.Data.Stops)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestStopsForLocationMissingLat(t *testing.T) {
@@ -347,7 +331,7 @@ func TestStopsForLocationHandlerWithSituations(t *testing.T) {
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Len(t, model.Data.Stops, 1)
+	assert.Len(t, model.Data.List, 1)
 
 	// Verify references contain the situation we added
 	refs := model.Data.References

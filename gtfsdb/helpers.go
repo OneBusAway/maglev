@@ -19,6 +19,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 //go:embed schema.sql
@@ -267,10 +268,10 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 			Name:     a.Name,
 			Url:      a.Url,
 			Timezone: a.Timezone,
-			Lang:     toNullString(a.Language),
-			Phone:    toNullString(a.Phone),
-			FareUrl:  toNullString(a.FareUrl),
-			Email:    toNullString(a.Email),
+			Lang:     nulls.String(a.Language),
+			Phone:    nulls.String(a.Phone),
+			FareUrl:  nulls.String(a.FareUrl),
+			Email:    nulls.String(a.Email),
 		}
 
 		_, err := qtx.CreateAgency(ctx, params)
@@ -288,13 +289,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		route := CreateRouteParams{
 			ID:                r.Id,
 			AgencyID:          pickFirstAvailable(r.Agency.Id, singleAgencyID),
-			ShortName:         toNullString(r.ShortName),
-			LongName:          toNullString(r.LongName),
-			Desc:              toNullString(r.Description),
+			ShortName:         nulls.String(r.ShortName),
+			LongName:          nulls.String(r.LongName),
+			Desc:              nulls.String(r.Description),
 			Type:              int64(r.Type),
-			Url:               toNullString(r.Url),
-			Color:             toNullString(r.Color),
-			TextColor:         toNullString(r.TextColor),
+			Url:               nulls.String(r.Url),
+			Color:             nulls.NonEmptyString(r.Color),
+			TextColor:         nulls.NonEmptyString(r.TextColor),
 			ContinuousPickup:  toNullInt64(int64(r.ContinuousPickup)),
 			ContinuousDropOff: toNullInt64(int64(r.ContinuousDropOff)),
 		}
@@ -327,19 +328,19 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 		params := CreateStopParams{
 			ID:                 s.Id,
-			Code:               toNullString(s.Code),
-			Name:               toNullString(s.Name),
-			Desc:               toNullString(s.Description),
+			Code:               nulls.String(s.Code),
+			Name:               nulls.String(s.Name),
+			Desc:               nulls.String(s.Description),
 			Lat:                *s.Latitude,
 			Lon:                *s.Longitude,
-			ZoneID:             toNullString(s.ZoneId),
-			Url:                toNullString(s.Url),
+			ZoneID:             nulls.String(s.ZoneId),
+			Url:                nulls.String(s.Url),
 			LocationType:       toNullInt64(int64(s.Type)),
-			Timezone:           toNullString(s.Timezone),
+			Timezone:           nulls.String(s.Timezone),
 			WheelchairBoarding: toNullInt64(int64(s.WheelchairBoarding)),
-			PlatformCode:       toNullString(s.PlatformCode),
+			PlatformCode:       nulls.String(s.PlatformCode),
 			Direction:          sql.NullString{}, // Will be computed later
-			ParentStation:      toNullString(parentStation),
+			ParentStation:      nulls.NonEmptyString(parentStation),
 		}
 
 		allStopParams = append(allStopParams, params)
@@ -389,11 +390,11 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 			ID:                   t.ID,
 			RouteID:              t.Route.Id,
 			ServiceID:            t.Service.Id,
-			TripHeadsign:         toNullString(t.Headsign),
-			TripShortName:        toNullString(t.ShortName),
+			TripHeadsign:         nulls.String(t.Headsign),
+			TripShortName:        nulls.String(t.ShortName),
 			DirectionID:          gtfsDirectionIDToDB(t.DirectionId),
-			BlockID:              toNullString(t.BlockID),
-			ShapeID:              toNullString(shapeID),
+			BlockID:              nulls.String(t.BlockID),
+			ShapeID:              nulls.NonEmptyString(shapeID),
 			WheelchairAccessible: toNullInt64(int64(t.WheelchairAccessible)),
 			BikesAllowed:         toNullInt64(int64(t.BikesAllowed)),
 		}
@@ -417,7 +418,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 				DepartureTime:     int64(st.DepartureTime),
 				StopID:            st.Stop.Id,
 				StopSequence:      int64(st.StopSequence),
-				StopHeadsign:      toNullString(st.Headsign),
+				StopHeadsign:      nulls.String(st.Headsign),
 				PickupType:        toNullInt64(int64(st.PickupType)),
 				DropOffType:       toNullInt64(int64(st.DropOffType)),
 				ShapeDistTraveled: toNullFloat64(shapeDistTraveled),
@@ -479,7 +480,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   data.Hash,
-		ImportTime: time.Now().Unix(),
+		ImportTime: time.Now().UnixNano(),
 		FileSource: data.Source,
 	})
 	if err != nil {
@@ -532,6 +533,19 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
+	logging.LogOperation(logger, "building_block_layover_index")
+	if err := c.buildBlockLayoverIndex(ctx, data.Static, tx); err != nil {
+		logging.LogError(logger, "Unable to build block layover index", err)
+		return false, fmt.Errorf("unable to build block layover index: %w", err)
+	}
+	logging.LogOperation(logger, "block_layover_index_built")
+
+	// Persist feed_expires_at inside the same transaction so it's atomic with
+	// the calendar data it was derived from.
+	if err := updateFeedExpiresAtFromCalendar(ctx, qtx); err != nil {
+		return false, fmt.Errorf("failed to update feed_expires_at: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("error committing import transaction: %w", err)
 	}
@@ -548,9 +562,51 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	return true, nil
 }
 
+// updateFeedExpiresAtFromCalendar reads the latest active service date from
+// calendar / calendar_dates, parses it, and persists feed_expires_at to
+// import_metadata. Intended to be called from within the StoreGtfsData
+// transaction so the value is atomic with the calendar data it was derived from.
+func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
+	val, err := qtx.GetFeedEndDate(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get feed end date: %w", err)
+	}
+
+	var dateStr string
+	switch v := val.(type) {
+	case nil:
+		// No calendar data — feed_expires_at will be NULL.
+	case string:
+		dateStr = v
+	case []byte:
+		dateStr = string(v)
+	default:
+		return fmt.Errorf("unexpected type from GetFeedEndDate: %T", val)
+	}
+
+	var expires sql.NullInt64
+	if dateStr != "" {
+		parsedTime, err := time.Parse("20060102", dateStr)
+		if err != nil {
+			return fmt.Errorf("failed to parse feed end date %q: %w", dateStr, err)
+		}
+		// 23:59:59 of the end date.
+		expiresAt := parsedTime.Add(24*time.Hour - time.Second)
+		expires = sql.NullInt64{Int64: expiresAt.Unix(), Valid: true}
+	}
+
+	if err := qtx.UpdateFeedExpiresAt(ctx, expires); err != nil {
+		return fmt.Errorf("failed to persist feed_expires_at: %w", err)
+	}
+	return nil
+}
+
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
 // Delete order respects foreign key constraints.
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
+	if err := q.ClearBlockLayovers(ctx); err != nil {
+		return fmt.Errorf("error clearing block_layover: %w", err)
+	}
 	if err := q.ClearBlockTripEntries(ctx); err != nil {
 		return fmt.Errorf("error clearing block_trip_entry: %w", err)
 	}
@@ -643,19 +699,6 @@ func toNullFloat64(f float64) sql.NullFloat64 {
 		}
 	}
 	return sql.NullFloat64{}
-}
-
-// toNullString converts a string to sql.NullString (unexported, for internal use)
-func toNullString(s string) sql.NullString {
-	return sql.NullString{
-		String: s,
-		Valid:  s != "",
-	}
-}
-
-// ToNullString converts a string to sql.NullString, with empty strings becoming NULL (exported).
-func ToNullString(s string) sql.NullString {
-	return toNullString(s)
 }
 
 // ParseNullFloat parses a string to sql.NullFloat64, with empty or invalid values becoming NULL.
@@ -1297,7 +1340,7 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 				err = qtx.CreateBlockTripEntry(ctx, CreateBlockTripEntryParams{
 					BlockTripIndexID:  indexID,
 					TripID:            trip.tripID,
-					BlockID:           toNullString(trip.blockID),
+					BlockID:           nulls.String(trip.blockID),
 					ServiceID:         trip.serviceID,
 					BlockTripSequence: int64(sequence),
 				})
@@ -1320,6 +1363,81 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 	logging.LogOperation(logger, "block_trip_index_creation_complete",
 		slog.Int("indices_created", len(indexGroups)),
 		slog.Int("entries_created", totalEntries))
+
+	return nil
+}
+
+// buildBlockLayoverIndex populates the block_layover table: one row per layover
+// (the gap between two consecutive trips in the same block that share a terminal
+// stop). Layover bounds are stored as nanoseconds since service-day midnight so
+// handlers can match against the same units used by stop_times.
+func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.Static, tx *sql.Tx) error {
+	logger := slog.Default().With(slog.String("component", "block_layover_builder"))
+
+	type blockKey struct {
+		blockID   string
+		serviceID string
+	}
+	blockTrips := make(map[blockKey][]*gtfs.ScheduledTrip)
+
+	for i := range staticData.Trips {
+		trip := &staticData.Trips[i]
+		if trip.BlockID == "" || len(trip.StopTimes) == 0 {
+			continue
+		}
+		key := blockKey{blockID: trip.BlockID, serviceID: trip.Service.Id}
+		blockTrips[key] = append(blockTrips[key], trip)
+	}
+
+	q := c.Queries
+	layoverCount := 0
+
+	if err := c.withTransaction(ctx, tx, "build_block_layover_index", func(tx *sql.Tx) error {
+		qtx := q.WithTx(tx)
+
+		for key, trips := range blockTrips {
+			if len(trips) < 2 {
+				continue
+			}
+
+			slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
+				return cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime)
+			})
+
+			for i := 0; i < len(trips)-1; i++ {
+				currentTrip := trips[i]
+				nextTrip := trips[i+1]
+
+				lastStopCurrent := currentTrip.StopTimes[len(currentTrip.StopTimes)-1]
+				firstStopNext := nextTrip.StopTimes[0]
+
+				if lastStopCurrent.Stop.Id != firstStopNext.Stop.Id {
+					continue
+				}
+
+				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
+					BlockID:       key.blockID,
+					ServiceID:     key.serviceID,
+					RouteID:       nextTrip.Route.Id,
+					LayoverStopID: lastStopCurrent.Stop.Id,
+					LayoverStart:  int64(lastStopCurrent.DepartureTime),
+					LayoverEnd:    int64(firstStopNext.ArrivalTime),
+					NextTripID:    nextTrip.ID,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to create block layover: %w", err)
+				}
+				layoverCount++
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, "block_layover_index_creation_complete",
+		slog.Int("layovers_created", layoverCount))
 
 	return nil
 }

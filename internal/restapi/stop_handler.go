@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -36,19 +37,19 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parentID := ""
-	if utils.NullStringOrEmpty(stop.ParentStation) != "" {
+	if nulls.StringOrEmpty(stop.ParentStation) != "" {
 		parentID = utils.FormCombinedID(agencyID, stop.ParentStation.String)
 	}
 
 	stopData := &models.Stop{
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
-		Name:               utils.NullStringOrEmpty(stop.Name),
+		Name:               nulls.StringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
-		Code:               utils.NullStringOrDefault(stop.Code, stop.ID),
-		Direction:          utils.NullStringOrEmpty(stop.Direction),
+		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
+		Direction:          nulls.StringOrEmpty(stop.Direction),
 		LocationType:       int(stop.LocationType.Int64),
-		WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
 		Parent:             parentID,
@@ -94,7 +95,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if utils.NullStringOrEmpty(stop.ParentStation) != "" {
+	if nulls.StringOrEmpty(stop.ParentStation) != "" {
 		parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
 		if err == nil {
 			parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
@@ -104,13 +105,13 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			references.Stops = append(references.Stops, models.Stop{
 				ID:                 utils.FormCombinedID(agencyID, parentStop.ID),
-				Name:               utils.NullStringOrEmpty(parentStop.Name),
+				Name:               nulls.StringOrEmpty(parentStop.Name),
 				Lat:                parentStop.Lat,
 				Lon:                parentStop.Lon,
-				Code:               utils.NullStringOrDefault(parentStop.Code, parentStop.ID),
-				Direction:          utils.NullStringOrEmpty(parentStop.Direction),
-				LocationType:       int(utils.NullInt64OrDefault(parentStop.LocationType, 0)),
-				WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(parentStop.WheelchairBoarding)),
+				Code:               nulls.StringOrDefault(parentStop.Code, parentStop.ID),
+				Direction:          nulls.StringOrEmpty(parentStop.Direction),
+				LocationType:       int(nulls.Int64OrDefault(parentStop.LocationType, 0)),
+				WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(parentStop.WheelchairBoarding)),
 				RouteIDs:           parentRouteIDs,
 				StaticRouteIDs:     parentRouteIDs,
 			})

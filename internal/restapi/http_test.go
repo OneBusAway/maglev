@@ -48,6 +48,21 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// newTestManagerNoData creates a gtfs.Manager backed by an empty in-memory SQLite DB
+// with the real gtfsdb schema applied. Use this for tests that need to drive the
+// metadata accessors (FeedExpiresAt, GetSystemETag, GetStaticLastUpdated) but don't
+// need a loaded GTFS feed. For tests that need real feed data, use createTestApi instead.
+func newTestManagerNoData(t testing.TB) *gtfs.Manager {
+	t.Helper()
+	client, err := gtfsdb.NewClient(gtfsdb.Config{
+		DBPath: ":memory:",
+		Env:    appconf.Test,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	return &gtfs.Manager{GtfsDB: client}
+}
+
 // createTestApiWithClock creates a new restAPI instance with a custom clock for deterministic testing.
 // The GTFS database is created once and reused across all tests for performance.
 func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
@@ -187,6 +202,14 @@ func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
 	stops, err := api.GtfsManager.GtfsDB.Queries.GetActiveStops(context.Background())
 	require.NoError(t, err)
 	return stops
+}
+
+// mustGetStop return an active stop from the DB (stop with stop times)
+func mustGetStop(t testing.TB, api *RestAPI) gtfsdb.Stop {
+	t.Helper()
+	stops := mustGetStops(t, api)
+	require.NotEmpty(t, stops)
+	return stops[0]
 }
 
 func TestCompressionMiddleware(t *testing.T) {

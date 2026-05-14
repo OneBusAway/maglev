@@ -41,6 +41,13 @@ type ArrivalAndDeparture struct {
 	VehicleID                  string      `json:"vehicleId"`
 }
 
+type ArrivalsAndDeparturesEntry struct {
+	ArrivalsAndDepartures []ArrivalAndDeparture `json:"arrivalsAndDepartures"`
+	NearbyStopIDs         []string              `json:"nearbyStopIds"`
+	SituationIDs          []string              `json:"situationIds"`
+	StopID                string                `json:"stopId"`
+}
+
 func NewArrivalAndDeparture(
 	routeID, routeShortName, routeLongName, tripID, tripHeadsign, stopID, vehicleID string,
 	serviceDate, scheduledArrivalTime, scheduledDepartureTime, predictedArrivalTime, predictedDepartureTime, lastUpdateTime time.Time,

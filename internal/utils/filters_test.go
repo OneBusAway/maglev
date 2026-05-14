@@ -2,7 +2,6 @@ package utils
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,14 +9,8 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
-
-func nullString(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
-}
 
 func TestFilterAgencies(t *testing.T) {
 	tests := []struct {
@@ -74,10 +67,10 @@ func TestFilterAgencies(t *testing.T) {
 					Name:     "Agency One",
 					Url:      "http://one.com",
 					Timezone: "America/Los_Angeles",
-					Lang:     nullString("en"),
-					Phone:    nullString("555-1234"),
-					Email:    nullString("info@one.com"),
-					FareUrl:  nullString("http://one.com/fares"),
+					Lang:     nulls.String("en"),
+					Phone:    nulls.String("555-1234"),
+					Email:    nulls.String("info@one.com"),
+					FareUrl:  nulls.String("http://one.com/fares"),
 				},
 			},
 			present:  map[string]bool{"agency1": true},
@@ -105,10 +98,10 @@ func TestFilterAgencies_VerifyFields(t *testing.T) {
 			Name:     "Test Agency",
 			Url:      "http://test.com",
 			Timezone: "America/Los_Angeles",
-			Lang:     nullString("en"),
-			Phone:    nullString("555-0000"),
-			Email:    nullString("test@test.com"),
-			FareUrl:  nullString("http://test.com/fares"),
+			Lang:     nulls.String("en"),
+			Phone:    nulls.String("555-0000"),
+			Email:    nulls.String("test@test.com"),
+			FareUrl:  nulls.String("http://test.com/fares"),
 		},
 	}
 	present := map[string]bool{"test_agency": true}

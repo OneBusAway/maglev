@@ -10,6 +10,7 @@ import (
 	"github.com/twpayne/go-polyline"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -195,7 +196,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 			Name:               stop.Name.String,
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 	return stopsList, nil
@@ -339,8 +340,8 @@ func processTripGroups(
 	}
 
 	if len(allStopGroups) > 0 {
-		slices.SortFunc(*stopGroupings, func(a, b models.StopGrouping) int {
-			return cmp.Compare(a.StopGroups[0].ID, b.StopGroups[0].ID)
+		slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
+			return cmp.Compare(a.Name.Name, b.Name.Name)
 		})
 
 		*stopGroupings = append(*stopGroupings, models.StopGrouping{

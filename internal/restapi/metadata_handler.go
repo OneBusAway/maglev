@@ -19,7 +19,7 @@ func (api *RestAPI) metadataHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t := api.GtfsManager.GetStaticLastUpdated()
+	t := api.GtfsManager.GetStaticLastUpdated(r.Context())
 	var staticTime *time.Time
 	if !t.IsZero() {
 		staticTime = &t

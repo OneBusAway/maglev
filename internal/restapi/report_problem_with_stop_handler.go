@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -44,18 +45,14 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	logging.LogOperation(logger, "problem_report_received_for_stop",
 		slog.String("stop_id", stopID),
 		slog.String("composite_id", compositeID),
-		slog.String("code", code),
-		slog.String("user_comment", userComment),
-		slog.String("user_lat", userLatStr),
-		slog.String("user_lon", userLonStr),
-		slog.String("user_location_accuracy", userLocationAccuracy))
+		slog.String("code", code))
 
 	// Store the problem report in the database
 	now := api.Clock.Now().UnixMilli()
 	params := gtfsdb.CreateProblemReportStopParams{
 		StopID:               stopID,
-		Code:                 gtfsdb.ToNullString(code),
-		UserComment:          gtfsdb.ToNullString(userComment),
+		Code:                 nulls.String(code),
+		UserComment:          nulls.String(userComment),
 		UserLat:              gtfsdb.ParseNullFloat(userLatStr),
 		UserLon:              gtfsdb.ParseNullFloat(userLonStr),
 		UserLocationAccuracy: gtfsdb.ParseNullFloat(userLocationAccuracy),

@@ -7,6 +7,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -53,28 +54,22 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		slog.String("code", code),
 		slog.String("service_date", serviceDate),
 		slog.String("vehicle_id", vehicleID),
-		slog.String("stop_id", stopID),
-		slog.String("user_comment", userComment),
-		slog.String("user_on_vehicle", userOnVehicle),
-		slog.String("user_vehicle_number", userVehicleNumber),
-		slog.String("user_lat", userLatStr),
-		slog.String("user_lon", userLonStr),
-		slog.String("user_location_accuracy", userLocationAccuracy))
+		slog.String("stop_id", stopID))
 
 	// Store the problem report in the database
 	now := api.Clock.Now().UnixMilli()
 	params := gtfsdb.CreateProblemReportTripParams{
 		TripID:               tripID,
-		ServiceDate:          gtfsdb.ToNullString(serviceDate),
-		VehicleID:            gtfsdb.ToNullString(vehicleID),
-		StopID:               gtfsdb.ToNullString(stopID),
-		Code:                 gtfsdb.ToNullString(code),
-		UserComment:          gtfsdb.ToNullString(userComment),
+		ServiceDate:          nulls.String(serviceDate),
+		VehicleID:            nulls.String(vehicleID),
+		StopID:               nulls.String(stopID),
+		Code:                 nulls.String(code),
+		UserComment:          nulls.String(userComment),
 		UserLat:              gtfsdb.ParseNullFloat(userLatStr),
 		UserLon:              gtfsdb.ParseNullFloat(userLonStr),
 		UserLocationAccuracy: gtfsdb.ParseNullFloat(userLocationAccuracy),
 		UserOnVehicle:        gtfsdb.ParseNullBool(userOnVehicle),
-		UserVehicleNumber:    gtfsdb.ToNullString(userVehicleNumber),
+		UserVehicleNumber:    nulls.String(userVehicleNumber),
 		CreatedAt:            now,
 		SubmittedAt:          now,
 	}

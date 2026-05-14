@@ -3,25 +3,27 @@ on:
   push:
     branches:
       - main
-  release:
-    types: [ published ]
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.github/workflows/docker-publish.yml'
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  # Push to GHCR on every main branch commit
+  # Push to GHCR on every main branch commit; build-only on PRs
   buildx:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Check if build is needed
         id: check
+        if: github.event_name == 'push'
         run: |
           LATEST_SHA=$(git ls-remote origin refs/heads/main | awk '{print $1}')
           if [ "${{ github.sha }}" != "$LATEST_SHA" ]; then
@@ -36,7 +38,7 @@ jobs:
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip != 'true'
         id: buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Inspect builder
         if: steps.check.outputs.skip != 'true'
         run: |
@@ -46,65 +48,21 @@ jobs:
           echo "Flags:     ${{ steps.buildx.outputs.flags }}"
           echo "Platforms: ${{ steps.buildx.outputs.platforms }}"
       - name: Login to GitHub Container Registry
-        if: steps.check.outputs.skip != 'true'
-        uses: docker/login-action@v3
+        if: steps.check.outputs.skip != 'true' && github.event_name != 'pull_request'
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push images
         if: steps.check.outputs.skip != 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ghcr.io/onebusaway/maglev:latest
             ghcr.io/onebusaway/maglev:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # Push to Docker Hub on published releases (non-prerelease only)
-  buildx-release:
-    if: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
-    runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.workflow }}-release
-      cancel-in-progress: false
-    steps:
-      - name: Compute image tag names
-        run: |
-          echo "IMAGE_TAG=$(echo $GITHUB_REF_NAME)" >> $GITHUB_ENV
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Inspect builder
-        run: |
-          echo "Name:      ${{ steps.buildx.outputs.name }}"
-          echo "Endpoint:  ${{ steps.buildx.outputs.endpoint }}"
-          echo "Status:    ${{ steps.buildx.outputs.status }}"
-          echo "Flags:     ${{ steps.buildx.outputs.flags }}"
-          echo "Platforms: ${{ steps.buildx.outputs.platforms }}"
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build and push images
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            opentransitsoftwarefoundation/maglev:${{ env.IMAGE_TAG }}
-            opentransitsoftwarefoundation/maglev:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
