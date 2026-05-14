@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -40,11 +41,13 @@ type ArrivalsAndDeparturesForLocationParams struct {
 // parameters for this endpoint in one place.
 func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request) (ArrivalsAndDeparturesForLocationParams, map[string][]string) {
 	const (
-		defaultMinutesBefore = 5
-		defaultMinutesAfter  = 35
-		maxMinutesBefore     = 60
-		maxMinutesAfter      = 240
-		defaultMaxCount      = 250
+		defaultMinutesBefore       = 5
+		defaultMinutesAfter        = 35
+		maxMinutesBefore           = 60
+		maxMinutesAfter            = 240
+		defaultMaxCount            = 250
+		errMustBeValidInteger      = "must be a valid integer"
+		errMustBeNonNegativeInteger = "must be a non-negative integer"
 	)
 
 	params := ArrivalsAndDeparturesForLocationParams{
@@ -93,9 +96,9 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	// minutesBefore
 	if val := q.Get("minutesBefore"); val != "" {
 		if n, err := strconv.Atoi(val); err != nil {
-			addError("minutesBefore", "must be a valid integer")
+			addError("minutesBefore", errMustBeValidInteger)
 		} else if n < 0 {
-			addError("minutesBefore", "must be a non-negative integer")
+			addError("minutesBefore", errMustBeNonNegativeInteger)
 		} else if n > maxMinutesBefore {
 			params.MinutesBefore = maxMinutesBefore
 		} else {
@@ -106,9 +109,9 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	// minutesAfter
 	if val := q.Get("minutesAfter"); val != "" {
 		if n, err := strconv.Atoi(val); err != nil {
-			addError("minutesAfter", "must be a valid integer")
+			addError("minutesAfter", errMustBeValidInteger)
 		} else if n < 0 {
-			addError("minutesAfter", "must be a non-negative integer")
+			addError("minutesAfter", errMustBeNonNegativeInteger)
 		} else if n > maxMinutesAfter {
 			params.MinutesAfter = maxMinutesAfter
 		} else {
@@ -119,9 +122,9 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	// frequencyMinutesBefore
 	if val := q.Get("frequencyMinutesBefore"); val != "" {
 		if n, err := strconv.Atoi(val); err != nil {
-			addError("frequencyMinutesBefore", "must be a valid integer")
+			addError("frequencyMinutesBefore", errMustBeValidInteger)
 		} else if n < 0 {
-			addError("frequencyMinutesBefore", "must be a non-negative integer")
+			addError("frequencyMinutesBefore", errMustBeNonNegativeInteger)
 		} else {
 			params.FrequencyMinutesBefore = n
 		}
@@ -130,9 +133,9 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	// frequencyMinutesAfter
 	if val := q.Get("frequencyMinutesAfter"); val != "" {
 		if n, err := strconv.Atoi(val); err != nil {
-			addError("frequencyMinutesAfter", "must be a valid integer")
+			addError("frequencyMinutesAfter", errMustBeValidInteger)
 		} else if n < 0 {
-			addError("frequencyMinutesAfter", "must be a non-negative integer")
+			addError("frequencyMinutesAfter", errMustBeNonNegativeInteger)
 		} else {
 			params.FrequencyMinutesAfter = n
 		}
@@ -812,7 +815,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 			Code:               stopData.Code.String,
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		})
