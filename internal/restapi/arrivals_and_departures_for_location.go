@@ -336,7 +336,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	references, topLevelSituationIDs := api.buildLocationReferencesBlock(ctx, state)
 	queriedStopIDs := api.buildLocationQueriedStopIDs(stops, state)
-	nearbyStops := getLocationNearbyStops(api, ctx, params.Lat, params.Lon, params.Time)
+	nearbyStops := getLocationNearbyStops(api, ctx, params.Lat, params.Lon)
 
 	api.sendResponse(w, r, models.NewArrivalsAndDeparturesForLocationResponse(
 		state.arrivals,
@@ -973,7 +973,6 @@ func getLocationNearbyStops(
 	api *RestAPI,
 	ctx context.Context,
 	centerLat, centerLon float64,
-	queryTime time.Time,
 ) []models.StopWithDistance {
 
 	nearby, _ := api.GtfsManager.GetStopsForLocation(
