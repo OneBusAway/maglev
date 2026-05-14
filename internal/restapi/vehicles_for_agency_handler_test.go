@@ -87,8 +87,14 @@ func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
 
 	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
 
-	require.NotEmpty(t, model.Data.List, "expected at least one vehicle — occupancy mock vehicle not returned by VehiclesForAgencyID")
-	vehicle := model.Data.List[0]
+	var vehicle *models.VehicleStatus
+	for i := range model.Data.List {
+		if model.Data.List[i].VehicleID == "v_occ_test" {
+			vehicle = &model.Data.List[i]
+			break
+		}
+	}
+	require.NotNil(t, vehicle, "occupancy mock vehicle not returned by VehiclesForAgencyID")
 	assert.Equal(t, "MANY_SEATS_AVAILABLE", vehicle.OccupancyStatus,
 		"vehicleStatus.occupancyStatus must receive the GTFS-RT value")
 	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
@@ -220,8 +226,15 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Trips,
 		"expected at least one trip reference — mock vehicle was not returned by VehiclesForAgencyID")
 	expectedRouteID := testdata.Raba.ID + "_" + trip.RouteID
-	assert.Equal(t, expectedRouteID, model.Data.References.Trips[0].RouteID,
-		"routeId in trip reference must be in combined agencyID_routeID format")
+	found := false
+	for _, tr := range model.Data.References.Trips {
+		if tr.RouteID == expectedRouteID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found,
+		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
 }
 
 // TestVehiclesForAgencyHandlerWithRealTimeData smoke-tests that .pb file loading
