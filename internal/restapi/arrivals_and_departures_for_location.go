@@ -41,12 +41,12 @@ type ArrivalsAndDeparturesForLocationParams struct {
 // parameters for this endpoint in one place.
 func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request) (ArrivalsAndDeparturesForLocationParams, map[string][]string) {
 	const (
-		defaultMinutesBefore       = 5
-		defaultMinutesAfter        = 35
-		maxMinutesBefore           = 60
-		maxMinutesAfter            = 240
-		defaultMaxCount            = 250
-		errMustBeValidInteger      = "must be a valid integer"
+		defaultMinutesBefore        = 5
+		defaultMinutesAfter         = 35
+		maxMinutesBefore            = 60
+		maxMinutesAfter             = 240
+		defaultMaxCount             = 250
+		errMustBeValidInteger       = "must be a valid integer"
 		errMustBeNonNegativeInteger = "must be a non-negative integer"
 	)
 
