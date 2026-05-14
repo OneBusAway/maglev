@@ -674,7 +674,7 @@ FROM
     JOIN agencies a ON routes.agency_id = a.id
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'))
-ORDER BY a.id, stop_times.stop_id;
+ORDER BY a.id ASC, stop_times.stop_id ASC;
 
 -- name: GetStopTimesForTrip :many
 SELECT
