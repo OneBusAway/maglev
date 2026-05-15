@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	gogtfs "github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
@@ -237,13 +238,18 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
 }
 
-// TestVehiclesForAgencyHandlerWithRealTimeData smoke-tests that .pb file loading
-// integrates with the handler. The .pb fixtures have fixed timestamps, so we don't
-// assert on vehicle counts (they may be filtered as stale relative to wall time);
-// instead, we verify the response shape and that whatever vehicles are loaded pass
-// the handler's validation.
+// vehiclesRealTimeDataClock is pinned just past the latest timestamp in
+// testdata/raba-vehicle-positions.pb (2025-06-08 21:08:26 UTC) so vehicles fall
+// inside the handler's 15-minute stale-vehicle window. With clock.RealClock{},
+// the .pb data is hours/days stale and every vehicle is filtered out — defeating
+// the point of the test.
+var vehiclesRealTimeDataClock = time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+
+// TestVehiclesForAgencyHandlerWithRealTimeData verifies that .pb file loading
+// integrates with the handler end-to-end: vehicles parse, get filtered by the
+// stale-vehicle window, and pass the handler's per-vehicle validation.
 func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(vehiclesRealTimeDataClock))
 	defer cleanup()
 
 	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
@@ -252,10 +258,12 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+	require.NotEmpty(t, model.Data.List, "expected real-time vehicles when clock is inside the .pb fixture window")
 
 	validStatuses := []string{"INCOMING_AT", "STOPPED_AT", "IN_TRANSIT_TO", "SCHEDULED", ""}
 	validPhases := []string{"approaching", "stopped", "in_progress", "scheduled", ""}
 	for i, vehicle := range model.Data.List {
+		assert.NotEmpty(t, vehicle.VehicleID, "list[%d].vehicleId", i)
 		assert.Contains(t, validStatuses, vehicle.Status, "list[%d].status", i)
 		assert.Contains(t, validPhases, vehicle.Phase, "list[%d].phase", i)
 		if vehicle.TripStatus != nil {
