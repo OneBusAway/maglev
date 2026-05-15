@@ -3,6 +3,9 @@ name: Performance Stress Test (Nightly)
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/loadtest-stress.yml'
   schedule:
     # Runs at 02:00 UTC every night
     - cron: '0 2 * * *'
@@ -23,7 +26,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Download dependencies
