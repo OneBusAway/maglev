@@ -3,6 +3,9 @@ name: Performance Stress Test (Nightly)
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/loadtest-stress.yml'
   schedule:
     # Runs at 02:00 UTC every night
     - cron: '0 2 * * *'
