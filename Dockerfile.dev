@@ -1,5 +1,5 @@
 # Development Dockerfile with live reload support
-FROM golang:1.24-alpine
+FROM golang:1.25-alpine
 
 # Add build arguments for UID and GID to support different host users
 # Note: UID 1000 matches the default first user on most Linux systems.
