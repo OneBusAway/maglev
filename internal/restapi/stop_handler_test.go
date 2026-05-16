@@ -185,8 +185,8 @@ func TestStopHandlerWithSituations(t *testing.T) {
 	defer api.Shutdown()
 
 	// Real-time alerts use raw (un-prefixed) ids from the GTFS-RT feed.
-	rawStopID := "4062"  // Stop4062 = "25_4062"
-	rawRouteID := "154"  // Stop4062 is on route 25_154
+	rawStopID := "4062" // Stop4062 = "25_4062"
+	rawRouteID := "154" // Stop4062 is on route 25_154
 	const alertID = "test-cross-entity-alert-789"
 	api.GtfsManager.AddAlertForTest(gtfs.Alert{
 		ID: alertID,
