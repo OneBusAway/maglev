@@ -9,94 +9,98 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripURL builds the /trip endpoint URL with key=TEST baked in. Tests that
+// want a different key (auth checks) build their URL inline.
+func tripURL(tripID string) string {
+	return "/api/where/trip/" + tripID + ".json?key=TEST"
+}
+
 func TestTripHandlerRequiresValidApiKey(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/invalid.json?key=invalid")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[TripEntryResponse](t, api,
+		"/api/where/trip/invalid.json?key=invalid")
+
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
 }
 
 func TestTripHandlerEndToEnd(t *testing.T) {
-
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agency := mustGetAgencies(t, api)[0]
 	trip := mustGetTrip(t, api)
+	combinedTripID := utils.FormCombinedID(testdata.Raba.ID, trip.ID)
 
-	tripID := utils.FormCombinedID(agency.ID, trip.ID)
-
-	ctx := context.Background()
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(context.Background(), trip.RouteID)
 	require.NoError(t, err)
 
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/"+tripID+".json?key=TEST")
+	resp, model := callAPIHandler[TripEntryResponse](t, api, tripURL(combinedTripID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]any)
+	entry := model.Data.Entry
+	assert.Equal(t, combinedTripID, entry.ID)
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, trip.RouteID), entry.RouteID)
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, trip.ServiceID), entry.ServiceID)
+	assert.Equal(t, fmt.Sprintf("%d", nulls.Int64OrDefault(trip.DirectionID, 0)), entry.DirectionID)
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, nulls.StringOrEmpty(trip.BlockID)), entry.BlockID)
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, nulls.StringOrEmpty(trip.ShapeID)), entry.ShapeID)
+	assert.Equal(t, nulls.StringOrEmpty(trip.TripHeadsign), entry.TripHeadsign)
+	assert.Equal(t, nulls.StringOrEmpty(trip.TripShortName), entry.TripShortName)
+	assert.Equal(t, nulls.StringOrEmpty(route.ShortName), entry.RouteShortName)
 
-	assert.True(t, ok)
-	assert.NotEmpty(t, data)
+	// Route reference: id is combined, agencyId matches, shortName echoes the DB.
+	require.NotEmpty(t, model.Data.References.Routes)
+	routeRef := model.Data.References.Routes[0]
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, trip.RouteID), routeRef.ID)
+	assert.Equal(t, testdata.Raba.ID, routeRef.AgencyID)
+	assert.Equal(t, nulls.StringOrEmpty(route.ShortName), routeRef.ShortName)
 
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-	assert.Equal(t, tripID, entry["id"])
-	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), entry["routeId"])
-	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.ServiceID), entry["serviceId"])
-	assert.Equal(t, fmt.Sprintf("%d", nulls.Int64OrDefault(trip.DirectionID, 0)), entry["directionId"])
-	assert.Equal(t, utils.FormCombinedID(agency.ID, nulls.StringOrEmpty(trip.BlockID)), entry["blockId"])
-	assert.Equal(t, utils.FormCombinedID(agency.ID, nulls.StringOrEmpty(trip.ShapeID)), entry["shapeId"])
-	assert.Equal(t, nulls.StringOrEmpty(trip.TripHeadsign), entry["tripHeadsign"])
-	assert.Equal(t, nulls.StringOrEmpty(trip.TripShortName), entry["tripShortName"])
-	assert.Equal(t, nulls.StringOrEmpty(route.ShortName), entry["routeShortName"])
-
-	references, ok := data["references"].(map[string]any)
-	assert.True(t, ok, "References section should exist")
-	assert.NotNil(t, references, "References should not be nil")
-
-	routes, ok := references["routes"].([]any)
-	assert.True(t, ok, "Routes section should exist in references")
-	assert.NotEmpty(t, routes, "Routes should not be empty")
-
-	routeRef, ok := routes[0].(map[string]any)
-	assert.True(t, ok)
-	assert.Equal(t, utils.FormCombinedID(agency.ID, trip.RouteID), routeRef["id"])
-	assert.Equal(t, agency.ID, routeRef["agencyId"])
-	assert.Equal(t, nulls.StringOrEmpty(route.ShortName), routeRef["shortName"])
-
-	agencies, ok := references["agencies"].([]any)
-	assert.True(t, ok, "Agencies section should exist in references")
-	assert.NotEmpty(t, agencies, "Agencies should not be empty")
-
-	agencyRef, ok := agencies[0].(map[string]any)
-	assert.True(t, ok)
-	assert.Equal(t, agency.ID, agencyRef["id"])
-	assert.Equal(t, agency.Name, agencyRef["name"])
+	// Agency reference: the RABA fixture should be exactly one entry.
+	assert.Contains(t, model.Data.References.Agencies, testdata.Raba)
 }
 
-func TestTripHandlerWithInvalidTripID(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip/agency_invalid.json?key=TEST")
-
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "resource not found", model.Text)
-	assert.Nil(t, model.Data)
-}
-
-func TestTripHandlerWithMalformedID(t *testing.T) {
+func TestTripHandler_NotFoundAndMalformed(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	malformedID := "1110"
-	endpoint := "/api/where/trip/" + malformedID + ".json?key=TEST"
+	tests := []struct {
+		name           string
+		tripID         string
+		expectedStatus int
+		expectedText   string
+	}{
+		{
+			"Unknown trip code",
+			utils.FormCombinedID(testdata.Raba.ID, "invalid"),
+			http.StatusNotFound,
+			"resource not found",
+		},
+		{
+			"Malformed (no agency separator)",
+			"1110",
+			http.StatusBadRequest,
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripEntryResponse](t, api, tripURL(tt.tripID))
 
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, model.Code)
+			if tt.expectedText != "" {
+				assert.Equal(t, tt.expectedText, model.Text)
+			}
+		})
+	}
 }
