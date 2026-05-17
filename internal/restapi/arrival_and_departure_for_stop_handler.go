@@ -385,6 +385,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		tripHeadsign = targetStopTime.StopHeadsign
 	}
 
+	entryStatus := "default"
+	if tripStatus != nil && tripStatus.Status == "CANCELED" {
+		entryStatus = "CANCELED"
+		predicted = false
+		vehicleID = ""
+		predictedArrivalTime = time.Time{}
+		predictedDepartureTime = time.Time{}
+		tripStatus = nil
+	}
+
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
 		routeShortName,                                 // routeShortName
@@ -407,7 +417,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		numberOfStopsAway,                              // numberOfStopsAway
 		blockTripSequence,                              // blockTripSequence
 		distanceFromStop,                               // distanceFromStop
-		"default",                                      // status
+		entryStatus,                                    // status
 		"",                                             // occupancyStatus
 		"",                                             // predictedOccupancy
 		"",                                             // historicalOccupancy
