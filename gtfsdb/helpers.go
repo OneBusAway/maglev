@@ -1418,8 +1418,14 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				layoverStart := int64(lastStopCurrent.ArrivalTime)
 				layoverEnd := int64(firstStopNext.DepartureTime)
 
+				// If the layover appears negative, check if it's a valid midnight wraparound
+				// (e.g. within a reasonable layover threshold, like 4 hours)
 				if layoverStart > layoverEnd {
-					continue
+					if (layoverEnd+86400)-layoverStart < (4 * 3600) {
+						layoverEnd += 86400 // It crosses midnight, shift it by 24h
+					} else {
+						continue // It's invalid data
+					}
 				}
 
 				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{

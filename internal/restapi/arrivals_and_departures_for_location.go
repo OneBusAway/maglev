@@ -449,6 +449,16 @@ func (api *RestAPI) collectArrivalsForLocationStop(ctx context.Context, w http.R
 }
 
 func (api *RestAPI) fetchActiveStopTimesForLocationWindow(ctx context.Context, stopCode string, stopLoc *time.Location, stopQueryTime time.Time, params ArrivalsAndDeparturesForLocationParams) ([]activeStopTime, error) {
+	maxBefore := params.MinutesBefore
+	if params.FrequencyMinutesBefore > maxBefore {
+		maxBefore = params.FrequencyMinutesBefore
+	}
+
+	maxAfter := params.MinutesAfter
+	if params.FrequencyMinutesAfter > maxAfter {
+		maxAfter = params.FrequencyMinutesAfter
+	}
+
 	stopWindowStart := stopQueryTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
 	stopWindowEnd := stopQueryTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
 
@@ -607,6 +617,20 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 		if !routeOK {
 			continue
 		}
+
+		if len(params.RouteTypes) > 0 {
+			routeTypeMatch := false
+			for _, rt := range params.RouteTypes {
+				if int(route.Type) == rt {
+					routeTypeMatch = true
+					break
+				}
+			}
+			if !routeTypeMatch {
+				continue // Skip this trip, it's the wrong vehicle type
+			}
+		}
+
 		trip, tripOK := tripsLookup[st.TripID]
 		if !tripOK {
 			continue
