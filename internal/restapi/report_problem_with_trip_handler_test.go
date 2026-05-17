@@ -1,8 +1,8 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,12 +10,7 @@ import (
 )
 
 func TestReportProblemWithTripRequiresValidApiKey(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-trip/12345.json?key=invalid")
-
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/report-problem-with-trip/12345.json?key=invalid")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
@@ -25,51 +20,64 @@ func TestReportProblemWithTripEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	tripID := "1_12345"
+	tripId := "1_12345"
 
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-trip/"+tripID+".json?key=TEST&serviceDate=1291536000000&vehicleId=1_3521&stopId=1_75403&code=vehicle_never_came&userComment=Test&userOnVehicle=true&userVehicleNumber=1234&userLat=47.6097&userLon=-122.3331&userLocationAccuracy=10")
+	url := fmt.Sprintf("/api/where/report-problem-with-trip/%s.json?key=TEST&serviceDate=1291536000000&vehicleId=1_3521&stopId=1_75403&code=vehicle_never_came&userComment=Test&userOnVehicle=true&userVehicleNumber=1234&userLat=47.6097&userLon=-122.3331&userLocationAccuracy=10", tripId)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	nullResp, nullModel := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-trip/.json?key=TEST&code=vehicle_never_came")
+	data, ok := model.Data.(map[string]any)
+	require.True(t, ok, "Data should be a map")
+
+	assert.Empty(t, data, "Data should be an empty object")
+
+	nullURL := "/api/where/report-problem-with-trip/.json?key=TEST&code=vehicle_never_came"
+	nullResp, nullModel := serveApiAndRetrieveEndpoint(t, api, nullURL)
 
 	assert.Equal(t, http.StatusBadRequest, nullResp.StatusCode, "Should return 400 when ID is missing")
-	assert.Equal(t, http.StatusBadRequest, nullModel.Code)
+	assert.Equal(t, 400, nullModel.Code)
 	assert.Equal(t, "id cannot be empty", nullModel.Text)
 }
 
-func TestReportProblemWithTripMinimalParams(t *testing.T) {
+func TestReportProblemWithTrip_MinimalParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-trip/1_12345.json?key=TEST")
+	tripID := "1_12345"
 
+	url := fmt.Sprintf("/api/where/report-problem-with-trip/%s.json?key=TEST", tripID)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, http.StatusOK, model.Code)
+	require.Equal(t, 200, model.Code)
 }
 
 func TestReportProblemWithTripSanitization(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	tripID := "1_12345"
+	tripId := "1_12345"
 
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-trip/"+tripID+".json?key=TEST&code=vehicle_never_came&userLat=invalid&userLon=not_a_number")
+	urlInvalidGeo := fmt.Sprintf("/api/where/report-problem-with-trip/%s.json?key=TEST&code=vehicle_never_came&userLat=invalid&userLon=not_a_number", tripId)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, urlInvalidGeo)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "Should handle invalid userLat/userLon gracefully without 500 error")
-	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	longComment := strings.Repeat("a", 1000)
-	respLong, modelLong := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-trip/"+tripID+".json?key=TEST&code=vehicle_never_came&userComment="+longComment)
+	longComment := make([]byte, 1000)
+	for i := range longComment {
+		longComment[i] = 'a'
+	}
+	urlLongComment := fmt.Sprintf("/api/where/report-problem-with-trip/%s.json?key=TEST&code=vehicle_never_came&userComment=%s", tripId, string(longComment))
+
+	respLong, modelLong := serveApiAndRetrieveEndpoint(t, api, urlLongComment)
 
 	assert.Equal(t, http.StatusOK, respLong.StatusCode, "Should handle massive user comments gracefully")
-	assert.Equal(t, http.StatusOK, modelLong.Code)
+	assert.Equal(t, 200, modelLong.Code)
 }

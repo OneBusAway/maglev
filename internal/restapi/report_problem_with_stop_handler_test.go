@@ -1,8 +1,8 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,12 +10,7 @@ import (
 )
 
 func TestReportProblemWithStopRequiresValidApiKey(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-stop/12345.json?key=invalid")
-
+	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/report-problem-with-stop/12345.json?key=invalid")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
@@ -25,51 +20,64 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	stopID := "1_75403"
+	stopId := "1_75403"
 
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-stop/"+stopID+".json?key=TEST&code=stop_name_wrong&userComment=Test+comment&userLat=47.6097&userLon=-122.3331&userLocationAccuracy=10")
+	url := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userComment=Test+comment&userLat=47.6097&userLon=-122.3331&userLocationAccuracy=10", stopId)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	nullResp, nullModel := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-stop/.json?key=TEST&code=stop_name_wrong")
+	data, ok := model.Data.(map[string]any)
+	require.True(t, ok, "Data should be a map")
+
+	assert.Empty(t, data, "Data should be an empty object")
+
+	nullURL := "/api/where/report-problem-with-stop/.json?key=TEST&code=stop_name_wrong"
+	nullResp, nullModel := serveApiAndRetrieveEndpoint(t, api, nullURL)
 
 	assert.Equal(t, http.StatusBadRequest, nullResp.StatusCode, "Should return 400 when ID is missing")
-	assert.Equal(t, http.StatusBadRequest, nullModel.Code)
+	assert.Equal(t, 400, nullModel.Code)
 	assert.Equal(t, "id cannot be empty", nullModel.Text)
 }
 
-func TestReportProblemWithStopMinimalParams(t *testing.T) {
+func TestReportProblemWithStop_MinimalParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-stop/1_75403.json?key=TEST")
+	// Test with only stop_id (no optional params)
+	stopID := "1_75403"
 
+	url := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST", stopID)
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, http.StatusOK, model.Code)
+	require.Equal(t, 200, model.Code)
 }
 
 func TestReportProblemWithStopSanitization(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	stopID := "1_75403"
+	stopId := "1_75403"
+	urlInvalidGeo := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userLat=invalid&userLon=not_a_number", stopId)
 
-	resp, model := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-stop/"+stopID+".json?key=TEST&code=stop_name_wrong&userLat=invalid&userLon=not_a_number")
+	resp, model := serveApiAndRetrieveEndpoint(t, api, urlInvalidGeo)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "Should handle invalid userLat/userLon gracefully without 500 error")
-	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	longComment := strings.Repeat("a", 1000)
-	respLong, modelLong := callAPIHandler[EmptyResponse](t, api,
-		"/api/where/report-problem-with-stop/"+stopID+".json?key=TEST&code=stop_name_wrong&userComment="+longComment)
+	longComment := make([]byte, 1000)
+	for i := range longComment {
+		longComment[i] = 'a'
+	}
+	urlLongComment := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=stop_name_wrong&userComment=%s", stopId, string(longComment))
+
+	respLong, modelLong := serveApiAndRetrieveEndpoint(t, api, urlLongComment)
 
 	assert.Equal(t, http.StatusOK, respLong.StatusCode, "Should handle massive user comments gracefully")
-	assert.Equal(t, http.StatusOK, modelLong.Code)
+	assert.Equal(t, 200, modelLong.Code)
 }
