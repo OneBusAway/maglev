@@ -714,7 +714,9 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 				tripStatus := vehicle["tripStatus"].(map[string]any)
 
 				assert.NotEmpty(t, tripStatus["activeTripId"], "TripStatus should have activeTripId")
-				assert.IsType(t, true, tripStatus["scheduled"])
+				// Note: "scheduled" field has been removed from TripStatus to match OBA Java wire format.
+				// Use "predicted" (tripStatus["predicted"]) instead.
+				assert.Contains(t, tripStatus, "predicted", "predicted field must be present in tripStatus")
 
 				if tripStatus["serviceDate"] != nil {
 					assert.IsType(t, float64(0), tripStatus["serviceDate"])
