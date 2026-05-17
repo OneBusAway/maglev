@@ -370,6 +370,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
 
+	stopOrdinal := int(targetRow.StopOrdinal)
+	arrivalEnabled := stopOrdinal > 0
+	departureEnabled := stopOrdinal < totalStopsInTrip-1
+
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
 		route.ShortName.String,                         // routeShortName
@@ -385,9 +389,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predictedDepartureTime,                         // predictedDepartureTime
 		lastUpdateTime,                                 // lastUpdateTime
 		predicted,                                      // predicted
-		true,                                           // arrivalEnabled
-		true,                                           // departureEnabled
-		int(targetStopTime.StopSequence)-1,             // stopSequence (Zero-based index)
+		arrivalEnabled,                                 // arrivalEnabled
+		departureEnabled,                               // departureEnabled
+		stopOrdinal,                                    // stopSequence (0-based ordinal)
 		totalStopsInTrip,                               // totalStopsInTrip
 		numberOfStopsAway,                              // numberOfStopsAway
 		blockTripSequence,                              // blockTripSequence
