@@ -259,6 +259,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		ArrivalTime:   targetRow.ArrivalTime,
 		DepartureTime: targetRow.DepartureTime,
 		StopSequence:  targetRow.StopSequence,
+		StopHeadsign:  targetRow.StopHeadsign.String,
 	}
 
 	// Set current time
@@ -374,12 +375,22 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	arrivalEnabled := stopOrdinal > 0
 	departureEnabled := stopOrdinal < totalStopsInTrip-1
 
+	routeShortName := route.ShortName.String
+	if trip.TripShortName.Valid && trip.TripShortName.String != "" {
+		routeShortName = trip.TripShortName.String
+	}
+
+	tripHeadsign := trip.TripHeadsign.String
+	if targetStopTime.StopHeadsign != "" {
+		tripHeadsign = targetStopTime.StopHeadsign
+	}
+
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
-		route.ShortName.String,                         // routeShortName
+		routeShortName,                                 // routeShortName
 		route.LongName.String,                          // routeLongName
 		utils.FormCombinedID(route.AgencyID, tripID),   // tripID
-		trip.TripHeadsign.String,                       // tripHeadsign
+		tripHeadsign,                                   // tripHeadsign
 		stopID,                                         // stopID
 		vehicleID,                                      // vehicleID
 		serviceMidnight,                                // serviceDate
