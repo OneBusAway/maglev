@@ -386,8 +386,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	entryStatus := "default"
-	if tripStatus != nil && tripStatus.Status == "CANCELED" {
-		entryStatus = "CANCELED"
+	if tripStatus != nil && tripStatus.Status != "" && tripStatus.Status != "SCHEDULED" {
+		entryStatus = tripStatus.Status
+	}
+
+	if entryStatus == "CANCELED" {
 		predicted = false
 		vehicleID = ""
 		predictedArrivalTime = time.Time{}
