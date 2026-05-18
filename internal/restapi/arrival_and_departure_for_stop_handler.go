@@ -337,9 +337,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if status != nil {
 		tripStatus = status
 
-		predictedArrivalTime = scheduledArrivalTime
-		predictedDepartureTime = scheduledDepartureTime
-
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
 		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
@@ -350,6 +347,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predicted = true
 		} else {
 			predicted = false
+			predictedArrivalTime = time.Time{}
+			predictedDepartureTime = time.Time{}
 		}
 
 		if vehicle != nil && vehicle.Position != nil {
@@ -400,32 +399,32 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
-		routeShortName,                                 // routeShortName
-		route.LongName.String,                          // routeLongName
-		utils.FormCombinedID(route.AgencyID, tripID),   // tripID
-		tripHeadsign,                                   // tripHeadsign
-		stopID,                                         // stopID
-		vehicleID,                                      // vehicleID
-		serviceMidnight,                                // serviceDate
-		scheduledArrivalTime,                           // scheduledArrivalTime
-		scheduledDepartureTime,                         // scheduledDepartureTime
-		predictedArrivalTime,                           // predictedArrivalTime
-		predictedDepartureTime,                         // predictedDepartureTime
-		lastUpdateTime,                                 // lastUpdateTime
-		predicted,                                      // predicted
-		arrivalEnabled,                                 // arrivalEnabled
-		departureEnabled,                               // departureEnabled
-		stopOrdinal,                                    // stopSequence (0-based ordinal)
-		totalStopsInTrip,                               // totalStopsInTrip
-		numberOfStopsAway,                              // numberOfStopsAway
-		blockTripSequence,                              // blockTripSequence
-		distanceFromStop,                               // distanceFromStop
-		entryStatus,                                    // status
-		"",                                             // occupancyStatus
-		"",                                             // predictedOccupancy
-		"",                                             // historicalOccupancy
-		tripStatus,                                     // tripStatus
-		situationIDs,                                   // situationIds
+		routeShortName,        // routeShortName
+		route.LongName.String, // routeLongName
+		utils.FormCombinedID(route.AgencyID, tripID), // tripID
+		tripHeadsign,           // tripHeadsign
+		stopID,                 // stopID
+		vehicleID,              // vehicleID
+		serviceMidnight,        // serviceDate
+		scheduledArrivalTime,   // scheduledArrivalTime
+		scheduledDepartureTime, // scheduledDepartureTime
+		predictedArrivalTime,   // predictedArrivalTime
+		predictedDepartureTime, // predictedDepartureTime
+		lastUpdateTime,         // lastUpdateTime
+		predicted,              // predicted
+		arrivalEnabled,         // arrivalEnabled
+		departureEnabled,       // departureEnabled
+		stopOrdinal,            // stopSequence (0-based ordinal)
+		totalStopsInTrip,       // totalStopsInTrip
+		numberOfStopsAway,      // numberOfStopsAway
+		blockTripSequence,      // blockTripSequence
+		distanceFromStop,       // distanceFromStop
+		entryStatus,            // status
+		"",                     // occupancyStatus
+		"",                     // predictedOccupancy
+		"",                     // historicalOccupancy
+		tripStatus,             // tripStatus
+		situationIDs,           // situationIds
 	)
 
 	references := models.NewEmptyReferences()
