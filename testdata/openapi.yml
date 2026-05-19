@@ -1859,7 +1859,6 @@ components:
           description: The ID of the trip for the arriving vehicle.
         tripStatus:
           $ref: '#/components/schemas/TripStatus'
-          description: Trip-specific status for the arriving transit vehicle.
         vehicleId:
           type: string
           description: ID of the transit vehicle serving this trip.
@@ -2165,6 +2164,7 @@ components:
 
     TripStatus:
       type: object
+      description: Trip-specific status for the arriving transit vehicle.
       properties:
         activeTripId:
           type: string
