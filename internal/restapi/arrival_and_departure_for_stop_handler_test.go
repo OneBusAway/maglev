@@ -429,7 +429,7 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	assert.Contains(t, errs, "stopSequence")
 
 	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
-	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
+	assert.Equal(t, "must be a valid Unix timestamp in milliseconds or YYYY-MM-DD date", errs["serviceDate"][0])
 }
 
 func TestParseArrivalAndDepartureParams_NegativeValues(t *testing.T) {
