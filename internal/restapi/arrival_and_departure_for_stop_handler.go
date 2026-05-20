@@ -434,196 +434,199 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	references := models.NewEmptyReferences()
 
-	// Add Stop Agency Reference
-	references.Agencies = append(references.Agencies, models.NewAgencyReference(
-		stopAgency.ID,
-		stopAgency.Name,
-		stopAgency.Url,
-		stopAgency.Timezone,
-		stopAgency.Lang.String,
-		stopAgency.Phone.String,
-		stopAgency.Email.String,
-		stopAgency.FareUrl.String,
-		"",
-		false,
-	))
+	includeRefs := r.URL.Query().Get("includeReferences") != "false"
+	if includeRefs {
+		// Add Stop Agency Reference
+		references.Agencies = append(references.Agencies, models.NewAgencyReference(
+			stopAgency.ID,
+			stopAgency.Name,
+			stopAgency.Url,
+			stopAgency.Timezone,
+			stopAgency.Lang.String,
+			stopAgency.Phone.String,
+			stopAgency.Email.String,
+			stopAgency.FareUrl.String,
+			"",
+			false,
+		))
 
-	// Add Route Agency Reference if different from Stop Agency
-	if route.AgencyID != stopAgency.ID {
-		routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
-		if err == nil {
-			references.Agencies = append(references.Agencies, models.NewAgencyReference(
-				routeAgency.ID,
-				routeAgency.Name,
-				routeAgency.Url,
-				routeAgency.Timezone,
-				routeAgency.Lang.String,
-				routeAgency.Phone.String,
-				routeAgency.Email.String,
-				routeAgency.FareUrl.String,
-				"",
-				false,
-			))
-		} else {
-			api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
-		}
-	}
-
-	tripRef := models.NewTripReference(
-		utils.FormCombinedID(route.AgencyID, tripID),
-		utils.FormCombinedID(route.AgencyID, trip.RouteID),
-		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
-		trip.TripHeadsign.String,
-		"", // trip short name
-		strconv.FormatInt(trip.DirectionID.Int64, 10),
-		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
-		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
-	)
-	references.Trips = append(references.Trips, *tripRef)
-
-	// Include active trip if it's different from the parameter trip and trip status is not null
-	if tripStatus != nil && tripStatus.ActiveTripID != "" {
-		_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
-		if err == nil && activeTripID != tripID {
-			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+		// Add Route Agency Reference if different from Stop Agency
+		if route.AgencyID != stopAgency.ID {
+			routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 			if err == nil {
-				activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
-				if err != nil {
-					api.Logger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
-				} else {
-					activeTripRef := models.NewTripReference(
-						utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
-						activeTrip.TripHeadsign.String,
-						"", // trip short name
-						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
-					)
-					references.Trips = append(references.Trips, *activeTripRef)
+				references.Agencies = append(references.Agencies, models.NewAgencyReference(
+					routeAgency.ID,
+					routeAgency.Name,
+					routeAgency.Url,
+					routeAgency.Timezone,
+					routeAgency.Lang.String,
+					routeAgency.Phone.String,
+					routeAgency.Email.String,
+					routeAgency.FareUrl.String,
+					"",
+					false,
+				))
+			} else {
+				api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
+			}
+		}
+
+		tripRef := models.NewTripReference(
+			utils.FormCombinedID(route.AgencyID, tripID),
+			utils.FormCombinedID(route.AgencyID, trip.RouteID),
+			utils.FormCombinedID(route.AgencyID, trip.ServiceID),
+			trip.TripHeadsign.String,
+			"", // trip short name
+			strconv.FormatInt(trip.DirectionID.Int64, 10),
+			utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
+			utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
+		)
+		references.Trips = append(references.Trips, *tripRef)
+
+		// Include active trip if it's different from the parameter trip and trip status is not null
+		if tripStatus != nil && tripStatus.ActiveTripID != "" {
+			_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
+			if err == nil && activeTripID != tripID {
+				activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+				if err == nil {
+					activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
+					if err != nil {
+						api.Logger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
+					} else {
+						activeTripRef := models.NewTripReference(
+							utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
+							activeTrip.TripHeadsign.String,
+							"", // trip short name
+							strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
+						)
+						references.Trips = append(references.Trips, *activeTripRef)
+					}
 				}
 			}
 		}
-	}
 
-	// Build stops references
-	stopIDSet := make(map[string]bool)
-	routeIDSet := make(map[string]*gtfsdb.Route)
+		// Build stops references
+		stopIDSet := make(map[string]bool)
+		routeIDSet := make(map[string]*gtfsdb.Route)
 
-	stopIDSet[stop.ID] = true
+		stopIDSet[stop.ID] = true
 
-	// Include the next and closest stops if trip status is not null to stops reference
-	if tripStatus != nil {
-		if tripStatus.NextStop != "" {
-			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
+		// Include the next and closest stops if trip status is not null to stops reference
+		if tripStatus != nil {
+			if tripStatus.NextStop != "" {
+				_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
 
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
+				if err != nil {
+					api.serverErrorResponse(w, r, err)
+					return
+				}
+
+				stopIDSet[nextStopID] = true
+			}
+			if tripStatus.ClosestStop != "" {
+				_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
+
+				if err != nil {
+					api.serverErrorResponse(w, r, err)
+					return
+				}
+				stopIDSet[closestStopID] = true
+			}
+		}
+		// batch fetch
+		stopIDsSlice := make([]string, 0, len(stopIDSet))
+		for sid := range stopIDSet {
+			stopIDsSlice = append(stopIDsSlice, sid)
+		}
+
+		batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch stops for references", "error", err)
+			batchedStops = nil
+		}
+
+		stopDataMap := make(map[string]gtfsdb.Stop)
+		for _, s := range batchedStops {
+			stopDataMap[s.ID] = s
+		}
+
+		batchedRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch routes for stops", "error", err)
+			batchedRoutesForStops = nil
+		}
+
+		routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
+		for _, routeRow := range batchedRoutesForStops {
+			routesByStopID[routeRow.StopID] = append(routesByStopID[routeRow.StopID], routeRow)
+		}
+
+		for _, sid := range stopIDsSlice {
+			stopData, exists := stopDataMap[sid]
+			if !exists {
+				continue
 			}
 
-			stopIDSet[nextStopID] = true
-		}
-		if tripStatus.ClosestStop != "" {
-			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
-
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
+			routesForThisStop := routesByStopID[sid]
+			combinedRouteIDs := make([]string, len(routesForThisStop))
+			for i, route := range routesForThisStop {
+				combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
+				routeCopy := gtfsdb.Route{
+					ID:        route.ID,
+					AgencyID:  route.AgencyID,
+					ShortName: route.ShortName,
+					LongName:  route.LongName,
+					Desc:      route.Desc,
+					Type:      route.Type,
+					Url:       route.Url,
+					Color:     route.Color,
+					TextColor: route.TextColor,
+				}
+				routeIDSet[route.ID] = &routeCopy
 			}
-			stopIDSet[closestStopID] = true
-		}
-	}
-	// batch fetch
-	stopIDsSlice := make([]string, 0, len(stopIDSet))
-	for sid := range stopIDSet {
-		stopIDsSlice = append(stopIDsSlice, sid)
-	}
 
-	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
-	if err != nil {
-		api.Logger.Warn("failed to batch fetch stops for references", "error", err)
-		batchedStops = nil
-	}
-
-	stopDataMap := make(map[string]gtfsdb.Stop)
-	for _, s := range batchedStops {
-		stopDataMap[s.ID] = s
-	}
-
-	batchedRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
-	if err != nil {
-		api.Logger.Warn("failed to batch fetch routes for stops", "error", err)
-		batchedRoutesForStops = nil
-	}
-
-	routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
-	for _, routeRow := range batchedRoutesForStops {
-		routesByStopID[routeRow.StopID] = append(routesByStopID[routeRow.StopID], routeRow)
-	}
-
-	for _, sid := range stopIDsSlice {
-		stopData, exists := stopDataMap[sid]
-		if !exists {
-			continue
-		}
-
-		routesForThisStop := routesByStopID[sid]
-		combinedRouteIDs := make([]string, len(routesForThisStop))
-		for i, route := range routesForThisStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
-			routeCopy := gtfsdb.Route{
-				ID:        route.ID,
-				AgencyID:  route.AgencyID,
-				ShortName: route.ShortName,
-				LongName:  route.LongName,
-				Desc:      route.Desc,
-				Type:      route.Type,
-				Url:       route.Url,
-				Color:     route.Color,
-				TextColor: route.TextColor,
+			stopRef := models.Stop{
+				ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
+				Name:               stopData.Name.String,
+				Lat:                stopData.Lat,
+				Lon:                stopData.Lon,
+				Code:               stopData.Code.String,
+				Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
+				LocationType:       int(stopData.LocationType.Int64),
+				WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
+				RouteIDs:           combinedRouteIDs,
+				StaticRouteIDs:     combinedRouteIDs,
 			}
-			routeIDSet[route.ID] = &routeCopy
+			references.Stops = append(references.Stops, stopRef)
 		}
 
-		stopRef := models.Stop{
-			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
-			Lat:                stopData.Lat,
-			Lon:                stopData.Lon,
-			Code:               stopData.Code.String,
-			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
-			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
-			RouteIDs:           combinedRouteIDs,
-			StaticRouteIDs:     combinedRouteIDs,
+		// Build routes references
+		routeRefs := make(map[string]models.Route, len(routeIDSet))
+		for _, route := range routeIDSet {
+			combinedID := utils.FormCombinedID(route.AgencyID, route.ID)
+			routeRefs[combinedID] = models.NewRoute(
+				combinedID,
+				route.AgencyID,
+				route.ShortName.String,
+				route.LongName.String,
+				route.Desc.String,
+				models.RouteType(route.Type),
+				route.Url.String,
+				route.Color.String,
+				route.TextColor.String)
 		}
-		references.Stops = append(references.Stops, stopRef)
-	}
+		references.Routes = utils.MapValues(routeRefs)
 
-	// Build routes references
-	routeRefs := make(map[string]models.Route, len(routeIDSet))
-	for _, route := range routeIDSet {
-		combinedID := utils.FormCombinedID(route.AgencyID, route.ID)
-		routeRefs[combinedID] = models.NewRoute(
-			combinedID,
-			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
-			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
-	}
-	references.Routes = utils.MapValues(routeRefs)
-
-	if len(situationIDs) > 0 {
-		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts)
-			references.Situations = append(references.Situations, situations...)
+		if len(situationIDs) > 0 {
+			alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
+			if len(alerts) > 0 {
+				situations := api.BuildSituationReferences(alerts)
+				references.Situations = append(references.Situations, situations...)
+			}
 		}
 	}
 

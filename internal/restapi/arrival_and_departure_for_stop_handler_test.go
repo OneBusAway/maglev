@@ -845,3 +845,22 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "", model.Data.Entry.VehicleID, "vehicleId should be empty for vehicle with nil ID")
 }
+
+func TestArrivalAndDepartureForStop_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", "0f36bccf-c435-4b31-b001-da345d06a57d")
+	serviceDate := time.Now()
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&includeReferences=false", stopID, tripID, serviceDate.UnixMilli())
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Trips)
+}
