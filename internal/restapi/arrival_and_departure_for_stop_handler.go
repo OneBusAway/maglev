@@ -394,6 +394,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		vehicleID = ""
 		predictedArrivalTime = time.Time{}
 		predictedDepartureTime = time.Time{}
+		lastUpdateTime = time.Time{}
 		tripStatus = nil
 	}
 
