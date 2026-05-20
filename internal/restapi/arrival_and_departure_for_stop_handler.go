@@ -69,13 +69,15 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		}
 	}
 
-	// Validate time
+	// Validate time (accepts Unix ms or yyyy-MM-dd_HH-mm-ss)
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else if t, err := time.Parse("2006-01-02_15-04-05", timeStr); err == nil {
+			params.Time = &t
 		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or yyyy-MM-dd_HH-mm-ss"}
 		}
 	}
 
