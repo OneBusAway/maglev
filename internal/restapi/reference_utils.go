@@ -101,17 +101,29 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 		}
 
 		for _, entity := range alert.InformedEntities {
+			agencyID := getStringValue(entity.AgencyID)
+
+			rawRouteID := getStringValue(entity.RouteID)
+			if rawRouteID != "" {
+				rawRouteID = utils.FormCombinedID(agencyID, rawRouteID)
+			}
+
+			rawStopID := getStringValue(entity.StopID)
+			if rawStopID != "" {
+				rawStopID = utils.FormCombinedID(agencyID, rawStopID)
+			}
+
 			affectedEntity := models.AffectedEntity{
-				AgencyID:      getStringValue(entity.AgencyID),
+				AgencyID:      agencyID,
 				ApplicationID: "",
 				DirectionID:   entity.DirectionID.String(),
-				RouteID:       getStringValue(entity.RouteID),
-				StopID:        getStringValue(entity.StopID),
+				RouteID:       rawRouteID,
+				StopID:        rawStopID,
 				TripID:        "",
 			}
 
-			if entity.TripID != nil {
-				affectedEntity.TripID = entity.TripID.ID
+			if entity.TripID != nil && entity.TripID.ID != "" {
+				affectedEntity.TripID = utils.FormCombinedID(agencyID, entity.TripID.ID)
 			}
 
 			situation.AllAffects = append(situation.AllAffects, affectedEntity)
