@@ -6,13 +6,29 @@ type Situation struct {
 	ActiveWindows      []ActiveWindow    `json:"activeWindows"`
 	AllAffects         []AffectedEntity  `json:"allAffects"`
 	ConsequenceMessage string            `json:"consequenceMessage"`
-	Consequences       []any             `json:"consequences"`
+	Consequences       []Consequence     `json:"consequences"`
 	PublicationWindows []any             `json:"publicationWindows"`
 	Reason             string            `json:"reason"`
 	Severity           string            `json:"severity"`
 	Summary            *TranslatedString `json:"summary,omitempty"`
 	Description        *TranslatedString `json:"description,omitempty"`
 	URL                *TranslatedString `json:"url,omitempty"`
+}
+
+type Consequence struct {
+	Condition        string           `json:"condition"`
+	ConditionDetails ConditionDetails `json:"conditionDetails"`
+}
+
+type ConditionDetails struct {
+	DiversionPath    DiversionPath `json:"diversionPath"`
+	DiversionStopIDs []string      `json:"diversionStopIds"`
+}
+
+type DiversionPath struct {
+	Length int    `json:"length"`
+	Levels string `json:"levels"`
+	Points string `json:"points"`
 }
 
 type ActiveWindow struct {

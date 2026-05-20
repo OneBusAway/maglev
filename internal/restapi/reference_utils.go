@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
@@ -79,11 +78,24 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 	for _, alert := range alerts {
 		situation := models.Situation{
 			ID:                 alert.ID,
-			CreationTime:       models.NewModelTime(time.Time{}),
+			CreationTime:       models.NewModelTime(api.Clock.Now()),
 			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
 			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
 			ConsequenceMessage: "",
-			Consequences:       []any{},
+			Consequences: []models.Consequence{
+				{
+					Condition: "",
+					ConditionDetails: models.ConditionDetails{
+						DiversionPath: models.DiversionPath{
+							Length: 0,
+							Levels: "",
+							Points: "",
+						},
+						// Initialized to an empty slice so it outputs [] instead of null
+						DiversionStopIDs: []string{},
+					},
+				},
+			},
 			PublicationWindows: []any{},
 			Reason:             mapAlertCauseToReason(alert.Cause),
 			Severity:           mapAlertEffectToSeverity(alert.Effect),
