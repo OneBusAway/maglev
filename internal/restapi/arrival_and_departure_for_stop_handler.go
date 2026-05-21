@@ -201,12 +201,37 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 	if params.ServiceDate != nil {
-		localized := params.ServiceDate.In(loc)
-		params.ServiceDate = &localized
+		if params.ServiceDate.Location() == time.UTC {
+			localized := time.Date(
+				params.ServiceDate.Year(),
+				params.ServiceDate.Month(),
+				params.ServiceDate.Day(),
+				0, 0, 0, 0,
+				loc,
+			)
+			params.ServiceDate = &localized
+		} else {
+			localized := params.ServiceDate.In(loc)
+			params.ServiceDate = &localized
+		}
 	}
 	if params.Time != nil {
-		localized := params.Time.In(loc)
-		params.Time = &localized
+		if params.Time.Location() == time.UTC {
+			localized := time.Date(
+				params.Time.Year(),
+				params.Time.Month(),
+				params.Time.Day(),
+				params.Time.Hour(),
+				params.Time.Minute(),
+				params.Time.Second(),
+				params.Time.Nanosecond(),
+				loc,
+			)
+			params.Time = &localized
+		} else {
+			localized := params.Time.In(loc)
+			params.Time = &localized
+		}
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
@@ -220,6 +245,23 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+	// Set current time
+	var currentTime time.Time
+	if params.Time != nil {
+		currentTime = *params.Time
+	} else {
+		currentTime = api.Clock.Now().In(loc)
+	}
+
+	// serviceDate is already localized above; extract midnight in agency's TZ.
+	serviceDate := *params.ServiceDate
+	serviceMidnight := time.Date(
+		serviceDate.Year(),
+		serviceDate.Month(),
+		serviceDate.Day(),
+		0, 0, 0, 0,
+		loc,
+	)
 
 	var targetRow gtfsdb.GetTargetStopTimeWithTotalStopsRow
 
@@ -290,8 +332,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		targetRow = gtfsdb.GetTargetStopTimeWithTotalStopsRow(seqRow)
 	} else {
 		targetRow, err = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStops(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsParams{
-			TripID: tripID,
-			StopID: stopCode,
+			TripID:      tripID,
+			StopID:      stopCode,
+			CurrentTime: currentTime.Sub(serviceMidnight).Nanoseconds(),
 		})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -314,24 +357,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		StopSequence:  targetRow.StopSequence,
 		StopHeadsign:  targetRow.StopHeadsign.String,
 	}
-
-	// Set current time
-	var currentTime time.Time
-	if params.Time != nil {
-		currentTime = *params.Time
-	} else {
-		currentTime = api.Clock.Now().In(loc)
-	}
-
-	// serviceDate is already localized above; extract midnight in agency's TZ.
-	serviceDate := *params.ServiceDate
-	serviceMidnight := time.Date(
-		serviceDate.Year(),
-		serviceDate.Month(),
-		serviceDate.Day(),
-		0, 0, 0, 0,
-		loc,
-	)
 
 	// Arrival time is stored in nanoseconds since midnight → convert to duration
 	// arrival and departure time is stored in nanoseconds (sqlite)

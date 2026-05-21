@@ -896,3 +896,37 @@ func TestArrivalAndDepartureForStop_ExpandOutwardSearch(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, respBad.StatusCode)
 	assert.Equal(t, 404, modelBad.Code)
 }
+
+func TestArrivalAndDepartureForStop_ClosestStopVisit(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "2000")
+	tripID := utils.FormCombinedID("25", "t_290969_b_80332_tn_0")
+
+	stopAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(t.Context(), "25")
+	require.NoError(t, err)
+	loc, err := time.LoadLocation(stopAgency.Timezone)
+	require.NoError(t, err)
+
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, loc)
+
+	time1 := serviceDate.Add(15*time.Hour + 15*time.Minute)
+	endpoint1 := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%s&time=%d",
+		stopID, tripID, serviceDate.Format("2006-01-02"), time1.UnixMilli())
+
+	resp1, model1 := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint1)
+	assert.Equal(t, http.StatusOK, resp1.StatusCode)
+	assert.Equal(t, 200, model1.Code)
+	assert.Equal(t, 0, model1.Data.Entry.StopSequence)
+
+	time2 := serviceDate.Add(16*time.Hour + 40*time.Minute)
+	endpoint2 := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%s&time=%d",
+		stopID, tripID, serviceDate.Format("2006-01-02"), time2.UnixMilli())
+
+	resp2, model2 := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint2)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	assert.Equal(t, 200, model2.Code)
+	assert.True(t, model2.Data.Entry.StopSequence > 0, "StopSequence should be greater than 0 for the second visit")
+	t.Logf("Second visit StopSequence: %d", model2.Data.Entry.StopSequence)
+}
