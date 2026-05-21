@@ -224,18 +224,67 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	var targetRow gtfsdb.GetTargetStopTimeWithTotalStopsRow
 
 	if params.StopSequence != nil {
-		seqRow, seqErr := api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
+		var seqRow gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceRow
+		var seqErr error
+		seqRow, seqErr = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
 			TripID:       tripID,
 			StopID:       stopCode,
 			StopSequence: int64(*params.StopSequence),
 		})
 		if seqErr != nil {
 			if errors.Is(seqErr, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
+				// Expand outward search fallback
+				stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+				if err != nil {
+					api.serverErrorResponse(w, r, err)
+					return
+				}
+				n := len(stopTimes)
+				if n == 0 {
+					api.sendNotFound(w, r)
+					return
+				}
+				startIdx := *params.StopSequence
+				if startIdx < 0 || startIdx >= n {
+					api.sendNotFound(w, r)
+					return
+				}
+				matchedOrdinal := -1
+				maxD := startIdx
+				if n-1-startIdx > maxD {
+					maxD = n - 1 - startIdx
+				}
+				for d := 0; d <= maxD; d++ {
+					if startIdx-d >= 0 && stopTimes[startIdx-d].StopID == stopCode {
+						matchedOrdinal = startIdx - d
+						break
+					}
+					if startIdx+d < n && stopTimes[startIdx+d].StopID == stopCode {
+						matchedOrdinal = startIdx + d
+						break
+					}
+				}
+				if matchedOrdinal == -1 {
+					api.sendNotFound(w, r)
+					return
+				}
+				seqRow, seqErr = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
+					TripID:       tripID,
+					StopID:       stopCode,
+					StopSequence: int64(matchedOrdinal),
+				})
+				if seqErr != nil {
+					if errors.Is(seqErr, sql.ErrNoRows) {
+						api.sendNotFound(w, r)
+					} else {
+						api.serverErrorResponse(w, r, seqErr)
+					}
+					return
+				}
 			} else {
 				api.serverErrorResponse(w, r, seqErr)
+				return
 			}
-			return
 		}
 
 		targetRow = gtfsdb.GetTargetStopTimeWithTotalStopsRow(seqRow)

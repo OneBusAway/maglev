@@ -864,3 +864,35 @@ func TestArrivalAndDepartureForStop_IncludeReferencesFalse(t *testing.T) {
 	assert.Empty(t, model.Data.References.Stops)
 	assert.Empty(t, model.Data.References.Trips)
 }
+
+func TestArrivalAndDepartureForStop_ExpandOutwardSearch(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", "0f36bccf-c435-4b31-b001-da345d06a57d")
+	serviceDate := time.Now()
+
+	endpointExact := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=17", stopID, tripID, serviceDate.UnixMilli())
+	respExact, modelExact := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointExact)
+	assert.Equal(t, http.StatusOK, respExact.StatusCode)
+	assert.Equal(t, 200, modelExact.Code)
+	assert.Equal(t, 17, modelExact.Data.Entry.StopSequence)
+
+	endpointShifted := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=16", stopID, tripID, serviceDate.UnixMilli())
+	respShifted, modelShifted := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointShifted)
+	assert.Equal(t, http.StatusOK, respShifted.StatusCode)
+	assert.Equal(t, 200, modelShifted.Code)
+	assert.Equal(t, 17, modelShifted.Data.Entry.StopSequence)
+
+	endpointWrong := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=-500", stopID, tripID, serviceDate.UnixMilli())
+	respWrong, modelWrong := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointWrong)
+	assert.Equal(t, http.StatusNotFound, respWrong.StatusCode)
+	assert.Equal(t, 404, modelWrong.Code)
+
+	badStopID := utils.FormCombinedID("25", "99999")
+	endpointBadStop := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=17", badStopID, tripID, serviceDate.UnixMilli())
+	respBad, modelBad := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointBadStop)
+	assert.Equal(t, http.StatusNotFound, respBad.StatusCode)
+	assert.Equal(t, 404, modelBad.Code)
+}
