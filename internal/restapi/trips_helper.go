@@ -205,7 +205,7 @@ func (api *RestAPI) BuildTripStatus(
 	}
 
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
-	if blockTripSequence > 0 {
+	if blockTripSequence >= 0 {
 		status.BlockTripSequence = blockTripSequence
 	}
 
@@ -556,20 +556,20 @@ func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, min
 	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
 }
 
-// calculateBlockTripSequence calculates the index of a trip within its block's ordered trip sequence
-// for trips that are active on the given service date.
-// Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
+// calculateBlockTripSequence calculates the 0-based index of a trip within its
+// block's ordered trip sequence for trips active on the given service date.
+// Returns -1 when the trip has no block or on error.
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
 		slog.Warn("calculateBlockTripSequence: failed to get trip",
 			slog.String("trip_id", tripID),
 			slog.String("error", err.Error()))
-		return 0
+		return -1
 	}
 
 	if !trip.BlockID.Valid {
-		return 0
+		return -1
 	}
 
 	formattedDate := serviceDate.Format("20060102")
@@ -579,13 +579,12 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 			slog.String("trip_id", tripID),
 			slog.String("date", formattedDate),
 			slog.String("error", err.Error()))
-		return 0
+		return -1
 	}
 	if len(activeServiceIDs) == 0 {
-		return 0
+		return -1
 	}
 
-	// Use optimized query with ROW_NUMBER() window function
 	seq, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripSequence(ctx, gtfsdb.GetBlockTripSequenceParams{
 		TripID:     tripID,
 		BlockID:    trip.BlockID,
@@ -598,7 +597,7 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 				slog.String("block_id", trip.BlockID.String),
 				slog.String("error", err.Error()))
 		}
-		return 0
+		return -1
 	}
 
 	return int(seq)
