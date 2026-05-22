@@ -63,10 +63,12 @@ type TripStatus struct {
 	TotalDistanceAlongTrip     float64    `json:"totalDistanceAlongTrip"`
 	VehicleFeatures            []string   `json:"vehicleFeatures"`
 	VehicleID                  string     `json:"vehicleId"`
+	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. Tracked as a known spec deviation.
 }
 
 func (ts *TripStatus) SetPredicted(predicted bool) {
 	ts.Predicted = predicted
+	ts.Scheduled = !predicted
 }
 
 // SituationIDs and VehicleFeatures default to empty slices (never null in JSON).

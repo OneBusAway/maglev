@@ -160,6 +160,7 @@ func TestTripStatusJSON(t *testing.T) {
 		TotalDistanceAlongTrip:     5000.0,
 		VehicleFeatures:            []string{"wifi", "bike_rack"},
 		VehicleID:                  "vehicle_789",
+		Scheduled:                  false,
 	}
 
 	jsonData, err := json.Marshal(tripStatus)
@@ -175,6 +176,7 @@ func TestTripStatusJSON(t *testing.T) {
 	assert.Equal(t, tripStatus.Predicted, unmarshaledStatus.Predicted)
 	assert.Equal(t, tripStatus.Position.Lat, unmarshaledStatus.Position.Lat)
 	assert.Equal(t, tripStatus.Position.Lon, unmarshaledStatus.Position.Lon)
+	assert.Equal(t, tripStatus.Scheduled, unmarshaledStatus.Scheduled)
 }
 
 func TestTripStatus_JSONAlwaysPresent(t *testing.T) {

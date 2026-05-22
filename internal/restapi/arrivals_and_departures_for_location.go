@@ -283,8 +283,6 @@ func arrivalStatusFromDeviation(deviationSeconds int) string {
 
 // arrivalsAndDeparturesForLocationHandler returns arrivals and departures for all
 // stops within a geographic bounding box (lat/lon + latSpan/lonSpan or radius).
-//
-// Java equivalent: ArrivalsAndDeparturesForLocationAction.index()
 func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -294,7 +292,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	stops, _ := api.GtfsManager.GetStopsForLocation(
+	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(
 		ctx,
 		&internalgtfs.LocationParams{
 			Lat:     params.Lat,
@@ -314,6 +312,10 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	}
 
 	state := newLocationArrivalsState()
+	if limitExceeded {
+		state.limitExceeded = true
+	}
+
 	if err := api.resolveAgenciesForStopsLocation(ctx, stops, state); err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
