@@ -832,7 +832,7 @@ func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID strin
 		_, nextStopCode, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
 		if err == nil {
 			nextStopSeq := api.getBlockSequenceForStopID(ctx, activeTripID, nextStopCode, serviceDate)
-			if nextStopSeq >= 0 {
+			if nextStopSeq != -1 && targetGlobalSeq != -1 {
 				numberOfStopsAway := targetGlobalSeq - nextStopSeq
 				return &numberOfStopsAway
 			}
@@ -842,8 +842,10 @@ func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID strin
 	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
 	if currentVehicleStopSequence != nil {
 		vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
-		numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq
-		return &numberOfStopsAway
+		if targetGlobalSeq != -1 && vehicleGlobalSeq != -1 {
+			numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq
+			return &numberOfStopsAway
+		}
 	}
 
 	return nil

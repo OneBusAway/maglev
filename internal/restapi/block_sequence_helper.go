@@ -16,7 +16,7 @@ func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID 
 
 	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, blockID)
 	if err != nil {
-		return 0
+		return rawSequenceToOrdinal(api, ctx, tripID, stopSequence)
 	}
 
 	type TripWithDetails struct {
@@ -69,7 +69,7 @@ func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID 
 					return blockSequence + i
 				}
 			}
-			return blockSequence
+			return -1
 		}
 		blockSequence += len(stopTimes)
 	}
@@ -82,14 +82,14 @@ func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID 
 func rawSequenceToOrdinal(api *RestAPI, ctx context.Context, tripID string, stopSequence int) int {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
-		return 0
+		return -1
 	}
 	for i, st := range stopTimes {
 		if int(st.StopSequence) == stopSequence {
 			return i
 		}
 	}
-	return 0
+	return -1
 }
 
 // getBlockSequenceForStopID returns the global block sequence index for the first
