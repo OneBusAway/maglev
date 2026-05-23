@@ -122,50 +122,50 @@ func (api *RestAPI) BuildTripStatus(
 		var actualDistance float64
 		var hasActualDistance bool
 
-	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
-	if shapeErr != nil {
-		slog.Warn("buildTripStatusCore: failed to get shape points",
-			slog.String("trip_id", dbTripID),
-			slog.String("error", shapeErr.Error()))
-	}
-	if shapeErr == nil && len(shapeRows) > 1 {
+		shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
+		if shapeErr != nil {
+			slog.Warn("buildTripStatusCore: failed to get shape points",
+				slog.String("trip_id", dbTripID),
+				slog.String("error", shapeErr.Error()))
+		}
+		if shapeErr == nil && len(shapeRows) > 1 {
 			shapePoints = shapeRowsToPoints(shapeRows)
 			cumulativeDistances = preCalculateCumulativeDistances(shapePoints)
-		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
+			status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
 
-		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
-			// it onto the route shape. Reuses the already-fetched shapePoints.
+			if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
+				// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
+				// it onto the route shape. Reuses the already-fetched shapePoints.
 				actualDistance = api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
-			status.DistanceAlongTrip = actualDistance
+				status.DistanceAlongTrip = actualDistance
 				hasActualDistance = true
 
-			if status.LastKnownLocation != nil {
-				actualPosition := *status.LastKnownLocation
+				if status.LastKnownLocation != nil {
+					actualPosition := *status.LastKnownLocation
 
-				if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
-					status.Position = *projected
-				}
+					if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
+						status.Position = *projected
+					}
 
-				// If the feed does not provide a bearing, infer orientation from the
-				// heading of the closest shape segment at the vehicle's position.
-				if vehicle.Position.Bearing == nil {
-					if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
-						status.Orientation = inferred
-						status.LastKnownOrientation = inferred
+					// If the feed does not provide a bearing, infer orientation from the
+					// heading of the closest shape segment at the vehicle's position.
+					if vehicle.Position.Bearing == nil {
+						if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+							status.Orientation = inferred
+							status.LastKnownOrientation = inferred
+						}
 					}
 				}
-			}
 
-			if scheduleDeviation != 0 && len(stopTimes) > 0 {
-				scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
-					ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
-					stopTimes, shapePoints, cumulativeDistances,
-				)
-				status.ScheduledDistanceAlongTrip = scheduledDistance
+				if scheduleDeviation != 0 && len(stopTimes) > 0 {
+					scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
+						ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
+						stopTimes, shapePoints, cumulativeDistances,
+					)
+					status.ScheduledDistanceAlongTrip = scheduledDistance
+				}
 			}
 		}
-	}
 
 		if vehicle != nil && vehicle.Position != nil {
 			if vehicle.StopID != nil && *vehicle.StopID != "" {
@@ -914,7 +914,7 @@ func (api *RestAPI) findStopsByDistance(
 	}
 
 	var closestStop *gtfsdb.StopTime
-	var closestDistDiff float64 = math.MaxFloat64
+	var closestDistDiff = math.MaxFloat64
 
 	var nextStop *gtfsdb.StopTime
 

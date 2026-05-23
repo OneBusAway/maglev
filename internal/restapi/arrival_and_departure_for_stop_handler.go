@@ -841,10 +841,10 @@ func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID strin
 
 	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
 	if currentVehicleStopSequence != nil {
-	vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
+		vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
 		numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq
-	return &numberOfStopsAway
-}
+		return &numberOfStopsAway
+	}
 
 	return nil
 }
