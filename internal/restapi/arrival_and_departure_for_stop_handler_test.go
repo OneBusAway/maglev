@@ -373,9 +373,77 @@ func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
 	api := createTestApi(t)
 	vehicle := &gtfs.Vehicle{}
 
-	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now())
+	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now(), nil)
 
 	assert.Nil(t, result)
+}
+
+func TestGetNumberOfStopsAway_Valid(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "t_290969_b_80332_tn_0"
+	ctx := context.Background()
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 3, "test trip must have at least 3 stop times")
+
+	seqVehicle := stopTimes[0].StopSequence
+	seqTarget := stopTimes[2].StopSequence
+
+	currentSeq := uint32(seqVehicle)
+	vehicle := &gtfs.Vehicle{
+		CurrentStopSequence: &currentSeq,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID: tripID,
+			},
+		},
+	}
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, loc)
+
+	result := api.getNumberOfStopsAway(ctx, tripID, int(seqTarget), vehicle, serviceDate, nil)
+	require.NotNil(t, result)
+	assert.Equal(t, 2, *result)
+}
+
+func TestGetNumberOfStopsAway_UsesTripStatusNextStop(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "t_290969_b_80332_tn_0"
+	ctx := context.Background()
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 3, "test trip must have at least 3 stop times")
+
+	vehicle := &gtfs.Vehicle{
+		CurrentStopSequence: nil,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID: tripID,
+			},
+		},
+	}
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, loc)
+
+	nextStopID := stopTimes[0].StopID
+	tripStatus := &models.TripStatus{
+		NextStop: utils.FormCombinedID("25", nextStopID),
+	}
+
+	seqTarget := stopTimes[2].StopSequence
+	result := api.getNumberOfStopsAway(ctx, tripID, int(seqTarget), vehicle, serviceDate, tripStatus)
+	require.NotNil(t, result, "should not be nil when tripStatus.NextStop is available")
+	assert.Equal(t, 2, *result, "numberOfStopsAway should be 2 (target index 2 - vehicle next stop index 0)")
 }
 
 func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {

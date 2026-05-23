@@ -953,12 +953,9 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	assert.Contains(t, status.ClosestStop, midStopID,
 		"ClosestStop should contain the vehicle's reported StopID")
 
-	// Because the vehicle is STOPPED_AT a mid-trip stop, NextStop should be the following stop
-	if midIdx+1 < len(stopTimes) {
-		assert.NotEmpty(t, status.NextStop, "NextStop should be populated when stopped at a mid-trip stop")
-		assert.Contains(t, status.NextStop, stopTimes[midIdx+1].StopID,
-			"NextStop should be the stop after the vehicle's current stop")
-	}
+	assert.NotEmpty(t, status.NextStop, "NextStop should be populated when vehicle has StopID")
+	assert.Contains(t, status.NextStop, midStopID,
+		"NextStop should match the vehicle's current stop when stopped at it")
 
 	// Vehicle is fresh so status/phase reflect ScheduleRelationship (SCHEDULED → "SCHEDULED"/"in_progress"),
 	// not CurrentStatus. CurrentStatus only affects the stop-finding branch, not GetVehicleStatusAndPhase.
