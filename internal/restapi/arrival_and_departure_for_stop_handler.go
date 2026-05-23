@@ -432,11 +432,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		if vehicle != nil && vehicle.Position != nil {
 			distanceFromStop = api.getBlockDistanceToStop(ctx, tripID, stopCode, vehicle, serviceDate)
 
-			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate)
+			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate, tripStatus)
 			if numberOfStopsAwayPtr != nil {
 				numberOfStopsAway = *numberOfStopsAwayPtr
 			} else {
-				numberOfStopsAway = -1
+				numberOfStopsAway = 0
 			}
 		}
 	}
@@ -820,20 +820,31 @@ func (api *RestAPI) getPredictedTimes(
 	return predictedArrival, predictedDeparture, true
 }
 
-func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
-	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
-	if currentVehicleStopSequence == nil {
-		return nil
-	}
-
+func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time, tripStatus *models.TripStatus) *int {
 	activeTripID := GetVehicleActiveTripID(vehicle)
 	if activeTripID == "" {
 		activeTripID = targetTripID
 	}
 
 	targetGlobalSeq := api.getBlockSequenceForStopSequence(ctx, targetTripID, targetStopSequence, serviceDate)
-	vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
 
-	numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq - 1
+	if tripStatus != nil && tripStatus.NextStop != "" {
+		_, nextStopCode, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
+		if err == nil {
+			nextStopSeq := api.getBlockSequenceForStopID(ctx, activeTripID, nextStopCode, serviceDate)
+			if nextStopSeq >= 0 {
+				numberOfStopsAway := targetGlobalSeq - nextStopSeq
+				return &numberOfStopsAway
+			}
+		}
+	}
+
+	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
+	if currentVehicleStopSequence != nil {
+	vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
+		numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq
 	return &numberOfStopsAway
+}
+
+	return nil
 }
