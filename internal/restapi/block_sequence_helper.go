@@ -91,3 +91,20 @@ func rawSequenceToOrdinal(api *RestAPI, ctx context.Context, tripID string, stop
 	}
 	return 0
 }
+
+// getBlockSequenceForStopID returns the global block sequence index for the first
+// occurrence of stopID in the given trip. Returns -1 if not found.
+func (api *RestAPI) getBlockSequenceForStopID(ctx context.Context, tripID string, stopID string, serviceDate time.Time) int {
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil || len(stopTimes) == 0 {
+		return -1
+	}
+
+	for _, st := range stopTimes {
+		if st.StopID == stopID {
+			return api.getBlockSequenceForStopSequence(ctx, tripID, int(st.StopSequence), serviceDate)
+		}
+	}
+
+	return -1
+}
