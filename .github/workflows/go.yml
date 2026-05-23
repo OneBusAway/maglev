@@ -58,6 +58,7 @@ jobs:
         run: go mod verify
 
       - name: Check OpenAPI spec is up to date with upstream
+        if: github.event_name == 'pull_request'
         run: bash scripts/check-openapi.sh
         shell: bash
 
