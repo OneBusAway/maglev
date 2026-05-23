@@ -777,34 +777,6 @@ func (api *RestAPI) calculateOffsetForStop(
 	return 0
 }
 
-func (api *RestAPI) findNextStopAfter(
-	currentStopID string,
-	stopTimes []*gtfsdb.StopTime,
-	currentTime time.Time,
-	serviceDate time.Time,
-	scheduleDeviation int,
-) (stopID string, offset int) {
-	if len(stopTimes) == 0 {
-		return "", 0
-	}
-
-	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-
-	for i, st := range stopTimes {
-		if st.StopID == currentStopID {
-			if i+1 < len(stopTimes) {
-				nextSt := stopTimes[i+1]
-				stopTimeSeconds := utils.EffectiveStopTimeSeconds(nextSt.ArrivalTime, nextSt.DepartureTime)
-				predictedArrival := stopTimeSeconds + int64(scheduleDeviation)
-				return nextSt.StopID, int(predictedArrival - currentTimeSeconds)
-			}
-			break
-		}
-	}
-
-	return "", 0
-}
-
 func (api *RestAPI) calculateBatchStopDistances(
 	timeStops []gtfsdb.StopTime,
 	shapePoints []gtfs.ShapePoint,
@@ -1057,79 +1029,6 @@ func (api *RestAPI) findClosestStopBySequence(
 	}
 
 	return "", 0
-}
-
-func (api *RestAPI) findNextStopBySequence(
-	ctx context.Context,
-	stopTimes []*gtfsdb.StopTime,
-	currentStopSequence uint32,
-	currentTime time.Time,
-	serviceDate time.Time,
-	scheduleDeviation int,
-	vehicle *gtfs.Vehicle,
-	tripID string,
-) (stopID string, offset int) {
-	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-
-	isAtCurrentStop := vehicle != nil && vehicle.CurrentStatus != nil &&
-		*vehicle.CurrentStatus == gtfs.CurrentStatus(1)
-
-	for i, st := range stopTimes {
-		if uint32(st.StopSequence) == currentStopSequence {
-			var nextStop *gtfsdb.StopTime
-
-			if isAtCurrentStop {
-				if i+1 < len(stopTimes) {
-					nextStop = stopTimes[i+1]
-				} else {
-					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID)
-				}
-			} else {
-				nextStop = st
-			}
-
-			if nextStop != nil {
-				stopTimeSeconds := utils.EffectiveStopTimeSeconds(nextStop.ArrivalTime, nextStop.DepartureTime)
-				predictedArrival := stopTimeSeconds + int64(scheduleDeviation)
-				return nextStop.StopID, int(predictedArrival - currentTimeSeconds)
-			}
-		}
-	}
-
-	return "", 0
-}
-
-// getFirstStopOfNextTripInBlock uses LEAD() window function to find the next trip
-// in the block and directly fetches its first stop in a single SQL query.
-func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string) *gtfsdb.StopTime {
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, currentTripID)
-	if err != nil {
-		slog.Warn("getFirstStopOfNextTripInBlock: failed to get trip",
-			slog.String("trip_id", currentTripID),
-			slog.String("error", err.Error()))
-		return nil
-	}
-	if !trip.BlockID.Valid {
-		return nil
-	}
-
-	// Use optimized query with LEAD() window function
-	stopTime, err := api.GtfsManager.GtfsDB.Queries.GetFirstStopOfNextTripInBlock(ctx, gtfsdb.GetFirstStopOfNextTripInBlockParams{
-		BlockID:    trip.BlockID,
-		ServiceIds: []string{trip.ServiceID},
-		TripID:     currentTripID,
-	})
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
-				slog.String("trip_id", currentTripID),
-				slog.String("block_id", trip.BlockID.String),
-				slog.String("error", err.Error()))
-		}
-		return nil
-	}
-
-	return &stopTime
 }
 
 func (api *RestAPI) calculateEffectiveDistanceAlongTrip(
