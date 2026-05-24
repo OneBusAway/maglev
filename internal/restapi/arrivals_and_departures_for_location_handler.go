@@ -490,8 +490,8 @@ func (api *RestAPI) fetchActiveStopTimesForLocationWindow(
 		maxAfter = params.FrequencyMinutesAfter
 	}
 
-	stopWindowStart := spc.QueryTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
-	stopWindowEnd := spc.QueryTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
+	stopWindowStart := spc.QueryTime.Add(-time.Duration(maxBefore) * time.Minute)
+	stopWindowEnd := spc.QueryTime.Add(time.Duration(maxAfter) * time.Minute)
 
 	fw := fetchWindow{
 		StopCode:  spc.StopCode,

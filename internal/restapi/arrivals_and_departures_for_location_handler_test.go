@@ -490,4 +490,5 @@ func TestArrivalsAndDeparturesForLocationLimitExceeded(t *testing.T) {
 
 	ads, _ := entry["arrivalsAndDepartures"].([]interface{})
 	assert.LessOrEqual(t, len(ads), 1)
+	assert.Equal(t, true, entry["limitExceeded"])
 }

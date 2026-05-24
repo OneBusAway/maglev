@@ -23,32 +23,32 @@ func TestContextCancellationHandling(t *testing.T) {
 	}{
 		{
 			name:     "agencies with coverage should handle context cancellation",
-			endpoint: "/api/where/agencies-with-coverage.json?key=test",
+			endpoint: "/api/where/agencies-with-coverage.json?key=org.onebusaway.iphone",
 			timeout:  1 * time.Nanosecond, // Very short timeout to trigger cancellation
 		},
 		{
 			name:     "stop IDs for agency should handle context cancellation",
-			endpoint: "/api/where/stop-ids-for-agency/1?key=test",
+			endpoint: "/api/where/stop-ids-for-agency/1?key=org.onebusaway.iphone",
 			timeout:  1 * time.Nanosecond,
 		},
 		{
 			name:     "routes for location should handle context cancellation",
-			endpoint: "/api/where/routes-for-location.json?lat=38.9&lon=-77.0&key=test",
+			endpoint: "/api/where/routes-for-location.json?lat=38.9&lon=-77.0&key=org.onebusaway.iphone",
 			timeout:  1 * time.Nanosecond,
 		},
 		{
 			name:     "stops for location should handle context cancellation",
-			endpoint: "/api/where/stops-for-location.json?lat=38.9&lon=-77.0&key=test",
+			endpoint: "/api/where/stops-for-location.json?lat=38.9&lon=-77.0&key=org.onebusaway.iphone",
 			timeout:  1 * time.Nanosecond,
 		},
 		{
 			name:     "arrivals and departures for location should handle context cancellation",
-			endpoint: "/api/where/arrivals-and-departures-for-location.json?lat=38.9&lon=-77.0&latSpan=0.01&lonSpan=0.01&key=test",
+			endpoint: "/api/where/arrivals-and-departures-for-location.json?lat=38.9&lon=-77.0&latSpan=0.01&lonSpan=0.01&key=org.onebusaway.iphone",
 			timeout:  1 * time.Nanosecond,
 		},
 		{
 			name:     "stops for route should handle context cancellation",
-			endpoint: "/api/where/stops-for-route/1?key=test",
+			endpoint: "/api/where/stops-for-route/1?key=org.onebusaway.iphone",
 			timeout:  1 * time.Nanosecond,
 		},
 	}
@@ -82,16 +82,15 @@ func TestContextCancellationHandling(t *testing.T) {
 			statusCode := w.Code
 
 			// Valid responses: 200 (completed), 401 (API validation), 500 (error), timeout-related,
-			// or 429 (rate limit — valid when many sub-tests exhaust the rate limiter).
+			// or 404 (not found). Rate limit 429 is prevented by using an exempt key.
 			assert.True(t, statusCode == http.StatusOK ||
 				statusCode == http.StatusUnauthorized || // API key validation happens first
 				statusCode == http.StatusBadRequest ||
 				statusCode == http.StatusInternalServerError ||
 				statusCode == http.StatusRequestTimeout ||
 				statusCode == http.StatusGatewayTimeout ||
-				statusCode == http.StatusTooManyRequests || // rate limit is valid under load
 				statusCode == http.StatusNotFound,
-				"Expected status 200, 401, 404, 429, 500, 408, or 504, got %d", statusCode)
+				"Expected status 200, 401, 400, 404, 500, 408, or 504, got %d", statusCode)
 		})
 	}
 }
@@ -102,7 +101,7 @@ func TestLongerTimeoutContextHandling(t *testing.T) {
 
 	// Test with a reasonable timeout that should allow completion
 	t.Run("reasonable timeout should complete successfully", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "/api/where/agencies-with-coverage.json?key=test", nil)
+		req, err := http.NewRequest("GET", "/api/where/agencies-with-coverage.json?key=org.onebusaway.iphone", nil)
 		require.NoError(t, err)
 
 		// Create context with reasonable timeout
