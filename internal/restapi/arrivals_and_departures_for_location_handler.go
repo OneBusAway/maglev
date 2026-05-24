@@ -44,6 +44,24 @@ type activeStopTime struct {
 	ServiceDate time.Time
 }
 
+// stopProcessingContext holds parameters for processing a single stop's arrivals.
+type stopProcessingContext struct {
+	StopCode       string
+	AgencyID       string
+	CombinedStopID string
+	QueryTime      time.Time
+	Loc            *time.Location
+}
+
+// fetchWindow groups parameters for fetching stop times to reduce function arguments.
+type fetchWindow struct {
+	StopCode  string
+	Loc       *time.Location
+	QueryTime time.Time
+	Start     time.Time
+	End       time.Time
+}
+
 // locationArrivalsState holds the shared accumulation state across all stops
 // while processing arrivals and departures for a location.
 type locationArrivalsState struct {
@@ -431,7 +449,16 @@ func (api *RestAPI) collectArrivalsForLocationStop(ctx context.Context, w http.R
 	}
 
 	stopQueryTime := params.Time.In(stopLoc)
-	allActiveStopTimes, err := api.fetchActiveStopTimesForLocationWindow(ctx, stopCode, stopLoc, stopQueryTime, params)
+
+	spc := stopProcessingContext{
+		StopCode:       stopCode,
+		AgencyID:       agencyID,
+		CombinedStopID: utils.FormCombinedID(agencyID, stopCode),
+		QueryTime:      stopQueryTime,
+		Loc:            stopLoc,
+	}
+
+	allActiveStopTimes, err := api.fetchActiveStopTimesForLocationWindow(ctx, spc, params)
 	if err != nil {
 		api.clientCanceledResponse(w, r, err)
 		return err
@@ -440,7 +467,7 @@ func (api *RestAPI) collectArrivalsForLocationStop(ctx context.Context, w http.R
 		return nil
 	}
 
-	stopProducedArrival, err := api.buildArrivalsFromLocationStopTimes(ctx, w, r, stopCode, agencyID, allActiveStopTimes, params, stopQueryTime, state)
+	stopProducedArrival, err := api.buildArrivalsFromLocationStopTimes(w, r, spc, allActiveStopTimes, params, state)
 	if err != nil {
 		return err
 	}
@@ -450,7 +477,9 @@ func (api *RestAPI) collectArrivalsForLocationStop(ctx context.Context, w http.R
 	return nil
 }
 
-func (api *RestAPI) fetchActiveStopTimesForLocationWindow(ctx context.Context, stopCode string, stopLoc *time.Location, stopQueryTime time.Time, params ArrivalsAndDeparturesForLocationParams) ([]activeStopTime, error) {
+func (api *RestAPI) fetchActiveStopTimesForLocationWindow(
+	ctx context.Context, spc stopProcessingContext, params ArrivalsAndDeparturesForLocationParams,
+) ([]activeStopTime, error) {
 	maxBefore := params.MinutesBefore
 	if params.FrequencyMinutesBefore > maxBefore {
 		maxBefore = params.FrequencyMinutesBefore
@@ -461,12 +490,20 @@ func (api *RestAPI) fetchActiveStopTimesForLocationWindow(ctx context.Context, s
 		maxAfter = params.FrequencyMinutesAfter
 	}
 
-	stopWindowStart := stopQueryTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
-	stopWindowEnd := stopQueryTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
+	stopWindowStart := spc.QueryTime.Add(-time.Duration(params.MinutesBefore) * time.Minute)
+	stopWindowEnd := spc.QueryTime.Add(time.Duration(params.MinutesAfter) * time.Minute)
+
+	fw := fetchWindow{
+		StopCode:  spc.StopCode,
+		Loc:       spc.Loc,
+		QueryTime: spc.QueryTime,
+		Start:     stopWindowStart,
+		End:       stopWindowEnd,
+	}
 
 	var allActiveStopTimes []activeStopTime
 	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
-		err := api.fetchStopTimesForDayOffset(ctx, stopCode, stopLoc, stopQueryTime, dayOffset, stopWindowStart, stopWindowEnd, &allActiveStopTimes)
+		err := api.fetchStopTimesForDayOffset(ctx, fw, dayOffset, &allActiveStopTimes)
 		if err != nil {
 			return nil, err
 		}
@@ -531,16 +568,13 @@ func (api *RestAPI) buildTripStopCountMap(ctx context.Context, uniqueTripIDs []s
 }
 
 func (api *RestAPI) fetchStopTimesForDayOffset(
-	ctx context.Context, stopCode string, stopLoc *time.Location,
-	stopQueryTime time.Time, dayOffset int,
-	stopWindowStart, stopWindowEnd time.Time,
-	allActiveStopTimes *[]activeStopTime,
+	ctx context.Context, fw fetchWindow, dayOffset int, allActiveStopTimes *[]activeStopTime,
 ) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	targetDate := stopQueryTime.AddDate(0, 0, dayOffset)
-	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, stopLoc)
+	targetDate := fw.QueryTime.AddDate(0, 0, dayOffset)
+	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, fw.Loc)
 	serviceDateStr := targetDate.Format("20060102")
 
 	activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
@@ -557,19 +591,19 @@ func (api *RestAPI) fetchStopTimesForDayOffset(
 		activeServiceIDSet[sid] = true
 	}
 
-	startNanos := stopWindowStart.Sub(serviceMidnight).Nanoseconds()
-	endNanos := stopWindowEnd.Sub(serviceMidnight).Nanoseconds()
+	startNanos := fw.Start.Sub(serviceMidnight).Nanoseconds()
+	endNanos := fw.End.Sub(serviceMidnight).Nanoseconds()
 	if endNanos < 0 {
 		return nil
 	}
 
 	stopTimes, stErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopInWindow(ctx, gtfsdb.GetStopTimesForStopInWindowParams{
-		StopID:           stopCode,
+		StopID:           fw.StopCode,
 		WindowStartNanos: startNanos,
 		WindowEndNanos:   endNanos,
 	})
 	if stErr != nil {
-		api.Logger.Warn("failed to query stop times in window", slog.String("stopID", stopCode), slog.Any("error", stErr))
+		api.Logger.Warn("failed to query stop times in window", slog.String("stopID", fw.StopCode), slog.Any("error", stErr))
 		return nil
 	}
 
@@ -584,24 +618,34 @@ func (api *RestAPI) fetchStopTimesForDayOffset(
 	return nil
 }
 
+// isRouteTypeAllowed checks if a route's type matches any in the requested filter list.
+func isRouteTypeAllowed(routeType int64, allowedTypes []int) bool {
+	if len(allowedTypes) == 0 {
+		return true
+	}
+	for _, rt := range allowedTypes {
+		if int(routeType) == rt {
+			return true
+		}
+	}
+	return false
+}
+
 func (api *RestAPI) buildArrivalsFromLocationStopTimes(
-	ctx context.Context,
 	w http.ResponseWriter,
 	r *http.Request,
-	stopCode string,
-	agencyID string,
+	spc stopProcessingContext,
 	allActiveStopTimes []activeStopTime,
 	params ArrivalsAndDeparturesForLocationParams,
-	stopQueryTime time.Time,
 	state *locationArrivalsState,
 ) (bool, error) {
-	routesLookup, tripsLookup, tripStopCountMap, bErr := api.batchFetchLocationRoutesAndTrips(ctx, stopCode, allActiveStopTimes)
+	ctx := r.Context()
+	routesLookup, tripsLookup, tripStopCountMap, bErr := api.batchFetchLocationRoutesAndTrips(ctx, spc.StopCode, allActiveStopTimes)
 	if bErr != nil {
 		return false, nil
 	}
 
 	stopProducedArrival := false
-	combinedStopID := utils.FormCombinedID(agencyID, stopCode)
 
 	for _, ast := range allActiveStopTimes {
 		if len(state.arrivals) >= params.MaxCount {
@@ -616,21 +660,8 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 		st := ast.GetStopTimesForStopInWindowRow
 
 		route, routeOK := routesLookup[st.RouteID]
-		if !routeOK {
+		if !routeOK || !isRouteTypeAllowed(route.Type, params.RouteTypes) {
 			continue
-		}
-
-		if len(params.RouteTypes) > 0 {
-			routeTypeMatch := false
-			for _, rt := range params.RouteTypes {
-				if int(route.Type) == rt {
-					routeTypeMatch = true
-					break
-				}
-			}
-			if !routeTypeMatch {
-				continue // Skip this trip, it's the wrong vehicle type
-			}
 		}
 
 		trip, tripOK := tripsLookup[st.TripID]
@@ -643,7 +674,7 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 		tCopy := trip
 		state.tripIDSet[trip.ID] = &tCopy
 
-		api.buildSingleArrival(ctx, stopCode, combinedStopID, ast, stopQueryTime, state, route, tripStopCountMap[st.TripID])
+		api.buildSingleArrival(ctx, spc, ast, state, route, tripStopCountMap[st.TripID])
 		stopProducedArrival = true
 	}
 
@@ -652,10 +683,8 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 
 func (api *RestAPI) buildSingleArrival(
 	ctx context.Context,
-	stopCode string,
-	combinedStopID string,
+	spc stopProcessingContext,
 	ast activeStopTime,
-	stopQueryTime time.Time,
 	state *locationArrivalsState,
 	route gtfsdb.Route,
 	totalStopsInTrip int,
@@ -676,10 +705,10 @@ func (api *RestAPI) buildSingleArrival(
 		ac.vehicleID = vehicle.ID.ID
 	}
 
-	api.applyPredictedTimes(ac, stopCode)
+	api.applyPredictedTimes(ac, spc.StopCode)
 
 	if vehicle != nil {
-		api.applyTripStatus(ctx, ac, route, vehicle, stopQueryTime, stopCode, state)
+		api.applyTripStatus(ctx, ac, route, vehicle, spc.QueryTime, spc.StopCode, state)
 	}
 
 	ac.blockTripSequence = api.calculateBlockTripSequence(ctx, ac.st.TripID, ac.serviceMidnight)
@@ -698,7 +727,7 @@ func (api *RestAPI) buildSingleArrival(
 		route.LongName.String,
 		utils.FormCombinedID(route.AgencyID, ac.st.TripID),
 		ac.st.TripHeadsign.String,
-		combinedStopID,
+		spc.CombinedStopID,
 		formattedVehicleID,
 		ac.serviceMidnight,
 		ac.scheduledArrivalTime,
