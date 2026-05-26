@@ -12,16 +12,24 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 )
 
-// setupShapeTest creates a test agency and inserts shape points into the database.
-// Returns the agency ID for use in API endpoint URLs.
-func setupShapeTest(t *testing.T, api *RestAPI, shapeID string, points []struct {
+// shapeURL builds the /shape endpoint URL with key=TEST baked in. Tests that
+// want a different key (auth checks) build their URL inline.
+func shapeURL(combinedShapeID string) string {
+	return "/api/where/shape/" + combinedShapeID + ".json?key=TEST"
+}
+
+type shapePoint struct {
 	lat      float64
 	lon      float64
 	sequence int64
-}) string {
+}
+
+// setupShapeTest creates a test agency and inserts shape points into the database.
+// Returns the combined "agencyID_shapeID" used by the handler.
+func setupShapeTest(t *testing.T, api *RestAPI, shapeID string, points []shapePoint) string {
 	t.Helper()
 	ctx := context.Background()
-	agencyID := "TestAgency1"
+	const agencyID = "TestAgency1"
 
 	_, err := api.GtfsManager.GtfsDB.Queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID:       agencyID,
@@ -42,11 +50,10 @@ func setupShapeTest(t *testing.T, api *RestAPI, shapeID string, points []struct 
 		require.NoError(t, err)
 	}
 
-	return agencyID
+	return agencyID + "_" + shapeID
 }
 
-// decodePolylinePoints decodes a Google encoded polyline string into coordinate pairs.
-// Only used in shape handler tests.
+// decodePolylinePoints decodes a Google encoded polyline string into [lat, lon] pairs.
 func decodePolylinePoints(t *testing.T, encoded string) [][]float64 {
 	t.Helper()
 	coords, _, err := polyline.DecodeCoords([]byte(encoded))
@@ -54,15 +61,11 @@ func decodePolylinePoints(t *testing.T, encoded string) [][]float64 {
 	return coords
 }
 
-func TestShapesHandlerReturnsShapeWhenItExists(t *testing.T) {
+func TestShapesHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	points := []struct {
-		lat      float64
-		lon      float64
-		sequence int64
-	}{
+	points := []shapePoint{
 		{38.56173, -121.76392, 0},
 		{38.56205, -121.76288, 1},
 		{38.56211, -121.76244, 2},
@@ -70,269 +73,165 @@ func TestShapesHandlerReturnsShapeWhenItExists(t *testing.T) {
 		{38.56200, -121.75860, 4},
 		{38.55997, -121.75855, 5},
 		{38.55672, -121.75857, 6},
-		{38.55385, -121.75864, 7},
-		{38.55227, -121.75866, 8},
-		{38.54638, -121.75867, 9},
-		{38.54617, -121.75078, 10},
-		{38.54398, -121.75017, 11},
-		{38.54405, -121.74970, 12},
-		{38.54363, -121.74957, 13},
 	}
+	combinedShapeID := setupShapeTest(t, api, "simple_shape", points)
 
-	agencyID := setupShapeTest(t, api, "simple_shape", points)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_simple_shape.json?key=TEST")
+	resp, model := callAPIHandler[ShapeEntryResponse](t, api, shapeURL(combinedShapeID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok, "model.Data should be a map")
+	entry := model.Data.Entry
+	assert.Equal(t, len(points), entry.Length)
+	assert.Equal(t, "", entry.Levels)
+	require.NotEmpty(t, entry.Points)
 
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok, "entry should be a map")
-
-	// Verify shape entry has expected fields
-	assert.NotEmpty(t, entry["points"])
-	assert.Equal(t, float64(14), entry["length"])
-	assert.Equal(t, "", entry["levels"])
+	decoded := decodePolylinePoints(t, entry.Points)
+	require.Len(t, decoded, len(points), "decoded coords count should match input points")
+	const tolerance = 0.00001
+	for i, p := range points {
+		assert.InDelta(t, p.lat, decoded[i][0], tolerance, "decoded[%d].lat", i)
+		assert.InDelta(t, p.lon, decoded[i][1], tolerance, "decoded[%d].lon", i)
+	}
 }
 
 func TestShapesHandlerReturnsNotFoundWhenShapeDoesNotExist(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/wrong_id.json?key=TEST")
+	resp, model := callAPIHandler[ShapeEntryResponse](t, api, shapeURL("wrong_id"))
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
 	assert.Equal(t, "resource not found", model.Text)
-	assert.Nil(t, model.Data)
 }
 
 func TestShapesHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencyID := mustGetAgencies(t, api)[0].ID
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_any_shape.json?key=INVALID")
+	resp, model := callAPIHandler[ShapeEntryResponse](t, api,
+		"/api/where/shape/25_any_shape.json?key=INVALID")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
 }
 
-func TestShapesHandlerWithMalformedID(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	malformedID := "1110"
-	endpoint := "/api/where/shape/" + malformedID + ".json?key=TEST"
-
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
-}
-
-func TestShapesHandlerWithLoopingRoute(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	// A -> B -> A (loop back to start)
-	points := []struct {
-		lat      float64
-		lon      float64
-		sequence int64
-	}{
-		{0.0, 0.0, 1},
-		{1.0, 1.0, 2},
-		{0.0, 0.0, 3},
-	}
-
-	agencyID := setupShapeTest(t, api, "looping_shape", points)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_looping_shape.json?key=TEST")
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok, "model.Data should be a map")
-
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok, "entry should be a map")
-
-	encodedPoints, ok := entry["points"].(string)
-	require.True(t, ok, "points should be a string")
-	assert.NotEmpty(t, encodedPoints)
-
-	decoded := decodePolylinePoints(t, encodedPoints)
-	require.Equal(t, 3, len(decoded), "Should have 3 decoded points")
-
-	tolerance := 0.00001
-	assert.InDelta(t, 0.0, decoded[0][0], tolerance, "First point latitude should be 0.0")
-	assert.InDelta(t, 0.0, decoded[0][1], tolerance, "First point longitude should be 0.0")
-	assert.InDelta(t, 1.0, decoded[1][0], tolerance, "Second point latitude should be 1.0")
-	assert.InDelta(t, 1.0, decoded[1][1], tolerance, "Second point longitude should be 1.0")
-	assert.InDelta(t, 0.0, decoded[2][0], tolerance, "Third point latitude should be 0.0 (loop)")
-	assert.InDelta(t, 0.0, decoded[2][1], tolerance, "Third point longitude should be 0.0 (loop)")
-}
-
-func TestShapesHandlerWithOutAndBackRoute(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	// A -> B -> C -> B -> A
-	points := []struct {
-		lat      float64
-		lon      float64
-		sequence int64
-	}{
-		{0.0, 0.0, 1},
-		{1.0, 1.0, 2},
-		{2.0, 2.0, 3},
-		{1.0, 1.0, 4},
-		{0.0, 0.0, 5},
-	}
-
-	agencyID := setupShapeTest(t, api, "out_and_back_shape", points)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_out_and_back_shape.json?key=TEST")
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok, "model.Data should be a map")
-
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok, "entry should be a map")
-
-	encodedPoints, ok := entry["points"].(string)
-	require.True(t, ok, "points should be a string")
-	assert.NotEmpty(t, encodedPoints)
-
-	decoded := decodePolylinePoints(t, encodedPoints)
-	require.Equal(t, 5, len(decoded))
-
-	tolerance := 0.00001
-	assert.InDelta(t, 0.0, decoded[0][0], tolerance)
-	assert.InDelta(t, 0.0, decoded[0][1], tolerance)
-	assert.InDelta(t, 1.0, decoded[1][0], tolerance)
-	assert.InDelta(t, 1.0, decoded[1][1], tolerance)
-	assert.InDelta(t, 2.0, decoded[2][0], tolerance)
-	assert.InDelta(t, 2.0, decoded[2][1], tolerance)
-	assert.InDelta(t, 1.0, decoded[3][0], tolerance)
-	assert.InDelta(t, 1.0, decoded[3][1], tolerance)
-	assert.InDelta(t, 0.0, decoded[4][0], tolerance)
-	assert.InDelta(t, 0.0, decoded[4][1], tolerance)
-}
-
-func TestShapesHandlerWithConsecutiveDuplicatePoints(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	// A -> B -> B (duplicate) -> C
-	points := []struct {
-		lat      float64
-		lon      float64
-		sequence int64
-	}{
-		{0.0, 0.0, 1},
-		{1.0, 1.0, 2},
-		{1.0, 1.0, 3}, // Duplicate of previous point
-		{2.0, 2.0, 4},
-	}
-
-	agencyID := setupShapeTest(t, api, "duplicate_shape", points)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_duplicate_shape.json?key=TEST")
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok, "model.Data should be a map")
-
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok, "entry should be a map")
-
-	encodedPoints, ok := entry["points"].(string)
-	require.True(t, ok, "points should be a string")
-	assert.NotEmpty(t, encodedPoints)
-
-	decoded := decodePolylinePoints(t, encodedPoints)
-	// Should have filtered out the duplicate point
-	require.Equal(t, 3, len(decoded))
-
-	tolerance := 0.00001
-	assert.InDelta(t, 0.0, decoded[0][0], tolerance)
-	assert.InDelta(t, 0.0, decoded[0][1], tolerance)
-	assert.InDelta(t, 1.0, decoded[1][0], tolerance)
-	assert.InDelta(t, 1.0, decoded[1][1], tolerance)
-	assert.InDelta(t, 2.0, decoded[2][0], tolerance)
-	assert.InDelta(t, 2.0, decoded[2][1], tolerance)
-}
-
 func TestShapesHandlerWithMissingApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencyID := mustGetAgencies(t, api)[0].ID
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_any_shape.json")
+	resp, model := callAPIHandler[ShapeEntryResponse](t, api,
+		"/api/where/shape/25_any_shape.json")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 }
 
-func TestShapesHandlerWithEmptyID(t *testing.T) {
+// TestShapesHandler_InvalidIDs covers both malformed IDs (no underscore
+// separator) and empty IDs — both should return 400.
+func TestShapesHandler_InvalidIDs(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/.json?key=TEST")
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"Missing agency separator", shapeURL("1110")},
+		{"Empty ID", shapeURL("")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[ShapeEntryResponse](t, api, tt.path)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
+		})
+	}
 }
 
-func TestShapesHandlerLengthMatchesDecodedPoints(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	points := []struct {
-		lat      float64
-		lon      float64
-		sequence int64
+// TestShapesHandler_PolylineDecoding consolidates the looping-route,
+// out-and-back, and consecutive-duplicates cases. Each subtest inserts shape
+// points, fetches the encoded polyline, decodes it, and verifies the resulting
+// coordinate sequence against an expected slice. Each subtest gets its own API
+// so the per-subtest agency-create doesn't collide.
+func TestShapesHandler_PolylineDecoding(t *testing.T) {
+	tests := []struct {
+		name     string
+		shapeID  string
+		input    []shapePoint
+		expected [][2]float64 // (lat, lon) pairs in expected order after decoding
 	}{
-		{38.56173, -121.76392, 0},
-		{38.56205, -121.76288, 1},
-		{38.56211, -121.76244, 2},
-		{38.56210, -121.75955, 3},
-		{38.56200, -121.75860, 4},
-		{38.55997, -121.75855, 5},
-		{38.55672, -121.75857, 6},
+		{
+			name:    "Looping route (A -> B -> A)",
+			shapeID: "looping_shape",
+			input: []shapePoint{
+				{0.0, 0.0, 1},
+				{1.0, 1.0, 2},
+				{0.0, 0.0, 3},
+			},
+			expected: [][2]float64{{0.0, 0.0}, {1.0, 1.0}, {0.0, 0.0}},
+		},
+		{
+			name:    "Out-and-back (A -> B -> C -> B -> A)",
+			shapeID: "out_and_back_shape",
+			input: []shapePoint{
+				{0.0, 0.0, 1},
+				{1.0, 1.0, 2},
+				{2.0, 2.0, 3},
+				{1.0, 1.0, 4},
+				{0.0, 0.0, 5},
+			},
+			expected: [][2]float64{{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}, {1.0, 1.0}, {0.0, 0.0}},
+		},
+		{
+			name:    "Consecutive duplicates (B repeats) are deduplicated",
+			shapeID: "duplicate_shape",
+			input: []shapePoint{
+				{0.0, 0.0, 1},
+				{1.0, 1.0, 2},
+				{1.0, 1.0, 3}, // duplicate of previous point — handler filters this
+				{2.0, 2.0, 4},
+			},
+			expected: [][2]float64{{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}},
+		},
 	}
 
-	agencyID := setupShapeTest(t, api, "length_check_shape", points)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_length_check_shape.json?key=TEST")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Each subtest uses its own API so the agency-create doesn't conflict.
+			subAPI := createTestApi(t)
+			defer subAPI.Shutdown()
+			combinedShapeID := setupShapeTest(t, subAPI, tt.shapeID, tt.input)
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+			resp, model := callAPIHandler[ShapeEntryResponse](t, subAPI, shapeURL(combinedShapeID))
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.Entry.Points)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok, "model.Data should be a map")
+			decoded := decodePolylinePoints(t, model.Data.Entry.Points)
+			require.Len(t, decoded, len(tt.expected))
 
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok, "entry should be a map")
-
-	assert.Equal(t, float64(7), entry["length"])
-	assert.NotEmpty(t, entry["points"])
-	assert.Equal(t, "", entry["levels"])
+			const tolerance = 0.00001
+			for i, want := range tt.expected {
+				assert.InDelta(t, want[0], decoded[i][0], tolerance, "decoded[%d].lat", i)
+				assert.InDelta(t, want[1], decoded[i][1], tolerance, "decoded[%d].lon", i)
+			}
+		})
+	}
 }
 
+// TestShapesHandlerOrdersBySequence inserts shape points out of order and
+// asserts that the encoded polyline reflects ascending shape_pt_sequence —
+// regression for ordering bugs in the shape query.
 func TestShapesHandlerOrdersBySequence(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	// Insert points out of sequence order
-	points := []struct {
-		lat      float64
-		lon      float64
-		sequence int64
-	}{
+	// Inserted with sequences {5, 0, 2, 4, 1, 3} — handler must return them
+	// in {0, 1, 2, 3, 4, 5} order.
+	points := []shapePoint{
 		{38.55997, -121.75855, 5},
 		{38.56173, -121.76392, 0},
 		{38.56211, -121.76244, 2},
@@ -340,33 +239,19 @@ func TestShapesHandlerOrdersBySequence(t *testing.T) {
 		{38.56205, -121.76288, 1},
 		{38.56210, -121.75955, 3},
 	}
+	combinedShapeID := setupShapeTest(t, api, "unordered_shape", points)
 
-	agencyID := setupShapeTest(t, api, "unordered_shape", points)
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/shape/"+agencyID+"_unordered_shape.json?key=TEST")
+	resp, model := callAPIHandler[ShapeEntryResponse](t, api, shapeURL(combinedShapeID))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, len(points), model.Data.Entry.Length)
+	decoded := decodePolylinePoints(t, model.Data.Entry.Points)
+	require.Len(t, decoded, len(points))
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-
-	assert.Equal(t, float64(6), entry["length"])
-
-	pointsStr, ok := entry["points"].(string)
-	require.True(t, ok)
-
-	decoded := decodePolylinePoints(t, pointsStr)
-	require.Len(t, decoded, 6)
-
-	tolerance := 0.00001
-
-	// Latitude is sufficient to verify coords sequence order.
-	assert.InDelta(t, 38.56173, decoded[0][0], tolerance)
-	assert.InDelta(t, 38.56205, decoded[1][0], tolerance)
-	assert.InDelta(t, 38.56211, decoded[2][0], tolerance)
-	assert.InDelta(t, 38.56210, decoded[3][0], tolerance)
-	assert.InDelta(t, 38.56200, decoded[4][0], tolerance)
-	assert.InDelta(t, 38.55997, decoded[5][0], tolerance)
+	// Latitude alone is enough to verify the sequence ordering since lats are unique.
+	expectedLats := []float64{38.56173, 38.56205, 38.56211, 38.56210, 38.56200, 38.55997}
+	const tolerance = 0.00001
+	for i, want := range expectedLats {
+		assert.InDelta(t, want, decoded[i][0], tolerance, "decoded[%d].lat (sequence %d)", i, i)
+	}
 }
