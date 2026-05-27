@@ -17,7 +17,7 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	stopID := stopCode                                       // The raw GTFS stop ID
+	stopID := stopCode                                      // The raw GTFS stop ID
 	compositeID := utils.FormCombinedID(agencyID, stopCode) // The API ID (e.g., "1_stop123")
 
 	// Safety check: Ensure DB is initialized
