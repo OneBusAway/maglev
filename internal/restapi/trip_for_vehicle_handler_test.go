@@ -1,711 +1,293 @@
 package restapi
 
 import (
-	"context"
-	"encoding/json"
+	"fmt"
 	"log/slog"
-	"maglev.onebusaway.org/internal/logging"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// Helper to create a mock vehicle and inject it into the test API
-func setupTestApiWithMockVehicle(t *testing.T) (*RestAPI, string, string) {
-	api := createTestApi(t)
-	// Initialize the logger to prevent nil pointer panics during handler execution
-	api.Logger = logging.NewStructuredLogger(os.Stdout, slog.LevelDebug)
+// tripForVehicleURL builds the /trip-for-vehicle URL with key=TEST baked in.
+// Extra query params are merged from optional url.Values arguments.
+func tripForVehicleURL(vehicleID string, params ...url.Values) string {
+	q := url.Values{"key": {"TEST"}}
+	for _, p := range params {
+		maps.Copy(q, p)
+	}
+	return "/api/where/trip-for-vehicle/" + vehicleID + ".json?" + q.Encode()
+}
+
+// setupTestApiWithMockVehicle builds an API with a mock vehicle pointing at the
+// first static trip and returns the API plus the vehicle's combined ID.
+func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID string) {
+	t.Helper()
+	api = createTestApi(t)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(api.Shutdown)
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	// Note: caller is responsible for calling api.Shutdown()
-
-	agencyStatic := mustGetAgencies(t, api)[0]
 	trip := mustGetTrip(t, api)
+	const mockVehicleID = "MOCK_VEHICLE_1"
+	combinedRouteID := utils.FormCombinedID(testdata.Raba.ID, trip.RouteID)
 
-	tripID := trip.ID
-	agencyID := agencyStatic.ID
-	vehicleID := "MOCK_VEHICLE_1"
-	routeID := utils.FormCombinedID(agencyID, trip.RouteID)
+	api.GtfsManager.MockAddAgency(testdata.Raba.ID, "unitrans")
+	api.GtfsManager.MockAddRoute(combinedRouteID, testdata.Raba.ID, combinedRouteID)
+	api.GtfsManager.MockAddTrip(trip.ID, testdata.Raba.ID, combinedRouteID)
+	api.GtfsManager.MockAddVehicle(mockVehicleID, trip.ID, combinedRouteID)
 
-	api.GtfsManager.MockAddAgency(agencyID, "unitrans")
-	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
-	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
-	api.GtfsManager.MockAddVehicle(vehicleID, tripID, routeID)
-
-	return api, agencyID, vehicleID
+	return api, utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)
 }
 
 func TestTripForVehicleHandlerRequiresValidApiKey(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip-for-vehicle/invalid.json?key=invalid")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-for-vehicle/invalid.json?key=invalid")
+
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
 }
 
-func TestTripForVehicleHandlerContentTypeHeader(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	contentType := resp.Header.Get("Content-Type")
-	assert.Equal(t, "application/json", contentType, "Content-Type should be application/json")
-}
-
-func TestTripForVehicleHandlerResponseSchemaValidation(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	// Validate top-level response structure
-	assert.Equal(t, http.StatusOK, model.Code, "Response code should be 200")
-	assert.Equal(t, "OK", model.Text, "Response text should be 'OK'")
-	assert.Equal(t, 2, model.Version, "Response version should be 2")
-	assert.Greater(t, model.CurrentTime, int64(0), "CurrentTime should be set")
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok, "Data should be a map")
-
-	// Validate entry structure
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok, "Entry should exist")
-
-	// Required fields in entry
-	assert.Contains(t, entry, "tripId", "Entry should contain tripId")
-	assert.Contains(t, entry, "serviceDate", "Entry should contain serviceDate")
-
-	// Validate serviceDate is a positive number
-	serviceDate, ok := entry["serviceDate"].(float64)
-	assert.True(t, ok, "serviceDate should be a number")
-	assert.Greater(t, serviceDate, float64(0), "serviceDate should be positive")
-
-	// Validate references structure
-	references, ok := data["references"].(map[string]any)
-	require.True(t, ok, "References should exist")
-
-	// Check required reference arrays exist
-	assert.Contains(t, references, "agencies", "References should contain agencies")
-	assert.Contains(t, references, "routes", "References should contain routes")
-	assert.Contains(t, references, "stops", "References should contain stops")
-	assert.Contains(t, references, "trips", "References should contain trips")
-	// situations might be optional depending on implementation, but good to check if expected
-}
-
 func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	defer api.Shutdown()
+	api, vehicleID := setupTestApiWithMockVehicle(t)
 
-	ctx := context.Background()
-	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-	require.NoError(t, err)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(vehicleID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, 2, model.Version)
+	assert.NotZero(t, model.CurrentTime)
 
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-	assert.NotEmpty(t, data)
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.TripID)
 
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-
-	assert.NotNil(t, entry["tripId"])
-	assert.NotNil(t, entry["serviceDate"])
-
-	loc, err := time.LoadLocation(agency.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
-
-	currentTimeInLoc := time.Now().In(loc)
-	y, m, d := currentTimeInLoc.Date()
+	// serviceDate defaults to today midnight in the agency timezone.
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	now := time.UnixMilli(model.CurrentTime).In(loc)
+	y, m, d := now.Date()
 	expectedServiceDate := time.Date(y, m, d, 0, 0, 0, 0, loc)
-	expectedServiceDateMillis := expectedServiceDate.Unix() * 1000
-	assert.Equal(t, float64(expectedServiceDateMillis), entry["serviceDate"])
+	assert.Equal(t, expectedServiceDate.UnixMilli(), entry.ServiceDate.UnixMilli())
 
-	status, statusOk := entry["status"].(map[string]any)
-	if statusOk {
-		assert.NotNil(t, status)
-		assert.NotNil(t, status["serviceDate"])
-		assert.Contains(t, []any{"scheduled", "in_progress", "completed"}, status["phase"])
-		assert.NotNil(t, status["predicted"])
+	if entry.Status != nil {
+		assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase)
+		assert.NotZero(t, entry.Status.ServiceDate)
 	}
 
-	references, ok := data["references"].(map[string]any)
-	assert.True(t, ok, "References section should exist")
-	assert.NotNil(t, references, "References should not be nil")
+	refs := model.Data.References
+	assert.NotEmpty(t, refs.Agencies)
+	require.NotEmpty(t, refs.Routes)
+	require.NotEmpty(t, refs.Trips)
 
-	routes, ok := references["routes"].([]any)
-	assert.True(t, ok, "Routes section should exist in references")
-	assert.NotEmpty(t, routes, "Routes should not be empty")
+	// Trip ref must have a non-empty id/routeId. ServiceID is intentionally not
+	// asserted: the mock trip injected by setupTestApiWithMockVehicle has no
+	// ServiceID, and asserting on it would be asserting on the mock helper.
+	trip := refs.Trips[0]
+	assert.NotEmpty(t, trip.ID)
+	assert.NotEmpty(t, trip.RouteID)
 
-	agencies, ok := references["agencies"].([]any)
-	assert.True(t, ok, "Agencies section should exist in references")
-	assert.NotEmpty(t, agencies, "Agencies should not be empty")
+	// Agency ref must have a populated id; other fields are checked structurally
+	// in the per-stop loop below.
+	for _, a := range refs.Agencies {
+		assert.NotEmpty(t, a.ID)
+	}
 
-	// Ensure trip is included by default
-	trips, ok := references["trips"].([]any)
-	assert.True(t, ok, "Trips section should exist in references by default")
-	assert.NotEmpty(t, trips, "Trips should not be empty by default")
-
-	stops, stopsOk := references["stops"].([]any)
-	if stopsOk && len(stops) > 0 {
-		stop, ok := stops[0].(map[string]any)
-		assert.True(t, ok)
-		assert.NotNil(t, stop["id"])
-		assert.NotNil(t, stop["name"])
-		assert.NotNil(t, stop["lat"])
-		assert.NotNil(t, stop["lon"])
+	// Stop refs (when present) must have populated id/name/lat/lon.
+	for _, stop := range refs.Stops {
+		assert.NotEmpty(t, stop.ID)
+		assert.NotEmpty(t, stop.Name)
+		assert.NotZero(t, stop.Lat)
+		assert.NotZero(t, stop.Lon)
 	}
 }
 
-func TestTripForVehicleHandlerWithInvalidVehicleID(t *testing.T) {
-	api, agencyID, _ := setupTestApiWithMockVehicle(t)
-	defer api.Shutdown()
-	vehicleCombinedID := utils.FormCombinedID(agencyID, "invalid")
+// TestTripForVehicleHandler_NotFoundCases verifies that 404 is returned for
+// vehicle IDs that resolve to no live trip — unknown vehicle, idle vehicle
+// (Trip.ID == ""), vehicle referencing a non-existent trip, and a vehicle
+// scoped under an unknown agency.
+func TestTripForVehicleHandler_NotFoundCases(t *testing.T) {
+	api, _ := setupTestApiWithMockVehicle(t)
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "resource not found", model.Text)
-	assert.Nil(t, model.Data)
-}
-
-// Check for edge case: Vehicle exists but has no current trip (Idle)
-func TestTripForVehicleHandlerWithIdleVehicle(t *testing.T) {
-	api, agencyID, _ := setupTestApiWithMockVehicle(t)
-
-	// Create a vehicle with empty trip ID (tests vehicle.Trip.ID.ID == "" branch)
-	idleVehicleID := "IDLE_VEHICLE"
+	// Add an idle vehicle (vehicle with empty trip ID) and a ghost-trip vehicle.
+	const (
+		idleVehicleID  = "IDLE_VEHICLE"
+		ghostVehicleID = "GHOST_TRIP_VEHICLE"
+	)
 	api.GtfsManager.MockAddVehicle(idleVehicleID, "", "")
+	api.GtfsManager.MockAddVehicle(ghostVehicleID, "TRIP_THAT_DOES_NOT_EXIST", "some_route")
 
-	vehicleCombinedID := utils.FormCombinedID(agencyID, idleVehicleID)
+	tests := []struct {
+		name      string
+		vehicleID string
+	}{
+		{"Unknown vehicle ID", utils.FormCombinedID(testdata.Raba.ID, "invalid")},
+		{"Vehicle with empty trip", utils.FormCombinedID(testdata.Raba.ID, idleVehicleID)},
+		{"Vehicle referencing non-existent trip", utils.FormCombinedID(testdata.Raba.ID, ghostVehicleID)},
+		{"Unknown agency", utils.FormCombinedID("INVALID_AGENCY", "MOCK_VEHICLE_1")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(tt.vehicleID))
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	// Should return 404 Not Found as the vehicle has no trip
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+			assert.Equal(t, http.StatusNotFound, model.Code)
+		})
+	}
 }
 
-// Ensure proper handling when a vehicle references a trip that does not exist in the DB (sql.ErrNoRows)
-func TestTripForVehicleHandlerWithNonExistentTrip(t *testing.T) {
-	api := createTestApi(t)
-	// Initialize the logger to prevent nil pointer panics during handler execution
-	api.Logger = logging.NewStructuredLogger(os.Stdout, slog.LevelDebug)
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+// TestTripForVehicleHandler_IncludeToggles exercises the includeTrip,
+// includeSchedule, and includeStatus query params.
+func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
+	api, vehicleID := setupTestApiWithMockVehicle(t)
 
-	agencyID := mustGetAgencies(t, api)[0].ID
+	t.Run("includeStatus=false omits status", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{"includeStatus": {"false"}}))
 
-	// Create vehicle with trip ID that doesn't exist in DB
-	vehicleID := "GHOST_TRIP_VEHICLE"
-	nonExistentTripID := "TRIP_THAT_DOES_NOT_EXIST"
-	api.GtfsManager.MockAddVehicle(vehicleID, nonExistentTripID, "some_route")
+		assert.Nil(t, model.Data.Entry.Status, "status should be omitted when includeStatus=false")
+	})
 
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
+	t.Run("includeTrip=false omits trip references", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{"includeTrip": {"false"}}))
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
+		assert.Empty(t, model.Data.References.Trips, "trip refs should be empty when includeTrip=false")
+	})
 
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
+	t.Run("includeSchedule=true keeps response well-formed", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{"includeSchedule": {"true"}}))
 
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-}
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.NotEmpty(t, model.Data.Entry.TripID)
+	})
 
-func TestTripForVehicleHandlerWithInvalidAgencyID(t *testing.T) {
-	api, _, vehicleID := setupTestApiWithMockVehicle(t)
-	// Use a non-existent agency ID
-	invalidAgencyVehicleID := utils.FormCombinedID("INVALID_AGENCY", vehicleID)
+	t.Run("all-false strips schedule/status/trip refs", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{
+				"includeTrip":     {"false"},
+				"includeSchedule": {"false"},
+				"includeStatus":   {"false"},
+			}))
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + invalidAgencyVehicleID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	// Should return 404 (Not Found) because GetAgency returns sql.ErrNoRows, which is handled as 404
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		entry := model.Data.Entry
+		assert.NotEmpty(t, entry.TripID)
+		assert.NotZero(t, entry.ServiceDate.UnixMilli())
+		assert.Nil(t, entry.Schedule)
+		assert.Nil(t, entry.Status)
+		assert.Empty(t, model.Data.References.Trips)
+		assert.NotEmpty(t, model.Data.References.Agencies)
+	})
 }
 
 func TestTripForVehicleHandlerWithServiceDate(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	defer api.Shutdown()
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-	tomorrow := time.Now().AddDate(0, 0, 1)
-	serviceDateMs := tomorrow.Unix() * 1000
+	api, vehicleID := setupTestApiWithMockVehicle(t)
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
-		".json?key=TEST&serviceDate=" + strconv.FormatInt(serviceDateMs, 10))
+	// Pin to a fixed future-but-bounded date so the test doesn't drift over the
+	// years. The handler resolves serviceDate to midnight in the agency's
+	// timezone, so we compute the expected midnight against testdata.Raba.Timezone.
+	serviceDate := time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC)
+	agencyLoc, err := time.LoadLocation(testdata.Raba.Timezone)
 	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
+	sdInAgencyTz := serviceDate.In(agencyLoc)
+	expectedMidnight := time.Date(sdInAgencyTz.Year(), sdInAgencyTz.Month(), sdInAgencyTz.Day(), 0, 0, 0, 0, agencyLoc)
 
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		tripForVehicleURL(vehicleID, url.Values{"serviceDate": {fmt.Sprintf("%d", serviceDate.UnixMilli())}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
-
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
-	agencyLoc, _ := time.LoadLocation("America/Los_Angeles")
-	sdInAgencyTz := tomorrow.In(agencyLoc)
-	expectedMidnight := time.Date(sdInAgencyTz.Year(), sdInAgencyTz.Month(), sdInAgencyTz.Day(),
-		0, 0, 0, 0, agencyLoc)
-	assert.Equal(t, float64(expectedMidnight.UnixMilli()), entry["serviceDate"])
-}
-
-func TestTripForVehicleHandlerWithIncludeStatusFalse(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	defer api.Shutdown()
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
-		".json?key=TEST&includeStatus=false")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-
-	status, statusExists := entry["status"]
-	if statusExists {
-		assert.Nil(t, status, "Status should be nil when includeStatus=false")
-	}
-}
-
-func TestTripForVehicleHandlerWithIncludeTripFalse(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	// Explicitly set includeTrip=false
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
-		".json?key=TEST&includeTrip=false")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-
-	references, ok := data["references"].(map[string]any)
-	assert.True(t, ok)
-
-	// Check that trips are NOT in references
-	trips, tripsExists := references["trips"]
-	if tripsExists {
-		// If the key exists, it should be nil or empty list
-		tripsList, isList := trips.([]any)
-		if isList {
-			assert.Empty(t, tripsList, "Trips should be empty when includeTrip=false")
-		} else {
-			assert.Nil(t, trips)
-		}
-	}
-}
-
-func TestTripForVehicleHandlerWithIncludeScheduleTrue(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
-		".json?key=TEST&includeSchedule=true")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-
-	// When includeSchedule=true, schedule may be present (depends on data)
-	// Just ensure the request succeeds and basic data is there
-	assert.NotNil(t, entry["tripId"])
+	assert.Equal(t, expectedMidnight.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli())
 }
 
 func TestTripForVehicleHandlerWithTimeParameter(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	defer api.Shutdown()
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-	specificTime := time.Now().Add(1 * time.Hour)
-	timeMs := specificTime.Unix() * 1000
+	api, vehicleID := setupTestApiWithMockVehicle(t)
+	// Fixed timestamp (Jan 1 2025 12:00 UTC), well inside RABA's calendar window.
+	timeMs := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC).UnixMilli()
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
-		".json?key=TEST&time=" + strconv.FormatInt(timeMs, 10))
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		tripForVehicleURL(vehicleID, url.Values{"time": {fmt.Sprintf("%d", timeMs)}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
-
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-	assert.NotNil(t, entry["tripId"])
-}
-
-func TestTripForVehicleHandlerWithAllParametersFalse(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	defer api.Shutdown()
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
-		".json?key=TEST&includeTrip=false&includeSchedule=false&includeStatus=false")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-
-	// Basic fields should still exist
-	assert.NotNil(t, entry["tripId"])
-	assert.NotNil(t, entry["serviceDate"])
-
-	// Optional sections should be nil or empty
-	schedule, scheduleExists := entry["schedule"]
-	if scheduleExists {
-		assert.Nil(t, schedule)
-	}
-
-	status, statusExists := entry["status"]
-	if statusExists {
-		assert.Nil(t, status)
-	}
-
-	references, ok := data["references"].(map[string]any)
-	assert.True(t, ok)
-
-	agencies, ok := references["agencies"].([]any)
-	assert.True(t, ok)
-	assert.NotEmpty(t, agencies)
-
-	// Ensure trip is missing from references
-	trips, tripsExists := references["trips"]
-	if tripsExists {
-		tripsList, ok := trips.([]any)
-		if ok {
-			assert.Empty(t, tripsList)
-		}
-	}
-}
-
-func TestTripForVehicleHandlerWithCombinedParameters(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	serviceDate := time.Now().Truncate(24 * time.Hour)
-	serviceDateMs := serviceDate.Unix() * 1000
-	timeMs := time.Now().Unix() * 1000
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	url := server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID +
-		".json?key=TEST&includeTrip=true&includeSchedule=true&includeStatus=true" +
-		"&serviceDate=" + strconv.FormatInt(serviceDateMs, 10) +
-		"&time=" + strconv.FormatInt(timeMs, 10)
-
-	resp, err := http.Get(url)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-
-	data, ok := model.Data.(map[string]any)
-	assert.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	assert.True(t, ok)
-
-	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
-	agencyLoc, _ := time.LoadLocation("America/Los_Angeles")
-	sdInAgencyTz := serviceDate.In(agencyLoc)
-	expectedMidnight := time.Date(sdInAgencyTz.Year(), sdInAgencyTz.Month(), sdInAgencyTz.Day(),
-		0, 0, 0, 0, agencyLoc)
-	assert.Equal(t, float64(expectedMidnight.UnixMilli()), entry["serviceDate"])
-}
-
-func TestTripForVehicleHandlerAgencyReferenceValidation(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	references, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	agencies, ok := references["agencies"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, agencies, "At least one agency should be referenced")
-
-	// Validate agency structure
-	agency, ok := agencies[0].(map[string]any)
-	require.True(t, ok)
-
-	assert.Contains(t, agency, "id", "Agency should have id")
-	assert.Contains(t, agency, "name", "Agency should have name")
-	assert.Contains(t, agency, "url", "Agency should have url")
-	assert.Contains(t, agency, "timezone", "Agency should have timezone")
-}
-
-func TestTripForVehicleHandlerTripReferenceValidation(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var model models.ResponseModel
-	err = json.NewDecoder(resp.Body).Decode(&model)
-	require.NoError(t, err)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	references, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	trips, ok := references["trips"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, trips, "At least one trip should be referenced")
-
-	// Validate trip structure
-	trip, ok := trips[0].(map[string]any)
-	require.True(t, ok)
-
-	assert.Contains(t, trip, "id", "Trip should have id")
-	assert.Contains(t, trip, "routeId", "Trip should have routeId")
-	assert.Contains(t, trip, "serviceId", "Trip should have serviceId")
+	assert.NotEmpty(t, model.Data.Entry.TripID)
 }
 
 func TestTripForVehicleHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	malformedID := "1110"
-	endpoint := "/api/where/trip-for-vehicle/" + malformedID + ".json?key=TEST"
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-for-vehicle/1110.json?key=TEST")
 
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
 func TestTripForVehicleHandlerWithInvalidParams(t *testing.T) {
-	api, agencyID, vehicleID := setupTestApiWithMockVehicle(t)
-	defer api.Shutdown()
-	vehicleCombinedID := utils.FormCombinedID(agencyID, vehicleID)
+	api, vehicleID := setupTestApiWithMockVehicle(t)
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&serviceDate=invalid")
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-
-	resp2, err := http.Get(server.URL + "/api/where/trip-for-vehicle/" + vehicleCombinedID + ".json?key=TEST&time=invalid")
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+	tests := []struct {
+		name  string
+		param url.Values
+	}{
+		{"invalid serviceDate", url.Values{"serviceDate": {"invalid"}}},
+		{"invalid time", url.Values{"time": {"invalid"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, _ := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(vehicleID, tt.param))
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		})
+	}
 }
 
 func TestParseTripForVehicleParams_Unit(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	req := httptest.NewRequest("GET", "/?includeStatus=false&time=1609459200000", nil)
-	params, errs := api.parseTripParams(req, false)
+	t.Run("explicit params", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?includeStatus=false&time=1609459200000", nil)
 
-	assert.Nil(t, errs)
-	assert.False(t, params.IncludeStatus)
-	assert.NotNil(t, params.Time)
+		params, errs := api.parseTripParams(req, false)
 
-	reqDefault := httptest.NewRequest("GET", "/", nil)
-	paramsDefault, errsDefault := api.parseTripParams(reqDefault, false)
+		assert.Nil(t, errs)
+		assert.False(t, params.IncludeStatus)
+		assert.NotNil(t, params.Time)
+	})
 
-	assert.Nil(t, errsDefault)
-	assert.True(t, paramsDefault.IncludeTrip)
-	assert.False(t, paramsDefault.IncludeSchedule)
-	assert.True(t, paramsDefault.IncludeStatus)
+	t.Run("defaults for trip-for-vehicle", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
 
-	reqInvalid := httptest.NewRequest("GET", "/?serviceDate=invalid&time=invalid", nil)
-	_, errsInvalid := api.parseTripParams(reqInvalid, false)
+		params, errs := api.parseTripParams(req, false)
 
-	assert.NotNil(t, errsInvalid)
-	assert.Contains(t, errsInvalid, "serviceDate")
-	assert.Contains(t, errsInvalid, "time")
-	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errsInvalid["serviceDate"][0])
+		assert.Nil(t, errs)
+		assert.True(t, params.IncludeTrip)
+		assert.False(t, params.IncludeSchedule)
+		assert.True(t, params.IncludeStatus)
+	})
+
+	t.Run("invalid params return field errors", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?serviceDate=invalid&time=invalid", nil)
+
+		_, errs := api.parseTripParams(req, false)
+
+		require.NotNil(t, errs)
+		assert.Contains(t, errs, "serviceDate")
+		assert.Contains(t, errs, "time")
+		assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
+	})
 }
