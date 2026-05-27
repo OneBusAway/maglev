@@ -1,22 +1,34 @@
 package restapi
 
 import (
+	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
+
+// stopsForAgencyURL builds the /stops-for-agency URL with key=TEST baked in.
+// Extra query params are merged from optional url.Values arguments.
+func stopsForAgencyURL(agencyID string, params ...url.Values) string {
+	q := url.Values{"key": {"TEST"}}
+	for _, p := range params {
+		maps.Copy(q, p)
+	}
+	return "/api/where/stops-for-agency/" + agencyID + ".json?" + q.Encode()
+}
 
 func TestStopsForAgencyRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].ID
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-agency/"+agencyID+".json?key=invalid")
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-agency/"+testdata.Raba.ID+".json?key=invalid")
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
@@ -26,105 +38,60 @@ func TestStopsForAgencyRequiresValidApiKey(t *testing.T) {
 func TestStopsForAgencyEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].ID
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-agency/"+agencyID+".json?key=TEST")
+	resp, model := callAPIHandler[StopsResponse](t, api, stopsForAgencyURL(testdata.Raba.ID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, 200, model.Code)
+	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
+	require.NotEmpty(t, model.Data.List, "expected stops for agency")
 
-	// Check list of stops
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, list)
-
-	// Verify first stop has expected fields
-	firstStop := list[0].(map[string]any)
-	assert.NotNil(t, firstStop["id"])
-	assert.NotNil(t, firstStop["lat"])
-	assert.NotNil(t, firstStop["lon"])
-	assert.NotNil(t, firstStop["name"])
-	assert.NotNil(t, firstStop["code"])
-	assert.NotNil(t, firstStop["direction"])
-	assert.NotNil(t, firstStop["locationType"])
-	assert.NotNil(t, firstStop["routeIds"])
-	assert.NotNil(t, firstStop["staticRouteIds"])
-	assert.NotNil(t, firstStop["wheelchairBoarding"])
-
-	// Verify that at least some stops have valid compass directions (not all "UNKNOWN")
-	// Not all stops will have directions (e.g., terminal stops, stops without shape data)
-	validDirections := []string{"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+	validDirections := map[string]bool{"N": true, "NE": true, "E": true, "SE": true, "S": true, "SW": true, "W": true, "NW": true}
 	stopsWithDirections := 0
-	for _, stop := range list {
-		stopMap := stop.(map[string]any)
-		direction := stopMap["direction"].(string)
-		for _, validDir := range validDirections {
-			if direction == validDir {
-				stopsWithDirections++
-				break
-			}
+
+	for i, stop := range model.Data.List {
+		assert.NotEmpty(t, stop.ID, "stop[%d].ID", i)
+		assert.NotZero(t, stop.Lat, "stop[%d].Lat", i)
+		assert.NotZero(t, stop.Lon, "stop[%d].Lon", i)
+		assert.NotEmpty(t, stop.Name, "stop[%d].Name", i)
+		assert.NotNil(t, stop.RouteIDs, "stop[%d].RouteIDs", i)
+		assert.NotNil(t, stop.StaticRouteIDs, "stop[%d].StaticRouteIDs", i)
+
+		assert.True(t, strings.HasPrefix(stop.ID, testdata.Raba.ID+"_"),
+			"stop[%d].ID should have agency prefix: %s", i, stop.ID)
+
+		for j, routeID := range stop.RouteIDs {
+			assert.True(t, strings.HasPrefix(routeID, testdata.Raba.ID+"_"),
+				"stop[%d].RouteIDs[%d] should have agency prefix: %s", i, j, routeID)
+		}
+
+		if validDirections[stop.Direction] {
+			stopsWithDirections++
 		}
 	}
-	assert.Greater(t, stopsWithDirections, len(list)/2,
-		"Expected more than half of stops to have valid directions, got %d out of %d", stopsWithDirections, len(list))
 
-	// Verify stop ID has agency prefix
-	stopID := firstStop["id"].(string)
-	assert.True(t, strings.HasPrefix(stopID, agencyID+"_"),
-		"Stop ID should start with agency ID prefix: %s", stopID)
+	assert.Greater(t, stopsWithDirections, len(model.Data.List)/2,
+		"Expected more than half of stops to have valid directions, got %d out of %d", stopsWithDirections, len(model.Data.List))
 
-	// Verify route IDs have agency prefix
-	routeIDs := firstStop["routeIds"].([]any)
-	if len(routeIDs) > 0 {
-		routeID := routeIDs[0].(string)
-		assert.True(t, strings.HasPrefix(routeID, agencyID+"_"),
-			"Route ID should start with agency ID prefix: %s", routeID)
-	}
+	assert.Contains(t, model.Data.List, testdata.Stop4062, "expected Stop4062 to be in the list")
 
-	// Check references
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
 
-	// Verify agency reference
-	agencyRefs, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	assert.Len(t, agencyRefs, 1)
+	assert.Empty(t, model.Data.References.Situations)
+	assert.Empty(t, model.Data.References.StopTimes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Trips)
 
-	// Verify route references exist (may be empty if stops have no routes)
-	_, ok = refs["routes"].([]any)
-	require.True(t, ok)
-
-	// Verify other reference fields exist but are empty
-	situations, ok := refs["situations"].([]any)
-	require.True(t, ok)
-	assert.Empty(t, situations)
-
-	stopTimes, ok := refs["stopTimes"].([]any)
-	require.True(t, ok)
-	assert.Empty(t, stopTimes)
-
-	stops, ok := refs["stops"].([]any)
-	require.True(t, ok)
-	assert.Empty(t, stops)
-
-	trips, ok := refs["trips"].([]any)
-	require.True(t, ok)
-	assert.Empty(t, trips)
-
-	// Verify limitExceeded field
-	limitExceeded, ok := data["limitExceeded"].(bool)
-	require.True(t, ok)
-	assert.False(t, limitExceeded)
+	assert.False(t, model.Data.LimitExceeded)
 }
 
 func TestStopsForAgencyInvalidAgency(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-agency/invalid.json?key=TEST")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopsResponse](t, api, stopsForAgencyURL("invalid"))
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "", model.Text)
 }
