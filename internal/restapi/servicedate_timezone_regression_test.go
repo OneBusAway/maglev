@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -44,14 +44,14 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID: td.RouteID, AgencyID: td.AgencyID,
-		ShortName: sql.NullString{String: "TZ", Valid: true},
-		LongName:  sql.NullString{String: "TZ Route", Valid: true},
+		ShortName: nulls.String("TZ"),
+		LongName:  nulls.String("TZ Route"),
 		Type:      3,
 	})
 	require.NoError(t, err)
 
 	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
-		ID: td.StopID, Name: sql.NullString{String: "TZ Stop", Valid: true},
+		ID: td.StopID, Name: nulls.String("TZ Stop"),
 		Lat: -36.8485, Lon: 174.7633,
 	})
 	require.NoError(t, err)
@@ -73,8 +73,8 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 	// Trip 1: departs 06:00 (earlier in block)
 	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID: td.TripID1, RouteID: td.RouteID, ServiceID: td.ServiceID,
-		TripHeadsign: sql.NullString{String: "Early", Valid: true},
-		BlockID:      sql.NullString{String: td.BlockID, Valid: true},
+		TripHeadsign: nulls.String("Early"),
+		BlockID:      nulls.String(td.BlockID),
 	})
 	require.NoError(t, err)
 
@@ -87,8 +87,8 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 	// Trip 2: departs 09:00 (later in block, our target)
 	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID: td.TripID2, RouteID: td.RouteID, ServiceID: td.ServiceID,
-		TripHeadsign: sql.NullString{String: "Late", Valid: true},
-		BlockID:      sql.NullString{String: td.BlockID, Valid: true},
+		TripHeadsign: nulls.String("Late"),
+		BlockID:      nulls.String(td.BlockID),
 	})
 	require.NoError(t, err)
 
@@ -158,8 +158,8 @@ func TestServiceDateTimezoneRegression_ArrivalDeparture(t *testing.T) {
 	code, model := serveAndGet(t, api, endpoint)
 	require.Equal(t, http.StatusOK, code)
 
-	data := model.Data.(map[string]interface{})
-	entry := data["entry"].(map[string]interface{})
+	data := model.Data.(map[string]any)
+	entry := data["entry"].(map[string]any)
 
 	// scheduledArrivalTime should use local midnight (March 15 NZDT), not UTC (March 14)
 	expectedMidnight := time.Date(2024, 3, 15, 0, 0, 0, 0, loc)
@@ -227,9 +227,6 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 			defer api.Shutdown()
 
 			setupTzTestGTFS(t, api.GtfsManager.GtfsDB.Queries, td, days)
-			// Clear the service-IDs cache so the request below sees the newly
-			// inserted calendar entry rather than a result cached by an earlier test.
-			api.GtfsManager.MockClearServiceIDsCache()
 
 			combinedTrip := utils.FormCombinedID(td.AgencyID, td.TripID2)
 			endpoint := fmt.Sprintf(
@@ -240,9 +237,9 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 			code, model := serveAndGet(t, api, endpoint)
 			require.Equal(t, http.StatusOK, code)
 
-			data := model.Data.(map[string]interface{})
-			entry := data["entry"].(map[string]interface{})
-			status := entry["status"].(map[string]interface{})
+			data := model.Data.(map[string]any)
+			entry := data["entry"].(map[string]any)
+			status := entry["status"].(map[string]any)
 
 			blockTripSeq := int(status["blockTripSequence"].(float64))
 			assert.Equal(t, 1, blockTripSeq,

@@ -1,15 +1,15 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"math"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 )
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, targetStopID string, vehicle *gtfs.Vehicle, serviceDate time.Time) float64 {
 	if vehicle == nil || vehicle.Position == nil || vehicle.Trip == nil {
 		return 0
@@ -70,8 +70,8 @@ func (api *RestAPI) getBlockDistanceToStop(ctx context.Context, targetTripID, ta
 		})
 	}
 
-	sort.Slice(activeTrips, func(i, j int) bool {
-		return activeTrips[i].StartTime < activeTrips[j].StartTime
+	slices.SortFunc(activeTrips, func(a, b TripInfo) int {
+		return cmp.Compare(a.StartTime, b.StartTime)
 	})
 
 	cumulativeDist := 0.0

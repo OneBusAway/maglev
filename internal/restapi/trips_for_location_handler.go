@@ -10,8 +10,10 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -20,10 +22,7 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
-	lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
+	locationParams, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -39,7 +38,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
 	currentTime := api.Clock.Now().In(currentLocation)
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, -1, latSpan, lonSpan, "", 100, false, []int{}, api.Clock.Now())
+	stops := api.GtfsManager.GetStopsInBounds(ctx, locationParams, 100)
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -48,8 +47,8 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	activeTrips := api.getActiveTrips(stopTimes, api.GtfsManager.GetRealTimeVehicles())
-	bbox := boundingBox(lat, lon, latSpan, lonSpan)
 
+	bounds := internalgtfs.BoundsFromParams(locationParams)
 	visibleTripIDs := make([]string, 0, len(activeTrips))
 	for _, vehicle := range activeTrips {
 		if ctx.Err() != nil {
@@ -61,7 +60,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 		vLat, vLon := float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude)
-		if vLat >= bbox.minLat && vLat <= bbox.maxLat && vLon >= bbox.minLon && vLon <= bbox.maxLon {
+		if vLat >= bounds.MinLat && vLat <= bounds.MaxLat && vLon >= bounds.MinLon && vLon <= bounds.MaxLon {
 			visibleTripIDs = append(visibleTripIDs, vehicle.Trip.ID.ID)
 		}
 	}
@@ -119,12 +118,12 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		Stops:       stops,
 		Trips:       result,
 	})
-	response := models.NewListResponseWithRange(result, references, checkIfOutOfBounds(api, lat, lon, latSpan, lonSpan, 0), api.Clock, false)
+	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(locationParams), api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
 func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
-	lat, lon, latSpan, lonSpan float64,
+	location *internalgtfs.LocationParams,
 	includeTrip, includeSchedule bool,
 	currentLocation *time.Location,
 	todayMidnight time.Time,
@@ -132,30 +131,22 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	fieldErrors map[string][]string,
 	serverErr error,
 ) {
-	var loc *LocationParams
-	loc, fieldErrors = api.parseLocationParams(r, nil)
-
-	if loc != nil {
-		lat = loc.Lat
-		lon = loc.Lon
-		latSpan = loc.LatSpan
-		lonSpan = loc.LonSpan
-	}
+	loc, fieldErrors := api.parseLocationParams(r, nil)
 
 	queryParams := r.URL.Query()
 
 	includeTrip = queryParams.Get("includeTrip") == "true"
 	includeSchedule = queryParams.Get("includeSchedule") == "true"
 
-	agencies := api.GtfsManager.GetAgencies()
-	if len(agencies) == 0 {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
+	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
+	if agenciesErr != nil || len(agencies) == 0 {
+		return nil, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, serverErr = loadAgencyLocation(currentAgency.Id, currentAgency.Timezone)
+	currentLocation, serverErr = loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if serverErr != nil {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, serverErr
+		return nil, false, false, nil, time.Time{}, time.Time{}, nil, serverErr
 	}
 
 	timeParam := queryParams.Get("time")
@@ -173,16 +164,11 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 		}
 	}
 
-	ctx := r.Context()
-	if ctx.Err() != nil {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, nil, ctx.Err()
-	}
-
 	if len(fieldErrors) > 0 {
-		return 0, 0, 0, 0, false, false, nil, time.Time{}, time.Time{}, fieldErrors, nil
+		return nil, false, false, nil, time.Time{}, time.Time{}, fieldErrors, nil
 	}
 
-	return lat, lon, latSpan, lonSpan, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil, nil
+	return loc, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil, nil
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
@@ -205,18 +191,6 @@ func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles
 		}
 	}
 	return activeTrips
-}
-
-type boundingBoxStruct struct{ minLat, maxLat, minLon, maxLon float64 }
-
-func boundingBox(lat, lon, latSpan, lonSpan float64) boundingBoxStruct {
-	const epsilon = 1e-6
-	return boundingBoxStruct{
-		minLat: lat - latSpan - epsilon,
-		maxLat: lat + latSpan + epsilon,
-		minLon: lon - lonSpan - epsilon,
-		maxLon: lon + lonSpan + epsilon,
-	}
 }
 
 // buildTripsForLocationEntries builds trip entries from pre-fetched batch data.
@@ -295,7 +269,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			}
 
 			dateStr := serviceDate.Format("20060102")
-			activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, dateStr)
+			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
 			if err != nil {
 				activeServiceIDs = []string{}
 				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
@@ -303,7 +277,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 			blockIDsNull := make([]sql.NullString, len(blockIDs))
 			for i, id := range blockIDs {
-				blockIDsNull[i] = sql.NullString{String: id, Valid: true}
+				blockIDsNull[i] = nulls.String(id)
 			}
 
 			params := gtfsdb.GetTripsByBlockIDsParams{
@@ -591,17 +565,17 @@ func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) mode
 	direction := rb.api.DirectionCalculator.CalculateStopDirection(rb.ctx, stop.ID, stop.Direction)
 
 	return models.Stop{
-		Code:               utils.NullStringOrEmpty(stop.Code),
+		Code:               nulls.StringOrEmpty(stop.Code),
 		Direction:          direction,
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		LocationType:       0,
-		Name:               utils.NullStringOrEmpty(stop.Name),
+		Name:               nulls.StringOrEmpty(stop.Name),
 		Parent:             "",
 		RouteIDs:           routeIds,
 		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 	}
 }
 
@@ -707,7 +681,6 @@ func (rb *referenceBuilder) createRoute(route gtfsdb.Route) models.Route {
 		route.TextColor.String)
 
 }
-
 
 func (rb *referenceBuilder) buildTripReferences() error {
 	rb.tripsRefList = make([]models.Trip, 0, len(rb.presentTrips))

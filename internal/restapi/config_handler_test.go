@@ -28,13 +28,13 @@ func TestConfigHandler(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	dataMap, ok := model.Data.(map[string]interface{})
+	dataMap, ok := model.Data.(map[string]any)
 	assert.True(t, ok)
 
-	entry, ok := dataMap["entry"].(map[string]interface{})
+	entry, ok := dataMap["entry"].(map[string]any)
 	assert.True(t, ok)
 
-	gitProps, ok := entry["gitProperties"].(map[string]interface{})
+	gitProps, ok := entry["gitProperties"].(map[string]any)
 	assert.True(t, ok)
 
 	assert.Equal(t, "test-hash-1234567", gitProps["git.commit.id"])

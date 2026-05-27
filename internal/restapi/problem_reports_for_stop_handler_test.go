@@ -30,10 +30,10 @@ func TestProblemReportsForStop_EmptyList(t *testing.T) {
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "Data should be a map")
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok, "Data should contain a list")
 	assert.Empty(t, list, "List should be empty when no reports exist")
 
@@ -66,15 +66,15 @@ func TestProblemReportsForStop_SubmitThenRetrieve(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok, "Data should be a map")
 
-	list, ok := data["list"].([]interface{})
+	list, ok := data["list"].([]any)
 	require.True(t, ok, "Data should contain a list")
 	require.Len(t, list, 1, "Should have exactly one report")
 
 	// Verify the report contents
-	report, ok := list[0].(map[string]interface{})
+	report, ok := list[0].(map[string]any)
 	require.True(t, ok, "Report should be a map")
 	assert.Equal(t, "75403", report["stopId"])
 	assert.Equal(t, "stop_name_wrong", report["code"])

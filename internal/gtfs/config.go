@@ -1,6 +1,7 @@
 package gtfs
 
 import (
+	"strings"
 	"time"
 
 	"maglev.onebusaway.org/internal/appconf"
@@ -27,7 +28,6 @@ type Config struct {
 	RTFeeds               []RTFeedConfig
 	GTFSDataPath          string
 	Env                   appconf.Environment
-	Verbose               bool
 	EnableGTFSTidy        bool
 	StartupRetries        []time.Duration
 	Metrics               *metrics.Metrics
@@ -42,4 +42,8 @@ func (config Config) enabledFeeds() []RTFeedConfig {
 		}
 	}
 	return feeds
+}
+
+func (config Config) isLocalFile() bool {
+	return !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
 }

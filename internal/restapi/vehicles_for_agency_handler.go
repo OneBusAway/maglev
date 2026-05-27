@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -18,11 +17,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	ctx := r.Context()
 
-	// Acquire static lock only for the agency lookup; release immediately.
-	// VehiclesForAgencyID manages its own locking internally.
-	api.GtfsManager.RLock()
-	agency := api.GtfsManager.FindAgency(id)
-	api.GtfsManager.RUnlock()
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	if agency == nil {
 		// return an empty list response.
@@ -30,7 +29,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	vehiclesForAgency := api.GtfsManager.VehiclesForAgencyID(id)
+	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	// Apply pagination
 	offset, limit := utils.ParsePaginationParams(r)
@@ -59,7 +62,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Maps to build references
-	agencyRefs := make(map[string]models.AgencyReference)
 	routeRefs := make(map[string]models.Route)
 	tripRefs := make(map[string]models.Trip)
 
@@ -79,14 +81,14 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Set timestamps
-		currentTime := api.Clock.NowUnixMilli()
+		currentTime := models.NewModelTime(api.Clock.Now())
 		vehicleStatus.LastLocationUpdateTime = currentTime
 		vehicleStatus.LastUpdateTime = currentTime
 
 		if vehicle.Timestamp != nil {
-			timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-			vehicleStatus.LastLocationUpdateTime = timestampMs
-			vehicleStatus.LastUpdateTime = timestampMs
+			ts := models.NewModelTime(*vehicle.Timestamp)
+			vehicleStatus.LastLocationUpdateTime = ts
+			vehicleStatus.LastUpdateTime = ts
 		}
 
 		// Set location if available
@@ -134,13 +136,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			tripStatus.LastLocationUpdateTime = currentTime
 
 			if vehicle.Timestamp != nil {
-				timestampMs := vehicle.Timestamp.UnixNano() / int64(time.Millisecond)
-				tripStatus.LastUpdateTime = timestampMs
-				tripStatus.LastLocationUpdateTime = timestampMs
+				ts := models.NewModelTime(*vehicle.Timestamp)
+				tripStatus.LastUpdateTime = ts
+				tripStatus.LastLocationUpdateTime = ts
 			}
 
 			// Set service date (use current date for now)
-			tripStatus.ServiceDate = api.Clock.NowUnixMilli()
+			tripStatus.ServiceDate = currentTime
 
 			// Propagate occupancy status from GTFS-RT to both TripStatus and VehicleStatus.
 			// There is no source for occupancyCapacity or occupancyCount anywhere in maglev — not in the SQLite DB,
@@ -186,8 +188,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					textColor = route.TextColor.String
 				}
 
-				routeRefs[route.ID] = models.NewRoute(
-					route.ID, route.AgencyID, shortName, longName,
+				combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
+				routeRefs[combinedRouteID] = models.NewRoute(
+					combinedRouteID, route.AgencyID, shortName, longName,
 					desc, models.RouteType(route.Type),
 					url, color, textColor)
 
@@ -204,19 +207,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		vehiclesList = append(vehiclesList, vehicleStatus)
 	}
 
-	// Add agency to references
-	agencyRefs[agency.Id] = models.NewAgencyReference(
-		agency.Id, agency.Name, agency.Url, agency.Timezone,
-		agency.Language, agency.Phone, agency.Email,
-		agency.FareUrl, "", false,
-	)
-
 	// Convert maps to slices for references
-	agencyRefList := make([]models.AgencyReference, 0, len(agencyRefs))
-	for _, agencyRef := range agencyRefs {
-		agencyRefList = append(agencyRefList, agencyRef)
-	}
-
 	routeRefList := make([]models.Route, 0, len(routeRefs))
 	for _, routeRef := range routeRefs {
 		routeRefList = append(routeRefList, routeRef)
@@ -228,9 +219,15 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	references := models.NewEmptyReferences()
-	references.Agencies = agencyRefList
+	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefList
 	references.Trips = tripRefList
+
+	alerts := deduplicateAlerts(
+		api.collectAlertsForRoutes(routeIDs),
+		api.GtfsManager.GetAlertsByIDs("", "", id),
+	)
+	references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
 
 	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)

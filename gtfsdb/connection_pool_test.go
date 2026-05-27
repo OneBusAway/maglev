@@ -13,9 +13,8 @@ import (
 func TestDatabaseConnectionPoolSettings(t *testing.T) {
 	// Test that database connection pool is configured with appropriate settings
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: false,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -39,9 +38,8 @@ func TestConnectionPoolBehavior(t *testing.T) {
 	// Test connection pool behavior - note that :memory: databases use only 1 connection
 	// so concurrent queries will be serialized
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: false,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -72,9 +70,8 @@ func TestConnectionPoolBehavior(t *testing.T) {
 func TestConnectionLifetime(t *testing.T) {
 	// Test that connection max lifetime is configured
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: false,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)

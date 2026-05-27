@@ -18,8 +18,6 @@ import (
 type Clock interface {
 	// Now returns the current time
 	Now() time.Time
-	// NowUnixMilli returns the current time as Unix milliseconds
-	NowUnixMilli() int64
 }
 
 // RealClock implements Clock using actual system time.
@@ -29,11 +27,6 @@ type RealClock struct{}
 // Now returns the current system time.
 func (RealClock) Now() time.Time {
 	return time.Now()
-}
-
-// NowUnixMilli returns the current time as Unix milliseconds.
-func (RealClock) NowUnixMilli() int64 {
-	return time.Now().UnixMilli()
 }
 
 // MockClock implements Clock and provides a controllable, thread-safe time for tests.
@@ -53,13 +46,6 @@ func (m *MockClock) Now() time.Time {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.currentTime
-}
-
-// NowUnixMilli returns the mock clock's current time as Unix milliseconds.
-func (m *MockClock) NowUnixMilli() int64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.currentTime.UnixMilli()
 }
 
 // Set changes the mock clock's current time.

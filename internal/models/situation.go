@@ -2,12 +2,12 @@ package models
 
 type Situation struct {
 	ID                 string            `json:"id"`
-	CreationTime       int64             `json:"creationTime"`
+	CreationTime       ModelTime         `json:"creationTime"`
 	ActiveWindows      []ActiveWindow    `json:"activeWindows"`
 	AllAffects         []AffectedEntity  `json:"allAffects"`
 	ConsequenceMessage string            `json:"consequenceMessage"`
-	Consequences       []interface{}     `json:"consequences"`
-	PublicationWindows []interface{}     `json:"publicationWindows"`
+	Consequences       []any             `json:"consequences"`
+	PublicationWindows []any             `json:"publicationWindows"`
 	Reason             string            `json:"reason"`
 	Severity           string            `json:"severity"`
 	Summary            *TranslatedString `json:"summary,omitempty"`

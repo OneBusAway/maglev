@@ -4,15 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	gtfsInternal "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -20,9 +21,6 @@ import (
 // status, schedule, and vehicle positions when available.
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
 
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -51,19 +49,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	serviceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, formattedDate)
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
 
-	// Calculate nanoseconds since midnight of the service day
+	// Time since midnight of the service day, as a duration.
 	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
-	nanosSinceMidnight := currentTime.Sub(serviceDayMidnight).Nanoseconds()
-	if nanosSinceMidnight < 0 {
-		nanosSinceMidnight = 0
-	}
-	currentNanosSinceMidnight := nanosSinceMidnight
+	currentSinceMidnight := max(currentTime.Sub(serviceDayMidnight), 0)
 
 	// Check the previous day's service for trips running past midnight.
 	// GTFS allows departure times > 24:00:00 (e.g., 25:30:00 = 1:30 AM next day).
@@ -71,9 +65,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	// TODO: We should add config for runningLateWindow and runningEarlyWindow like Java OBA
 	// source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
 	const (
-		oneDayNanos       = int64(24 * 60 * 60 * 1_000_000_000)
-		runningLateNanos  = int64(30 * 60 * 1_000_000_000) // runningLateWindow
-		runningEarlyNanos = int64(10 * 60 * 1_000_000_000) // runningEarlyWindow
+		runningLate  = 30 * time.Minute // runningLateWindow
+		runningEarly = 10 * time.Minute // runningEarlyWindow
 	)
 	prevDay := currentTime.AddDate(0, 0, -1)
 	prevFormattedDate := prevDay.Format("20060102")
@@ -82,7 +75,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		api.Logger.Warn("trips-for-route: failed to fetch previous-day service IDs", "date", prevFormattedDate, "error", err)
 		prevServiceIDs = nil
 	}
-	prevDayNanosSinceMidnight := currentNanosSinceMidnight + oneDayNanos
+	// I'm confused by adding 24 hours to get the previous day here, but that's the existing behavior.
+	prevDaySinceMidnight := currentSinceMidnight + (24 * time.Hour)
 
 	indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
 		RouteID:    routeID,
@@ -93,18 +87,27 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	layoverIndices := api.GtfsManager.GetBlockLayoverIndicesForRoute(routeID)
-
 	// Match Java OBA: look back 30 min (catch late vehicles) and ahead 10 min (catch early vehicles).
-	timeRangeStart := currentNanosSinceMidnight - runningLateNanos
-	timeRangeEnd := currentNanosSinceMidnight + runningEarlyNanos
+	timeRangeStart := currentSinceMidnight - runningLate
+	timeRangeEnd := currentSinceMidnight + runningEarly
 
-	layoverBlocks := gtfsInternal.GetBlocksInTimeRange(layoverIndices, timeRangeStart, timeRangeEnd)
+	layoverBlocks, err := api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForRoute(ctx, gtfsdb.GetActiveLayoverBlockIDsForRouteParams{
+		RouteID:        routeID,
+		ServiceIds:     serviceIDs,
+		TimeRangeStart: timeRangeStart.Nanoseconds(),
+		TimeRangeEnd:   timeRangeEnd.Nanoseconds(),
+	})
+	if err != nil {
+		api.Logger.Warn("trips-for-route: failed to fetch layover blocks", "route_id", routeID, "error", err)
+		layoverBlocks = nil
+	}
 
 	allLinkedBlocks := make(map[string]bool)
 
 	if len(indexIDs) > 0 {
 		blocksFromIndices, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
+			FromTime:   sql.NullInt64{Int64: timeRangeStart.Nanoseconds(), Valid: true},
+			ToTime:     sql.NullInt64{Int64: timeRangeEnd.Nanoseconds(), Valid: true},
 			IndexIds:   indexIDs,
 			ServiceIds: serviceIDs,
 		})
@@ -133,7 +136,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			api.Logger.Warn("trips-for-route: failed to fetch previous-day block index IDs", "error", err)
 		} else if len(prevIndexIDs) > 0 {
+			prevFromTime := prevDaySinceMidnight + timeRangeStart - currentSinceMidnight
+			prevToTime := prevDaySinceMidnight + timeRangeEnd - currentSinceMidnight
 			prevBlocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
+				FromTime:   sql.NullInt64{Int64: prevFromTime.Nanoseconds(), Valid: true},
+				ToTime:     sql.NullInt64{Int64: prevToTime.Nanoseconds(), Valid: true},
 				IndexIds:   prevIndexIDs,
 				ServiceIds: prevServiceIDs,
 			})
@@ -152,8 +159,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	nullBlockTrips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForRoute(ctx, gtfsdb.GetActiveTripsWithNullBlockForRouteParams{
 		RouteID:        routeID,
 		ServiceIds:     serviceIDs,
-		TimeRangeStart: sql.NullInt64{Int64: timeRangeStart, Valid: true},
-		TimeRangeEnd:   sql.NullInt64{Int64: timeRangeEnd, Valid: true},
+		TimeRangeStart: sql.NullInt64{Int64: timeRangeStart.Nanoseconds(), Valid: true},
+		TimeRangeEnd:   sql.NullInt64{Int64: timeRangeEnd.Nanoseconds(), Valid: true},
 	})
 	if err != nil {
 		api.Logger.Warn("trips-for-route: failed to fetch null-block trips", "route_id", routeID, "error", err)
@@ -164,8 +171,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		prevNullBlockTrips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForRoute(ctx, gtfsdb.GetActiveTripsWithNullBlockForRouteParams{
 			RouteID:        routeID,
 			ServiceIds:     prevServiceIDs,
-			TimeRangeStart: sql.NullInt64{Int64: prevDayNanosSinceMidnight + timeRangeStart - currentNanosSinceMidnight, Valid: true},
-			TimeRangeEnd:   sql.NullInt64{Int64: prevDayNanosSinceMidnight + timeRangeEnd - currentNanosSinceMidnight, Valid: true},
+			TimeRangeStart: sql.NullInt64{Int64: (prevDaySinceMidnight + timeRangeStart - currentSinceMidnight).Nanoseconds(), Valid: true},
+			TimeRangeEnd:   sql.NullInt64{Int64: (prevDaySinceMidnight + timeRangeEnd - currentSinceMidnight).Nanoseconds(), Valid: true},
 		})
 		if err != nil {
 			api.Logger.Warn("trips-for-route: failed to fetch previous-day null-block trips", "error", err)
@@ -184,16 +191,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	var activeTrips []string
 
 	type serviceDayEntry struct {
-		serviceIDs         []string
-		nanosSinceMidnight int64
+		serviceIDs    []string
+		sinceMidnight time.Duration
 	}
 	serviceDays := []serviceDayEntry{
-		{serviceIDs: serviceIDs, nanosSinceMidnight: currentNanosSinceMidnight},
+		{serviceIDs: serviceIDs, sinceMidnight: currentSinceMidnight},
 	}
 	if len(prevServiceIDs) > 0 {
 		serviceDays = append(serviceDays, serviceDayEntry{
-			serviceIDs:         prevServiceIDs,
-			nanosSinceMidnight: prevDayNanosSinceMidnight,
+			serviceIDs:    prevServiceIDs,
+			sinceMidnight: prevDaySinceMidnight,
 		})
 	}
 
@@ -203,7 +210,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
+		blockIDNullStr := nulls.String(blockID)
 
 		for _, sd := range serviceDays {
 			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
@@ -221,26 +228,18 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 				BlockID:     blockIDNullStr,
 				ServiceIds:  sd.serviceIDs,
-				CurrentTime: sql.NullInt64{Int64: sd.nanosSinceMidnight, Valid: true}})
+				CurrentTime: sql.NullInt64{Int64: sd.sinceMidnight.Nanoseconds(), Valid: true}})
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				api.Logger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
 				continue
 			}
 			if errors.Is(err, sql.ErrNoRows) {
-				// No currently-running trip; pick the best candidate (most recently
-				// completed or next upcoming) so that blocks are never skipped.
-				candidates, qErr := api.GtfsManager.GtfsDB.Queries.GetTripsInBlockWithTimeBounds(ctx, gtfsdb.GetTripsInBlockWithTimeBoundsParams{
-					BlockID:    blockIDNullStr,
-					ServiceIds: sd.serviceIDs,
-				})
-				if qErr != nil {
-					api.Logger.Warn("failed to query block trip candidates", "block_id", blockIDNullStr.String, "error", qErr)
-					continue
-				}
-				if len(candidates) == 0 {
-					continue
-				}
-				activeTrip = selectBestTripInBlock(candidates, sd.nanosSinceMidnight)
+				// No trip in this block is currently running at the requested time.
+				// Java OBA only returns blocks with a currently-running trip (see
+				// BlockStatusServiceImpl.computeLocations which adds scheduled locations
+				// only when isInService()). Skip rather than picking a "best candidate"
+				// upcoming/past trip that isn't actually running.
+				continue
 			}
 
 			activeTrips = append(activeTrips, activeTrip)
@@ -268,21 +267,41 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Do NOT filter by trip.RouteID here. Java OBA's trips-for-route intentionally
+	// returns trips from other routes when they share a block with a requested-route
+	// trip, because the UI uses the block context (previous/next trips).
+	// See: https://github.com/OneBusAway/onebusaway-application-modules/issues/90
+	// and Brian Ferris's 2012 design note on the legacy API group.
 	filteredRouteTrips := make(map[string]bool, len(fetchedTrips))
-	n := 0
 	for _, trip := range fetchedTrips {
-		if trip.RouteID == routeID {
-			fetchedTrips[n] = trip
-			filteredRouteTrips[trip.ID] = true
-			n++
-		}
+		filteredRouteTrips[trip.ID] = true
 	}
-	fetchedTrips = fetchedTrips[:n]
 
 	tripAgencyMap := make(map[string]string)
-	for _, trip := range fetchedTrips {
-		if route := api.GtfsManager.FindRoute(trip.RouteID); route != nil && route.Agency != nil {
-			tripAgencyMap[trip.ID] = route.Agency.Id
+	if len(fetchedTrips) > 0 {
+		routeIDSet := make(map[string]struct{})
+		for _, trip := range fetchedTrips {
+			routeIDSet[trip.RouteID] = struct{}{}
+		}
+		routeIDs := make([]string, 0, len(routeIDSet))
+		for id := range routeIDSet {
+			routeIDs = append(routeIDs, id)
+		}
+
+		routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		routeAgencyMap := make(map[string]string, len(routes))
+		for _, route := range routes {
+			routeAgencyMap[route.ID] = route.AgencyID
+		}
+		for _, trip := range fetchedTrips {
+			if agencyID, ok := routeAgencyMap[trip.RouteID]; ok {
+				tripAgencyMap[trip.ID] = agencyID
+			}
 		}
 	}
 
@@ -562,19 +581,13 @@ func buildTripReferences(
 				route.TextColor.String)
 
 			if _, exists := presentAgencies[route.AgencyID]; !exists {
-				if agency := api.GtfsManager.FindAgency(route.AgencyID); agency != nil {
-					presentAgencies[agency.Id] = models.NewAgencyReference(
-						agency.Id,
-						agency.Name,
-						agency.Url,
-						agency.Timezone,
-						agency.Language,
-						agency.Phone,
-						agency.Email,
-						agency.FareUrl,
-						"",
-						false,
-					)
+				agency, err := api.GtfsManager.FindAgency(ctx, route.AgencyID)
+				if err != nil {
+					logging.LogError(api.Logger, "failed to fetch agency for references", err, slog.String("agency", route.AgencyID))
+				}
+
+				if agency != nil {
+					presentAgencies[agency.ID] = models.AgencyReferenceFromDatabase(agency)
 				}
 			}
 		}
@@ -608,17 +621,17 @@ func buildTripReferences(
 		}
 
 		stopList = append(stopList, models.Stop{
-			Code:               utils.NullStringOrEmpty(stop.Code),
+			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
 			ID:                 stop.ID,
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       0,
-			Name:               utils.NullStringOrEmpty(stop.Name),
+			Name:               nulls.StringOrEmpty(stop.Name),
 			Parent:             "",
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 
@@ -635,7 +648,7 @@ func buildTripReferences(
 					TripHeadsign:  trip.TripHeadsign,
 					TripShortName: trip.TripShortName,
 					DirectionID:   trip.DirectionID,
-					BlockID: utils.FormCombinedID(currentAgency, trip.BlockID),
+					BlockID:       utils.FormCombinedID(currentAgency, trip.BlockID),
 					ShapeID:       utils.FormCombinedID(currentAgency, trip.ShapeID),
 					PeakOffPeak:   0,
 					TimeZone:      "",
@@ -660,40 +673,6 @@ func buildTripReferences(
 	references.Stops = stopList
 	references.Trips = tripsRefList
 	return *references
-}
-
-// selectBestTripInBlock picks the most relevant trip from a block when no trip
-// is currently running (GetActiveTripInBlockAtTime returned ErrNoRows). Priority:
-//  1. Most recently completed (max_departure < now → highest max_departure)
-//  2. Next upcoming    (min_arrival > now  → lowest  min_arrival)
-//  3. Fallback: first row
-func selectBestTripInBlock(rows []gtfsdb.GetTripsInBlockWithTimeBoundsRow, nowNanos int64) string {
-	bestID := ""
-	bestDep := int64(-1)
-	for _, r := range rows {
-		if r.MaxDepartureTime.Valid && r.MaxDepartureTime.Int64 < nowNanos {
-			if r.MaxDepartureTime.Int64 > bestDep {
-				bestDep = r.MaxDepartureTime.Int64
-				bestID = r.ID
-			}
-		}
-	}
-	if bestID != "" {
-		return bestID
-	}
-	bestArr := int64(-1)
-	for _, r := range rows {
-		if r.MinArrivalTime.Valid && r.MinArrivalTime.Int64 > nowNanos {
-			if bestArr == -1 || r.MinArrivalTime.Int64 < bestArr {
-				bestArr = r.MinArrivalTime.Int64
-				bestID = r.ID
-			}
-		}
-	}
-	if bestID != "" {
-		return bestID
-	}
-	return rows[0].ID
 }
 
 // stripNumericSuffix removes a trailing ".<digits>" from a trip ID.

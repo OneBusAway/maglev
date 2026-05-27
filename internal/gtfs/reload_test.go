@@ -3,9 +3,7 @@ package gtfs
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,12 +14,14 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
-func loggerErrorf(format string, args ...interface{}) error {
+func loggerErrorf(format string, args ...any) error {
 	err := fmt.Errorf(format, args...)
 	return err
 }
 
-func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
+// TestReload_QueriesCompleteDuringReload verifies that database queries
+// can complete successfully during a static data reload operation.
+func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
@@ -41,9 +41,10 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
-	assert.Equal(t, "25", agencies[0].Id)
+	assert.Equal(t, "25", agencies[0].ID)
 
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
@@ -61,16 +62,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					manager.RLock()
-					if manager.gtfsData == nil {
-						errChan <- loggerErrorf("gtfsData is nil during read")
-					}
-					if manager.GtfsDB == nil {
-						errChan <- loggerErrorf("GtfsDB is nil during read")
-						manager.RUnlock()
-						continue
-					}
-
 					aps, err := manager.GtfsDB.Queries.ListAgencies(ctx)
 					if err != nil && ctx.Err() == nil {
 						errChan <- loggerErrorf("Failed to list agencies during read: %v", err)
@@ -80,7 +71,6 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 					}
 
 					time.Sleep(5 * time.Millisecond)
-					manager.RUnlock()
 				}
 			}
 		}()
@@ -89,12 +79,9 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 	newSource := models.GetFixturePath(t, "gtfs.zip")
 	manager.SetGtfsURL(newSource)
 
-	time.Sleep(50 * time.Millisecond)
+	_, err = manager.ReloadStatic(context.Background())
+	assert.Nil(t, err, "reloadstatic should succeed with new file")
 
-	err = manager.ForceUpdate(context.Background())
-	assert.Nil(t, err, "ForceUpdate should succeed with new file")
-
-	time.Sleep(50 * time.Millisecond)
 	cancel()
 	wg.Wait()
 	close(errChan)
@@ -103,12 +90,15 @@ func TestHotSwap_QueriesCompleteDuringSwap(t *testing.T) {
 		t.Errorf("Reader error: %v", e)
 	}
 
-	agencies = manager.GetAgencies()
+	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
-	assert.Equal(t, "40", agencies[0].Id)
+	assert.Equal(t, "40", agencies[0].ID)
 }
 
-func TestHotSwap_FailureRecovery(t *testing.T) {
+// TestReload_FailureRecovery verifies that the GTFS manager handles
+// failed reload attempts gracefully without corrupting existing data.
+func TestReload_FailureRecovery(t *testing.T) {
 	ctx := context.Background()
 
 	tempDir := t.TempDir()
@@ -133,20 +123,8 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 
 	manager.SetGtfsURL("/path/to/non/existent/file.zip")
 
-	err = manager.ForceUpdate(context.Background())
-
-	assert.Error(t, err, "ForceUpdate should fail with invalid source")
-
-	// Verify temp file is cleaned up
-	files, err := os.ReadDir(tempDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		if strings.Contains(f.Name(), "temp.db") {
-			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
-		}
-	}
+	_, err = manager.ReloadStatic(context.Background())
+	assert.Error(t, err, "ReloadStatic should fail with invalid source")
 
 	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
 	assert.Nil(t, err)
@@ -154,7 +132,9 @@ func TestHotSwap_FailureRecovery(t *testing.T) {
 	assert.Equal(t, "25", agencies[0].ID, "Should still be using original agency")
 }
 
-func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
+// TestReload_OldDatabaseCleanup verifies that old database data is properly
+// cleaned up during a reload operation.
+func TestReload_OldDatabaseCleanup(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
@@ -178,25 +158,18 @@ func TestHotSwap_OldDatabaseCleanup(t *testing.T) {
 	defer manager.Shutdown()
 
 	manager.SetGtfsURL(gtfsNew)
-	err = manager.ForceUpdate(context.Background())
-	require.NoError(t, err, "ForceUpdate failed for new GTFS")
+	_, err = manager.ReloadStatic(context.Background())
+	require.NoError(t, err, "ReloadStatic failed for new GTFS")
 
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	require.NotEmpty(t, agencies, "No agencies found after second update")
-	assert.Equal(t, "40", agencies[0].Id)
-
-	files, err := os.ReadDir(tempDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		if strings.Contains(f.Name(), "temp.db") {
-			t.Errorf("Found temp DB file that should have been cleaned up: %s", f.Name())
-		}
-	}
+	assert.Equal(t, "40", agencies[0].ID)
 }
 
-func TestHotSwap_MutexProtectedSwap(t *testing.T) {
+// TestReload_ReplacesDataAndRebuildsState verifies that a reload correctly
+// replaces static data and rebuilds derived state (e.g. block_layover rows).
+func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
@@ -220,41 +193,39 @@ func TestHotSwap_MutexProtectedSwap(t *testing.T) {
 	defer manager.Shutdown()
 
 	// Verify initial state
-	manager.RLock()
-	assert.Equal(t, "25", manager.gtfsData.Agencies[0].Id)
-	assert.NotNil(t, manager.stopSpatialIndex)
-	assert.NotNil(t, manager.blockLayoverIndices)
-	manager.RUnlock()
-
-	// Capture old references
-	manager.RLock()
-	oldStaticData := manager.gtfsData
-	oldGtfsDB := manager.GtfsDB
-	oldSpatialIndex := manager.stopSpatialIndex
-	oldBlockLayoverIndices := manager.blockLayoverIndices
-	manager.RUnlock()
+	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, initialAgencies)
+	assert.Equal(t, "25", initialAgencies[0].ID)
+	initialLayoverCount := countBlockLayovers(t, manager)
 
 	manager.SetGtfsURL(gtfsNew)
-	err = manager.ForceUpdate(context.Background())
-	assert.Nil(t, err, "ForceUpdate should succeed")
+	_, err = manager.ReloadStatic(context.Background())
+	assert.Nil(t, err, "ReloadStatic should succeed")
 
 	// Verify Final State
-	manager.RLock()
-	assert.Equal(t, "40", manager.gtfsData.Agencies[0].Id)
+	updatedAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, listErr)
+	require.NotEmpty(t, updatedAgencies)
+	assert.Equal(t, "40", updatedAgencies[0].ID)
 
-	// Verify memory cleanup (references replaced)
-	assert.NotEqual(t, oldStaticData, manager.gtfsData, "StaticData Reference should have been replaced")
-	assert.NotEqual(t, oldGtfsDB, manager.GtfsDB, "GtfsDB Reference should have been replaced")
-	assert.NotEqual(t, oldSpatialIndex, manager.stopSpatialIndex, "SpatialIndex Reference should have been replaced")
-	assert.NotEqual(t, oldBlockLayoverIndices, manager.blockLayoverIndices, "BlockLayoverIndices Reference should have been replaced")
-
-	assert.NotNil(t, manager.stopSpatialIndex)
-	assert.NotNil(t, manager.blockLayoverIndices)
-
-	manager.RUnlock()
+	// block_layover rows are rebuilt from the new feed.
+	updatedLayoverCount := countBlockLayovers(t, manager)
+	assert.NotEqual(t, initialLayoverCount, updatedLayoverCount, "block_layover rows should be rebuilt from the new feed")
 }
 
-func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
+// countBlockLayovers returns the number of rows in the block_layover table.
+func countBlockLayovers(t *testing.T, manager *Manager) int {
+	t.Helper()
+	var n int
+	err := manager.GtfsDB.DB.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM block_layover").Scan(&n)
+	require.NoError(t, err)
+	return n
+}
+
+// TestReload_ConcurrentReload verifies that multiple concurrent reload
+// operations don't crash and properly handle serialization.
+func TestReload_ConcurrentReload(t *testing.T) {
 	ctx := context.Background()
 
 	if runtime.GOOS == "windows" {
@@ -274,15 +245,16 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	defer manager.Shutdown()
 
 	// Verify initial state
-	manager.RLock()
-	assert.Equal(t, "25", manager.gtfsData.Agencies[0].Id)
-	manager.RUnlock()
+	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, initialAgencies)
+	assert.Equal(t, "25", initialAgencies[0].ID)
 
 	// Prepare to update to "gtfs.zip"
 	newSource := models.GetFixturePath(t, "gtfs.zip")
 	manager.SetGtfsURL(newSource)
 
-	// Launch concurrent ForceUpdate calls
+	// Launch concurrent ReloadStatic calls
 	concurrency := 2
 	errChan := make(chan error, concurrency)
 	var wg sync.WaitGroup
@@ -291,8 +263,7 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer wg.Done()
-			// Calling ForceUpdate concurrently
-			err := manager.ForceUpdate(context.Background())
+			_, err := manager.ReloadStatic(context.Background())
 			errChan <- err
 		}()
 	}
@@ -303,14 +274,14 @@ func TestHotSwap_ConcurrentForceUpdate(t *testing.T) {
 	// Both updates should succeed (serialized one after another)
 	// OR essentially one might overwrite the other's result, but neither should crash.
 	for err := range errChan {
-		assert.NoError(t, err, "Concurrent ForceUpdate should not return error")
+		assert.NoError(t, err, "Concurrent ReloadStatic should not return error")
 	}
 
 	// Verify final state matches "gtfs.zip" (agency ID 40)
-	manager.RLock()
-	defer manager.RUnlock()
-	if len(manager.gtfsData.Agencies) > 0 {
-		assert.Equal(t, "40", manager.gtfsData.Agencies[0].Id, "Should utilize new GTFS data")
+	finalAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, listErr)
+	if len(finalAgencies) > 0 {
+		assert.Equal(t, "40", finalAgencies[0].ID, "Should utilize new GTFS data")
 	} else {
 		t.Error("Agencies should not be empty after update")
 	}

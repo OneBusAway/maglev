@@ -103,10 +103,8 @@ func TestMetricsResponseWriter_WriteHeader(t *testing.T) {
 }
 
 func TestMetricsResponseWriter_InitialStatusCode(t *testing.T) {
-	rec := httptest.NewRecorder()
 	w := &metricsResponseWriter{
-		ResponseWriter: rec,
-		statusCode:     http.StatusOK,
+		statusCode: http.StatusOK,
 	}
 
 	// Without calling WriteHeader, statusCode should be 200

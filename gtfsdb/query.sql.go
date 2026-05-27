@@ -33,6 +33,15 @@ func (q *Queries) ClearAgencies(ctx context.Context) error {
 	return err
 }
 
+const clearBlockLayovers = `-- name: ClearBlockLayovers :exec
+DELETE FROM block_layover
+`
+
+func (q *Queries) ClearBlockLayovers(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearBlockLayoversStmt, clearBlockLayovers)
+	return err
+}
+
 const clearBlockTripEntries = `-- name: ClearBlockTripEntries :exec
 DELETE FROM block_trip_entry
 `
@@ -123,6 +132,50 @@ func (q *Queries) ClearTrips(ctx context.Context) error {
 	return err
 }
 
+const countAgencies = `-- name: CountAgencies :one
+SELECT COUNT(*) FROM agencies
+`
+
+func (q *Queries) CountAgencies(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countAgenciesStmt, countAgencies)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countRoutes = `-- name: CountRoutes :one
+SELECT COUNT(*) FROM routes
+`
+
+func (q *Queries) CountRoutes(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countRoutesStmt, countRoutes)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countStops = `-- name: CountStops :one
+SELECT COUNT(*) FROM stops
+`
+
+func (q *Queries) CountStops(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countStopsStmt, countStops)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTrips = `-- name: CountTrips :one
+SELECT COUNT(*) FROM trips
+`
+
+func (q *Queries) CountTrips(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countTripsStmt, countTrips)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgency = `-- name: CreateAgency :one
 INSERT
 OR REPLACE INTO agencies (
@@ -173,6 +226,43 @@ func (q *Queries) CreateAgency(ctx context.Context, arg CreateAgencyParams) (Age
 		&i.Email,
 	)
 	return i, err
+}
+
+const createBlockLayover = `-- name: CreateBlockLayover :exec
+INSERT INTO block_layover (
+    block_id,
+    service_id,
+    route_id,
+    layover_stop_id,
+    layover_start,
+    layover_end,
+    next_trip_id
+)
+VALUES
+    (?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateBlockLayoverParams struct {
+	BlockID       string
+	ServiceID     string
+	RouteID       string
+	LayoverStopID string
+	LayoverStart  int64
+	LayoverEnd    int64
+	NextTripID    string
+}
+
+func (q *Queries) CreateBlockLayover(ctx context.Context, arg CreateBlockLayoverParams) error {
+	_, err := q.exec(ctx, q.createBlockLayoverStmt, createBlockLayover,
+		arg.BlockID,
+		arg.ServiceID,
+		arg.RouteID,
+		arg.LayoverStopID,
+		arg.LayoverStart,
+		arg.LayoverEnd,
+		arg.NextTripID,
+	)
+	return err
 }
 
 const createBlockTripEntry = `-- name: CreateBlockTripEntry :exec
@@ -555,10 +645,11 @@ OR REPLACE INTO stops (
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 `
 
 type CreateStopParams struct {
@@ -575,6 +666,7 @@ type CreateStopParams struct {
 	WheelchairBoarding sql.NullInt64
 	PlatformCode       sql.NullString
 	Direction          sql.NullString
+	ParentStation      sql.NullString
 }
 
 func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, error) {
@@ -592,6 +684,7 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		arg.WheelchairBoarding,
 		arg.PlatformCode,
 		arg.Direction,
+		arg.ParentStation,
 	)
 	var i Stop
 	err := row.Scan(
@@ -741,6 +834,63 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 	return i, err
 }
 
+const getActiveLayoverBlockIDsForRoute = `-- name: GetActiveLayoverBlockIDsForRoute :many
+SELECT DISTINCT block_id
+FROM block_layover
+WHERE route_id = ?1
+  AND layover_start < ?2
+  AND layover_end > ?3
+  AND service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetActiveLayoverBlockIDsForRouteParams struct {
+	RouteID        string
+	TimeRangeEnd   int64
+	TimeRangeStart int64
+	ServiceIds     []string
+}
+
+// Return distinct block IDs whose layover overlaps the given time window for the
+// specified route + active service IDs. Replaces the in-memory
+// GetBlocksInTimeRange traversal with one indexed range scan per call.
+// Slice param is last so non-slice param numbering stays contiguous (?1, ?2, ?3)
+// when the slice is empty and sqlc expands it to NULL.
+func (q *Queries) GetActiveLayoverBlockIDsForRoute(ctx context.Context, arg GetActiveLayoverBlockIDsForRouteParams) ([]string, error) {
+	query := getActiveLayoverBlockIDsForRoute
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.RouteID)
+	queryParams = append(queryParams, arg.TimeRangeEnd)
+	queryParams = append(queryParams, arg.TimeRangeStart)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var block_id string
+		if err := rows.Scan(&block_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getActiveRouteIDsForStopsOnDate = `-- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
     routes.agency_id || '_' || routes.id AS route_id,
@@ -868,22 +1018,10 @@ func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interfa
 
 const getActiveStops = `-- name: GetActiveStops :many
 SELECT DISTINCT
-    s.id,
-    s.code,
-    s.name,
-    s."desc",
-    s.lat,
-    s.lon,
-    s.zone_id,
-    s.url,
-    s.location_type,
-    s.timezone,
-    s.wheelchair_boarding,
-    s.platform_code,
-    s.direction,
-    s.parent_station
-FROM stops s
-INNER JOIN stop_times st ON s.id = st.stop_id
+    s.id, s.code, s.name, s."desc", s.lat, s.lon, s.zone_id, s.url, s.location_type, s.timezone, s.wheelchair_boarding, s.platform_code, s.direction, s.parent_station
+FROM
+    stops s
+    INNER JOIN stop_times st ON s.id = st.stop_id
 `
 
 func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
@@ -1711,20 +1849,33 @@ func (q *Queries) GetBlockTripSequence(ctx context.Context, arg GetBlockTripSequ
 const getBlocksForBlockTripIndexIDs = `-- name: GetBlocksForBlockTripIndexIDs :many
 SELECT DISTINCT bte.block_id
 FROM block_trip_entry bte
-WHERE bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
-  AND bte.service_id IN (/*SLICE:service_ids*/?)
+JOIN trips t ON bte.trip_id = t.id
+WHERE t.max_departure_time >= ?1
+  AND t.min_arrival_time <= ?2
   AND bte.block_id IS NOT NULL
+  AND bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
 `
 
 type GetBlocksForBlockTripIndexIDsParams struct {
+	FromTime   sql.NullInt64
+	ToTime     sql.NullInt64
 	IndexIds   []int64
 	ServiceIds []string
 }
 
-// Get all distinct block_ids that have trips in the specified BlockTripIndex IDs
+// Get distinct block_ids whose schedule window overlaps [from_time, to_time] within the
+// specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+// which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
+// whose trips are hours away from the requested time.
+// Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
+// no stop_times rows) are implicitly excluded: SQL NULL comparisons return UNKNOWN, which
+// WHERE treats as false. A trip with no stop_times cannot be "active" in any time range.
 func (q *Queries) GetBlocksForBlockTripIndexIDs(ctx context.Context, arg GetBlocksForBlockTripIndexIDsParams) ([]sql.NullString, error) {
 	query := getBlocksForBlockTripIndexIDs
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.FromTime)
+	queryParams = append(queryParams, arg.ToTime)
 	if len(arg.IndexIds) > 0 {
 		for _, v := range arg.IndexIds {
 			queryParams = append(queryParams, v)
@@ -1999,7 +2150,7 @@ func (q *Queries) GetFrequencyTripIDs(ctx context.Context) ([]string, error) {
 
 const getImportMetadata = `-- name: GetImportMetadata :one
 SELECT
-    id, file_hash, import_time, file_source
+    id, file_hash, import_time, file_source, feed_expires_at
 FROM
     import_metadata
 WHERE
@@ -2014,6 +2165,7 @@ func (q *Queries) GetImportMetadata(ctx context.Context) (ImportMetadatum, error
 		&i.FileHash,
 		&i.ImportTime,
 		&i.FileSource,
+		&i.FeedExpiresAt,
 	)
 	return i, err
 }
@@ -2444,6 +2596,65 @@ func (q *Queries) GetRoutesByIDs(ctx context.Context, routeIds []string) ([]Rout
 			&i.TextColor,
 			&i.ContinuousPickup,
 			&i.ContinuousDropOff,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRoutesForAgency = `-- name: GetRoutesForAgency :many
+SELECT
+    routes.id,
+    routes.short_name,
+    routes.long_name,
+    routes."desc",
+    routes.type,
+    routes.url,
+    routes.color,
+    routes.text_color
+FROM
+    routes
+WHERE
+    routes.agency_id = ?
+`
+
+type GetRoutesForAgencyRow struct {
+	ID        string
+	ShortName sql.NullString
+	LongName  sql.NullString
+	Desc      sql.NullString
+	Type      int64
+	Url       sql.NullString
+	Color     sql.NullString
+	TextColor sql.NullString
+}
+
+func (q *Queries) GetRoutesForAgency(ctx context.Context, agencyID string) ([]GetRoutesForAgencyRow, error) {
+	rows, err := q.query(ctx, q.getRoutesForAgencyStmt, getRoutesForAgency, agencyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRoutesForAgencyRow
+	for rows.Next() {
+		var i GetRoutesForAgencyRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ShortName,
+			&i.LongName,
+			&i.Desc,
+			&i.Type,
+			&i.Url,
+			&i.Color,
+			&i.TextColor,
 		); err != nil {
 			return nil, err
 		}
@@ -3166,7 +3377,8 @@ SELECT
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 FROM
     stops
 WHERE
@@ -3175,25 +3387,9 @@ LIMIT
     1
 `
 
-type GetStopRow struct {
-	ID                 string
-	Code               sql.NullString
-	Name               sql.NullString
-	Desc               sql.NullString
-	Lat                float64
-	Lon                float64
-	ZoneID             sql.NullString
-	Url                sql.NullString
-	LocationType       sql.NullInt64
-	Timezone           sql.NullString
-	WheelchairBoarding sql.NullInt64
-	PlatformCode       sql.NullString
-	Direction          sql.NullString
-}
-
-func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
+func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 	row := q.queryRow(ctx, q.getStopStmt, getStop, id)
-	var i GetStopRow
+	var i Stop
 	err := row.Scan(
 		&i.ID,
 		&i.Code,
@@ -3208,8 +3404,65 @@ func (q *Queries) GetStop(ctx context.Context, id string) (GetStopRow, error) {
 		&i.WheelchairBoarding,
 		&i.PlatformCode,
 		&i.Direction,
+		&i.ParentStation,
 	)
 	return i, err
+}
+
+const getStopBoundsPerAgency = `-- name: GetStopBoundsPerAgency :many
+SELECT
+    r.agency_id,
+    COUNT(*) AS cnt,
+    CAST(MIN(s.lat) AS REAL) AS min_lat,
+    CAST(MAX(s.lat) AS REAL) AS max_lat,
+    CAST(MIN(s.lon) AS REAL) AS min_lon,
+    CAST(MAX(s.lon) AS REAL) AS max_lon
+FROM
+    routes r
+    JOIN trips t ON t.route_id = r.id
+    JOIN stop_times st ON st.trip_id = t.id
+    JOIN stops s ON s.id = st.stop_id
+GROUP BY
+    r.agency_id
+`
+
+type GetStopBoundsPerAgencyRow struct {
+	AgencyID string
+	Cnt      int64
+	MinLat   float64
+	MaxLat   float64
+	MinLon   float64
+	MaxLon   float64
+}
+
+func (q *Queries) GetStopBoundsPerAgency(ctx context.Context) ([]GetStopBoundsPerAgencyRow, error) {
+	rows, err := q.query(ctx, q.getStopBoundsPerAgencyStmt, getStopBoundsPerAgency)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopBoundsPerAgencyRow
+	for rows.Next() {
+		var i GetStopBoundsPerAgencyRow
+		if err := rows.Scan(
+			&i.AgencyID,
+			&i.Cnt,
+			&i.MinLat,
+			&i.MaxLat,
+			&i.MinLon,
+			&i.MaxLon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getStopForAgency = `-- name: GetStopForAgency :one
@@ -3731,61 +3984,6 @@ func (q *Queries) GetStopsForRoute(ctx context.Context, id string) ([]GetStopsFo
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getStopsWithActiveServiceOnDate = `-- name: GetStopsWithActiveServiceOnDate :many
-SELECT DISTINCT st.stop_id
-FROM stop_times st
-JOIN trips t ON st.trip_id = t.id
-WHERE st.stop_id IN (/*SLICE:stop_ids*/?)
-  AND t.service_id IN (/*SLICE:service_ids*/?)
-`
-
-type GetStopsWithActiveServiceOnDateParams struct {
-	StopIds    []string
-	ServiceIds []string
-}
-
-// Returns stop IDs that have at least one trip with active service on the given date
-func (q *Queries) GetStopsWithActiveServiceOnDate(ctx context.Context, arg GetStopsWithActiveServiceOnDateParams) ([]string, error) {
-	query := getStopsWithActiveServiceOnDate
-	var queryParams []interface{}
-	if len(arg.StopIds) > 0 {
-		for _, v := range arg.StopIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
-	}
-	if len(arg.ServiceIds) > 0 {
-		for _, v := range arg.ServiceIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
-	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var stop_id string
-		if err := rows.Scan(&stop_id); err != nil {
-			return nil, err
-		}
-		items = append(items, stop_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -4636,59 +4834,6 @@ func (q *Queries) GetTripsInBlock(ctx context.Context, arg GetTripsInBlockParams
 	return items, nil
 }
 
-const getTripsInBlockWithTimeBounds = `-- name: GetTripsInBlockWithTimeBounds :many
-SELECT id, min_arrival_time, max_departure_time
-FROM trips
-WHERE block_id = ?1
-  AND service_id IN (/*SLICE:service_ids*/?)
-`
-
-type GetTripsInBlockWithTimeBoundsParams struct {
-	BlockID    sql.NullString
-	ServiceIds []string
-}
-
-type GetTripsInBlockWithTimeBoundsRow struct {
-	ID               string
-	MinArrivalTime   sql.NullInt64
-	MaxDepartureTime sql.NullInt64
-}
-
-// Get all trips in a block with their time bounds for best-trip selection in Go
-func (q *Queries) GetTripsInBlockWithTimeBounds(ctx context.Context, arg GetTripsInBlockWithTimeBoundsParams) ([]GetTripsInBlockWithTimeBoundsRow, error) {
-	query := getTripsInBlockWithTimeBounds
-	var queryParams []interface{}
-	queryParams = append(queryParams, arg.BlockID)
-	if len(arg.ServiceIds) > 0 {
-		for _, v := range arg.ServiceIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
-	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetTripsInBlockWithTimeBoundsRow
-	for rows.Next() {
-		var i GetTripsInBlockWithTimeBoundsRow
-		if err := rows.Scan(&i.ID, &i.MinArrivalTime, &i.MaxDepartureTime); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listAgencies = `-- name: ListAgencies :many
 SELECT
     id, name, url, timezone, lang, phone, fare_url, email
@@ -4720,6 +4865,38 @@ func (q *Queries) ListAgencies(ctx context.Context) ([]Agency, error) {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgencyIds = `-- name: ListAgencyIds :many
+SELECT
+    id
+FROM
+    agencies
+ORDER BY
+    id
+`
+
+func (q *Queries) ListAgencyIds(ctx context.Context) ([]string, error) {
+	rows, err := q.query(ctx, q.listAgencyIdsStmt, listAgencyIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -4875,6 +5052,72 @@ func (q *Queries) ListTrips(ctx context.Context) ([]Trip, error) {
 	return items, nil
 }
 
+const listTripsWithLimit = `-- name: ListTripsWithLimit :many
+SELECT
+    id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed, min_arrival_time, max_departure_time
+FROM
+    trips
+LIMIT ?
+`
+
+func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, error) {
+	rows, err := q.query(ctx, q.listTripsWithLimitStmt, listTripsWithLimit, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Trip
+	for rows.Next() {
+		var i Trip
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.ServiceID,
+			&i.TripHeadsign,
+			&i.TripShortName,
+			&i.DirectionID,
+			&i.BlockID,
+			&i.ShapeID,
+			&i.WheelchairAccessible,
+			&i.BikesAllowed,
+			&i.MinArrivalTime,
+			&i.MaxDepartureTime,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateFeedExpiresAt = `-- name: UpdateFeedExpiresAt :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
+VALUES (1, '', 0, '', ?)
+ON CONFLICT(id) DO UPDATE SET feed_expires_at = excluded.feed_expires_at
+`
+
+func (q *Queries) UpdateFeedExpiresAt(ctx context.Context, feedExpiresAt sql.NullInt64) error {
+	_, err := q.exec(ctx, q.updateFeedExpiresAtStmt, updateFeedExpiresAt, feedExpiresAt)
+	return err
+}
+
+const updateImportTime = `-- name: UpdateImportTime :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source)
+VALUES (1, '', ?, '')
+ON CONFLICT(id) DO UPDATE SET import_time = excluded.import_time
+`
+
+func (q *Queries) UpdateImportTime(ctx context.Context, importTime int64) error {
+	_, err := q.exec(ctx, q.updateImportTimeStmt, updateImportTime, importTime)
+	return err
+}
+
 const updateStopDirection = `-- name: UpdateStopDirection :exec
 UPDATE stops
 SET direction = ?
@@ -4900,7 +5143,7 @@ OR REPLACE INTO import_metadata (
     file_source
 )
 VALUES
-    (1, ?, ?, ?) RETURNING id, file_hash, import_time, file_source
+    (1, ?, ?, ?) RETURNING id, file_hash, import_time, file_source, feed_expires_at
 `
 
 type UpsertImportMetadataParams struct {
@@ -4917,6 +5160,7 @@ func (q *Queries) UpsertImportMetadata(ctx context.Context, arg UpsertImportMeta
 		&i.FileHash,
 		&i.ImportTime,
 		&i.FileSource,
+		&i.FeedExpiresAt,
 	)
 	return i, err
 }

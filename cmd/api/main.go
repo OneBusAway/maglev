@@ -20,10 +20,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Create a temporary logger for reporting errors during startup.
+	startupLogger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 	// Start isolated pprof server on localhost only
 	if os.Getenv("MAGLEV_ENABLE_PPROF") == "1" {
 		go func() {
-			logger := slog.New(slog.NewTextHandler(os.Stdout, nil)).With(slog.String("component", "pprof"))
+			logger := startupLogger.With(slog.String("component", "pprof"))
 			logger.Warn("STARTING PPROF DEBUG SERVER ON localhost:6060 (NOT PUBLIC)")
 			// Listens ONLY on loopback interface using DefaultServeMux
 			if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
@@ -37,8 +40,7 @@ func main() {
 		runtime.SetMutexProfileFraction(1)
 		runtime.SetBlockProfileRate(1)
 
-		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-		logger.Warn("MUTEX AND BLOCK PROFILING ENABLED (Performance will be impacted)")
+		startupLogger.Warn("MUTEX AND BLOCK PROFILING ENABLED (Performance will be impacted)")
 	}
 
 	var cfg appconf.Config
@@ -63,7 +65,7 @@ func main() {
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
 	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
 	flag.StringVar(&exemptApiKeysFlag, "exempt-api-keys", "org.onebusaway.iphone", "Comma separated list of API keys exempt from rate limiting")
-	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second per API key for rate limiting")
+	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second across the entire service (global shared bucket; exempt keys bypass it)")
 	flag.StringVar(&gtfsCfg.GtfsURL, "gtfs-url", "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", "URL for a static GTFS zip file")
 	flag.StringVar(&gtfsCfg.StaticAuthHeaderKey, "gtfs-static-auth-header-name", "", "Optional header name for static GTFS feed auth")
 	flag.StringVar(&gtfsCfg.StaticAuthHeaderValue, "gtfs-static-auth-header-value", "", "Optional header value for static GTFS feed auth")
@@ -73,14 +75,15 @@ func main() {
 	flag.StringVar(&cliFeedAuthHeaderValue, "realtime-auth-header-value", "", "Optional header value for GTFS-RT auth")
 	flag.StringVar(&cliFeedServiceAlertsURL, "service-alerts-url", "", "URL for a GTFS-RT service alerts feed")
 	flag.StringVar(&gtfsCfg.GTFSDataPath, "data-path", "./gtfs.db", "Path to the SQLite database containing GTFS data")
+	flag.StringVar(&cfg.TLSCertPath, "tls-cert-path", "", "Path to TLS certificate file (enables HTTPS when set with tls-key-path)")
+	flag.StringVar(&cfg.TLSKeyPath, "tls-key-path", "", "Path to TLS private key file (enables HTTPS when set with tls-cert-path)")
 	flag.Parse()
 
 	// Enforce mutual exclusivity between -f and other flags (except --dump-config)
 	if configFile != "" && flag.NFlag() > 1 {
 		// Allow -f with --dump-config as a special case
 		if flag.NFlag() != 2 || !dumpConfig {
-			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-			logger.Error("the -f flag is mutually exclusive with other configuration flags (except --dump-config)")
+			startupLogger.Error("the -f flag is mutually exclusive with other configuration flags (except --dump-config)")
 			flag.Usage()
 			os.Exit(1)
 		}
@@ -91,8 +94,7 @@ func main() {
 		// Load configuration from JSON file
 		jsonConfig, err := appconf.LoadFromFile(configFile)
 		if err != nil {
-			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-			logger.Error("failed to load config file", "error", err)
+			startupLogger.Error("failed to load config file", "error", err)
 			os.Exit(1)
 		}
 
@@ -134,7 +136,9 @@ func main() {
 					RefreshInterval:         30,
 				},
 			},
-			DataPath: gtfsCfg.GTFSDataPath,
+			DataPath:    gtfsCfg.GTFSDataPath,
+			TLSCertPath: cfg.TLSCertPath,
+			TLSKeyPath:  cfg.TLSKeyPath,
 		}
 
 		// Run the shared validation logic
@@ -156,8 +160,6 @@ func main() {
 		gtfsCfg = gtfsConfigFromData(gtfsCfgData)
 
 		// Set verbosity flags (CLI specific)
-		gtfsCfg.Verbose = true
-		cfg.Verbose = true
 		cfg.LogLevel = "info"
 		cfg.LogFormat = "text"
 	}
@@ -168,10 +170,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	level := parseLogLevel(cfg.LogLevel)
+	logger := slog.New(newLogHandler(cfg.LogFormat, level))
+	slog.SetDefault(logger)
+
 	// Build application with dependencies
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
 	if err != nil {
-		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 		logger.Error("failed to build application", "error", err)
 		os.Exit(1)
 	}
@@ -180,8 +185,8 @@ func main() {
 	srv, api := CreateServer(coreApp, cfg)
 
 	// Run server with graceful shutdown
-	if err := Run(ctx, srv, coreApp, api, coreApp.Logger); err != nil {
-		coreApp.Logger.Error("server error", "error", err)
+	if err := Run(ctx, srv, coreApp, api); err != nil {
+		logger.Error("server error", "error", err)
 		os.Exit(1)
 	}
 }

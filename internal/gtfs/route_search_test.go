@@ -89,9 +89,6 @@ func TestSearchRoutes_MatchingResults(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	require.NotNil(t, manager)
 
-	manager.RLock()
-	defer manager.RUnlock()
-
 	routes, err := manager.SearchRoutes(ctx, "1", 20)
 	require.NoError(t, err)
 	assert.NotEmpty(t, routes, "Should find routes matching short name '1'")
@@ -108,9 +105,6 @@ func TestSearchRoutes_NoMatch(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	require.NotNil(t, manager)
 
-	manager.RLock()
-	defer manager.RUnlock()
-
 	routes, err := manager.SearchRoutes(ctx, "zzzyyyxxx_nomatch", 20)
 	require.NoError(t, err)
 	assert.Empty(t, routes, "Should return empty slice for non-matching query")
@@ -120,9 +114,6 @@ func TestSearchRoutes_EmptyInput(t *testing.T) {
 	ctx := context.Background()
 	manager, _ := getSharedTestComponents(t)
 	require.NotNil(t, manager)
-
-	manager.RLock()
-	defer manager.RUnlock()
 
 	routes, err := manager.SearchRoutes(ctx, "", 20)
 	require.NoError(t, err)
@@ -134,9 +125,6 @@ func TestSearchRoutes_WhitespaceOnlyInput(t *testing.T) {
 	manager, _ := getSharedTestComponents(t)
 	require.NotNil(t, manager)
 
-	manager.RLock()
-	defer manager.RUnlock()
-
 	routes, err := manager.SearchRoutes(ctx, "   \t  ", 20)
 	require.NoError(t, err)
 	assert.Empty(t, routes, "Whitespace-only input should short-circuit and return empty slice")
@@ -146,9 +134,6 @@ func TestSearchRoutes_DefaultLimit(t *testing.T) {
 	ctx := context.Background()
 	manager, _ := getSharedTestComponents(t)
 	require.NotNil(t, manager)
-
-	manager.RLock()
-	defer manager.RUnlock()
 
 	// Pass maxCount=0 to trigger default limit of 20
 	routes, err := manager.SearchRoutes(ctx, "1", 0)

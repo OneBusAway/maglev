@@ -24,6 +24,14 @@ FROM
 ORDER BY
     id;
 
+-- name: ListAgencyIds :many
+SELECT
+    id
+FROM
+    agencies
+ORDER BY
+    id;
+
 -- name: CreateAgency :one
 INSERT
 OR REPLACE INTO agencies (
@@ -72,10 +80,11 @@ OR REPLACE INTO stops (
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: CreateCalendar :one
 INSERT
@@ -210,6 +219,21 @@ FROM
 WHERE
     stop_times.stop_id = ?;
 
+-- name: GetRoutesForAgency :many
+SELECT
+    routes.id,
+    routes.short_name,
+    routes.long_name,
+    routes."desc",
+    routes.type,
+    routes.url,
+    routes.color,
+    routes.text_color
+FROM
+    routes
+WHERE
+    routes.agency_id = ?;
+
 -- name: GetAgencyForStop :one
 SELECT DISTINCT
     a.id,
@@ -279,7 +303,8 @@ SELECT
     timezone,
     wheelchair_boarding,
     platform_code,
-    direction
+    direction,
+    parent_station
 FROM
     stops
 WHERE
@@ -321,6 +346,13 @@ FROM
 ORDER BY
     id;
 
+-- name: GetActiveStops :many
+SELECT DISTINCT
+    s.*
+FROM
+    stops s
+    INNER JOIN stop_times st ON s.id = st.stop_id;
+
 -- name: GetRoutesForStop :many
 SELECT DISTINCT
     routes.id,
@@ -338,25 +370,6 @@ FROM
     JOIN routes ON trips.route_id = routes.id
 WHERE
     stop_times.stop_id = ?;
-
--- name: GetActiveStops :many
-SELECT DISTINCT
-    s.id,
-    s.code,
-    s.name,
-    s."desc",
-    s.lat,
-    s.lon,
-    s.zone_id,
-    s.url,
-    s.location_type,
-    s.timezone,
-    s.wheelchair_boarding,
-    s.platform_code,
-    s.direction,
-    s.parent_station
-FROM stops s
-INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetAllShapes :many
 SELECT
@@ -562,6 +575,16 @@ OR REPLACE INTO import_metadata (
 VALUES
     (1, ?, ?, ?) RETURNING *;
 
+-- name: UpdateFeedExpiresAt :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
+VALUES (1, '', 0, '', ?)
+ON CONFLICT(id) DO UPDATE SET feed_expires_at = excluded.feed_expires_at;
+
+-- name: UpdateImportTime :exec
+INSERT INTO import_metadata (id, file_hash, import_time, file_source)
+VALUES (1, '', ?, '')
+ON CONFLICT(id) DO UPDATE SET import_time = excluded.import_time;
+
 -- name: ClearStopTimes :exec
 DELETE FROM stop_times;
 
@@ -651,14 +674,6 @@ FROM
     JOIN agencies a ON routes.agency_id = a.id
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'));
-
--- name: GetStopsWithActiveServiceOnDate :many
--- Returns stop IDs that have at least one trip with active service on the given date
-SELECT DISTINCT st.stop_id
-FROM stop_times st
-JOIN trips t ON st.trip_id = t.id
-WHERE st.stop_id IN (sqlc.slice('stop_ids'))
-  AND t.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetStopTimesForTrip :many
 SELECT
@@ -840,6 +855,25 @@ SELECT
 FROM
     trips;
 
+-- name: ListTripsWithLimit :many
+SELECT
+    *
+FROM
+    trips
+LIMIT ?;
+
+-- name: CountAgencies :one
+SELECT COUNT(*) FROM agencies;
+
+-- name: CountRoutes :one
+SELECT COUNT(*) FROM routes;
+
+-- name: CountStops :one
+SELECT COUNT(*) FROM stops;
+
+-- name: CountTrips :one
+SELECT COUNT(*) FROM trips;
+
 -- name: GetArrivalsAndDeparturesForStop :many
 SELECT
     st.trip_id,
@@ -976,6 +1010,35 @@ DELETE FROM block_trip_entry;
 -- name: ClearBlockTripIndices :exec
 DELETE FROM block_trip_index;
 
+-- name: CreateBlockLayover :exec
+INSERT INTO block_layover (
+    block_id,
+    service_id,
+    route_id,
+    layover_stop_id,
+    layover_start,
+    layover_end,
+    next_trip_id
+)
+VALUES
+    (?, ?, ?, ?, ?, ?, ?);
+
+-- name: ClearBlockLayovers :exec
+DELETE FROM block_layover;
+
+-- name: GetActiveLayoverBlockIDsForRoute :many
+-- Return distinct block IDs whose layover overlaps the given time window for the
+-- specified route + active service IDs. Replaces the in-memory
+-- GetBlocksInTimeRange traversal with one indexed range scan per call.
+-- Slice param is last so non-slice param numbering stays contiguous (?1, ?2, ?3)
+-- when the slice is empty and sqlc expands it to NULL.
+SELECT DISTINCT block_id
+FROM block_layover
+WHERE route_id = sqlc.arg('route_id')
+  AND layover_start < sqlc.arg('time_range_end')
+  AND layover_end > sqlc.arg('time_range_start')
+  AND service_id IN (sqlc.slice('service_ids'));
+
 -- name: GetBlockTripIndexIDsForRoute :many
 -- Get all block_trip_index IDs that contain trips for the specified route and service IDs
 SELECT DISTINCT bti.id
@@ -1027,12 +1090,21 @@ WHERE bte.block_id IN (sqlc.slice('block_ids'))
 ORDER BY bte.block_trip_index_id;
 
 -- name: GetBlocksForBlockTripIndexIDs :many
--- Get all distinct block_ids that have trips in the specified BlockTripIndex IDs
+-- Get distinct block_ids whose schedule window overlaps [from_time, to_time] within the
+-- specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+-- which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
+-- whose trips are hours away from the requested time.
+-- Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
+-- no stop_times rows) are implicitly excluded: SQL NULL comparisons return UNKNOWN, which
+-- WHERE treats as false. A trip with no stop_times cannot be "active" in any time range.
 SELECT DISTINCT bte.block_id
 FROM block_trip_entry bte
-WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
-  AND bte.service_id IN (sqlc.slice('service_ids'))
-  AND bte.block_id IS NOT NULL;
+JOIN trips t ON bte.trip_id = t.id
+WHERE t.max_departure_time >= sqlc.arg('from_time')
+  AND t.min_arrival_time <= sqlc.arg('to_time')
+  AND bte.block_id IS NOT NULL
+  AND bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetActiveTripInBlockAtTime :one
 -- Find the currently active trip in a specific block at the given time
@@ -1050,13 +1122,6 @@ LIMIT 1;
 -- name: GetTripsInBlock :many
 -- Get all trip IDs in a specific block for the given service IDs
 SELECT id
-FROM trips
-WHERE block_id = sqlc.arg('block_id')
-  AND service_id IN (sqlc.slice('service_ids'));
-
--- name: GetTripsInBlockWithTimeBounds :many
--- Get all trips in a block with their time bounds for best-trip selection in Go
-SELECT id, min_arrival_time, max_departure_time
 FROM trips
 WHERE block_id = sqlc.arg('block_id')
   AND service_id IN (sqlc.slice('service_ids'));
@@ -1239,5 +1304,21 @@ WHERE st.trip_id = (
 )
 ORDER BY st.stop_sequence ASC
 LIMIT 1;
+
+-- name: GetStopBoundsPerAgency :many
+SELECT
+    r.agency_id,
+    COUNT(*) AS cnt,
+    CAST(MIN(s.lat) AS REAL) AS min_lat,
+    CAST(MAX(s.lat) AS REAL) AS max_lat,
+    CAST(MIN(s.lon) AS REAL) AS min_lon,
+    CAST(MAX(s.lon) AS REAL) AS max_lon
+FROM
+    routes r
+    JOIN trips t ON t.route_id = r.id
+    JOIN stop_times st ON st.trip_id = t.id
+    JOIN stops s ON s.id = st.stop_id
+GROUP BY
+    r.agency_id;
 
 

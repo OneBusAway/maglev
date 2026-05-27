@@ -21,9 +21,9 @@ func (m *mockTestingFatalf) Fatalf(format string, args ...any) {
 }
 
 func TestCollectAllNestedIdsFromObjects(t *testing.T) {
-	data := []interface{}{
-		map[string]interface{}{"routes": []interface{}{"234", "235"}},
-		map[string]interface{}{"routes": []interface{}{"345"}},
+	data := []any{
+		map[string]any{"routes": []any{"234", "235"}},
+		map[string]any{"routes": []any{"345"}},
 	}
 	expected := []string{"234", "235", "345"}
 	actual := collectAllNestedIdsFromObjects(t, data, "routes")
@@ -34,34 +34,34 @@ func TestCollectAllNestedIdsFromObjects(t *testing.T) {
 func TestCollectAllNestedIdsFromObjectsFailures(t *testing.T) {
 	tests := []struct {
 		name          string
-		data          []interface{}
+		data          []any
 		expectedError string
 	}{
 		{
 			name: "Invalid object type in the array",
-			data: []interface{}{
-				map[int]interface{}{1: "234"},
+			data: []any{
+				map[int]any{1: "234"},
 			},
 			expectedError: "item 0 is not a map[string]interface{}",
 		},
 		{
 			name: "Missing key from the object",
-			data: []interface{}{
-				map[string]interface{}{"id": "234"},
+			data: []any{
+				map[string]any{"id": "234"},
 			},
 			expectedError: "item 0 missing key \"routes\"",
 		},
 		{
 			name: "Invalid nested object",
-			data: []interface{}{
-				map[string]interface{}{"routes": "234"},
+			data: []any{
+				map[string]any{"routes": "234"},
 			},
 			expectedError: "item 0 key \"routes\" is not a []interface{}: string",
 		},
 		{
 			name: "Invalid nested array type",
-			data: []interface{}{
-				map[string]interface{}{"routes": []interface{}{234}},
+			data: []any{
+				map[string]any{"routes": []any{234}},
 			},
 			expectedError: "item 0 key \"routes\" index 0 is not a string: int",
 		},
@@ -86,9 +86,9 @@ func TestCollectAllNestedIdsFromObjectsFailures(t *testing.T) {
 }
 
 func TestCollectAllIdsFromObjects(t *testing.T) {
-	data := []interface{}{
-		map[string]interface{}{"id": "234"},
-		map[string]interface{}{"id": "345"},
+	data := []any{
+		map[string]any{"id": "234"},
+		map[string]any{"id": "345"},
 	}
 	expected := []string{"234", "345"}
 	actual := collectAllIdsFromObjects(t, data, "id")
@@ -99,27 +99,27 @@ func TestCollectAllIdsFromObjects(t *testing.T) {
 func TestCollectAllIdsFromObjectsFailures(t *testing.T) {
 	tests := []struct {
 		name          string
-		data          []interface{}
+		data          []any
 		expectedError string
 	}{
 		{
 			name: "Invalid object type in the array",
-			data: []interface{}{
-				map[int]interface{}{1: "234"},
+			data: []any{
+				map[int]any{1: "234"},
 			},
 			expectedError: "item 0 is not a map[string]interface{}",
 		},
 		{
 			name: "Missing key from the object",
-			data: []interface{}{
-				map[string]interface{}{"name": "234"},
+			data: []any{
+				map[string]any{"name": "234"},
 			},
 			expectedError: "item 0 missing key \"id\"",
 		},
 		{
 			name: "Invalid nested object",
-			data: []interface{}{
-				map[string]interface{}{"id": 234},
+			data: []any{
+				map[string]any{"id": 234},
 			},
 			expectedError: "item 0 key \"id\" is not a string: int",
 		},

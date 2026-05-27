@@ -19,16 +19,6 @@ func TestRealClock_Now(t *testing.T) {
 	assert.False(t, result.After(after), "RealClock.Now() should not be after the call")
 }
 
-func TestRealClock_NowUnixMilli(t *testing.T) {
-	c := RealClock{}
-	before := time.Now().UnixMilli()
-	result := c.NowUnixMilli()
-	after := time.Now().UnixMilli()
-
-	assert.GreaterOrEqual(t, result, before)
-	assert.LessOrEqual(t, result, after)
-}
-
 func TestMockClock_Now(t *testing.T) {
 	fixedTime := time.Date(2024, 6, 15, 8, 30, 0, 0, time.UTC)
 	c := NewMockClock(fixedTime)
@@ -36,14 +26,6 @@ func TestMockClock_Now(t *testing.T) {
 	assert.Equal(t, fixedTime, c.Now())
 	// Should return the same time on repeated calls
 	assert.Equal(t, fixedTime, c.Now())
-}
-
-func TestMockClock_NowUnixMilli(t *testing.T) {
-	fixedTime := time.Date(2024, 6, 15, 8, 30, 0, 0, time.UTC)
-	c := NewMockClock(fixedTime)
-
-	expected := fixedTime.UnixMilli()
-	assert.Equal(t, expected, c.NowUnixMilli())
 }
 
 func TestMockClock_Set(t *testing.T) {
@@ -377,7 +359,6 @@ func TestMockClock_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for range iterations {
 				_ = c.Now()
-				_ = c.NowUnixMilli()
 			}
 		}()
 	}

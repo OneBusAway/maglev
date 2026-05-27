@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -24,8 +27,6 @@ import (
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
 // trip ID so the correct schedule data is used.
-//
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
@@ -41,7 +42,7 @@ func (api *RestAPI) BuildTripStatus(
 		0, 0, 0, 0, serviceDate.Location())
 	status := models.NewTripStatus()
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
-	status.ServiceDate = sdMidnight.UnixMilli()
+	status.ServiceDate = models.NewModelTime(sdMidnight)
 	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
 	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
@@ -211,7 +212,6 @@ func (api *RestAPI) BuildTripStatus(
 	return status, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
@@ -257,7 +257,6 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	}, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
 	if !trip.BlockID.Valid {
 		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
@@ -574,7 +573,7 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	}
 
 	formattedDate := serviceDate.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, formattedDate)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		slog.Warn("calculateBlockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),
@@ -652,25 +651,6 @@ func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
 	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
 }
 
-// calculatePreciseDistanceAlongTrip is the legacy version that fetches stop coordinates from the database
-// Deprecated: Use calculatePreciseDistanceAlongTripWithCoords with batch-fetched coordinates instead
-func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopID string, shapePoints []gtfs.ShapePoint) float64 {
-	if len(shapePoints) == 0 {
-		return 0.0
-	}
-
-	// Get stop coordinates
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil {
-		return 0.0
-	}
-
-	// Pre-calculate cumulative distances (this is inefficient for multiple stops)
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-
-	return api.calculatePreciseDistanceAlongTripWithCoords(stop.Lat, stop.Lon, shapePoints, cumulativeDistances)
-}
-
 // preCalculateCumulativeDistances pre-calculates cumulative distances along shape points
 // Returns an array where cumulativeDistances[i] is the cumulative distance up to (but not including) segment i
 func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
@@ -727,7 +707,6 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 	return d, r
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
 	var routeID string
 	var agencyID string
@@ -832,9 +811,9 @@ func (api *RestAPI) calculateBatchStopDistances(
 		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         int(utils.NanosToSeconds(stopTime.ArrivalTime)),
-				DepartureTime:       int(utils.NanosToSeconds(stopTime.DepartureTime)),
-				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
+				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
+				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
+				StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
 			})
@@ -848,9 +827,9 @@ func (api *RestAPI) calculateBatchStopDistances(
 		for _, stopTime := range timeStops {
 			stopTimesList = append(stopTimesList, models.StopTime{
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         int(utils.NanosToSeconds(stopTime.ArrivalTime)),
-				DepartureTime:       int(utils.NanosToSeconds(stopTime.DepartureTime)),
-				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
+				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
+				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
+				StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
 			})
@@ -918,9 +897,9 @@ func (api *RestAPI) calculateBatchStopDistances(
 
 		stopTimesList = append(stopTimesList, models.StopTime{
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-			ArrivalTime:         int(utils.NanosToSeconds(stopTime.ArrivalTime)),
-			DepartureTime:       int(utils.NanosToSeconds(stopTime.DepartureTime)),
-			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
+			ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
+			DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
+			StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
 			DistanceAlongTrip:   distanceAlongTrip,
 			HistoricalOccupancy: "",
 		})
@@ -1025,7 +1004,7 @@ func (api *RestAPI) findNextStopBySequence(
 				if i+1 < len(stopTimes) {
 					nextStop = stopTimes[i+1]
 				} else {
-					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID, serviceDate)
+					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID)
 				}
 			} else {
 				nextStop = st
@@ -1044,7 +1023,7 @@ func (api *RestAPI) findNextStopBySequence(
 
 // getFirstStopOfNextTripInBlock uses LEAD() window function to find the next trip
 // in the block and directly fetches its first stop in a single SQL query.
-func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string, serviceDate time.Time) *gtfsdb.StopTime {
+func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string) *gtfsdb.StopTime {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, currentTripID)
 	if err != nil {
 		slog.Warn("getFirstStopOfNextTripInBlock: failed to get trip",
@@ -1197,4 +1176,37 @@ func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float6
 		degrees += 360
 	}
 	return degrees
+}
+
+type directionGroup struct {
+	GroupID     string
+	DirectionID sql.NullInt64
+	Trips       []gtfsdb.Trip
+}
+
+func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
+	byDirID := make(map[int64][]gtfsdb.Trip)
+	for _, trip := range trips {
+		byDirID[trip.DirectionID.Int64] = append(byDirID[trip.DirectionID.Int64], trip)
+	}
+
+	dirIDs := make([]int64, 0, len(byDirID))
+	for dirID := range byDirID {
+		dirIDs = append(dirIDs, dirID)
+	}
+	sort.Slice(dirIDs, func(i, j int) bool { return dirIDs[i] < dirIDs[j] })
+
+	groups := make([]directionGroup, 0, len(dirIDs))
+	for _, dirID := range dirIDs {
+		tripsInGroup := byDirID[dirID]
+		sort.Slice(tripsInGroup, func(a, b int) bool {
+			return tripsInGroup[a].ID < tripsInGroup[b].ID
+		})
+		groups = append(groups, directionGroup{
+			GroupID:     strconv.FormatInt(dirID, 10),
+			DirectionID: tripsInGroup[0].DirectionID,
+			Trips:       tripsInGroup,
+		})
+	}
+	return groups
 }

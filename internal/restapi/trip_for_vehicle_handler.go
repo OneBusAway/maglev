@@ -10,6 +10,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -19,9 +20,6 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
 
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
 
@@ -70,7 +68,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
+	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
 	var status *models.TripStatus
 	if params.IncludeStatus {
@@ -123,7 +121,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:  serviceDateMillis,
+		ServiceDate:  models.NewModelTime(midnight),
 		Frequency:    nil,
 		Status:       status,
 		Schedule:     schedule,
@@ -210,7 +208,6 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds stop references and collects unique routes for the given stop IDs.
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
 	if len(stopIDs) == 0 {
 		return []models.Stop{}, map[string]gtfsdb.GetRoutesForStopsRow{}, nil
@@ -277,7 +274,7 @@ func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, a
 			Code:               stop.Code.String,
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

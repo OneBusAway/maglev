@@ -1,14 +1,16 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"math"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestCalculateBlockTripSequence(t *testing.T) {
@@ -16,44 +18,46 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
-	trips := api.GtfsManager.GetTrips()
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	require.NoError(t, err)
 	require.NotEmpty(t, trips, "Should have test trips")
 
 	// Monday within the RABA dataset's active service period (calendar range covers this date)
 	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
-
 	// Find a block that has multiple active trips so we can verify sequencing
 	type blockInfo struct {
 		tripIDs []string
 	}
-	blocks := make(map[string]*blockInfo)
 
+	var multiTripBlock *blockInfo
+	seenBlocks := make(map[string]bool)
 	for _, trip := range trips {
 		tripRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, trip.ID)
 		if err != nil || !tripRow.BlockID.Valid || tripRow.BlockID.String == "" {
 			continue
 		}
+		bid := tripRow.BlockID.String
+		if seenBlocks[bid] {
+			continue
+		}
+		seenBlocks[bid] = true
 
-		isActive, err := api.GtfsManager.IsServiceActiveOnDate(ctx, tripRow.ServiceID, serviceDate)
-		if err != nil || isActive == 0 {
+		blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, nulls.String(bid))
+		if err != nil {
 			continue
 		}
 
-		bid := tripRow.BlockID.String
-		if blocks[bid] == nil {
-			blocks[bid] = &blockInfo{}
+		var activeTripIDs []string
+		for _, bt := range blockTrips {
+			isActive, err := api.GtfsManager.IsServiceActiveOnDate(ctx, bt.ServiceID, serviceDate)
+			if err != nil || isActive == 0 {
+				continue
+			}
+			activeTripIDs = append(activeTripIDs, bt.ID)
 		}
-		blocks[bid].tripIDs = append(blocks[bid].tripIDs, trip.ID)
-	}
 
-	// Find a block with at least 2 active trips
-	var multiTripBlock *blockInfo
-	for _, b := range blocks {
-		if len(b.tripIDs) >= 2 {
-			multiTripBlock = b
+		if len(activeTripIDs) >= 2 {
+			multiTripBlock = &blockInfo{tripIDs: activeTripIDs}
 			break
 		}
 	}
@@ -109,8 +113,8 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 			}
 			results = append(results, tripSeq{sequence: seq, earliestDepart: minDepart})
 		}
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].sequence < results[j].sequence
+		slices.SortFunc(results, func(a, b tripSeq) int {
+			return cmp.Compare(a.sequence, b.sequence)
 		})
 		for i := 1; i < len(results); i++ {
 			assert.LessOrEqual(t, results[i-1].earliestDepart, results[i].earliestDepart)

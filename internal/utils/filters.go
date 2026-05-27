@@ -2,19 +2,20 @@ package utils
 
 import (
 	"context"
-	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
 
-// FilterAgencies filters a list of GTFS agencies based on their presence in the provided map.
+// FilterAgencies filters a list of agencies based on their presence in the provided map.
 // It returns a slice of AgencyReference objects for the agencies that are present.
-func FilterAgencies(all []gtfs.Agency, present map[string]bool) []models.AgencyReference {
+func FilterAgencies(all []gtfsdb.Agency, present map[string]bool) []models.AgencyReference {
 	var refs []models.AgencyReference
 	for _, a := range all {
-		if present[a.Id] {
+		if present[a.ID] {
 			refs = append(refs, models.NewAgencyReference(
-				a.Id, a.Name, a.Url, a.Timezone, a.Language, a.Phone, a.Email, a.FareUrl, "", false,
+				a.ID, a.Name, a.Url, a.Timezone,
+				a.Lang.String, a.Phone.String, a.Email.String, a.FareUrl.String,
+				"", false,
 			))
 		}
 	}

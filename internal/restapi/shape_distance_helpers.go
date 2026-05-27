@@ -18,7 +18,6 @@ func shapeRowsToPoints(rows []gtfsdb.Shape) []gtfs.ShapePoint {
 	return pts
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) getStopDistanceAlongShape(ctx context.Context, tripID, stopID string) float64 {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err == nil {
@@ -44,7 +43,6 @@ func (api *RestAPI) getStopDistanceAlongShape(ctx context.Context, tripID, stopI
 	return getDistanceAlongShape(stop.Lat, stop.Lon, shapePoints)
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) getVehicleDistanceAlongShapeContextual(ctx context.Context, tripID string, vehicle *gtfs.Vehicle) float64 {
 	if vehicle == nil || vehicle.Position == nil || vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
 		return 0

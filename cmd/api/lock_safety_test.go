@@ -58,7 +58,7 @@ func TestHandlerLockSafety(t *testing.T) {
 
 	serverErrChan := make(chan error, 1)
 	go func() {
-		serverErrChan <- Run(serverCtx, srv, application, api, application.Logger)
+		serverErrChan <- Run(serverCtx, srv, application, api)
 	}()
 
 	// Wait for server to become ready
@@ -166,8 +166,8 @@ func TestHandlerLockSafety(t *testing.T) {
 	gtfsZipPath := models.GetFixturePath(t, "gtfs.zip")
 	application.GtfsManager.SetGtfsURL(gtfsZipPath)
 
-	t.Log("Triggering ForceUpdate...")
-	updateErr := application.GtfsManager.ForceUpdate(context.Background())
+	t.Log("Triggering GTFS reload...")
+	_, updateErr := application.GtfsManager.ReloadStatic(context.Background())
 	if updateErr != nil {
 		readerCancel()
 		wg.Wait()

@@ -4,27 +4,27 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestFilterAgencies(t *testing.T) {
 	tests := []struct {
 		name     string
-		all      []gtfs.Agency
+		all      []gtfsdb.Agency
 		present  map[string]bool
 		expected int
 	}{
 		{
 			name: "Filter with some agencies present",
-			all: []gtfs.Agency{
-				{Id: "agency1", Name: "Agency One", Url: "http://one.com", Timezone: "America/Los_Angeles"},
-				{Id: "agency2", Name: "Agency Two", Url: "http://two.com", Timezone: "America/New_York"},
-				{Id: "agency3", Name: "Agency Three", Url: "http://three.com", Timezone: "America/Chicago"},
+			all: []gtfsdb.Agency{
+				{ID: "agency1", Name: "Agency One", Url: "http://one.com", Timezone: "America/Los_Angeles"},
+				{ID: "agency2", Name: "Agency Two", Url: "http://two.com", Timezone: "America/New_York"},
+				{ID: "agency3", Name: "Agency Three", Url: "http://three.com", Timezone: "America/Chicago"},
 			},
 			present: map[string]bool{
 				"agency1": true,
@@ -34,18 +34,18 @@ func TestFilterAgencies(t *testing.T) {
 		},
 		{
 			name: "Filter with no agencies present",
-			all: []gtfs.Agency{
-				{Id: "agency1", Name: "Agency One", Url: "http://one.com", Timezone: "America/Los_Angeles"},
-				{Id: "agency2", Name: "Agency Two", Url: "http://two.com", Timezone: "America/New_York"},
+			all: []gtfsdb.Agency{
+				{ID: "agency1", Name: "Agency One", Url: "http://one.com", Timezone: "America/Los_Angeles"},
+				{ID: "agency2", Name: "Agency Two", Url: "http://two.com", Timezone: "America/New_York"},
 			},
 			present:  map[string]bool{},
 			expected: 0,
 		},
 		{
 			name: "Filter with all agencies present",
-			all: []gtfs.Agency{
-				{Id: "agency1", Name: "Agency One", Url: "http://one.com", Timezone: "America/Los_Angeles"},
-				{Id: "agency2", Name: "Agency Two", Url: "http://two.com", Timezone: "America/New_York"},
+			all: []gtfsdb.Agency{
+				{ID: "agency1", Name: "Agency One", Url: "http://one.com", Timezone: "America/Los_Angeles"},
+				{ID: "agency2", Name: "Agency Two", Url: "http://two.com", Timezone: "America/New_York"},
 			},
 			present: map[string]bool{
 				"agency1": true,
@@ -55,22 +55,22 @@ func TestFilterAgencies(t *testing.T) {
 		},
 		{
 			name:     "Empty agency list",
-			all:      []gtfs.Agency{},
+			all:      []gtfsdb.Agency{},
 			present:  map[string]bool{"agency1": true},
 			expected: 0,
 		},
 		{
 			name: "Agencies with full details",
-			all: []gtfs.Agency{
+			all: []gtfsdb.Agency{
 				{
-					Id:       "agency1",
+					ID:       "agency1",
 					Name:     "Agency One",
 					Url:      "http://one.com",
 					Timezone: "America/Los_Angeles",
-					Language: "en",
-					Phone:    "555-1234",
-					Email:    "info@one.com",
-					FareUrl:  "http://one.com/fares",
+					Lang:     nulls.String("en"),
+					Phone:    nulls.String("555-1234"),
+					Email:    nulls.String("info@one.com"),
+					FareUrl:  nulls.String("http://one.com/fares"),
 				},
 			},
 			present:  map[string]bool{"agency1": true},
@@ -92,16 +92,16 @@ func TestFilterAgencies(t *testing.T) {
 }
 
 func TestFilterAgencies_VerifyFields(t *testing.T) {
-	agencies := []gtfs.Agency{
+	agencies := []gtfsdb.Agency{
 		{
-			Id:       "test_agency",
+			ID:       "test_agency",
 			Name:     "Test Agency",
 			Url:      "http://test.com",
 			Timezone: "America/Los_Angeles",
-			Language: "en",
-			Phone:    "555-0000",
-			Email:    "test@test.com",
-			FareUrl:  "http://test.com/fares",
+			Lang:     nulls.String("en"),
+			Phone:    nulls.String("555-0000"),
+			Email:    nulls.String("test@test.com"),
+			FareUrl:  nulls.String("http://test.com/fares"),
 		},
 	}
 	present := map[string]bool{"test_agency": true}

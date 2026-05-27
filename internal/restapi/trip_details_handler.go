@@ -9,6 +9,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -111,9 +112,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
 		api.sendNotFound(w, r)
@@ -153,7 +151,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	serviceDate, serviceDateMillis := utils.ServiceDateMillis(params.ServiceDate, currentTime)
+	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
 	var schedule *models.Schedule
 	var status *models.TripStatus
@@ -200,7 +198,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
 		// we take the first row which gives us the frequency with the earliest start_time
 		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
-		converted.ServiceDate = serviceDateMillis
+		converted.ServiceDate = models.NewModelTime(midnight)
 		converted.ServiceID = utils.FormCombinedID(agencyID, trip.ServiceID)
 		converted.TripID = utils.FormCombinedID(agencyID, trip.ID)
 		frequency = &converted
@@ -208,7 +206,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	tripDetails := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
-		ServiceDate:  serviceDateMillis,
+		ServiceDate:  models.NewModelTime(midnight),
 		Schedule:     schedule,
 		Frequency:    frequency,
 		SituationIDs: situationsIDs,
@@ -290,7 +288,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, response)
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
 	referencedTrips := []*models.Trip{}
 
@@ -388,7 +385,6 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	return referencedTrips, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, stopTimes []models.StopTime) ([]models.Stop, error) {
 	stopIDSet := make(map[string]bool)
 	originalStopIDs := make([]string, 0, len(stopTimes))
@@ -481,7 +477,7 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 			Code:               stop.Code.String,
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}
@@ -491,7 +487,6 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 	return modelStops, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) BuildRouteReference(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
 
 	routeIDSet := make(map[string]bool)

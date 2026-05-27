@@ -8,6 +8,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -20,9 +21,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	ctx := r.Context()
-
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
 
 	// Get the date parameter or use current date
 	dateParam := r.URL.Query().Get("date")
@@ -170,24 +168,30 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Batch fetch agencies using cached manager
-	allAgencies := api.GtfsManager.GetAgencies()
-	for _, a := range allAgencies {
-		if uniqueAgencyIDsMap[a.Id] {
-			if _, exists := agencyRefs[a.Id]; !exists {
-				agencyRefs[a.Id] = models.NewAgencyReference(
-					a.Id,
-					a.Name,
-					a.Url,
-					a.Timezone,
-					a.Language,
-					a.Phone,
-					a.Email,
-					a.FareUrl,
-					"",    // disclaimer
-					false, // privateService
-				)
-			}
+	agencyIDsToFetch := make([]string, 0, len(uniqueAgencyIDsMap))
+	for agencyID := range uniqueAgencyIDsMap {
+		agencyIDsToFetch = append(agencyIDsToFetch, agencyID)
+	}
+
+	fetchedAgencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDsToFetch)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	for _, a := range fetchedAgencies {
+		if _, exists := agencyRefs[a.ID]; !exists {
+			agencyRefs[a.ID] = models.NewAgencyReference(
+				a.ID,
+				a.Name,
+				a.Url,
+				a.Timezone,
+				nulls.StringOrEmpty(a.Lang),
+				a.Phone.String,
+				a.Email.String,
+				a.FareUrl.String,
+				"",    // disclaimer
+				false, // privateService
+			)
 		}
 	}
 
@@ -297,12 +301,12 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	stopRef := models.NewStop(
-		utils.NullStringOrEmpty(stop.Code),
-		utils.NullStringOrEmpty(stop.Direction),
+		nulls.StringOrEmpty(stop.Code),
+		nulls.StringOrEmpty(stop.Direction),
 		utils.FormCombinedID(agencyID, stop.ID),
-		utils.NullStringOrEmpty(stop.Name),
+		nulls.StringOrEmpty(stop.Name),
 		"",
-		utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		stop.Lat,
 		stop.Lon,
 		int(stop.LocationType.Int64),

@@ -49,7 +49,6 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 				wrapped.statusCode,
 				float64(duration.Nanoseconds())/1e6,
 				slog.String("request_id", reqID),
-				slog.String("user_agent", r.Header.Get("User-Agent")),
 				slog.String("component", "http_server"))
 		})
 	}

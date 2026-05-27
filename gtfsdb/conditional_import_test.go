@@ -43,9 +43,8 @@ func createTestData(t *testing.T) ([]byte, []byte) {
 func TestConditionalImport_InitialImport(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -56,7 +55,9 @@ func TestConditionalImport_InitialImport(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	parsedOriginal, err := ParseGtfsData(originalData, "test-source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedOriginal)
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Verify metadata was stored
@@ -76,9 +77,8 @@ func TestConditionalImport_InitialImport(t *testing.T) {
 func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -89,7 +89,9 @@ func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	parsedOriginal, err := ParseGtfsData(originalData, "test-source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedOriginal)
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Get initial metadata
@@ -106,7 +108,7 @@ func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 
 	// Perform second import with same data
 	startTime := time.Now()
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	_, err = client.StoreGtfsData(t.Context(), parsedOriginal)
 	duration := time.Since(startTime)
 	require.NoError(t, err, "Second import should succeed")
 
@@ -130,9 +132,8 @@ func TestConditionalImport_SkipUnchangedData(t *testing.T) {
 func TestConditionalImport_ReloadChangedData(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -143,7 +144,9 @@ func TestConditionalImport_ReloadChangedData(t *testing.T) {
 	originalData, modifiedData := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	parsedOriginal, err := ParseGtfsData(originalData, "test-source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedOriginal)
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Get initial metadata
@@ -151,7 +154,9 @@ func TestConditionalImport_ReloadChangedData(t *testing.T) {
 	require.NoError(t, err, "Should be able to retrieve initial metadata")
 
 	// Perform import with modified data
-	err = client.processAndStoreGTFSDataWithSource(modifiedData, "test-source")
+	parsedModified, err := ParseGtfsData(modifiedData, "test-source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedModified)
 	require.NoError(t, err, "Import with modified data should succeed")
 
 	// Verify metadata was updated
@@ -173,9 +178,8 @@ func TestConditionalImport_ReloadChangedData(t *testing.T) {
 func TestConditionalImport_DifferentSources(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -186,7 +190,9 @@ func TestConditionalImport_DifferentSources(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import with source A
-	err = client.processAndStoreGTFSDataWithSource(originalData, "source-a")
+	parsedA, err := ParseGtfsData(originalData, "source-a")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedA)
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Get initial metadata
@@ -194,7 +200,9 @@ func TestConditionalImport_DifferentSources(t *testing.T) {
 	require.NoError(t, err, "Should be able to retrieve initial metadata")
 
 	// Perform import with same data but different source
-	err = client.processAndStoreGTFSDataWithSource(originalData, "source-b")
+	parsedB, err := ParseGtfsData(originalData, "source-b")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedB)
 	require.NoError(t, err, "Import with different source should succeed")
 
 	// Verify metadata was updated (different source should trigger reimport)
@@ -209,9 +217,8 @@ func TestConditionalImport_DifferentSources(t *testing.T) {
 func TestConditionalImport_FileImport(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -222,7 +229,11 @@ func TestConditionalImport_FileImport(t *testing.T) {
 	testFilePath := getTestFixturePath(t, "raba.zip")
 
 	// Perform initial import from file
-	err = client.ImportFromFile(ctx, testFilePath)
+	body, err := os.ReadFile(testFilePath)
+	require.NoError(t, err)
+	data, err := ParseGtfsData(body, testFilePath)
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), data)
 	require.NoError(t, err, "File import should succeed")
 
 	// Verify metadata was stored with file path as source
@@ -240,7 +251,7 @@ func TestConditionalImport_FileImport(t *testing.T) {
 
 	// Import same file again - should skip
 	startTime := time.Now()
-	err = client.ImportFromFile(ctx, testFilePath)
+	_, err = client.StoreGtfsData(t.Context(), data)
 	duration := time.Since(startTime)
 	require.NoError(t, err, "Second file import should succeed")
 
@@ -251,9 +262,8 @@ func TestConditionalImport_FileImport(t *testing.T) {
 func TestClearAllGTFSData(t *testing.T) {
 	// Create in-memory database
 	config := Config{
-		DBPath:  ":memory:",
-		Env:     appconf.Test,
-		verbose: true,
+		DBPath: ":memory:",
+		Env:    appconf.Test,
 	}
 
 	client, err := NewClient(config)
@@ -264,7 +274,9 @@ func TestClearAllGTFSData(t *testing.T) {
 	originalData, _ := createTestData(t)
 
 	// Perform initial import
-	err = client.processAndStoreGTFSDataWithSource(originalData, "test-source")
+	parsedOriginal, err := ParseGtfsData(originalData, "test-source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedOriginal)
 	require.NoError(t, err, "Initial import should succeed")
 
 	// Verify data exists

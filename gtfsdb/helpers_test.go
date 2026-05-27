@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -84,7 +83,9 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 		t.Skip("Skipping test: testdata/gtfs.zip not found")
 	}
 
-	err = client.processAndStoreGTFSDataWithSource(validBytes, "test-source-valid")
+	parsedValid, err := ParseGtfsData(validBytes, "test-source-valid")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedValid)
 	assert.NoError(t, err, "First import should succeed")
 
 	counts, err := client.TableCounts()
@@ -119,145 +120,17 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 
 	invalidBytes := buf.Bytes()
 
-	// 3. Attempt to import structurally invalid data
-	err = client.processAndStoreGTFSDataWithSource(invalidBytes, "test-source-invalid")
-	assert.Error(t, err, "Import should fail structural validation")
+	// 3. Attempt to parse+validate structurally invalid data.
+	// Validation now happens during ParseGtfsData, before the DB is touched,
+	// so the original working data must remain intact.
+	_, err = ParseGtfsData(invalidBytes, "test-source-invalid")
+	assert.Error(t, err, "Parse should fail structural validation")
 	assert.Contains(t, err.Error(), "validation failed")
 
 	// 4. Verify original data was NOT cleared
 	countsAfter, err := client.TableCounts()
 	assert.NoError(t, err)
 	assert.Equal(t, originalRouteCount, countsAfter["routes"], "Database should remain intact after validation failure")
-}
-
-// TestSlowQueryDB_LogsSlowQueries verifies that slowQueryDB emits a log record
-// when a query exceeds the threshold, and is silent when it does not.
-func TestSlowQueryDB_LogsSlowQueries(t *testing.T) {
-	db, err := sql.Open(DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
-	require.NoError(t, err)
-
-	// Capture slog output via a custom handler.
-	logger, captured := newCaptureLogger(t)
-
-	ctx := context.Background()
-
-	// Threshold of 0 → logging disabled; no records should be emitted.
-	wrapper := newSlowQueryDB(db, 0)
-	wrapper.logger = logger
-	rows, err := wrapper.QueryContext(ctx, "SELECT 1")
-	require.NoError(t, err)
-	require.NoError(t, rows.Close())
-	assert.Empty(t, *captured, "threshold=0 must not emit any log records")
-
-	// Use a fake clock advancing 10 ms per call to ensure the query exceeds
-	// the threshold and avoid Windows timer resolution issues.
-	t0 := time.Unix(0, 0)
-	call := 0
-	wrapper.now = func() time.Time {
-		call++
-		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
-	}
-	wrapper.threshold = 1 * time.Nanosecond
-	rows, err = wrapper.QueryContext(ctx, "SELECT 1")
-	require.NoError(t, err)
-	require.NoError(t, rows.Close())
-	require.NotEmpty(t, *captured, "threshold=1ns must emit a slow_query record")
-	rec := (*captured)[0]
-	assert.Equal(t, "slow_query", rec.msg)
-	assert.Equal(t, slog.LevelWarn, rec.level)
-	assert.Equal(t, "QueryContext", rec.attrs["op"])
-	assert.Contains(t, rec.attrs, "duration")
-	assert.Contains(t, rec.attrs, "query")
-}
-
-func TestSlowQueryDB_LogsSlowExecContext(t *testing.T) {
-	db, err := sql.Open(DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
-	require.NoError(t, err)
-
-	logger, captured := newCaptureLogger(t)
-
-	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
-	wrapper.logger = logger
-	t0 := time.Unix(0, 0)
-	call := 0
-	wrapper.now = func() time.Time {
-		call++
-		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
-	}
-
-	_, err = wrapper.ExecContext(context.Background(), "INSERT INTO t(v) VALUES (1)")
-	require.NoError(t, err)
-	require.Len(t, *captured, 1)
-	rec := (*captured)[0]
-	assert.Equal(t, "slow_query", rec.msg)
-	assert.Equal(t, "ExecContext", rec.attrs["op"])
-	assert.Contains(t, rec.attrs, "duration")
-	assert.Contains(t, rec.attrs, "query")
-}
-
-func TestSlowQueryDB_LogsSlowQueryRowContext(t *testing.T) {
-	db, err := sql.Open(DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	logger, captured := newCaptureLogger(t)
-
-	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
-	wrapper.logger = logger
-	t0 := time.Unix(0, 0)
-	call := 0
-	wrapper.now = func() time.Time {
-		call++
-		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
-	}
-
-	var v int
-	err = wrapper.QueryRowContext(context.Background(), "SELECT 1").Scan(&v)
-	require.NoError(t, err)
-	assert.Equal(t, 1, v)
-	require.Len(t, *captured, 1)
-	rec := (*captured)[0]
-	assert.Equal(t, "slow_query", rec.msg)
-	assert.Equal(t, "QueryRowContext", rec.attrs["op"])
-	assert.Contains(t, rec.attrs, "duration")
-	assert.Contains(t, rec.attrs, "query")
-}
-
-func TestSlowQueryDB_LogsSlowErrorsWithErrorAttribute(t *testing.T) {
-	db, err := sql.Open(DriverName, ":memory:")
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	logger, captured := newCaptureLogger(t)
-
-	wrapper := newSlowQueryDB(db, 1*time.Nanosecond)
-	wrapper.logger = logger
-	t0 := time.Unix(0, 0)
-	call := 0
-	wrapper.now = func() time.Time {
-		call++
-		return t0.Add(time.Duration(call) * 10 * time.Millisecond)
-	}
-
-	_, err = wrapper.QueryContext(context.Background(), "SELECT * FROM missing_table")
-	require.Error(t, err)
-	require.Len(t, *captured, 1)
-	rec := (*captured)[0]
-	assert.Equal(t, "slow_query", rec.msg)
-	assert.Equal(t, "QueryContext", rec.attrs["op"])
-	assert.Contains(t, rec.attrs, "duration")
-	assert.Contains(t, rec.attrs, "query")
-	errAttr, ok := rec.attrs["error"].(string)
-	require.True(t, ok)
-	assert.Contains(t, errAttr, "no such table")
 }
 
 type queryMetricCall struct {
@@ -270,7 +143,7 @@ type testQueryMetricsRecorder struct {
 	calls []queryMetricCall
 }
 
-func (r *testQueryMetricsRecorder) RecordDBQuery(queryName, op string, err error, _ time.Duration) {
+func (r *testQueryMetricsRecorder) RecordDBQuery(queryName, op string, err error) {
 	r.calls = append(r.calls, queryMetricCall{
 		queryName: queryName,
 		op:        op,
@@ -286,7 +159,7 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	ctx := context.Background()
 	recorder := &testQueryMetricsRecorder{}
 
-	wrapper := newSlowQueryDB(db, 0)
+	wrapper := newMetricsWrapper(db)
 	wrapper.queryMetrics = recorder
 
 	_, err = wrapper.QueryContext(ctx, "-- name: ListAgencies :many\nSELECT 1")
@@ -307,11 +180,6 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 }
 
 func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
-	originalThreshold := slowQueryThreshold
-	slowQueryThreshold = 0
-	t.Cleanup(func() {
-		slowQueryThreshold = originalThreshold
-	})
 	originalDDL := ddl
 	ddl = `
 	CREATE TABLE IF NOT EXISTS agencies (
@@ -385,36 +253,6 @@ func TestExtractQueryName(t *testing.T) {
 	}
 }
 
-func TestParseSlowQueryThreshold(t *testing.T) {
-	t.Run("empty value disables logging", func(t *testing.T) {
-		warned := false
-		got := parseSlowQueryThreshold("", func(string, ...any) { warned = true })
-		assert.Equal(t, time.Duration(0), got)
-		assert.False(t, warned)
-	})
-
-	t.Run("valid positive integer enables logging", func(t *testing.T) {
-		warned := false
-		got := parseSlowQueryThreshold("25", func(string, ...any) { warned = true })
-		assert.Equal(t, 25*time.Millisecond, got)
-		assert.False(t, warned)
-	})
-
-	t.Run("invalid value logs warning and disables logging", func(t *testing.T) {
-		warned := false
-		got := parseSlowQueryThreshold("50ms", func(string, ...any) { warned = true })
-		assert.Equal(t, time.Duration(0), got)
-		assert.True(t, warned)
-	})
-
-	t.Run("non-positive value logs warning and disables logging", func(t *testing.T) {
-		warned := false
-		got := parseSlowQueryThreshold("-5", func(string, ...any) { warned = true })
-		assert.Equal(t, time.Duration(0), got)
-		assert.True(t, warned)
-	})
-}
-
 // TestTrimQuery verifies whitespace collapse and truncation.
 func TestTrimQuery(t *testing.T) {
 	long := "SELECT " + string(make([]byte, 200))
@@ -424,35 +262,66 @@ func TestTrimQuery(t *testing.T) {
 		"trimQuery must collapse whitespace")
 }
 
-// logRecord holds the fields of a single captured slog log entry.
-type logRecord struct {
-	msg   string
-	level slog.Level
-	attrs map[string]any
-}
+func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
+	ctx := context.Background()
 
-// newCaptureLogger returns a *slog.Logger and a pointer to the slice of
-// captured records. Every entry written to the logger is appended to *records.
-func newCaptureLogger(t *testing.T) (*slog.Logger, *[]logRecord) {
-	t.Helper()
-	var records []logRecord
-	h := &captureHandler{fn: func(r slog.Record) {
-		attrs := make(map[string]any)
-		r.Attrs(func(a slog.Attr) bool {
-			attrs[a.Key] = a.Value.Any()
-			return true
-		})
-		records = append(records, logRecord{msg: r.Message, level: r.Level, attrs: attrs})
-	}}
-	return slog.New(h), &records
-}
+	db, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, db.Close()) }()
 
-// captureHandler is a minimal slog.Handler that calls fn for every record.
-type captureHandler struct {
-	fn func(slog.Record)
-}
+	_, err = db.Exec(`
+		CREATE TABLE calendar (end_date TEXT);
+		CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);
+		CREATE TABLE import_metadata (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			file_hash TEXT NOT NULL,
+			import_time INTEGER NOT NULL,
+			file_source TEXT NOT NULL,
+			feed_expires_at INTEGER
+		);
+		INSERT INTO import_metadata (id, file_hash, import_time, file_source) VALUES (1, '', 0, '');
+	`)
+	require.NoError(t, err)
 
-func (h *captureHandler) Enabled(_ context.Context, _ slog.Level) bool  { return true }
-func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler          { return h }
-func (h *captureHandler) WithGroup(_ string) slog.Handler               { return h }
-func (h *captureHandler) Handle(_ context.Context, r slog.Record) error { h.fn(r); return nil }
+	q := New(db)
+	readExpiresAt := func(t *testing.T) sql.NullInt64 {
+		t.Helper()
+		md, err := q.GetImportMetadata(ctx)
+		require.NoError(t, err)
+		return md.FeedExpiresAt
+	}
+
+	// 1. Empty calendar → feed_expires_at stays NULL.
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	assert.False(t, readExpiresAt(t).Valid, "Should be NULL when no calendar dates exist")
+
+	// 2. Valid calendar end date → parse and persist.
+	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
+	require.NoError(t, err)
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	expected, _ := time.Parse("20060102150405", "20260401235959")
+	got := readExpiresAt(t)
+	require.True(t, got.Valid)
+	assert.Equal(t, expected.Unix(), got.Int64)
+
+	// 3. Re-running with empty calendar resets to NULL.
+	_, err = db.Exec("DELETE FROM calendar")
+	require.NoError(t, err)
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	assert.False(t, readExpiresAt(t).Valid, "Should reset to NULL after empty re-import")
+
+	// 4. calendar_dates exception_type=1 with later date overrides calendar end_date.
+	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260405', 1)")
+	require.NoError(t, err)
+	// exception_type=2 (removed) should NOT extend the expiry.
+	_, err = db.Exec("INSERT INTO calendar_dates (date, exception_type) VALUES ('20260410', 2)")
+	require.NoError(t, err)
+
+	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
+	expected2, _ := time.Parse("20060102150405", "20260405235959")
+	got = readExpiresAt(t)
+	require.True(t, got.Valid)
+	assert.Equal(t, expected2.Unix(), got.Int64)
+}

@@ -1,19 +1,18 @@
 package restapi
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
 
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -64,17 +63,17 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			assert.Equal(t, "OK", model.Text)
 			assert.Equal(t, 2, model.Version)
 
-			data := model.Data.(map[string]interface{})
+			data := model.Data.(map[string]any)
 			assert.False(t, data["limitExceeded"].(bool))
 			assert.False(t, data["outOfRange"].(bool))
 
-			list, _ := data["list"].([]interface{})
+			list, _ := data["list"].([]any)
 			for _, item := range list {
-				trip := item.(map[string]interface{})
+				trip := item.(map[string]any)
 				verifyTripEntry(t, trip)
 			}
 
-			references := data["references"].(map[string]interface{})
+			references := data["references"].(map[string]any)
 			verifyReferences(t, references)
 
 			assert.GreaterOrEqual(t, len(list), tt.minExpected)
@@ -83,14 +82,14 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	}
 }
 
-func verifyTripEntry(t *testing.T, trip map[string]interface{}) {
+func verifyTripEntry(t *testing.T, trip map[string]any) {
 	assert.Contains(t, trip, "frequency")
 	assert.Contains(t, trip, "serviceDate")
 	assert.Contains(t, trip, "situationIds")
 	assert.Contains(t, trip, "tripId")
 	assert.Contains(t, trip, "status")
 
-	status := trip["status"].(map[string]interface{})
+	status := trip["status"].(map[string]any)
 	assert.Contains(t, status, "activeTripId")
 	assert.Contains(t, status, "blockTripSequence")
 	assert.Contains(t, status, "closestStop")
@@ -106,20 +105,20 @@ func verifyTripEntry(t *testing.T, trip map[string]interface{}) {
 	assert.Contains(t, status, "vehicleId")
 
 	if pos := status["position"]; pos != nil {
-		position := pos.(map[string]interface{})
+		position := pos.(map[string]any)
 		assert.Contains(t, position, "lat")
 		assert.Contains(t, position, "lon")
 	}
 
-	if schedule, ok := trip["schedule"].(map[string]interface{}); ok {
+	if schedule, ok := trip["schedule"].(map[string]any); ok {
 		assert.Contains(t, schedule, "frequency")
 		assert.Contains(t, schedule, "nextTripId")
 		assert.Contains(t, schedule, "previousTripId")
 		assert.Contains(t, schedule, "timeZone")
 
-		if stopTimes, ok := schedule["stopTimes"].([]interface{}); ok {
+		if stopTimes, ok := schedule["stopTimes"].([]any); ok {
 			for _, st := range stopTimes {
-				stopTime := st.(map[string]interface{})
+				stopTime := st.(map[string]any)
 				assert.Contains(t, stopTime, "arrivalTime")
 				assert.Contains(t, stopTime, "departureTime")
 				assert.Contains(t, stopTime, "stopId")
@@ -131,10 +130,10 @@ func verifyTripEntry(t *testing.T, trip map[string]interface{}) {
 	}
 }
 
-func verifyReferences(t *testing.T, references map[string]interface{}) {
-	agencies := references["agencies"].([]interface{})
+func verifyReferences(t *testing.T, references map[string]any) {
+	agencies := references["agencies"].([]any)
 	for _, a := range agencies {
-		agency := a.(map[string]interface{})
+		agency := a.(map[string]any)
 		assert.Contains(t, agency, "disclaimer")
 		assert.Contains(t, agency, "id")
 		assert.Contains(t, agency, "lang")
@@ -145,9 +144,9 @@ func verifyReferences(t *testing.T, references map[string]interface{}) {
 		assert.Contains(t, agency, "url")
 	}
 
-	routes := references["routes"].([]interface{})
+	routes := references["routes"].([]any)
 	for _, r := range routes {
-		route := r.(map[string]interface{})
+		route := r.(map[string]any)
 		assert.Contains(t, route, "agencyId")
 		assert.Contains(t, route, "color")
 		assert.Contains(t, route, "description")
@@ -158,9 +157,9 @@ func verifyReferences(t *testing.T, references map[string]interface{}) {
 		assert.Contains(t, route, "type")
 	}
 
-	stops := references["stops"].([]interface{})
+	stops := references["stops"].([]any)
 	for _, s := range stops {
-		stop := s.(map[string]interface{})
+		stop := s.(map[string]any)
 		assert.Contains(t, stop, "code")
 		assert.Contains(t, stop, "direction")
 		assert.Contains(t, stop, "id")
@@ -174,7 +173,7 @@ func verifyReferences(t *testing.T, references map[string]interface{}) {
 }
 
 func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -200,12 +199,12 @@ func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
 			resp, model := serveApiAndRetrieveEndpoint(t, api, url)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-			data := model.Data.(map[string]interface{})
-			list := data["list"].([]interface{})
+			data := model.Data.(map[string]any)
+			list := data["list"].([]any)
 
 			for _, item := range list {
-				trip := item.(map[string]interface{})
-				schedule, hasSchedule := trip["schedule"].(map[string]interface{})
+				trip := item.(map[string]any)
+				schedule, hasSchedule := trip["schedule"].(map[string]any)
 
 				if tt.includeSchedule {
 					assert.True(t, hasSchedule)
@@ -234,45 +233,6 @@ func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
-}
-
-func TestSelectBestTripInBlock(t *testing.T) {
-	nullInt64 := func(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true} }
-	row := func(id string, min, max int64) gtfsdb.GetTripsInBlockWithTimeBoundsRow {
-		return gtfsdb.GetTripsInBlockWithTimeBoundsRow{ID: id, MinArrivalTime: nullInt64(min), MaxDepartureTime: nullInt64(max)}
-	}
-
-	// now = 1000
-	now := int64(1000)
-
-	t.Run("most recently completed when none running", func(t *testing.T) {
-		rows := []gtfsdb.GetTripsInBlockWithTimeBoundsRow{
-			row("older", 100, 500),
-			row("recent", 600, 900),
-		}
-		assert.Equal(t, "recent", selectBestTripInBlock(rows, now))
-	})
-
-	t.Run("next upcoming when none completed", func(t *testing.T) {
-		rows := []gtfsdb.GetTripsInBlockWithTimeBoundsRow{
-			row("sooner", 1100, 1300),
-			row("later", 1400, 1600),
-		}
-		assert.Equal(t, "sooner", selectBestTripInBlock(rows, now))
-	})
-
-	t.Run("completed beats upcoming", func(t *testing.T) {
-		rows := []gtfsdb.GetTripsInBlockWithTimeBoundsRow{
-			row("recent", 100, 800),
-			row("next", 1200, 1500),
-		}
-		assert.Equal(t, "recent", selectBestTripInBlock(rows, now))
-	})
-
-	t.Run("fallback to first row when no time data matches", func(t *testing.T) {
-		noTime := gtfsdb.GetTripsInBlockWithTimeBoundsRow{ID: "only"}
-		assert.Equal(t, "only", selectBestTripInBlock([]gtfsdb.GetTripsInBlockWithTimeBoundsRow{noTime}, now))
-	})
 }
 
 func TestStripNumericSuffix(t *testing.T) {

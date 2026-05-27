@@ -61,7 +61,7 @@ func getResponseSchema(t *testing.T, doc *openapi3.T, specEndpointPath string) *
 
 // validateJSONAgainstSchema validates a parsed JSON value against an OpenAPI schema.
 // Returns a list of validation errors (empty if conformant).
-func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue interface{}) []error {
+func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue any) []error {
 	err := schema.VisitJSON(jsonValue, openapi3.MultiErrors())
 	if err == nil {
 		return nil
@@ -74,7 +74,7 @@ func validateJSONAgainstSchema(schema *openapi3.Schema, jsonValue interface{}) [
 
 // serveAndCaptureRawJSON makes an HTTP request to the test server and returns
 // the status code and parsed JSON body.
-func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (int, map[string]interface{}) {
+func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (int, map[string]any) {
 	t.Helper()
 
 	client := &http.Client{}
@@ -85,7 +85,7 @@ func serveAndCaptureRawJSON(t *testing.T, serverURL string, endpoint string) (in
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	err = json.Unmarshal(body, &parsed)
 	require.NoError(t, err, "Failed to parse response JSON: %s", string(body))
 
@@ -164,41 +164,21 @@ func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 	doc := loadOpenAPISpec(t)
 
 	// Gather test data IDs from the RABA fixture
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies, "Test data must contain at least one agency")
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
-	stops := api.GtfsManager.GetStops()
+	stops := mustGetStops(t, api)
 	require.NotEmpty(t, stops, "Test data must contain at least one stop")
-	stopID := utils.FormCombinedID(agencyID, stops[0].Id)
+	stopID := utils.FormCombinedID(agencyID, stops[0].ID)
 
-	routes := api.GtfsManager.GetStaticData().Routes
+	routes := mustGetRoutes(t, api)
 	require.NotEmpty(t, routes, "Test data must contain at least one route")
-	var firstRouteID string
-	for _, r := range routes {
-		firstRouteID = utils.FormCombinedID(agencyID, r.Id)
-		break
-	}
+	firstRouteID := utils.FormCombinedID(agencyID, routes[0].ID)
 
-	trips := api.GtfsManager.GetStaticData().Trips
-	require.NotEmpty(t, trips, "Test data must contain at least one trip")
-	var firstTripID string
-	var firstBlockID string
-	var firstShapeID string
-	for _, trip := range trips {
-		if firstTripID == "" {
-			firstTripID = utils.FormCombinedID(agencyID, trip.ID)
-		}
-		if firstBlockID == "" && trip.BlockID != "" {
-			firstBlockID = utils.FormCombinedID(agencyID, trip.BlockID)
-		}
-		if firstShapeID == "" && trip.Shape != nil && trip.Shape.ID != "" {
-			firstShapeID = utils.FormCombinedID(agencyID, trip.Shape.ID)
-		}
-		if firstTripID != "" && firstBlockID != "" && firstShapeID != "" {
-			break
-		}
-	}
+	firstTripID := utils.FormCombinedID(agencyID, mustGetTrip(t, api).ID)
+	firstBlockID := utils.FormCombinedID(agencyID, mustGetTripIDWithBlockID(t, api))
+	firstShapeID := utils.FormCombinedID(agencyID, mustGetTripIDWithShapeID(t, api))
 
 	tests := []struct {
 		name     string
@@ -471,11 +451,12 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 
 	doc := loadOpenAPISpec(t)
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(t, api)
 	require.NotEmpty(t, agencies)
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
-	vehicles := api.GtfsManager.VehiclesForAgencyID(agencyID)
+	vehicles, err := api.GtfsManager.VehiclesForAgencyID(ctx, agencyID)
+	require.Nil(t, err)
 	require.NotEmpty(t, vehicles, "Real-time vehicles must be loaded for conformance testing")
 
 	t.Run("vehicles-for-agency", func(t *testing.T) {

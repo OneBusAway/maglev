@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,7 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		// Optional fields should be absent at the top level.
 		// Unmarshal to a map to avoid false positives from nested TripStatus JSON
 		// (which has its own phase/status/occupancyStatus without omitempty).
-		var top map[string]interface{}
+		var top map[string]any
 		require.NoError(t, json.Unmarshal(data, &top))
 		assert.Equal(t, float64(0), top["occupancyCapacity"])
 		assert.Equal(t, float64(0), top["occupancyCount"])
@@ -48,7 +49,7 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 	t.Run("optional fields appear only when set", func(t *testing.T) {
 		capacity := 50
 		count := 30
-		ts := int64(1000)
+		ts := NewModelTime(time.UnixMilli(1000))
 
 		tripStatus := NewTripStatus()
 		tripStatus.ActiveTripID = "trip_1"
@@ -90,7 +91,7 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		data, err = json.Marshal(vs)
 		require.NoError(t, err)
 
-		var top map[string]interface{}
+		var top map[string]any
 		require.NoError(t, json.Unmarshal(data, &top))
 
 		assert.Equal(t, float64(0), top["occupancyCapacity"])

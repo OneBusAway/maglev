@@ -1,18 +1,20 @@
 package models
 
+import "time"
+
 type TripDetails struct {
 	Frequency    *Frequency  `json:"frequency,omitempty"` // omitempty intentional: trip-details callers expect the field absent when the trip is not frequency-based
 	Schedule     *Schedule   `json:"schedule"`
-	ServiceDate  int64       `json:"serviceDate"`
+	ServiceDate  ModelTime   `json:"serviceDate"`
 	SituationIDs []string    `json:"situationIds"`
 	Status       *TripStatus `json:"status,omitempty"`
 	TripID       string      `json:"tripId"`
 }
 
-func NewTripDetails(tripID string, serviceDate int64, frequency *Frequency, status *TripStatus, schedule *Schedule, situationIDs []string) *TripDetails {
+func NewTripDetails(tripID string, serviceDate time.Time, frequency *Frequency, status *TripStatus, schedule *Schedule, situationIDs []string) *TripDetails {
 	return &TripDetails{
 		TripID:       tripID,
-		ServiceDate:  serviceDate,
+		ServiceDate:  NewModelTime(serviceDate),
 		Frequency:    frequency,
 		Status:       status,
 		Schedule:     schedule,
@@ -24,7 +26,7 @@ func NewTripDetails(tripID string, serviceDate int64, frequency *Frequency, stat
 func NewEmptyTripDetails() *TripDetails {
 	return &TripDetails{
 		TripID:       "",
-		ServiceDate:  0,
+		ServiceDate:  NewModelTime(time.Time{}),
 		Frequency:    nil,
 		Status:       nil,
 		Schedule:     nil,
@@ -42,8 +44,8 @@ type TripStatus struct {
 	LastKnownDistanceAlongTrip float64    `json:"lastKnownDistanceAlongTrip"`
 	LastKnownLocation          *Location  `json:"lastKnownLocation,omitempty"`
 	LastKnownOrientation       float64    `json:"lastKnownOrientation"`
-	LastLocationUpdateTime     int64      `json:"lastLocationUpdateTime"`
-	LastUpdateTime             int64      `json:"lastUpdateTime"`
+	LastLocationUpdateTime     ModelTime  `json:"lastLocationUpdateTime"`
+	LastUpdateTime             ModelTime  `json:"lastUpdateTime"`
 	NextStop                   string     `json:"nextStop"`
 	NextStopTimeOffset         int        `json:"nextStopTimeOffset"`
 	OccupancyCapacity          int        `json:"occupancyCapacity"`
@@ -55,7 +57,7 @@ type TripStatus struct {
 	Predicted                  bool       `json:"predicted"`
 	ScheduleDeviation          int        `json:"scheduleDeviation"`
 	ScheduledDistanceAlongTrip float64    `json:"scheduledDistanceAlongTrip"`
-	ServiceDate                int64      `json:"serviceDate"`
+	ServiceDate                ModelTime  `json:"serviceDate"`
 	SituationIDs               []string   `json:"situationIds"`
 	Status                     string     `json:"status"`
 	TotalDistanceAlongTrip     float64    `json:"totalDistanceAlongTrip"`

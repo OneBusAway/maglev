@@ -5,20 +5,21 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 // Benchmark arrivals endpoint (hot path).
 func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b)
+	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
 	defer cleanup()
 
-	agencies := api.GtfsManager.GetAgencies()
-	stops := api.GtfsManager.GetStops()
+	agencies := mustGetAgencies(b, api)
+	stops := mustGetStops(b, api)
 	if len(agencies) == 0 || len(stops) == 0 {
 		b.Fatal("no agencies or stops")
 	}
-	stopID := utils.FormCombinedID(agencies[0].Id, stops[0].Id)
+	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
@@ -63,14 +64,14 @@ func BenchmarkStopsForLocation(b *testing.B) {
 
 // Benchmark vehicles-for-agency with real-time data.
 func BenchmarkVehiclesForAgency(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b)
+	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
 	defer cleanup()
 
-	agencies := api.GtfsManager.GetAgencies()
+	agencies := mustGetAgencies(b, api)
 	if len(agencies) == 0 {
 		b.Fatal("no agencies")
 	}
-	agencyID := agencies[0].Id
+	agencyID := agencies[0].ID
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
@@ -92,15 +93,15 @@ func BenchmarkVehiclesForAgency(b *testing.B) {
 
 // Benchmark trip-details with real-time data.
 func BenchmarkTripDetails(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b)
+	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
 	defer cleanup()
 
-	agencies := api.GtfsManager.GetAgencies()
-	trips := api.GtfsManager.GetTrips()
-	if len(agencies) == 0 || len(trips) == 0 {
-		b.Fatal("no agencies or trips")
+	agencies := mustGetAgencies(b, api)
+	if len(agencies) == 0 {
+		b.Fatal("no agencies")
 	}
-	tripID := utils.FormCombinedID(agencies[0].Id, trips[0].ID)
+	trip := mustGetTrip(b, api)
+	tripID := utils.FormCombinedID(agencies[0].ID, trip.ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)

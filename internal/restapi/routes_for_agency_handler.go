@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -14,38 +15,44 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
-	agency := api.GtfsManager.FindAgency(id)
-
+	ctx := r.Context()
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if agency == nil {
-		api.sendNull(w, r)
+		api.sendNotFound(w, r)
 		return
 	}
 
-	routesForAgency := api.GtfsManager.RoutesForAgencyID(id)
+	routesForAgency, err := api.GtfsManager.RoutesForAgencyID(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	// Apply pagination
 	offset, limit := utils.ParsePaginationParams(r)
 	routesForAgency, limitExceeded := utils.PaginateSlice(routesForAgency, offset, limit)
-	// Safe allocation logic
 	routesList := make([]models.Route, 0, len(routesForAgency))
 
 	for _, route := range routesForAgency {
 		routesList = append(routesList, models.NewRoute(
-			utils.FormCombinedID(route.Agency.Id, route.Id), route.Agency.Id, route.ShortName, route.LongName,
-			route.Description, models.RouteType(route.Type),
-			route.Url, route.Color, route.TextColor))
+			utils.FormCombinedID(agency.ID, route.ID),
+			agency.ID,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
+			models.RouteType(route.Type),
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor)))
 	}
 
 	references := models.NewEmptyReferences()
 	references.Agencies = []models.AgencyReference{
-		models.NewAgencyReference(
-			agency.Id, agency.Name, agency.Url, agency.Timezone,
-			agency.Language, agency.Phone, agency.Email,
-			agency.FareUrl, "", false,
-		),
+		models.AgencyReferenceFromDatabase(agency),
 	}
 
 	response := models.NewListResponse(routesList, *references, limitExceeded, api.Clock)

@@ -175,11 +175,11 @@ func (m *mockTransaction) Commit() error {
 	return nil
 }
 
-func (m *mockTransaction) Exec(query string, args ...interface{}) (sql.Result, error) {
+func (m *mockTransaction) Exec(query string, args ...any) (sql.Result, error) {
 	return nil, nil
 }
 
-func (m *mockTransaction) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (m *mockTransaction) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	return nil, nil
 }
 
@@ -191,19 +191,19 @@ func (m *mockTransaction) PrepareContext(ctx context.Context, query string) (*sq
 	return nil, nil
 }
 
-func (m *mockTransaction) Query(query string, args ...interface{}) (*sql.Rows, error) {
+func (m *mockTransaction) Query(query string, args ...any) (*sql.Rows, error) {
 	return nil, nil
 }
 
-func (m *mockTransaction) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (m *mockTransaction) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	return nil, nil
 }
 
-func (m *mockTransaction) QueryRow(query string, args ...interface{}) *sql.Row {
+func (m *mockTransaction) QueryRow(query string, args ...any) *sql.Row {
 	return nil
 }
 
-func (m *mockTransaction) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (m *mockTransaction) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	return nil
 }
 

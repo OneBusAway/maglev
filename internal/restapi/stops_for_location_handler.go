@@ -1,14 +1,16 @@
 package restapi
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -92,14 +94,17 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
+	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
-	stops := api.GtfsManager.GetStopsForLocation(ctx, loc.Lat, loc.Lon, loc.Radius, loc.LatSpan, loc.LonSpan, query, maxCount, false, routeTypes, queryTime)
+	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
 
 	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"
-	sort.SliceStable(stops, func(i, j int) bool {
-		return stops[i].ID < stops[j].ID
+	slices.SortStableFunc(stops, func(a, b gtfsdb.Stop) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	results := []models.Stop{}
@@ -115,7 +120,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
-		agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 		if agencies == nil {
 			agencies = []models.AgencyReference{}
 		}
@@ -128,14 +133,14 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
 		references.Routes = routes
-		response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, loc.Radius), api.Clock, false)
+		response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
 
 	// Get active service IDs for the requested queryTime
 	currentDate := queryTime.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, currentDate)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -193,7 +198,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	isLimitExceeded := false
+	isLimitExceeded := limitExceeded
 	var resultRawStopIDs []string
 
 	// Build results using the pre-fetched data
@@ -216,22 +221,18 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
 		results = append(results, models.NewStop(
-			utils.NullStringOrEmpty(stop.Code),
+			nulls.StringOrEmpty(stop.Code),
 			direction,
 			utils.FormCombinedID(agency.ID, stop.ID),
-			utils.NullStringOrEmpty(stop.Name),
+			nulls.StringOrEmpty(stop.Name),
 			"",
-			utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 			stop.Lat,
 			stop.Lon,
 			0,
 			rids,
 			rids,
 		))
-		if len(results) >= maxCount {
-			isLimitExceeded = true
-			break
-		}
 	}
 
 	if ctx.Err() != nil {
@@ -239,7 +240,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	agencies := utils.FilterAgencies(api.GtfsManager.GetAgencies(), agencyIDs)
+	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
 
 	if agencies == nil {
@@ -258,6 +259,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	references.Routes = routes
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, *references, checkIfOutOfBounds(api, loc.Lat, loc.Lon, loc.LatSpan, loc.LonSpan, loc.Radius), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

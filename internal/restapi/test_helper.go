@@ -9,9 +9,9 @@ type testingFatalf interface {
 // collectAllNestedIdsFromObjects extracts string IDs from a nested array field
 // across all objects in the list. For example, extracting all routeIds from
 // a list of stop objects where each stop has a routeIds array.
-func collectAllNestedIdsFromObjects(t testingFatalf, list []interface{}, key string) (ids []string) {
+func collectAllNestedIdsFromObjects(t testingFatalf, list []any, key string) (ids []string) {
 	for i, item := range list {
-		object, ok := item.(map[string]interface{})
+		object, ok := item.(map[string]any)
 		if !ok {
 			t.Fatalf("item %d is not a map[string]interface{}", i)
 		}
@@ -19,7 +19,7 @@ func collectAllNestedIdsFromObjects(t testingFatalf, list []interface{}, key str
 		if !ok {
 			t.Fatalf("item %d missing key %q", i, key)
 		}
-		objectList, ok := value.([]interface{})
+		objectList, ok := value.([]any)
 		if !ok {
 			t.Fatalf("item %d key %q is not a []interface{}: %T", i, key, value)
 		}
@@ -36,9 +36,9 @@ func collectAllNestedIdsFromObjects(t testingFatalf, list []interface{}, key str
 
 // collectAllIdsFromObjects extracts string IDs from all objects in this list.
 // For example, extracting all agency IDs from a list of agency objects.
-func collectAllIdsFromObjects(t testingFatalf, list []interface{}, key string) (ids []string) {
+func collectAllIdsFromObjects(t testingFatalf, list []any, key string) (ids []string) {
 	for i, item := range list {
-		object, ok := item.(map[string]interface{})
+		object, ok := item.(map[string]any)
 		if !ok {
 			t.Fatalf("item %d is not a map[string]interface{}", i)
 		}

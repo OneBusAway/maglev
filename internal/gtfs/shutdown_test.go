@@ -20,7 +20,6 @@ func TestManagerShutdown(t *testing.T) {
 		GtfsURL:      testDataPath,
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
-		Verbose:      false,
 	}
 
 	// Initialize manager
@@ -29,7 +28,8 @@ func TestManagerShutdown(t *testing.T) {
 	require.NotNil(t, manager, "Manager should not be nil")
 
 	// Verify manager is functional
-	agencies := manager.GetAgencies()
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	require.NoError(t, err)
 	assert.Greater(t, len(agencies), 0, "Should have loaded agencies")
 
 	// Test shutdown
@@ -65,8 +65,7 @@ func TestManagerShutdownWithRealtime(t *testing.T) {
 				Enabled:             true,
 			},
 		},
-		Env:     appconf.Test,
-		Verbose: false,
+		Env: appconf.Test,
 	}
 
 	// Initialize manager
@@ -102,7 +101,6 @@ func TestManagerShutdownIdempotent(t *testing.T) {
 		GtfsURL:      testDataPath,
 		GTFSDataPath: ":memory:",
 		Env:          appconf.Test,
-		Verbose:      false,
 	}
 
 	// Initialize manager

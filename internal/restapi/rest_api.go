@@ -15,13 +15,9 @@ type RestAPI struct {
 func NewRestAPI(app *app.Application) *RestAPI {
 	return &RestAPI{
 		Application: app,
-		rateLimiter: NewRateLimitMiddleware(app.Config.RateLimit, time.Second, app.Config.ExemptApiKeys, app.Clock),
+		rateLimiter: NewRateLimitMiddleware(app.Config.RateLimit, time.Second, app.Config.ExemptApiKeys),
 	}
 }
 
 // Shutdown gracefully stops the RestAPI resources
-func (api *RestAPI) Shutdown() {
-	if api.rateLimiter != nil {
-		api.rateLimiter.Stop()
-	}
-}
+func (api *RestAPI) Shutdown() {}

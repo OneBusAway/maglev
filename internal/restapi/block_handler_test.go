@@ -20,27 +20,27 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
 	if id, exists := entry["id"]; exists {
 		assert.NotEmpty(t, id)
 	}
 
-	configs, ok := entry["configurations"].([]interface{})
+	configs, ok := entry["configurations"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, configs)
 
-	config, ok := configs[0].(map[string]interface{})
+	config, ok := configs[0].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, config, "activeServiceIds")
 	assert.Contains(t, config, "inactiveServiceIds")
 	assert.Contains(t, config, "trips")
 
-	activeServiceIds, ok := config["activeServiceIds"].([]interface{})
+	activeServiceIds, ok := config["activeServiceIds"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, activeServiceIds)
 
@@ -48,11 +48,11 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, serviceId, "_")
 
-	trips, ok := config["trips"].([]interface{})
+	trips, ok := config["trips"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, trips)
 
-	trip, ok := trips[0].(map[string]interface{})
+	trip, ok := trips[0].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, trip, "tripId")
 	assert.Contains(t, trip, "distanceAlongBlock")
@@ -66,45 +66,45 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 	_, ok = trip["distanceAlongBlock"].(float64)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agencies, ok := refs["agencies"].([]interface{})
+	agencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, agencies)
 
-	agency, ok := agencies[0].(map[string]interface{})
+	agency, ok := agencies[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "25", agency["id"])
 	assert.Contains(t, agency, "name")
 	assert.Contains(t, agency, "url")
 	assert.Contains(t, agency, "timezone")
 
-	stops, ok := refs["stops"].([]interface{})
+	stops, ok := refs["stops"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, stops)
 
-	stop, ok := stops[0].(map[string]interface{})
+	stop, ok := stops[0].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, stop, "id")
 	assert.Contains(t, stop, "name")
 	assert.Contains(t, stop, "lat")
 	assert.Contains(t, stop, "lon")
 
-	routes, ok := refs["routes"].([]interface{})
+	routes, ok := refs["routes"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, routes)
 
-	route, ok := routes[0].(map[string]interface{})
+	route, ok := routes[0].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, route, "id")
 	assert.Contains(t, route, "agencyId")
 
-	tripsRef, ok := refs["trips"].([]interface{})
+	tripsRef, ok := refs["trips"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, tripsRef)
 
-	tripRef, ok := tripsRef[0].(map[string]interface{})
+	tripRef, ok := tripsRef[0].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, tripRef, "id")
 	assert.Contains(t, tripRef, "routeId")
@@ -117,27 +117,27 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
-	configs, ok := entry["configurations"].([]interface{})
+	configs, ok := entry["configurations"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, configs)
 
-	config, ok := configs[0].(map[string]interface{})
+	config, ok := configs[0].(map[string]any)
 	require.True(t, ok)
 
-	trips, ok := config["trips"].([]interface{})
+	trips, ok := config["trips"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, trips)
 
-	trip, ok := trips[0].(map[string]interface{})
+	trip, ok := trips[0].(map[string]any)
 	require.True(t, ok)
 
-	blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
+	blockStopTimes, ok := trip["blockStopTimes"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, blockStopTimes)
 
@@ -146,7 +146,7 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 			continue
 		}
 
-		stopTime, ok := blockStopTimes[rawStopTime].(map[string]interface{})
+		stopTime, ok := blockStopTimes[rawStopTime].(map[string]any)
 		require.True(t, ok)
 		assert.Contains(t, stopTime, "blockSequence")
 		assert.Contains(t, stopTime, "distanceAlongBlock")
@@ -162,7 +162,7 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 		_, ok = stopTime["accumulatedSlackTime"].(float64)
 		require.True(t, ok, "accumulatedSlackTime should be a number")
 
-		stopTimeDetails, ok := stopTime["stopTime"].(map[string]interface{})
+		stopTimeDetails, ok := stopTime["stopTime"].(map[string]any)
 		require.True(t, ok)
 		assert.Contains(t, stopTimeDetails, "arrivalTime")
 		assert.Contains(t, stopTimeDetails, "departureTime")
@@ -180,9 +180,9 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	}
 
 	if len(blockStopTimes) >= 2 {
-		firstStopTime, ok := blockStopTimes[0].(map[string]interface{})
+		firstStopTime, ok := blockStopTimes[0].(map[string]any)
 		require.True(t, ok)
-		lastStopTime, ok := blockStopTimes[len(blockStopTimes)-1].(map[string]interface{})
+		lastStopTime, ok := blockStopTimes[len(blockStopTimes)-1].(map[string]any)
 		require.True(t, ok)
 
 		firstSeq, ok := firstStopTime["blockSequence"].(float64)
@@ -251,13 +251,13 @@ func TestBlockHandlerResponseValidation(t *testing.T) {
 	assert.Greater(t, model.CurrentTime, int64(0), "currentTime should be set")
 	assert.Equal(t, 2, model.Version, "version should be 2")
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
 	require.Contains(t, data, "entry")
 	require.Contains(t, data, "references")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, entry, "id")
 	require.Contains(t, entry, "configurations")
@@ -266,28 +266,28 @@ func TestBlockHandlerResponseValidation(t *testing.T) {
 	require.True(t, ok)
 	assert.NotEmpty(t, blockID)
 
-	configs, ok := entry["configurations"].([]interface{})
+	configs, ok := entry["configurations"].([]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, configs, "Block should have at least one configuration")
 
 	for _, rawConfig := range configs {
-		config, ok := rawConfig.(map[string]interface{})
+		config, ok := rawConfig.(map[string]any)
 		require.True(t, ok)
 
 		require.Contains(t, config, "activeServiceIds")
 		require.Contains(t, config, "inactiveServiceIds")
 		require.Contains(t, config, "trips")
 
-		activeServiceIds, ok := config["activeServiceIds"].([]interface{})
+		activeServiceIds, ok := config["activeServiceIds"].([]any)
 		require.True(t, ok)
 		assert.NotEmpty(t, activeServiceIds, "Configuration should have active service IDs")
 
-		trips, ok := config["trips"].([]interface{})
+		trips, ok := config["trips"].([]any)
 		require.True(t, ok)
 		assert.NotEmpty(t, trips, "Configuration should have trips")
 
 		for _, rawTrip := range trips {
-			trip, ok := rawTrip.(map[string]interface{})
+			trip, ok := rawTrip.(map[string]any)
 			require.True(t, ok)
 
 			require.Contains(t, trip, "tripId")
@@ -295,12 +295,12 @@ func TestBlockHandlerResponseValidation(t *testing.T) {
 			require.Contains(t, trip, "blockStopTimes")
 			require.Contains(t, trip, "accumulatedSlackTime")
 
-			blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
+			blockStopTimes, ok := trip["blockStopTimes"].([]any)
 			require.True(t, ok)
 			assert.NotEmpty(t, blockStopTimes, "Trip should have block stop times")
 
 			for _, rawStopTime := range blockStopTimes {
-				stopTime, ok := rawStopTime.(map[string]interface{})
+				stopTime, ok := rawStopTime.(map[string]any)
 				require.True(t, ok)
 
 				require.Contains(t, stopTime, "blockSequence")
@@ -308,7 +308,7 @@ func TestBlockHandlerResponseValidation(t *testing.T) {
 				require.Contains(t, stopTime, "accumulatedSlackTime")
 				require.Contains(t, stopTime, "stopTime")
 
-				st, ok := stopTime["stopTime"].(map[string]interface{})
+				st, ok := stopTime["stopTime"].(map[string]any)
 				require.True(t, ok)
 				require.Contains(t, st, "arrivalTime")
 				require.Contains(t, st, "departureTime")
@@ -319,7 +319,7 @@ func TestBlockHandlerResponseValidation(t *testing.T) {
 		}
 	}
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, refs, "agencies")
 	require.Contains(t, refs, "routes")
@@ -361,17 +361,17 @@ func TestBlockHandlerAgencyIdExtraction(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
-	agencies, ok := refs["agencies"].([]interface{})
+	agencies, ok := refs["agencies"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, agencies)
 
-	agency, ok := agencies[0].(map[string]interface{})
+	agency, ok := agencies[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "25", agency["id"])
 
@@ -386,10 +386,10 @@ func TestBlockHandlerReferencesConsistency(t *testing.T) {
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]interface{})
+	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)
 
-	refs, ok := data["references"].(map[string]interface{})
+	refs, ok := data["references"].(map[string]any)
 	require.True(t, ok)
 
 	assert.Contains(t, refs, "agencies")
@@ -399,42 +399,42 @@ func TestBlockHandlerReferencesConsistency(t *testing.T) {
 	assert.Contains(t, refs, "stopTimes")
 	assert.Contains(t, refs, "situations")
 
-	entry, ok := data["entry"].(map[string]interface{})
+	entry, ok := data["entry"].(map[string]any)
 	require.True(t, ok)
 
-	configs, ok := entry["configurations"].([]interface{})
+	configs, ok := entry["configurations"].([]any)
 	require.True(t, ok)
 
 	if len(configs) > 0 {
-		config, ok := configs[0].(map[string]interface{})
+		config, ok := configs[0].(map[string]any)
 		require.True(t, ok)
 
-		trips, ok := config["trips"].([]interface{})
+		trips, ok := config["trips"].([]any)
 		require.True(t, ok)
 
 		if len(trips) > 0 {
-			trip, ok := trips[0].(map[string]interface{})
+			trip, ok := trips[0].(map[string]any)
 			require.True(t, ok)
 
-			blockStopTimes, ok := trip["blockStopTimes"].([]interface{})
+			blockStopTimes, ok := trip["blockStopTimes"].([]any)
 			require.True(t, ok)
 
 			if len(blockStopTimes) > 0 {
-				stopTime, ok := blockStopTimes[0].(map[string]interface{})
+				stopTime, ok := blockStopTimes[0].(map[string]any)
 				require.True(t, ok)
 
-				stopTimeDetails, ok := stopTime["stopTime"].(map[string]interface{})
+				stopTimeDetails, ok := stopTime["stopTime"].(map[string]any)
 				require.True(t, ok)
 
 				stopId, ok := stopTimeDetails["stopId"].(string)
 				require.True(t, ok)
 
-				stops, ok := refs["stops"].([]interface{})
+				stops, ok := refs["stops"].([]any)
 				require.True(t, ok)
 
 				found := false
 				for _, rawStop := range stops {
-					stop, ok := rawStop.(map[string]interface{})
+					stop, ok := rawStop.(map[string]any)
 					require.True(t, ok)
 
 					if refStopId, ok := stop["id"].(string); ok && refStopId == stopId {
@@ -495,7 +495,7 @@ func TestBlockHandlerJSONSerialization(t *testing.T) {
 	jsonBytes, err := json.Marshal(model)
 	require.NoError(t, err, "Should be able to marshal response to JSON")
 
-	var unmarshaled map[string]interface{}
+	var unmarshaled map[string]any
 	err = json.Unmarshal(jsonBytes, &unmarshaled)
 	require.NoError(t, err, "Should be able to unmarshal JSON")
 

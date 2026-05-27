@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -199,12 +200,17 @@ func TestScheduleForStopEntryWithEmptyRouteSchedules(t *testing.T) {
 func TestNewStopRouteDirectionSchedule_WithFrequencies(t *testing.T) {
 	schedule := []ScheduleStopTime{}
 	frequencies := []Frequency{
-		{StartTime: 28800, EndTime: 32400, Headway: 600, ExactTimes: 0},
+		{
+			StartTime:  NewModelTime(time.UnixMilli(1609459200000)),
+			EndTime:    NewModelTime(time.UnixMilli(1609459300000)),
+			Headway:    NewModelDuration(600 * time.Second),
+			ExactTimes: 0,
+		},
 	}
 
 	directionSchedule := NewStopRouteDirectionSchedule("trip1", schedule, frequencies)
 
 	assert.NotNil(t, directionSchedule.ScheduleFrequencies)
 	assert.Len(t, directionSchedule.ScheduleFrequencies, 1)
-	assert.Equal(t, 600, directionSchedule.ScheduleFrequencies[0].Headway)
+	assert.Equal(t, 600*time.Second, directionSchedule.ScheduleFrequencies[0].Headway.Duration)
 }

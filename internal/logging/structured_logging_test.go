@@ -85,7 +85,7 @@ func TestLoggerHelpers(t *testing.T) {
 
 	t.Run("LogOperation logs structured operation info", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := NewStructuredLogger(&buf, slog.LevelInfo)
+		logger := NewStructuredLogger(&buf, slog.LevelDebug)
 
 		LogOperation(logger, "gtfs_data_imported",
 			slog.String("source", "file.zip"),
@@ -93,7 +93,7 @@ func TestLoggerHelpers(t *testing.T) {
 			slog.Duration("duration", 0)) // Will be ignored if zero
 
 		output := buf.String()
-		assert.Contains(t, output, `"level":"INFO"`)
+		assert.Contains(t, output, `"level":"DEBUG"`)
 		assert.Contains(t, output, `"msg":"gtfs_data_imported"`)
 		assert.Contains(t, output, `"source":"file.zip"`)
 		assert.Contains(t, output, `"stops_count":150`)
@@ -141,36 +141,5 @@ func TestContextLogger(t *testing.T) {
 		// Should not panic and should return a usable logger
 		require.NotNil(t, logger)
 		logger.Info("test message") // Should not panic
-	})
-}
-
-func TestMigrationHelpers(t *testing.T) {
-	t.Run("ReplaceLogPrint creates equivalent slog call", func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := NewStructuredLogger(&buf, slog.LevelInfo)
-
-		// Simulate replacing log.Printf with structured logging
-		message := "Importing GTFS data took 5s"
-		ReplaceLogPrint(logger, message)
-
-		output := buf.String()
-		assert.Contains(t, output, `"level":"INFO"`)
-		assert.Contains(t, output, message)
-	})
-
-	t.Run("ReplaceLogFatal creates error log instead of fatal", func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := NewStructuredLogger(&buf, slog.LevelError)
-
-		err := assert.AnError
-		result := ReplaceLogFatal(logger, "Unable to create DB", err)
-
-		// Should return the error instead of calling log.Fatal
-		assert.Error(t, result)
-		assert.Contains(t, result.Error(), "Unable to create DB")
-
-		output := buf.String()
-		assert.Contains(t, output, `"level":"ERROR"`)
-		assert.Contains(t, output, `"msg":"Unable to create DB"`)
 	})
 }

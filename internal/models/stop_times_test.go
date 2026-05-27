@@ -3,13 +3,14 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewStopTime(t *testing.T) {
-	arrivalTime := 28800
-	departureTime := 28900
+	arrivalTime := 8 * time.Hour
+	departureTime := arrivalTime + (100 * time.Second)
 	stopID := "unitrans_22005"
 	stopHeadsign := "Downtown"
 	distanceAlongTrip := 1234.56
@@ -17,8 +18,8 @@ func TestNewStopTime(t *testing.T) {
 
 	stopTime := NewStopTime(arrivalTime, departureTime, stopID, stopHeadsign, distanceAlongTrip, historicalOccupancy)
 
-	assert.Equal(t, arrivalTime, stopTime.ArrivalTime)
-	assert.Equal(t, departureTime, stopTime.DepartureTime)
+	assert.Equal(t, arrivalTime, stopTime.ArrivalTime.Duration)
+	assert.Equal(t, departureTime, stopTime.DepartureTime.Duration)
 	assert.Equal(t, stopID, stopTime.StopID)
 	assert.Equal(t, stopHeadsign, stopTime.StopHeadsign)
 	assert.Equal(t, distanceAlongTrip, stopTime.DistanceAlongTrip)
@@ -27,8 +28,8 @@ func TestNewStopTime(t *testing.T) {
 
 func TestStopTimeJSON(t *testing.T) {
 	stopTime := StopTime{
-		ArrivalTime:         28800,
-		DepartureTime:       28900,
+		ArrivalTime:         NewModelDuration(8 * time.Hour),
+		DepartureTime:       NewModelDuration(8*time.Hour + (100 * time.Second)),
 		DropOffType:         0,
 		PickupType:          0,
 		StopID:              "unitrans_22005",
@@ -55,8 +56,8 @@ func TestStopTimeJSON(t *testing.T) {
 func TestStopTimeWithEmptyValues(t *testing.T) {
 	stopTime := NewStopTime(0, 0, "", "", 0.0, "")
 
-	assert.Equal(t, 0, stopTime.ArrivalTime)
-	assert.Equal(t, 0, stopTime.DepartureTime)
+	assert.Equal(t, time.Duration(0), stopTime.ArrivalTime.Duration)
+	assert.Equal(t, time.Duration(0), stopTime.DepartureTime.Duration)
 	assert.Equal(t, "", stopTime.StopID)
 	assert.Equal(t, "", stopTime.StopHeadsign)
 	assert.Equal(t, 0.0, stopTime.DistanceAlongTrip)
@@ -64,8 +65,8 @@ func TestStopTimeWithEmptyValues(t *testing.T) {
 }
 
 func TestNewStopTimes(t *testing.T) {
-	stopTime1 := NewStopTime(28800, 28900, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
-	stopTime2 := NewStopTime(29000, 29100, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE")
+	stopTime1 := NewStopTime(8*time.Hour, 8*time.Hour+time.Minute, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
+	stopTime2 := NewStopTime(9*time.Hour, 9*time.Hour+time.Minute, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE")
 
 	stopTimes := NewStopTimes([]StopTime{stopTime1, stopTime2})
 
@@ -75,8 +76,8 @@ func TestNewStopTimes(t *testing.T) {
 }
 
 func TestStopTimesJSON(t *testing.T) {
-	stopTime1 := NewStopTime(28800, 28900, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
-	stopTime2 := NewStopTime(29000, 29100, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE")
+	stopTime1 := NewStopTime(8*time.Hour, 8*time.Hour+time.Minute, "stop_1", "Downtown", 100.0, "MANY_SEATS_AVAILABLE")
+	stopTime2 := NewStopTime(9*time.Hour, 9*time.Hour+time.Minute, "stop_2", "Uptown", 200.0, "FEW_SEATS_AVAILABLE")
 
 	stopTimes := StopTimes{
 		StopTimes: []StopTime{stopTime1, stopTime2},

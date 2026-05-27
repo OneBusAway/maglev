@@ -24,7 +24,7 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// First validate API key
 		if api.RequestHasInvalidAPIKey(r) {
-			api.invalidAPIKeyResponse(w, r)
+			api.invalidAPIKeyResponse(w)
 			return
 		}
 		// Then apply rate limiting
@@ -36,9 +36,9 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 // By using an unnamed function type, Go allows this to be passed seamlessly into
 // rateLimitAndValidateAPIKey (which expects handlerFunc).
 func etagStatic(api *RestAPI, handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	getETagFunc := func() string {
+	getETagFunc := func(r *http.Request) string {
 		if api.GtfsManager != nil {
-			return api.GtfsManager.GetSystemETag() // Safe, lock-protected read
+			return api.GtfsManager.GetSystemETag(r.Context())
 		}
 		return ""
 	}

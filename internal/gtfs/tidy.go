@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -51,7 +52,7 @@ func checkGTFSTidyAvailable() (string, error) {
 
 // tidyGTFSData processes GTFS data through gtfstidy with flags -OscRCSmeD
 // Returns the tidied GTFS zip data or an error
-func tidyGTFSData(inputZip []byte, logger *slog.Logger) ([]byte, error) {
+func tidyGTFSData(ctx context.Context, inputZip []byte, logger *slog.Logger) ([]byte, error) {
 	gtfstidyPath, err := checkGTFSTidyAvailable()
 	if err != nil {
 		return nil, err
@@ -82,7 +83,7 @@ func tidyGTFSData(inputZip []byte, logger *slog.Logger) ([]byte, error) {
 		slog.Int("input_size_bytes", len(inputZip)))
 
 	// -o: output file
-	cmd := exec.Command(gtfstidyPath, "-OscRCSmeD", "-o", outputZipPath, pristineZipPath)
+	cmd := exec.CommandContext(ctx, gtfstidyPath, "-OscRCSmeD", "-o", outputZipPath, pristineZipPath)
 	cmd.Dir = tempDir
 
 	var stdout, stderr bytes.Buffer

@@ -9,26 +9,28 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 // Define params structure for the plural handler
 type ArrivalsStopParams struct {
-	MinutesAfter  int
-	MinutesBefore int
-	Time          time.Time
+	After  time.Duration
+	Before time.Duration
+	Time   time.Time
 }
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
 func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
-	const maxMinutesBefore = 60
-	const maxMinutesAfter = 240
+	const maxBefore = 60 * time.Minute
+	const maxAfter = 240 * time.Minute
 
 	params := ArrivalsStopParams{
-		MinutesAfter:  35,              // Default
-		MinutesBefore: 5,               // Default
-		Time:          api.Clock.Now(), // Default to current time
+		After:  35 * time.Minute, // Default
+		Before: 5 * time.Minute,  // Default
+		Time:   api.Clock.Now(),  // Default to current time
 	}
 
 	var fieldErrors map[string][]string
@@ -44,12 +46,11 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 
 	if val := query.Get("minutesAfter"); val != "" {
 		if minutes, err := strconv.Atoi(val); err == nil {
-			if minutes > maxMinutesAfter {
-				params.MinutesAfter = maxMinutesAfter
-			} else if minutes >= 0 {
-				params.MinutesAfter = minutes
-			} else {
+			paramAfter := time.Duration(minutes) * time.Minute
+			if paramAfter < 0 {
 				addError("minutesAfter", "must be a non-negative integer")
+			} else {
+				params.After = min(paramAfter, maxAfter)
 			}
 		} else {
 			addError("minutesAfter", "must be a valid integer")
@@ -58,12 +59,11 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 
 	if val := query.Get("minutesBefore"); val != "" {
 		if minutes, err := strconv.Atoi(val); err == nil {
-			if minutes > maxMinutesBefore {
-				params.MinutesBefore = maxMinutesBefore
-			} else if minutes >= 0 {
-				params.MinutesBefore = minutes
-			} else {
+			paramBefore := time.Duration(minutes) * time.Minute
+			if paramBefore < 0 {
 				addError("minutesBefore", "must be a non-negative integer")
+			} else {
+				params.Before = min(paramBefore, maxBefore)
 			}
 		} else {
 			addError("minutesBefore", "must be a valid integer")
@@ -90,9 +90,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	ctx := r.Context()
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
 	// Capture parsing errors
 	params, fieldErrors := api.parseArrivalsAndDeparturesParams(r)
 	if len(fieldErrors) > 0 {
@@ -118,8 +115,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 	params.Time = params.Time.In(loc)
-	windowStart := params.Time.Add(-time.Duration(params.MinutesBefore) * time.Minute)
-	windowEnd := params.Time.Add(time.Duration(params.MinutesAfter) * time.Minute)
+	windowStart := params.Time.Add(-params.Before)
+	windowEnd := params.Time.Add(params.After)
 
 	arrivals := make([]models.ArrivalAndDeparture, 0)
 	references := models.NewEmptyReferences()
@@ -153,7 +150,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, loc)
 		serviceDateStr := targetDate.Format("20060102")
 
-		activeServiceIDs, err := api.GtfsManager.GetActiveServiceIDsForDateCached(ctx, serviceDateStr)
+		activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 		if err != nil {
 			api.Logger.Warn("failed to query active service IDs",
 				slog.String("date", serviceDateStr),
@@ -169,17 +166,16 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			activeServiceIDSet[sid] = true
 		}
 
-		startNanos := windowStart.Sub(serviceMidnight).Nanoseconds()
-		endNanos := windowEnd.Sub(serviceMidnight).Nanoseconds()
-
-		if endNanos < 0 {
+		startOffset := windowStart.Sub(serviceMidnight)
+		endOffset := windowEnd.Sub(serviceMidnight)
+		if endOffset < 0 {
 			continue
 		}
 
 		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopInWindow(ctx, gtfsdb.GetStopTimesForStopInWindowParams{
 			StopID:           stopCode,
-			WindowStartNanos: startNanos,
-			WindowEndNanos:   endNanos,
+			WindowStartNanos: startOffset.Nanoseconds(),
+			WindowEndNanos:   endOffset.Nanoseconds(),
 		})
 		if err != nil {
 			api.Logger.Warn("failed to query stop times in window",
@@ -274,7 +270,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		st := ast.GetStopTimesForStopInWindowRow
 
 		serviceMidnight := ast.ServiceDate
-		serviceDateMillis := serviceMidnight.UnixMilli()
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
@@ -301,8 +296,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		tCopy := trip
 		tripIDSet[trip.ID] = &tCopy
 
-		scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime)).UnixMilli()
-		scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime)).UnixMilli()
+		scheduledArrivalTime := serviceMidnight.Add(time.Duration(st.ArrivalTime))
+		scheduledDepartureTime := serviceMidnight.Add(time.Duration(st.DepartureTime))
 
 		var (
 			predictedArrivalTime   = scheduledArrivalTime
@@ -406,8 +401,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 
 		if !predicted {
-			predictedArrivalTime = 0
-			predictedDepartureTime = 0
+			predictedArrivalTime = time.Time{}
+			predictedDepartureTime = time.Time{}
 		}
 
 		totalStopsInTrip := tripStopCountMap[st.TripID]
@@ -415,10 +410,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
 
 		lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-		var lastUpdateTimePtr *int64
-		if lastUpdateTime > 0 {
-			lastUpdateTimePtr = utils.Int64Ptr(lastUpdateTime)
-		}
 
 		tripAlerts := api.GtfsManager.GetAlertsForTrip(r.Context(), st.TripID)
 		situationIDs := make([]string, 0, len(tripAlerts))
@@ -445,12 +436,12 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			st.TripHeadsign.String,                          // tripHeadsign
 			stopID,                                          // stopID
 			vehicleID,                                       // vehicleID
-			serviceDateMillis,                               // serviceDate
+			serviceMidnight,                                 // serviceDate
 			scheduledArrivalTime,                            // scheduledArrivalTime
 			scheduledDepartureTime,                          // scheduledDepartureTime
 			predictedArrivalTime,                            // predictedArrivalTime
 			predictedDepartureTime,                          // predictedDepartureTime
-			lastUpdateTimePtr,                               // lastUpdateTime
+			lastUpdateTime,                                  // lastUpdateTime
 			predicted,                                       // predicted
 			true,                                            // arrivalEnabled
 			true,                                            // departureEnabled
@@ -573,7 +564,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			Code:               stopData.Code.String,
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}
@@ -641,16 +632,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
-	nearbyStops := api.GtfsManager.GetStopsForLocation(ctx, lat, lon, 10000, 100, 100, "", 5, false, []int{}, api.Clock.Now())
-	if len(nearbyStops) == 0 {
+	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: 10000, LatSpan: 100, LonSpan: 100}
+	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, 5)
+	if len(nearbyIDs) == 0 {
 		return nil
 	}
 
-	// Collect nearby stop IDs (excluding the current stop) for a batch agency lookup.
+	// Exclude the current stop from nearby results
 	var candidateIDs []string
-	for _, s := range nearbyStops {
-		if s.ID != stopID {
-			candidateIDs = append(candidateIDs, s.ID)
+	for _, id := range nearbyIDs {
+		if id != stopID {
+			candidateIDs = append(candidateIDs, id)
 		}
 	}
 	if len(candidateIDs) == 0 {

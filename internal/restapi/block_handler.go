@@ -1,14 +1,16 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
-	"database/sql"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -33,10 +35,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
-
-	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
+	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
 	if err != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
@@ -75,7 +74,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 	for serviceID := range serviceGroups {
 		serviceIDs = append(serviceIDs, serviceID)
 	}
-	sort.Strings(serviceIDs)
+	slices.Sort(serviceIDs)
 
 	configurations := make([]models.BlockConfiguration, 0, len(serviceGroups))
 
@@ -99,13 +98,13 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 		for tripID := range tripStops {
 			tripIDs = append(tripIDs, tripID)
 		}
-		sort.Strings(tripIDs)
+		slices.Sort(tripIDs)
 
 		for _, tripID := range tripIDs {
 			stops := tripStops[tripID]
 
-			sort.Slice(stops, func(i, j int) bool {
-				return stops[i].StopSequence < stops[j].StopSequence
+			slices.SortFunc(stops, func(a, b gtfsdb.GetBlockDetailsRow) int {
+				return cmp.Compare(a.StopSequence, b.StopSequence)
 			})
 
 			var blockStopTimes []models.BlockStopTime
@@ -126,8 +125,8 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 					BlockSequence:      int(stop.StopSequence - 1),
 					DistanceAlongBlock: blockDistance,
 					StopTime: models.StopTime{
-						ArrivalTime:   int(utils.NanosToSeconds(stop.ArrivalTime)),
-						DepartureTime: int(utils.NanosToSeconds(stop.DepartureTime)),
+						ArrivalTime:   models.NewModelDuration(time.Duration(stop.ArrivalTime)),
+						DepartureTime: models.NewModelDuration(time.Duration(stop.DepartureTime)),
 						DropOffType:   int(stop.DropOffType.Int64),
 						PickupType:    int(stop.PickupType.Int64),
 						StopID:        utils.FormCombinedID(agencyID, stop.StopID),
@@ -138,15 +137,15 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 
 			blockStopTimes = calculateBlockSlackTimes(blockStopTimes)
 
-			var tripAccumulatedSlack float64
+			var tripAccumulatedSlack time.Duration
 			if len(blockStopTimes) > 0 {
-				tripAccumulatedSlack = blockStopTimes[len(blockStopTimes)-1].AccumulatedSlackTime
+				tripAccumulatedSlack = blockStopTimes[len(blockStopTimes)-1].AccumulatedSlackTime.Duration
 			}
 
 			tripDistance := blockDistance - tripStartDistance
 
 			trip := models.TripBlock{
-				AccumulatedSlackTime: tripAccumulatedSlack,
+				AccumulatedSlackTime: models.NewModelDuration(tripAccumulatedSlack),
 				BlockStopTimes:       blockStopTimes,
 				DistanceAlongBlock:   tripDistance,
 				TripId:               utils.FormCombinedID(agencyID, tripID),
@@ -163,7 +162,6 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 	}
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
 	routeIDs := make(map[string]struct{})
 	stopIDs := make(map[string]struct{})
@@ -262,11 +260,11 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 }
 
 func calculateBlockSlackTimes(blockStopTimes []models.BlockStopTime) []models.BlockStopTime {
-	var accumulatedBlockSlackTime int
+	var accumulatedBlockSlackTime time.Duration
 
 	for i := range blockStopTimes {
-		blockStopTimes[i].AccumulatedSlackTime = float64(accumulatedBlockSlackTime)
-		dwellTime := blockStopTimes[i].StopTime.DepartureTime - blockStopTimes[i].StopTime.ArrivalTime
+		blockStopTimes[i].AccumulatedSlackTime = models.NewModelDuration(accumulatedBlockSlackTime)
+		dwellTime := blockStopTimes[i].StopTime.DepartureTime.Duration - blockStopTimes[i].StopTime.ArrivalTime.Duration
 		accumulatedBlockSlackTime += dwellTime
 	}
 

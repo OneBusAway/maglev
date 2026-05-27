@@ -5,15 +5,13 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 // stopsForAgencyHandler returns all stops belonging to a given agency with full stop details.
 func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	api.GtfsManager.RLock()
-	defer api.GtfsManager.RUnlock()
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
@@ -27,7 +25,11 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate agency exists
-	agency := api.GtfsManager.FindAgency(id)
+	agency, err := api.GtfsManager.FindAgency(ctx, id)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if agency == nil {
 		api.sendNull(w, r)
 		return
@@ -47,20 +49,6 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build agency reference
-	agencyRef := models.NewAgencyReference(
-		agency.Id,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Language,
-		agency.Phone,
-		agency.Email,
-		agency.FareUrl,
-		"",
-		false,
-	)
-
 	// Build route references from stops
 	routeRefs, err := api.BuildRouteReferences(ctx, id, stopsList)
 	if err != nil {
@@ -70,14 +58,13 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 	// Build references
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{agencyRef}
+	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefs
 
 	response := models.NewListResponse(stopsList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, error) {
 	// If no stops, return empty list
 	if len(stopIDs) == 0 {
@@ -118,7 +105,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 
 		stopsList = append(stopsList, models.Stop{
 			Code:               stop.Code.String,
-			Direction:          utils.NullStringOrEmpty(stop.Direction),
+			Direction:          nulls.StringOrEmpty(stop.Direction),
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
@@ -126,7 +113,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			Name:               stop.Name.String,
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 

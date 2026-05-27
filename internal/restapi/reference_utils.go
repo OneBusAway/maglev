@@ -2,13 +2,22 @@ package restapi
 
 import (
 	"context"
+	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
+func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
+	var refs []models.AgencyReference
+	for _, agency := range agencies {
+		refs = append(refs, models.AgencyReferenceFromDatabase(&agency))
+	}
+	return refs
+}
+
 func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
 	routeIDSet := make(map[string]bool)
 	originalRouteIDs := make([]string, 0)
@@ -64,33 +73,18 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 	return modelRoutes, nil
 }
 
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
-func (api *RestAPI) BuildRouteReferencesAsInterface(ctx context.Context, agencyID string, stops []models.Stop) ([]interface{}, error) {
-	routes, err := api.BuildRouteReferences(ctx, agencyID, stops)
-	if err != nil {
-		return nil, err
-	}
-
-	routeRefs := make([]interface{}, len(routes))
-	for i, route := range routes {
-		routeRefs[i] = route
-	}
-
-	return routeRefs, nil
-}
-
 func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 
 	for _, alert := range alerts {
 		situation := models.Situation{
 			ID:                 alert.ID,
-			CreationTime:       0,
+			CreationTime:       models.NewModelTime(time.Time{}),
 			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
 			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
 			ConsequenceMessage: "",
-			Consequences:       []interface{}{},
-			PublicationWindows: []interface{}{},
+			Consequences:       []any{},
+			PublicationWindows: []any{},
 			Reason:             mapAlertCauseToReason(alert.Cause),
 			Severity:           mapAlertEffectToSeverity(alert.Effect),
 		}
