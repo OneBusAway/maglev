@@ -22,9 +22,7 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
-		if api.Logger != nil {
-			api.Logger.Error("report problem with stop failed: GTFS DB not initialized")
-		}
+		api.Logger.Error("report problem with stop failed: GTFS DB not initialized")
 		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
