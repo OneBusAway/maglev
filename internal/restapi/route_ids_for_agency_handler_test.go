@@ -73,6 +73,17 @@ func TestMalformedAgencyIdForRouteIds(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
+func TestRouteIdsForAgencyInvalidVersion(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RouteIDsForAgencyResponse](t, api, "/api/where/route-ids-for-agency/"+testdata.Raba.ID+".json?key=TEST&version=99")
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Equal(t, "unknown version: 99", model.Text)
+}
+
 func TestAgencyWithNoRoutesReturnsEmptyList(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
