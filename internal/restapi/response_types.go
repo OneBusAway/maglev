@@ -51,4 +51,3 @@ type RouteEntryResponse EntryResponse[models.Route]
 type StopEntryResponse EntryResponse[models.Stop]
 type TripEntryResponse EntryResponse[models.TripResponse]
 type ShapeEntryResponse EntryResponse[models.ShapeEntry]
-
