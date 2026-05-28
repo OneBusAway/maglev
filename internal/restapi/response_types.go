@@ -32,6 +32,14 @@ type EntryData[T any] struct {
 	FieldErrors map[string][]string    `json:"fieldErrors,omitempty"`
 }
 
+// EmptyResponse is used by endpoints that return OK with an empty data body.
+type EmptyResponse struct {
+	Code        int    `json:"code"`
+	CurrentTime int64  `json:"currentTime"`
+	Text        string `json:"text"`
+	Version     int    `json:"version"`
+}
+
 type CoverageResponse ListResponse[models.AgencyCoverage]
 type RoutesResponse ListResponse[models.Route]
 type StopsResponse ListResponse[models.Stop]
