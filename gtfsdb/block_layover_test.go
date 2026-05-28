@@ -48,7 +48,9 @@ func TestBuildBlockLayoverIndex_PopulatesTable(t *testing.T) {
 		SELECT block_id, route_id, service_id, layover_stop_id, next_trip_id
 		FROM block_layover`)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	checked := 0
 	for rows.Next() {

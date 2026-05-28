@@ -275,6 +275,7 @@ func TestValidateAndFilterGTFSData_OrphanedParentStation(t *testing.T) {
 	}
 	if stop2 == nil {
 		t.Fatal("stop2 was unexpectedly removed")
+		return
 	}
 	if stop2.Parent != nil {
 		t.Errorf("expected stop2.Parent to be cleared, got %+v", stop2.Parent)
@@ -283,6 +284,7 @@ func TestValidateAndFilterGTFSData_OrphanedParentStation(t *testing.T) {
 	// stop3's valid parent reference should be preserved.
 	if stop3 == nil {
 		t.Fatal("stop3 was unexpectedly removed")
+		return
 	}
 	if stop3.Parent == nil || stop3.Parent.Id != validParent.Id {
 		t.Errorf("expected stop3.Parent to reference %q, got %+v", validParent.Id, stop3.Parent)
