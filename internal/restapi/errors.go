@@ -24,7 +24,7 @@ func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter) {
 		Code:        http.StatusUnauthorized,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "permission denied",
-		Version:     1, // Note: This is version 1, not 2 as in a successful response. Probably a mistake, but back-compat.
+		Version:     2,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
