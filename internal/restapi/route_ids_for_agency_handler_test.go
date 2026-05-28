@@ -1,10 +1,14 @@
 package restapi
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
@@ -67,4 +71,32 @@ func TestMalformedAgencyIdForRouteIds(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestAgencyWithNoRoutesReturnsEmptyList(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	_, err := api.GtfsManager.GtfsDB.Queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       "no-routes-agency",
+		Name:     "No Routes Agency",
+		Url:      "http://example.com",
+		Timezone: "America/New_York",
+		Lang:     sql.NullString{String: "en", Valid: true},
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, "DELETE FROM agencies WHERE id = ?", "no-routes-agency")
+	})
+
+	resp, model := callAPIHandler[RouteIDsForAgencyResponse](t, api, "/api/where/route-ids-for-agency/no-routes-agency.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+	assert.Empty(t, model.Data.List)
+	assert.False(t, model.Data.LimitExceeded)
 }
