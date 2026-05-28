@@ -63,7 +63,7 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 							Code:        http.StatusInternalServerError,
 							CurrentTime: models.ResponseCurrentTime(c),
 							Text:        "internal server error",
-							Version:     1,
+							Version:     2,
 						}
 						if err := json.NewEncoder(w).Encode(response); err != nil {
 							logging.LogError(logger, "failed to encode panic recovery response", err,

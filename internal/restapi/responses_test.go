@@ -139,7 +139,7 @@ func TestSendUnauthorized(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnauthorized, response.Code)
 		assert.Equal(t, "permission denied", response.Text)
-		assert.Equal(t, 1, response.Version)
+		assert.Equal(t, 2, response.Version)
 	})
 
 	t.Run("verifies response structure", func(t *testing.T) {

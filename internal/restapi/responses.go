@@ -51,7 +51,7 @@ func (api *RestAPI) sendUnauthorized(w http.ResponseWriter, r *http.Request) { /
 		Code:        http.StatusUnauthorized,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "permission denied",
-		Version:     1,
+		Version:     2,
 	}
 
 	err := json.NewEncoder(w).Encode(response)

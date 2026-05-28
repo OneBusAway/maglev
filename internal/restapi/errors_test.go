@@ -74,9 +74,9 @@ func TestServerErrorResponse(t *testing.T) {
 			response.Text, "internal server error")
 	}
 
-	if response.Version != 1 {
+	if response.Version != 2 {
 		t.Errorf("unexpected version in response: got %d want %d",
-			response.Version, 1)
+			response.Version, 2)
 	}
 
 	// Check that the timestamp is reasonable

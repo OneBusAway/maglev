@@ -58,7 +58,7 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 		Code:        http.StatusInternalServerError,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "internal server error",
-		Version:     1,
+		Version:     2,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
