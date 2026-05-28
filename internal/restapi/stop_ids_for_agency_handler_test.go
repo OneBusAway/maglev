@@ -57,8 +57,9 @@ func TestStopIdsForAgencyInvalidAgency(t *testing.T) {
 
 	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL("invalid"))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "", model.Text)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestStopIdsForAgencyMalformedAgencyId(t *testing.T) {
