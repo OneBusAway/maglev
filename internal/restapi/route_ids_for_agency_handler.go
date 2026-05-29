@@ -16,7 +16,7 @@ func (api *RestAPI) routeIDsForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if v := r.URL.Query().Get("version"); v != "" && v != "2" {
-		api.sendError(w, r, http.StatusInternalServerError, fmt.Sprintf("unknown version: %s", v))
+		api.sendError(w, r, http.StatusBadRequest, fmt.Sprintf("unknown version: %s", v))
 		return
 	}
 
