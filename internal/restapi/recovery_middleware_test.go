@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func TestRecoveryMiddleware_Panic(t *testing.T) {
@@ -53,8 +54,8 @@ func TestRecoveryMiddleware_Panic(t *testing.T) {
 	if response.Text != "internal server error" {
 		t.Errorf("expected text 'internal server error', got %s", response.Text)
 	}
-	if response.Version != 2 {
-		t.Errorf("expected version 2, got %d", response.Version)
+	if response.Version != models.APIVersion {
+		t.Errorf("expected version %d, got %d", models.APIVersion, response.Version)
 	}
 
 	expectedTime := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC).UnixMilli()
@@ -146,8 +147,8 @@ func TestRecoveryMiddleware_PanicWithErrorType(t *testing.T) {
 	if response.Text != "internal server error" {
 		t.Errorf("expected text 'internal server error', got %s", response.Text)
 	}
-	if response.Version != 2 {
-		t.Errorf("expected version 2, got %d", response.Version)
+	if response.Version != models.APIVersion {
+		t.Errorf("expected version %d, got %d", models.APIVersion, response.Version)
 	}
 
 	expectedTime := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC).UnixMilli()

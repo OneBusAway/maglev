@@ -23,7 +23,7 @@ func TestSendResponse(t *testing.T) {
 			Code:        http.StatusOK,
 			CurrentTime: 1234567890,
 			Text:        "OK",
-			Version:     2,
+			Version:     models.APIVersion,
 			Data:        map[string]string{"test": "data"},
 		}
 
@@ -38,7 +38,7 @@ func TestSendResponse(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, decoded.Code)
 		assert.Equal(t, "OK", decoded.Text)
-		assert.Equal(t, 2, decoded.Version)
+		assert.Equal(t, models.APIVersion, decoded.Version)
 	})
 
 	t.Run("sends response with nil data", func(t *testing.T) {
@@ -49,7 +49,7 @@ func TestSendResponse(t *testing.T) {
 			Code:        http.StatusNoContent,
 			CurrentTime: 1234567890,
 			Text:        "No Content",
-			Version:     2,
+			Version:     models.APIVersion,
 			Data:        nil,
 		}
 
@@ -102,7 +102,7 @@ func TestSendNotFound(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, response.Code)
 		assert.Equal(t, "resource not found", response.Text)
-		assert.Equal(t, 2, response.Version)
+		assert.Equal(t, models.APIVersion, response.Version)
 	})
 
 	t.Run("verifies response structure", func(t *testing.T) {
@@ -139,7 +139,7 @@ func TestSendUnauthorized(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnauthorized, response.Code)
 		assert.Equal(t, "permission denied", response.Text)
-		assert.Equal(t, 2, response.Version)
+		assert.Equal(t, models.APIVersion, response.Version)
 	})
 
 	t.Run("verifies response structure", func(t *testing.T) {

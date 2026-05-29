@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func TestBlockHandlerEndToEnd(t *testing.T) {
@@ -208,7 +209,7 @@ func TestBlockHandlerNonExistentBlock(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
 	assert.Equal(t, "resource not found", model.Text)
-	assert.Equal(t, 2, model.Version)
+	assert.Equal(t, models.APIVersion, model.Version)
 	assert.Greater(t, model.CurrentTime, int64(0))
 }
 
@@ -234,7 +235,7 @@ func TestBlockHandlerInvalidBlockID(t *testing.T) {
 
 			assert.Equal(t, tc.expectedStatus, model.Code, "Response model should match expected status code")
 			assert.NotEmpty(t, model.Text, "Response model should contain an error message")
-			assert.Equal(t, 2, model.Version, "Response model should contain API version")
+			assert.Equal(t, models.APIVersion, model.Version, "Response model should contain API version")
 		})
 	}
 }
@@ -249,7 +250,7 @@ func TestBlockHandlerResponseValidation(t *testing.T) {
 	assert.Equal(t, "OK", model.Text)
 	assert.NotNil(t, model.Data)
 	assert.Greater(t, model.CurrentTime, int64(0), "currentTime should be set")
-	assert.Equal(t, 2, model.Version, "version should be 2")
+	assert.Equal(t, models.APIVersion, model.Version, "version should be 2")
 
 	data, ok := model.Data.(map[string]any)
 	require.True(t, ok)

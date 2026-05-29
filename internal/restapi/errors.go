@@ -24,7 +24,7 @@ func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter) {
 		Code:        http.StatusUnauthorized,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "permission denied",
-		Version:     2,
+		Version:     models.APIVersion,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -58,7 +58,7 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 		Code:        http.StatusInternalServerError,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "internal server error",
-		Version:     2,
+		Version:     models.APIVersion,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -89,7 +89,7 @@ func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, _ *http.Reque
 		Code:        http.StatusBadRequest,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        errorText,
-		Version:     2,
+		Version:     models.APIVersion,
 		Data: struct {
 			FieldErrors map[string][]string `json:"fieldErrors"`
 		}{
@@ -136,7 +136,7 @@ func (api *RestAPI) clientCanceledResponse(w http.ResponseWriter, r *http.Reques
 			Code:        http.StatusGatewayTimeout,
 			CurrentTime: models.ResponseCurrentTime(api.Clock),
 			Text:        "gateway timeout",
-			Version:     2,
+			Version:     models.APIVersion,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusGatewayTimeout)

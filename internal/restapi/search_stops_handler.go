@@ -73,7 +73,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		response := models.ResponseModel{
 			Code:        200,
 			CurrentTime: models.ResponseCurrentTime(api.Clock),
-			Version:     2,
+			Version:     models.APIVersion,
 			Text:        "OK",
 			Data:        data,
 		}
@@ -315,7 +315,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	response := models.ResponseModel{
 		Code:        200,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
-		Version:     2,
+		Version:     models.APIVersion,
 		Text:        "OK",
 		Data:        data,
 	}

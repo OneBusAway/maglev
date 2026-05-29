@@ -61,7 +61,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			assert.Equal(t, 200, model.Code)
 			assert.NotZero(t, model.CurrentTime)
 			assert.Equal(t, "OK", model.Text)
-			assert.Equal(t, 2, model.Version)
+			assert.Equal(t, models.APIVersion, model.Version)
 
 			data := model.Data.(map[string]any)
 			assert.False(t, data["limitExceeded"].(bool))
