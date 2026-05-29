@@ -70,3 +70,58 @@ func TestStopIdsForAgencyMalformedAgencyId(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
+
+func TestStopIdsForAgencyMissingApiKey(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, "/api/where/stop-ids-for-agency/"+testdata.Raba.ID+".json")
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, model.Code)
+	assert.Equal(t, "permission denied", model.Text)
+}
+
+func TestStopIdsForAgencyEmptyAgencyId(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(""))
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestStopIdsForAgencyLimitExceededIsFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(testdata.Raba.ID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.False(t, model.Data.LimitExceeded)
+}
+
+func TestStopIdsForAgencyReferencesAlwaysPresentAndEmpty(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(testdata.Raba.ID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Trips)
+	assert.Empty(t, model.Data.References.Situations)
+}
+
+func TestStopIdsForAgencyVersionIsTwo(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(testdata.Raba.ID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 2, model.Version)
+}
