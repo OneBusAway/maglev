@@ -100,7 +100,7 @@ func TestAgencyWithNoRoutesReturnsEmptyList(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, "DELETE FROM agencies WHERE id = ?", "no-routes-agency")
+		_ = api.GtfsManager.GtfsDB.Queries.DeleteAgency(ctx, "no-routes-agency")
 	})
 
 	resp, model := callAPIHandler[RouteIDsForAgencyResponse](t, api, "/api/where/route-ids-for-agency/no-routes-agency.json?key=TEST")
