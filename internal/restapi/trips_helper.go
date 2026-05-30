@@ -184,8 +184,13 @@ func (api *RestAPI) BuildTripStatus(
 				nextStopID = closestStopID
 				nextOffset = closestOffset
 			} else if hasActualDistance {
+				sc := shapeContext{
+					Points:              shapePoints,
+					CumulativeDistances: cumulativeDistances,
+					VehicleDistance:     actualDistance,
+				}
 				closestStopID, closestOffset, nextStopID, nextOffset = api.findStopsByDistance(
-					ctx, stopTimesPtrs, actualDistance, shapePoints, cumulativeDistances, currentTime, serviceDate, scheduleDeviation,
+					ctx, stopTimesPtrs, sc, currentTime, serviceDate, scheduleDeviation,
 				)
 			} else {
 				closestStopID, closestOffset, nextStopID, nextOffset = api.findStopsByScheduleDeviation(
@@ -886,12 +891,17 @@ func (api *RestAPI) calculateBatchStopDistances(
 	return stopTimesList
 }
 
+// shapeContext bundles route-shape geometry used for distance-based stop matching.
+type shapeContext struct {
+	Points              []gtfs.ShapePoint
+	CumulativeDistances []float64
+	VehicleDistance     float64
+}
+
 func (api *RestAPI) findStopsByDistance(
 	ctx context.Context,
 	stopTimes []*gtfsdb.StopTime,
-	actualDistance float64,
-	shapePoints []gtfs.ShapePoint,
-	cumulativeDistances []float64,
+	shape shapeContext,
 	currentTime time.Time,
 	serviceDate time.Time,
 	scheduleDeviation int,
@@ -924,16 +934,16 @@ func (api *RestAPI) findStopsByDistance(
 			continue
 		}
 		dist := api.calculatePreciseDistanceAlongTripWithCoords(
-			stop.Lat, stop.Lon, shapePoints, cumulativeDistances,
+			stop.Lat, stop.Lon, shape.Points, shape.CumulativeDistances,
 		)
 
-		distDiff := math.Abs(dist - actualDistance)
+		distDiff := math.Abs(dist - shape.VehicleDistance)
 		if distDiff < closestDistDiff {
 			closestDistDiff = distDiff
 			closestStop = st
 		}
 
-		if nextStop == nil && dist >= actualDistance {
+		if nextStop == nil && dist >= shape.VehicleDistance {
 			nextStop = st
 		}
 	}
