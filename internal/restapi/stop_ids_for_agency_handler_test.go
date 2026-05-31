@@ -119,6 +119,8 @@ func TestStopIdsForAgencyReferencesAlwaysPresentAndEmpty(t *testing.T) {
 	assert.Empty(t, model.Data.References.Trips)
 	assert.NotNil(t, model.Data.References.Situations)
 	assert.Empty(t, model.Data.References.Situations)
+	assert.NotNil(t, model.Data.References.StopTimes)
+	assert.Empty(t, model.Data.References.StopTimes)
 }
 
 func TestStopIdsForAgencyVersionIsTwo(t *testing.T) {
