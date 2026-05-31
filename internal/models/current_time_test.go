@@ -170,8 +170,8 @@ func TestCurrentTimeDataEndToEnd(t *testing.T) {
 		t.Errorf("Expected text 'OK', got %v", result["text"])
 	}
 
-	if version, ok := result["version"].(float64); !ok || int(version) != 2 {
-		t.Errorf("Expected version 2, got %v", result["version"])
+	if version, ok := result["version"].(float64); !ok || int(version) != APIVersion {
+		t.Errorf("Expected version %d, got %v", APIVersion, result["version"])
 	}
 
 	// Check data structure

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/models"
 
 	"golang.org/x/time/rate"
 )
@@ -119,7 +120,7 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter) {
 			},
 		},
 		"currentTime": time.Now().UnixMilli(),
-		"version":     2,
+		"version":     models.APIVersion,
 	}
 
 	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
