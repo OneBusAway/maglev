@@ -412,18 +412,14 @@ func TestOpenAPIConformance_ArrivalsEndpoints(t *testing.T) {
 		)
 	})
 
-	// For the singular endpoint we need a valid tripId + serviceDate.
-	// Query the DB for a trip that visits Stop4062 (raw ID "4062").
 	ctx := context.Background()
-	var tripIDRaw string
-	err = api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
-		`SELECT trip_id FROM stop_times WHERE stop_id = '4062' LIMIT 1`,
-	).Scan(&tripIDRaw)
+	scheduleRows, err := api.GtfsManager.GtfsDB.Queries.GetScheduleForStop(ctx, "4062")
 	require.NoError(t, err, "RABA test data must have a trip visiting stop 4062")
+	require.NotEmpty(t, scheduleRows, "RABA test data must have a trip visiting stop 4062")
+	tripIDRaw := scheduleRows[0].TripID
 
 	agencyID := "25"
 	tripID := utils.FormCombinedID(agencyID, tripIDRaw)
-	// Compute serviceDate as midnight of the mock clock's date in the agency timezone.
 	now := mockClock.Now().In(loc)
 	serviceDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 
@@ -521,10 +517,8 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 	// Find a vehicle with a valid trip to test trip-for-vehicle.
 	var vehicleID string
 	for _, v := range vehicles {
-		if v.Trip != nil && v.Trip.ID.ID != "" {
-			if v.ID != nil {
-				vehicleID = utils.FormCombinedID(agencyID, v.ID.ID)
-			}
+		if v.Trip != nil && v.Trip.ID.ID != "" && v.ID != nil {
+			vehicleID = utils.FormCombinedID(agencyID, v.ID.ID)
 			break
 		}
 	}
