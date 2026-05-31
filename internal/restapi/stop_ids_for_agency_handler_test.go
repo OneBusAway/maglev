@@ -109,10 +109,15 @@ func TestStopIdsForAgencyReferencesAlwaysPresentAndEmpty(t *testing.T) {
 	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(testdata.Raba.ID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotNil(t, model.Data.References.Agencies)
 	assert.Empty(t, model.Data.References.Agencies)
+	assert.NotNil(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Routes)
+	assert.NotNil(t, model.Data.References.Stops)
 	assert.Empty(t, model.Data.References.Stops)
+	assert.NotNil(t, model.Data.References.Trips)
 	assert.Empty(t, model.Data.References.Trips)
+	assert.NotNil(t, model.Data.References.Situations)
 	assert.Empty(t, model.Data.References.Situations)
 }
 
