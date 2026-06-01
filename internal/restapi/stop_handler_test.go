@@ -203,3 +203,75 @@ func TestStopHandlerWithSituations(t *testing.T) {
 		"expected exactly one deduplicated situation despite matching multiple entities")
 	assert.Equal(t, alertID, model.Data.References.Situations[0].ID)
 }
+
+func TestStopHandler_NaturalSorting(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	agencyID := "SortAgency"
+	stopID := "SortStop1"
+
+	// Create Agency and Stop
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Sort Transit", Url: "http://sort.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Name: nulls.String("Sorted Stop"), Lat: 47.6, Lon: -122.3,
+	})
+	require.NoError(t, err)
+
+	// Create Routes intentionally out of natural order
+	// We want to verify "2" < "14" < "101" < "B" < "Fallback"
+	routeNames := []string{"101", "B", "14", "2", "Fallback"}
+
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: "serv1", Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1, StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+
+	for i, name := range routeNames {
+		routeID := "Route" + name
+		tripID := "Trip" + name
+
+		shortName := nulls.String(name)
+		longName := nulls.String("")
+		if name == "Fallback" {
+			shortName = nulls.String("")
+			longName = nulls.String(name)
+		}
+
+		_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+			ID: routeID, AgencyID: agencyID, ShortName: shortName, LongName: longName, Type: 3,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID: tripID, RouteID: routeID, ServiceID: "serv1",
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: stopID, StopSequence: int64(i + 1), ArrivalTime: 30000, DepartureTime: 30000,
+		})
+		require.NoError(t, err)
+	}
+
+	// Call Endpoint
+	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(agencyID, stopID)))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Also assert that model.Data.Entry.RouteIDs matches the same order exactly
+	expectedRouteIDs := []string{
+		utils.FormCombinedID(agencyID, "Route2"),
+		utils.FormCombinedID(agencyID, "Route14"),
+		utils.FormCombinedID(agencyID, "Route101"),
+		utils.FormCombinedID(agencyID, "RouteB"),
+		utils.FormCombinedID(agencyID, "RouteFallback"),
+	}
+	assert.Equal(t, expectedRouteIDs, model.Data.Entry.RouteIDs, "Entry.RouteIDs should preserve natural order")
+}
