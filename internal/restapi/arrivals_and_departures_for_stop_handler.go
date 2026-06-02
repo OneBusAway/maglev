@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -24,7 +26,8 @@ type ArrivalsStopParams struct {
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
 func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
-	const maxBefore = 60 * time.Minute
+	// Both windows cap at 240 min, matching Java and the absence of any spec maximum.
+	const maxBefore = 240 * time.Minute
 	const maxAfter = 240 * time.Minute
 
 	params := ArrivalsStopParams{
@@ -105,7 +108,13 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		// Unknown agency (e.g. wrong case in the URL like "hsr_2543" when the
+		// agency_id is "HSR") is a client error — surface 404 instead of 500.
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -335,61 +344,66 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			predictedDepartureTime = predDep
 		}
 
-		if vehicle != nil {
-			// Use route.AgencyID instead of stopAgencyID for BuildTripStatus
-			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
-			if statusErr != nil {
-				api.Logger.Warn("BuildTripStatus failed for arrival",
-					"tripID", st.TripID, "error", statusErr)
+		// Always built — Java attaches a BlockLocation (real-time or scheduled) to
+		// every arrival, so tripStatus is always non-null.
+		status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
+		if statusErr != nil {
+			api.Logger.Warn("BuildTripStatus failed for arrival",
+				"tripID", st.TripID, "error", statusErr)
+		}
+		if status != nil {
+			tripStatus = status
+
+			if status.NextStop != "" {
+				_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop)
+				if err == nil {
+					stopIDSet[nextStopID] = true
+				}
 			}
-			if status != nil {
-				tripStatus = status
-
-				if status.NextStop != "" {
-					_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop)
-					if err == nil {
-						stopIDSet[nextStopID] = true
-					}
+			if status.ClosestStop != "" {
+				_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop)
+				if err == nil {
+					stopIDSet[closestStopID] = true
 				}
-				if status.ClosestStop != "" {
-					_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop)
-					if err == nil {
-						stopIDSet[closestStopID] = true
-					}
+			}
+
+			// Interpolate the block schedule at params.Time−scheduleDeviation.
+			// See GetScheduleDeviationForBlock for the deviation rules.
+			effectiveTime := params.Time
+			if vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
+				blockTripIDs := api.blockTripIDsSortedByStartTime(ctx,
+					api.blockTripIDsForServiceDate(ctx, st.TripID, serviceMidnight))
+				if dev, hasRT := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceMidnight, params.Time); hasRT {
+					effectiveTime = params.Time.Add(-time.Duration(dev) * time.Second)
 				}
-
-				if vehicle.Position != nil {
-					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, params.Time)
-
-					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, params.Time)
-					if numberOfStopsAwayPtr != nil {
-						numberOfStopsAway = *numberOfStopsAwayPtr
-					} else {
-						numberOfStopsAway = -1
-					}
+			}
+			if snapshot := api.computeScheduledBlockSnapshot(ctx, st.TripID, effectiveTime, serviceMidnight); snapshot != nil {
+				if d, n, ok := snapshot.metricsForStop(st.TripID, int(st.StopSequence)); ok {
+					distanceFromStop = d
+					numberOfStopsAway = n
 				}
+			}
 
-				// If there's an active trip that's different from the current trip, add it to references
-				if status.ActiveTripID != "" {
-					_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
-					if err == nil && activeTripID != st.TripID {
-						// Check cache for active trip
-						if _, exists := tripIDSet[activeTripID]; !exists {
-							activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
-							if err != nil {
-								api.Logger.Debug("skipping active trip reference: trip not found",
-									slog.String("activeTripID", activeTripID),
-									slog.String("scheduledTripID", st.TripID),
-									slog.Any("error", err))
+			// If there's an active trip that's different from the current trip, add it to references
+			if status.ActiveTripID != "" {
+				_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
+				if err == nil && activeTripID != st.TripID {
+					// Check cache for active trip
+					if _, exists := tripIDSet[activeTripID]; !exists {
+						activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+						if err != nil {
+							api.Logger.Debug("skipping active trip reference: trip not found",
+								slog.String("activeTripID", activeTripID),
+								slog.String("scheduledTripID", st.TripID),
+								slog.Any("error", err))
+						} else {
+							tripIDSet[activeTrip.ID] = &activeTrip
+							activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
+							if err == nil {
+								routeIDSet[activeRoute.ID] = &activeRoute
 							} else {
-								tripIDSet[activeTrip.ID] = &activeTrip
-								activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
-								if err == nil {
-									routeIDSet[activeRoute.ID] = &activeRoute
-								} else {
-									api.Logger.Warn("failed to fetch route for active trip reference",
-										"tripID", activeTripID, "routeID", activeTrip.RouteID, "error", err)
-								}
+								api.Logger.Warn("failed to fetch route for active trip reference",
+									"tripID", activeTripID, "routeID", activeTrip.RouteID, "error", err)
 							}
 						}
 					}

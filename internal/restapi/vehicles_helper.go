@@ -260,11 +260,3 @@ func projectPointToSegment(px, py, x1, y1, x2, y2 float64) (float64, models.Loca
 	dist, _, projLat, projLon := projectOntoSegment(px, py, x1, y1, x2, y2)
 	return dist, models.Location{Lat: projLat, Lon: projLon}
 }
-
-func getCurrentVehicleStopSequence(vehicle *gtfs.Vehicle) *int {
-	if vehicle == nil || vehicle.CurrentStopSequence == nil {
-		return nil
-	}
-	val := int(*vehicle.CurrentStopSequence)
-	return &val
-}
