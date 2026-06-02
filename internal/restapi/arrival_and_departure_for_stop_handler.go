@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -37,7 +36,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	fieldErrors := make(map[string][]string)
 
 	const maxMinutesAfter = 240
-	const maxMinutesBefore = 60
+	const maxMinutesBefore = 240
 
 	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
@@ -185,7 +184,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	stopAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -351,14 +354,20 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predicted = false
 		}
 
-		if vehicle != nil && vehicle.Position != nil {
-			distanceFromStop = api.getBlockDistanceToStop(ctx, tripID, stopCode, vehicle, serviceDate)
-
-			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate)
-			if numberOfStopsAwayPtr != nil {
-				numberOfStopsAway = *numberOfStopsAwayPtr
-			} else {
-				numberOfStopsAway = -1
+		// Interpolate the block schedule at currentTime−scheduleDeviation.
+		// GPS lat/lon doesn't enter the formula. No RT vehicle → no shift.
+		effectiveTime := currentTime
+		if vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
+			blockTripIDs := api.blockTripIDsSortedByStartTime(ctx,
+				api.blockTripIDsForServiceDate(ctx, tripID, serviceDate))
+			if dev, hasRT := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, currentTime); hasRT {
+				effectiveTime = currentTime.Add(-time.Duration(dev) * time.Second)
+			}
+		}
+		if snapshot := api.computeScheduledBlockSnapshot(ctx, tripID, effectiveTime, serviceDate); snapshot != nil {
+			if d, n, ok := snapshot.metricsForStop(tripID, int(targetStopTime.StopSequence)); ok {
+				distanceFromStop = d
+				numberOfStopsAway = n
 			}
 		}
 	}
@@ -687,22 +696,4 @@ func (api *RestAPI) getPredictedTimes(
 	predictedDeparture := scheduledDepartureTime.Add(*departureOffset)
 
 	return predictedArrival, predictedDeparture, true
-}
-
-func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
-	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
-	if currentVehicleStopSequence == nil {
-		return nil
-	}
-
-	activeTripID := GetVehicleActiveTripID(vehicle)
-	if activeTripID == "" {
-		activeTripID = targetTripID
-	}
-
-	targetGlobalSeq := api.getBlockSequenceForStopSequence(ctx, targetTripID, targetStopSequence, serviceDate)
-	vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
-
-	numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq - 1
-	return &numberOfStopsAway
 }

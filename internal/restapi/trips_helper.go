@@ -1,13 +1,14 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"time"
 
@@ -48,7 +49,10 @@ func (api *RestAPI) BuildTripStatus(
 
 	if vehicle != nil {
 		if vehicle.ID != nil {
-			status.VehicleID = utils.FormCombinedID(agencyID, vehicle.ID.ID)
+			// Emit the GTFS-RT vehicle id verbatim — Java keeps it un-prefixed
+			// here and the top-level ArrivalAndDeparture.VehicleID already does
+			// the same, so wrapping it with the agency was a double-prefix bug.
+			status.VehicleID = vehicle.ID.ID
 		}
 		if vehicle.OccupancyStatus != nil {
 			status.OccupancyStatus = vehicle.OccupancyStatus.String()
@@ -93,7 +97,13 @@ func (api *RestAPI) BuildTripStatus(
 		}
 	}
 
-	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviation(dbTripID)
+	// Mirror Java's applyTripUpdatesToRecord: iterate all block trips in
+	// start-time order; last trip-level delay wins (Java overwrites
+	// best.scheduleDeviation unconditionally each time a trip-level delay is
+	// seen). This is what makes the published `scheduleDeviation` match Java's.
+	blockTripIDs := api.blockTripIDsSortedByStartTime(ctx,
+		api.blockTripIDsForServiceDate(ctx, dbTripID, serviceDate))
+	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, currentTime)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
@@ -194,12 +204,45 @@ func (api *RestAPI) BuildTripStatus(
 				}
 			}
 
-			if scheduleDeviation != 0 && len(stopTimes) > 0 {
-				scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
-					ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
-					stopTimes, shapePoints, cumulativeDistances,
+			// Java's TripStatusBeanServiceImpl:287-288 formula:
+			//   scheduledDistanceAlongTrip =
+			//       blockLocation.scheduledDistanceAlongBlock
+			//       − activeBlockTrip.distanceAlongBlock
+			// which is exactly what snapshot.ActiveTripScheduledDistance gives
+			// us in scheduled_block_helper.go (see line 173). The snapshot
+			// must be built at effectiveTime = currentTime − scheduleDeviation
+			// so the deviation shift is applied, then we read ActiveTripScheduledDistance.
+			effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
+			if snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate); snapshot != nil && snapshot.ActiveTripID != "" {
+				status.ScheduledDistanceAlongTrip = snapshot.ActiveTripScheduledDistance
+			}
+		} else if len(stopTimes) > 0 {
+			// No real-time vehicle: position fields refer to the block's currently-
+			// active trip, not the target trip. Java: TripStatusBeanServiceImpl
+			// setScheduledDistanceAlongTrip(blockScheduledDist − activeBlockTrip.distanceAlongBlock).
+			snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, currentTime, serviceDate)
+			if snapshot != nil && snapshot.ActiveTripID != "" {
+				status.ActiveTripID = utils.FormCombinedID(agencyID, snapshot.ActiveTripID)
+				status.ScheduledDistanceAlongTrip = snapshot.ActiveTripScheduledDistance
+				if snapshot.ActiveTripTotalDistance > 0 {
+					status.TotalDistanceAlongTrip = snapshot.ActiveTripTotalDistance
+				}
+				if pos, orient := positionAndOrientationAtDistance(
+					snapshot.ActiveTripShape,
+					snapshot.ActiveTripCumulativeDistances,
+					snapshot.ActiveTripScheduledDistance,
+				); pos != nil {
+					status.Position = *pos
+					if orient >= 0 {
+						status.Orientation = orient
+					}
+				}
+			} else {
+				// currentTime is before the block starts — fall back to within-target
+				// interpolation so position / orientation are not (0, 0).
+				api.applyScheduledTripPositionToStatus(
+					ctx, status, stopTimes, shapePoints, cumulativeDistances, currentTime, serviceDate,
 				)
-				status.ScheduledDistanceAlongTrip = scheduledDistance
 			}
 		}
 	}
@@ -617,53 +660,6 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	return int(seq), true
 }
 
-// calculatePreciseDistanceAlongTripWithCoords calculates the distance along a trip's shape to a stop
-// This optimized version accepts pre-calculated cumulative distances and stop coordinates
-func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
-	stopLat, stopLon float64,
-	shapePoints []gtfs.ShapePoint,
-	cumulativeDistances []float64,
-) float64 {
-	// Validate inputs
-	if len(shapePoints) < 2 {
-		return 0.0
-	}
-
-	// Validate that cumulative distances array matches shape points
-	if len(cumulativeDistances) != len(shapePoints) {
-		return 0.0
-	}
-
-	// Find the closest point on the shape to this stop
-	var minDistance = math.Inf(1)
-	var closestSegmentIndex int
-	var projectionRatio float64
-
-	for i := 0; i < len(shapePoints)-1; i++ {
-		// Calculate distance from stop to this line segment
-		distance, ratio := distanceToLineSegment(
-			stopLat, stopLon,
-			shapePoints[i].Latitude, shapePoints[i].Longitude,
-			shapePoints[i+1].Latitude, shapePoints[i+1].Longitude,
-		)
-
-		if distance < minDistance {
-			minDistance = distance
-			closestSegmentIndex = i
-			projectionRatio = ratio
-		}
-	}
-
-	var segmentLength float64
-	if closestSegmentIndex < len(shapePoints)-1 {
-		segmentLength = utils.Distance(
-			shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
-			shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
-		)
-	}
-	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
-}
-
 // preCalculateCumulativeDistances pre-calculates cumulative distances along shape points
 // Returns an array where cumulativeDistances[i] is the cumulative distance up to (but not including) segment i
 func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
@@ -850,6 +846,21 @@ func (api *RestAPI) calculateBatchStopDistances(
 		return stopTimesList
 	}
 
+	// shape_dist_traveled is publisher-defined (km, miles, feet…); scale it to
+	// metres by matching the trip's max value to the shape's geometric metre total.
+	// Scale stays 1.0 when the feed already uses metres or omits shape_dist_traveled.
+	shapeDistScale := 1.0
+	totalShapeDist := cumulativeDistances[len(cumulativeDistances)-1]
+	var maxStopDist float64
+	for _, st := range timeStops {
+		if st.ShapeDistTraveled.Valid && st.ShapeDistTraveled.Float64 > maxStopDist {
+			maxStopDist = st.ShapeDistTraveled.Float64
+		}
+	}
+	if maxStopDist > 0 && totalShapeDist > 0 {
+		shapeDistScale = totalShapeDist / maxStopDist
+	}
+
 	lastMatchedIndex := 0
 
 	for _, stopTime := range timeStops {
@@ -859,7 +870,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 		// handles stops that are off the main shape geometry (e.g. loop ends, branching
 		// routes) correctly. Only fall back to geometric projection when missing.
 		if stopTime.ShapeDistTraveled.Valid {
-			distanceAlongTrip = stopTime.ShapeDistTraveled.Float64
+			distanceAlongTrip = stopTime.ShapeDistTraveled.Float64 * shapeDistScale
 		} else if coords, exists := stopCoords[stopTime.StopID]; exists {
 			stopLat := coords.lat
 			stopLon := coords.lon
@@ -1067,50 +1078,6 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 	return &stopTime
 }
 
-func (api *RestAPI) calculateEffectiveDistanceAlongTrip(
-	ctx context.Context,
-	actualDistance float64,
-	scheduleDeviation int,
-	currentTime time.Time,
-	serviceDate time.Time,
-	stopTimes []gtfsdb.StopTime,
-	shapePoints []gtfs.ShapePoint,
-	cumulativeDistances []float64,
-) float64 {
-	if scheduleDeviation == 0 || len(stopTimes) == 0 {
-		return actualDistance
-	}
-
-	stopIDs := make([]string, len(stopTimes))
-	for i, st := range stopTimes {
-		stopIDs[i] = st.StopID
-	}
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-	if err != nil {
-		return actualDistance
-	}
-	stopByID := make(map[string]gtfsdb.Stop, len(stops))
-	for _, s := range stops {
-		stopByID[s.ID] = s
-	}
-
-	stopDistances := make([]float64, len(stopTimes))
-	for i, st := range stopTimes {
-		stop, ok := stopByID[st.StopID]
-		if !ok {
-			return actualDistance
-		}
-		stopDistances[i] = api.calculatePreciseDistanceAlongTripWithCoords(
-			stop.Lat, stop.Lon, shapePoints, cumulativeDistances,
-		)
-	}
-
-	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-	effectiveScheduleTime := currentTimeSeconds - int64(scheduleDeviation)
-
-	return interpolateDistanceAtScheduledTime(effectiveScheduleTime, stopTimes, stopDistances)
-}
-
 func interpolateDistanceAtScheduledTime(
 	scheduledTime int64,
 	stopTimes []gtfsdb.StopTime,
@@ -1175,20 +1142,20 @@ func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float6
 		}
 	}
 
-	latFrom := shape[bestIdx].Latitude
-	latTo := shape[bestIdx+1].Latitude
-	lonFrom := shape[bestIdx].Longitude
-	lonTo := shape[bestIdx+1].Longitude
+	return segmentOrientation(shape[bestIdx], shape[bestIdx+1])
+}
 
-	dLat := latTo - latFrom
-	cosLat := math.Cos(latFrom * math.Pi / 180)
-	dLon := (lonTo - lonFrom) * cosLat
-
-	degrees := math.Atan2(dLat, dLon) * 180 / math.Pi
-	if degrees < 0 {
-		degrees += 360
+// segmentOrientation returns the OBA orientation (degrees; 0=East, 90=North) of
+// the from→to segment.
+func segmentOrientation(from, to gtfs.ShapePoint) float64 {
+	dLat := to.Latitude - from.Latitude
+	cosLat := math.Cos(from.Latitude * math.Pi / 180)
+	dLon := (to.Longitude - from.Longitude) * cosLat
+	deg := math.Atan2(dLat, dLon) * 180 / math.Pi
+	if deg < 0 {
+		deg += 360
 	}
-	return degrees
+	return deg
 }
 
 type directionGroup struct {
@@ -1207,13 +1174,13 @@ func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 	for dirID := range byDirID {
 		dirIDs = append(dirIDs, dirID)
 	}
-	sort.Slice(dirIDs, func(i, j int) bool { return dirIDs[i] < dirIDs[j] })
+	slices.Sort(dirIDs)
 
 	groups := make([]directionGroup, 0, len(dirIDs))
 	for _, dirID := range dirIDs {
 		tripsInGroup := byDirID[dirID]
-		sort.Slice(tripsInGroup, func(a, b int) bool {
-			return tripsInGroup[a].ID < tripsInGroup[b].ID
+		slices.SortFunc(tripsInGroup, func(a, b gtfsdb.Trip) int {
+			return cmp.Compare(a.ID, b.ID)
 		})
 		groups = append(groups, directionGroup{
 			GroupID:     strconv.FormatInt(dirID, 10),

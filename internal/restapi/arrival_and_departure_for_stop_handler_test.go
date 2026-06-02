@@ -345,38 +345,6 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	assert.False(t, predicted)
 }
 
-func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	result := api.getBlockDistanceToStop(t.Context(), "test_trip", "test_stop", nil, time.Now())
-
-	assert.Equal(t, 0.0, result)
-}
-
-func TestGetBlockDistanceToStop_NoPosition(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	ctx := context.Background()
-
-	vehicle := &gtfs.Vehicle{
-		Position: nil,
-	}
-
-	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", vehicle, time.Now())
-
-	assert.Equal(t, 0.0, result)
-}
-
-func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
-	api := createTestApi(t)
-	vehicle := &gtfs.Vehicle{}
-
-	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now())
-
-	assert.Nil(t, result)
-}
-
 func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -449,7 +417,7 @@ func TestParseArrivalAndDepartureParams_LargeValues(t *testing.T) {
 
 	assert.Empty(t, errs)
 	assert.Equal(t, 240, params.MinutesAfter)
-	assert.Equal(t, 60, params.MinutesBefore)
+	assert.Equal(t, 240, params.MinutesBefore)
 }
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {

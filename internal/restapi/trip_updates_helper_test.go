@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,16 +9,44 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// devDate is a placeholder service date for tests that don't exercise the
+// Time-based deviation path. Trip IDs in these mocks don't exist in the
+// static DB, so the absolute-time selection logic falls back to the simple
+// "reverse-walk for the latest Delay" branch.
+var devDate = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+var devNow = devDate.Add(12 * time.Hour) // arbitrary currentTime
+
 func TestGetScheduleDeviation_NoUpdates(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	deviation, hasData := api.GetScheduleDeviation("no-such-trip")
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"no-such-trip"}, devDate, devNow)
 	assert.Equal(t, 0, deviation)
 	assert.False(t, hasData, "no trip updates should return hasData=false")
 }
 
-func TestGetScheduleDeviation_TripLevelDelay(t *testing.T) {
+// TestGetScheduleDeviation_TripLevelDelayWins: per Java's applyTripUpdatesToRecord,
+// a trip-level `delay` short-circuits the per-stop selection — it is the schedule
+// deviation, no further processing.
+func TestGetScheduleDeviation_TripLevelDelayWins(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	tripDelay := 30 * time.Second
+	stopID := "stop-1"
+	stopDelay := 90 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &stopDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-precedence-test", &tripDelay, updates)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-precedence-test"}, devDate, devNow)
+	assert.Equal(t, 30, deviation, "trip-level Delay wins immediately (Java's tripUpdateHasDelay short-circuit)")
+	assert.True(t, hasData)
+}
+
+func TestGetScheduleDeviation_TripLevelDelayWithoutStopUpdates(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -25,7 +54,7 @@ func TestGetScheduleDeviation_TripLevelDelay(t *testing.T) {
 	delay := 90 * time.Second
 	api.GtfsManager.MockAddTripUpdate("trip-delay-test", &delay, nil)
 
-	deviation, hasData := api.GetScheduleDeviation("trip-delay-test")
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-delay-test"}, devDate, devNow)
 	assert.Equal(t, 90, deviation)
 	assert.True(t, hasData)
 }
@@ -38,15 +67,12 @@ func TestGetScheduleDeviation_StopLevelArrivalDelay(t *testing.T) {
 	stopID := "stop-1"
 	arrivalDelay := 60 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:  &stopID,
-			Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay},
-		},
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-arrival-test", nil, updates)
 
-	deviation, hasData := api.GetScheduleDeviation("trip-arrival-test")
-	assert.Equal(t, 60, deviation)
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-arrival-test"}, devDate, devNow)
+	assert.Equal(t, 60, deviation, "delay-only update with no DB schedule falls through to reverse-walk fallback")
 	assert.True(t, hasData)
 }
 
@@ -58,36 +84,12 @@ func TestGetScheduleDeviation_StopLevelDepartureDelay(t *testing.T) {
 	stopID := "stop-1"
 	departureDelay := 120 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:    &stopID,
-			Departure: &gtfs.StopTimeEvent{Delay: &departureDelay},
-		},
+		{StopID: &stopID, Departure: &gtfs.StopTimeEvent{Delay: &departureDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-departure-test", nil, updates)
 
-	deviation, hasData := api.GetScheduleDeviation("trip-departure-test")
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-departure-test"}, devDate, devNow)
 	assert.Equal(t, 120, deviation)
-	assert.True(t, hasData)
-}
-
-func TestGetScheduleDeviation_TripLevelDelayTakesPrecedence(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-
-	tripDelay := 30 * time.Second
-	stopID := "stop-1"
-	stopDelay := 90 * time.Second
-	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:  &stopID,
-			Arrival: &gtfs.StopTimeEvent{Delay: &stopDelay},
-		},
-	}
-	api.GtfsManager.MockAddTripUpdate("trip-precedence-test", &tripDelay, updates)
-
-	deviation, hasData := api.GetScheduleDeviation("trip-precedence-test")
-	assert.Equal(t, 30, deviation, "trip-level delay should take precedence over stop-level delay")
 	assert.True(t, hasData)
 }
 
@@ -98,14 +100,11 @@ func TestGetScheduleDeviation_StopUpdateWithNoDelay(t *testing.T) {
 
 	stopID := "stop-1"
 	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:  &stopID,
-			Arrival: &gtfs.StopTimeEvent{}, // no Delay set
-		},
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-nodelay-test", nil, updates)
 
-	deviation, hasData := api.GetScheduleDeviation("trip-nodelay-test")
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-nodelay-test"}, devDate, devNow)
 	assert.Equal(t, 0, deviation)
 	assert.False(t, hasData, "trip update with no delay data should report hasData=false")
 }
@@ -115,18 +114,39 @@ func TestGetScheduleDeviation_ZeroDeviationIsDistinguishedFromNoData(t *testing.
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	// Trip with explicit zero-second delay — should return (0, true)
 	zeroDelay := time.Duration(0)
 	api.GtfsManager.MockAddTripUpdate("trip-zero-delay", &zeroDelay, nil)
 
-	deviation, hasData := api.GetScheduleDeviation("trip-zero-delay")
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-zero-delay"}, devDate, devNow)
 	assert.Equal(t, 0, deviation)
 	assert.True(t, hasData, "zero delay with trip update should still report hasData=true")
 
-	// Nonexistent trip — should return (0, false)
-	deviation2, hasData2 := api.GetScheduleDeviation("nonexistent-trip")
+	deviation2, hasData2 := api.GetScheduleDeviationForBlock(context.Background(), []string{"nonexistent-trip"}, devDate, devNow)
 	assert.Equal(t, 0, deviation2)
 	assert.False(t, hasData2, "nonexistent trip should report hasData=false")
+}
+
+func TestGetScheduleDeviation_BlockNotActiveDiscardsBogusDelay(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// 168260s = 46h44m20s — well over Java's 1-hour threshold.
+	bogus := 168260 * time.Second
+	api.GtfsManager.MockAddTripUpdate("trip-bogus-delay", &bogus, nil)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-bogus-delay"}, devDate, devNow)
+	assert.Equal(t, 0, deviation,
+		"bogus publisher delay must not propagate")
+	assert.False(t, hasData,
+		"|delay| > 1 hour → discard VehicleLocationRecord (Java's blockNotActive); caller falls back to schedule-only")
+
+	// And the symmetric negative case.
+	negBogus := -3700 * time.Second
+	api.GtfsManager.MockAddTripUpdate("trip-bogus-negative", &negBogus, nil)
+	deviation, hasData = api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-bogus-negative"}, devDate, devNow)
+	assert.Equal(t, 0, deviation)
+	assert.False(t, hasData, "negative delays beyond -1h must also be discarded")
 }
 
 func TestGetStopDelaysFromTripUpdates_NoUpdates(t *testing.T) {
@@ -145,10 +165,7 @@ func TestGetStopDelaysFromTripUpdates_WithArrivalDelay(t *testing.T) {
 	stopID := "stop-A"
 	arrivalDelay := 45 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:  &stopID,
-			Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay},
-		},
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-arrival", nil, updates)
 
@@ -166,10 +183,7 @@ func TestGetStopDelaysFromTripUpdates_WithDepartureDelay(t *testing.T) {
 	stopID := "stop-B"
 	departureDelay := 75 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:    &stopID,
-			Departure: &gtfs.StopTimeEvent{Delay: &departureDelay},
-		},
+		{StopID: &stopID, Departure: &gtfs.StopTimeEvent{Delay: &departureDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-departure", nil, updates)
 
@@ -186,10 +200,7 @@ func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopID(t *testing.T) {
 
 	arrivalDelay := 30 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:  nil, // no stop ID — should be skipped
-			Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay},
-		},
+		{StopID: nil, Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-nil-stopid", nil, updates)
 
@@ -205,10 +216,7 @@ func TestGetStopDelaysFromTripUpdates_IncludesStopWithZeroDelays(t *testing.T) {
 	stopID := "stop-C"
 	zeroDelay := time.Duration(0)
 	updates := []gtfs.StopTimeUpdate{
-		{
-			StopID:  &stopID,
-			Arrival: &gtfs.StopTimeEvent{Delay: &zeroDelay},
-		},
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &zeroDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-zero-delays", nil, updates)
 
@@ -232,7 +240,7 @@ func TestGetStopDelaysFromTripUpdates_MultipleStops(t *testing.T) {
 	updates := []gtfs.StopTimeUpdate{
 		{StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &delayA}},
 		{StopID: &stopB, Departure: &gtfs.StopTimeEvent{Delay: &delayB}},
-		{StopID: &stopC}, // no delay events — still included with zero values
+		{StopID: &stopC},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-multi-stops", nil, updates)
 
