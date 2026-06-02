@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"testing"
 
@@ -202,4 +203,154 @@ func TestStopHandlerWithSituations(t *testing.T) {
 	require.Len(t, model.Data.References.Situations, 1,
 		"expected exactly one deduplicated situation despite matching multiple entities")
 	assert.Equal(t, alertID, model.Data.References.Situations[0].ID)
+}
+
+// TestStopHandler_StopCodeFallback verifies that when a stop has no stop_code
+// in the database (Code is a null NullString), the response falls back to
+// returning the raw entity portion of the combined ID as the code field.
+func TestStopHandler_StopCodeFallback(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID = "FallbackAgency"
+		stopID   = "StopNoCode"
+		routeID  = "FallbackRoute"
+		tripID   = "FallbackTrip"
+		service  = "FallbackService"
+	)
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Fallback Transit", Url: "http://fallback.example.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	// Create stop with NO Code set — leave Code as zero-value sql.NullString (Valid=false)
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:  stopID,
+		Lat: 37.7749,
+		Lon: -122.4194,
+		// Code intentionally omitted (zero value = null)
+	})
+	require.NoError(t, err)
+
+	// Need a route + trip + stop_time so GetRoutesForStop returns something
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, ShortName: nulls.String("FB"), Type: 3,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: service, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: service,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1,
+		ArrivalTime: 32400, DepartureTime: 32700,
+	})
+	require.NoError(t, err)
+
+	resp, model := callAPIHandler[StopEntryResponse](t, api,
+		stopURL(utils.FormCombinedID(agencyID, stopID)))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	// The code field must fall back to the raw stopID (the entity portion of the
+	// combined ID), NOT the full combined ID like "FallbackAgency_StopNoCode".
+	assert.Equal(t, stopID, model.Data.Entry.Code)
+}
+
+// TestStopHandler_ParentStation verifies that when a stop has a parent_station
+// set, the handler:
+//  1. Sets entry.parent to FormCombinedID(agencyID, parentStopID)
+//  2. Includes the parent stop in references.stops
+//  3. Does NOT recursively resolve the parent's own parent field
+func TestStopHandler_ParentStation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID     = "ParentStationAgency"
+		parentStopID = "StationParent"
+		childStopID  = "StationChild"
+		routeID      = "ParentStationRoute"
+		tripID       = "ParentStationTrip"
+		service      = "ParentStationService"
+	)
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Parent Station Transit", Url: "http://pst.example.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	// Parent stop — locationType=1 (station)
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:           parentStopID,
+		Name:         nulls.String("Central Station"),
+		Lat:          47.6062,
+		Lon:          -122.3321,
+		LocationType: sql.NullInt64{Int64: 1, Valid: true},
+	})
+	require.NoError(t, err)
+
+	// Child stop pointing at the parent
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:            childStopID,
+		Name:          nulls.String("Platform A"),
+		Lat:           47.6063,
+		Lon:           -122.3322,
+		ParentStation: nulls.String(parentStopID),
+	})
+	require.NoError(t, err)
+
+	// Route + trip + stop_time linking the child stop
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, ShortName: nulls.String("PS"), Type: 3,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: service, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: service,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: childStopID, StopSequence: 1,
+		ArrivalTime: 36000, DepartureTime: 36300,
+	})
+	require.NoError(t, err)
+
+	resp, model := callAPIHandler[StopEntryResponse](t, api,
+		stopURL(utils.FormCombinedID(agencyID, childStopID)))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	// entry.parent must be the combined ID of the parent stop
+	expectedParentCombinedID := utils.FormCombinedID(agencyID, parentStopID)
+	assert.Equal(t, expectedParentCombinedID, model.Data.Entry.Parent)
+
+	// The parent stop must appear exactly once in references.stops
+	require.Len(t, model.Data.References.Stops, 1, "expected exactly one stop in references")
+	assert.Equal(t, expectedParentCombinedID, model.Data.References.Stops[0].ID)
+
+	// The parent's own parent field must be empty — no recursive resolution per spec
+	assert.Equal(t, "", model.Data.References.Stops[0].Parent)
+
+	// entry.id must be the child stop, not the parent
+	assert.Equal(t, utils.FormCombinedID(agencyID, childStopID), model.Data.Entry.ID)
 }

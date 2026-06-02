@@ -1,5 +1,5 @@
 # Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
-# Fetched: 2026-05-22
+# Fetched: 2026-06-02
 openapi: 3.0.0
 info:
   title: OneBusAway
@@ -1776,6 +1776,7 @@ components:
           description: Distance of the arriving transit vehicle from the stop, in meters.
         frequency:
           type: string
+          nullable: true
           description: Information about frequency-based scheduling, if applicable to the trip.
         historicalOccupancy:
           type: string
@@ -1794,12 +1795,14 @@ components:
           description: Indicates if real-time arrival info is available for this trip.
         predictedArrivalInterval:
           type: string
+          nullable: true
           description: Interval for predicted arrival time, if available.
         predictedArrivalTime:
           type: integer
           description: Predicted arrival time, in milliseconds since Unix epoch (zero if no real-time available).
         predictedDepartureInterval:
           type: string
+          nullable: true
           description: Interval for predicted departure time, if available.
         predictedDepartureTime:
           type: integer
@@ -1818,12 +1821,14 @@ components:
           description: Optional route short name that potentially overrides the route short name in the referenced route element.
         scheduledArrivalInterval:
           type: string
+          nullable: true
           description: Interval for scheduled arrival time.
         scheduledArrivalTime:
           type: integer
           description: Scheduled arrival time, in milliseconds since Unix epoch.
         scheduledDepartureInterval:
           type: string
+          nullable: true
           description: Interval for scheduled departure time.
         scheduledDepartureTime:
           type: integer
@@ -2183,6 +2188,7 @@ components:
           description: Distance, in meters, the transit vehicle has progressed along the active trip.
         frequency:
           type: string
+          nullable: true
           description: Information about frequency-based scheduling, if applicable to the trip.
         lastKnownDistanceAlongTrip:
           type: number
@@ -2309,6 +2315,7 @@ components:
 
     TripSchedule:
       type: object
+      nullable: true
       properties:
         frequency:
           type: string
