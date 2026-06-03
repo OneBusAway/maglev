@@ -57,8 +57,9 @@ func TestStopIdsForAgencyInvalidAgency(t *testing.T) {
 
 	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL("invalid"))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "", model.Text)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestStopIdsForAgencyMalformedAgencyId(t *testing.T) {
@@ -69,4 +70,66 @@ func TestStopIdsForAgencyMalformedAgencyId(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestStopIdsForAgencyMissingApiKey(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, "/api/where/stop-ids-for-agency/"+testdata.Raba.ID+".json")
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, model.Code)
+	assert.Equal(t, "permission denied", model.Text)
+}
+
+func TestStopIdsForAgencyEmptyAgencyId(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(""))
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestStopIdsForAgencyLimitExceededIsFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(testdata.Raba.ID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.False(t, model.Data.LimitExceeded)
+}
+
+func TestStopIdsForAgencyReferencesAlwaysPresentAndEmpty(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(testdata.Raba.ID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotNil(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.NotNil(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.NotNil(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.NotNil(t, model.Data.References.Trips)
+	assert.Empty(t, model.Data.References.Trips)
+	assert.NotNil(t, model.Data.References.Situations)
+	assert.Empty(t, model.Data.References.Situations)
+	assert.NotNil(t, model.Data.References.StopTimes)
+	assert.Empty(t, model.Data.References.StopTimes)
+}
+
+func TestStopIdsForAgencyVersionIsTwo(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL(testdata.Raba.ID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 2, model.Version)
 }
