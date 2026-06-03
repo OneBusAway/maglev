@@ -34,54 +34,73 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 	if len(tripIDs) == 0 {
 		return 0, false
 	}
-
-	type tripUpdateForTrip struct {
-		tripID string
-		tu     gtfs.Trip
-	}
-	var tripUpdates []tripUpdateForTrip
-	for _, id := range tripIDs {
-		for _, tu := range api.GtfsManager.GetTripUpdatesForTrip(id) {
-			tripUpdates = append(tripUpdates, tripUpdateForTrip{tripID: id, tu: tu})
-		}
-	}
+	tripUpdates := api.collectBlockTripUpdates(tripIDs)
 	if len(tripUpdates) == 0 {
 		return 0, false
 	}
+	if dev, ok := pickTripLevelDeviation(tripUpdates); ok {
+		return dev, true
+	}
+	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, currentTime); ok {
+		return dev, true
+	}
+	return pickReverseWalkSTUDelay(tripUpdates)
+}
 
-	// (1) Mirror Java's unconditional overwrite: LAST trip-level delay wins.
-	//     We do NOT short-circuit on the first delay because Java doesn't —
-	//     a later block trip's delay overwrites an earlier one.
+type tripUpdateForTrip struct {
+	tripID string
+	tu     gtfs.Trip
+}
+
+// collectBlockTripUpdates flattens every TripUpdate matching any tripID
+// into a slice in the order they appear, preserving block-trip-start order
+// when the caller passes a sorted slice.
+func (api *RestAPI) collectBlockTripUpdates(tripIDs []string) []tripUpdateForTrip {
+	var out []tripUpdateForTrip
+	for _, id := range tripIDs {
+		for _, tu := range api.GtfsManager.GetTripUpdatesForTrip(id) {
+			out = append(out, tripUpdateForTrip{tripID: id, tu: tu})
+		}
+	}
+	return out
+}
+
+// pickTripLevelDeviation implements Java's unconditional overwrite: LAST
+// trip-level delay across the block wins. Returns (0, false) when no
+// trip-level delay was set OR when |delay|>1h (Java's blockNotActive guard).
+func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool) {
 	var (
-		tripLevelDeviation int
-		tripLevelFound     bool
+		deviation int
+		found     bool
 	)
 	for _, t := range tripUpdates {
 		if t.tu.Delay != nil {
-			tripLevelDeviation = int(t.tu.Delay.Seconds())
-			tripLevelFound = true
+			deviation = int(t.tu.Delay.Seconds())
+			found = true
 		}
 	}
-	if tripLevelFound {
-		const javaBlockNotActiveThreshold = 60 * 60
-		if tripLevelDeviation > javaBlockNotActiveThreshold || tripLevelDeviation < -javaBlockNotActiveThreshold {
-			return 0, false
-		}
-		return tripLevelDeviation, true
+	if !found {
+		return 0, false
 	}
+	const javaBlockNotActiveThreshold = 60 * 60
+	if deviation > javaBlockNotActiveThreshold || deviation < -javaBlockNotActiveThreshold {
+		return 0, false
+	}
+	return deviation, true
+}
 
-	// (2) No trip-level delay anywhere → closest-in-time STU across all block
-	//     trips. Java's updateBestScheduleDeviation only fires this path when
-	//     tripUpdateHasDelay was never set, so we mirror that.
+// schedEntry captures one (stop_sequence, arrival, departure) tuple for a
+// stop_id; loop/lasso trips need multiple entries per stop_id.
+type schedEntry struct{ seq, arr, dep int64 }
 
-	// Per-trip scheduled stop-time cache, lazy-loaded. Loop/lasso trips visit
-	// the same stop_id at different stop_sequences (e.g. Unitrans P route
-	// hits 22272 at both seq=1 and seq=40 on the return), so we store every
-	// occurrence and match by stop_sequence when the STU provides one.
-	type schedEntry struct{ seq, arr, dep int64 }
-	scheduledByTrip := make(map[string]map[string][]schedEntry, len(tripIDs))
-	loadScheduled := func(tripID string) map[string][]schedEntry {
-		if s, ok := scheduledByTrip[tripID]; ok {
+// loadScheduledForTrip returns a lazy loader that caches per-trip scheduled
+// stop-time entries keyed by stop_id (with multiple entries per stop_id for
+// loop trips). Closure captures the cache map for the lifetime of one
+// pickClosestSTUDeviation call.
+func (api *RestAPI) loadScheduledForTrip(ctx context.Context) func(string) map[string][]schedEntry {
+	cache := map[string]map[string][]schedEntry{}
+	return func(tripID string) map[string][]schedEntry {
+		if s, ok := cache[tripID]; ok {
 			return s
 		}
 		s := map[string][]schedEntry{}
@@ -95,22 +114,78 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 				})
 			}
 		}
-		scheduledByTrip[tripID] = s
+		cache[tripID] = s
 		return s
 	}
+}
 
+// matchScheduleEntry resolves the right scheduled (arr, dep) for an STU
+// against a stop_id's entries. Loop trips: prefer the entry matching the
+// STU's stop_sequence; fall back to the first occurrence.
+func matchScheduleEntry(entries []schedEntry, stuSeq *uint32) (schedArr, schedDep int64) {
+	if len(entries) == 0 {
+		return 0, 0
+	}
+	picked := entries[0]
+	if stuSeq != nil {
+		for _, e := range entries {
+			if e.seq == int64(*stuSeq) {
+				picked = e
+				break
+			}
+		}
+	}
+	return picked.arr, picked.dep
+}
+
+// stuPredictedFromArrival computes the predicted arrival-seconds-since-midnight
+// for an STU. Returns 0 when nothing useful is set.
+//
+// TODO(dst): Time path uses UTC epoch math, which can be off by 1h for
+// trips that span the DST transition. Rare in practice.
+func stuPredictedFromArrival(stu gtfs.StopTimeUpdate, schedArr int64, serviceDate time.Time) int64 {
+	if stu.Arrival == nil || schedArr <= 0 {
+		return 0
+	}
+	switch {
+	case stu.Arrival.Time != nil:
+		return stu.Arrival.Time.Unix() - serviceDate.Unix()
+	case stu.Arrival.Delay != nil:
+		return schedArr + int64(stu.Arrival.Delay.Seconds())
+	}
+	return 0
+}
+
+// stuPredictedFromDeparture mirrors stuPredictedFromArrival for departure events.
+func stuPredictedFromDeparture(stu gtfs.StopTimeUpdate, schedDep int64, serviceDate time.Time) int64 {
+	if stu.Departure == nil || schedDep <= 0 {
+		return 0
+	}
+	switch {
+	case stu.Departure.Time != nil:
+		return stu.Departure.Time.Unix() - serviceDate.Unix()
+	case stu.Departure.Delay != nil:
+		return schedDep + int64(stu.Departure.Delay.Seconds())
+	}
+	return 0
+}
+
+// pickClosestSTUDeviation implements Java's updateBestScheduleDeviation:
+// across every STU in every block trip's TripUpdate, pick the one whose
+// predicted stop-time is closest to currentTime; tiebreak prefers stops
+// still in the future.
+func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (int, bool) {
+	loadScheduled := api.loadScheduledForTrip(ctx)
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 
 	bestDelta := int64(math.MaxInt64)
 	bestDeviation := 0
 	bestIsInPast := true
 	found := false
-
-	considerCandidate := func(scheduledSec, predictedSec int64) {
-		if scheduledSec <= 0 {
+	consider := func(scheduledSec, predictedSec int64) {
+		if scheduledSec <= 0 || predictedSec <= 0 {
 			return
 		}
-		deviation := predictedSec - scheduledSec
 		delta := predictedSec - currentSeconds
 		if delta < 0 {
 			delta = -delta
@@ -118,7 +193,7 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		isInPast := predictedSec < currentSeconds
 		if delta < bestDelta || (!isInPast && bestIsInPast) {
 			bestDelta = delta
-			bestDeviation = int(deviation)
+			bestDeviation = int(predictedSec - scheduledSec)
 			bestIsInPast = isInPast
 			found = true
 		}
@@ -129,59 +204,22 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		for _, stu := range t.tu.StopTimeUpdates {
 			var schedArr, schedDep int64
 			if stu.StopID != nil {
-				if entries := schedMap[*stu.StopID]; len(entries) > 0 {
-					// Loop trips: prefer the entry matching the STU's
-					// stop_sequence; fall back to the first occurrence.
-					picked := entries[0]
-					if stu.StopSequence != nil {
-						for _, e := range entries {
-							if e.seq == int64(*stu.StopSequence) {
-								picked = e
-								break
-							}
-						}
-					}
-					schedArr, schedDep = picked.arr, picked.dep
-				}
+				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence)
 			}
-
-			// TODO(dst): predicted from Time uses UTC epoch math, which can be
-			// off by 1h for trips that span the DST transition. Rare in
-			// practice — most transit doesn't run during the 2-3am jump.
-			if stu.Arrival != nil && schedArr > 0 {
-				var predicted int64
-				switch {
-				case stu.Arrival.Time != nil:
-					predicted = stu.Arrival.Time.Unix() - serviceDate.Unix()
-				case stu.Arrival.Delay != nil:
-					predicted = schedArr + int64(stu.Arrival.Delay.Seconds())
-				}
-				if predicted > 0 {
-					considerCandidate(schedArr, predicted)
-				}
-			}
-			if stu.Departure != nil && schedDep > 0 {
-				var predicted int64
-				switch {
-				case stu.Departure.Time != nil:
-					predicted = stu.Departure.Time.Unix() - serviceDate.Unix()
-				case stu.Departure.Delay != nil:
-					predicted = schedDep + int64(stu.Departure.Delay.Seconds())
-				}
-				if predicted > 0 {
-					considerCandidate(schedDep, predicted)
-				}
-			}
+			consider(schedArr, stuPredictedFromArrival(stu, schedArr, serviceDate))
+			consider(schedDep, stuPredictedFromDeparture(stu, schedDep, serviceDate))
 		}
 	}
-
-	if found {
-		return bestDeviation, true
+	if !found {
+		return 0, false
 	}
+	return bestDeviation, true
+}
 
-	// Fallback: schedule lookup failed (e.g. test fixtures without static stop
-	// times) but the feed carries per-stop delays. Reverse-walk every block
-	// trip's updates and return the latest stop's delay.
+// pickReverseWalkSTUDelay is the final fallback when schedule lookup failed
+// (e.g. test fixtures without static stop times) but the feed still carries
+// per-stop delays. Returns the latest stop's delay in block-iteration order.
+func pickReverseWalkSTUDelay(tripUpdates []tripUpdateForTrip) (int, bool) {
 	for i := len(tripUpdates) - 1; i >= 0; i-- {
 		stus := tripUpdates[i].tu.StopTimeUpdates
 		for j := len(stus) - 1; j >= 0; j-- {
