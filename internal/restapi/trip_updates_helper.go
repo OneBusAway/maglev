@@ -74,20 +74,25 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 	//     trips. Java's updateBestScheduleDeviation only fires this path when
 	//     tripUpdateHasDelay was never set, so we mirror that.
 
-	// Per-trip scheduled stop-time cache, lazy-loaded.
-	scheduledByTrip := make(map[string]map[string]struct{ arr, dep int64 }, len(tripIDs))
-	loadScheduled := func(tripID string) map[string]struct{ arr, dep int64 } {
+	// Per-trip scheduled stop-time cache, lazy-loaded. Loop/lasso trips visit
+	// the same stop_id at different stop_sequences (e.g. Unitrans P route
+	// hits 22272 at both seq=1 and seq=40 on the return), so we store every
+	// occurrence and match by stop_sequence when the STU provides one.
+	type schedEntry struct{ seq, arr, dep int64 }
+	scheduledByTrip := make(map[string]map[string][]schedEntry, len(tripIDs))
+	loadScheduled := func(tripID string) map[string][]schedEntry {
 		if s, ok := scheduledByTrip[tripID]; ok {
 			return s
 		}
-		s := map[string]struct{ arr, dep int64 }{}
+		s := map[string][]schedEntry{}
 		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 		if err == nil {
 			for _, st := range stopTimes {
-				s[st.StopID] = struct{ arr, dep int64 }{
+				s[st.StopID] = append(s[st.StopID], schedEntry{
+					seq: st.StopSequence,
 					arr: st.ArrivalTime / int64(time.Second),
 					dep: st.DepartureTime / int64(time.Second),
-				}
+				})
 			}
 		}
 		scheduledByTrip[tripID] = s
@@ -124,11 +129,25 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		for _, stu := range t.tu.StopTimeUpdates {
 			var schedArr, schedDep int64
 			if stu.StopID != nil {
-				if s, ok := schedMap[*stu.StopID]; ok {
-					schedArr, schedDep = s.arr, s.dep
+				if entries := schedMap[*stu.StopID]; len(entries) > 0 {
+					// Loop trips: prefer the entry matching the STU's
+					// stop_sequence; fall back to the first occurrence.
+					picked := entries[0]
+					if stu.StopSequence != nil {
+						for _, e := range entries {
+							if e.seq == int64(*stu.StopSequence) {
+								picked = e
+								break
+							}
+						}
+					}
+					schedArr, schedDep = picked.arr, picked.dep
 				}
 			}
 
+			// TODO(dst): predicted from Time uses UTC epoch math, which can be
+			// off by 1h for trips that span the DST transition. Rare in
+			// practice — most transit doesn't run during the 2-3am jump.
 			if stu.Arrival != nil && schedArr > 0 {
 				var predicted int64
 				switch {
