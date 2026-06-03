@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -470,6 +471,54 @@ func TestProjectStopsInSequence_GracefulOnEmptyShape(t *testing.T) {
 	require.Len(t, distances, 2)
 	assert.Equal(t, 0.0, distances[0])
 	assert.Equal(t, 0.0, distances[1])
+}
+
+// TestProjectStopsInSequence_MixedAuthoritativeAndGeometric exercises the
+// mixed-mode path: one stop uses shape_dist_traveled (authoritative), the
+// next falls back to geometric projection. Validates that:
+//
+//  1. authoritative distances are returned verbatim (scale=1 when max==total),
+//  2. the geometric stop's projection produces a monotonic non-decreasing
+//     distance, which requires lastMatchedIndex to advance through the shape
+//     after each authoritative match.
+func TestProjectStopsInSequence_MixedAuthoritativeAndGeometric(t *testing.T) {
+	// Straight-line shape, 5 evenly spaced points across longitude 0..0.001.
+	// utils.Distance per segment ~27.8m → cumulative ~0, 27.8, 55.6, 83.4, 111.2.
+	shape := []gtfs.ShapePoint{
+		{Latitude: 0.0, Longitude: 0.0},
+		{Latitude: 0.0, Longitude: 0.00025},
+		{Latitude: 0.0, Longitude: 0.00050},
+		{Latitude: 0.0, Longitude: 0.00075},
+		{Latitude: 0.0, Longitude: 0.00100},
+	}
+	cumDist := preCalculateCumulativeDistances(shape)
+	totalDist := cumDist[len(cumDist)-1]
+
+	// Three stops: A (authoritative, start), B (geometric, middle),
+	// C (authoritative, end). max == totalDist ⇒ shapeDistScale = 1,
+	// so the authoritative values are emitted verbatim and we can assert
+	// magnitudes directly.
+	stopTimes := []gtfsdb.StopTime{
+		{StopID: "stop_A", StopSequence: 1, ShapeDistTraveled: sql.NullFloat64{Float64: 11.1, Valid: true}},
+		{StopID: "stop_B", StopSequence: 2},
+		{StopID: "stop_C", StopSequence: 3, ShapeDistTraveled: sql.NullFloat64{Float64: totalDist, Valid: true}},
+	}
+	stopByID := map[string]gtfsdb.Stop{
+		"stop_B": {ID: "stop_B", Lat: 0.0, Lon: 0.0007}, // ~78m along the shape
+	}
+
+	distances := projectStopsInSequence(stopTimes, stopByID, shape, cumDist)
+	require.Len(t, distances, 3)
+	assert.Equal(t, 11.1, distances[0], "authoritative stop uses shape_dist_traveled verbatim when scale==1")
+	assert.Equal(t, totalDist, distances[2], "trailing authoritative stop equals the shape's total distance")
+
+	// Monotonicity: the geometric stop must land between its two
+	// authoritative neighbours, never regress before the previous match.
+	for i := 1; i < len(distances); i++ {
+		assert.GreaterOrEqual(t, distances[i], distances[i-1],
+			"distances must be monotonic in stop_sequence order (stop %d vs %d)", i-1, i)
+	}
+	assert.LessOrEqual(t, distances[1], totalDist, "geometric stop must stay within shape bounds")
 }
 
 func TestApplyScheduledTripPositionToStatus_PopulatesFields(t *testing.T) {
