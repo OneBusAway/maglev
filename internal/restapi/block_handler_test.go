@@ -104,6 +104,8 @@ func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 		st := blockStopTimes[idx]
 		assert.GreaterOrEqual(t, st.DistanceAlongBlock, 0.0)
 		assert.Contains(t, st.StopTime.StopID, "_", "stop ID should be combined with agency prefix")
+		assert.GreaterOrEqual(t, st.StopTime.PickupType, 0, "pickupType should be present and non-negative")
+		assert.GreaterOrEqual(t, st.StopTime.DropOffType, 0, "dropOffType should be present and non-negative")
 	}
 
 	if len(blockStopTimes) >= 2 {
