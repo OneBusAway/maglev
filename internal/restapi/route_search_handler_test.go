@@ -24,7 +24,7 @@ func TestRouteSearchHandlerRequiresValidApiKey(t *testing.T) {
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[RoutesResponse](t, api,
-		"/api/where/search/route.json?key=invalid&input=1")
+		routeSearchURL(url.Values{"input": {"1"}, "key": {"invalid"}}))
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
