@@ -107,44 +107,7 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		}
 	}
 
-	// Single pass: emit block stops, accumulate cumulative block distance, and
-	// capture the active trip's block-offset as we cross it (saves a second scan
-	// to find that offset later).
-	var (
-		stops               = make([]blockStopMetric, 0, len(trips)*40)
-		cumulativeBlockDist float64
-		blockSeq            int
-		activeTripOffset    float64
-	)
-	for i, t := range trips {
-		if i == activeIdx {
-			activeTripOffset = cumulativeBlockDist
-		}
-		// TODO(perf): hoist this out of the loop — block trips overlap heavily
-		// in stops (a loop route hits the same ~40 stops twice). Fetch the
-		// union of stop IDs across all trips once before the loop.
-		stopByID := api.fetchStopCoordsForStopTimes(ctx, t.stopTimes)
-		// Project all of this trip's stops in sequence order, advancing
-		// lastMatchedIndex through the shape so loop routes (where the same
-		// lat/lon appears at multiple shape segments) get monotonically
-		// increasing distance-along-trip values. Mirrors Java's
-		// DistanceAlongShapeLibrary.computeBestAssignment monotonicity rule.
-		tripStopDistances := projectStopsInSequence(t.stopTimes, stopByID, t.shapePoints, t.cumDistances)
-		for k, st := range t.stopTimes {
-			d := tripStopDistances[k]
-			stops = append(stops, blockStopMetric{
-				TripID:               t.id,
-				StopID:               st.StopID,
-				StopSequenceInTrip:   int(st.StopSequence),
-				BlockSequence:        blockSeq,
-				EffectiveStopSeconds: utils.EffectiveStopTimeSeconds(st.ArrivalTime, st.DepartureTime),
-				DistanceAlongBlock:   cumulativeBlockDist + d,
-				DistanceAlongTrip:    d,
-			})
-			blockSeq++
-		}
-		cumulativeBlockDist += t.totalDist
-	}
+	stops, activeTripOffset := api.emitBlockStops(ctx, trips, activeIdx)
 	if len(stops) == 0 {
 		return nil
 	}
@@ -179,6 +142,42 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		snap.ActiveTripScheduledDistance = math.Max(0, snap.DistanceAlongBlock-activeTripOffset)
 	}
 	return snap
+}
+
+// emitBlockStops walks the block trips in order, projecting each trip's
+// stops onto its shape and emitting one blockStopMetric per stop with
+// cumulative DistanceAlongBlock and BlockSequence. Returns the assembled
+// slice and the activeTripOffset (block-distance to the start of the
+// active trip; 0 when activeIdx < 0).
+func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, activeIdx int) ([]blockStopMetric, float64) {
+	stops := make([]blockStopMetric, 0, len(trips)*40)
+	var cumulativeBlockDist float64
+	var blockSeq int
+	var activeTripOffset float64
+	for i, t := range trips {
+		if i == activeIdx {
+			activeTripOffset = cumulativeBlockDist
+		}
+		// TODO(perf): hoist this out of the loop — block trips overlap heavily
+		// in stops (a loop route hits the same ~40 stops twice). Fetch the
+		// union of stop IDs across all trips once before the loop.
+		stopByID := api.fetchStopCoordsForStopTimes(ctx, t.stopTimes)
+		tripStopDistances := projectStopsInSequence(t.stopTimes, stopByID, t.shapePoints, t.cumDistances)
+		for k, st := range t.stopTimes {
+			stops = append(stops, blockStopMetric{
+				TripID:               t.id,
+				StopID:               st.StopID,
+				StopSequenceInTrip:   int(st.StopSequence),
+				BlockSequence:        blockSeq,
+				EffectiveStopSeconds: utils.EffectiveStopTimeSeconds(st.ArrivalTime, st.DepartureTime),
+				DistanceAlongBlock:   cumulativeBlockDist + tripStopDistances[k],
+				DistanceAlongTrip:    tripStopDistances[k],
+			})
+			blockSeq++
+		}
+		cumulativeBlockDist += t.totalDist
+	}
+	return stops, activeTripOffset
 }
 
 // metricsForStop is the Java applyBlockLocationToBean formula:
@@ -408,24 +407,7 @@ func projectStopsInSequence(
 	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
 		return distances
 	}
-
-	// Derive a per-trip scale factor for shape_dist_traveled so publisher
-	// units (km/miles/...) come out as metres. Identical to the formula in
-	// calculateBatchStopDistances.
-	totalShapeDist := cumulativeDistances[len(cumulativeDistances)-1]
-	var maxStopDist float64
-	for _, st := range stopTimes {
-		if st.ShapeDistTraveled.Valid && st.ShapeDistTraveled.Float64 > maxStopDist {
-			maxStopDist = st.ShapeDistTraveled.Float64
-		}
-	}
-	shapeDistScale := 1.0
-	if maxStopDist > 0 && totalShapeDist > 0 {
-		shapeDistScale = totalShapeDist / maxStopDist
-	}
-
-	const earlyExitThresholdMeters = 100.0
-	const goodMatchThreshold = 500.0
+	shapeDistScale := computeShapeDistScale(stopTimes, cumulativeDistances)
 
 	lastMatchedIndex := 0
 	for i, st := range stopTimes {
@@ -433,15 +415,7 @@ func projectStopsInSequence(
 		// for loops and uniquely identifies the right occurrence.
 		if st.ShapeDistTraveled.Valid {
 			distances[i] = st.ShapeDistTraveled.Float64 * shapeDistScale
-			// Advance the monotonic cursor to the segment containing this
-			// distance so subsequent geometry-fallback stops start their
-			// scan from here, not from an earlier shape segment.
-			for j := lastMatchedIndex; j < len(cumulativeDistances)-1; j++ {
-				if cumulativeDistances[j+1] >= distances[i] {
-					lastMatchedIndex = j
-					break
-				}
-			}
+			lastMatchedIndex = advanceCursorThroughCumDist(lastMatchedIndex, cumulativeDistances, distances[i])
 			continue
 		}
 		stop, ok := stopByID[st.StopID]
@@ -449,40 +423,75 @@ func projectStopsInSequence(
 			distances[i] = 0
 			continue
 		}
-		if lastMatchedIndex >= len(shapePoints)-1 {
-			lastMatchedIndex = len(shapePoints) - 2
-		}
-
-		minDistance := math.Inf(1)
-		closestSegmentIndex := lastMatchedIndex
-		var projectionRatio float64
-
-		for j := lastMatchedIndex; j < len(shapePoints)-1; j++ {
-			d, ratio := distanceToLineSegment(
-				stop.Lat, stop.Lon,
-				shapePoints[j].Latitude, shapePoints[j].Longitude,
-				shapePoints[j+1].Latitude, shapePoints[j+1].Longitude,
-			)
-			if d < minDistance {
-				minDistance = d
-				closestSegmentIndex = j
-				projectionRatio = ratio
-				lastMatchedIndex = j
-			} else if minDistance < goodMatchThreshold && d > minDistance+earlyExitThresholdMeters {
-				break
-			}
-		}
-
-		var segmentLength float64
-		if closestSegmentIndex < len(shapePoints)-1 {
-			segmentLength = utils.Distance(
-				shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
-				shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
-			)
-		}
-		distances[i] = interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
+		distances[i], lastMatchedIndex = projectStopGeometric(stop, shapePoints, cumulativeDistances, lastMatchedIndex)
 	}
 	return distances
+}
+
+// computeShapeDistScale derives a per-trip scale factor so publisher units
+// (km/miles/...) come out as metres. Identical to calculateBatchStopDistances.
+func computeShapeDistScale(stopTimes []gtfsdb.StopTime, cumulativeDistances []float64) float64 {
+	totalShapeDist := cumulativeDistances[len(cumulativeDistances)-1]
+	var maxStopDist float64
+	for _, st := range stopTimes {
+		if st.ShapeDistTraveled.Valid && st.ShapeDistTraveled.Float64 > maxStopDist {
+			maxStopDist = st.ShapeDistTraveled.Float64
+		}
+	}
+	if maxStopDist > 0 && totalShapeDist > 0 {
+		return totalShapeDist / maxStopDist
+	}
+	return 1.0
+}
+
+// advanceCursorThroughCumDist moves the monotonic cursor forward through the
+// shape to the segment that contains `distance`. Used after the
+// shape_dist_traveled branch so subsequent geometric stops don't regress.
+func advanceCursorThroughCumDist(cursor int, cumulativeDistances []float64, distance float64) int {
+	for j := cursor; j < len(cumulativeDistances)-1; j++ {
+		if cumulativeDistances[j+1] >= distance {
+			return j
+		}
+	}
+	return cursor
+}
+
+// projectStopGeometric projects a stop's lat/lon onto the shape, scanning
+// forward from `cursor` to preserve monotonicity on loop routes. Returns
+// the projected distance and the updated cursor.
+func projectStopGeometric(stop gtfsdb.Stop, shapePoints []gtfs.ShapePoint, cumulativeDistances []float64, cursor int) (float64, int) {
+	const earlyExitThresholdMeters = 100.0
+	const goodMatchThreshold = 500.0
+
+	if cursor >= len(shapePoints)-1 {
+		cursor = len(shapePoints) - 2
+	}
+	minDistance := math.Inf(1)
+	closestSegmentIndex := cursor
+	var projectionRatio float64
+	for j := cursor; j < len(shapePoints)-1; j++ {
+		d, ratio := distanceToLineSegment(
+			stop.Lat, stop.Lon,
+			shapePoints[j].Latitude, shapePoints[j].Longitude,
+			shapePoints[j+1].Latitude, shapePoints[j+1].Longitude,
+		)
+		if d < minDistance {
+			minDistance = d
+			closestSegmentIndex = j
+			projectionRatio = ratio
+			cursor = j
+		} else if minDistance < goodMatchThreshold && d > minDistance+earlyExitThresholdMeters {
+			break
+		}
+	}
+	var segmentLength float64
+	if closestSegmentIndex < len(shapePoints)-1 {
+		segmentLength = utils.Distance(
+			shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
+			shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
+		)
+	}
+	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio), cursor
 }
 
 // interpolateBlockDistance linearly interpolates the block's distance-along-block
