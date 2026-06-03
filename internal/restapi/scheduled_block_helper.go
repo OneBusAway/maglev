@@ -330,9 +330,12 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 		if err != nil || len(stopTimes) == 0 {
 			continue
 		}
-		// Shape errors are intentionally swallowed — the snapshot can still
-		// produce DistanceAlongBlock from stop coords + linear-segment
-		// interpolation; only position/orientation lose precision.
+		// TODO(correctness): shape errors and <2-point shapes are swallowed
+		// here. The trip is still appended with totalDist=0, so its stops get
+		// zero DistanceAlongTrip and the next block trip starts at the same
+		// cumulativeBlockDist — wrong for distance, but block_sequence stays
+		// consistent. A stop-only Haversine fallback would be the correct fix
+		// but requires hoisting stop coords out of computeScheduledBlockSnapshot.
 		shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, id)
 		shapePoints := shapeRowsToPoints(shapeRows)
 		var cumDistances []float64
@@ -430,6 +433,15 @@ func projectStopsInSequence(
 		// for loops and uniquely identifies the right occurrence.
 		if st.ShapeDistTraveled.Valid {
 			distances[i] = st.ShapeDistTraveled.Float64 * shapeDistScale
+			// Advance the monotonic cursor to the segment containing this
+			// distance so subsequent geometry-fallback stops start their
+			// scan from here, not from an earlier shape segment.
+			for j := lastMatchedIndex; j < len(cumulativeDistances)-1; j++ {
+				if cumulativeDistances[j+1] >= distances[i] {
+					lastMatchedIndex = j
+					break
+				}
+			}
 			continue
 		}
 		stop, ok := stopByID[st.StopID]

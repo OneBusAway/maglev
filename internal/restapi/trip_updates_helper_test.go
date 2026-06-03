@@ -226,6 +226,58 @@ func TestGetStopDelaysFromTripUpdates_IncludesStopWithZeroDelays(t *testing.T) {
 	assert.Equal(t, int64(0), delays["stop-C"].ArrivalDelay)
 }
 
+// TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule
+// exercises the path that the other deviation tests can't: when the trip
+// IS in the static DB, loadScheduled returns real arrival/departure
+// seconds and the closest-in-time-against-scheduled branch fires
+// (rather than the reverse-walk fallback). A "decoy" STU 9999 s late at
+// a far-from-currentTime stop must NOT win against the nearer 17 s
+// candidate.
+func TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	trip := mustGetTrip(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	if err != nil || len(stopTimes) < 3 {
+		t.Skip("need a real trip with >= 3 stop_times for this path")
+	}
+
+	// nearStop ≈ at currentTime (~12h into the service day in our default
+	// devNow); farStop is the trip's first stop (typically early morning).
+	nearStop := stopTimes[len(stopTimes)/2].StopID
+	farStop := stopTimes[0].StopID
+	nearDelay := 17 * time.Second
+	farDelay := 9999 * time.Second // intentionally absurd; must NOT win
+
+	api.GtfsManager.MockAddTripUpdate(trip.ID, nil, []gtfs.StopTimeUpdate{
+		{StopID: &farStop, Arrival: &gtfs.StopTimeEvent{Delay: &farDelay}},
+		{StopID: &nearStop, Arrival: &gtfs.StopTimeEvent{Delay: &nearDelay}},
+	})
+
+	// Align currentTime to the near stop's scheduled arrival so delta=0
+	// at that candidate.
+	loc := time.UTC
+	if z, _ := time.LoadLocation("America/Los_Angeles"); z != nil {
+		loc = z
+	}
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+	var nearScheduledSec int64
+	for _, st := range stopTimes {
+		if st.StopID == nearStop {
+			nearScheduledSec = st.ArrivalTime / int64(time.Second)
+		}
+	}
+	currentTime := serviceDate.Add(time.Duration(nearScheduledSec) * time.Second)
+
+	dev, hasData := api.GetScheduleDeviationForBlock(ctx, []string{trip.ID}, serviceDate, currentTime)
+	assert.True(t, hasData)
+	assert.Equal(t, 17, dev,
+		"closest-in-time STU must win; the absurd 9999s decoy at a far stop must not")
+}
+
 func TestGetStopDelaysFromTripUpdates_MultipleStops(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
