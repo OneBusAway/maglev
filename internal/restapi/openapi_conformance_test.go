@@ -418,7 +418,7 @@ func TestOpenAPIConformance_ArrivalsEndpoints(t *testing.T) {
 	require.NotEmpty(t, scheduleRows, "RABA test data must have a trip visiting stop 4062")
 	tripIDRaw := scheduleRows[0].TripID
 
-	agencyID := "25"
+	agencyID := testdata.Raba.ID
 	tripID := utils.FormCombinedID(agencyID, tripIDRaw)
 	now := mockClock.Now().In(loc)
 	serviceDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
