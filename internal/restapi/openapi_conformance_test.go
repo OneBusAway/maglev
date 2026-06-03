@@ -517,7 +517,7 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 	// Find a vehicle with a valid trip to test trip-for-vehicle.
 	var vehicleID string
 	for _, v := range vehicles {
-		if v.Trip != nil && v.Trip.ID.ID != "" && v.ID != nil {
+		if v.Trip != nil && v.Trip.ID.ID != "" && v.ID != nil && v.ID.ID != "" {
 			vehicleID = utils.FormCombinedID(agencyID, v.ID.ID)
 			break
 		}
