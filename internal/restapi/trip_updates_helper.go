@@ -176,28 +176,7 @@ func stuPredictedFromDeparture(stu gtfs.StopTimeUpdate, schedDep int64, serviceD
 // still in the future.
 func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (int, bool) {
 	loadScheduled := api.loadScheduledForTrip(ctx)
-	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-
-	bestDelta := int64(math.MaxInt64)
-	bestDeviation := 0
-	bestIsInPast := true
-	found := false
-	consider := func(scheduledSec, predictedSec int64) {
-		if scheduledSec <= 0 || predictedSec <= 0 {
-			return
-		}
-		delta := predictedSec - currentSeconds
-		if delta < 0 {
-			delta = -delta
-		}
-		isInPast := predictedSec < currentSeconds
-		if delta < bestDelta || (!isInPast && bestIsInPast) {
-			bestDelta = delta
-			bestDeviation = int(predictedSec - scheduledSec)
-			bestIsInPast = isInPast
-			found = true
-		}
-	}
+	picker := newSTUDeviationPicker(utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate))
 
 	for _, t := range tripUpdates {
 		schedMap := loadScheduled(t.tripID)
@@ -206,14 +185,55 @@ func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []t
 			if stu.StopID != nil {
 				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence)
 			}
-			consider(schedArr, stuPredictedFromArrival(stu, schedArr, serviceDate))
-			consider(schedDep, stuPredictedFromDeparture(stu, schedDep, serviceDate))
+			picker.consider(schedArr, stuPredictedFromArrival(stu, schedArr, serviceDate))
+			picker.consider(schedDep, stuPredictedFromDeparture(stu, schedDep, serviceDate))
 		}
 	}
-	if !found {
+	if !picker.found {
 		return 0, false
 	}
-	return bestDeviation, true
+	return picker.bestDeviation, true
+}
+
+type stuDeviationPicker struct {
+	currentSeconds int64
+	bestDelta      int64
+	bestDeviation  int
+	bestIsInPast   bool
+	found          bool
+}
+
+func newSTUDeviationPicker(currentSeconds int64) stuDeviationPicker {
+	return stuDeviationPicker{
+		currentSeconds: currentSeconds,
+		bestDelta:      int64(math.MaxInt64),
+		bestIsInPast:   true,
+	}
+}
+
+func (p *stuDeviationPicker) consider(scheduledSec, predictedSec int64) {
+	if scheduledSec <= 0 || predictedSec <= 0 {
+		return
+	}
+	delta := absInt64(predictedSec - p.currentSeconds)
+	isInPast := predictedSec < p.currentSeconds
+	if p.shouldReplace(delta, isInPast) {
+		p.bestDelta = delta
+		p.bestDeviation = int(predictedSec - scheduledSec)
+		p.bestIsInPast = isInPast
+		p.found = true
+	}
+}
+
+func (p *stuDeviationPicker) shouldReplace(delta int64, isInPast bool) bool {
+	return delta < p.bestDelta || (!isInPast && p.bestIsInPast)
+}
+
+func absInt64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // pickReverseWalkSTUDelay is the final fallback when schedule lookup failed
