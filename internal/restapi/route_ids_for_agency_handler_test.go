@@ -1,10 +1,14 @@
 package restapi
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
@@ -43,7 +47,6 @@ func TestRouteIdsForAgencyEndToEnd(t *testing.T) {
 	assert.Empty(t, model.Data.References.Trips)
 	assert.Empty(t, model.Data.References.Situations)
 	assert.Empty(t, model.Data.References.StopTimes)
-	assert.Empty(t, model.Data.References.Agencies)
 }
 
 func TestInvalidAgencyIdForRouteIds(t *testing.T) {
@@ -64,4 +67,40 @@ func TestMalformedAgencyIdForRouteIds(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func TestAgencyWithNoRoutesReturnsEmptyList(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	_, err := api.GtfsManager.GtfsDB.Queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       "no-routes-agency",
+		Name:     "No Routes Agency",
+		Url:      "http://example.com",
+		Timezone: "America/New_York",
+		Lang:     sql.NullString{String: "en", Valid: true},
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = api.GtfsManager.GtfsDB.Queries.DeleteAgency(ctx, "no-routes-agency")
+	})
+
+	resp, model := callAPIHandler[RouteIDsForAgencyResponse](t, api, "/api/where/route-ids-for-agency/no-routes-agency.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+	assert.Empty(t, model.Data.List)
+	assert.False(t, model.Data.LimitExceeded)
+	assert.Equal(t, 2, model.Version)
+	assert.Greater(t, model.CurrentTime, int64(0))
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Trips)
+	assert.Empty(t, model.Data.References.Situations)
+	assert.Empty(t, model.Data.References.StopTimes)
 }

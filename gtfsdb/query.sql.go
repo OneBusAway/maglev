@@ -834,6 +834,15 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 	return i, err
 }
 
+const deleteAgency = `-- name: DeleteAgency :exec
+DELETE FROM agencies WHERE id = ?
+`
+
+func (q *Queries) DeleteAgency(ctx context.Context, id string) error {
+	_, err := q.exec(ctx, q.deleteAgencyStmt, deleteAgency, id)
+	return err
+}
+
 const getActiveLayoverBlockIDsForRoute = `-- name: GetActiveLayoverBlockIDsForRoute :many
 SELECT DISTINCT block_id
 FROM block_layover
