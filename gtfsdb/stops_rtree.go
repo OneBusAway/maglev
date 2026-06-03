@@ -42,7 +42,7 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var items []Stop
 	for rows.Next() {
@@ -95,7 +95,7 @@ func (q *Queries) GetStopIDsWithinBounds(ctx context.Context, arg GetStopIDsWith
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []string
 	for rows.Next() {
@@ -178,7 +178,7 @@ func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActive
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var items []Route
 	for rows.Next() {
 		var i Route
