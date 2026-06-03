@@ -522,16 +522,15 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 			break
 		}
 	}
-	if vehicleID != "" {
-		t.Run("trip-for-vehicle", func(t *testing.T) {
-			assertConformance(t, server.URL, doc,
-				"/api/where/trip-for-vehicle/"+vehicleID+".json?key=TEST",
-				"/api/where/trip-for-vehicle/{vehicleID}.json",
-			)
-		})
-	} else {
-		t.Log("Skipping trip-for-vehicle conformance test: no vehicle with an active trip found in .pb fixtures")
-	}
+	t.Run("trip-for-vehicle", func(t *testing.T) {
+		if vehicleID == "" {
+			t.Skip("no vehicle with an active trip found in .pb fixtures")
+		}
+		assertConformance(t, server.URL, doc,
+			"/api/where/trip-for-vehicle/"+vehicleID+".json?key=TEST",
+			"/api/where/trip-for-vehicle/{vehicleID}.json",
+		)
+	})
 }
 
 // TestOpenAPIConformance_ErrorResponses tests that error responses also conform to the spec's ResponseWrapper.
