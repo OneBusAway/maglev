@@ -184,6 +184,13 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 					assert.NotEmpty(t, entry.Status.Status, "list[%d].status.status should be set", i)
 				}
 			}
+
+			refs := model.Data.References
+			require.Len(t, refs.Agencies, 1, "response should reference the single fixture agency")
+			assert.Equal(t, tripsForRouteAgencyID, refs.Agencies[0].ID)
+			require.Len(t, refs.Routes, 1, "response should reference the single fixture route")
+			assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID), refs.Routes[0].ID)
+			require.Len(t, refs.Stops, 2, "response should reference both fixture stops when includeSchedule=true")
 		})
 	}
 }
