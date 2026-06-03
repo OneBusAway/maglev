@@ -28,12 +28,21 @@ func TestRouteIdsForAgencyEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, 2, model.Version)
+	assert.Greater(t, model.CurrentTime, int64(0))
 
 	expected := make([]string, 0, len(testdata.RabaRoutes))
 	for _, r := range testdata.RabaRoutes {
 		expected = append(expected, r.ID)
 	}
 	assert.ElementsMatch(t, expected, model.Data.List)
+	assert.False(t, model.Data.LimitExceeded)
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Trips)
+	assert.Empty(t, model.Data.References.Situations)
+	assert.Empty(t, model.Data.References.StopTimes)
 	assert.Empty(t, model.Data.References.Agencies)
 }
 
