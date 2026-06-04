@@ -3,12 +3,14 @@ package restapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/stretchr/testify/assert"
@@ -17,6 +19,7 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -384,6 +387,51 @@ func TestOpenAPIConformance_SearchEndpoints(t *testing.T) {
 	}
 }
 
+// TestOpenAPIConformance_ArrivalsEndpoints tests the arrival/departure endpoints
+// that require a MockClock pinned inside the RABA service window.
+func TestOpenAPIConformance_ArrivalsEndpoints(t *testing.T) {
+	// Pin clock to a Friday inside the RABA calendar window so Stop4062's
+	// scheduled arrivals fall within the query time window.
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 11, 0, 0, 0, loc))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	doc := loadOpenAPISpec(t)
+
+	stopID := testdata.Stop4062.ID
+
+	t.Run("arrivals-and-departures-for-stop", func(t *testing.T) {
+		assertConformance(t, server.URL, doc,
+			"/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST&minutesBefore=60&minutesAfter=240",
+			"/api/where/arrivals-and-departures-for-stop/{stopID}.json",
+		)
+	})
+
+	ctx := context.Background()
+	scheduleRows, err := api.GtfsManager.GtfsDB.Queries.GetScheduleForStop(ctx, "4062")
+	require.NoError(t, err, "RABA test data must have a trip visiting stop 4062")
+	require.NotEmpty(t, scheduleRows, "RABA test data must have a trip visiting stop 4062")
+	tripIDRaw := scheduleRows[0].TripID
+
+	agencyID := testdata.Raba.ID
+	tripID := utils.FormCombinedID(agencyID, tripIDRaw)
+	now := mockClock.Now().In(loc)
+	serviceDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+
+	t.Run("arrival-and-departure-for-stop", func(t *testing.T) {
+		assertConformance(t, server.URL, doc,
+			fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+				stopID, tripID, serviceDate.UnixMilli()),
+			"/api/where/arrival-and-departure-for-stop/{stopID}.json",
+		)
+	})
+}
+
 // TestOpenAPIConformance_RealTimeEndpoints tests endpoints that require real-time GTFS-RT data.
 func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 	ctx := context.Background()
@@ -463,6 +511,24 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 		assertConformance(t, server.URL, doc,
 			"/api/where/vehicles-for-agency/"+agencyID+".json?key=TEST",
 			"/api/where/vehicles-for-agency/{agencyID}.json",
+		)
+	})
+
+	// Find a vehicle with a valid trip to test trip-for-vehicle.
+	var vehicleID string
+	for _, v := range vehicles {
+		if v.Trip != nil && v.Trip.ID.ID != "" && v.ID != nil && v.ID.ID != "" {
+			vehicleID = utils.FormCombinedID(agencyID, v.ID.ID)
+			break
+		}
+	}
+	t.Run("trip-for-vehicle", func(t *testing.T) {
+		if vehicleID == "" {
+			t.Skip("no vehicle with an active trip found in .pb fixtures")
+		}
+		assertConformance(t, server.URL, doc,
+			"/api/where/trip-for-vehicle/"+vehicleID+".json?key=TEST",
+			"/api/where/trip-for-vehicle/{vehicleID}.json",
 		)
 	})
 }
