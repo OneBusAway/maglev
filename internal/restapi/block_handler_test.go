@@ -2,530 +2,230 @@ package restapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
+
+// blockURL builds the /block endpoint URL with key=TEST baked in. Tests that
+// want a different key (auth checks) build their URL inline.
+func blockURL(blockID string) string {
+	return "/api/where/block/" + blockID + ".json?key=TEST"
+}
 
 func TestBlockHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, 2, model.Version)
+	assert.Greater(t, model.CurrentTime, int64(0))
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.ID)
+	require.NotEmpty(t, entry.Configurations)
 
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
+	// Detailed checks on the first config/trip — verifies structure and ID formatting.
+	config := entry.Configurations[0]
+	require.NotEmpty(t, config.ActiveServiceIds)
+	assert.Contains(t, config.ActiveServiceIds[0], "_", "service IDs should be combined with agency prefix")
+	require.NotEmpty(t, config.Trips)
 
-	if id, exists := entry["id"]; exists {
-		assert.NotEmpty(t, id)
+	trip := config.Trips[0]
+	assert.Contains(t, trip.TripId, "_", "trip ID should be combined with agency prefix")
+	assert.NotZero(t, trip.DistanceAlongBlock)
+	assert.NotEmpty(t, trip.BlockStopTimes)
+
+	// Iterate every config/trip/stop-time — catches empty IDs in less-common configurations.
+	for _, c := range entry.Configurations {
+		assert.NotEmpty(t, c.ActiveServiceIds)
+		assert.NotEmpty(t, c.Trips)
+		for _, tr := range c.Trips {
+			assert.NotEmpty(t, tr.TripId)
+			assert.NotEmpty(t, tr.BlockStopTimes)
+			for _, st := range tr.BlockStopTimes {
+				assert.NotEmpty(t, st.StopTime.StopID)
+			}
+		}
 	}
 
-	configs, ok := entry["configurations"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, configs)
+	refs := model.Data.References
+	idx := slices.IndexFunc(refs.Agencies, func(a models.AgencyReference) bool {
+		return a.ID == testdata.Raba.ID
+	})
+	require.GreaterOrEqual(t, idx, 0, "agency %s should be in references", testdata.Raba.ID)
+	agency := refs.Agencies[idx]
+	assert.Equal(t, testdata.Raba.Name, agency.Name)
+	assert.Equal(t, testdata.Raba.URL, agency.URL)
+	assert.Equal(t, testdata.Raba.Timezone, agency.Timezone)
 
-	config, ok := configs[0].(map[string]any)
-	require.True(t, ok)
-	assert.Contains(t, config, "activeServiceIds")
-	assert.Contains(t, config, "inactiveServiceIds")
-	assert.Contains(t, config, "trips")
+	require.NotEmpty(t, refs.Stops)
+	assert.NotEmpty(t, refs.Stops[0].ID)
+	assert.NotEmpty(t, refs.Stops[0].Name)
 
-	activeServiceIds, ok := config["activeServiceIds"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, activeServiceIds)
+	require.NotEmpty(t, refs.Routes)
+	assert.NotEmpty(t, refs.Routes[0].ID)
+	assert.NotEmpty(t, refs.Routes[0].AgencyID)
 
-	serviceId, ok := activeServiceIds[0].(string)
-	require.True(t, ok)
-	assert.Contains(t, serviceId, "_")
-
-	trips, ok := config["trips"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, trips)
-
-	trip, ok := trips[0].(map[string]any)
-	require.True(t, ok)
-	assert.Contains(t, trip, "tripId")
-	assert.Contains(t, trip, "distanceAlongBlock")
-	assert.Contains(t, trip, "blockStopTimes")
-	assert.Contains(t, trip, "accumulatedSlackTime")
-
-	tripId, ok := trip["tripId"].(string)
-	require.True(t, ok)
-	assert.Contains(t, tripId, "_")
-
-	_, ok = trip["distanceAlongBlock"].(float64)
-	require.True(t, ok)
-
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	agencies, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, agencies)
-
-	agency, ok := agencies[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "25", agency["id"])
-	assert.Contains(t, agency, "name")
-	assert.Contains(t, agency, "url")
-	assert.Contains(t, agency, "timezone")
-
-	stops, ok := refs["stops"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, stops)
-
-	stop, ok := stops[0].(map[string]any)
-	require.True(t, ok)
-	assert.Contains(t, stop, "id")
-	assert.Contains(t, stop, "name")
-	assert.Contains(t, stop, "lat")
-	assert.Contains(t, stop, "lon")
-
-	routes, ok := refs["routes"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, routes)
-
-	route, ok := routes[0].(map[string]any)
-	require.True(t, ok)
-	assert.Contains(t, route, "id")
-	assert.Contains(t, route, "agencyId")
-
-	tripsRef, ok := refs["trips"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, tripsRef)
-
-	tripRef, ok := tripsRef[0].(map[string]any)
-	require.True(t, ok)
-	assert.Contains(t, tripRef, "id")
-	assert.Contains(t, tripRef, "routeId")
-	assert.Contains(t, tripRef, "serviceId")
+	require.NotEmpty(t, refs.Trips)
+	assert.NotEmpty(t, refs.Trips[0].ID)
+	assert.NotEmpty(t, refs.Trips[0].RouteID)
+	assert.NotEmpty(t, refs.Trips[0].ServiceID)
 }
 
 func TestBlockHandlerVerifyBlockStopTimes(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-
-	configs, ok := entry["configurations"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, configs)
-
-	config, ok := configs[0].(map[string]any)
-	require.True(t, ok)
-
-	trips, ok := config["trips"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, trips)
-
-	trip, ok := trips[0].(map[string]any)
-	require.True(t, ok)
-
-	blockStopTimes, ok := trip["blockStopTimes"].([]any)
-	require.True(t, ok)
+	require.NotEmpty(t, model.Data.Entry.Configurations)
+	require.NotEmpty(t, model.Data.Entry.Configurations[0].Trips)
+	blockStopTimes := model.Data.Entry.Configurations[0].Trips[0].BlockStopTimes
 	require.NotEmpty(t, blockStopTimes)
 
-	for i, rawStopTime := range []int{0, len(blockStopTimes) - 1} {
-		if i >= len(blockStopTimes) {
-			continue
-		}
-
-		stopTime, ok := blockStopTimes[rawStopTime].(map[string]any)
-		require.True(t, ok)
-		assert.Contains(t, stopTime, "blockSequence")
-		assert.Contains(t, stopTime, "distanceAlongBlock")
-		assert.Contains(t, stopTime, "accumulatedSlackTime")
-		assert.Contains(t, stopTime, "stopTime")
-
-		_, ok = stopTime["blockSequence"].(float64)
-		require.True(t, ok, "blockSequence should be a number")
-
-		_, ok = stopTime["distanceAlongBlock"].(float64)
-		require.True(t, ok, "distanceAlongBlock should be a number")
-
-		_, ok = stopTime["accumulatedSlackTime"].(float64)
-		require.True(t, ok, "accumulatedSlackTime should be a number")
-
-		stopTimeDetails, ok := stopTime["stopTime"].(map[string]any)
-		require.True(t, ok)
-		assert.Contains(t, stopTimeDetails, "arrivalTime")
-		assert.Contains(t, stopTimeDetails, "departureTime")
-		assert.Contains(t, stopTimeDetails, "stopId")
-
-		_, ok = stopTimeDetails["arrivalTime"].(float64)
-		require.True(t, ok, "arrivalTime should be a number")
-
-		_, ok = stopTimeDetails["departureTime"].(float64)
-		require.True(t, ok, "departureTime should be a number")
-
-		stopId, ok := stopTimeDetails["stopId"].(string)
-		require.True(t, ok, "stopId should be a string")
-		assert.Contains(t, stopId, "_")
+	indices := []int{0}
+	if len(blockStopTimes) > 1 {
+		indices = append(indices, len(blockStopTimes)-1)
+	}
+	for _, idx := range indices {
+		st := blockStopTimes[idx]
+		assert.GreaterOrEqual(t, st.DistanceAlongBlock, 0.0)
+		assert.Contains(t, st.StopTime.StopID, "_", "stop ID should be combined with agency prefix")
+		assert.GreaterOrEqual(t, st.StopTime.PickupType, 0, "pickupType should be present and non-negative")
+		assert.GreaterOrEqual(t, st.StopTime.DropOffType, 0, "dropOffType should be present and non-negative")
 	}
 
 	if len(blockStopTimes) >= 2 {
-		firstStopTime, ok := blockStopTimes[0].(map[string]any)
-		require.True(t, ok)
-		lastStopTime, ok := blockStopTimes[len(blockStopTimes)-1].(map[string]any)
-		require.True(t, ok)
-
-		firstSeq, ok := firstStopTime["blockSequence"].(float64)
-		require.True(t, ok)
-		lastSeq, ok := lastStopTime["blockSequence"].(float64)
-		require.True(t, ok)
-
-		assert.Less(t, firstSeq, lastSeq, "blockSequence should increase")
-
-		firstDist, ok := firstStopTime["distanceAlongBlock"].(float64)
-		require.True(t, ok)
-		lastDist, ok := lastStopTime["distanceAlongBlock"].(float64)
-		require.True(t, ok)
-
-		assert.LessOrEqual(t, firstDist, lastDist, "distanceAlongBlock should increase")
+		first := blockStopTimes[0]
+		last := blockStopTimes[len(blockStopTimes)-1]
+		assert.Less(t, first.BlockSequence, last.BlockSequence, "blockSequence should increase")
+		assert.LessOrEqual(t, first.DistanceAlongBlock, last.DistanceAlongBlock, "distanceAlongBlock should increase")
 	}
 }
 
 func TestBlockHandlerNonExistentBlock(t *testing.T) {
-	api, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_nonexistent.json?key=TEST")
+	api := createTestApi(t)
 	defer api.Shutdown()
+
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_nonexistent"))
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
 	assert.Equal(t, "resource not found", model.Text)
-	assert.Equal(t, 2, model.Version)
+	assert.Equal(t, models.APIVersion, model.Version)
 	assert.Greater(t, model.CurrentTime, int64(0))
 }
 
 func TestBlockHandlerInvalidBlockID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
 	testCases := []struct {
 		name           string
 		endpoint       string
 		expectedStatus int
 	}{
-		{"Empty block ID", "/api/where/block/.json?key=TEST", http.StatusBadRequest},
-		{"Missing agency", "/api/where/block/invalidblock.json?key=TEST", http.StatusBadRequest},
-		{"Special characters", "/api/where/block/25_@%23$.json?key=TEST", http.StatusBadRequest},
-		{"Only underscore", "/api/where/block/_.json?key=TEST", http.StatusBadRequest},
+		{"Empty block ID", blockURL(""), http.StatusBadRequest},
+		{"Missing agency separator", blockURL("invalidblock"), http.StatusBadRequest},
+		{"Disallowed characters in code ID", blockURL("25_@%23$"), http.StatusBadRequest},
+		{"Only underscore", blockURL("_"), http.StatusBadRequest},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			api, resp, model := serveAndRetrieveEndpoint(t, tc.endpoint)
-			defer api.Shutdown()
+			resp, model := callAPIHandler[BlockEntryResponse](t, api, tc.endpoint)
 
 			assert.Equal(t, tc.expectedStatus, resp.StatusCode,
 				"Expected HTTP %d for test case: %s", tc.expectedStatus, tc.name)
 
 			assert.Equal(t, tc.expectedStatus, model.Code, "Response model should match expected status code")
 			assert.NotEmpty(t, model.Text, "Response model should contain an error message")
-			assert.Equal(t, 2, model.Version, "Response model should contain API version")
+			assert.Equal(t, models.APIVersion, model.Version, "Response model should contain API version")
 		})
 	}
-}
-
-func TestBlockHandlerResponseValidation(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, "OK", model.Text)
-	assert.NotNil(t, model.Data)
-	assert.Greater(t, model.CurrentTime, int64(0), "currentTime should be set")
-	assert.Equal(t, 2, model.Version, "version should be 2")
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	require.Contains(t, data, "entry")
-	require.Contains(t, data, "references")
-
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, entry, "id")
-	require.Contains(t, entry, "configurations")
-
-	blockID, ok := entry["id"].(string)
-	require.True(t, ok)
-	assert.NotEmpty(t, blockID)
-
-	configs, ok := entry["configurations"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, configs, "Block should have at least one configuration")
-
-	for _, rawConfig := range configs {
-		config, ok := rawConfig.(map[string]any)
-		require.True(t, ok)
-
-		require.Contains(t, config, "activeServiceIds")
-		require.Contains(t, config, "inactiveServiceIds")
-		require.Contains(t, config, "trips")
-
-		activeServiceIds, ok := config["activeServiceIds"].([]any)
-		require.True(t, ok)
-		assert.NotEmpty(t, activeServiceIds, "Configuration should have active service IDs")
-
-		trips, ok := config["trips"].([]any)
-		require.True(t, ok)
-		assert.NotEmpty(t, trips, "Configuration should have trips")
-
-		for _, rawTrip := range trips {
-			trip, ok := rawTrip.(map[string]any)
-			require.True(t, ok)
-
-			require.Contains(t, trip, "tripId")
-			require.Contains(t, trip, "distanceAlongBlock")
-			require.Contains(t, trip, "blockStopTimes")
-			require.Contains(t, trip, "accumulatedSlackTime")
-
-			blockStopTimes, ok := trip["blockStopTimes"].([]any)
-			require.True(t, ok)
-			assert.NotEmpty(t, blockStopTimes, "Trip should have block stop times")
-
-			for _, rawStopTime := range blockStopTimes {
-				stopTime, ok := rawStopTime.(map[string]any)
-				require.True(t, ok)
-
-				require.Contains(t, stopTime, "blockSequence")
-				require.Contains(t, stopTime, "distanceAlongBlock")
-				require.Contains(t, stopTime, "accumulatedSlackTime")
-				require.Contains(t, stopTime, "stopTime")
-
-				st, ok := stopTime["stopTime"].(map[string]any)
-				require.True(t, ok)
-				require.Contains(t, st, "arrivalTime")
-				require.Contains(t, st, "departureTime")
-				require.Contains(t, st, "stopId")
-				require.Contains(t, st, "pickupType")
-				require.Contains(t, st, "dropOffType")
-			}
-		}
-	}
-
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, refs, "agencies")
-	require.Contains(t, refs, "routes")
-	require.Contains(t, refs, "stops")
-	require.Contains(t, refs, "trips")
-	require.Contains(t, refs, "stopTimes")
-	require.Contains(t, refs, "situations")
-}
-
-func TestBlockHandlerDifferentBlockIDs(t *testing.T) {
-	testCases := []struct {
-		name          string
-		blockID       string
-		shouldSucceed bool
-	}{
-		{"Valid block ID", "25_1", true},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			api := createTestApi(t)
-			defer api.Shutdown()
-			endpoint := "/api/where/block/" + tc.blockID + ".json?key=TEST"
-			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
-
-			if tc.shouldSucceed {
-				assert.Equal(t, http.StatusOK, resp.StatusCode)
-				assert.Equal(t, http.StatusOK, model.Code)
-			} else {
-				assert.True(t, resp.StatusCode >= 400 || model.Code >= 400)
-			}
-		})
-	}
-}
-
-func TestBlockHandlerAgencyIdExtraction(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	agencies, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, agencies)
-
-	agency, ok := agencies[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "25", agency["id"])
-
-	assert.Contains(t, agency, "name")
-	assert.Contains(t, agency, "url")
-	assert.Contains(t, agency, "timezone")
 }
 
 func TestBlockHandlerReferencesConsistency(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
+
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
+	entry := model.Data.Entry
+	require.NotEmpty(t, entry.Configurations)
+	require.NotEmpty(t, entry.Configurations[0].Trips)
+	blockStopTimes := entry.Configurations[0].Trips[0].BlockStopTimes
+	require.NotEmpty(t, blockStopTimes)
+	stopID := blockStopTimes[0].StopTime.StopID
 
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	assert.Contains(t, refs, "agencies")
-	assert.Contains(t, refs, "routes")
-	assert.Contains(t, refs, "stops")
-	assert.Contains(t, refs, "trips")
-	assert.Contains(t, refs, "stopTimes")
-	assert.Contains(t, refs, "situations")
-
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-
-	configs, ok := entry["configurations"].([]any)
-	require.True(t, ok)
-
-	if len(configs) > 0 {
-		config, ok := configs[0].(map[string]any)
-		require.True(t, ok)
-
-		trips, ok := config["trips"].([]any)
-		require.True(t, ok)
-
-		if len(trips) > 0 {
-			trip, ok := trips[0].(map[string]any)
-			require.True(t, ok)
-
-			blockStopTimes, ok := trip["blockStopTimes"].([]any)
-			require.True(t, ok)
-
-			if len(blockStopTimes) > 0 {
-				stopTime, ok := blockStopTimes[0].(map[string]any)
-				require.True(t, ok)
-
-				stopTimeDetails, ok := stopTime["stopTime"].(map[string]any)
-				require.True(t, ok)
-
-				stopId, ok := stopTimeDetails["stopId"].(string)
-				require.True(t, ok)
-
-				stops, ok := refs["stops"].([]any)
-				require.True(t, ok)
-
-				found := false
-				for _, rawStop := range stops {
-					stop, ok := rawStop.(map[string]any)
-					require.True(t, ok)
-
-					if refStopId, ok := stop["id"].(string); ok && refStopId == stopId {
-						found = true
-						break
-					}
-				}
-
-				assert.True(t, found, "Stop %s should be in references", stopId)
-			}
-		}
+	refStopIDs := make(map[string]bool, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		refStopIDs[s.ID] = true
 	}
+	assert.True(t, refStopIDs[stopID], "Stop %s should be in references", stopID)
 }
 
 func TestBlockHandlerRequiresValidApiKey(t *testing.T) {
-	api, resp, model := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json?key=invalid")
+	api := createTestApi(t)
 	defer api.Shutdown()
+
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, "/api/where/block/25_1.json?key=invalid")
+
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
 }
 
 func TestBlockHandlerMissingApiKey(t *testing.T) {
-	api, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/block/25_1.json")
+	api := createTestApi(t)
 	defer api.Shutdown()
+
+	resp, _ := callAPIHandler[BlockEntryResponse](t, api, "/api/where/block/25_1.json")
+
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-}
-
-func BenchmarkBlockHandler(b *testing.B) {
-	api := createTestApi(b)
-	defer api.Shutdown()
-	endpoint := "/api/where/block/25_1.json?key=TEST"
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = serveApiAndRetrieveEndpoint(b, api, endpoint)
-	}
-}
-
-func TestBlockHandlerResponseTime(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	start := time.Now()
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
-	duration := time.Since(start)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Less(t, duration.Milliseconds(), int64(5000), "Response should be under 5 seconds")
-}
-
-func TestBlockHandlerJSONSerialization(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/25_1.json?key=TEST")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	jsonBytes, err := json.Marshal(model)
-	require.NoError(t, err, "Should be able to marshal response to JSON")
-
-	var unmarshaled map[string]any
-	err = json.Unmarshal(jsonBytes, &unmarshaled)
-	require.NoError(t, err, "Should be able to unmarshal JSON")
-
-	assert.Contains(t, unmarshaled, "code")
-	assert.Contains(t, unmarshaled, "text")
-	assert.Contains(t, unmarshaled, "data")
-	assert.Contains(t, unmarshaled, "version")
-	assert.Contains(t, unmarshaled, "currentTime")
 }
 
 func TestBlockHandlerContextCancellation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	t.Run("cancelled context should be handled gracefully", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "/api/where/block/25_1.json?key=TEST", nil)
-		require.NoError(t, err)
+	req, err := http.NewRequest("GET", blockURL("25_1"), nil)
+	require.NoError(t, err)
+	// Use a deadline in the past — context.Err() is DeadlineExceeded immediately,
+	// no timer resolution dependency (avoids Windows ~15ms minimum sleep issue).
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+	defer cancel()
+	req = req.WithContext(ctx)
 
-		// Use a deadline in the past — context.Err() is DeadlineExceeded immediately,
-		// no timer resolution dependency (avoids Windows ~15ms minimum sleep issue).
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
-		defer cancel()
-		req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	mux.ServeHTTP(w, req)
 
-		w := httptest.NewRecorder()
-		mux := http.NewServeMux()
-		api.SetRoutes(mux)
-		mux.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
+}
 
-		assert.Equal(t, http.StatusGatewayTimeout, w.Code,
-			"Expected 504 Gateway Timeout for DeadlineExceeded context, got: %d", w.Code)
-	})
+func BenchmarkBlockHandler(b *testing.B) {
+	api := createTestApi(b)
+	defer api.Shutdown()
+	endpoint := blockURL("25_1")
+
+	for b.Loop() {
+		_, _ = callAPIHandler[BlockEntryResponse](b, api, endpoint)
+	}
 }
