@@ -266,6 +266,12 @@ func TestStopHandler_StopCodeFallback(t *testing.T) {
 	// The code field must fall back to the raw stopID (the entity portion of the
 	// combined ID), NOT the full combined ID like "FallbackAgency_StopNoCode".
 	assert.Equal(t, stopID, model.Data.Entry.Code)
+
+	// Additional assertions for defaults and empty fields
+	assert.Equal(t, "", model.Data.Entry.Direction, "direction should default to empty string when absent")
+	assert.Equal(t, 0, model.Data.Entry.LocationType, "locationType should default to 0 when absent")
+	assert.Empty(t, model.Data.References.Stops, "references.stops should be empty when there is no parent station")
+	assert.Equal(t, model.Data.Entry.RouteIDs, model.Data.Entry.StaticRouteIDs, "staticRouteIds should inherit from routeIds when no static list is provided")
 }
 
 // TestStopHandler_ParentStation verifies that when a stop has a parent_station
@@ -353,4 +359,7 @@ func TestStopHandler_ParentStation(t *testing.T) {
 
 	// entry.id must be the child stop, not the parent
 	assert.Equal(t, utils.FormCombinedID(agencyID, childStopID), model.Data.Entry.ID)
+
+	// Verify non-default locationType on the parent reference
+	assert.Equal(t, 1, model.Data.References.Stops[0].LocationType, "parent stop should correctly retain locationType=1")
 }
