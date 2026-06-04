@@ -22,7 +22,7 @@ func (api *RestAPI) stopIDsForAgencyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if agency == nil {
-		api.sendNull(w, r)
+		api.sendNotFound(w, r)
 		return
 	}
 
