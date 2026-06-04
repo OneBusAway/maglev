@@ -271,6 +271,8 @@ func TestStopHandler_StopCodeFallback(t *testing.T) {
 	assert.Equal(t, "", model.Data.Entry.Direction, "direction should default to empty string when absent")
 	assert.Equal(t, 0, model.Data.Entry.LocationType, "locationType should default to 0 when absent")
 	assert.Empty(t, model.Data.References.Stops, "references.stops should be empty when there is no parent station")
+	require.NotEmpty(t, model.Data.Entry.RouteIDs, "routeIds should contain seeded route")
+	assert.Contains(t, model.Data.Entry.RouteIDs, utils.FormCombinedID(agencyID, routeID))
 	assert.Equal(t, model.Data.Entry.RouteIDs, model.Data.Entry.StaticRouteIDs, "staticRouteIds should inherit from routeIds when no static list is provided")
 }
 
