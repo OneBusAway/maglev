@@ -108,8 +108,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
-		// Unknown agency (e.g. wrong case in the URL like "hsr_2543" when the
-		// agency_id is "HSR") is a client error — surface 404 instead of 500.
+		// Unknown agency (e.g. wrong-case agency in the URL) is a client
+		// error — surface 404 instead of 500.
 		if errors.Is(err, sql.ErrNoRows) {
 			api.sendNotFound(w, r)
 		} else {
@@ -339,6 +339,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			int64(st.StopSequence),
 			schedArrTime,
 			schedDepTime,
+			params.Time,
 		)
 
 		if isPredicted {
@@ -646,8 +647,16 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
-	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: 10000, LatSpan: 100, LonSpan: 100}
-	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, 5)
+	// Mirrors Java: StopWithArrivalsAndDeparturesBeanServiceImpl calls
+	// NearbyStopsBeanService with radius=100 m and no count limit
+	// (StopWithArrivalsAndDeparturesBeanServiceImpl.java:74-75 +
+	// NearbyStopsBeanServiceImpl.java:60-72). LatSpan/LonSpan must stay
+	// zero so BoundsFromParams uses Radius — otherwise span-in-degrees
+	// takes precedence and produces a city-sized bounding box.
+	const nearbyRadiusMeters = 100
+	const nearbyLimit = 0 // 0 = no cap
+	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: nearbyRadiusMeters}
+	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, nearbyLimit)
 	if len(nearbyIDs) == 0 {
 		return nil
 	}
