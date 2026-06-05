@@ -1001,32 +1001,10 @@ func (api *RestAPI) addStopReferences(ctx context.Context, state *locationArriva
 		if !ok {
 			continue
 		}
-		ag := state.stopAgencyMap[sid]
-		if ag == "" {
-			ag = state.stopAgencyOverride[sid]
-		}
-		if ag == "" {
-			ag = state.fallbackAgencyID
-		}
-		routesForStop := routesByStop[sid]
-		combinedRouteIDs := make([]string, len(routesForStop))
-		for i, rr := range routesForStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(rr.AgencyID, rr.ID)
-			if _, exists := state.routeIDSet[rr.ID]; !exists {
-				rc := gtfsdb.Route{
-					ID:        rr.ID,
-					AgencyID:  rr.AgencyID,
-					ShortName: rr.ShortName,
-					LongName:  rr.LongName,
-					Desc:      rr.Desc,
-					Type:      rr.Type,
-					Url:       rr.Url,
-					Color:     rr.Color,
-					TextColor: rr.TextColor,
-				}
-				state.routeIDSet[rr.ID] = &rc
-			}
-		}
+
+		ag := resolveAgencyForStop(sid, state)
+		combinedRouteIDs := processRoutesForStop(routesByStop[sid], state)
+
 		references.Stops = append(references.Stops, models.Stop{
 			ID:                 utils.FormCombinedID(ag, stopData.ID),
 			Name:               stopData.Name.String,
@@ -1041,6 +1019,38 @@ func (api *RestAPI) addStopReferences(ctx context.Context, state *locationArriva
 		})
 	}
 	return nil
+}
+
+func resolveAgencyForStop(sid string, state *locationArrivalsState) string {
+	if ag := state.stopAgencyMap[sid]; ag != "" {
+		return ag
+	}
+	if ag := state.stopAgencyOverride[sid]; ag != "" {
+		return ag
+	}
+	return state.fallbackAgencyID
+}
+
+func processRoutesForStop(routesForStop []gtfsdb.GetRoutesForStopsRow, state *locationArrivalsState) []string {
+	combinedRouteIDs := make([]string, len(routesForStop))
+	for i, rr := range routesForStop {
+		combinedRouteIDs[i] = utils.FormCombinedID(rr.AgencyID, rr.ID)
+		if _, exists := state.routeIDSet[rr.ID]; !exists {
+			rc := gtfsdb.Route{
+				ID:        rr.ID,
+				AgencyID:  rr.AgencyID,
+				ShortName: rr.ShortName,
+				LongName:  rr.LongName,
+				Desc:      rr.Desc,
+				Type:      rr.Type,
+				Url:       rr.Url,
+				Color:     rr.Color,
+				TextColor: rr.TextColor,
+			}
+			state.routeIDSet[rr.ID] = &rc
+		}
+	}
+	return combinedRouteIDs
 }
 
 func (api *RestAPI) buildLocationQueriedStopIDs(stops []gtfsdb.Stop, state *locationArrivalsState) []string {
