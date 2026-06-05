@@ -344,7 +344,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime, currentTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -599,10 +599,13 @@ func (api *RestAPI) getPredictedTimes(
 	stopCode string,
 	targetStopSequence int64,
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
+	currentTime time.Time,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	// trip-level delay exists but StopTimeUpdates is empty
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	if !isTripActive(*realTimeTrip, currentTime) {
 		return time.Time{}, time.Time{}, false
 	}
 

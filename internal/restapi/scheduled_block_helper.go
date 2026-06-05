@@ -87,9 +87,9 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 	slices.SortFunc(trips, func(a, b blockTripData) int {
 		return cmp.Compare(a.firstSeconds, b.firstSeconds)
 	})
-	// Some feeds (Unitrans) reuse one block_id across every bus in a day,
-	// producing overlapping trip windows. Java's bundle build splits these
-	// into per-shift BlockConfigurationEntries; we replicate at query time.
+	// Some feeds reuse one block_id across every bus in a day. Java's
+	// bundle build splits these into per-shift BlockConfigurationEntries;
+	// we replicate at query time.
 	trips = keepShiftContainingTrip(trips, targetTripID)
 	if len(trips) == 0 {
 		return nil
@@ -158,9 +158,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, a
 		if i == activeIdx {
 			activeTripOffset = cumulativeBlockDist
 		}
-		// TODO(perf): hoist this out of the loop — block trips overlap heavily
-		// in stops (a loop route hits the same ~40 stops twice). Fetch the
-		// union of stop IDs across all trips once before the loop.
+		// TODO(perf): hoist out of the loop; fetch the union of stop IDs once.
 		stopByID := api.fetchStopCoordsForStopTimes(ctx, t.stopTimes)
 		tripStopDistances := projectStopsInSequence(t.stopTimes, stopByID, t.shapePoints, t.cumDistances)
 		for k, st := range t.stopTimes {
@@ -319,9 +317,7 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 // loadBlockTripData fetches stop_times + shape for each tripID and bundles them.
 // Skips trips with no stop times or unusable shape data.
 //
-// TODO(perf): 2N round-trips. Replace with batched GetStopTimesForTrips and
-// GetShapePointsForTrips sqlc queries that fetch all trips in two queries
-// total. See arrivals-bugs/snapshot-performance-followup.md.
+// TODO(perf): 2N round-trips; batch via GetStopTimesForTrips / GetShapePointsForTrips.
 func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []blockTripData {
 	out := make([]blockTripData, 0, len(tripIDs))
 	for _, id := range tripIDs {
@@ -329,12 +325,9 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 		if err != nil || len(stopTimes) == 0 {
 			continue
 		}
-		// TODO(correctness): shape errors and <2-point shapes are swallowed
-		// here. The trip is still appended with totalDist=0, so its stops get
-		// zero DistanceAlongTrip and the next block trip starts at the same
-		// cumulativeBlockDist — wrong for distance, but block_sequence stays
-		// consistent. A stop-only Haversine fallback would be the correct fix
-		// but requires hoisting stop coords out of computeScheduledBlockSnapshot.
+		// TODO(correctness): shape errors leave totalDist=0 — trip is still
+		// appended so block_sequence stays consistent, but its DistanceAlongTrip
+		// values are zero. Stop-only Haversine fallback would fix this.
 		shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, id)
 		shapePoints := shapeRowsToPoints(shapeRows)
 		var cumDistances []float64

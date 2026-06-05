@@ -38,7 +38,14 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 	if len(tripUpdates) == 0 {
 		return 0, false
 	}
-	if dev, ok := pickTripLevelDeviation(tripUpdates); ok {
+	dev, ok, discard := pickTripLevelDeviation(tripUpdates)
+	if discard {
+		// Java's blockNotActive guard fired: the entire VehicleLocationRecord
+		// would be discarded. We must NOT fall through to STU/per-stop paths —
+		// that would silently recover RT data Java treats as poisoned.
+		return 0, false
+	}
+	if ok {
 		return dev, true
 	}
 	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, currentTime); ok {
@@ -66,9 +73,15 @@ func (api *RestAPI) collectBlockTripUpdates(tripIDs []string) []tripUpdateForTri
 }
 
 // pickTripLevelDeviation implements Java's unconditional overwrite: LAST
-// trip-level delay across the block wins. Returns (0, false) when no
-// trip-level delay was set OR when |delay|>1h (Java's blockNotActive guard).
-func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool) {
+// trip-level delay across the block wins. Return values:
+//
+//   - (deviation, true,  false): valid trip-level delay, use it.
+//   - (0,         false, true):  Java's blockNotActive guard fired
+//     (|delay| > 1h). Caller must DISCARD — do not fall through to STU/per-stop
+//     paths, since Java drops the entire VehicleLocationRecord in this case.
+//   - (0,         false, false): no trip-level delay was seen; caller may try
+//     other strategies (closest-in-time STU, reverse-walk fallback).
+func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool, bool) {
 	var (
 		deviation int
 		found     bool
@@ -80,13 +93,13 @@ func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool) {
 		}
 	}
 	if !found {
-		return 0, false
+		return 0, false, false
 	}
 	const javaBlockNotActiveThreshold = 60 * 60
 	if deviation > javaBlockNotActiveThreshold || deviation < -javaBlockNotActiveThreshold {
-		return 0, false
+		return 0, false, true
 	}
-	return deviation, true
+	return deviation, true, false
 }
 
 // schedEntry captures one (stop_sequence, arrival, departure) tuple for a
@@ -120,22 +133,113 @@ func (api *RestAPI) loadScheduledForTrip(ctx context.Context) func(string) map[s
 }
 
 // matchScheduleEntry resolves the right scheduled (arr, dep) for an STU
-// against a stop_id's entries. Loop trips: prefer the entry matching the
-// STU's stop_sequence; fall back to the first occurrence.
-func matchScheduleEntry(entries []schedEntry, stuSeq *uint32) (schedArr, schedDep int64) {
+// against a stop_id's entries. Mirrors Java's getBlockStopTimeForStopTimeUpdate
+// (GtfsRealtimeTripLibrary.java:1125-1188):
+//
+//  1. If the STU has stop_sequence, prefer the entry with that sequence.
+//  2. Otherwise (loop trips, STU without sequence), pick the occurrence whose
+//     scheduled arr/dep is closest to stuRefSeconds — Java does
+//     Min<>(|stopTime.arrivalTime − time|, |stopTime.departureTime − time|).
+//  3. stuRefSeconds<=0 falls back to the first occurrence.
+func matchScheduleEntry(entries []schedEntry, stuSeq *uint32, stuRefSeconds int64) (schedArr, schedDep int64) {
 	if len(entries) == 0 {
 		return 0, 0
 	}
-	picked := entries[0]
 	if stuSeq != nil {
 		for _, e := range entries {
 			if e.seq == int64(*stuSeq) {
-				picked = e
-				break
+				return e.arr, e.dep
 			}
 		}
 	}
+	if len(entries) == 1 || stuRefSeconds <= 0 {
+		return entries[0].arr, entries[0].dep
+	}
+	picked := entries[0]
+	bestDelta := minAbs(picked.arr-stuRefSeconds, picked.dep-stuRefSeconds)
+	for _, e := range entries[1:] {
+		d := minAbs(e.arr-stuRefSeconds, e.dep-stuRefSeconds)
+		if d < bestDelta {
+			bestDelta = d
+			picked = e
+		}
+	}
 	return picked.arr, picked.dep
+}
+
+// stuReferenceTime returns the STU's approximate target time in seconds
+// since service-date midnight, used to disambiguate loop-trip stop_id
+// matches when no stop_sequence is provided. Mirrors Java's
+// getTimeForStopTimeUpdate (GtfsRealtimeTripLibrary.java:1197-1224).
+func stuReferenceTime(stu gtfs.StopTimeUpdate, serviceDate, currentTime time.Time) int64 {
+	if stu.Arrival != nil {
+		if stu.Arrival.Time != nil {
+			return stu.Arrival.Time.Unix() - serviceDate.Unix()
+		}
+		if stu.Arrival.Delay != nil {
+			return int64(currentTime.Sub(serviceDate).Seconds()) - int64(stu.Arrival.Delay.Seconds())
+		}
+	}
+	if stu.Departure != nil {
+		if stu.Departure.Time != nil {
+			return stu.Departure.Time.Unix() - serviceDate.Unix()
+		}
+		if stu.Departure.Delay != nil {
+			return int64(currentTime.Sub(serviceDate).Seconds()) - int64(stu.Departure.Delay.Seconds())
+		}
+	}
+	return -1
+}
+
+func minAbs(a, b int64) int64 {
+	if a < 0 {
+		a = -a
+	}
+	if b < 0 {
+		b = -b
+	}
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// isTripActive returns true if the trip update's StopTimeUpdate predictions
+// are still within a relevant time window. Mirrors Java's
+// GtfsRealtimeTripLibrary.isTripActive:
+//
+//	currentTime + 1h > firstPrediction  &&  lastPrediction > currentTime
+//
+// When the last prediction is entirely in the past, the trip update is
+// considered inactive and should not be consumed.
+func isTripActive(tu gtfs.Trip, currentTime time.Time) bool {
+	if len(tu.StopTimeUpdates) == 0 {
+		return false
+	}
+	windowFuture := int64(60 * 60)
+	currentUnix := currentTime.Unix()
+
+	var firstPrediction, lastPrediction int64 = -1, -1
+
+	firstSTU := tu.StopTimeUpdates[0]
+	if firstSTU.Arrival != nil && firstSTU.Arrival.Time != nil {
+		firstPrediction = firstSTU.Arrival.Time.Unix()
+	} else if firstSTU.Departure != nil && firstSTU.Departure.Time != nil {
+		firstPrediction = firstSTU.Departure.Time.Unix()
+	}
+
+	lastSTU := tu.StopTimeUpdates[len(tu.StopTimeUpdates)-1]
+	if lastSTU.Departure != nil && lastSTU.Departure.Time != nil {
+		lastPrediction = lastSTU.Departure.Time.Unix()
+	} else if lastSTU.Arrival != nil && lastSTU.Arrival.Time != nil {
+		lastPrediction = lastSTU.Arrival.Time.Unix()
+	}
+
+	if firstPrediction < 0 || lastPrediction < 0 {
+		return false
+	}
+
+	return currentUnix+windowFuture > firstPrediction && lastPrediction > currentUnix
 }
 
 // stuPredictedFromArrival computes the predicted arrival-seconds-since-midnight
@@ -179,11 +283,15 @@ func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []t
 	picker := newSTUDeviationPicker(utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate))
 
 	for _, t := range tripUpdates {
+		if !isTripActive(t.tu, currentTime) {
+			continue
+		}
 		schedMap := loadScheduled(t.tripID)
 		for _, stu := range t.tu.StopTimeUpdates {
 			var schedArr, schedDep int64
 			if stu.StopID != nil {
-				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence)
+				refTime := stuReferenceTime(stu, serviceDate, currentTime)
+				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence, refTime)
 			}
 			picker.consider(schedArr, stuPredictedFromArrival(stu, schedArr, serviceDate))
 			picker.consider(schedDep, stuPredictedFromDeparture(stu, schedDep, serviceDate))
@@ -287,12 +395,17 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 
 // GetStopDelaysFromTripUpdates returns a map of stop ID → per-stop delay information
 // (arrival and departure delays in seconds) derived from the GTFS-RT StopTimeUpdates
-// for the given trip. Returns an empty map when no real-time data is available.
-func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopDelayInfo {
+// for the given trip. Returns an empty map when no real-time data is available or the
+// trip update is inactive (all predictions are in the past).
+func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string, currentTime time.Time) map[string]StopDelayInfo {
 	delays := make(map[string]StopDelayInfo)
 
 	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
 	if len(tripUpdates) == 0 {
+		return delays
+	}
+
+	if !isTripActive(tripUpdates[0], currentTime) {
 		return delays
 	}
 
