@@ -149,11 +149,39 @@ func TestGetScheduleDeviation_BlockNotActiveDiscardsBogusDelay(t *testing.T) {
 	assert.False(t, hasData, "negative delays beyond -1h must also be discarded")
 }
 
+// TestGetScheduleDeviation_BlockNotActiveDoesNotFallThroughToSTU regresses
+// the bug where blockNotActive returning (0,false) caused the caller to
+// fall through to pickClosestSTUDeviation, surfacing per-stop delays from
+// a record Java would have discarded.
+func TestGetScheduleDeviation_BlockNotActiveDoesNotFallThroughToSTU(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// Bogus trip-level delay alongside a sane per-STU delay: the STU path
+	// must NOT recover the per-stop value when blockNotActive has fired.
+	bogus := 41 * time.Hour
+	stop := "stop-A"
+	stuDelay := 130 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopID: &stop, Arrival: &gtfs.StopTimeEvent{Delay: &stuDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-bogus-with-stu", &bogus, updates)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(
+		context.Background(), []string{"trip-bogus-with-stu"}, devDate, devNow,
+	)
+	assert.Equal(t, 0, deviation,
+		"blockNotActive must discard the entire record — not fall through to STU")
+	assert.False(t, hasData,
+		"hasData=false signals the caller to skip the deviation shift entirely")
+}
+
 func TestGetStopDelaysFromTripUpdates_NoUpdates(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	delays := api.GetStopDelaysFromTripUpdates("no-such-trip")
+	delays := api.GetStopDelaysFromTripUpdates("no-such-trip", devNow)
 	assert.Empty(t, delays)
 }
 
@@ -163,13 +191,14 @@ func TestGetStopDelaysFromTripUpdates_WithArrivalDelay(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	stopID := "stop-A"
+	futureTime := devNow.Add(30 * time.Minute)
 	arrivalDelay := 45 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay}},
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Time: &futureTime, Delay: &arrivalDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-arrival", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-arrival")
+	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-arrival", devNow)
 	assert.Len(t, delays, 1)
 	assert.Equal(t, int64(45), delays["stop-A"].ArrivalDelay)
 	assert.Equal(t, int64(0), delays["stop-A"].DepartureDelay)
@@ -181,13 +210,14 @@ func TestGetStopDelaysFromTripUpdates_WithDepartureDelay(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	stopID := "stop-B"
+	futureTime := devNow.Add(30 * time.Minute)
 	departureDelay := 75 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{StopID: &stopID, Departure: &gtfs.StopTimeEvent{Delay: &departureDelay}},
+		{StopID: &stopID, Departure: &gtfs.StopTimeEvent{Time: &futureTime, Delay: &departureDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-departure", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-departure")
+	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-departure", devNow)
 	assert.Len(t, delays, 1)
 	assert.Equal(t, int64(0), delays["stop-B"].ArrivalDelay)
 	assert.Equal(t, int64(75), delays["stop-B"].DepartureDelay)
@@ -198,13 +228,14 @@ func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopID(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
+	futureTime := devNow.Add(30 * time.Minute)
 	arrivalDelay := 30 * time.Second
 	updates := []gtfs.StopTimeUpdate{
-		{StopID: nil, Arrival: &gtfs.StopTimeEvent{Delay: &arrivalDelay}},
+		{StopID: nil, Arrival: &gtfs.StopTimeEvent{Time: &futureTime, Delay: &arrivalDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-nil-stopid", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-nil-stopid")
+	delays := api.GetStopDelaysFromTripUpdates("trip-nil-stopid", devNow)
 	assert.Empty(t, delays, "stop updates without StopID should be skipped")
 }
 
@@ -214,13 +245,14 @@ func TestGetStopDelaysFromTripUpdates_IncludesStopWithZeroDelays(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	stopID := "stop-C"
+	futureTime := devNow.Add(30 * time.Minute)
 	zeroDelay := time.Duration(0)
 	updates := []gtfs.StopTimeUpdate{
-		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &zeroDelay}},
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Time: &futureTime, Delay: &zeroDelay}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-zero-delays", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-zero-delays")
+	delays := api.GetStopDelaysFromTripUpdates("trip-zero-delays", devNow)
 	assert.Len(t, delays, 1, "stops with zero delays should be included")
 	assert.Contains(t, delays, "stop-C")
 	assert.Equal(t, int64(0), delays["stop-C"].ArrivalDelay)
@@ -286,17 +318,18 @@ func TestGetStopDelaysFromTripUpdates_MultipleStops(t *testing.T) {
 	stopA := "stop-A"
 	stopB := "stop-B"
 	stopC := "stop-C"
+	futureTime := devNow.Add(30 * time.Minute)
 	delayA := 30 * time.Second
 	delayB := 60 * time.Second
 
 	updates := []gtfs.StopTimeUpdate{
-		{StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &delayA}},
+		{StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Time: &futureTime, Delay: &delayA}},
 		{StopID: &stopB, Departure: &gtfs.StopTimeEvent{Delay: &delayB}},
-		{StopID: &stopC},
+		{StopID: &stopC, Arrival: &gtfs.StopTimeEvent{Time: &futureTime}},
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-multi-stops", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-multi-stops")
+	delays := api.GetStopDelaysFromTripUpdates("trip-multi-stops", devNow)
 	assert.Len(t, delays, 3, "all stops with StopID should be included")
 	assert.Equal(t, int64(30), delays["stop-A"].ArrivalDelay)
 	assert.Equal(t, int64(60), delays["stop-B"].DepartureDelay)
