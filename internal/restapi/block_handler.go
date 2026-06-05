@@ -51,19 +51,25 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID)
-
 	references, err := api.getReferences(ctx, agencyID, block)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
 
+	// Extract TimeZone from the generated references to avoid a duplicate DB call
+	var timeZone string
+	if len(references.Agencies) > 0 {
+		timeZone = references.Agencies[0].Timezone
+	}
+
+	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID, timeZone)
+
 	response := models.NewEntryResponse(blockEntry, references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
-func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID string) models.BlockEntry {
+func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID, timezone string) models.BlockEntry {
 	serviceGroups := make(map[string][]gtfsdb.GetBlockDetailsRow)
 
 	for _, row := range block {
@@ -86,6 +92,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 		config := &models.BlockConfiguration{
 			ActiveServiceIds:   []string{utils.FormCombinedID(agencyID, serviceID)},
 			InactiveServiceIds: []string{},
+			TimeZone:           timezone,
 			Trips:              make([]models.TripBlock, 0),
 		}
 

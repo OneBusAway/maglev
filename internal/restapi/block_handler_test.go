@@ -40,6 +40,10 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 	config := entry.Configurations[0]
 	require.NotEmpty(t, config.ActiveServiceIds)
 	assert.Contains(t, config.ActiveServiceIds[0], "_", "service IDs should be combined with agency prefix")
+
+	// Verify TimeZone is populated with the correct agency timezone
+	assert.Equal(t, testdata.Raba.Timezone, config.TimeZone, "timeZone should match the agency's timezone")
+
 	require.NotEmpty(t, config.Trips)
 
 	trip := config.Trips[0]
@@ -50,6 +54,7 @@ func TestBlockHandlerEndToEnd(t *testing.T) {
 	// Iterate every config/trip/stop-time — catches empty IDs in less-common configurations.
 	for _, c := range entry.Configurations {
 		assert.NotEmpty(t, c.ActiveServiceIds)
+		assert.NotEmpty(t, c.TimeZone, "timeZone should be populated for all configurations")
 		assert.NotEmpty(t, c.Trips)
 		for _, tr := range c.Trips {
 			assert.NotEmpty(t, tr.TripId)
