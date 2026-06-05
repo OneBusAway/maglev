@@ -8,7 +8,7 @@ type BlockEntry struct {
 type BlockConfiguration struct {
 	ActiveServiceIds   []string    `json:"activeServiceIds"`
 	InactiveServiceIds []string    `json:"inactiveServiceIds"`
-	TimeZone           string      `json:"timezone"`
+	TimeZone           string      `json:"timeZone"`
 	Trips              []TripBlock `json:"trips"`
 }
 
