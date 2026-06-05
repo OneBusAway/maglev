@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
@@ -233,4 +235,50 @@ func BenchmarkBlockHandler(b *testing.B) {
 	for b.Loop() {
 		_, _ = callAPIHandler[BlockEntryResponse](b, api, endpoint)
 	}
+}
+
+func TestTransformBlockToEntry_GroupingAndSorting(t *testing.T) {
+	agencyID := "TEST"
+	blockID := "B1"
+	timezone := "America/Los_Angeles"
+
+	// Helper to quickly mock DB rows
+	makeRow := func(serviceID, tripID string, stopSeq int64) gtfsdb.GetBlockDetailsRow {
+		return gtfsdb.GetBlockDetailsRow{
+			ServiceID:    serviceID,
+			TripID:       tripID,
+			StopSequence: stopSeq,
+			StopID:       "S" + strconv.Itoa(int(stopSeq)), // Dummy stop ID
+		}
+	}
+
+	mockDBRows := []gtfsdb.GetBlockDetailsRow{
+		// S_B has a unique itinerary. (Group of 1)
+		makeRow("S_B", "T2", 1),
+
+		// S_A, S_C, and S_D share the exact same itinerary (T1 with 2 stops). (Group of 3)
+		makeRow("S_C", "T1", 1), makeRow("S_C", "T1", 2),
+		makeRow("S_A", "T1", 1), makeRow("S_A", "T1", 2),
+		makeRow("S_D", "T1", 1), makeRow("S_D", "T1", 2),
+
+		// S_E and S_F share another identical itinerary. (Group of 2)
+		makeRow("S_E", "T3", 1),
+		makeRow("S_F", "T3", 1),
+	}
+
+	// Execute our new grouping and sorting logic
+	entry := transformBlockToEntry(mockDBRows, blockID, agencyID, timezone)
+
+	// ASSERTIONS
+	require.Len(t, entry.Configurations, 3, "Should compress 6 service calendars into 3 distinct configurations")
+
+	// 1st config: Largest group (3 items). Ties broken by natural alphabetical sort.
+	assert.Equal(t, []string{"TEST_S_A", "TEST_S_C", "TEST_S_D"}, entry.Configurations[0].ActiveServiceIds)
+	assert.Equal(t, timezone, entry.Configurations[0].TimeZone)
+
+	// 2nd config: Next largest group (2 items).
+	assert.Equal(t, []string{"TEST_S_E", "TEST_S_F"}, entry.Configurations[1].ActiveServiceIds)
+
+	// 3rd config: Smallest group (1 item).
+	assert.Equal(t, []string{"TEST_S_B"}, entry.Configurations[2].ActiveServiceIds)
 }

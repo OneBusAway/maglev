@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"time"
@@ -82,19 +83,11 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID,
 	}
 	slices.Sort(serviceIDs)
 
-	configurations := make([]models.BlockConfiguration, 0, len(serviceGroups))
-
-	var blockDistance float64
+	// configurations will hold our grouped and distinct itineraries
+	var configurations []models.BlockConfiguration
 
 	for _, serviceID := range serviceIDs {
 		serviceStops := serviceGroups[serviceID]
-
-		config := &models.BlockConfiguration{
-			ActiveServiceIds:   []string{utils.FormCombinedID(agencyID, serviceID)},
-			InactiveServiceIds: []string{},
-			TimeZone:           timezone,
-			Trips:              make([]models.TripBlock, 0),
-		}
 
 		tripStops := make(map[string][]gtfsdb.GetBlockDetailsRow)
 		for _, stop := range serviceStops {
@@ -107,13 +100,48 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID,
 		}
 		slices.Sort(tripIDs)
 
+		var currentTrips []models.TripBlock
+		var blockDistance float64 // Reset block distance for each service configuration
+
+		// Build the trips for the current serviceID
 		for _, tripID := range tripIDs {
 			trip := buildTripBlock(tripStops[tripID], tripID, agencyID, &blockDistance)
-			config.Trips = append(config.Trips, trip)
+			currentTrips = append(currentTrips, trip)
 		}
 
-		configurations = append(configurations, *config)
+		// Check if this identical itinerary already exists in our configurations
+		found := false
+		combinedServiceID := utils.FormCombinedID(agencyID, serviceID)
+
+		for i := range configurations {
+			// If the sequence of trips and stop times is identical, group them together
+			if reflect.DeepEqual(configurations[i].Trips, currentTrips) {
+				configurations[i].ActiveServiceIds = append(configurations[i].ActiveServiceIds, combinedServiceID)
+				found = true
+				break
+			}
+		}
+
+		// If no matching itinerary was found, create a new configuration variant
+		if !found {
+			configurations = append(configurations, models.BlockConfiguration{
+				ActiveServiceIds:   []string{combinedServiceID},
+				InactiveServiceIds: []string{},
+				TimeZone:           timezone,
+				Trips:              currentTrips,
+			})
+		}
 	}
+
+	// Sort configurations based on the wiki spec requirements
+	slices.SortFunc(configurations, func(a, b models.BlockConfiguration) int {
+		// Primary Sort: Descending by the number of active service IDs
+		if len(a.ActiveServiceIds) != len(b.ActiveServiceIds) {
+			return cmp.Compare(len(b.ActiveServiceIds), len(a.ActiveServiceIds))
+		}
+		// Secondary Sort: Alphabetically by the first service ID to break ties predictably
+		return cmp.Compare(a.ActiveServiceIds[0], b.ActiveServiceIds[0])
+	})
 
 	return models.BlockEntry{
 		Configurations: configurations,
