@@ -418,9 +418,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				continue
 			}
 
-			situationIDs = append(situationIDs, alert.ID)
-			if _, seen := collectedAlerts[alert.ID]; !seen {
-				collectedAlerts[alert.ID] = alert
+			namespacedID := utils.FormCombinedID(route.AgencyID, alert.ID)
+			situationIDs = append(situationIDs, namespacedID)
+			if _, seen := collectedAlerts[namespacedID]; !seen {
+				alert.ID = namespacedID
+				collectedAlerts[namespacedID] = alert
 			}
 		}
 
@@ -602,8 +604,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	for _, alert := range api.GtfsManager.GetAlertsForStop(stopCode) {
 		if alert.ID != "" {
-			if _, seen := collectedAlerts[alert.ID]; !seen {
-				collectedAlerts[alert.ID] = alert
+			namespacedID := utils.FormCombinedID(stopAgencyID, alert.ID)
+			if _, seen := collectedAlerts[namespacedID]; !seen {
+				alert.ID = namespacedID
+				collectedAlerts[namespacedID] = alert
 			}
 		}
 	}

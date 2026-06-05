@@ -116,12 +116,12 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 			agencyID := getStringValue(entity.AgencyID)
 
 			rawRouteID := getStringValue(entity.RouteID)
-			if rawRouteID != "" {
+			if rawRouteID != "" && agencyID != "" {
 				rawRouteID = utils.FormCombinedID(agencyID, rawRouteID)
 			}
 
 			rawStopID := getStringValue(entity.StopID)
-			if rawStopID != "" {
+			if rawStopID != "" && agencyID != "" {
 				rawStopID = utils.FormCombinedID(agencyID, rawStopID)
 			}
 
@@ -134,7 +134,7 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 				TripID:        "",
 			}
 
-			if entity.TripID != nil && entity.TripID.ID != "" {
+			if entity.TripID != nil && entity.TripID.ID != "" && agencyID != "" {
 				affectedEntity.TripID = utils.FormCombinedID(agencyID, entity.TripID.ID)
 			}
 

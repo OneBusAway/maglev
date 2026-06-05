@@ -354,7 +354,11 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	api.collectStopLevelAlerts(stops, state)
 
-	references, topLevelSituationIDs := api.buildLocationReferencesBlock(ctx, state)
+	references, topLevelSituationIDs, refErr := api.buildLocationReferencesBlock(ctx, state)
+	if refErr != nil {
+		api.serverErrorResponse(w, r, refErr)
+		return
+	}
 	queriedStopIDs := api.buildLocationQueriedStopIDs(stops, state)
 	nearbyStops := getLocationNearbyStops(api, ctx, params.Lat, params.Lon)
 
@@ -460,7 +464,11 @@ func (api *RestAPI) collectArrivalsForLocationStop(ctx context.Context, w http.R
 
 	allActiveStopTimes, err := api.fetchActiveStopTimesForLocationWindow(ctx, spc, params)
 	if err != nil {
-		api.clientCanceledResponse(w, r, err)
+		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return err
 	}
 	if len(allActiveStopTimes) == 0 {
@@ -642,7 +650,12 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 	ctx := r.Context()
 	routesLookup, tripsLookup, tripStopCountMap, bErr := api.batchFetchLocationRoutesAndTrips(ctx, spc.StopCode, allActiveStopTimes)
 	if bErr != nil {
-		return false, nil
+		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
+			return false, ctx.Err()
+		}
+		api.serverErrorResponse(w, r, bErr)
+		return false, bErr
 	}
 
 	stopProducedArrival := false
@@ -876,13 +889,15 @@ func (api *RestAPI) sortLocationArrivalsByTime(arrivals []models.ArrivalAndDepar
 	})
 }
 
-func (api *RestAPI) buildLocationReferencesBlock(ctx context.Context, state *locationArrivalsState) (*models.ReferencesModel, []string) {
+func (api *RestAPI) buildLocationReferencesBlock(ctx context.Context, state *locationArrivalsState) (*models.ReferencesModel, []string, error) {
 	references := models.NewEmptyReferences()
 	addedAgencyIDs := make(map[string]bool)
 
 	api.addTripReferences(ctx, state, references)
 	api.addRouteAndAgencyReferences(ctx, state, references, addedAgencyIDs)
-	api.addStopReferences(ctx, state, references)
+	if err := api.addStopReferences(ctx, state, references); err != nil {
+		return nil, nil, err
+	}
 
 	topLevelSituationIDs := make([]string, 0, len(state.collectedAlerts))
 	if len(state.collectedAlerts) > 0 {
@@ -894,7 +909,7 @@ func (api *RestAPI) buildLocationReferencesBlock(ctx context.Context, state *loc
 		references.Situations = append(references.Situations, api.BuildSituationReferences(alertSlice)...)
 	}
 
-	return references, topLevelSituationIDs
+	return references, topLevelSituationIDs, nil
 }
 
 func (api *RestAPI) addTripReferences(ctx context.Context, state *locationArrivalsState, references *models.ReferencesModel) {
@@ -910,13 +925,24 @@ func (api *RestAPI) addTripReferences(ctx context.Context, state *locationArriva
 				continue
 			}
 		}
+
+		headsign := ""
+		if trip.TripHeadsign.Valid {
+			headsign = trip.TripHeadsign.String
+		}
+
+		direction := ""
+		if trip.DirectionID.Valid {
+			direction = strconv.FormatInt(trip.DirectionID.Int64, 10)
+		}
+
 		references.Trips = append(references.Trips, *models.NewTripReference(
 			utils.FormCombinedID(routeForTrip.AgencyID, trip.ID),
 			utils.FormCombinedID(routeForTrip.AgencyID, trip.RouteID),
 			utils.FormCombinedID(routeForTrip.AgencyID, trip.ServiceID),
-			trip.TripHeadsign.String,
+			headsign,
 			"",
-			strconv.FormatInt(trip.DirectionID.Int64, 10),
+			direction,
 			utils.FormCombinedID(routeForTrip.AgencyID, trip.BlockID.String),
 			utils.FormCombinedID(routeForTrip.AgencyID, trip.ShapeID.String),
 		))
@@ -948,10 +974,18 @@ func (api *RestAPI) addRouteAndAgencyReferences(ctx context.Context, state *loca
 	}
 }
 
-func (api *RestAPI) addStopReferences(ctx context.Context, state *locationArrivalsState, references *models.ReferencesModel) {
+func (api *RestAPI) addStopReferences(ctx context.Context, state *locationArrivalsState, references *models.ReferencesModel) error {
 	stopIDsSlice := stringMapKeys(state.stopIDSet)
-	batchStops, _ := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
-	batchRoutesForStops, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
+	batchStops, sErr := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
+	if sErr != nil {
+		api.Logger.Warn("failed to batch fetch stops for references", slog.Any("error", sErr))
+		return sErr
+	}
+	batchRoutesForStops, rErr := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
+	if rErr != nil {
+		api.Logger.Warn("failed to batch fetch routes for stop references", slog.Any("error", rErr))
+		return rErr
+	}
 
 	stopsMap := make(map[string]gtfsdb.Stop, len(batchStops))
 	for _, s := range batchStops {
@@ -1006,6 +1040,7 @@ func (api *RestAPI) addStopReferences(ctx context.Context, state *locationArriva
 			StaticRouteIDs:     combinedRouteIDs,
 		})
 	}
+	return nil
 }
 
 func (api *RestAPI) buildLocationQueriedStopIDs(stops []gtfsdb.Stop, state *locationArrivalsState) []string {

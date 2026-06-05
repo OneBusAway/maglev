@@ -46,7 +46,7 @@ func TestParseArrivalsAndDeparturesForLocationParams_CustomValues(t *testing.T) 
 	assert.Equal(t, 10, params.MinutesBefore)
 	assert.Equal(t, 60, params.MinutesAfter)
 	assert.Equal(t, 50, params.MaxCount)
-	assert.False(t, params.Time.IsZero())
+	assert.Equal(t, time.UnixMilli(1609459200000).UTC(), params.Time.UTC())
 }
 
 func TestParseArrivalsAndDeparturesForLocationParams_MissingLatLon(t *testing.T) {
@@ -476,6 +476,16 @@ func TestArrivalsAndDeparturesForLocationArrivalsAreSortedByTime(t *testing.T) {
 func TestArrivalsAndDeparturesForLocationLimitExceeded(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 12, 26, 14, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
+
+	// First verify unbounded returns > 1 arrival
+	_, unboundedModel := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500")
+	unboundedData, ok := unboundedModel.Data.(map[string]interface{})
+	require.True(t, ok)
+	unboundedEntry, ok := unboundedData["entry"].(map[string]interface{})
+	require.True(t, ok)
+	unboundedAds, _ := unboundedEntry["arrivalsAndDepartures"].([]interface{})
+	require.Greater(t, len(unboundedAds), 1, "unbounded request should return more than 1 arrival for test to be valid")
 
 	// maxCount=1 forces limitExceeded=true if there is more than 1 arrival.
 	resp, model := serveApiAndRetrieveEndpoint(t, api,

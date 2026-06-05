@@ -712,6 +712,11 @@ func (api *RestAPI) getPredictedTimes(
 }
 
 func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
+	activeTripID := GetVehicleActiveTripID(vehicle)
+	if activeTripID == "" {
+		activeTripID = targetTripID
+	}
+
 	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
 
 	if currentVehicleStopSequence == nil {
@@ -723,7 +728,7 @@ func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID strin
 			return nil
 		}
 		inferred := api.inferStopSequenceFromPosition(
-			ctx, targetTripID,
+			ctx, activeTripID,
 			float64(*vehicle.Position.Latitude),
 			float64(*vehicle.Position.Longitude),
 		)
@@ -731,11 +736,6 @@ func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID strin
 			return nil
 		}
 		currentVehicleStopSequence = inferred
-	}
-
-	activeTripID := GetVehicleActiveTripID(vehicle)
-	if activeTripID == "" {
-		activeTripID = targetTripID
 	}
 
 	targetGlobalSeq := api.getBlockSequenceForStopSequence(ctx, targetTripID, targetStopSequence, serviceDate)

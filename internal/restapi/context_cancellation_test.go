@@ -81,16 +81,14 @@ func TestContextCancellationHandling(t *testing.T) {
 			// If cancelled, we expect a timeout or cancellation error response
 			statusCode := w.Code
 
-			// Valid responses: 200 (completed), 401 (API validation), 500 (error), timeout-related,
+			// Valid responses: 200 (completed), 500 (error), timeout-related,
 			// or 404 (not found). Rate limit 429 is prevented by using an exempt key.
 			assert.True(t, statusCode == http.StatusOK ||
-				statusCode == http.StatusUnauthorized || // API key validation happens first
-				statusCode == http.StatusBadRequest ||
 				statusCode == http.StatusInternalServerError ||
 				statusCode == http.StatusRequestTimeout ||
 				statusCode == http.StatusGatewayTimeout ||
 				statusCode == http.StatusNotFound,
-				"Expected status 200, 401, 400, 404, 500, 408, or 504, got %d", statusCode)
+				"Expected status 200, 404, 500, 408, or 504, got %d", statusCode)
 		})
 	}
 }
@@ -101,7 +99,7 @@ func TestLongerTimeoutContextHandling(t *testing.T) {
 
 	// Test with a reasonable timeout that should allow completion
 	t.Run("reasonable timeout should complete successfully", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "/api/where/agencies-with-coverage.json?key=org.onebusaway.iphone", nil)
+		req, err := http.NewRequest("GET", "/api/where/agencies-with-coverage.json?key=TEST", nil)
 		require.NoError(t, err)
 
 		// Create context with reasonable timeout

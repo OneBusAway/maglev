@@ -77,6 +77,9 @@ func NewArrivalsAndDeparturesForLocationResponse(
 	if stopIds == nil {
 		stopIds = []string{}
 	}
+	if arrivalsAndDepartures == nil {
+		arrivalsAndDepartures = []ArrivalAndDeparture{}
+	}
 	entryData := map[string]any{
 		"arrivalsAndDepartures": arrivalsAndDepartures,
 		"limitExceeded":         limitExceeded,
