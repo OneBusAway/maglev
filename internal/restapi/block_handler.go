@@ -108,55 +108,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID,
 		slices.Sort(tripIDs)
 
 		for _, tripID := range tripIDs {
-			stops := tripStops[tripID]
-
-			slices.SortFunc(stops, func(a, b gtfsdb.GetBlockDetailsRow) int {
-				return cmp.Compare(a.StopSequence, b.StopSequence)
-			})
-
-			var blockStopTimes []models.BlockStopTime
-			tripStartDistance := blockDistance
-
-			for i, stop := range stops {
-				var distanceFromPrevious float64
-				if i > 0 {
-					prevStop := stops[i-1]
-					distanceFromPrevious = utils.Distance(
-						prevStop.Lat, prevStop.Lon,
-						stop.Lat, stop.Lon,
-					)
-					blockDistance += distanceFromPrevious
-				}
-
-				blockStopTime := models.BlockStopTime{
-					BlockSequence:      int(stop.StopSequence - 1),
-					DistanceAlongBlock: blockDistance,
-					StopTime: models.StopTime{
-						ArrivalTime:   models.NewModelDuration(time.Duration(stop.ArrivalTime)),
-						DepartureTime: models.NewModelDuration(time.Duration(stop.DepartureTime)),
-						DropOffType:   int(stop.DropOffType.Int64),
-						PickupType:    int(stop.PickupType.Int64),
-						StopID:        utils.FormCombinedID(agencyID, stop.StopID),
-					},
-				}
-				blockStopTimes = append(blockStopTimes, blockStopTime)
-			}
-
-			blockStopTimes = calculateBlockSlackTimes(blockStopTimes)
-
-			var tripAccumulatedSlack time.Duration
-			if len(blockStopTimes) > 0 {
-				tripAccumulatedSlack = blockStopTimes[len(blockStopTimes)-1].AccumulatedSlackTime.Duration
-			}
-
-			tripDistance := blockDistance - tripStartDistance
-
-			trip := models.TripBlock{
-				AccumulatedSlackTime: models.NewModelDuration(tripAccumulatedSlack),
-				BlockStopTimes:       blockStopTimes,
-				DistanceAlongBlock:   tripDistance,
-				TripId:               utils.FormCombinedID(agencyID, tripID),
-			}
+			trip := buildTripBlock(tripStops[tripID], tripID, agencyID, &blockDistance)
 			config.Trips = append(config.Trips, trip)
 		}
 
@@ -166,6 +118,56 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID,
 	return models.BlockEntry{
 		Configurations: configurations,
 		ID:             blockID,
+	}
+}
+
+func buildTripBlock(stops []gtfsdb.GetBlockDetailsRow, tripID, agencyID string, blockDistance *float64) models.TripBlock {
+	slices.SortFunc(stops, func(a, b gtfsdb.GetBlockDetailsRow) int {
+		return cmp.Compare(a.StopSequence, b.StopSequence)
+	})
+
+	var blockStopTimes []models.BlockStopTime
+	tripStartDistance := *blockDistance
+
+	for i, stop := range stops {
+		var distanceFromPrevious float64
+		if i > 0 {
+			prevStop := stops[i-1]
+			distanceFromPrevious = utils.Distance(
+				prevStop.Lat, prevStop.Lon,
+				stop.Lat, stop.Lon,
+			)
+			*blockDistance += distanceFromPrevious
+		}
+
+		blockStopTime := models.BlockStopTime{
+			BlockSequence:      int(stop.StopSequence - 1),
+			DistanceAlongBlock: *blockDistance,
+			StopTime: models.StopTime{
+				ArrivalTime:   models.NewModelDuration(time.Duration(stop.ArrivalTime)),
+				DepartureTime: models.NewModelDuration(time.Duration(stop.DepartureTime)),
+				DropOffType:   int(stop.DropOffType.Int64),
+				PickupType:    int(stop.PickupType.Int64),
+				StopID:        utils.FormCombinedID(agencyID, stop.StopID),
+			},
+		}
+		blockStopTimes = append(blockStopTimes, blockStopTime)
+	}
+
+	blockStopTimes = calculateBlockSlackTimes(blockStopTimes)
+
+	var tripAccumulatedSlack time.Duration
+	if len(blockStopTimes) > 0 {
+		tripAccumulatedSlack = blockStopTimes[len(blockStopTimes)-1].AccumulatedSlackTime.Duration
+	}
+
+	tripDistance := *blockDistance - tripStartDistance
+
+	return models.TripBlock{
+		AccumulatedSlackTime: models.NewModelDuration(tripAccumulatedSlack),
+		BlockStopTimes:       blockStopTimes,
+		DistanceAlongBlock:   tripDistance,
+		TripId:               utils.FormCombinedID(agencyID, tripID),
 	}
 }
 
