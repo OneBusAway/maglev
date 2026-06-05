@@ -134,8 +134,12 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 				TripID:        "",
 			}
 
-			if entity.TripID != nil && entity.TripID.ID != "" && agencyID != "" {
-				affectedEntity.TripID = utils.FormCombinedID(agencyID, entity.TripID.ID)
+			if entity.TripID != nil && entity.TripID.ID != "" {
+				if agencyID != "" {
+					affectedEntity.TripID = utils.FormCombinedID(agencyID, entity.TripID.ID)
+				} else {
+					affectedEntity.TripID = entity.TripID.ID
+				}
 			}
 
 			situation.AllAffects = append(situation.AllAffects, affectedEntity)
