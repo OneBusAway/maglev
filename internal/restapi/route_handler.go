@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -38,14 +37,7 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 
 	references := models.NewEmptyReferences()
 
-	// Parse includeReferences query parameter (default: true).
-	// When false, skip the agency lookup and return an empty agencies array.
-	includeReferences := true
-	if val := r.URL.Query().Get("includeReferences"); val != "" {
-		if parsed, parseErr := strconv.ParseBool(val); parseErr == nil {
-			includeReferences = parsed
-		}
-	}
+	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
 		agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
