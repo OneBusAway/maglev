@@ -48,9 +48,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 	var date int64
 	var targetDate string
-	var weekday string
-
-	if dateParam != "" {
 		var parsedDate time.Time
 
 		// Check if dateParam is a Unix timestamp (milliseconds)
@@ -60,7 +57,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			parsedDate = time.UnixMilli(unixMillis).In(loc)
 		} else {
 			// Check if dateParam is in YYYY-MM-DD
-			parsedDate, err := time.ParseInLocation("2006-01-02", dateParam, loc)
+			var err error
+			parsedDate, err = time.ParseInLocation("2006-01-02", dateParam, loc)
 			if err != nil {
 				fieldErrors := map[string][]string{
 					"date": {"Invalid date format. Use YYYY-MM-DD or a Unix millisecond integer"},
@@ -71,7 +69,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 			date = parsedDate.UnixMilli()
 		}
-
+		
 		targetDate = parsedDate.Format("20060102")
 		weekday = strings.ToLower(parsedDate.Weekday().String())
 	} else {
