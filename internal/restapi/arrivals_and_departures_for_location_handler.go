@@ -158,8 +158,19 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	params.Time = parseTimeParam(q, params.Time, addError)
 	parseMinutesCappedParam(q, "minutesBefore", maxMinutesBefore, &params.MinutesBefore, addError)
 	parseMinutesCappedParam(q, "minutesAfter", maxMinutesAfter, &params.MinutesAfter, addError)
-	parseMinutesUncappedParam(q, "frequencyMinutesBefore", &params.FrequencyMinutesBefore, addError)
-	parseMinutesUncappedParam(q, "frequencyMinutesAfter", &params.FrequencyMinutesAfter, addError)
+	
+	if q.Get("frequencyMinutesBefore") == "" {
+		params.FrequencyMinutesBefore = params.MinutesBefore
+	} else {
+		parseMinutesUncappedParam(q, "frequencyMinutesBefore", &params.FrequencyMinutesBefore, addError)
+	}
+
+	if q.Get("frequencyMinutesAfter") == "" {
+		params.FrequencyMinutesAfter = params.MinutesAfter
+	} else {
+		parseMinutesUncappedParam(q, "frequencyMinutesAfter", &params.FrequencyMinutesAfter, addError)
+	}
+
 	params.EmptyReturnsNotFound = parseEmptyReturnsNotFoundParam(q, addError)
 	params.RouteTypes = parseRouteTypesParam(q, addError)
 
