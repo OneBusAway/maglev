@@ -124,6 +124,29 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
 		if err == nil {
 			parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
+
+			// Sort parent routes naturally by ShortName
+			slices.SortFunc(parentRoutes, func(a, b gtfsdb.GetRoutesForStopRow) int {
+				nameA := a.ShortName.String
+				if nameA == "" {
+					nameA = a.LongName.String
+				}
+
+				nameB := b.ShortName.String
+				if nameB == "" {
+					nameB = b.LongName.String
+				}
+
+				res := utils.NaturalCompare(nameA, nameB)
+				if res != 0 {
+					return res
+				}
+				if a.AgencyID != b.AgencyID {
+					return cmp.Compare(a.AgencyID, b.AgencyID)
+				}
+				return cmp.Compare(a.ID, b.ID)
+			})
+
 			parentRouteIDs := make([]string, len(parentRoutes))
 			for i, r := range parentRoutes {
 				parentRouteIDs[i] = utils.FormCombinedID(r.AgencyID, r.ID)
