@@ -100,6 +100,11 @@ func ValidateSpan(span float64) error {
 	return nil
 }
 
+const (
+	minUnixMillis = int64(0)
+	maxUnixMillis = int64(32503680000000) // year 3000
+)
+
 // ValidateDate validates date strings in YYYY-MM-DD format or as a Unix millisecond integer
 func ValidateDate(date string) error {
 	// Empty dates are allowed (will default to current date)
@@ -108,7 +113,10 @@ func ValidateDate(date string) error {
 	}
 
 	// Parsing as an integer (Unix milliseconds)
-	if _, err := strconv.ParseInt(date, 10, 64); err == nil {
+	if v, err := strconv.ParseInt(date, 10, 64); err == nil {
+		if v < minUnixMillis || v > maxUnixMillis {
+			return errors.New("unix millisecond timestamp out of reasonable bounds")
+		}
 		return nil
 	}
 

@@ -444,6 +444,23 @@ func TestValidateDate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "zero timestamp",
+			date:    "0",
+			wantErr: false,
+		},
+		{
+			name:    "negative timestamp",
+			date:    "-1000",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "extremely large timestamp",
+			date:    "999999999999999999",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
 			name:    "empty date is valid",
 			date:    "",
 			wantErr: false,
