@@ -161,7 +161,7 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	params.Time = parseTimeParam(q, params.Time, addError)
 	parseMinutesCappedParam(q, "minutesBefore", maxMinutesBefore, &params.MinutesBefore, addError)
 	parseMinutesCappedParam(q, "minutesAfter", maxMinutesAfter, &params.MinutesAfter, addError)
-	
+
 	if q.Get("frequencyMinutesBefore") == "" {
 		params.FrequencyMinutesBefore = params.MinutesBefore
 	} else {
