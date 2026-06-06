@@ -49,6 +49,13 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		return nil, err
 	}
 
+	return buildRouteModels(ctx, agencyID, routes)
+}
+
+// buildRouteModels converts a slice of database routes into model routes.
+// It is the single source of truth for mapping gtfsdb.Route → models.Route,
+// used by both BuildRouteReferences and BuildRouteReference.
+func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Route) ([]models.Route, error) {
 	modelRoutes := make([]models.Route, 0, len(routes))
 	for _, route := range routes {
 		if ctx.Err() != nil {
@@ -56,23 +63,18 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		}
 
 		combinedID := utils.FormCombinedID(agencyID, route.ID)
-		nullSafeShortName := route.ShortName.String
-		if nullSafeShortName == "" {
-			nullSafeShortName = combinedID
-		}
 
-		routeModel := models.Route{
-			ID:                combinedID,
-			AgencyID:          agencyID,
-			ShortName:         route.ShortName.String,
-			LongName:          route.LongName.String,
-			Description:       route.Desc.String,
-			Type:              models.RouteType(route.Type),
-			URL:               route.Url.String,
-			Color:             route.Color.String,
-			TextColor:         route.TextColor.String,
-			NullSafeShortName: nullSafeShortName,
-		}
+		routeModel := models.NewRoute(
+			combinedID,
+			agencyID,
+			route.ShortName.String,
+			route.LongName.String,
+			route.Desc.String,
+			models.RouteType(route.Type),
+			route.Url.String,
+			route.Color.String,
+			route.TextColor.String,
+		)
 		modelRoutes = append(modelRoutes, routeModel)
 	}
 
