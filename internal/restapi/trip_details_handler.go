@@ -275,7 +275,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		references.Stops = stops
 
-		routes, err := api.BuildRouteReference(ctx, agencyID, stops)
+		routes, err := api.BuildRouteReferences(ctx, agencyID, stops)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -485,39 +485,4 @@ func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, st
 	}
 
 	return modelStops, nil
-}
-
-func (api *RestAPI) BuildRouteReference(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
-
-	routeIDSet := make(map[string]bool)
-	originalRouteIDs := make([]string, 0)
-
-	for _, stop := range stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		for _, routeID := range stop.StaticRouteIDs {
-			_, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				continue
-			}
-
-			if !routeIDSet[originalRouteID] {
-				routeIDSet[originalRouteID] = true
-				originalRouteIDs = append(originalRouteIDs, originalRouteID)
-			}
-		}
-	}
-
-	if len(originalRouteIDs) == 0 {
-		return []models.Route{}, nil
-	}
-
-	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, originalRouteIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildRouteModels(ctx, agencyID, routes)
 }

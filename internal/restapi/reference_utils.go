@@ -53,8 +53,7 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 }
 
 // buildRouteModels converts a slice of database routes into model routes.
-// It is the single source of truth for mapping gtfsdb.Route → models.Route,
-// used by both BuildRouteReferences and BuildRouteReference.
+// It is the single source of truth for mapping gtfsdb.Route → models.Route.
 func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Route) ([]models.Route, error) {
 	modelRoutes := make([]models.Route, 0, len(routes))
 	for _, route := range routes {
