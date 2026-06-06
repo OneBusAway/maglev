@@ -521,7 +521,7 @@ func (api *RestAPI) fetchActiveStopTimesForLocationWindow(
 
 func (api *RestAPI) batchFetchLocationRoutesAndTrips(
 	ctx context.Context, stopCode string, allActiveStopTimes []activeStopTime,
-) (map[string]gtfsdb.Route, map[string]gtfsdb.Trip, map[string]int, error) {
+) (map[string]gtfsdb.Route, map[string]gtfsdb.Trip, map[string]int, map[string]bool, error) {
 	batchRouteIDs := make(map[string]bool)
 	batchTripIDs := make(map[string]bool)
 	for _, ast := range allActiveStopTimes {
@@ -539,12 +539,12 @@ func (api *RestAPI) batchFetchLocationRoutesAndTrips(
 	fetchedRoutes, rErr := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, uniqueRouteIDs)
 	if rErr != nil {
 		api.Logger.Warn("failed to batch fetch routes", slog.String("stopID", stopCode), slog.Any("error", rErr))
-		return nil, nil, nil, rErr
+		return nil, nil, nil, nil, rErr
 	}
 	fetchedTrips, tErr := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
 	if tErr != nil {
 		api.Logger.Warn("failed to batch fetch trips", slog.String("stopID", stopCode), slog.Any("error", tErr))
-		return nil, nil, nil, tErr
+		return nil, nil, nil, nil, tErr
 	}
 
 	routesLookup := make(map[string]gtfsdb.Route, len(fetchedRoutes))
@@ -557,7 +557,20 @@ func (api *RestAPI) batchFetchLocationRoutesAndTrips(
 	}
 
 	tripStopCountMap := api.buildTripStopCountMap(ctx, uniqueTripIDs)
-	return routesLookup, tripsLookup, tripStopCountMap, nil
+
+	frequencyTripsMap := make(map[string]bool, len(uniqueTripIDs))
+	if len(uniqueTripIDs) > 0 {
+		freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, uniqueTripIDs)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch frequencies for trips", slog.Any("error", err))
+		} else {
+			for _, freq := range freqRows {
+				frequencyTripsMap[freq.TripID] = true
+			}
+		}
+	}
+
+	return routesLookup, tripsLookup, tripStopCountMap, frequencyTripsMap, nil
 }
 
 func (api *RestAPI) buildTripStopCountMap(ctx context.Context, uniqueTripIDs []string) map[string]int {
@@ -648,7 +661,7 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 	state *locationArrivalsState,
 ) (bool, error) {
 	ctx := r.Context()
-	routesLookup, tripsLookup, tripStopCountMap, bErr := api.batchFetchLocationRoutesAndTrips(ctx, spc.StopCode, allActiveStopTimes)
+	routesLookup, tripsLookup, tripStopCountMap, frequencyTripsMap, bErr := api.batchFetchLocationRoutesAndTrips(ctx, spc.StopCode, allActiveStopTimes)
 	if bErr != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
@@ -687,8 +700,10 @@ func (api *RestAPI) buildArrivalsFromLocationStopTimes(
 		tCopy := trip
 		state.tripIDSet[trip.ID] = &tCopy
 
-		api.buildSingleArrival(ctx, spc, ast, state, route, tripStopCountMap[st.TripID])
-		stopProducedArrival = true
+		added := api.buildSingleArrival(ctx, spc, ast, state, route, tripStopCountMap[st.TripID], frequencyTripsMap[st.TripID], params)
+		if added {
+			stopProducedArrival = true
+		}
 	}
 
 	return stopProducedArrival, nil
@@ -701,7 +716,9 @@ func (api *RestAPI) buildSingleArrival(
 	state *locationArrivalsState,
 	route gtfsdb.Route,
 	totalStopsInTrip int,
-) {
+	isFrequency bool,
+	params ArrivalsAndDeparturesForLocationParams,
+) bool {
 	st := ast.GetStopTimesForStopInWindowRow
 	ac := &arrivalContext{
 		st:               st,
@@ -722,6 +739,32 @@ func (api *RestAPI) buildSingleArrival(
 
 	if vehicle != nil {
 		api.applyTripStatus(ctx, ac, route, vehicle, spc.QueryTime, spc.StopCode, state)
+	}
+
+	// Secondary filter for exact time bounds based on predicted vs scheduled times
+	var tripBefore, tripAfter int
+	if isFrequency {
+		tripBefore = params.FrequencyMinutesBefore
+		tripAfter = params.FrequencyMinutesAfter
+	} else {
+		tripBefore = params.MinutesBefore
+		tripAfter = params.MinutesAfter
+	}
+
+	windowStart := params.Time.Add(-time.Duration(tripBefore) * time.Minute)
+	windowEnd := params.Time.Add(time.Duration(tripAfter) * time.Minute)
+
+	arrTimeForFilter := ac.scheduledArrivalTime
+	if ac.predicted {
+		arrTimeForFilter = ac.predictedArrivalTime
+	}
+	depTimeForFilter := ac.scheduledDepartureTime
+	if ac.predicted {
+		depTimeForFilter = ac.predictedDepartureTime
+	}
+
+	if depTimeForFilter.Before(windowStart) || arrTimeForFilter.After(windowEnd) {
+		return false
 	}
 
 	ac.blockTripSequence = api.calculateBlockTripSequence(ctx, ac.st.TripID, ac.serviceMidnight)
@@ -761,6 +804,8 @@ func (api *RestAPI) buildSingleArrival(
 		ac.tripStatus,
 		ac.situationIDs,
 	))
+
+	return true
 }
 
 func (api *RestAPI) applyPredictedTimes(ac *arrivalContext, stopCode string) {
