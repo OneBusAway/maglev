@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -237,20 +236,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	tripIDs := make([]string, 0, len(tripIDsSet))
-	for tripID := range tripIDsSet {
-		tripIDs = append(tripIDs, tripID)
-	}
-
-	var trips []gtfsdb.Trip
-	if len(tripIDs) > 0 {
-		trips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-	}
-
 	// Build the route schedules
 	var routeSchedules []models.StopRouteSchedule
 	for routeID, stopTimes := range routeScheduleMap {
@@ -279,21 +264,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	references := models.NewEmptyReferences()
 	references.Agencies = utils.MapValues(agencyRefs)
 	references.Routes = utils.MapValues(routeRefs)
-
-	for _, trip := range trips {
-		combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
-		tripRef := models.NewTripReference(
-			combinedTripID,
-			utils.FormCombinedID(agencyID, trip.RouteID),
-			utils.FormCombinedID(agencyID, trip.ServiceID),
-			trip.TripHeadsign.String,
-			trip.TripShortName.String,
-			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormCombinedID(agencyID, trip.BlockID.String),
-			utils.FormCombinedID(agencyID, trip.ShapeID.String),
-		)
-		references.Trips = append(references.Trips, *tripRef)
-	}
 
 	routeIDsWithAgency := make([]string, 0, len(routeIDs))
 	for _, ri := range routeIDs {
