@@ -435,3 +435,79 @@ func TestStopHandler_NaturalSorting(t *testing.T) {
 	}
 	assert.Equal(t, expectedRouteIDs, model.Data.Entry.RouteIDs, "Entry.RouteIDs should preserve natural order")
 }
+
+func TestStopHandler_ParentStationNaturalSorting(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	agencyID := "SortAgency"
+	parentStopID := "ParentStop"
+	childStopID := "ChildStop"
+
+	// Create Agency
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Sort Transit", Url: "http://sort.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	// Create Parent Stop
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: parentStopID, Name: nulls.String("Parent Stop"), Lat: 47.6, Lon: -122.3, LocationType: nulls.Int64(1),
+	})
+	require.NoError(t, err)
+
+	// Create Child Stop pointing to Parent Stop
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: childStopID, Name: nulls.String("Child Stop"), Lat: 47.6, Lon: -122.3, LocationType: nulls.Int64(0), ParentStation: nulls.String(parentStopID),
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: "serv1", Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1, StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+
+	// Create Routes for the PARENT stop intentionally out of natural order
+	routeNames := []string{"101", "B", "14", "2"}
+	for i, name := range routeNames {
+		routeID := "Route" + name
+		tripID := "Trip" + name
+
+		_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+			ID: routeID, AgencyID: agencyID, ShortName: nulls.String(name), Type: 3,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID: tripID, RouteID: routeID, ServiceID: "serv1",
+		})
+		require.NoError(t, err)
+
+		// Link routes to the PARENT stop
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: parentStopID, StopSequence: int64(i + 1), ArrivalTime: 30000, DepartureTime: 30000,
+		})
+		require.NoError(t, err)
+	}
+
+	// Call Endpoint for the CHILD stop
+	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(agencyID, childStopID)))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Find the parent stop in references.stops
+	require.Len(t, model.Data.References.Stops, 1, "Should include exactly one parent stop in references")
+	parentRef := model.Data.References.Stops[0]
+	assert.Equal(t, utils.FormCombinedID(agencyID, parentStopID), parentRef.ID)
+
+	// Assert that the parent station's RouteIDs are naturally sorted ("2" < "14" < "101" < "B")
+	expectedRouteIDs := []string{
+		utils.FormCombinedID(agencyID, "Route2"),
+		utils.FormCombinedID(agencyID, "Route14"),
+		utils.FormCombinedID(agencyID, "Route101"),
+		utils.FormCombinedID(agencyID, "RouteB"),
+	}
+	assert.Equal(t, expectedRouteIDs, parentRef.RouteIDs, "Parent station RouteIDs should preserve natural order")
+}
