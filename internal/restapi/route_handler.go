@@ -19,7 +19,15 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
-	if err != nil || route.ID == "" {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+			return
+		}
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if route.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}

@@ -1,12 +1,17 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
@@ -106,4 +111,36 @@ func TestRouteHandlerWithSituations(t *testing.T) {
 	require.Len(t, model.Data.References.Situations, 1,
 		"expected exactly one situation matching the seeded alert")
 	assert.Equal(t, alertID, model.Data.References.Situations[0].ID)
+}
+
+func TestRouteHandler_DatabaseError(t *testing.T) {
+	ctx := context.Background()
+	gtfsConfig := internalgtfs.Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := internalgtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	defer manager.Shutdown()
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.Test,
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:  gtfsConfig,
+		GtfsManager: manager,
+		Clock:       clock.RealClock{},
+	}
+	api := NewRestAPI(application)
+
+	// Close the database connection to trigger database errors.
+	err = manager.GtfsDB.Close()
+	require.NoError(t, err)
+
+	resp, model := callAPIHandler[RouteEntryResponse](t, api, routeURL("25_1"))
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
 }
