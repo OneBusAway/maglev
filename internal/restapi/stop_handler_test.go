@@ -280,7 +280,6 @@ func TestStopHandler_StopCodeFallback(t *testing.T) {
 // set, the handler:
 //  1. Sets entry.parent to FormCombinedID(agencyID, parentStopID)
 //  2. Includes the parent stop in references.stops
-//  3. Does NOT recursively resolve the parent's own parent field
 func TestStopHandler_ParentStation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -356,7 +355,6 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	require.Len(t, model.Data.References.Stops, 1, "expected exactly one stop in references")
 	assert.Equal(t, expectedParentCombinedID, model.Data.References.Stops[0].ID)
 
-	// The parent's own parent field must be empty — no recursive resolution per spec
 	assert.Equal(t, "", model.Data.References.Stops[0].Parent)
 
 	// entry.id must be the child stop, not the parent
