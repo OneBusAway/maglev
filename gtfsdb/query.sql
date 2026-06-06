@@ -502,7 +502,7 @@ FROM
 WHERE
     st.stop_id = ?
 ORDER BY
-    r.id, st.arrival_time;
+    r.id, st.departure_time;
 
 -- name: GetScheduleForStopOnDate :many
 SELECT
@@ -553,7 +553,7 @@ WHERE
     )
     AND r.id IN (sqlc.slice('route_ids'))
 ORDER BY
-    r.id, st.arrival_time;
+    r.id, st.departure_time;
 
 
 -- name: GetImportMetadata :one
