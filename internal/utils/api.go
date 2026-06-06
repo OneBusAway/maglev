@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -310,4 +311,35 @@ func ValidateNumericParam(s string) string {
 		return ""
 	}
 	return s
+}
+
+const (
+	minUnixMillis = int64(0)
+	maxUnixMillis = int64(32503680000000) // year 3000
+)
+
+// ParseDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
+// It returns a time.Time set to midnight (start of day) in the provided location.
+func ParseDate(date string, loc *time.Location) (time.Time, error) {
+	if date == "" {
+		return time.Time{}, errors.New("date cannot be empty")
+	}
+
+	// Parsing as an integer (Unix milliseconds)
+	if v, err := strconv.ParseInt(date, 10, 64); err == nil {
+		if v < minUnixMillis || v > maxUnixMillis {
+			return time.Time{}, errors.New("unix millisecond timestamp out of reasonable bounds")
+		}
+		// Convert to the provided timezone and explicitly set to midnight
+		t := time.UnixMilli(v).In(loc)
+		y, m, d := t.Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, loc), nil
+	}
+
+	// Parsing in YYYY-MM-DD format
+	if parsedDate, err := time.ParseInLocation("2006-01-02", date, loc); err == nil {
+		return parsedDate, nil
+	}
+
+	return time.Time{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
 }
