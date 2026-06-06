@@ -147,6 +147,9 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 	if len(locErrors) > 0 {
 		mergeFieldErrors(&fieldErrors, locErrors)
 	} else {
+		if loc.Radius == 0 && loc.LatSpan == 0 && loc.LonSpan == 0 {
+			loc.Radius = models.QuerySearchRadiusInMeters
+		}
 		params.Lat = loc.Lat
 		params.Lon = loc.Lon
 		params.Radius = loc.Radius
