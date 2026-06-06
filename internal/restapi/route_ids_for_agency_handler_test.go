@@ -43,8 +43,9 @@ func TestInvalidAgencyIdForRouteIds(t *testing.T) {
 
 	resp, model := callAPIHandler[RouteIDsForAgencyResponse](t, api, "/api/where/route-ids-for-agency/invalid.json?key=TEST")
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "", model.Text)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestMalformedAgencyIdForRouteIds(t *testing.T) {
