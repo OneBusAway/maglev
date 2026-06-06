@@ -68,8 +68,12 @@ func TestScheduleForStopHandler(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, tt.stopID, entry["stopId"])
 
-				loc, _ := time.LoadLocation(agencies[0].Timezone)
-				parsedTime, _ := time.ParseInLocation("2006-01-02", "2025-06-12", loc)
+				loc, err := time.LoadLocation(agencies[0].Timezone)
+				assert.NoError(t, err, "Should load agency timezone")
+
+				parsedTime, err := time.ParseInLocation("2006-01-02", "2025-06-12", loc)
+				assert.NoError(t, err, "Should parse test date")
+
 				expectedMillis := float64(parsedTime.UnixMilli())
 				assert.Equal(t, expectedMillis, entry["date"])
 
