@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -99,17 +100,21 @@ func ValidateSpan(span float64) error {
 	return nil
 }
 
-// ValidateDate validates date strings in YYYY-MM-DD format
+// ValidateDate validates date strings in YYYY-MM-DD format or as a Unix millisecond integer
 func ValidateDate(date string) error {
 	// Empty dates are allowed (will default to current date)
 	if date == "" {
 		return nil
 	}
 
-	// Parse date in YYYY-MM-DD format
-	_, err := time.Parse("2006-01-02", date)
-	if err != nil {
-		return errors.New("invalid date format, use YYYY-MM-DD")
+	// Parsing as an integer (Unix milliseconds)
+	if _, err := strconv.ParseInt(date, 10, 64); err == nil {
+		return nil
+	}
+
+	// Parsing in YYYY-MM-DD format
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
 	}
 
 	return nil

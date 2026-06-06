@@ -84,7 +84,7 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	// Test valid date parameter
-	t.Run("Valid date parameter", func(t *testing.T) {
+	t.Run("Valid date parameter in format YYYY-MM-DD", func(t *testing.T) {
 		// NOTE: Hardcoded date 2025-06-12 used for test consistency with GTFS data validity
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
@@ -98,6 +98,23 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 		assert.NotNil(t, entry["date"])
+	})
+
+	t.Run("Valid date parameter in format Unix Millisecond", func(t *testing.T) {
+		// NOTE: Hardcoded date 1749686400000 used for test consistency with GTFS data validity
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=1749686400000"
+		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.Equal(t, "OK", model.Text)
+
+		data, ok := model.Data.(map[string]any)
+		assert.True(t, ok)
+		entry, ok := data["entry"].(map[string]any)
+		assert.True(t, ok)
+		assert.NotNil(t, entry["date"])
+		assert.Equal(t, float64(1749686400000), entry["date"])
 	})
 }
 
