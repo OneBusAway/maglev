@@ -612,8 +612,6 @@ DELETE FROM routes;
 -- name: ClearAgencies :exec
 DELETE FROM agencies;
 
--- name: DeleteAgency :exec
-DELETE FROM agencies WHERE id = ?;
 
 -- Batch queries to solve N+1 problems
 
