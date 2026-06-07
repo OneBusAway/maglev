@@ -367,6 +367,13 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 
 		require.True(hasAgencies || hasRoutes, "At least one reference type should exist")
 
+		// trips must not contain full trip references for schedule-for-stop
+		if rawTrips, hasTrips := references["trips"]; hasTrips {
+			trips, ok := rawTrips.([]any)
+			require.True(ok, "references.trips should be an array when present")
+			require.Len(trips, 0, "references.trips must be empty for schedule-for-stop")
+		}
+
 		// Validate entry structure
 		entry, ok := data["entry"].(map[string]any)
 		require.True(ok, "Entry should exist")
