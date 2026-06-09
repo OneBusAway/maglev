@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -278,7 +277,7 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served
 // from local .pb files.
 func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func()) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, r *http.Request) {

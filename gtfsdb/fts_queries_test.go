@@ -1,7 +1,6 @@
 package gtfsdb
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -20,7 +19,7 @@ func createFTSTestClient(t *testing.T) *Client {
 	client, err := NewClient(config)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err = client.Queries.CreateAgency(ctx, CreateAgencyParams{
 		ID:       "agency1",
@@ -37,7 +36,7 @@ func TestSearchRoutesByFullText(t *testing.T) {
 	client := createFTSTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert test routes with varied fields to verify correct column scanning
 	routes := []CreateRouteParams{
@@ -193,7 +192,7 @@ func TestSearchRoutesByFullTextEmptyDB(t *testing.T) {
 	client := createFTSTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	results, err := client.Queries.SearchRoutesByFullText(ctx, SearchRoutesByFullTextParams{
 		Query: "anything",
@@ -207,7 +206,7 @@ func TestSearchStopsByName(t *testing.T) {
 	client := createFTSTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert test stops with varied fields to verify correct column scanning
 	stops := []CreateStopParams{
@@ -329,7 +328,7 @@ func TestSearchStopsByNameEmptyDB(t *testing.T) {
 	client := createFTSTestClient(t)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
 		SearchQuery: "anything",

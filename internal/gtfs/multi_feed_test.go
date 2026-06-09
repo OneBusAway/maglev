@@ -1,7 +1,6 @@
 package gtfs
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,7 +48,7 @@ func TestMultiFeedDataMerging(t *testing.T) {
 		Enabled:             true,
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	manager.updateFeedRealtime(ctx, feedA)
 	manager.updateFeedRealtime(ctx, feedB)
 
@@ -100,7 +99,7 @@ func TestStaleVehicleExpiry(t *testing.T) {
 		Enabled:             true,
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// First poll: seed vehicles from RABA feed via the production updateFeedRealtime path.
 	manager.updateFeedRealtime(ctx, feed)
@@ -157,7 +156,7 @@ func TestFeedIsolation(t *testing.T) {
 	defer server.Close()
 
 	manager := newTestManager()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Load feed-B with real vehicle data
 	feedB := RTFeedConfig{
@@ -225,7 +224,7 @@ func TestConcurrentFeedUpdates(t *testing.T) {
 		Enabled:             true,
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Run several rounds of concurrent updates to increase the chance of
 	// exposing races. The -race detector will catch any unsynchronised access.

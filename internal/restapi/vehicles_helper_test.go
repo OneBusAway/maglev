@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -125,7 +124,7 @@ func TestStaleDetector_ExactThreshold(t *testing.T) {
 func TestBuildVehicleStatus_NilVehicleSetsDefaultStatus(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	now := time.Now()
 	status := models.NewTripStatus()
@@ -139,7 +138,7 @@ func TestBuildVehicleStatus_NilVehicleSetsDefaultStatus(t *testing.T) {
 func TestBuildVehicleStatus_StaleVehicleSetsDefaultStatus(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	now := time.Now()
 	old := now.Add(-20 * time.Minute)
@@ -158,7 +157,7 @@ func TestBuildVehicleStatus_StaleVehicleSetsDefaultStatus(t *testing.T) {
 func TestBuildVehicleStatus_FreshVehicleWithPosition_SetsLocationAndPhase(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	now := time.Now()
 	lat := float32(37.7749)
@@ -183,7 +182,7 @@ func TestBuildVehicleStatus_FreshVehicleWithPosition_SetsLocationAndPhase(t *tes
 func TestBuildVehicleStatus_FreshVehicleNoPosition_DoesNotSetPredicted(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	now := time.Now()
 	vehicle := &gtfs.Vehicle{
@@ -201,7 +200,7 @@ func TestBuildVehicleStatus_FreshVehicleNoPosition_DoesNotSetPredicted(t *testin
 func TestBuildVehicleStatus_BearingConversion(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tests := []struct {
 		name                string

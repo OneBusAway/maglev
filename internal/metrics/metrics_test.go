@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"context"
 	"database/sql"
 	"sync/atomic"
 	"testing"
@@ -155,7 +154,7 @@ func TestStartDBStatsCollector_FollowsDBSwap(t *testing.T) {
 	defer func() { _ = db2.Close() }()
 
 	// Hold one active transaction so db2 reports an in-use connection.
-	tx, err := db2.BeginTx(context.Background(), nil)
+	tx, err := db2.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 

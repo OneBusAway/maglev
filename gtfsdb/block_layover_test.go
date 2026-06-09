@@ -1,7 +1,6 @@
 package gtfsdb
 
 import (
-	"context"
 	"os"
 	"testing"
 
@@ -26,7 +25,7 @@ func newTestClientWithRABA(t *testing.T) *Client {
 
 	parsed, err := ParseGtfsData(rabaBytes, "test-raba")
 	require.NoError(t, err)
-	_, err = client.StoreGtfsData(context.Background(), parsed)
+	_, err = client.StoreGtfsData(t.Context(), parsed)
 	require.NoError(t, err)
 
 	return client
@@ -34,7 +33,7 @@ func newTestClientWithRABA(t *testing.T) *Client {
 
 func TestBuildBlockLayoverIndex_PopulatesTable(t *testing.T) {
 	client := newTestClientWithRABA(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var total int
 	err := client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM block_layover").Scan(&total)
@@ -68,7 +67,7 @@ func TestBuildBlockLayoverIndex_PopulatesTable(t *testing.T) {
 
 func TestBuildBlockLayoverIndex_RebuildOnReimport(t *testing.T) {
 	client := newTestClientWithRABA(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var first int
 	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM block_layover").Scan(&first))
@@ -90,7 +89,7 @@ func TestBuildBlockLayoverIndex_RebuildOnReimport(t *testing.T) {
 
 func TestGetActiveLayoverBlockIDsForRoute_MatchesWindow(t *testing.T) {
 	client := newTestClientWithRABA(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Pull a real layover from the built index to drive the query with known-good inputs.
 	var routeID, serviceID, blockID string

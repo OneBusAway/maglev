@@ -22,7 +22,7 @@ func loggerErrorf(format string, args ...any) error {
 // TestReload_QueriesCompleteDuringReload verifies that database queries
 // can complete successfully during a static data reload operation.
 func TestReload_QueriesCompleteDuringReload(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -41,13 +41,13 @@ func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
 	assert.Equal(t, "25", agencies[0].ID)
 
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	readerCount := 5
@@ -79,7 +79,7 @@ func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 	newSource := models.GetFixturePath(t, "gtfs.zip")
 	manager.SetGtfsURL(newSource)
 
-	_, err = manager.ReloadStatic(context.Background())
+	_, err = manager.ReloadStatic(t.Context())
 	assert.Nil(t, err, "reloadstatic should succeed with new file")
 
 	cancel()
@@ -90,7 +90,7 @@ func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 		t.Errorf("Reader error: %v", e)
 	}
 
-	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err = manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(agencies))
 	assert.Equal(t, "40", agencies[0].ID)
@@ -99,7 +99,7 @@ func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 // TestReload_FailureRecovery verifies that the GTFS manager handles
 // failed reload attempts gracefully without corrupting existing data.
 func TestReload_FailureRecovery(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tempDir := t.TempDir()
 	gtfsConfig := Config{
@@ -114,7 +114,7 @@ func TestReload_FailureRecovery(t *testing.T) {
 	}
 	defer manager.Shutdown()
 
-	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to list agencies: %v", err)
 	}
@@ -123,10 +123,10 @@ func TestReload_FailureRecovery(t *testing.T) {
 
 	manager.SetGtfsURL("/path/to/non/existent/file.zip")
 
-	_, err = manager.ReloadStatic(context.Background())
+	_, err = manager.ReloadStatic(t.Context())
 	assert.Error(t, err, "ReloadStatic should fail with invalid source")
 
-	agencies, err = manager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err = manager.GtfsDB.Queries.ListAgencies(t.Context())
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(agencies), "Original data should be preserved")
 	assert.Equal(t, "25", agencies[0].ID, "Should still be using original agency")
@@ -135,7 +135,7 @@ func TestReload_FailureRecovery(t *testing.T) {
 // TestReload_OldDatabaseCleanup verifies that old database data is properly
 // cleaned up during a reload operation.
 func TestReload_OldDatabaseCleanup(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -158,10 +158,10 @@ func TestReload_OldDatabaseCleanup(t *testing.T) {
 	defer manager.Shutdown()
 
 	manager.SetGtfsURL(gtfsNew)
-	_, err = manager.ReloadStatic(context.Background())
+	_, err = manager.ReloadStatic(t.Context())
 	require.NoError(t, err, "ReloadStatic failed for new GTFS")
 
-	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	require.NotEmpty(t, agencies, "No agencies found after second update")
 	assert.Equal(t, "40", agencies[0].ID)
@@ -170,7 +170,7 @@ func TestReload_OldDatabaseCleanup(t *testing.T) {
 // TestReload_ReplacesDataAndRebuildsState verifies that a reload correctly
 // replaces static data and rebuilds derived state (e.g. block_layover rows).
 func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -193,18 +193,18 @@ func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 	defer manager.Shutdown()
 
 	// Verify initial state
-	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	require.NotEmpty(t, initialAgencies)
 	assert.Equal(t, "25", initialAgencies[0].ID)
 	initialLayoverCount := countBlockLayovers(t, manager)
 
 	manager.SetGtfsURL(gtfsNew)
-	_, err = manager.ReloadStatic(context.Background())
+	_, err = manager.ReloadStatic(t.Context())
 	assert.Nil(t, err, "ReloadStatic should succeed")
 
 	// Verify Final State
-	updatedAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	updatedAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, listErr)
 	require.NotEmpty(t, updatedAgencies)
 	assert.Equal(t, "40", updatedAgencies[0].ID)
@@ -218,7 +218,7 @@ func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 func countBlockLayovers(t *testing.T, manager *Manager) int {
 	t.Helper()
 	var n int
-	err := manager.GtfsDB.DB.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM block_layover").Scan(&n)
+	err := manager.GtfsDB.DB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM block_layover").Scan(&n)
 	require.NoError(t, err)
 	return n
 }
@@ -226,7 +226,7 @@ func countBlockLayovers(t *testing.T, manager *Manager) int {
 // TestReload_ConcurrentReload verifies that multiple concurrent reload
 // operations don't crash and properly handle serialization.
 func TestReload_ConcurrentReload(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows: SQLite file I/O is too slow for CI timeout")
@@ -245,7 +245,7 @@ func TestReload_ConcurrentReload(t *testing.T) {
 	defer manager.Shutdown()
 
 	// Verify initial state
-	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, err)
 	require.NotEmpty(t, initialAgencies)
 	assert.Equal(t, "25", initialAgencies[0].ID)
@@ -263,7 +263,7 @@ func TestReload_ConcurrentReload(t *testing.T) {
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := manager.ReloadStatic(context.Background())
+			_, err := manager.ReloadStatic(t.Context())
 			errChan <- err
 		}()
 	}
@@ -278,7 +278,7 @@ func TestReload_ConcurrentReload(t *testing.T) {
 	}
 
 	// Verify final state matches "gtfs.zip" (agency ID 40)
-	finalAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(context.Background())
+	finalAgencies, listErr := manager.GtfsDB.Queries.ListAgencies(t.Context())
 	require.NoError(t, listErr)
 	if len(finalAgencies) > 0 {
 		assert.Equal(t, "40", finalAgencies[0].ID, "Should utilize new GTFS data")

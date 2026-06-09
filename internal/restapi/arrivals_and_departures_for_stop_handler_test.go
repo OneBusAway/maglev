@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"fmt"
 	"maps"
 	"net/http"
@@ -245,7 +244,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	const (
@@ -354,7 +353,7 @@ func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 // stopSeq is the stop_sequence value written to the DB for the stop being queried.
 func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode, combinedStopID, tripID string, scheduledArrivalMs int64) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	q := api.GtfsManager.GtfsDB.Queries
 
 	agencyID := "dp-agency"
@@ -686,7 +685,7 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
 	require.NotEmpty(t, stops, "precondition: RABA should have stops near Redding, CA")
@@ -706,7 +705,7 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
 	require.NotEmpty(t, stops)
@@ -731,7 +730,7 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	const (

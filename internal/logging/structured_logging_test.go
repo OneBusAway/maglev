@@ -2,7 +2,6 @@ package logging
 
 import (
 	"bytes"
-	"context"
 	"log/slog"
 	"testing"
 
@@ -122,7 +121,7 @@ func TestContextLogger(t *testing.T) {
 		var buf bytes.Buffer
 		logger := NewStructuredLogger(&buf, slog.LevelInfo)
 
-		ctx := context.Background()
+		ctx := t.Context()
 		ctx = WithLogger(ctx, logger)
 
 		retrievedLogger := FromContext(ctx)
@@ -135,7 +134,7 @@ func TestContextLogger(t *testing.T) {
 	})
 
 	t.Run("returns default logger when not in context", func(t *testing.T) {
-		ctx := context.Background()
+		ctx := t.Context()
 		logger := FromContext(ctx)
 
 		// Should not panic and should return a usable logger
