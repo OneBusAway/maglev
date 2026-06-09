@@ -340,7 +340,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		if vehicle != nil {
 			// Use route.AgencyID instead of stopAgencyID for BuildTripStatus
-			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
+			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, vehicle, serviceMidnight, params.Time)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for arrival",
 					"tripID", st.TripID, "error", statusErr)
@@ -418,9 +418,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				continue
 			}
 
-			situationIDs = append(situationIDs, utils.FormCombinedID(route.AgencyID, alert.ID))
-			if _, seen := collectedAlerts[alert.ID]; !seen {
-				collectedAlerts[alert.ID] = alert
+			namespacedID := utils.FormCombinedID(route.AgencyID, alert.ID)
+			situationIDs = append(situationIDs, namespacedID)
+			if _, seen := collectedAlerts[namespacedID]; !seen {
+				alert.ID = namespacedID
+				collectedAlerts[namespacedID] = alert
 			}
 		}
 
@@ -602,8 +604,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	for _, alert := range api.GtfsManager.GetAlertsForStop(stopCode) {
 		if alert.ID != "" {
-			if _, seen := collectedAlerts[alert.ID]; !seen {
-				collectedAlerts[alert.ID] = alert
+			namespacedID := utils.FormCombinedID(stopAgencyID, alert.ID)
+			if _, seen := collectedAlerts[namespacedID]; !seen {
+				alert.ID = namespacedID
+				collectedAlerts[namespacedID] = alert
 			}
 		}
 	}
@@ -619,7 +623,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	topLevelSituationIDSet := make(map[string]struct{}, len(collectedAlerts))
 	for alertID := range collectedAlerts {
-		topLevelSituationIDSet[utils.FormCombinedID(alertAgencyID, alertID)] = struct{}{}
+		topLevelSituationIDSet[alertID] = struct{}{}
 	}
 	topLevelSituationIDs := make([]string, 0, len(topLevelSituationIDSet))
 	for id := range topLevelSituationIDSet {

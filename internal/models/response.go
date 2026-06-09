@@ -59,6 +59,41 @@ func NewArrivalsAndDepartureResponse(arrivalsAndDepartures any, references Refer
 	return NewOKResponse(data, c)
 }
 
+func NewArrivalsAndDeparturesForLocationResponse(
+	arrivalsAndDepartures []ArrivalAndDeparture,
+	references ReferencesModel,
+	nearbyStopIds []StopWithDistance,
+	situationIds []string,
+	stopIds []string,
+	limitExceeded bool,
+	c clock.Clock,
+) ResponseModel {
+	if nearbyStopIds == nil {
+		nearbyStopIds = []StopWithDistance{}
+	}
+	if situationIds == nil {
+		situationIds = []string{}
+	}
+	if stopIds == nil {
+		stopIds = []string{}
+	}
+	if arrivalsAndDepartures == nil {
+		arrivalsAndDepartures = []ArrivalAndDeparture{}
+	}
+	entryData := map[string]any{
+		"arrivalsAndDepartures": arrivalsAndDepartures,
+		"limitExceeded":         limitExceeded,
+		"nearbyStopIds":         nearbyStopIds,
+		"situationIds":          situationIds,
+		"stopIds":               stopIds,
+	}
+	data := map[string]any{
+		"entry":      entryData,
+		"references": references,
+	}
+	return NewOKResponse(data, c)
+}
+
 // NewResponse creates a standard response using the provided clock.
 func NewResponse(code int, data any, text string, c clock.Clock) ResponseModel {
 	return ResponseModel{

@@ -712,14 +712,30 @@ func (api *RestAPI) getPredictedTimes(
 }
 
 func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
-	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
-	if currentVehicleStopSequence == nil {
-		return nil
-	}
-
 	activeTripID := GetVehicleActiveTripID(vehicle)
 	if activeTripID == "" {
 		activeTripID = targetTripID
+	}
+
+	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
+
+	if currentVehicleStopSequence == nil {
+		// Fallback: infer the vehicle's current stop from its lat/lon position.
+		// This handles agencies (e.g. Sound Transit Link light rail) that don't
+		// publish current_stop_sequence in GTFS-RT vehicle positions.
+		if vehicle == nil || vehicle.Position == nil ||
+			vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
+			return nil
+		}
+		inferred := api.inferStopSequenceFromPosition(
+			ctx, activeTripID,
+			float64(*vehicle.Position.Latitude),
+			float64(*vehicle.Position.Longitude),
+		)
+		if inferred == nil {
+			return nil
+		}
+		currentVehicleStopSequence = inferred
 	}
 
 	targetGlobalSeq := api.getBlockSequenceForStopSequence(ctx, targetTripID, targetStopSequence, serviceDate)
@@ -727,4 +743,56 @@ func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID strin
 
 	numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq - 1
 	return &numberOfStopsAway
+}
+
+// inferStopSequenceFromPosition returns the stop_sequence of the stop the vehicle
+// is currently at or has most recently passed, determined by projecting the vehicle's
+// lat/lon onto the ordered list of stop positions for the trip.
+//
+// It fetches stop times (ordered by sequence) and stop coordinates in a single batch,
+// then finds the last stop that is "behind" the vehicle along the route direction.
+// Returns nil when no stop times exist or coordinates cannot be resolved.
+func (api *RestAPI) inferStopSequenceFromPosition(ctx context.Context, tripID string, vehLat, vehLon float64) *int {
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil || len(stopTimes) == 0 {
+		return nil
+	}
+
+	stopIDs := make([]string, len(stopTimes))
+	for i, st := range stopTimes {
+		stopIDs[i] = st.StopID
+	}
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return nil
+	}
+
+	coordMap := make(map[string][2]float64, len(stops))
+	for _, s := range stops {
+		coordMap[s.ID] = [2]float64{s.Lat, s.Lon}
+	}
+
+	// Find the stop that is geometrically closest to the vehicle's current position.
+	// OBA Java uses a similar nearest-stop heuristic when stop-sequence is absent.
+	bestIdx := -1
+	bestDist := -1.0
+	for i, st := range stopTimes {
+		coords, ok := coordMap[st.StopID]
+		if !ok {
+			continue
+		}
+		d := utils.Distance(vehLat, vehLon, coords[0], coords[1])
+		if bestDist < 0 || d < bestDist {
+			bestDist = d
+			bestIdx = i
+		}
+	}
+
+	if bestIdx < 0 {
+		return nil
+	}
+
+	seq := int(stopTimes[bestIdx].StopSequence)
+	return &seq
 }

@@ -67,7 +67,6 @@ func (api *RestAPI) BuildTripStatus(
 	// Predicted is true because the cancellation itself is real-time information.
 	if status.Status == "CANCELED" {
 		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
-		status.Scheduled = !status.Predicted
 		return status, nil
 	}
 
@@ -740,11 +739,7 @@ func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) [
 		if alert.ID == "" {
 			continue
 		}
-		if agencyID != "" {
-			situationIDs = append(situationIDs, utils.FormCombinedID(agencyID, alert.ID))
-		} else {
-			situationIDs = append(situationIDs, alert.ID)
-		}
+		situationIDs = append(situationIDs, alert.ID)
 	}
 
 	return situationIDs

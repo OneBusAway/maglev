@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
@@ -79,11 +78,24 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 	for _, alert := range alerts {
 		situation := models.Situation{
 			ID:                 alert.ID,
-			CreationTime:       models.NewModelTime(time.Time{}),
+			CreationTime:       models.NewModelTime(api.Clock.Now()),
 			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
 			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
 			ConsequenceMessage: "",
-			Consequences:       []any{},
+			Consequences: []models.Consequence{
+				{
+					Condition: "",
+					ConditionDetails: models.ConditionDetails{
+						DiversionPath: models.DiversionPath{
+							Length: 0,
+							Levels: "",
+							Points: "",
+						},
+						// Initialized to an empty slice so it outputs [] instead of null
+						DiversionStopIDs: []string{},
+					},
+				},
+			},
 			PublicationWindows: []any{},
 			Reason:             mapAlertCauseToReason(alert.Cause),
 			Severity:           mapAlertEffectToSeverity(alert.Effect),
@@ -101,17 +113,33 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 		}
 
 		for _, entity := range alert.InformedEntities {
+			agencyID := getStringValue(entity.AgencyID)
+
+			rawRouteID := getStringValue(entity.RouteID)
+			if rawRouteID != "" && agencyID != "" {
+				rawRouteID = utils.FormCombinedID(agencyID, rawRouteID)
+			}
+
+			rawStopID := getStringValue(entity.StopID)
+			if rawStopID != "" && agencyID != "" {
+				rawStopID = utils.FormCombinedID(agencyID, rawStopID)
+			}
+
 			affectedEntity := models.AffectedEntity{
-				AgencyID:      getStringValue(entity.AgencyID),
+				AgencyID:      agencyID,
 				ApplicationID: "",
 				DirectionID:   entity.DirectionID.String(),
-				RouteID:       getStringValue(entity.RouteID),
-				StopID:        getStringValue(entity.StopID),
+				RouteID:       rawRouteID,
+				StopID:        rawStopID,
 				TripID:        "",
 			}
 
-			if entity.TripID != nil {
-				affectedEntity.TripID = entity.TripID.ID
+			if entity.TripID != nil && entity.TripID.ID != "" {
+				if agencyID != "" {
+					affectedEntity.TripID = utils.FormCombinedID(agencyID, entity.TripID.ID)
+				} else {
+					affectedEntity.TripID = entity.TripID.ID
+				}
 			}
 
 			situation.AllAffects = append(situation.AllAffects, affectedEntity)

@@ -1415,13 +1415,30 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 					continue
 				}
 
+				layoverStart := int64(lastStopCurrent.ArrivalTime)
+				layoverEnd := int64(firstStopNext.DepartureTime)
+
+				// ArrivalTime/DepartureTime are nanoseconds since service-day midnight
+				// (they come from the go-gtfs library as time.Duration values).
+				// If the layover appears negative, check if it's a valid midnight wraparound
+				// (e.g. within a reasonable layover threshold, like 4 hours).
+				const dayNs = int64(24 * time.Hour)       // 86_400_000_000_000 ns
+				const maxLayoverNs = int64(4 * time.Hour) // 14_400_000_000_000 ns
+				if layoverStart > layoverEnd {
+					if (layoverEnd+dayNs)-layoverStart < maxLayoverNs {
+						layoverEnd += dayNs // It crosses midnight, shift it by 24h
+					} else {
+						continue // It's invalid data
+					}
+				}
+
 				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
 					BlockID:       key.blockID,
 					ServiceID:     key.serviceID,
 					RouteID:       nextTrip.Route.Id,
 					LayoverStopID: lastStopCurrent.Stop.Id,
-					LayoverStart:  int64(lastStopCurrent.DepartureTime),
-					LayoverEnd:    int64(firstStopNext.ArrivalTime),
+					LayoverStart:  layoverStart,
+					LayoverEnd:    layoverEnd,
 					NextTripID:    nextTrip.ID,
 				})
 				if err != nil {

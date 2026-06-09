@@ -157,6 +157,44 @@ func TestInputValidationIntegration(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "invalid date format",
 		},
+
+		// Test arrivals-and-departures-for-location parameter validation
+		{
+			name:           "arrivals-for-location: invalid latitude too high",
+			endpoint:       "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=91.0&lon=-77.0&radius=500",
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "latitude must be between -90 and 90",
+		},
+		{
+			name:           "arrivals-for-location: invalid longitude too high",
+			endpoint:       "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=38.0&lon=181.0&radius=500",
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "longitude must be between -180 and 180",
+		},
+		{
+			name:           "arrivals-for-location: missing lat and lon",
+			endpoint:       "/api/where/arrivals-and-departures-for-location.json?key=TEST",
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "",
+		},
+		{
+			name:           "arrivals-for-location: invalid minutesAfter",
+			endpoint:       "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=500&minutesAfter=notanumber",
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "must be a valid integer",
+		},
+		{
+			name:           "arrivals-for-location: invalid minutesBefore",
+			endpoint:       "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=500&minutesBefore=notanumber",
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "must be a valid integer",
+		},
+		{
+			name:           "arrivals-for-location: invalid time",
+			endpoint:       "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=500&time=notanumber",
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "must be a valid Unix timestamp in milliseconds",
+		},
 	}
 
 	for _, tt := range tests {
@@ -252,6 +290,18 @@ func TestValidInputsPassThrough(t *testing.T) {
 		{
 			name:     "Valid location with span parameters",
 			endpoint: "/api/where/stops-for-location.json?key=TEST&lat=38.9&lon=-77.0&latSpan=0.01&lonSpan=0.01",
+		},
+		{
+			name:     "Valid arrivals-for-location with radius",
+			endpoint: "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=1000",
+		},
+		{
+			name:     "Valid arrivals-for-location with latSpan and lonSpan",
+			endpoint: "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=38.9&lon=-77.0&latSpan=0.01&lonSpan=0.01",
+		},
+		{
+			name:     "Valid arrivals-for-location with custom time window",
+			endpoint: "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=1000&minutesBefore=2&minutesAfter=20",
 		},
 	}
 

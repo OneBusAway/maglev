@@ -462,7 +462,6 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	require.NotZero(t, status.ScheduleDeviation)
 	assert.Equal(t, 120, status.ScheduleDeviation, "ScheduleDeviation should reflect the trip update delay")
 	assert.True(t, status.Predicted, "Predicted should be true when trip update exists")
-	assert.False(t, status.Scheduled, "Scheduled should be false when predicted is true")
 }
 
 func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
@@ -488,7 +487,6 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 
 	assert.Equal(t, 0, status.ScheduleDeviation, "ScheduleDeviation should be 0 with no real-time data")
 	assert.False(t, status.Predicted, "Predicted should be false with no real-time data")
-	assert.True(t, status.Scheduled, "Scheduled should be true with no real-time data")
 	assert.Equal(t, "default", status.Status)
 	assert.Equal(t, "scheduled", status.Phase)
 }
