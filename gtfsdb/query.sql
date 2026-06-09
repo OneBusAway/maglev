@@ -612,6 +612,7 @@ DELETE FROM routes;
 -- name: ClearAgencies :exec
 DELETE FROM agencies;
 
+
 -- Batch queries to solve N+1 problems
 
 -- name: GetRoutesForStops :many
