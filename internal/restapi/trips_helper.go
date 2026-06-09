@@ -117,23 +117,80 @@ func (api *RestAPI) BuildTripStatus(
 		var closestStopID, nextStopID string
 		var closestOffset, nextOffset int
 
+		var shapePoints []gtfs.ShapePoint
+		var cumulativeDistances []float64
+		var actualDistance float64
+		var hasActualDistance bool
+
+		shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
+		if shapeErr != nil {
+			slog.Warn("buildTripStatusCore: failed to get shape points",
+				slog.String("trip_id", dbTripID),
+				slog.String("error", shapeErr.Error()))
+		}
+		if shapeErr == nil && len(shapeRows) > 1 {
+			shapePoints = shapeRowsToPoints(shapeRows)
+			cumulativeDistances = preCalculateCumulativeDistances(shapePoints)
+			status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
+
+			if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
+				// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
+				// it onto the route shape. Reuses the already-fetched shapePoints.
+				actualDistance = api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
+				status.DistanceAlongTrip = actualDistance
+				hasActualDistance = true
+
+				if status.LastKnownLocation != nil {
+					actualPosition := *status.LastKnownLocation
+
+					if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
+						status.Position = *projected
+					}
+
+					// If the feed does not provide a bearing, infer orientation from the
+					// heading of the closest shape segment at the vehicle's position.
+					if vehicle.Position.Bearing == nil {
+						if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+							status.Orientation = inferred
+							status.LastKnownOrientation = inferred
+						}
+					}
+				}
+
+				if scheduleDeviation != 0 && len(stopTimes) > 0 {
+					scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
+						ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
+						stopTimes, shapePoints, cumulativeDistances,
+					)
+					status.ScheduledDistanceAlongTrip = scheduledDistance
+				}
+			}
+		}
+
 		if vehicle != nil && vehicle.Position != nil {
 			if vehicle.StopID != nil && *vehicle.StopID != "" {
 				closestStopID = *vehicle.StopID
 				closestOffset = api.calculateOffsetForStop(closestStopID, stopTimesPtrs, currentTime, serviceDate, scheduleDeviation)
-				isStoppedAt := vehicle.CurrentStatus != nil && *vehicle.CurrentStatus == gtfs.CurrentStatus(1)
-				if isStoppedAt {
-					nextStopID, nextOffset = api.findNextStopAfter(closestStopID, stopTimesPtrs, currentTime, serviceDate, scheduleDeviation)
-				} else {
-					nextStopID = closestStopID
-					nextOffset = closestOffset
-				}
+				// Java sets NextStop to the current stop when the vehicle is at it,
+				// and the upcoming stop when in transit. Since GTFS-RT StopID represents
+				// exactly this, NextStop is always simply the GTFS-RT StopID.
+				nextStopID = closestStopID
+				nextOffset = closestOffset
 			} else if vehicle.CurrentStopSequence != nil {
 				closestStopID, closestOffset = api.findClosestStopBySequence(
 					stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, serviceDate, scheduleDeviation,
 				)
-				nextStopID, nextOffset = api.findNextStopBySequence(
-					ctx, stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, serviceDate, scheduleDeviation, vehicle, tripID,
+				// Same as above, GTFS-RT CurrentStopSequence is exactly the NextStop.
+				nextStopID = closestStopID
+				nextOffset = closestOffset
+			} else if hasActualDistance {
+				sc := shapeContext{
+					Points:              shapePoints,
+					CumulativeDistances: cumulativeDistances,
+					VehicleDistance:     actualDistance,
+				}
+				closestStopID, closestOffset, nextStopID, nextOffset = api.findStopsByDistance(
+					ctx, stopTimesPtrs, sc, currentTime, serviceDate, scheduleDeviation,
 				)
 			} else {
 				closestStopID, closestOffset, nextStopID, nextOffset = api.findStopsByScheduleDeviation(
@@ -160,52 +217,8 @@ func (api *RestAPI) BuildTripStatus(
 		api.fillStopsFromSchedule(ctx, status, dbTripID, currentTime, serviceDate, agencyID, stopTimes)
 	}
 
-	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
-	if shapeErr != nil {
-		slog.Warn("buildTripStatusCore: failed to get shape points",
-			slog.String("trip_id", dbTripID),
-			slog.String("error", shapeErr.Error()))
-	}
-	if shapeErr == nil && len(shapeRows) > 1 {
-		shapePoints := shapeRowsToPoints(shapeRows)
-		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
-
-		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
-			// it onto the route shape. Reuses the already-fetched shapePoints.
-			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
-			status.DistanceAlongTrip = actualDistance
-
-			if status.LastKnownLocation != nil {
-				actualPosition := *status.LastKnownLocation
-
-				if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
-					status.Position = *projected
-				}
-
-				// If the feed does not provide a bearing, infer orientation from the
-				// heading of the closest shape segment at the vehicle's position.
-				if vehicle.Position.Bearing == nil {
-					if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
-						status.Orientation = inferred
-						status.LastKnownOrientation = inferred
-					}
-				}
-			}
-
-			if scheduleDeviation != 0 && len(stopTimes) > 0 {
-				scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
-					ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
-					stopTimes, shapePoints, cumulativeDistances,
-				)
-				status.ScheduledDistanceAlongTrip = scheduledDistance
-			}
-		}
-	}
-
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
-	if blockTripSequence > 0 {
+	if blockTripSequence >= 0 {
 		status.BlockTripSequence = blockTripSequence
 	}
 
@@ -556,20 +569,20 @@ func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, min
 	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
 }
 
-// calculateBlockTripSequence calculates the index of a trip within its block's ordered trip sequence
-// for trips that are active on the given service date.
-// Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
+// calculateBlockTripSequence calculates the 0-based index of a trip within its
+// block's ordered trip sequence for trips active on the given service date.
+// Returns -1 when the trip has no block or on error.
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
 		slog.Warn("calculateBlockTripSequence: failed to get trip",
 			slog.String("trip_id", tripID),
 			slog.String("error", err.Error()))
-		return 0
+		return -1
 	}
 
 	if !trip.BlockID.Valid {
-		return 0
+		return -1
 	}
 
 	formattedDate := serviceDate.Format("20060102")
@@ -579,13 +592,12 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 			slog.String("trip_id", tripID),
 			slog.String("date", formattedDate),
 			slog.String("error", err.Error()))
-		return 0
+		return -1
 	}
 	if len(activeServiceIDs) == 0 {
-		return 0
+		return -1
 	}
 
-	// Use optimized query with ROW_NUMBER() window function
 	seq, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripSequence(ctx, gtfsdb.GetBlockTripSequenceParams{
 		TripID:     tripID,
 		BlockID:    trip.BlockID,
@@ -598,7 +610,7 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 				slog.String("block_id", trip.BlockID.String),
 				slog.String("error", err.Error()))
 		}
-		return 0
+		return -1
 	}
 
 	return int(seq)
@@ -770,34 +782,6 @@ func (api *RestAPI) calculateOffsetForStop(
 	return 0
 }
 
-func (api *RestAPI) findNextStopAfter(
-	currentStopID string,
-	stopTimes []*gtfsdb.StopTime,
-	currentTime time.Time,
-	serviceDate time.Time,
-	scheduleDeviation int,
-) (stopID string, offset int) {
-	if len(stopTimes) == 0 {
-		return "", 0
-	}
-
-	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-
-	for i, st := range stopTimes {
-		if st.StopID == currentStopID {
-			if i+1 < len(stopTimes) {
-				nextSt := stopTimes[i+1]
-				stopTimeSeconds := utils.EffectiveStopTimeSeconds(nextSt.ArrivalTime, nextSt.DepartureTime)
-				predictedArrival := stopTimeSeconds + int64(scheduleDeviation)
-				return nextSt.StopID, int(predictedArrival - currentTimeSeconds)
-			}
-			break
-		}
-	}
-
-	return "", 0
-}
-
 func (api *RestAPI) calculateBatchStopDistances(
 	timeStops []gtfsdb.StopTime,
 	shapePoints []gtfs.ShapePoint,
@@ -907,6 +891,82 @@ func (api *RestAPI) calculateBatchStopDistances(
 	return stopTimesList
 }
 
+// shapeContext bundles route-shape geometry used for distance-based stop matching.
+type shapeContext struct {
+	Points              []gtfs.ShapePoint
+	CumulativeDistances []float64
+	VehicleDistance     float64
+}
+
+func (api *RestAPI) findStopsByDistance(
+	ctx context.Context,
+	stopTimes []*gtfsdb.StopTime,
+	shape shapeContext,
+	currentTime time.Time,
+	serviceDate time.Time,
+	scheduleDeviation int,
+) (closestStopID string, closestOffset int, nextStopID string, nextOffset int) {
+	if len(stopTimes) == 0 {
+		return "", 0, "", 0
+	}
+
+	stopIDs := make([]string, len(stopTimes))
+	for i, st := range stopTimes {
+		stopIDs[i] = st.StopID
+	}
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return "", 0, "", 0
+	}
+	stopByID := make(map[string]gtfsdb.Stop, len(stops))
+	for _, s := range stops {
+		stopByID[s.ID] = s
+	}
+
+	var closestStop *gtfsdb.StopTime
+	var closestDistDiff = math.MaxFloat64
+
+	var nextStop *gtfsdb.StopTime
+
+	for _, st := range stopTimes {
+		stop, ok := stopByID[st.StopID]
+		if !ok {
+			continue
+		}
+		dist := api.calculatePreciseDistanceAlongTripWithCoords(
+			stop.Lat, stop.Lon, shape.Points, shape.CumulativeDistances,
+		)
+
+		distDiff := math.Abs(dist - shape.VehicleDistance)
+		if distDiff < closestDistDiff {
+			closestDistDiff = distDiff
+			closestStop = st
+		}
+
+		if nextStop == nil && dist >= shape.VehicleDistance {
+			nextStop = st
+		}
+	}
+
+	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
+
+	if closestStop != nil {
+		closestStopID = closestStop.StopID
+		closestStopTime := utils.EffectiveStopTimeSeconds(closestStop.ArrivalTime, closestStop.DepartureTime)
+		predictedClosestArrival := closestStopTime + int64(scheduleDeviation)
+		closestOffset = int(predictedClosestArrival - currentTimeSeconds)
+	}
+
+	if nextStop != nil {
+		nextStopID = nextStop.StopID
+		nextStopTime := utils.EffectiveStopTimeSeconds(nextStop.ArrivalTime, nextStop.DepartureTime)
+		predictedNextArrival := nextStopTime + int64(scheduleDeviation)
+		nextOffset = int(predictedNextArrival - currentTimeSeconds)
+	}
+
+	return closestStopID, closestOffset, nextStopID, nextOffset
+}
+
 func (api *RestAPI) findStopsByScheduleDeviation(
 	stopTimes []*gtfsdb.StopTime,
 	currentTime time.Time,
@@ -979,79 +1039,6 @@ func (api *RestAPI) findClosestStopBySequence(
 	}
 
 	return "", 0
-}
-
-func (api *RestAPI) findNextStopBySequence(
-	ctx context.Context,
-	stopTimes []*gtfsdb.StopTime,
-	currentStopSequence uint32,
-	currentTime time.Time,
-	serviceDate time.Time,
-	scheduleDeviation int,
-	vehicle *gtfs.Vehicle,
-	tripID string,
-) (stopID string, offset int) {
-	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-
-	isAtCurrentStop := vehicle != nil && vehicle.CurrentStatus != nil &&
-		*vehicle.CurrentStatus == gtfs.CurrentStatus(1)
-
-	for i, st := range stopTimes {
-		if uint32(st.StopSequence) == currentStopSequence {
-			var nextStop *gtfsdb.StopTime
-
-			if isAtCurrentStop {
-				if i+1 < len(stopTimes) {
-					nextStop = stopTimes[i+1]
-				} else {
-					nextStop = api.getFirstStopOfNextTripInBlock(ctx, tripID)
-				}
-			} else {
-				nextStop = st
-			}
-
-			if nextStop != nil {
-				stopTimeSeconds := utils.EffectiveStopTimeSeconds(nextStop.ArrivalTime, nextStop.DepartureTime)
-				predictedArrival := stopTimeSeconds + int64(scheduleDeviation)
-				return nextStop.StopID, int(predictedArrival - currentTimeSeconds)
-			}
-		}
-	}
-
-	return "", 0
-}
-
-// getFirstStopOfNextTripInBlock uses LEAD() window function to find the next trip
-// in the block and directly fetches its first stop in a single SQL query.
-func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTripID string) *gtfsdb.StopTime {
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, currentTripID)
-	if err != nil {
-		slog.Warn("getFirstStopOfNextTripInBlock: failed to get trip",
-			slog.String("trip_id", currentTripID),
-			slog.String("error", err.Error()))
-		return nil
-	}
-	if !trip.BlockID.Valid {
-		return nil
-	}
-
-	// Use optimized query with LEAD() window function
-	stopTime, err := api.GtfsManager.GtfsDB.Queries.GetFirstStopOfNextTripInBlock(ctx, gtfsdb.GetFirstStopOfNextTripInBlockParams{
-		BlockID:    trip.BlockID,
-		ServiceIds: []string{trip.ServiceID},
-		TripID:     currentTripID,
-	})
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
-				slog.String("trip_id", currentTripID),
-				slog.String("block_id", trip.BlockID.String),
-				slog.String("error", err.Error()))
-		}
-		return nil
-	}
-
-	return &stopTime
 }
 
 func (api *RestAPI) calculateEffectiveDistanceAlongTrip(

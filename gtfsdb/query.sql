@@ -1230,7 +1230,8 @@ FROM (
 -- Optimized queries using SQLite window functions
 
 -- name: GetTargetStopTimeWithTotalStops :one
--- Fetches a specific stop time for a trip+stop, along with the total stop count,
+-- Fetches a specific stop time for a trip+stop, along with the total stop count
+-- and a 0-based trip-relative ordinal (stop_ordinal) that is safe for sparse GTFS stop_sequences.
 SELECT
     st.trip_id,
     st.arrival_time,
@@ -1242,14 +1243,17 @@ SELECT
     st.drop_off_type,
     st.shape_dist_traveled,
     st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st3 WHERE st3.trip_id = @trip_id AND st3.stop_sequence < st.stop_sequence) AS stop_ordinal,
     (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = @trip_id) AS total_stops
 FROM stop_times st
-WHERE st.trip_id = @trip_id AND st.stop_id = @stop_id
-ORDER BY st.stop_sequence
+WHERE st.trip_id = @trip_id AND st.stop_id = @stop_id AND CAST(@current_time AS INTEGER) IS NOT NULL
+ORDER BY ABS(st.arrival_time - CAST(?3 AS INTEGER)), st.stop_sequence
 LIMIT 1;
 
 -- name: GetTargetStopTimeWithTotalStopsBySequence :one
--- Fetches a specific stop time for a trip+stop+sequence, along with the total stop count,
+-- Fetches a specific stop time for a trip+stop+ordinal, along with the total stop count.
+-- Uses a 0-based trip-relative ordinal (stop_ordinal) for matching instead of raw GTFS stop_sequence.
+-- The ordinal equals the count of stops whose stop_sequence is strictly less than this row's.
 SELECT
     st.trip_id,
     st.arrival_time,
@@ -1261,9 +1265,12 @@ SELECT
     st.drop_off_type,
     st.shape_dist_traveled,
     st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st3 WHERE st3.trip_id = @trip_id AND st3.stop_sequence < st.stop_sequence) AS stop_ordinal,
     (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = @trip_id) AS total_stops
 FROM stop_times st
-WHERE st.trip_id = @trip_id AND st.stop_id = @stop_id AND st.stop_sequence = @stop_sequence
+WHERE st.trip_id = @trip_id
+  AND st.stop_id = @stop_id
+  AND (SELECT COUNT(*) FROM stop_times st4 WHERE st4.trip_id = @trip_id AND st4.stop_sequence < st.stop_sequence) = CAST(@stop_sequence AS INTEGER)
 LIMIT 1;
 
 -- name: GetBlockTripSequence :one

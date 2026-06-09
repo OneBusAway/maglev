@@ -74,6 +74,7 @@ func (ts *TripStatus) SetPredicted(predicted bool) {
 // SituationIDs and VehicleFeatures default to empty slices (never null in JSON).
 func NewTripStatus() *TripStatus {
 	status := &TripStatus{
+		BlockTripSequence: -1,
 		OccupancyCapacity: -1,
 		OccupancyCount:    -1,
 		SituationIDs:      []string{},
