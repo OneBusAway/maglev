@@ -147,7 +147,7 @@ func TestRouteResponseJSON(t *testing.T) {
 		CurrentTime: 1633046400000,
 		Data:        routeData,
 		Text:        "OK",
-		Version:     2,
+		Version:     APIVersion,
 	}
 
 	jsonData, err := json.Marshal(response)

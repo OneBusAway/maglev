@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"log/slog"
+	"maglev.onebusaway.org/internal/logging"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -201,7 +202,7 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 	}
 
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	api.Logger = logging.NewStructuredLogger(os.Stdout, slog.LevelDebug)
 	t.Cleanup(api.Shutdown)
 
 	return api

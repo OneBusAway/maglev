@@ -3,10 +3,6 @@ name: Go CI
 on:
   push:
     branches: [main]
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
   pull_request:
 
 jobs:
@@ -42,6 +38,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     env:
       CGO_ENABLED: 1
+      SONAR_CI_ANALYSIS_ENABLED: false
     steps:
       - uses: actions/checkout@v6
 
@@ -58,6 +55,7 @@ jobs:
         run: go mod verify
 
       - name: Check OpenAPI spec is up to date with upstream
+        if: github.event_name == 'pull_request'
         run: bash scripts/check-openapi.sh
         shell: bash
 
@@ -94,6 +92,12 @@ jobs:
             exit 1
           fi
         shell: bash
+
+      - name: SonarQube Scan
+        if: matrix.os == 'ubuntu-latest' && github.repository == 'OneBusAway/maglev' && env.SONAR_CI_ANALYSIS_ENABLED == 'true'
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   test-race:
     name: Race Detector (Targeted)

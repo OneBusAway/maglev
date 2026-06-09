@@ -1,16 +1,5 @@
 package models
 
-type TripsForRouteResponse struct {
-	Code        int64             `json:"code"`
-	CurrentTime int64             `json:"currentTime"`
-	Data        TripsForRouteData `json:"data"`
-}
-
-type TripsForRouteData struct {
-	LimitExceeded bool                     `json:"limitExceeded"`
-	List          []TripsForRouteListEntry `json:"list"`
-}
-
 type TripsForRouteListEntry struct {
 	Frequency    *int64         `json:"frequency"`
 	Schedule     *TripsSchedule `json:"schedule,omitempty"`
