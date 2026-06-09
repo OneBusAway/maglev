@@ -22,9 +22,9 @@ func TestSortRoutesByName(t *testing.T) {
 			ShortName: sql.NullString{String: "A", Valid: true},
 		},
 		{
-			ID:        "2",
-			AgencyID:  "agency1",
-			LongName:  sql.NullString{String: "B", Valid: true},
+			ID:       "2",
+			AgencyID: "agency1",
+			LongName: sql.NullString{String: "B", Valid: true},
 		},
 		{
 			ID:        "4",
