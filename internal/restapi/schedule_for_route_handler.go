@@ -94,21 +94,29 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	noTripsResponse := func() models.ResponseModel {
+	noTripsResponse := func() (models.ResponseModel, error) {
 		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
 			RouteID:   routeID,
 			EndDate:   targetDate,
 			RouteID_2: routeID,
 			Date:      targetDate,
 		})
-		if err != nil || hasFuture == 0 {
-			return models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock)
+		if err != nil {
+			return models.ResponseModel{}, err
 		}
-		return buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock)
+		if hasFuture == 0 {
+			return models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock), nil
+		}
+		return buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock), nil
 	}
 
 	if len(serviceIDs) == 0 {
-		api.sendResponse(w, r, noTripsResponse())
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 
@@ -122,7 +130,12 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(trips) == 0 {
-		api.sendResponse(w, r, noTripsResponse())
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 
@@ -203,6 +216,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		seenHeadsigns := make(map[string]bool)
 		var headsigns []string
 		var fallbackStopIDs []string
+		seenFallbackStops := make(map[string]bool)
 		for _, trip := range tripsInGroup {
 			hs := trip.TripHeadsign.String
 			if hs != "" {
@@ -211,7 +225,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					headsigns = append(headsigns, hs)
 				}
 			} else if sts := stopTimesByTrip[trip.ID]; len(sts) > 0 {
-				fallbackStopIDs = append(fallbackStopIDs, sts[len(sts)-1].StopID)
+				lastStopID := sts[len(sts)-1].StopID
+				if !seenFallbackStops[lastStopID] {
+					seenFallbackStops[lastStopID] = true
+					fallbackStopIDs = append(fallbackStopIDs, lastStopID)
+				}
 			}
 		}
 		if len(fallbackStopIDs) > 0 {
