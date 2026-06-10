@@ -55,3 +55,11 @@ func NonEmptyString(value string) sql.NullString {
 		Valid:  value != "",
 	}
 }
+
+// Int64 creates a sql.NullInt64 from the given int64.
+func Int64(value int64) sql.NullInt64 {
+	return sql.NullInt64{
+		Int64: value,
+		Valid: true,
+	}
+}
