@@ -1,6 +1,8 @@
 package restapi
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -28,4 +30,41 @@ func TestDeduplicateAlerts(t *testing.T) {
 	assert.True(t, idMap["alert-1"], "Missing alert-1")
 	assert.True(t, idMap["alert-2"], "Missing alert-2")
 	assert.True(t, idMap["alert-3"], "Missing alert-3")
+}
+
+func TestShouldIncludeReferences(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		{
+			name:     "empty string defaults to true",
+			url:      "/api/where/route/1.json?key=TEST",
+			expected: true,
+		},
+		{
+			name:     "explicit true returns true",
+			url:      "/api/where/route/1.json?key=TEST&includeReferences=true",
+			expected: true,
+		},
+		{
+			name:     "explicit false returns false",
+			url:      "/api/where/route/1.json?key=TEST&includeReferences=false",
+			expected: false,
+		},
+		{
+			name:     "garbage string defaults to true",
+			url:      "/api/where/route/1.json?key=TEST&includeReferences=banana",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			actual := ShouldIncludeReferences(req)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
 }

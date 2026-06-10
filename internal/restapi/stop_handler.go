@@ -1,8 +1,11 @@
 package restapi
 
 import (
+	"cmp"
 	"net/http"
+	"slices"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -28,6 +31,28 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	// Sort routes naturally by ShortName
+	slices.SortFunc(routes, func(a, b gtfsdb.GetRoutesForStopRow) int {
+		nameA := a.ShortName.String
+		if nameA == "" {
+			nameA = a.LongName.String
+		}
+
+		nameB := b.ShortName.String
+		if nameB == "" {
+			nameB = b.LongName.String
+		}
+
+		res := utils.NaturalCompare(nameA, nameB)
+		if res != 0 {
+			return res
+		}
+		if a.AgencyID != b.AgencyID {
+			return cmp.Compare(a.AgencyID, b.AgencyID)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
 
 	combinedRouteIDs := make([]string, len(routes))
 	for i, route := range routes {
