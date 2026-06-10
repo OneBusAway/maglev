@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"fmt"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
@@ -12,11 +11,6 @@ import (
 func (api *RestAPI) routeIDsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
-		return
-	}
-
-	if v := r.URL.Query().Get("version"); v != "" && v != "2" {
-		api.sendError(w, r, http.StatusBadRequest, fmt.Sprintf("unknown version: %s", v))
 		return
 	}
 
