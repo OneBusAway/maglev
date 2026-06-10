@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"context"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -253,4 +255,20 @@ func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) [
 		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
 	}
 	return deduplicateAlerts(alerts)
+}
+
+// ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
+// It defaults to true if the parameter is absent or if it fails to parse as a boolean.
+func ShouldIncludeReferences(r *http.Request) bool {
+	val := r.URL.Query().Get("includeReferences")
+	if val == "" {
+		return true
+	}
+
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		return true
+	}
+
+	return parsed
 }
