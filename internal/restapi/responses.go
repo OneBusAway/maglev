@@ -80,3 +80,20 @@ func (api *RestAPI) sendError(w http.ResponseWriter, r *http.Request, code int, 
 		api.serverErrorResponse(w, r, err)
 	}
 }
+
+// sendFieldError returns a Spring-framework-compatible 400 response with a
+// fieldErrors body, matching the Java OBA reference implementation.
+func (api *RestAPI) sendFieldError(w http.ResponseWriter, r *http.Request, field, message string) {
+	setJSONResponseType(&w)
+	w.WriteHeader(http.StatusBadRequest)
+
+	body := map[string]any{
+		"fieldErrors": map[string][]string{
+			field: {message},
+		},
+	}
+
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		api.serverErrorResponse(w, r, err)
+	}
+}

@@ -46,7 +46,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		if parseErr != nil {
 			epochMs, numErr := strconv.ParseInt(dateParam, 10, 64)
 			if numErr != nil {
-				api.sendResponse(w, r, models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock))
+				api.sendFieldError(w, r, "date", "Invalid field value for field \"date\".")
 				return
 			}
 			t := time.UnixMilli(epochMs).In(loc)
@@ -63,17 +63,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
 		targetDate = startOfDay.Format("20060102")
 		scheduleDate = startOfDay.UnixMilli()
-	}
-
-	// Check if date exceeds the feed's max calendar end date -> ServiceDateOutOfRange
-	feedEndDateRaw, err := api.GtfsManager.GtfsDB.Queries.GetFeedEndDate(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	if feedEndDate, ok := feedEndDateRaw.(string); ok && feedEndDate != "" && targetDate > feedEndDate {
-		api.sendResponse(w, r, models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock))
-		return
 	}
 
 	agencyModel := models.NewAgencyReference(
@@ -105,8 +94,29 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	noTripsResponse := func() (models.ResponseModel, error) {
+		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
+			RouteID:   routeID,
+			EndDate:   targetDate,
+			RouteID_2: routeID,
+			Date:      targetDate,
+		})
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		if hasFuture == 0 {
+			return models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock), nil
+		}
+		return buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock), nil
+	}
+
 	if len(serviceIDs) == 0 {
-		api.sendResponse(w, r, buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock))
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 
@@ -120,7 +130,12 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(trips) == 0 {
-		api.sendResponse(w, r, buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock))
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 
@@ -181,16 +196,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			globalStopIDSet[stopID] = struct{}{}
 		}
 
-		seenHeadsigns := make(map[string]bool)
-		var headsigns []string
-		for _, trip := range tripsInGroup {
-			hs := trip.TripHeadsign.String
-			if hs != "" && !seenHeadsigns[hs] {
-				seenHeadsigns[hs] = true
-				headsigns = append(headsigns, hs)
-			}
-		}
-
 		rawTripIDs := make([]string, 0, len(tripsInGroup))
 		for _, trip := range tripsInGroup {
 			rawTripIDs = append(rawTripIDs, trip.ID)
@@ -205,6 +210,41 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripsInGroup))
 		for _, st := range allStopTimes {
 			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+		}
+
+		// Collect headsigns; fall back to last stop name when a trip has no headsign.
+		seenHeadsigns := make(map[string]bool)
+		var headsigns []string
+		var fallbackStopIDs []string
+		seenFallbackStops := make(map[string]bool)
+		for _, trip := range tripsInGroup {
+			hs := trip.TripHeadsign.String
+			if hs != "" {
+				if !seenHeadsigns[hs] {
+					seenHeadsigns[hs] = true
+					headsigns = append(headsigns, hs)
+				}
+			} else if sts := stopTimesByTrip[trip.ID]; len(sts) > 0 {
+				lastStopID := sts[len(sts)-1].StopID
+				if !seenFallbackStops[lastStopID] {
+					seenFallbackStops[lastStopID] = true
+					fallbackStopIDs = append(fallbackStopIDs, lastStopID)
+				}
+			}
+		}
+		if len(fallbackStopIDs) > 0 {
+			lastStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, fallbackStopIDs)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+			for _, s := range lastStops {
+				name := s.Name.String
+				if name != "" && !seenHeadsigns[name] {
+					seenHeadsigns[name] = true
+					headsigns = append(headsigns, name)
+				}
+			}
 		}
 
 		var tripIDs []string
