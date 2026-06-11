@@ -422,6 +422,16 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 					require.True(ok, "ServiceID should be a string")
 					require.NotEmpty(serviceID, "ServiceID should not be empty")
 					require.Contains(serviceID, "_", "serviceId should have agency prefix")
+
+					// Verify that stop times are strictly sorted by departureTime
+					for i := 0; i < len(stopTimes)-1; i++ {
+						curr := stopTimes[i].(map[string]any)
+						next := stopTimes[i+1].(map[string]any)
+						currDep, okCurr := curr["departureTime"].(float64)
+						nextDep, okNext := next["departureTime"].(float64)
+						require.True(okCurr && okNext, "departureTime should be a number")
+						require.LessOrEqual(currDep, nextDep, "Stop times must be sorted by departureTime ascending")
+					}
 				}
 			}
 		}

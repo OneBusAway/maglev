@@ -2885,7 +2885,7 @@ FROM
 WHERE
     st.stop_id = ?
 ORDER BY
-    r.id, st.arrival_time
+    r.id, st.departure_time
 `
 
 type GetScheduleForStopRow struct {
@@ -2982,7 +2982,7 @@ WHERE
     )
     AND r.id IN (/*SLICE:route_ids*/?)
 ORDER BY
-    r.id, st.arrival_time
+    r.id, st.departure_time
 `
 
 type GetScheduleForStopOnDateParams struct {
