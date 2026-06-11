@@ -159,8 +159,12 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var requestedVehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		_, rawVehicleID, vErr := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
+		vehicleAgencyID, rawVehicleID, vErr := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
 		if vErr != nil {
+			api.sendNotFound(w, r)
+			return
+		}
+		if vehicleAgencyID != agencyID {
 			api.sendNotFound(w, r)
 			return
 		}
