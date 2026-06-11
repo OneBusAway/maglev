@@ -237,8 +237,6 @@ func TestScheduleForStopHandlerReferences(t *testing.T) {
 		assert.True(t, ok, "Stops should exist in references")
 		assert.Len(t, stopsRef, 1, "Should have exactly one stop")
 
-		_, ok = references["trips"].([]any)
-		assert.True(t, ok, "Trips should exist in references")
 		_, ok = references["routes"].([]any)
 		assert.True(t, ok, "Routes should exist in references")
 	})
@@ -366,9 +364,15 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 		// Check that all reference types exist (even if empty)
 		_, hasAgencies := references["agencies"]
 		_, hasRoutes := references["routes"]
-		_, hasTrips := references["trips"]
 
-		require.True(hasAgencies || hasRoutes || hasTrips, "At least one reference type should exist")
+		require.True(hasAgencies || hasRoutes, "At least one reference type should exist")
+
+		// trips must not contain full trip references for schedule-for-stop
+		if rawTrips, hasTrips := references["trips"]; hasTrips {
+			trips, ok := rawTrips.([]any)
+			require.True(ok, "references.trips should be an array when present")
+			require.Len(trips, 0, "references.trips must be empty for schedule-for-stop")
+		}
 
 		// Validate entry structure
 		entry, ok := data["entry"].(map[string]any)

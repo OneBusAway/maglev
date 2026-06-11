@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -129,7 +128,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	)
 
 	routeRefs := make(map[string]models.Route)
-	tripIDsSet := make(map[string]bool)
 
 	// Pre-process to gather unique IDs for batch fetching
 	uniqueRouteIDsMap := make(map[string]bool)
@@ -209,8 +207,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
 		combinedTripID := utils.FormCombinedID(agencyID, row.TripID)
 
-		tripIDsSet[row.TripID] = true
-
 		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in the agency's timezone in milliseconds
 		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
 		startOfDay := time.UnixMilli(date).In(loc)
@@ -234,20 +230,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 				routeHeadsignCounts[combinedRouteID] = make(map[string]int)
 			}
 			routeHeadsignCounts[combinedRouteID][row.TripHeadsign.String]++
-		}
-	}
-
-	tripIDs := make([]string, 0, len(tripIDsSet))
-	for tripID := range tripIDsSet {
-		tripIDs = append(tripIDs, tripID)
-	}
-
-	var trips []gtfsdb.Trip
-	if len(tripIDs) > 0 {
-		trips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
 		}
 	}
 
@@ -279,21 +261,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	references := models.NewEmptyReferences()
 	references.Agencies = utils.MapValues(agencyRefs)
 	references.Routes = utils.MapValues(routeRefs)
-
-	for _, trip := range trips {
-		combinedTripID := utils.FormCombinedID(agencyID, trip.ID)
-		tripRef := models.NewTripReference(
-			combinedTripID,
-			utils.FormCombinedID(agencyID, trip.RouteID),
-			utils.FormCombinedID(agencyID, trip.ServiceID),
-			trip.TripHeadsign.String,
-			trip.TripShortName.String,
-			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormCombinedID(agencyID, trip.BlockID.String),
-			utils.FormCombinedID(agencyID, trip.ShapeID.String),
-		)
-		references.Trips = append(references.Trips, *tripRef)
-	}
 
 	routeIDsWithAgency := make([]string, 0, len(routeIDs))
 	for _, ri := range routeIDs {
