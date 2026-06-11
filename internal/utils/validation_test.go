@@ -419,6 +419,9 @@ func TestSanitizeInput(t *testing.T) {
 }
 
 func TestValidateDate(t *testing.T) {
+	// The expected error message based on your updated validation.go
+	expectedErrMsg := "invalid date format, use YYYY-MM-DD or a Unix millisecond integer"
+
 	tests := []struct {
 		name    string
 		date    string
@@ -436,6 +439,28 @@ func TestValidateDate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid unix timestamp in milliseconds",
+			date:    "1749686400000",
+			wantErr: false,
+		},
+		{
+			name:    "zero timestamp",
+			date:    "0",
+			wantErr: false,
+		},
+		{
+			name:    "negative timestamp",
+			date:    "-1000",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "extremely large timestamp",
+			date:    "999999999999999999",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
 			name:    "empty date is valid",
 			date:    "",
 			wantErr: false,
@@ -444,25 +469,31 @@ func TestValidateDate(t *testing.T) {
 			name:    "invalid date format",
 			date:    "12/25/2023",
 			wantErr: true,
-			errMsg:  "invalid date format, use YYYY-MM-DD",
+			errMsg:  expectedErrMsg,
 		},
 		{
 			name:    "invalid date",
 			date:    "2023-13-01",
 			wantErr: true,
-			errMsg:  "invalid date format, use YYYY-MM-DD",
+			errMsg:  expectedErrMsg,
 		},
 		{
 			name:    "invalid leap year date",
 			date:    "2023-02-29",
 			wantErr: true,
-			errMsg:  "invalid date format, use YYYY-MM-DD",
+			errMsg:  expectedErrMsg,
 		},
 		{
 			name:    "date with invalid characters",
 			date:    "2023-01-01<script>",
 			wantErr: true,
-			errMsg:  "invalid date format, use YYYY-MM-DD",
+			errMsg:  expectedErrMsg,
+		},
+		{
+			name:    "completely invalid string",
+			date:    "not-a-date-or-number",
+			wantErr: true,
+			errMsg:  expectedErrMsg,
 		},
 	}
 
