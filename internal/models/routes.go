@@ -3,11 +3,14 @@ package models
 type RouteType int
 
 type Route struct {
-	AgencyID          string    `json:"agencyId"`
-	Color             string    `json:"color"`
-	Description       string    `json:"description"`
-	ID                string    `json:"id"`
-	LongName          string    `json:"longName"`
+	AgencyID    string `json:"agencyId"`
+	Color       string `json:"color"`
+	Description string `json:"description"`
+	ID          string `json:"id"`
+	LongName    string `json:"longName"`
+	// Deprecated: NullSafeShortName is an accidental leak from the legacy Java
+	// OBA server. It is preserved only for backward compatibility with the
+	// Wayfinder web client. Do not use in new code; prefer ShortName and ID.
 	NullSafeShortName string    `json:"nullSafeShortName"`
 	ShortName         string    `json:"shortName"`
 	TextColor         string    `json:"textColor"`
@@ -18,7 +21,7 @@ type Route struct {
 func NewRoute(id, agencyID, shortName, longName, description string, routeType RouteType, url, color, textColor string) Route {
 	nullSafeShortName := shortName
 	if nullSafeShortName == "" {
-		nullSafeShortName = longName
+		nullSafeShortName = id
 	}
 
 	return Route{

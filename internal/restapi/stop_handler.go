@@ -29,6 +29,9 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort routes naturally by ShortName
+	utils.SortRoutesByName(routes)
+
 	combinedRouteIDs := make([]string, len(routes))
 	for i, route := range routes {
 		// Use route.AgencyID, not the stop's agencyID.
@@ -99,6 +102,10 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
 		if err == nil {
 			parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
+
+			// Sort parent routes naturally by ShortName
+			utils.SortRoutesByName(parentRoutes)
+
 			parentRouteIDs := make([]string, len(parentRoutes))
 			for i, r := range parentRoutes {
 				parentRouteIDs[i] = utils.FormCombinedID(r.AgencyID, r.ID)

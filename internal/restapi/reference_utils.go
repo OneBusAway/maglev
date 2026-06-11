@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"context"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -49,24 +51,31 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		return nil, err
 	}
 
+	return buildRouteModels(ctx, agencyID, routes)
+}
+
+// buildRouteModels converts a slice of database routes into model routes.
+// It is the single source of truth for mapping gtfsdb.Route → models.Route.
+func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Route) ([]models.Route, error) {
 	modelRoutes := make([]models.Route, 0, len(routes))
 	for _, route := range routes {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 
-		routeModel := models.Route{
-			ID:                utils.FormCombinedID(agencyID, route.ID),
-			AgencyID:          agencyID,
-			ShortName:         route.ShortName.String,
-			LongName:          route.LongName.String,
-			Description:       route.Desc.String,
-			Type:              models.RouteType(route.Type),
-			URL:               route.Url.String,
-			Color:             route.Color.String,
-			TextColor:         route.TextColor.String,
-			NullSafeShortName: route.ShortName.String,
-		}
+		combinedID := utils.FormCombinedID(agencyID, route.ID)
+
+		routeModel := models.NewRoute(
+			combinedID,
+			agencyID,
+			route.ShortName.String,
+			route.LongName.String,
+			route.Desc.String,
+			models.RouteType(route.Type),
+			route.Url.String,
+			route.Color.String,
+			route.TextColor.String,
+		)
 		modelRoutes = append(modelRoutes, routeModel)
 	}
 
@@ -253,4 +262,20 @@ func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) [
 		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
 	}
 	return deduplicateAlerts(alerts)
+}
+
+// ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
+// It defaults to true if the parameter is absent or if it fails to parse as a boolean.
+func ShouldIncludeReferences(r *http.Request) bool {
+	val := r.URL.Query().Get("includeReferences")
+	if val == "" {
+		return true
+	}
+
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		return true
+	}
+
+	return parsed
 }
