@@ -128,7 +128,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	)
 
 	routeRefs := make(map[string]models.Route)
-	tripIDsSet := make(map[string]bool)
 
 	// Pre-process to gather unique IDs for batch fetching
 	uniqueRouteIDsMap := make(map[string]bool)
@@ -207,8 +206,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
 		combinedTripID := utils.FormCombinedID(agencyID, row.TripID)
-
-		tripIDsSet[row.TripID] = true
 
 		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in the agency's timezone in milliseconds
 		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
