@@ -535,6 +535,7 @@ func TestStopHandler_IncludeReferences(t *testing.T) {
 	assert.Empty(t, modelFalse.Data.References.Agencies, "Agencies must be empty when includeReferences=false")
 	assert.Empty(t, modelFalse.Data.References.Routes, "Routes must be empty when includeReferences=false")
 	assert.Empty(t, modelFalse.Data.References.Stops, "Stops must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.StopTimes, "StopTimes must be empty when includeReferences=false")
 	assert.Empty(t, modelFalse.Data.References.Trips, "Trips must be empty when includeReferences=false")
 	assert.Empty(t, modelFalse.Data.References.Situations, "Situations must be empty when includeReferences=false")
 }
