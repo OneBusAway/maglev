@@ -1,6 +1,7 @@
 {
   "$schema": "./config.schema.json",
   "port": 4000,
+  "host": "127.0.0.1",
   "env": "development",
   "api-keys": [
     "test"
