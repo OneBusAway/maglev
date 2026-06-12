@@ -56,7 +56,10 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, nulls.StringOrEmpty(trip.ShapeID)), entry.ShapeID)
 	assert.Equal(t, nulls.StringOrEmpty(trip.TripHeadsign), entry.TripHeadsign)
 	assert.Equal(t, nulls.StringOrEmpty(trip.TripShortName), entry.TripShortName)
-	assert.Equal(t, nulls.StringOrEmpty(route.ShortName), entry.RouteShortName)
+	// entry.routeShortName is the trip's own per-trip route short name, not the
+	// route's. Maglev does not store that column, so it is always empty (parity
+	// with the Java reference). Clients fall back to the route reference's shortName.
+	assert.Equal(t, "", entry.RouteShortName)
 
 	// Route reference: id is combined, agencyId matches, shortName echoes the DB.
 	require.NotEmpty(t, model.Data.References.Routes)
@@ -67,6 +70,49 @@ func TestTripHandlerEndToEnd(t *testing.T) {
 
 	// Agency reference: the RABA fixture should be exactly one entry.
 	assert.Contains(t, model.Data.References.Agencies, testdata.Raba)
+}
+
+func TestTripHandler_IncludeReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	trip := mustGetTrip(t, api)
+	combinedTripID := utils.FormCombinedID(testdata.Raba.ID, trip.ID)
+
+	t.Run("includeReferences=false returns empty references", func(t *testing.T) {
+		resp, model := callAPIHandler[TripEntryResponse](t, api,
+			tripURL(combinedTripID)+"&includeReferences=false")
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+
+		// Entry is still fully populated.
+		assert.Equal(t, combinedTripID, model.Data.Entry.ID)
+
+		// All references sub-arrays are empty.
+		assert.Empty(t, model.Data.References.Agencies)
+		assert.Empty(t, model.Data.References.Routes)
+		assert.Empty(t, model.Data.References.Stops)
+		assert.Empty(t, model.Data.References.Trips)
+		assert.Empty(t, model.Data.References.Situations)
+	})
+
+	t.Run("includeReferences=true populates references", func(t *testing.T) {
+		resp, model := callAPIHandler[TripEntryResponse](t, api,
+			tripURL(combinedTripID)+"&includeReferences=true")
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.NotEmpty(t, model.Data.References.Routes)
+		assert.NotEmpty(t, model.Data.References.Agencies)
+	})
+
+	t.Run("absent includeReferences defaults to true", func(t *testing.T) {
+		resp, model := callAPIHandler[TripEntryResponse](t, api, tripURL(combinedTripID))
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.NotEmpty(t, model.Data.References.Routes)
+		assert.NotEmpty(t, model.Data.References.Agencies)
+	})
 }
 
 func TestTripHandler_NotFoundAndMalformed(t *testing.T) {
