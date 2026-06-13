@@ -218,70 +218,74 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	references := models.NewEmptyReferences()
 
-	if params.IncludeTrip {
-		tripsToInclude := []string{utils.FormCombinedID(agencyID, trip.ID)}
+	includeReferences := ShouldIncludeReferences(r)
+
+	if includeReferences {
+		if params.IncludeTrip {
+			tripsToInclude := []string{utils.FormCombinedID(agencyID, trip.ID)}
+
+			if params.IncludeSchedule && schedule != nil {
+				if schedule.NextTripID != "" {
+					tripsToInclude = append(tripsToInclude, schedule.NextTripID)
+				}
+				if schedule.PreviousTripID != "" {
+					tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
+				}
+			}
+
+			if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
+				tripsToInclude = append(tripsToInclude, status.ActiveTripID)
+			}
+
+			referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+
+			for _, t := range referencedTrips {
+				references.Trips = append(references.Trips, *t)
+			}
+		}
+
+		agencyModel := models.NewAgencyReference(
+			agency.ID,
+			agency.Name,
+			agency.Url,
+			agency.Timezone,
+			agency.Lang.String,
+			agency.Phone.String,
+			agency.Email.String,
+			agency.FareUrl.String,
+			"",
+			false,
+		)
+		references.Agencies = append(references.Agencies, agencyModel)
+
+		if len(situationsIDs) > 0 {
+			alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
+			if len(alerts) > 0 {
+				situations := api.BuildSituationReferences(alerts)
+				references.Situations = append(references.Situations, situations...)
+			}
+		}
 
 		if params.IncludeSchedule && schedule != nil {
-			if schedule.NextTripID != "" {
-				tripsToInclude = append(tripsToInclude, schedule.NextTripID)
+			stops, err := api.buildStopReferences(ctx, agencyID, schedule.StopTimes)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
 			}
-			if schedule.PreviousTripID != "" {
-				tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
+			references.Stops = stops
+
+			routes, err := api.BuildRouteReferences(ctx, agencyID, stops)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
 			}
+
+			references.Routes = routes
 		}
-
-		if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
-			tripsToInclude = append(tripsToInclude, status.ActiveTripID)
-		}
-
-		referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-
-		for _, t := range referencedTrips {
-			references.Trips = append(references.Trips, *t)
-		}
-	}
-
-	agencyModel := models.NewAgencyReference(
-		agency.ID,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Lang.String,
-		agency.Phone.String,
-		agency.Email.String,
-		agency.FareUrl.String,
-		"",
-		false,
-	)
-	references.Agencies = append(references.Agencies, agencyModel)
-
-	if len(situationsIDs) > 0 {
-		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts)
-			references.Situations = append(references.Situations, situations...)
-		}
-	}
-
-	if params.IncludeSchedule && schedule != nil {
-		stops, err := api.buildStopReferences(ctx, agencyID, schedule.StopTimes)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-		references.Stops = stops
-
-		routes, err := api.BuildRouteReferences(ctx, agencyID, stops)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-
-		references.Routes = routes
 	}
 
 	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
