@@ -150,14 +150,6 @@ func (api *RestAPI) BuildVehicleStatus(
 	}
 }
 
-func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
-	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
-		return ""
-	}
-
-	return vehicle.Trip.ID.ID
-}
-
 // projectPositionWithShapePoints projects actualPos onto the nearest segment
 // of the given shape, returning nil if no segment is within 200 m.
 func projectPositionWithShapePoints(shapePoints []gtfs.ShapePoint, actualPos models.Location) *models.Location {
@@ -191,12 +183,4 @@ func projectPositionWithShapePoints(shapePoints []gtfs.ShapePoint, actualPos mod
 func projectPointToSegment(px, py, x1, y1, x2, y2 float64) (float64, models.Location) {
 	dist, _, projLat, projLon := projectOntoSegment(px, py, x1, y1, x2, y2)
 	return dist, models.Location{Lat: projLat, Lon: projLon}
-}
-
-func getCurrentVehicleStopSequence(vehicle *gtfs.Vehicle) *int {
-	if vehicle == nil || vehicle.CurrentStopSequence == nil {
-		return nil
-	}
-	val := int(*vehicle.CurrentStopSequence)
-	return &val
 }
