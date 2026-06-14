@@ -35,13 +35,22 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 
 	fieldErrors := make(map[string][]string)
 
-	// Validate serviceDate
+	// Validate serviceDate — accepts either a Unix timestamp in milliseconds
+	// (e.g. "1718409600000") or a calendar date in yyyy-MM-dd format (e.g. "2024-06-15").
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
 		} else {
-			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			dateLoc := time.UTC
+			if len(loc) > 0 && loc[0] != nil {
+				dateLoc = loc[0]
+			}
+			if serviceDate, err := time.ParseInLocation("2006-01-02", serviceDateStr, dateLoc); err == nil {
+				params.ServiceDate = &serviceDate
+			} else {
+				fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"}
+			}
 		}
 	}
 
