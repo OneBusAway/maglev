@@ -105,19 +105,8 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			agencyModel := models.NewAgencyReference(
-				agency.ID,
-				agency.Name,
-				agency.Url,
-				agency.Timezone,
-				agency.Lang.String,
-				agency.Phone.String,
-				agency.Email.String,
-				agency.FareUrl.String,
-				"",
-				false,
-			)
-			references.Agencies = append(references.Agencies, agencyModel)
+			// Use the existing helper to map the database row to the model
+			references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
 		}
 
