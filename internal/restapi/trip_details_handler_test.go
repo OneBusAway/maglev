@@ -115,6 +115,26 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	assert.Equal(t, expectedMidnight.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli())
 }
 
+func TestTripDetailsHandlerWithServiceDateString(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	agencyLoc, err := time.LoadLocation(agency.Timezone)
+	require.NoError(t, err)
+	expectedMidnight := time.Date(2025, 7, 20, 0, 0, 0, 0, agencyLoc)
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&serviceDate=2025-07-20")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, expectedMidnight.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli())
+}
+
 func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -246,6 +266,18 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 		assert.False(t, params.IncludeTrip)
 		assert.False(t, params.IncludeSchedule)
 		assert.NotNil(t, params.ServiceDate)
+	})
+
+	t.Run("serviceDate yyyy-MM-dd format", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?serviceDate=2024-06-15", nil)
+
+		params, errs := api.parseTripParams(req, true)
+
+		assert.Nil(t, errs)
+		require.NotNil(t, params.ServiceDate)
+		assert.Equal(t, 2024, params.ServiceDate.Year())
+		assert.Equal(t, time.June, params.ServiceDate.Month())
+		assert.Equal(t, 15, params.ServiceDate.Day())
 	})
 
 	t.Run("defaults", func(t *testing.T) {
