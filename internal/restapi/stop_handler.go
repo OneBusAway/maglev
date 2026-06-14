@@ -93,7 +93,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 		sort.Strings(agencyIDs)
 
-		for aid := range uniqueAgencyIDs {
+		for _, aid := range agencyIDs {
 			agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, aid)
 
 			if err != nil {
