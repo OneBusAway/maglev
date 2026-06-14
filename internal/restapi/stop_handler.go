@@ -1,7 +1,10 @@
 package restapi
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
+	"sort"
 
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -83,23 +86,39 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Fetch references for ALL unique agencies involved, not just the first one.
+		agencyIDs := make([]string, 0, len(uniqueAgencyIDs))
+		for aid := range uniqueAgencyIDs {
+			agencyIDs = append(agencyIDs, aid)
+		}
+
+		sort.Strings(agencyIDs)
+
 		for aid := range uniqueAgencyIDs {
 			agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, aid)
-			if err == nil {
-				agencyModel := models.NewAgencyReference(
-					agency.ID,
-					agency.Name,
-					agency.Url,
-					agency.Timezone,
-					agency.Lang.String,
-					agency.Phone.String,
-					agency.Email.String,
-					agency.FareUrl.String,
-					"",
-					false,
-				)
-				references.Agencies = append(references.Agencies, agencyModel)
+
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					api.sendNotFound(w, r)
+					return
+				}
+				api.serverErrorResponse(w, r, err)
+				return
 			}
+
+			agencyModel := models.NewAgencyReference(
+				agency.ID,
+				agency.Name,
+				agency.Url,
+				agency.Timezone,
+				agency.Lang.String,
+				agency.Phone.String,
+				agency.Email.String,
+				agency.FareUrl.String,
+				"",
+				false,
+			)
+			references.Agencies = append(references.Agencies, agencyModel)
+
 		}
 
 		if nulls.StringOrEmpty(stop.ParentStation) != "" {
