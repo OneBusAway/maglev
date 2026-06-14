@@ -96,7 +96,8 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 	// callers receive times in the agency's timezone by default. This prevents the
 	// bug where time.Unix(ms/1000, 0) creates a UTC time and downstream
 	// Year()/Month()/Day()/Format() calls extract the wrong calendar date for
-	// agencies in positive UTC offsets.
+	// agencies in positive UTC offsets. For yyyy-MM-dd dates, this is a no-op since
+	// they are already parsed in the correct timezone at line 49
 	if len(loc) > 0 && loc[0] != nil {
 		if params.ServiceDate != nil {
 			localized := params.ServiceDate.In(loc[0])
