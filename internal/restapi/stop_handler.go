@@ -125,15 +125,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Populate situation references for alerts affecting this stop and its serving routes
-	rawRouteIDs := make([]string, len(routes))
-	for i, route := range routes {
-		rawRouteIDs[i] = route.ID
-	}
-	alerts := api.collectAlertsForStopsAndRoutes([]string{stopID}, rawRouteIDs)
-	situations := api.BuildSituationReferences(alerts)
-	references.Situations = append(references.Situations, situations...)
-
 	response := models.NewEntryResponse(stopData, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
