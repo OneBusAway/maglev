@@ -174,7 +174,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager)(apiHandler)
 	apiHandler = api.VersionValidationMiddleware(apiHandler)
 
-	// Apply global compression around the entire mux
+	// Apply compression around apiHandler (the mux plus API-specific middleware)
 	compressedMux := restapi.CompressionMiddleware(apiHandler)
 
 	// Add freshness middleware
