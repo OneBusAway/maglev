@@ -28,6 +28,18 @@ func TestEncodePolyline_FloorsNotRounds(t *testing.T) {
 	if got == rounded {
 		t.Errorf("floored encoding should differ from rounded 0.00002 encoding %q", rounded)
 	}
+
+	// Negative boundary: -0.000019 * 1e5 = -1.9. Java floors to -2 (same as
+	// -0.00002); truncation or rounding would give -1 (same as -0.00001).
+	gotNeg := EncodePolyline([][]float64{{-0.000019, 0}})
+	flooredNeg := EncodePolyline([][]float64{{-0.00002, 0}})
+	truncOrRoundNeg := EncodePolyline([][]float64{{-0.00001, 0}})
+	if gotNeg != flooredNeg {
+		t.Errorf("floor(-0.000019*1e5) should match -0.00002 encoding; got %q want %q", gotNeg, flooredNeg)
+	}
+	if gotNeg == truncOrRoundNeg {
+		t.Errorf("floored negative encoding should differ from -0.00001 (truncate/round) encoding %q", truncOrRoundNeg)
+	}
 }
 
 func TestEncodePolyline_PreservesDuplicates(t *testing.T) {
