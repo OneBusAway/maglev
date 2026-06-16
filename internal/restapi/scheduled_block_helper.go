@@ -67,8 +67,7 @@ type blockTripData struct {
 // nil when no stop times can be loaded.
 //
 // TODO(perf): each call issues ~(3 + 3N) DB queries where N = block size, and
-// the plural arrivals handler calls this twice per arrival row. See
-// arrivals-bugs/snapshot-performance-followup.md for the batching plan.
+// the plural arrivals handler calls this twice per arrival row.
 func (api *RestAPI) computeScheduledBlockSnapshot(
 	ctx context.Context,
 	targetTripID string,
