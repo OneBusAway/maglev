@@ -26,9 +26,10 @@ type ArrivalsStopParams struct {
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
 func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
-	// Both windows cap at 240 min, matching Java and the absence of any spec maximum.
-	const maxBefore = 240 * time.Minute
-	const maxAfter = 240 * time.Minute
+	// Cap at one service day. Java doesn't cap; we do to bound per-request
+	// work — the handler iterates only ±1 day of stop_times anyway.
+	const maxBefore = 24 * time.Hour
+	const maxAfter = 24 * time.Hour
 
 	params := ArrivalsStopParams{
 		After:  35 * time.Minute, // Default
