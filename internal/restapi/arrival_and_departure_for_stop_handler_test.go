@@ -416,8 +416,8 @@ func TestParseArrivalAndDepartureParams_LargeValues(t *testing.T) {
 	params, errs := parseArrivalAndDepartureParams(req)
 
 	assert.Empty(t, errs)
-	assert.Equal(t, 240, params.MinutesAfter)
-	assert.Equal(t, 240, params.MinutesBefore)
+	assert.Equal(t, 1440, params.MinutesAfter)
+	assert.Equal(t, 1440, params.MinutesBefore)
 }
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
