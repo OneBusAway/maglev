@@ -35,8 +35,11 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	// Initialize errors map
 	fieldErrors := make(map[string][]string)
 
-	const maxMinutesAfter = 240
-	const maxMinutesBefore = 240
+	// Cap at one service day. Java has no cap; we keep one to bound
+	// per-request work — the handler iterates only ±1 day of stop_times,
+	// so anything larger returns the same data anyway.
+	const maxMinutesAfter = 24 * 60
+	const maxMinutesBefore = 24 * 60
 
 	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
