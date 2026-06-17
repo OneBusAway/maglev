@@ -97,14 +97,13 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	trip := mustGetTrip(t, api)
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
-	tomorrow := time.Now().AddDate(0, 0, 1)
-	serviceDateMs := tomorrow.Unix() * 1000
-	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
+	// Use a fixed date known to be within the test GTFS calendar range (Mon-Fri, 2024-01-01 to 2025-12-31).
+	// 2025-06-11 is a Wednesday.
 	agencyLoc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
-	sdInAgencyTz := tomorrow.In(agencyLoc)
-	expectedMidnight := time.Date(sdInAgencyTz.Year(), sdInAgencyTz.Month(), sdInAgencyTz.Day(),
-		0, 0, 0, 0, agencyLoc)
+	validDate := time.Date(2025, 6, 11, 12, 0, 0, 0, agencyLoc)
+	serviceDateMs := validDate.UnixMilli()
+	expectedMidnight := time.Date(2025, 6, 11, 0, 0, 0, 0, agencyLoc)
 
 	resp, model := callAPIHandler[TripDetailsResponse](t, api,
 		"/api/where/trip-details/"+tripID+".json?key=TEST&serviceDate="+
@@ -113,6 +112,28 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, expectedMidnight.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli())
+}
+
+// TestTripDetailsHandlerWithInvalidServiceDate verifies that when serviceDate is
+// explicitly provided but the trip does not operate on that date, HTTP 404 is returned.
+func TestTripDetailsHandlerWithInvalidServiceDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	// Use a date far in the past that is definitely outside any service calendar.
+	invalidDate := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	serviceDateMs := invalidDate.UnixMilli()
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&serviceDate="+
+			strconv.FormatInt(serviceDateMs, 10))
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
 }
 
 func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {

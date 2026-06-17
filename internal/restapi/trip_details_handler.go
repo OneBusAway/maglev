@@ -153,6 +153,29 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
+	// When serviceDate is explicitly provided, validate that the trip operates on
+	// that date. Per the wiki spec: "serviceDate is provided but no
+	// block instance exists for that service date → HTTP 404".
+	if params.ServiceDate != nil {
+		formattedDate := serviceDate.Format("20060102")
+		activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+		if svcErr != nil {
+			api.serverErrorResponse(w, r, svcErr)
+			return
+		}
+		serviceActive := false
+		for _, svcID := range activeServiceIDs {
+			if svcID == trip.ServiceID {
+				serviceActive = true
+				break
+			}
+		}
+		if !serviceActive {
+			api.sendNotFound(w, r)
+			return
+		}
+	}
+
 	var schedule *models.Schedule
 	var status *models.TripStatus
 
