@@ -324,3 +324,61 @@ func TestTripDetailsHandlerWithVehicleId(t *testing.T) {
 		assert.Equal(t, tripID, model.Data.Entry.TripID)
 	})
 }
+
+// TestTripDetailsHandlerWithIncludeReferencesFalse verifies that when includeReferences=false,
+// the response includes data.references with empty collections for agencies, routes, trips, stops,
+// and situations, while the entry data is still fully populated.
+func TestTripDetailsHandlerWithIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeReferences=false")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	assert.Equal(t, tripID, model.Data.Entry.TripID)
+	assert.NotZero(t, model.Data.Entry.ServiceDate.UnixMilli())
+	require.NotNil(t, model.Data.Entry.Schedule)
+
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies, "agencies should be empty when includeReferences=false")
+	assert.Empty(t, refs.Trips, "trips should be empty when includeReferences=false")
+	assert.Empty(t, refs.Routes, "routes should be empty when includeReferences=false")
+	assert.Empty(t, refs.Stops, "stops should be empty when includeReferences=false")
+	assert.Empty(t, refs.Situations, "situations should be empty when includeReferences=false")
+}
+
+// TestTripDetailsHandlerWithIncludeReferencesDefault verifies that the default behaviour
+// (includeReferences absent or explicitly true) returns populated references.
+func TestTripDetailsHandlerWithIncludeReferencesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"absent", "/api/where/trip-details/" + tripID + ".json?key=TEST"},
+		{"explicit true", "/api/where/trip-details/" + tripID + ".json?key=TEST&includeReferences=true"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, tt.url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.References.Agencies,
+				"agencies should be populated when includeReferences is true/absent")
+			assert.Equal(t, agency.ID, model.Data.References.Agencies[0].ID)
+		})
+	}
+}
