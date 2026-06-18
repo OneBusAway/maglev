@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	gtfs "github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -21,6 +22,7 @@ type TripParams struct {
 	IncludeSchedule bool
 	IncludeStatus   bool
 	Time            *time.Time
+	VehicleID       string
 }
 
 // parseTripParams parses and validates the common trip query params
@@ -78,6 +80,8 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
 	}
+
+	params.VehicleID = r.URL.Query().Get("vehicleId")
 
 	if len(fieldErrors) > 0 {
 		return params, fieldErrors
@@ -153,12 +157,31 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
+	var requestedVehicle *gtfs.Vehicle
+	if params.VehicleID != "" {
+		vehicleAgencyID, rawVehicleID, vErr := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
+		if vErr != nil {
+			api.sendNotFound(w, r)
+			return
+		}
+		if vehicleAgencyID != agencyID {
+			api.sendNotFound(w, r)
+			return
+		}
+		v, vErr := api.GtfsManager.GetVehicleByID(rawVehicleID)
+		if vErr != nil || v == nil {
+			api.sendNotFound(w, r)
+			return
+		}
+		requestedVehicle = v
+	}
+
 	var schedule *models.Schedule
 	var status *models.TripStatus
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, nil, serviceDate, currentTime)
+		status, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed",
 				"trip_id", trip.ID,

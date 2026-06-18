@@ -269,4 +269,58 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 		assert.Contains(t, errs, "serviceDate")
 		assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
 	})
+
+	t.Run("vehicleId is parsed", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?vehicleId=40_v123", nil)
+
+		params, errs := api.parseTripParams(req, true)
+
+		assert.Nil(t, errs)
+		assert.Equal(t, "40_v123", params.VehicleID)
+	})
+
+	t.Run("vehicleId defaults to empty", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+
+		params, errs := api.parseTripParams(req, true)
+
+		assert.Nil(t, errs)
+		assert.Equal(t, "", params.VehicleID)
+	})
+}
+
+func TestTripDetailsHandlerWithVehicleId(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	t.Run("unknown vehicleId returns 404", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			"/api/where/trip-details/"+tripID+".json?key=TEST&vehicleId="+agency.ID+"_nonexistent")
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, model.Code)
+	})
+
+	t.Run("malformed vehicleId returns 404", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			"/api/where/trip-details/"+tripID+".json?key=TEST&vehicleId=malformed")
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, model.Code)
+	})
+
+	t.Run("valid vehicleId returns 200", func(t *testing.T) {
+		api.GtfsManager.MockAddVehicle("test-vehicle", trip.ID, trip.RouteID)
+
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			"/api/where/trip-details/"+tripID+".json?key=TEST&vehicleId="+agency.ID+"_test-vehicle")
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.Equal(t, tripID, model.Data.Entry.TripID)
+	})
 }
