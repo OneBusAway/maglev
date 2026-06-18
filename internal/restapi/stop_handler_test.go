@@ -511,3 +511,31 @@ func TestStopHandler_ParentStationNaturalSorting(t *testing.T) {
 	}
 	assert.Equal(t, expectedRouteIDs, parentRef.RouteIDs, "Parent station RouteIDs should preserve natural order")
 }
+
+func TestStopHandler_IncludeReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Verify standard behavior (includeReferences=true implicitly)
+	respTrue, modelTrue := callAPIHandler[StopEntryResponse](t, api, stopURL(testdata.Stop4062.ID))
+	require.Equal(t, http.StatusOK, respTrue.StatusCode)
+	assert.Equal(t, testdata.Stop4062, modelTrue.Data.Entry)
+	// Verify references are populated
+	assert.NotEmpty(t, modelTrue.Data.References.Agencies, "Agencies should be populated when includeReferences is not false")
+	assert.NotEmpty(t, modelTrue.Data.References.Routes, "Routes should be populated when includeReferences is not false")
+
+	// Verify explicit explicit includeReferences=false behavior
+	respFalse, modelFalse := callAPIHandler[StopEntryResponse](t, api, stopURL(testdata.Stop4062.ID)+"&includeReferences=false")
+	require.Equal(t, http.StatusOK, respFalse.StatusCode)
+
+	// Ensure the core entry data is unaffected
+	assert.Equal(t, testdata.Stop4062, modelFalse.Data.Entry)
+
+	// Verify the references object is present but all arrays are empty (as per spec)
+	assert.Empty(t, modelFalse.Data.References.Agencies, "Agencies must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Routes, "Routes must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Stops, "Stops must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.StopTimes, "StopTimes must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Trips, "Trips must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Situations, "Situations must be empty when includeReferences=false")
+}
