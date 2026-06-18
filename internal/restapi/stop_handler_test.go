@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -51,6 +50,7 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	require.Len(t, model.Data.References.Routes, len(testdata.Stop4062.RouteIDs),
 		"references.routes count should match entry.routeIds count")
 	assert.Equal(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Situations, "situations should always be empty for this endpoint")
 }
 
 func TestStopHandler_NotFoundAndMalformed(t *testing.T) {
@@ -176,33 +176,6 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 	}
 	assert.True(t, agencyIDs[agencyA], "AgencyA should be in references")
 	assert.True(t, agencyIDs[agencyB], "AgencyB should be in references")
-}
-
-// TestStopHandlerWithSituations verifies that an alert informing the same
-// situation against multiple entities (stop + route) deduplicates to one
-// situation in references.
-func TestStopHandlerWithSituations(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	// Real-time alerts use raw (un-prefixed) ids from the GTFS-RT feed.
-	rawStopID := "4062" // Stop4062 = "25_4062"
-	rawRouteID := "154" // Stop4062 is on route 25_154
-	const alertID = "test-cross-entity-alert-789"
-	api.GtfsManager.AddAlertForTest(gtfs.Alert{
-		ID: alertID,
-		InformedEntities: []gtfs.AlertInformedEntity{
-			{StopID: &rawStopID},
-			{RouteID: &rawRouteID},
-		},
-	})
-
-	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(testdata.Stop4062.ID))
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Len(t, model.Data.References.Situations, 1,
-		"expected exactly one deduplicated situation despite matching multiple entities")
-	assert.Equal(t, alertID, model.Data.References.Situations[0].ID)
 }
 
 // TestStopHandler_StopCodeFallback verifies that when a stop has no stop_code
