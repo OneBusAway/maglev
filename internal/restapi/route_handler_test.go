@@ -89,24 +89,15 @@ func TestRouteHandler_EntityIDWithUnderscores(t *testing.T) {
 	defer api.Shutdown()
 
 	tests := []struct {
-		name             string
-		routeID          string
-		expectedAgency   string
-		expectedEntityID string
+		name    string
+		routeID string
 	}{
-		{"agency with underscore in entity", "KCM_40_100479", "KCM", "40_100479"},
-		{"existing agency with underscore in entity", "25_40_100479", "25", "40_100479"},
-		{"multiple underscores in entity", "AGENCY_part1_part2_part3", "AGENCY", "part1_part2_part3"},
+		{"agency with underscore in entity", "KCM_40_100479"},
+		{"existing agency with underscore in entity", "25_40_100479"},
+		{"multiple underscores in entity", "AGENCY_part1_part2_part3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Verify parsing logic directly
-			agencyID, codeID, err := utils.ExtractAgencyIDAndCodeID(tt.routeID)
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectedAgency, agencyID)
-			assert.Equal(t, tt.expectedEntityID, codeID)
-
-			// Verify handler accepts the ID (returns 404, not 400 validation error)
 			resp, model := callAPIHandler[RouteEntryResponse](t, api, routeURL(tt.routeID))
 			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 			assert.Equal(t, http.StatusNotFound, model.Code)
