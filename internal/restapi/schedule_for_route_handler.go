@@ -46,7 +46,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		if parseErr != nil {
 			epochMs, numErr := strconv.ParseInt(dateParam, 10, 64)
 			if numErr != nil {
-				api.sendResponse(w, r, models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock))
+				api.sendFieldError(w, r, "date", "Invalid field value for field \"date\".")
 				return
 			}
 			t := time.UnixMilli(epochMs).In(loc)
