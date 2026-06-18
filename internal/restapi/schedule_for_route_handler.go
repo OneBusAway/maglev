@@ -181,16 +181,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			globalStopIDSet[stopID] = struct{}{}
 		}
 
-		seenHeadsigns := make(map[string]bool)
-		var headsigns []string
-		for _, trip := range tripsInGroup {
-			hs := trip.TripHeadsign.String
-			if hs != "" && !seenHeadsigns[hs] {
-				seenHeadsigns[hs] = true
-				headsigns = append(headsigns, hs)
-			}
-		}
-
 		rawTripIDs := make([]string, 0, len(tripsInGroup))
 		for _, trip := range tripsInGroup {
 			rawTripIDs = append(rawTripIDs, trip.ID)
@@ -205,6 +195,42 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripsInGroup))
 		for _, st := range allStopTimes {
 			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+		}
+
+		// Collect headsigns; fall back to the last stop's name when a trip has no
+		// recorded headsign, matching the Java reference behavior.
+		seenHeadsigns := make(map[string]bool)
+		var headsigns []string
+		var fallbackStopIDs []string
+		seenFallbackStops := make(map[string]bool)
+		for _, trip := range tripsInGroup {
+			hs := trip.TripHeadsign.String
+			if hs != "" {
+				if !seenHeadsigns[hs] {
+					seenHeadsigns[hs] = true
+					headsigns = append(headsigns, hs)
+				}
+			} else if sts := stopTimesByTrip[trip.ID]; len(sts) > 0 {
+				lastStopID := sts[len(sts)-1].StopID
+				if !seenFallbackStops[lastStopID] {
+					seenFallbackStops[lastStopID] = true
+					fallbackStopIDs = append(fallbackStopIDs, lastStopID)
+				}
+			}
+		}
+		if len(fallbackStopIDs) > 0 {
+			lastStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, fallbackStopIDs)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+			for _, s := range lastStops {
+				name := s.Name.String
+				if name != "" && !seenHeadsigns[name] {
+					seenHeadsigns[name] = true
+					headsigns = append(headsigns, name)
+				}
+			}
 		}
 
 		var tripIDs []string
