@@ -81,6 +81,30 @@ func TestRouteHandlerWithMalformedID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
+// TestRouteHandler_EntityIDWithUnderscores verifies that the handler correctly
+// processes IDs where the entity portion contains underscores (e.g. KCM_40_100479
+// splits into agency "KCM" and entity "40_100479" via SplitN with limit 2).
+func TestRouteHandler_EntityIDWithUnderscores(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name    string
+		routeID string
+	}{
+		{"agency with underscore in entity", "KCM_40_100479"},
+		{"existing agency with underscore in entity", "25_40_100479"},
+		{"multiple underscores in entity", "AGENCY_part1_part2_part3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[RouteEntryResponse](t, api, routeURL(tt.routeID))
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+			assert.Equal(t, http.StatusNotFound, model.Code)
+		})
+	}
+}
+
 // TestRouteHandlerWithSituations verifies that a real-time alert informing a
 // route shows up in references.situations for that route's response.
 func TestRouteHandlerWithSituations(t *testing.T) {
