@@ -269,4 +269,116 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 		assert.Contains(t, errs, "serviceDate")
 		assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
 	})
+
+	t.Run("vehicleId is parsed", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?vehicleId=40_v123", nil)
+
+		params, errs := api.parseTripParams(req, true)
+
+		assert.Nil(t, errs)
+		assert.Equal(t, "40_v123", params.VehicleID)
+	})
+
+	t.Run("vehicleId defaults to empty", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+
+		params, errs := api.parseTripParams(req, true)
+
+		assert.Nil(t, errs)
+		assert.Equal(t, "", params.VehicleID)
+	})
+}
+
+func TestTripDetailsHandlerWithVehicleId(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	t.Run("unknown vehicleId returns 404", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			"/api/where/trip-details/"+tripID+".json?key=TEST&vehicleId="+agency.ID+"_nonexistent")
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, model.Code)
+	})
+
+	t.Run("malformed vehicleId returns 404", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			"/api/where/trip-details/"+tripID+".json?key=TEST&vehicleId=malformed")
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, model.Code)
+	})
+
+	t.Run("valid vehicleId returns 200", func(t *testing.T) {
+		api.GtfsManager.MockAddVehicle("test-vehicle", trip.ID, trip.RouteID)
+
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			"/api/where/trip-details/"+tripID+".json?key=TEST&vehicleId="+agency.ID+"_test-vehicle")
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.Equal(t, tripID, model.Data.Entry.TripID)
+	})
+}
+
+// TestTripDetailsHandlerWithIncludeReferencesFalse verifies that when includeReferences=false,
+// the response includes data.references with empty collections for agencies, routes, trips, stops,
+// and situations, while the entry data is still fully populated.
+func TestTripDetailsHandlerWithIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeReferences=false")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	assert.Equal(t, tripID, model.Data.Entry.TripID)
+	assert.NotZero(t, model.Data.Entry.ServiceDate.UnixMilli())
+	require.NotNil(t, model.Data.Entry.Schedule)
+
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies, "agencies should be empty when includeReferences=false")
+	assert.Empty(t, refs.Trips, "trips should be empty when includeReferences=false")
+	assert.Empty(t, refs.Routes, "routes should be empty when includeReferences=false")
+	assert.Empty(t, refs.Stops, "stops should be empty when includeReferences=false")
+	assert.Empty(t, refs.Situations, "situations should be empty when includeReferences=false")
+}
+
+// TestTripDetailsHandlerWithIncludeReferencesDefault verifies that the default behaviour
+// (includeReferences absent or explicitly true) returns populated references.
+func TestTripDetailsHandlerWithIncludeReferencesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"absent", "/api/where/trip-details/" + tripID + ".json?key=TEST"},
+		{"explicit true", "/api/where/trip-details/" + tripID + ".json?key=TEST&includeReferences=true"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, tt.url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.References.Agencies,
+				"agencies should be populated when includeReferences is true/absent")
+			assert.Equal(t, agency.ID, model.Data.References.Agencies[0].ID)
+		})
+	}
 }

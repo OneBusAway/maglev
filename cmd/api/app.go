@@ -166,8 +166,16 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 		ErrorLog: slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
 	}))
 
-	// Apply global compression around the entire mux
-	compressedMux := restapi.CompressionMiddleware(mux)
+	// Apply API-specific middleware closest to the routes. Both middlewares
+	// guard on the "/api/" path prefix internally, so wrapping the whole mux
+	// leaves web UI and other endpoints untouched.
+	// Order (innermost to outermost): expiry -> version.
+	var apiHandler http.Handler = mux
+	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager)(apiHandler)
+	apiHandler = api.VersionValidationMiddleware(apiHandler)
+
+	// Apply compression around apiHandler (the mux plus API-specific middleware)
+	compressedMux := restapi.CompressionMiddleware(apiHandler)
 
 	// Add freshness middleware
 	freshnessHandler := api.FreshnessMiddleware(compressedMux)
