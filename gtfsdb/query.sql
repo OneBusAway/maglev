@@ -1227,6 +1227,26 @@ FROM (
     SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
 );
 
+-- name: RouteHasFutureService :one
+-- Returns 1 if the given route has at least one trip whose calendar covers a date
+-- strictly after the given date (YYYYMMDD), 0 otherwise. Used to distinguish
+-- ServiceDateOutOfRange (no future service for this route) from NoServiceThatDay
+-- (the route still has service on a later date).
+SELECT EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN calendar c ON c.id = t.service_id
+    WHERE t.route_id = ?
+      AND c.end_date > ?
+    UNION ALL
+    SELECT 1
+    FROM trips t
+    JOIN calendar_dates cd ON cd.service_id = t.service_id
+    WHERE t.route_id = ?
+      AND cd.exception_type = 1
+      AND cd.date > ?
+) AS has_future_service;
+
 -- Optimized queries using SQLite window functions
 
 -- name: GetTargetStopTimeWithTotalStops :one

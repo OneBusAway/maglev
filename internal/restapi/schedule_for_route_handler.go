@@ -67,17 +67,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		scheduleDate = startOfDay.UnixMilli()
 	}
 
-	// Check if date exceeds the feed's max calendar end date -> ServiceDateOutOfRange
-	feedEndDateRaw, err := api.GtfsManager.GtfsDB.Queries.GetFeedEndDate(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	if feedEndDate, ok := feedEndDateRaw.(string); ok && feedEndDate != "" && targetDate > feedEndDate {
-		api.sendResponse(w, r, models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock))
-		return
-	}
-
 	agencyModel := models.NewAgencyReference(
 		agency.ID,
 		agency.Name,
@@ -107,8 +96,32 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// noTripsResponse distinguishes the two 510 cases for this route: if the route
+	// has no service on any date after the requested one, it is ServiceDateOutOfRange;
+	// otherwise the route simply has no service that day (NoServiceThatDay).
+	noTripsResponse := func() (models.ResponseModel, error) {
+		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
+			RouteID:   routeID,
+			EndDate:   targetDate,
+			RouteID_2: routeID,
+			Date:      targetDate,
+		})
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		if hasFuture == 0 {
+			return models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock), nil
+		}
+		return buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock), nil
+	}
+
 	if len(serviceIDs) == 0 {
-		api.sendResponse(w, r, buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock))
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 
@@ -122,7 +135,12 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(trips) == 0 {
-		api.sendResponse(w, r, buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock))
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 

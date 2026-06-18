@@ -265,7 +265,7 @@ func TestOpenAPIConformance_StaticEndpoints(t *testing.T) {
 		},
 		{
 			name:     "schedule-for-route",
-			endpoint: "/api/where/schedule-for-route/" + firstRouteID + ".json?key=TEST",
+			endpoint: "/api/where/schedule-for-route/" + firstRouteID + ".json?key=TEST&date=2025-06-12",
 			specPath: "/api/where/schedule-for-route/{routeID}.json",
 		},
 		{
