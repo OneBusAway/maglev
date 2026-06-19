@@ -119,9 +119,11 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 		assert.Equal(t, expectedScheduleDate.UnixMilli(), model.Data.Entry.ScheduleDate)
 	})
 
-	t.Run("Invalid date format returns ServiceDateOutOfRange", func(t *testing.T) {
+	t.Run("Invalid date format returns 400 with fieldErrors", func(t *testing.T) {
 		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025/06/12"))
-		assertScheduleErr(t, resp, model, 510, "ServiceDateOutOfRange")
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+		assert.Contains(t, model.Data.FieldErrors, "date", "fieldErrors should contain a 'date' key")
 	})
 
 	t.Run("Epoch ms date parsed as Java OBA compatibility", func(t *testing.T) {
@@ -229,9 +231,11 @@ func TestScheduleForRouteHandler_ServiceDateOutOfRange(t *testing.T) {
 		assert.Empty(t, model.Data.Entry.RouteID, "data.entry should be absent for ServiceDateOutOfRange")
 	})
 
-	t.Run("Garbage date string returns ServiceDateOutOfRange", func(t *testing.T) {
+	t.Run("Garbage date string returns 400 with fieldErrors", func(t *testing.T) {
 		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "not-a-date"))
-		assertScheduleErr(t, resp, model, 510, "ServiceDateOutOfRange")
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+		assert.Contains(t, model.Data.FieldErrors, "date", "fieldErrors should contain a 'date' key")
 	})
 }
 

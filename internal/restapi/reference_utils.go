@@ -252,18 +252,6 @@ func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
 	return deduplicateAlerts(alerts)
 }
 
-// collectAlertsForStopsAndRoutes returns deduplicated alerts matching any of the given stop or route IDs.
-func (api *RestAPI) collectAlertsForStopsAndRoutes(stopIDs, routeIDs []string) []gtfs.Alert {
-	var alerts []gtfs.Alert
-	for _, stopID := range stopIDs {
-		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
-	}
-	for _, routeID := range routeIDs {
-		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
-	}
-	return deduplicateAlerts(alerts)
-}
-
 // ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
 // It defaults to true if the parameter is absent or if it fails to parse as a boolean.
 func ShouldIncludeReferences(r *http.Request) bool {
