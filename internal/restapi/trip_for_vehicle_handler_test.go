@@ -289,6 +289,6 @@ func TestParseTripForVehicleParams_Unit(t *testing.T) {
 		require.NotNil(t, errs)
 		assert.Contains(t, errs, "serviceDate")
 		assert.Contains(t, errs, "time")
-		assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
+		assert.Equal(t, "must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format", errs["serviceDate"][0])
 	})
 }
