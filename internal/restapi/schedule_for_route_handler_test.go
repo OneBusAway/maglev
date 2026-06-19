@@ -120,11 +120,10 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	})
 
 	t.Run("Invalid date format returns 400 with fieldErrors", func(t *testing.T) {
-		resp, body := callAPIHandler[map[string]any](t, api, scheduleForRouteURL(routeID, "2025/06/12"))
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025/06/12"))
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-		fieldErrors, ok := body["fieldErrors"].(map[string]any)
-		require.True(t, ok, "response should have a fieldErrors object")
-		assert.Contains(t, fieldErrors, "date", "fieldErrors should contain a 'date' key")
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+		assert.Contains(t, model.Data.FieldErrors, "date", "fieldErrors should contain a 'date' key")
 	})
 
 	t.Run("Epoch ms date parsed as Java OBA compatibility", func(t *testing.T) {
@@ -233,11 +232,10 @@ func TestScheduleForRouteHandler_ServiceDateOutOfRange(t *testing.T) {
 	})
 
 	t.Run("Garbage date string returns 400 with fieldErrors", func(t *testing.T) {
-		resp, body := callAPIHandler[map[string]any](t, api, scheduleForRouteURL(routeID, "not-a-date"))
+		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "not-a-date"))
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-		fieldErrors, ok := body["fieldErrors"].(map[string]any)
-		require.True(t, ok, "response should have a fieldErrors object")
-		assert.Contains(t, fieldErrors, "date", "fieldErrors should contain a 'date' key")
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+		assert.Contains(t, model.Data.FieldErrors, "date", "fieldErrors should contain a 'date' key")
 	})
 }
 
