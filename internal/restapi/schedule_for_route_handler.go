@@ -96,9 +96,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// noTripsResponse distinguishes the two 510 cases for this route: if the route
-	// has no service on any date after the requested one, it is ServiceDateOutOfRange;
-	// otherwise the route simply has no service that day (NoServiceThatDay).
+	// noTripsResponse distinguishes the two no-service cases for this route: if the
+	// route has no service on any date after the requested one, the reason is
+	// ServiceDateOutOfRange; otherwise the route simply has no service that day
+	// (NoServiceThatDay). Both return body code 200 with an empty-schedule body.
 	noTripsResponse := func() (models.ResponseModel, error) {
 		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
 			RouteID:   routeID,
@@ -109,10 +110,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return models.ResponseModel{}, err
 		}
+		text := "NoServiceThatDay"
 		if hasFuture == 0 {
-			return models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock), nil
+			text = "ServiceDateOutOfRange"
 		}
-		return buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock), nil
+		return buildNoServiceResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, text, api.Clock), nil
 	}
 
 	if len(serviceIDs) == 0 {
@@ -333,9 +335,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }
 
-// buildNoServiceThatDayResponse constructs the spec-compliant 510 NoServiceThatDay response,
-// which includes the entry stub and agency+route references required by the spec.
-func buildNoServiceThatDayResponse(agencyID, routeID string, scheduleDate int64, agencyModel models.AgencyReference, routeModel models.Route, clk clock.Clock) models.ResponseModel {
+// buildNoServiceResponse constructs the empty-schedule response for a route that has
+// no service on the requested date. Per the schedule-for-route Implementation Decisions,
+// the body uses code 200 — the route exists and the request succeeded, the schedule is
+// simply empty — while the text carries the reason ("ServiceDateOutOfRange" or
+// "NoServiceThatDay"). The body includes the route ID, schedule date, empty serviceIds
+// and stopTripGroupings arrays, plus agency and route references.
+func buildNoServiceResponse(agencyID, routeID string, scheduleDate int64, agencyModel models.AgencyReference, routeModel models.Route, text string, clk clock.Clock) models.ResponseModel {
 	refs := models.NewEmptyReferences()
 	refs.Agencies = append(refs.Agencies, agencyModel)
 	refs.Routes = append(refs.Routes, routeModel)
@@ -349,5 +355,5 @@ func buildNoServiceThatDayResponse(agencyID, routeID string, scheduleDate int64,
 		"entry":      entry,
 		"references": *refs,
 	}
-	return models.NewResponse(510, data, "NoServiceThatDay", clk)
+	return models.NewResponse(200, data, text, clk)
 }
