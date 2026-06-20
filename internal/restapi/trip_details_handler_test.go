@@ -199,6 +199,16 @@ func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, model.Data.Entry.Status,
 		"status must be absent when the block has no current tracking record (extension 4e)")
+
+	// Verify at the raw JSON level that "status" key is truly absent, not just null.
+	// assert.Nil passes for both absent and null after unmarshal; the spec requires absence.
+	_, rawModel := callAPIHandler[map[string]any](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+	data := rawModel["data"].(map[string]any)
+	entry := data["entry"].(map[string]any)
+	_, hasStatus := entry["status"]
+	assert.False(t, hasStatus,
+		"status key must not be present in JSON (not even as null) per extension 4e")
 }
 
 func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
