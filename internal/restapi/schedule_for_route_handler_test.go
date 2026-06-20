@@ -1,13 +1,16 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -282,4 +285,80 @@ func TestScheduleForRouteHandlerWithMalformedID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+func setupHeadsignlessTrip(t *testing.T, api *RestAPI) (combinedRouteID, expectedHeadsign string) {
+	t.Helper()
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID     = "hsagency"
+		routeID      = "hsroute"
+		serviceID    = "hssvc"
+		tripID       = "hstrip"
+		lastStopName = "Final Destination"
+	)
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Headsign Test Agency", Url: "http://hs.test", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3, ShortName: nulls.String("HS"),
+	})
+	require.NoError(t, err)
+
+	// Active on Thursdays; the tests query 2025-06-12, which is a Thursday.
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: serviceID, Thursday: 1, StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: "hsstopone", Name: nulls.String("First Stop"), Lat: 40.0, Lon: -120.0,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: "hsstoptwo", Name: nulls.String(lastStopName), Lat: 40.1, Lon: -120.1,
+	})
+	require.NoError(t, err)
+
+	// Trip with NO headsign: TripHeadsign is left as a zero-value (invalid) NullString.
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+		DirectionID: nulls.Int64(0),
+	})
+	require.NoError(t, err)
+
+	createStopTime(t, ctx, q, tripID, "hsstopone", 1, 8*3600)
+	createStopTime(t, ctx, q, tripID, "hsstoptwo", 2, 9*3600)
+
+	return utils.FormCombinedID(agencyID, routeID), lastStopName
+}
+
+func createStopTime(t *testing.T, ctx context.Context, q *gtfsdb.Queries, tripID, stopID string, seq, secs int64) {
+	t.Helper()
+	ns := secs * int64(time.Second)
+	_, err := q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: seq,
+		ArrivalTime: ns, DepartureTime: ns,
+	})
+	require.NoError(t, err)
+}
+
+func TestScheduleForRouteHandler_HeadsignFallbackToLastStop(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	combinedRouteID, expectedHeadsign := setupHeadsignlessTrip(t, api)
+
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(combinedRouteID, "2025-06-12"))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.Entry.StopTripGroupings)
+
+	g := model.Data.Entry.StopTripGroupings[0]
+	assert.Contains(t, g.TripHeadsigns, expectedHeadsign,
+		"trip with no headsign should fall back to the last stop's name")
 }
