@@ -181,6 +181,26 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 	assert.Nil(t, model.Data.Entry.Status)
 }
 
+// TestTripDetailsHandlerStatusOmittedWhenNoTracking verifies Extension 4e:
+// The status key must be absent entirely when there is no tracking record, even if includeStatus=true.
+func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	// No vehicle, no trip updates — purely scheduled, no tracking record.
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Nil(t, model.Data.Entry.Status,
+		"status must be absent when the block has no current tracking record (extension 4e)")
+}
+
 func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
