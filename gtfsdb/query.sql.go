@@ -5103,6 +5103,8 @@ SELECT EXISTS (
     JOIN calendar c ON c.id = t.service_id
     WHERE t.route_id = ?
       AND c.end_date > ?
+      AND (c.monday = 1 OR c.tuesday = 1 OR c.wednesday = 1 OR c.thursday = 1
+           OR c.friday = 1 OR c.saturday = 1 OR c.sunday = 1)
     UNION ALL
     SELECT 1
     FROM trips t
