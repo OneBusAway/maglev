@@ -46,7 +46,9 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		if parseErr != nil {
 			epochMs, numErr := strconv.ParseInt(dateParam, 10, 64)
 			if numErr != nil {
-				api.sendResponse(w, r, models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock))
+				api.validationErrorResponse(w, r, map[string][]string{
+					"date": {"Invalid date format. Use YYYY-MM-DD"},
+				})
 				return
 			}
 			t := time.UnixMilli(epochMs).In(loc)

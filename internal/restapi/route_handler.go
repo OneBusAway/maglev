@@ -19,7 +19,15 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
-	if err != nil || route.ID == "" {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+			return
+		}
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if route.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}
@@ -49,19 +57,8 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
-		agencyModel := models.NewAgencyReference(
-			agency.ID,
-			agency.Name,
-			agency.Url,
-			agency.Timezone,
-			agency.Lang.String,
-			agency.Phone.String,
-			agency.Email.String,
-			agency.FareUrl.String,
-			"",    // disclaimer
-			false, // privateService
-		)
-		references.Agencies = append(references.Agencies, agencyModel)
+		// Use the existing helper to map the database row to the model
+		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 	}
 
 	// Populate situation references for alerts affecting this route
