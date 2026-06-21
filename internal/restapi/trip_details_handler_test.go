@@ -179,6 +179,9 @@ func TestTripDetailsHandlerIncludeTripFalseKeepsBlockTrips(t *testing.T) {
 		}
 	}
 
+	assert.NotEmpty(t, expectedBlockTrips,
+		"test fixture should include preceding/following trips to meaningfully test this behavior")
+
 	gotTrips := map[string]bool{}
 	for _, refTrip := range withoutTrip.Data.References.Trips {
 		gotTrips[refTrip.ID] = true
