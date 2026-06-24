@@ -30,8 +30,6 @@ func TestStopTimeJSON(t *testing.T) {
 	stopTime := StopTime{
 		ArrivalTime:         NewModelDuration(8 * time.Hour),
 		DepartureTime:       NewModelDuration(8*time.Hour + (100 * time.Second)),
-		DropOffType:         0,
-		PickupType:          0,
 		StopID:              "unitrans_22005",
 		StopHeadsign:        "Downtown",
 		DistanceAlongTrip:   1234.56,
