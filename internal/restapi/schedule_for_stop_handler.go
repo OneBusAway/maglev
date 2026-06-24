@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,17 +25,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Get the date parameter or use current date
 	dateParam := r.URL.Query().Get("date")
 
-	// Validate date parameter
-	if err := utils.ValidateDate(dateParam); err != nil {
-		fieldErrors := map[string][]string{
-			"date": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-
 	if err != nil {
 		api.sendNotFound(w, r)
 		return
@@ -45,30 +36,38 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	var date int64
-	var targetDate string
-	var weekday string
+
+	var startOfDay time.Time
+	var responseDate int64 // Stores the exact timestamp for the JSON response
 
 	if dateParam != "" {
-		parsedDate, err := time.ParseInLocation("2006-01-02", dateParam, loc)
+		var err error
+		startOfDay, err = utils.ParseDate(dateParam, loc)
 		if err != nil {
 			fieldErrors := map[string][]string{
-				"date": {"Invalid date format. Use YYYY-MM-DD"},
+				"date": {err.Error()},
 			}
 			api.validationErrorResponse(w, r, fieldErrors)
 			return
 		}
-		date = parsedDate.UnixMilli()
-		targetDate = parsedDate.Format("20060102")
-		weekday = strings.ToLower(parsedDate.Weekday().String())
+
+		// Echo the exact Unix timestamp if provided, else use midnight
+		if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
+			responseDate = unixMillis
+		} else {
+			responseDate = startOfDay.UnixMilli()
+		}
 	} else {
 		now := api.Clock.Now().In(loc)
+		// Echo current wall-clock time if omitted
+		responseDate = now.UnixMilli()
+
 		y, m, d := now.Date()
-		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
-		date = startOfDay.UnixMilli()
-		targetDate = startOfDay.Format("20060102")
-		weekday = strings.ToLower(startOfDay.Weekday().String())
+		startOfDay = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
+
+	targetDate := startOfDay.Format("20060102")
+	weekday := strings.ToLower(startOfDay.Weekday().String())
 
 	// Verify stop exists
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
@@ -90,7 +89,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	if len(routeIDs) == 0 {
 		api.sendResponse(w, r, models.NewEntryResponse(
-			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), date, nil),
+			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), responseDate, nil),
 			*models.NewEmptyReferences(),
 			api.Clock,
 		))
@@ -209,7 +208,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in the agency's timezone in milliseconds
 		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
-		startOfDay := time.UnixMilli(date).In(loc)
 		arrivalDuration := time.Duration(row.ArrivalTime)
 		departureDuration := time.Duration(row.DepartureTime)
 		arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
@@ -255,7 +253,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	// Create the entry
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
-	entry := models.NewScheduleForStopEntry(combinedStopID, date, routeSchedules)
+	entry := models.NewScheduleForStopEntry(combinedStopID, responseDate, routeSchedules)
 
 	// Convert reference maps to slices
 	references := models.NewEmptyReferences()

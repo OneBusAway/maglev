@@ -147,13 +147,13 @@ func TestInputValidationIntegration(t *testing.T) {
 		// Test malicious date parameters
 		{
 			name:           "Invalid date format",
-			endpoint:       "/api/where/schedule-for-stop/raba_12345?key=TEST&date=12/25/2023",
+			endpoint:       "/api/where/schedule-for-stop/25_12345.json?key=TEST&date=12/25/2023",
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "invalid date format",
 		},
 		{
 			name:           "Date with script injection",
-			endpoint:       "/api/where/schedule-for-stop/raba_12345?key=TEST&date=2023-01-01<script>alert('xss')</script>",
+			endpoint:       "/api/where/schedule-for-stop/25_12345.json?key=TEST&date=2023-01-01<script>alert('xss')</script>",
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "invalid date format",
 		},
@@ -312,8 +312,8 @@ func TestEdgeCaseValidation(t *testing.T) {
 		},
 		{
 			name:           "Empty date parameter is valid",
-			endpoint:       "/api/where/schedule-for-stop/raba_12345?key=TEST&date=",
-			expectedStatus: http.StatusNotFound, // Stop doesn't exist in test data
+			endpoint:       "/api/where/schedule-for-stop/25_12345.json?key=TEST&date=",
+			expectedStatus: http.StatusNotFound, // Stop doesn't exist in test data, meaning date validation passed!
 		},
 	}
 
