@@ -80,13 +80,22 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 		}
 	}
 
-	// Validate time
+	// Validate time — accepts either a Unix timestamp in milliseconds
+	// (e.g. "1718459400000") or a datetime in yyyy-MM-dd_HH-mm-ss format (e.g. "2024-06-15_14-30-00").
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
 		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			timeLoc := time.UTC
+			if len(loc) > 0 && loc[0] != nil {
+				timeLoc = loc[0]
+			}
+			if timeParam, err := time.ParseInLocation("2006-01-02_15-04-05", timeStr, timeLoc); err == nil {
+				params.Time = &timeParam
+			} else {
+				fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
+			}
 		}
 	}
 

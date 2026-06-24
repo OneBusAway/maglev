@@ -321,7 +321,22 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 		assert.NotNil(t, errs)
 		assert.Contains(t, errs, "time")
 		assert.Contains(t, errs, "serviceDate")
-		assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
+		assert.Equal(t, "must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format", errs["time"][0])
+	})
+
+	t.Run("time yyyy-MM-dd_HH-mm-ss format", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?time=2024-06-15_14-30-00", nil)
+
+		params, errs := api.parseTripParams(req, true)
+
+		assert.Nil(t, errs)
+		require.NotNil(t, params.Time)
+		assert.Equal(t, 2024, params.Time.Year())
+		assert.Equal(t, time.June, params.Time.Month())
+		assert.Equal(t, 15, params.Time.Day())
+		assert.Equal(t, 14, params.Time.Hour())
+		assert.Equal(t, 30, params.Time.Minute())
+		assert.Equal(t, 0, params.Time.Second())
 	})
 
 	t.Run("vehicleId is parsed", func(t *testing.T) {
@@ -435,4 +450,20 @@ func TestTripDetailsHandlerWithIncludeReferencesDefault(t *testing.T) {
 			assert.Equal(t, agency.ID, model.Data.References.Agencies[0].ID)
 		})
 	}
+}
+
+func TestTripDetailsHandlerWithTimeParameterString(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&time=2025-07-20_14-30-00")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.Entry.TripID)
 }
