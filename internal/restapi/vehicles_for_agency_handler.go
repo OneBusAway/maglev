@@ -30,14 +30,13 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Parse requested reference time for status entries, falling back to server clock if absent.
-	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
 	referenceTime := api.Clock.Now()
 	if timeParam := r.URL.Query().Get("time"); timeParam != "" {
+		loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 		_, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, loc)
 		if !ok {
 			api.validationErrorResponse(w, r, fieldErrors)
