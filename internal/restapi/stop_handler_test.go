@@ -253,6 +253,7 @@ func TestStopHandler_StopCodeFallback(t *testing.T) {
 // set, the handler:
 //  1. Sets entry.parent to FormCombinedID(agencyID, parentStopID)
 //  2. Includes the parent stop in references.stops
+//  3. Includes the parent stop's routes and agencies in the references block
 func TestStopHandler_ParentStation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -261,12 +262,14 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	q := api.GtfsManager.GtfsDB.Queries
 
 	const (
-		agencyID     = "ParentStationAgency"
-		parentStopID = "StationParent"
-		childStopID  = "StationChild"
-		routeID      = "ParentStationRoute"
-		tripID       = "ParentStationTrip"
-		service      = "ParentStationService"
+		agencyID          = "ParentStationAgency"
+		parentStopID      = "StationParent"
+		childStopID       = "StationChild"
+		routeID           = "ParentStationRoute"
+		tripID            = "ParentStationTrip"
+		service           = "ParentStationService"
+		parentOnlyRouteID = "ParentOnlyRoute"
+		parentOnlyTripID  = "ParentOnlyTrip"
 	)
 
 	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
@@ -294,7 +297,7 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Route + trip + stop_time linking the child stop
+	// Route + trip + stop_time linking the CHILD stop
 	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID: routeID, AgencyID: agencyID, ShortName: nulls.String("PS"), Type: 3,
 	})
@@ -311,6 +314,21 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
 		TripID: tripID, StopID: childStopID, StopSequence: 1,
 		ArrivalTime: 36000, DepartureTime: 36300,
+	})
+	require.NoError(t, err)
+
+	// Route + trip + stop_time linking exclusively to the PARENT stop
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: parentOnlyRouteID, AgencyID: agencyID, ShortName: nulls.String("ParentOnly"), Type: 3,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: parentOnlyTripID, RouteID: parentOnlyRouteID, ServiceID: service,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: parentOnlyTripID, StopID: parentStopID, StopSequence: 1,
+		ArrivalTime: 37000, DepartureTime: 37300,
 	})
 	require.NoError(t, err)
 
@@ -335,6 +353,27 @@ func TestStopHandler_ParentStation(t *testing.T) {
 
 	// Verify non-default locationType on the parent reference
 	assert.Equal(t, 1, model.Data.References.Stops[0].LocationType, "parent stop should correctly retain locationType=1")
+
+	// 1. Assert the parent station's unique route is present in references.routes
+	routeFound := false
+	expectedParentRouteCombinedID := utils.FormCombinedID(agencyID, parentOnlyRouteID)
+	for _, r := range model.Data.References.Routes {
+		if r.ID == expectedParentRouteCombinedID {
+			routeFound = true
+			break
+		}
+	}
+	assert.True(t, routeFound, "parent station route must be included in references.routes")
+
+	// 2. Assert the agency for the parent station's route is present in references.agencies
+	agencyFound := false
+	for _, a := range model.Data.References.Agencies {
+		if a.ID == agencyID {
+			agencyFound = true
+			break
+		}
+	}
+	assert.True(t, agencyFound, "agency for the parent station route must be included in references.agencies")
 }
 
 func TestStopHandler_NaturalSorting(t *testing.T) {

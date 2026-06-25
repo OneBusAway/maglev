@@ -67,25 +67,77 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	// Only populate references if the query parameter is absent or true
 	if ShouldIncludeReferences(r) {
 		uniqueAgencyIDs := make(map[string]bool)
+		uniqueRouteIDs := make(map[string]bool)
 
 		// Add routes to references and collect unique agency IDs
 		for _, route := range routes {
-			routeModel := models.NewRoute(
-				utils.FormCombinedID(route.AgencyID, route.ID),
-				route.AgencyID,
-				route.ShortName.String,
-				route.LongName.String,
-				route.Desc.String,
-				models.RouteType(route.Type),
-				route.Url.String,
-				route.Color.String,
-				route.TextColor.String)
+			combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
 
-			references.Routes = append(references.Routes, routeModel)
-			uniqueAgencyIDs[route.AgencyID] = true
+			// Only add if we haven't seen this route yet
+			if !uniqueRouteIDs[combinedRouteID] {
+				routeModel := models.NewRoute(
+					combinedRouteID,
+					route.AgencyID,
+					route.ShortName.String,
+					route.LongName.String,
+					route.Desc.String,
+					models.RouteType(route.Type),
+					route.Url.String,
+					route.Color.String,
+					route.TextColor.String)
+
+				references.Routes = append(references.Routes, routeModel)
+				uniqueRouteIDs[combinedRouteID] = true
+				uniqueAgencyIDs[route.AgencyID] = true
+			}
 		}
 
-		// Fetch references for ALL unique agencies involved, not just the first one.
+		if nulls.StringOrEmpty(stop.ParentStation) != "" {
+			parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
+			if err == nil {
+				parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
+
+				// Sort parent routes naturally by ShortName
+				utils.SortRoutesByName(parentRoutes)
+
+				parentRouteIDs := make([]string, len(parentRoutes))
+				for i, pr := range parentRoutes {
+					combinedRouteID := utils.FormCombinedID(pr.AgencyID, pr.ID)
+					parentRouteIDs[i] = combinedRouteID
+
+					// Only add if we haven't seen this route yet (Deduplication)
+					if !uniqueRouteIDs[combinedRouteID] {
+						routeModel := models.NewRoute(
+							combinedRouteID,
+							pr.AgencyID,
+							pr.ShortName.String,
+							pr.LongName.String,
+							pr.Desc.String,
+							models.RouteType(pr.Type),
+							pr.Url.String,
+							pr.Color.String,
+							pr.TextColor.String)
+						references.Routes = append(references.Routes, routeModel)
+						uniqueRouteIDs[combinedRouteID] = true
+						uniqueAgencyIDs[pr.AgencyID] = true
+					}
+				}
+
+				references.Stops = append(references.Stops, models.Stop{
+					ID:                 utils.FormCombinedID(agencyID, parentStop.ID),
+					Name:               nulls.StringOrEmpty(parentStop.Name),
+					Lat:                parentStop.Lat,
+					Lon:                parentStop.Lon,
+					Code:               nulls.StringOrDefault(parentStop.Code, parentStop.ID),
+					Direction:          nulls.StringOrEmpty(parentStop.Direction),
+					LocationType:       int(nulls.Int64OrDefault(parentStop.LocationType, 0)),
+					WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(parentStop.WheelchairBoarding)),
+					RouteIDs:           parentRouteIDs,
+					StaticRouteIDs:     parentRouteIDs,
+				})
+			}
+		}
+
 		agencyIDs := make([]string, 0, len(uniqueAgencyIDs))
 		for aid := range uniqueAgencyIDs {
 			agencyIDs = append(agencyIDs, aid)
@@ -107,34 +159,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 			// Use the existing helper to map the database row to the model
 			references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
-
-		}
-
-		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
-			if err == nil {
-				parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
-
-				// Sort parent routes naturally by ShortName
-				utils.SortRoutesByName(parentRoutes)
-
-				parentRouteIDs := make([]string, len(parentRoutes))
-				for i, r := range parentRoutes {
-					parentRouteIDs[i] = utils.FormCombinedID(r.AgencyID, r.ID)
-				}
-				references.Stops = append(references.Stops, models.Stop{
-					ID:                 utils.FormCombinedID(agencyID, parentStop.ID),
-					Name:               nulls.StringOrEmpty(parentStop.Name),
-					Lat:                parentStop.Lat,
-					Lon:                parentStop.Lon,
-					Code:               nulls.StringOrDefault(parentStop.Code, parentStop.ID),
-					Direction:          nulls.StringOrEmpty(parentStop.Direction),
-					LocationType:       int(nulls.Int64OrDefault(parentStop.LocationType, 0)),
-					WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(parentStop.WheelchairBoarding)),
-					RouteIDs:           parentRouteIDs,
-					StaticRouteIDs:     parentRouteIDs,
-				})
-			}
 		}
 	}
 
