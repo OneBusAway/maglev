@@ -332,6 +332,17 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Seed the shared routeID (already on child stop) onto the PARENT stop as well to test deduplication
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: "SharedRouteParentTrip", RouteID: routeID, ServiceID: service,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: "SharedRouteParentTrip", StopID: parentStopID, StopSequence: 1,
+		ArrivalTime: 38000, DepartureTime: 38300,
+	})
+	require.NoError(t, err)
+
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyID, childStopID)))
 
@@ -374,6 +385,16 @@ func TestStopHandler_ParentStation(t *testing.T) {
 		}
 	}
 	assert.True(t, agencyFound, "agency for the parent station route must be included in references.agencies")
+
+	// 3. Assert the shared route (seeded on both child and parent) appears exactly once in references.routes
+	sharedRouteCount := 0
+	expectedSharedRouteCombinedID := utils.FormCombinedID(agencyID, routeID)
+	for _, r := range model.Data.References.Routes {
+		if r.ID == expectedSharedRouteCombinedID {
+			sharedRouteCount++
+		}
+	}
+	assert.Equal(t, 1, sharedRouteCount, "shared route must appear exactly once due to deduplication")
 }
 
 func TestStopHandler_NaturalSorting(t *testing.T) {
