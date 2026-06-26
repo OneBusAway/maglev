@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -33,6 +35,21 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
+	}
+
+	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
+	referenceTime := api.Clock.Now()
+	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
+		if ageInSeconds, err := strconv.Atoi(val); err == nil && ageInSeconds >= 0 {
+			cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
+			filtered := vehiclesForAgency[:0]
+			for _, vehicle := range vehiclesForAgency {
+				if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
+					filtered = append(filtered, vehicle)
+				}
+			}
+			vehiclesForAgency = filtered
+		}
 	}
 
 	// Apply pagination
