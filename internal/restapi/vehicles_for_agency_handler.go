@@ -39,9 +39,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
 	referenceTime := api.Clock.Now()
-	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
-	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
-	referenceTime := api.Clock.Now()
 	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
 	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
 		if ageInSeconds, err := strconv.ParseInt(val, 10, 64); err == nil && ageInSeconds >= 0 && ageInSeconds <= maxAgeInSeconds {
