@@ -1,7 +1,6 @@
 package gtfsdb
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -22,7 +21,7 @@ func TestBulkInsertStopTimes(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create prerequisite data (agency, route, calendar/service)
 	_, err = client.Queries.CreateAgency(ctx, CreateAgencyParams{
@@ -144,7 +143,7 @@ func TestBulkInsertShapes(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testCases := []struct {
 		name  string
@@ -215,7 +214,7 @@ func TestBulkInsertWithNullValues(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test shapes with NULL distance traveled
 	shapes := []CreateShapeParams{
@@ -266,7 +265,7 @@ func TestBulkInsertPerformance(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create prerequisite data (agency, route, calendar/service)
 	_, err = client.Queries.CreateAgency(ctx, CreateAgencyParams{

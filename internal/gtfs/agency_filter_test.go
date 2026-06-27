@@ -213,7 +213,7 @@ func TestAlertMatchesAgency(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := alertMatchesAgency(ctx, manager, tt.alert, tt.allowed)
@@ -322,7 +322,7 @@ func TestAgencyFilterIntegration_UpdateFeedRealtime(t *testing.T) {
 
 	// First, fetch without filtering to discover what route IDs appear in the data
 	unfilteredManager := newTestManager()
-	ctx := context.Background()
+	ctx := t.Context()
 	unfilteredManager.updateFeedRealtime(ctx, RTFeedConfig{
 		ID:                  "unfiltered",
 		VehiclePositionsURL: server.URL,
@@ -392,7 +392,7 @@ func TestAgencyFilterIntegration_NoFilterPassesAll(t *testing.T) {
 	defer server.Close()
 
 	manager := newTestManager()
-	ctx := context.Background()
+	ctx := t.Context()
 	manager.updateFeedRealtime(ctx, RTFeedConfig{
 		ID:                  "no-filter",
 		VehiclePositionsURL: server.URL,
@@ -414,7 +414,7 @@ func TestAgencyFilterIntegration_TripUpdates(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	unfilteredManager := newTestManager()
 	unfilteredManager.updateFeedRealtime(ctx, RTFeedConfig{

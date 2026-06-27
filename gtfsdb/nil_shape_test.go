@@ -3,7 +3,6 @@ package gtfsdb
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -97,7 +96,7 @@ func TestProcessGTFSWithoutShapes(t *testing.T) {
 	gtfsData := createMinimalGTFSWithoutShapes(t)
 
 	// This should NOT panic - trips without shapes are valid
-	ctx := context.Background()
+	ctx := t.Context()
 	parsed, err := ParseGtfsData(gtfsData, "test-source-no-shapes")
 	require.NoError(t, err)
 	_, err = client.StoreGtfsData(t.Context(), parsed)

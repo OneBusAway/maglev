@@ -2,7 +2,6 @@ package gtfs
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -40,7 +39,7 @@ func TestGetAlertsForTrip(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	alerts := manager.GetAlertsForTrip(context.Background(), "trip123")
+	alerts := manager.GetAlertsForTrip(t.Context(), "trip123")
 
 	assert.Len(t, alerts, 1)
 	assert.Equal(t, "alert1", alerts[0].ID)
@@ -196,7 +195,7 @@ func TestLoadRealtimeData_Non200StatusCode(t *testing.T) {
 			}))
 			defer server.Close()
 
-			result, err := loadRealtimeData(context.Background(), server.URL, nil)
+			result, err := loadRealtimeData(t.Context(), server.URL, nil)
 			assert.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), fmt.Sprintf("%d", tt.statusCode))
@@ -336,7 +335,7 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 		ServiceAlertsURL:    server.URL,
 	}
 
-	hasNewData := manager.updateFeedRealtime(context.Background(), cfg)
+	hasNewData := manager.updateFeedRealtime(t.Context(), cfg)
 
 	assert.False(t, hasNewData, "Should return false when all fetches fail")
 }
@@ -357,7 +356,7 @@ func TestStaleFeedRejected(t *testing.T) {
 	defer server.Close()
 
 	manager := newTestManager()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	feed := RTFeedConfig{
 		ID:                  "freshness-test",
@@ -417,7 +416,7 @@ func TestStaleFeedRejected(t *testing.T) {
 // feed level.
 func TestVehicleMerge_StaleIgnored(t *testing.T) {
 	manager := newTestManager()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// capture logs for verification
 	var buf bytes.Buffer
@@ -481,7 +480,7 @@ func TestVehicleMerge_StaleIgnored(t *testing.T) {
 // fresh entity should update while the stale one should be preserved.
 func TestVehicleMerge_MixedFreshAndStale(t *testing.T) {
 	manager := newTestManager()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var mu sync.Mutex
 	var payload []byte
@@ -542,7 +541,7 @@ func TestVehicleMerge_MixedFreshAndStale(t *testing.T) {
 // the updated record (with nil timestamp) replaces the previous one.
 func TestVehicleMerge_MissingTimestamp(t *testing.T) {
 	manager := newTestManager()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var mu sync.Mutex
 	var payload []byte
@@ -1273,7 +1272,7 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		VehiclePositionsURL: badServer.URL,  // Fails
 	}
 
-	hasNewData := manager.updateFeedRealtime(context.Background(), cfg)
+	hasNewData := manager.updateFeedRealtime(t.Context(), cfg)
 	assert.True(t, hasNewData, "OR check should return true if ANY configured sub-feed succeeds")
 
 	// 2. Test full failure: Both fail
@@ -1283,7 +1282,7 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		VehiclePositionsURL: badServer.URL,
 	}
 
-	hasNewDataFail := manager.updateFeedRealtime(context.Background(), cfgFail)
+	hasNewDataFail := manager.updateFeedRealtime(t.Context(), cfgFail)
 	assert.False(t, hasNewDataFail, "OR check should return false when ALL sub-feeds fail")
 
 	// 3. Test full success: Both succeed
@@ -1293,7 +1292,7 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		VehiclePositionsURL: goodServer.URL,
 	}
 
-	hasNewDataSuccess := manager.updateFeedRealtime(context.Background(), cfgSuccess)
+	hasNewDataSuccess := manager.updateFeedRealtime(t.Context(), cfgSuccess)
 	assert.True(t, hasNewDataSuccess, "OR check should return true when ALL sub-feeds succeed")
 }
 

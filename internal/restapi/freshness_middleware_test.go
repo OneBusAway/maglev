@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,7 +62,7 @@ func TestFreshnessMiddleware(t *testing.T) {
 
 		// Inject a specific time for the test (truncate to seconds — DB stores unix seconds)
 		expectedTime := time.Date(2023, 10, 27, 10, 0, 0, 0, time.UTC)
-		api.GtfsManager.SetStaticLastUpdatedForTest(context.Background(), expectedTime)
+		api.GtfsManager.SetStaticLastUpdatedForTest(t.Context(), expectedTime)
 
 		req := httptest.NewRequest("GET", "/", nil)
 		rr := httptest.NewRecorder()
