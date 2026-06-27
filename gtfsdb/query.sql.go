@@ -2876,6 +2876,9 @@ SELECT
     t.service_id,
     t.route_id,
     t.trip_headsign,
+    t.block_id,
+    t.min_arrival_time,
+    t.max_departure_time,
     r.id as route_id,
     r.agency_id
 FROM
@@ -2889,15 +2892,18 @@ ORDER BY
 `
 
 type GetScheduleForStopRow struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopHeadsign  sql.NullString
-	ServiceID     string
-	RouteID       string
-	TripHeadsign  sql.NullString
-	RouteID_2     string
-	AgencyID      string
+	TripID           string
+	ArrivalTime      int64
+	DepartureTime    int64
+	StopHeadsign     sql.NullString
+	ServiceID        string
+	RouteID          string
+	TripHeadsign     sql.NullString
+	BlockID          sql.NullString
+	MinArrivalTime   sql.NullInt64
+	MaxDepartureTime sql.NullInt64
+	RouteID_2        string
+	AgencyID         string
 }
 
 func (q *Queries) GetScheduleForStop(ctx context.Context, stopID string) ([]GetScheduleForStopRow, error) {
@@ -2917,6 +2923,9 @@ func (q *Queries) GetScheduleForStop(ctx context.Context, stopID string) ([]GetS
 			&i.ServiceID,
 			&i.RouteID,
 			&i.TripHeadsign,
+			&i.BlockID,
+			&i.MinArrivalTime,
+			&i.MaxDepartureTime,
 			&i.RouteID_2,
 			&i.AgencyID,
 		); err != nil {
