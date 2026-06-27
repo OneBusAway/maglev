@@ -193,32 +193,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Extract unique trip IDs from the scheduled rows
-	uniqueTripIDsMap := make(map[string]bool)
-	for _, row := range scheduleRows {
-		uniqueTripIDsMap[row.TripID] = true
-	}
-
-	uniqueTripIDs := make([]string, 0, len(uniqueTripIDsMap))
-	for tripID := range uniqueTripIDsMap {
-		uniqueTripIDs = append(uniqueTripIDs, tripID)
-	}
-
-	// Batch fetch trip metadata to retrieve bounding times and block assignments
-	tripsMap := make(map[string]gtfsdb.Trip)
+	// Extract unique block IDs directly from the scheduled rows
 	uniqueBlockIDsMap := make(map[string]bool)
-
-	if len(uniqueTripIDs) > 0 {
-		fetchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-		for _, t := range fetchedTrips {
-			tripsMap[t.ID] = t
-			if t.BlockID.Valid && t.BlockID.String != "" {
-				uniqueBlockIDsMap[t.BlockID.String] = true
-			}
+	for _, row := range scheduleRows {
+		if row.BlockID.Valid && row.BlockID.String != "" {
+			uniqueBlockIDsMap[row.BlockID.String] = true
 		}
 	}
 
@@ -283,30 +262,29 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		// Determine the arrival/departure capabilities for this stop time based on its
 		// position within the vehicle's entire block for the service day.
-		if trip, ok := tripsMap[row.TripID]; ok {
-			// First, verify if the stop is at the temporal boundaries of its individual trip.
-			isFirstInTrip := trip.MinArrivalTime.Valid && row.ArrivalTime == trip.MinArrivalTime.Int64
-			isLastInTrip := trip.MaxDepartureTime.Valid && row.DepartureTime == trip.MaxDepartureTime.Int64
 
-			isFirstInBlock := isFirstInTrip
-			isLastInBlock := isLastInTrip
+		// First, verify if the stop is at the temporal boundaries of its individual trip.
+		isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
+		isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
 
-			// If the trip belongs to a block, refine the boundaries to the block level.
-			if trip.BlockID.Valid && trip.BlockID.String != "" {
-				if bTrips, exists := blockTripsMap[trip.BlockID.String]; exists && len(bTrips) > 0 {
-					isFirstInBlock = isFirstInTrip && (bTrips[0].ID == row.TripID)
-					isLastInBlock = isLastInTrip && (bTrips[len(bTrips)-1].ID == row.TripID)
-				}
-			}
+		isFirstInBlock := isFirstInTrip
+		isLastInBlock := isLastInTrip
 
-			// Disable arrivals for the first stop of a block (vehicle starts service here).
-			if isFirstInBlock {
-				stopTime.ArrivalEnabled = false
+		// If the trip belongs to a block, refine the boundaries to the block level.
+		if row.BlockID.Valid && row.BlockID.String != "" {
+			if bTrips, exists := blockTripsMap[row.BlockID.String]; exists && len(bTrips) > 0 {
+				isFirstInBlock = isFirstInTrip && (bTrips[0].ID == row.TripID)
+				isLastInBlock = isLastInTrip && (bTrips[len(bTrips)-1].ID == row.TripID)
 			}
-			// Disable departures for the last stop of a block (vehicle ends service here).
-			if isLastInBlock {
-				stopTime.DepartureEnabled = false
-			}
+		}
+
+		// Disable arrivals for the first stop of a block (vehicle starts service here).
+		if isFirstInBlock {
+			stopTime.ArrivalEnabled = false
+		}
+		// Disable departures for the last stop of a block (vehicle ends service here).
+		if isLastInBlock {
+			stopTime.DepartureEnabled = false
 		}
 
 		routeScheduleMap[combinedRouteID] = append(routeScheduleMap[combinedRouteID], stopTime)
