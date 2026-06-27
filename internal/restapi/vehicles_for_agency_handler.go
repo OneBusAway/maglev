@@ -218,16 +218,19 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		tripRefList = append(tripRefList, tripRef)
 	}
 
+	// Omit references entirely when includeReferences=false.
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
-	references.Routes = routeRefList
-	references.Trips = tripRefList
+	if ShouldIncludeReferences(r) {
+		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		references.Routes = routeRefList
+		references.Trips = tripRefList
 
-	alerts := deduplicateAlerts(
-		api.collectAlertsForRoutes(routeIDs),
-		api.GtfsManager.GetAlertsByIDs("", "", id),
-	)
-	references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
+		alerts := deduplicateAlerts(
+			api.collectAlertsForRoutes(routeIDs),
+			api.GtfsManager.GetAlertsByIDs("", "", id),
+		)
+		references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
+	}
 
 	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
