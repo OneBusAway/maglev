@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,24 @@ func vehiclesForAgencyURL(agencyID string, params ...url.Values) string {
 		maps.Copy(q, p)
 	}
 	return "/api/where/vehicles-for-agency/" + agencyID + ".json?" + q.Encode()
+}
+
+// fetchRawData returns the response "data" object as raw JSON keys so tests can
+// assert field presence, not just decoded zero values.
+func fetchRawData(t testing.TB, api *RestAPI, endpoint string) map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data
 }
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
@@ -69,7 +88,11 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.Empty(t, model.Data.List)
-	assert.False(t, model.Data.OutOfRange, "unknown agency must return outOfRange=false (Extension 3a)")
+
+	data := fetchRawData(t, api, vehiclesForAgencyURL("nonexistent"))
+	raw, ok := data["outOfRange"]
+	require.True(t, ok, "outOfRange key must be present in the response payload")
+	assert.JSONEq(t, "false", string(raw), "unknown agency must return outOfRange=false (Extension 3a)")
 }
 
 // TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency verifies the success
@@ -78,11 +101,10 @@ func TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.False(t, model.Data.OutOfRange, "known agency must return outOfRange=false")
+	data := fetchRawData(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	raw, ok := data["outOfRange"]
+	require.True(t, ok, "outOfRange key must be present in the response payload")
+	assert.JSONEq(t, "false", string(raw), "known agency must return outOfRange=false")
 }
 
 // TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
