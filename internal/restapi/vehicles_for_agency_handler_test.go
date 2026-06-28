@@ -238,6 +238,43 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
 }
 
+// TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
+// returns all vehicles with limitExceeded=false (no result cap).
+func TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must always be false")
+	assert.Len(t, model.Data.List, 3, "all matching vehicles must be returned")
+}
+
+// TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset verifies that maxCount and
+// offset do not truncate the result; all vehicles are returned.
+func TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"maxCount": {"1"}, "offset": {"1"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must remain false")
+	assert.Len(t, model.Data.List, 3, "maxCount/offset must not truncate the result")
+}
+
 // vehiclesRealTimeDataClock is pinned just past the latest timestamp in
 // testdata/raba-vehicle-positions.pb (2025-06-08 21:08:26 UTC) so vehicles fall
 // inside the handler's 15-minute stale-vehicle window. With clock.RealClock{},
