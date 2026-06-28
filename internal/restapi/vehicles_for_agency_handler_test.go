@@ -69,6 +69,20 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.Empty(t, model.Data.List)
+	assert.False(t, model.Data.OutOfRange, "unknown agency must return outOfRange=false (Extension 3a)")
+}
+
+// TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency verifies the success
+// path emits outOfRange=false for an agency served by this instance.
+func TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.False(t, model.Data.OutOfRange, "known agency must return outOfRange=false")
 }
 
 // TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
