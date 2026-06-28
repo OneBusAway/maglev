@@ -493,6 +493,9 @@ SELECT
     t.service_id,
     t.route_id,
     t.trip_headsign,
+    t.block_id,
+    t.min_arrival_time,
+    t.max_departure_time,
     r.id as route_id,
     r.agency_id
 FROM
@@ -513,6 +516,9 @@ SELECT
     t.service_id,
     t.route_id,
     t.trip_headsign,
+    t.block_id,
+    t.min_arrival_time,
+    t.max_departure_time,
     r.id as route_id,
     r.agency_id
 FROM

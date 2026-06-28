@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 	"strings"
@@ -192,6 +193,44 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Extract unique block IDs directly from the scheduled rows
+	uniqueBlockIDsMap := make(map[string]bool)
+	for _, row := range scheduleRows {
+		if row.BlockID.Valid && row.BlockID.String != "" {
+			uniqueBlockIDsMap[row.BlockID.String] = true
+		}
+	}
+
+	// Batch fetch all trips within the identified blocks for the active service day
+	// This allows us to establish the chronological sequence of trips per vehicle
+	blockTripsMap := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
+	uniqueBlockIDs := make([]sql.NullString, 0, len(uniqueBlockIDsMap))
+	for blockID := range uniqueBlockIDsMap {
+		uniqueBlockIDs = append(uniqueBlockIDs, nulls.String(blockID))
+	}
+
+	if len(uniqueBlockIDs) > 0 {
+		activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		if len(activeServiceIDs) > 0 {
+			blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+				BlockIds:   uniqueBlockIDs,
+				ServiceIds: activeServiceIDs,
+			})
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+			// Group trips by block ID. The underlying query inherently sorts by min_arrival_time ASC.
+			for _, bt := range blockTrips {
+				blockTripsMap[bt.BlockID.String] = append(blockTripsMap[bt.BlockID.String], bt)
+			}
+		}
+	}
+
 	// Group schedule data by route
 	routeScheduleMap := make(map[string][]models.ScheduleStopTime)
 	// Track headsign counts to pick the most common one
@@ -220,6 +259,33 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			row.StopHeadsign.String,
 			combinedTripID,
 		)
+
+		// Determine the arrival/departure capabilities for this stop time based on its
+		// position within the vehicle's entire block for the service day.
+
+		// First, verify if the stop is at the temporal boundaries of its individual trip.
+		isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
+		isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
+
+		isFirstInBlock := isFirstInTrip
+		isLastInBlock := isLastInTrip
+
+		// If the trip belongs to a block, refine the boundaries to the block level.
+		if row.BlockID.Valid && row.BlockID.String != "" {
+			if bTrips, exists := blockTripsMap[row.BlockID.String]; exists && len(bTrips) > 0 {
+				isFirstInBlock = isFirstInTrip && (bTrips[0].ID == row.TripID)
+				isLastInBlock = isLastInTrip && (bTrips[len(bTrips)-1].ID == row.TripID)
+			}
+		}
+
+		// Disable arrivals for the first stop of a block (vehicle starts service here).
+		if isFirstInBlock {
+			stopTime.ArrivalEnabled = false
+		}
+		// Disable departures for the last stop of a block (vehicle ends service here).
+		if isLastInBlock {
+			stopTime.DepartureEnabled = false
+		}
 
 		routeScheduleMap[combinedRouteID] = append(routeScheduleMap[combinedRouteID], stopTime)
 
