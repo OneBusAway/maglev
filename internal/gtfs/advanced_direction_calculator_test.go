@@ -542,6 +542,244 @@ func TestBulkQuery_GetShapePointsByIDs(t *testing.T) {
 	assert.True(t, isSorted, "Shape points should be returned in sequence order")
 }
 
+// shapeRow is a small helper to build a synthetic shape point for cache injection.
+func shapeRow(lat, lon float64, seq int64) gtfsdb.GetShapePointsWithDistanceRow {
+	return gtfsdb.GetShapePointsWithDistanceRow{
+		Lat:             lat,
+		Lon:             lon,
+		ShapePtSequence: seq,
+	}
+}
+
+// newCachedCalc builds a calculator whose shape data is served entirely from an
+// in-memory cache, so calculateOrientationAtStop never touches the database.
+// queries is nil intentionally: with a populated cache the DB path is never hit.
+func newCachedCalc(t *testing.T, shapes map[string][]gtfsdb.GetShapePointsWithDistanceRow) *AdvancedDirectionCalculator {
+	t.Helper()
+	calc := NewAdvancedDirectionCalculator(nil)
+	if err := calc.SetShapeCache(shapes); err != nil {
+		t.Fatalf("SetShapeCache: %v", err)
+	}
+	return calc
+}
+
+// TestCalculateOrientationAtStop_SingleSegmentNotChord is the core regression test
+// for the parity fix. An L-shaped shape runs due East and then turns due North.
+// The stop sits on the final Eastward segment, right by the corner vertex.
+//
+// The OLD implementation measured the bearing over a wide ±5-point chord, which
+// spanned the corner and produced a diagonal (NE) bearing. The fix measures the
+// bearing of the single segment the stop lies on, which is due East.
+func TestCalculateOrientationAtStop_SingleSegmentNotChord(t *testing.T) {
+	ctx := context.Background()
+	const shapeID = "L-shape"
+
+	shape := []gtfsdb.GetShapePointsWithDistanceRow{
+		shapeRow(0, 0, 0),
+		shapeRow(0, 1, 1),
+		shapeRow(0, 2, 2),
+		shapeRow(0, 3, 3),
+		shapeRow(0, 4, 4),
+		shapeRow(0, 5, 5), // corner vertex (closest to the stop)
+		shapeRow(1, 5, 6),
+		shapeRow(2, 5, 7),
+		shapeRow(3, 5, 8),
+		shapeRow(4, 5, 9),
+		shapeRow(5, 5, 10),
+	}
+	calc := newCachedCalc(t, map[string][]gtfsdb.GetShapePointsWithDistanceRow{shapeID: shape})
+
+	// Stop lies just South of, and slightly before, the corner — i.e. on the
+	// Eastward segment (P4->P5), not the Northward one (P5->P6).
+	orientation, err := calc.calculateOrientationAtStop(ctx, shapeID, -1.0, -0.1, 4.9)
+	assert.NoError(t, err)
+
+	// Single-segment bearing is due East (dy=0, dx>0 => atan2 == 0).
+	assert.InDelta(t, 0.0, orientation, 1e-9, "should follow the single Eastward segment")
+	assert.Equal(t, "E", calc.getAngleAsDirection(orientation),
+		"wide-chord bearing would have been NE; the fix yields E")
+}
+
+// TestCalculateOrientationAtStop_PicksNearestAdjacentSegment verifies the
+// prev-vs-next segment selection: when the stop sits past the corner on the
+// Northward leg, the Northward segment (P5->P6) is chosen instead of the
+// Eastward one.
+func TestCalculateOrientationAtStop_PicksNearestAdjacentSegment(t *testing.T) {
+	ctx := context.Background()
+	const shapeID = "L-shape"
+
+	shape := []gtfsdb.GetShapePointsWithDistanceRow{
+		shapeRow(0, 3, 0),
+		shapeRow(0, 4, 1),
+		shapeRow(0, 5, 2), // corner vertex (closest to the stop)
+		shapeRow(1, 5, 3),
+		shapeRow(2, 5, 4),
+	}
+	calc := newCachedCalc(t, map[string][]gtfsdb.GetShapePointsWithDistanceRow{shapeID: shape})
+
+	// Stop sits just East of, and slightly above, the corner — nearest to the
+	// Northward segment (lon=5, lat increasing).
+	orientation, err := calc.calculateOrientationAtStop(ctx, shapeID, -1.0, 0.1, 5.1)
+	assert.NoError(t, err)
+
+	// Northward bearing: dx=0, dy>0 => atan2 == +pi/2.
+	assert.InDelta(t, math.Pi/2, orientation, 1e-9, "should follow the Northward segment")
+	assert.Equal(t, "N", calc.getAngleAsDirection(orientation))
+}
+
+// TestCalculateOrientationAtStop_NoCosLatScaling pins the deliberate removal of
+// the cos(latitude) longitude correction. At 60°N a diagonal segment with equal
+// lat/lon deltas must yield atan2(dlat, dlon) using RAW deltas. With the dropped
+// cos-lat scaling the longitude delta would be halved (cos60°=0.5), rotating the
+// bearing — so this value distinguishes the two implementations.
+func TestCalculateOrientationAtStop_NoCosLatScaling(t *testing.T) {
+	ctx := context.Background()
+	const shapeID = "diagonal"
+
+	// Two-point shape: any closest index collapses to the (0,1) boundary segment.
+	shape := []gtfsdb.GetShapePointsWithDistanceRow{
+		shapeRow(60.000, 10.000, 0),
+		shapeRow(60.001, 10.002, 1),
+	}
+	calc := newCachedCalc(t, map[string][]gtfsdb.GetShapePointsWithDistanceRow{shapeID: shape})
+
+	orientation, err := calc.calculateOrientationAtStop(ctx, shapeID, -1.0, 60.0, 10.0)
+	assert.NoError(t, err)
+
+	// Raw deltas: atan2(0.001, 0.002).
+	expectedRaw := math.Atan2(0.001, 0.002)
+	assert.InDelta(t, expectedRaw, orientation, 1e-9, "raw lon/lat deltas, no cos-lat scaling")
+
+	// Guard: the cos(60°) scaled bearing (pi/4) must NOT match.
+	cosLatBearing := math.Atan2(0.001, 0.002*math.Cos(60.0*math.Pi/180.0))
+	assert.Greater(t, math.Abs(cosLatBearing-orientation), 1e-6,
+		"cos-lat corrected bearing should differ from the raw bearing")
+}
+
+// TestCalculateOrientationAtStop_StartAndEndBoundaries verifies the boundary
+// branches: a stop matching the first point uses segment [0,1], and one matching
+// the last point uses segment [n-2, n-1].
+func TestCalculateOrientationAtStop_StartAndEndBoundaries(t *testing.T) {
+	ctx := context.Background()
+	const shapeID = "boundaries"
+
+	// Eastward then Northward; a corner separates the two legs so the start and
+	// end segments have clearly different bearings.
+	shape := []gtfsdb.GetShapePointsWithDistanceRow{
+		shapeRow(0, 0, 0),
+		shapeRow(0, 1, 1),
+		shapeRow(0, 2, 2),
+		shapeRow(1, 2, 3),
+		shapeRow(2, 2, 4),
+	}
+	calc := newCachedCalc(t, map[string][]gtfsdb.GetShapePointsWithDistanceRow{shapeID: shape})
+
+	// At the very first point -> segment [0,1] is Eastward.
+	startOrientation, err := calc.calculateOrientationAtStop(ctx, shapeID, -1.0, 0, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, "E", calc.getAngleAsDirection(startOrientation))
+
+	// At the very last point -> segment [n-2, n-1] is Northward.
+	endOrientation, err := calc.calculateOrientationAtStop(ctx, shapeID, -1.0, 2, 2)
+	assert.NoError(t, err)
+	assert.Equal(t, "N", calc.getAngleAsDirection(endOrientation))
+}
+
+// TestCalculateOrientationAtStop_DistTraveledMatching verifies the
+// shape_dist_traveled matching path selects the correct segment, independent of
+// geographic coordinates.
+func TestCalculateOrientationAtStop_DistTraveledMatching(t *testing.T) {
+	ctx := context.Background()
+	const shapeID = "dist-shape"
+
+	withDist := func(lat, lon float64, seq int64, dist float64) gtfsdb.GetShapePointsWithDistanceRow {
+		r := shapeRow(lat, lon, seq)
+		r.ShapeDistTraveled = sql.NullFloat64{Float64: dist, Valid: true}
+		return r
+	}
+
+	// Eastward leg (dist 0..20) then Northward leg (dist 30..40).
+	shape := []gtfsdb.GetShapePointsWithDistanceRow{
+		withDist(0, 0, 0, 0),
+		withDist(0, 1, 1, 10),
+		withDist(0, 2, 2, 20), // corner
+		withDist(1, 2, 3, 30),
+		withDist(2, 2, 4, 40),
+	}
+	calc := newCachedCalc(t, map[string][]gtfsdb.GetShapePointsWithDistanceRow{shapeID: shape})
+
+	// dist 5 sits on the Eastward leg. stopLat/stopLon are 0 so only dist matching applies.
+	eastOrientation, err := calc.calculateOrientationAtStop(ctx, shapeID, 5.0, 0, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, "E", calc.getAngleAsDirection(eastOrientation))
+
+	// dist 35 sits on the Northward leg.
+	northOrientation, err := calc.calculateOrientationAtStop(ctx, shapeID, 35.0, 0, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, "N", calc.getAngleAsDirection(northOrientation))
+}
+
+// TestCalculateOrientationAtStop_InsufficientPoints verifies a single-point shape
+// is treated as "no data" (ErrNoRows), never a panic from segment indexing.
+func TestCalculateOrientationAtStop_InsufficientPoints(t *testing.T) {
+	ctx := context.Background()
+	const shapeID = "tiny"
+
+	calc := newCachedCalc(t, map[string][]gtfsdb.GetShapePointsWithDistanceRow{
+		shapeID: {shapeRow(0, 0, 0)},
+	})
+
+	_, err := calc.calculateOrientationAtStop(ctx, shapeID, -1.0, 0, 0)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestDistanceToSegment(t *testing.T) {
+	tests := []struct {
+		name                   string
+		plat, plon             float64
+		alat, alon, blat, blon float64
+		expected               float64
+	}{
+		{
+			name: "point on the segment",
+			plat: 0, plon: 1,
+			alat: 0, alon: 0, blat: 0, blon: 2,
+			expected: 0,
+		},
+		{
+			name: "perpendicular distance from segment",
+			plat: 1, plon: 1,
+			alat: 0, alon: 0, blat: 0, blon: 2,
+			expected: 1,
+		},
+		{
+			name: "projection clamped before start (t<0)",
+			plat: 0, plon: -1,
+			alat: 0, alon: 0, blat: 0, blon: 2,
+			expected: 1, // nearest point is endpoint A
+		},
+		{
+			name: "projection clamped past end (t>1)",
+			plat: 0, plon: 5,
+			alat: 0, alon: 0, blat: 0, blon: 2,
+			expected: 3, // nearest point is endpoint B
+		},
+		{
+			name: "degenerate segment uses point-to-point distance",
+			plat: 3, plon: 4,
+			alat: 0, alon: 0, blat: 0, blon: 0,
+			expected: 5, // 3-4-5 triangle
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := distanceToSegment(tt.plat, tt.plon, tt.alat, tt.alon, tt.blat, tt.blon)
+			assert.InDelta(t, tt.expected, got, 1e-9)
+		})
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Run all tests
 	code := m.Run()
