@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -236,6 +237,99 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 	}
 	assert.True(t, found,
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
+}
+
+// fetchVehiclesForAgencyRawList returns the data.list entries as raw JSON maps so
+// tests can assert field presence, not just decoded zero values.
+func fetchVehiclesForAgencyRawList(t testing.TB, api *RestAPI, endpoint string) []map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data struct {
+			List []map[string]json.RawMessage `json:"list"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data.List
+}
+
+// rawEntryByVehicleID returns the raw entry whose vehicleId matches, or nil.
+func rawEntryByVehicleID(t testing.TB, list []map[string]json.RawMessage, vehicleID string) map[string]json.RawMessage {
+	t.Helper()
+	for _, entry := range list {
+		if string(entry["vehicleId"]) == `"`+vehicleID+`"` {
+			return entry
+		}
+	}
+	return nil
+}
+
+// TestVehiclesForAgencyHandler_UpdateTimesAbsentWhenZero verifies that
+// lastUpdateTime / lastLocationUpdateTime are omitted (not 0) when the vehicle has
+// no update time, on both the outer entry and tripStatus.
+func TestVehiclesForAgencyHandler_UpdateTimesAbsentWhenZero(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_no_ts", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		NoTimestamp: true,
+	})
+
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, "v_no_ts")
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+
+	_, hasUpdate := entry["lastUpdateTime"]
+	_, hasLocUpdate := entry["lastLocationUpdateTime"]
+	assert.False(t, hasUpdate, "outer lastUpdateTime must be absent when zero")
+	assert.False(t, hasLocUpdate, "outer lastLocationUpdateTime must be absent when zero")
+
+	var tripStatus map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry["tripStatus"], &tripStatus))
+	_, hasTSUpdate := tripStatus["lastUpdateTime"]
+	_, hasTSLocUpdate := tripStatus["lastLocationUpdateTime"]
+	assert.False(t, hasTSUpdate, "tripStatus.lastUpdateTime must be absent when zero")
+	assert.False(t, hasTSLocUpdate, "tripStatus.lastLocationUpdateTime must be absent when zero")
+}
+
+// TestVehiclesForAgencyHandler_UpdateTimesPresentWhenSet verifies that
+// lastUpdateTime / lastLocationUpdateTime are present (Unix ms) when the vehicle
+// has an update time, on both the outer entry and tripStatus.
+func TestVehiclesForAgencyHandler_UpdateTimesPresentWhenSet(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_with_ts", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, "v_with_ts")
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+
+	updateRaw, hasUpdate := entry["lastUpdateTime"]
+	locRaw, hasLocUpdate := entry["lastLocationUpdateTime"]
+	require.True(t, hasUpdate, "outer lastUpdateTime must be present when set")
+	require.True(t, hasLocUpdate, "outer lastLocationUpdateTime must be present when set")
+	assert.NotEqual(t, "0", string(updateRaw), "lastUpdateTime must be a real timestamp, not 0")
+	assert.NotEqual(t, "0", string(locRaw), "lastLocationUpdateTime must be a real timestamp, not 0")
+
+	var tripStatus map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry["tripStatus"], &tripStatus))
+	tsUpdateRaw, hasTSUpdate := tripStatus["lastUpdateTime"]
+	tsLocRaw, hasTSLocUpdate := tripStatus["lastLocationUpdateTime"]
+	require.True(t, hasTSUpdate, "tripStatus.lastUpdateTime must be present when set")
+	require.True(t, hasTSLocUpdate, "tripStatus.lastLocationUpdateTime must be present when set")
+	assert.NotEqual(t, "0", string(tsUpdateRaw), "tripStatus.lastUpdateTime must be a real timestamp, not 0")
+	assert.NotEqual(t, "0", string(tsLocRaw), "tripStatus.lastLocationUpdateTime must be a real timestamp, not 0")
 }
 
 // vehiclesRealTimeDataClock is pinned just past the latest timestamp in
