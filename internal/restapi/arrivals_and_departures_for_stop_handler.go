@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -159,8 +160,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 		if err != nil {
-			api.Logger.Warn("failed to query active service IDs",
+			// dayOffset==0 is the user's actual service date — silently
+			// dropping it would emit a 200 with the most important day's
+			// arrivals missing. Fail loud for that case so clients can
+			// retry. ±1-day failures stay best-effort (window-spillover only).
+			if dayOffset == 0 {
+				api.serverErrorResponse(w, r, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err))
+				return
+			}
+			api.Logger.Warn("failed to query active service IDs for window-spillover day, skipping",
 				slog.String("date", serviceDateStr),
+				slog.Int("day_offset", dayOffset),
 				slog.Any("error", err))
 			continue
 		}
