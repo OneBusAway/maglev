@@ -181,7 +181,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -213,7 +217,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -332,7 +340,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predicted = true
 	}
 
-	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceDate, currentTime)
+	// Use serviceMidnight (not the raw user-supplied serviceDate, which may
+	// carry a wall-clock time portion) for all schedule math — matches Java's
+	// BlockInstance contract ("midnight time relative to stop times"; see
+	// BlockInstance.java:69-72) and the plural handler's convention.
+	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
 	if statusErr != nil {
 		api.Logger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -362,12 +374,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		effectiveTime := currentTime
 		if vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
 			blockTripIDs := api.blockTripIDsSortedByStartTime(ctx,
-				api.blockTripIDsForServiceDate(ctx, tripID, serviceDate))
-			if dev, hasRT := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, currentTime); hasRT {
+				api.blockTripIDsForServiceDate(ctx, tripID, serviceMidnight))
+			if dev, hasRT := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceMidnight, currentTime); hasRT {
 				effectiveTime = currentTime.Add(-time.Duration(dev) * time.Second)
 			}
 		}
-		if snapshot := api.computeScheduledBlockSnapshot(ctx, tripID, effectiveTime, serviceDate); snapshot != nil {
+		if snapshot := api.computeScheduledBlockSnapshot(ctx, tripID, effectiveTime, serviceMidnight); snapshot != nil {
 			if d, n, ok := snapshot.metricsForStop(tripID, int(targetStopTime.StopSequence)); ok {
 				distanceFromStop = d
 				numberOfStopsAway = n
@@ -377,7 +389,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	totalStopsInTrip := int(targetRow.TotalStops)
 
-	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceMidnight)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
@@ -699,10 +711,21 @@ func (api *RestAPI) getPredictedTimes(
 		}
 	}
 
-	if arrivalOffset == nil {
+	// Mirror Java's propagateScheduleDeviationForwardAcrossStop
+	// (ArrivalAndDepartureServiceImpl.java:925-930). When slack between arrival
+	// and departure is zero (the typical case at most stops), the
+	// propagation reduces to "copy the present side." Falling back to
+	// propagatedDelay here would mix the target stop with an unrelated
+	// earlier stop's deviation, producing a negative dwell on stops where
+	// arr != dep. Only fall back to propagatedDelay if BOTH sides are nil.
+	if arrivalOffset == nil && departureOffset != nil {
+		arrivalOffset = departureOffset
+	} else if arrivalOffset == nil {
 		arrivalOffset = &propagatedDelay
 	}
-	if departureOffset == nil {
+	if departureOffset == nil && arrivalOffset != nil {
+		departureOffset = arrivalOffset
+	} else if departureOffset == nil {
 		departureOffset = &propagatedDelay
 	}
 
