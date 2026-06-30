@@ -3,8 +3,6 @@ package restapi
 import (
 	"cmp"
 	"context"
-	"database/sql"
-	"errors"
 	"log/slog"
 	"math"
 	"slices"
@@ -385,10 +383,8 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 			// A real DB error (vs. sql.ErrNoRows / empty) on a partial sort
 			// would silently scramble block-trip order — and pickTripLevelDeviation
 			// depends on that order ("last delay wins"). Warn and bail.
-			if !errors.Is(err, sql.ErrNoRows) {
-				slog.Warn("blockTripIDsSortedByStartTime: GetStopTimesForTrip failed, returning input order",
-					slog.String("trip_id", id), slog.String("error", err.Error()))
-			}
+			warnIfRealDBError(err, "blockTripIDsSortedByStartTime: GetStopTimesForTrip failed, returning input order",
+				slog.String("trip_id", id))
 			return tripIDs
 		}
 		if len(sts) == 0 {

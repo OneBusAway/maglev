@@ -3,8 +3,6 @@ package restapi
 import (
 	"cmp"
 	"context"
-	"database/sql"
-	"errors"
 	"log/slog"
 	"math"
 	"slices"
@@ -291,37 +289,32 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	// degrade the snapshot to single-trip mode. The single-trip fallback IS
 	// the right behaviour for the not-found cases — it just shouldn't be
 	// reached on real DB errors without a warning.
-	blockID, err := api.GtfsManager.GtfsDB.Queries.GetBlockIDByTripID(ctx, targetTripID)
+	fallback := []string{targetTripID}
+	q := api.GtfsManager.GtfsDB.Queries
+
+	blockID, err := q.GetBlockIDByTripID(ctx, targetTripID)
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("blockTripIDsForServiceDate: GetBlockIDByTripID failed, degrading to single-trip mode",
-				slog.String("trip_id", targetTripID), slog.String("error", err.Error()))
-		}
-		return []string{targetTripID}
+		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetBlockIDByTripID failed, degrading to single-trip mode",
+			slog.String("trip_id", targetTripID))
+		return fallback
 	}
 	if !blockID.Valid || blockID.String == "" {
-		return []string{targetTripID}
+		return fallback
 	}
-	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, blockID)
+	blockTrips, err := q.GetTripsByBlockID(ctx, blockID)
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
-				slog.String("trip_id", targetTripID), slog.String("block_id", blockID.String), slog.String("error", err.Error()))
-		}
-		return []string{targetTripID}
+		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
+			slog.String("trip_id", targetTripID), slog.String("block_id", blockID.String))
+		return fallback
 	}
 	if len(blockTrips) == 0 {
-		return []string{targetTripID}
+		return fallback
 	}
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(
-		ctx, serviceDate.Format("20060102"),
-	)
+	activeServiceIDs, err := q.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("blockTripIDsForServiceDate: GetActiveServiceIDsForDate failed, degrading to single-trip mode",
-				slog.String("trip_id", targetTripID), slog.String("date", serviceDate.Format("20060102")), slog.String("error", err.Error()))
-		}
-		return []string{targetTripID}
+		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetActiveServiceIDsForDate failed, degrading to single-trip mode",
+			slog.String("trip_id", targetTripID), slog.String("date", serviceDate.Format("20060102")))
+		return fallback
 	}
 	activeSet := make(map[string]struct{}, len(activeServiceIDs))
 	for _, id := range activeServiceIDs {
@@ -334,7 +327,7 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 		}
 	}
 	if len(ids) == 0 {
-		return []string{targetTripID}
+		return fallback
 	}
 	return ids
 }
