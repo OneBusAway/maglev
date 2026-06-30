@@ -3,6 +3,9 @@ package restapi
 import (
 	"cmp"
 	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
 	"math"
 	"slices"
 	"time"
@@ -378,12 +381,27 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 	withStart := make([]tripWithStart, 0, len(tripIDs))
 	for _, id := range tripIDs {
 		sts, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, id)
-		if err != nil || len(sts) == 0 {
-			// On lookup failure, preserve input order by returning the
-			// original slice — sorting partial data would scramble it.
+		if err != nil {
+			// A real DB error (vs. sql.ErrNoRows / empty) on a partial sort
+			// would silently scramble block-trip order — and pickTripLevelDeviation
+			// depends on that order ("last delay wins"). Warn and bail.
+			if !errors.Is(err, sql.ErrNoRows) {
+				slog.Warn("blockTripIDsSortedByStartTime: GetStopTimesForTrip failed, returning input order",
+					slog.String("trip_id", id), slog.String("error", err.Error()))
+			}
 			return tripIDs
 		}
+		if len(sts) == 0 {
+			// Trip has no stop_times — skip it from the sort but keep going;
+			// it can't contribute a meaningful start time anyway.
+			continue
+		}
 		withStart = append(withStart, tripWithStart{id: id, start: sts[0].ArrivalTime})
+	}
+	if len(withStart) < len(tripIDs) {
+		// Some trips had no stop_times. Returning a partial sort would drop
+		// those IDs from the block; keep input order to preserve them.
+		return tripIDs
 	}
 	slices.SortFunc(withStart, func(a, b tripWithStart) int { return cmp.Compare(a.start, b.start) })
 	out := make([]string, len(withStart))
