@@ -606,6 +606,77 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
+// TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime is the
+// handler-level regression for the blockNotActive discard signal. When the
+// trip-level delay exceeds 1h, the GetScheduleDeviationForBlock helper
+// returns (0, false) to mirror Java's "discard the whole VehicleLocationRecord"
+// behaviour. The handler MUST NOT then surface that delay through the
+// snapshot's effectiveTime shift — the response should look as if no RT
+// deviation data exists at all.
+//
+// We assert on the user-visible signals:
+//   - tripStatus.scheduleDeviation == 0 (no shift was recorded)
+//   - distanceFromStop/numberOfStopsAway come from an UNSHIFTED snapshot
+//     (same as a baseline run with no TripUpdate at all)
+//
+// A future refactor that "helpfully" applies the discarded deviation would
+// fail the first assertion; a refactor that fell through to STU-based
+// shifting would fail the second.
+func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+
+	// === Baseline: same fixture, NO TripUpdate. Captures the unshifted snapshot. ===
+	baselineAPI := createTestApiWithClock(t, mockClock)
+	defer baselineAPI.Shutdown()
+	_, combinedStopIDBaseline, baselineTripID, _ := setupDelayPropTestData(t, baselineAPI, 1)
+	baselineAPI.GtfsManager.MockAddVehicle("v1", baselineTripID, "dp-route")
+	_, baselineModel := callAPIHandler[ArrivalsAndDeparturesResponse](t, baselineAPI,
+		arrivalsAndDeparturesURL(combinedStopIDBaseline))
+
+	expectedTripIDBaseline := utils.FormCombinedID("dp-agency", baselineTripID)
+	var baseline *models.ArrivalAndDeparture
+	for i := range baselineModel.Data.Entry.ArrivalsAndDepartures {
+		if baselineModel.Data.Entry.ArrivalsAndDepartures[i].TripID == expectedTripIDBaseline {
+			baseline = &baselineModel.Data.Entry.ArrivalsAndDepartures[i]
+			break
+		}
+	}
+	require.NotNil(t, baseline, "baseline arrival missing for trip %s", expectedTripIDBaseline)
+
+	// === Subject: identical fixture + bogus 2h trip-level delay (above blockNotActive's 1h cap). ===
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	bogusDelay := 2 * time.Hour // > Java's 60-minute blockNotActive guard
+	api.GtfsManager.MockAddTripUpdate(tripID, &bogusDelay, nil)
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var subject *models.ArrivalAndDeparture
+	for i := range model.Data.Entry.ArrivalsAndDepartures {
+		if model.Data.Entry.ArrivalsAndDepartures[i].TripID == expectedTripID {
+			subject = &model.Data.Entry.ArrivalsAndDepartures[i]
+			break
+		}
+	}
+	require.NotNil(t, subject, "subject arrival missing for trip %s", expectedTripID)
+	require.NotNil(t, subject.TripStatus, "tripStatus must still be emitted even when RT is discarded")
+
+	// Java's blockNotActive: deviation surfaces as 0.
+	assert.Equal(t, 0, subject.TripStatus.ScheduleDeviation,
+		"|delay| > 1h must be discarded; tripStatus.scheduleDeviation should be 0, not %d", subject.TripStatus.ScheduleDeviation)
+
+	// Snapshot was NOT shifted by 2h: distance and stops-away match the no-RT baseline.
+	assert.InDelta(t, baseline.DistanceFromStop, subject.DistanceFromStop, 0.001,
+		"distanceFromStop must come from an unshifted snapshot (baseline=%.2f, got=%.2f)",
+		baseline.DistanceFromStop, subject.DistanceFromStop)
+	assert.Equal(t, baseline.NumberOfStopsAway, subject.NumberOfStopsAway,
+		"numberOfStopsAway must come from an unshifted snapshot (baseline=%d, got=%d)",
+		baseline.NumberOfStopsAway, subject.NumberOfStopsAway)
+}
+
 // TestPluralArrivals_NoMatchingOrPriorStop verifies that a TripUpdate with a
 // StopTimeUpdate for a later stop does not mark the arrival as predicted.
 func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
