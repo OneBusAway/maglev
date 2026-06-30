@@ -521,6 +521,73 @@ func TestProjectStopsInSequence_MixedAuthoritativeAndGeometric(t *testing.T) {
 	assert.LessOrEqual(t, distances[1], totalDist, "geometric stop must stay within shape bounds")
 }
 
+// TestProjectStopsInSequence_LoopRouteRevisitsSameCoords pins the whole
+// reason projectStopsInSequence exists: when the same (lat, lon) appears
+// at two different shape segments (figure-eight / lasso / Q-route loop),
+// a naive global-minimum projection picks the SAME segment for both
+// stops, producing equal distances and ultimately the catastrophic
+// distanceFromStop outliers documented at scheduled_block_helper.go:388.
+//
+// We build a figure-eight shape that revisits (0, 0) at the midpoint:
+// stop_A at sequence 1 is at the start (shape segment 0); stop_B at
+// sequence 4 is at the same (0, 0) coords but should project to the
+// LATER segment near point[3]. With the monotonic cursor advancing,
+// distances[3] must be strictly greater than distances[0] — both
+// physical coordinates are identical, only the cursor tells them apart.
+func TestProjectStopsInSequence_LoopRouteRevisitsSameCoords(t *testing.T) {
+	// Figure-eight shape that passes through (0, 0) twice:
+	//   point 0: (0, 0)       — start, where stop_A lives
+	//   point 1: (0.0001, 0)  — far point of first lobe
+	//   point 2: (0, 0)       — back at origin (midpoint crossing)
+	//   point 3: (0, 0.0001)  — far point of second lobe
+	//   point 4: (0, 0)       — close the loop at origin
+	shape := []gtfs.ShapePoint{
+		{Latitude: 0.0, Longitude: 0.0},
+		{Latitude: 0.0001, Longitude: 0.0},
+		{Latitude: 0.0, Longitude: 0.0},
+		{Latitude: 0.0, Longitude: 0.0001},
+		{Latitude: 0.0, Longitude: 0.0},
+	}
+	cumDist := preCalculateCumulativeDistances(shape)
+	require.Len(t, cumDist, 5)
+	require.Greater(t, cumDist[len(cumDist)-1], 0.0, "shape must have non-zero total distance")
+
+	// Four stops in sequence:
+	//   stop_A (seq 1, coords (0,0))     — at point 0
+	//   stop_B (seq 2, coords (0.0001,0))— at point 1
+	//   stop_C (seq 3, coords (0,0))     — at point 2 / midpoint crossing (SAME COORDS as stop_A!)
+	//   stop_D (seq 4, coords (0,0.0001))— at point 3
+	stopTimes := []gtfsdb.StopTime{
+		{StopID: "stop_A", StopSequence: 1},
+		{StopID: "stop_B", StopSequence: 2},
+		{StopID: "stop_C", StopSequence: 3},
+		{StopID: "stop_D", StopSequence: 4},
+	}
+	stopByID := map[string]gtfsdb.Stop{
+		"stop_A": {ID: "stop_A", Lat: 0.0, Lon: 0.0},
+		"stop_B": {ID: "stop_B", Lat: 0.0001, Lon: 0.0},
+		"stop_C": {ID: "stop_C", Lat: 0.0, Lon: 0.0},
+		"stop_D": {ID: "stop_D", Lat: 0.0, Lon: 0.0001},
+	}
+
+	distances := projectStopsInSequence(stopTimes, stopByID, shape, cumDist)
+	require.Len(t, distances, 4)
+
+	// Monotonicity is THE invariant. If lastMatchedIndex didn't advance
+	// through the figure-eight, stop_C (same coords as stop_A) would
+	// project back to segment 0 and distances[2] < distances[1].
+	for i := 1; i < len(distances); i++ {
+		assert.GreaterOrEqual(t, distances[i], distances[i-1],
+			"loop-route monotonicity: distances[%d]=%.2f must be ≥ distances[%d]=%.2f even when coords repeat",
+			i, distances[i], i-1, distances[i-1])
+	}
+	// stop_C revisits stop_A's exact coords but is at sequence 3 — it
+	// MUST project to a later shape distance, not back to 0.
+	assert.Greater(t, distances[2], distances[0],
+		"stop_C shares coords with stop_A but appears later in sequence; "+
+			"must project to a later shape segment, not the first one")
+}
+
 func TestApplyScheduledTripPositionToStatus_PopulatesFields(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -553,4 +620,134 @@ func TestApplyScheduledTripPositionToStatus_NoOpOnEmptyInput(t *testing.T) {
 	)
 	assert.Equal(t, 0.0, status.ScheduledDistanceAlongTrip)
 	assert.Equal(t, models.Location{}, status.Position)
+}
+
+// ---------------------------------------------------------------------------
+// keepShiftContainingTrip — pure-function unit tests.
+//
+// Before this PR, the shift-splitting logic was only exercised indirectly via
+// computeScheduledBlockSnapshot against RABA, which has no overlapping trips.
+// The function exists specifically to handle feeds that reuse one block_id
+// across multiple physical buses (overlapping trip windows), so the test
+// scenarios MUST include actual overlaps to be meaningful.
+// ---------------------------------------------------------------------------
+
+func shiftTrip(id string, first, last int64) blockTripData {
+	return blockTripData{id: id, firstSeconds: first, lastSeconds: last}
+}
+
+func shiftIDs(trips []blockTripData) []string {
+	ids := make([]string, len(trips))
+	for i, t := range trips {
+		ids[i] = t.id
+	}
+	return ids
+}
+
+func TestKeepShiftContainingTrip_EmptyInputReturnsNil(t *testing.T) {
+	assert.Nil(t, keepShiftContainingTrip(nil, "target"))
+	assert.Nil(t, keepShiftContainingTrip([]blockTripData{}, "target"))
+}
+
+func TestKeepShiftContainingTrip_TargetNotInBlockReturnsNil(t *testing.T) {
+	trips := []blockTripData{
+		shiftTrip("A", 100, 200),
+		shiftTrip("B", 300, 400),
+	}
+	assert.Nil(t, keepShiftContainingTrip(trips, "C"),
+		"target not in block must return nil so callers fall back gracefully")
+}
+
+func TestKeepShiftContainingTrip_NoOverlapsKeepsEntireBlock(t *testing.T) {
+	// Three sequential, non-overlapping trips. Target is the middle one.
+	trips := []blockTripData{
+		shiftTrip("morning", 100, 200),
+		shiftTrip("midday", 300, 400),
+		shiftTrip("evening", 500, 600),
+	}
+	got := keepShiftContainingTrip(trips, "midday")
+	assert.Equal(t, []string{"morning", "midday", "evening"}, shiftIDs(got),
+		"no overlaps anywhere → no split; whole block is one shift")
+}
+
+func TestKeepShiftContainingTrip_OverlapBeforeTargetCutsStart(t *testing.T) {
+	// "earlier" ends at 250; "target" starts at 200 — overlap! That means a
+	// different physical bus is running "target" and earlier trips belong
+	// to a different shift. Cut start at "target".
+	trips := []blockTripData{
+		shiftTrip("earlier", 100, 250),
+		shiftTrip("target", 200, 300),
+		shiftTrip("later", 350, 450),
+	}
+	got := keepShiftContainingTrip(trips, "target")
+	assert.Equal(t, []string{"target", "later"}, shiftIDs(got),
+		"overlap before target must cut start; 'earlier' belongs to another shift")
+}
+
+func TestKeepShiftContainingTrip_OverlapAfterTargetCutsEnd(t *testing.T) {
+	trips := []blockTripData{
+		shiftTrip("earlier", 100, 150),
+		shiftTrip("target", 200, 350),
+		shiftTrip("overlapping_next", 300, 400), // starts before target ends
+	}
+	got := keepShiftContainingTrip(trips, "target")
+	assert.Equal(t, []string{"earlier", "target"}, shiftIDs(got),
+		"overlap after target must cut end; 'overlapping_next' belongs to another shift")
+}
+
+func TestKeepShiftContainingTrip_ThreeShiftBlockTargetInMiddle(t *testing.T) {
+	// Three distinct shifts. Target is in the middle one (B-shift).
+	//   shift A: A1 → A2  (overlap with B1 starts here)
+	//   shift B: B1 → B2  ← target=B1
+	//   shift C: C1 → C2
+	trips := []blockTripData{
+		shiftTrip("A1", 100, 250),
+		shiftTrip("A2", 200, 300),
+		shiftTrip("B1", 280, 380), // target — starts before A2 ends → overlap → cut
+		shiftTrip("B2", 400, 500),
+		shiftTrip("C1", 480, 580), // starts before B2 ends → overlap → cut
+		shiftTrip("C2", 600, 700),
+	}
+	got := keepShiftContainingTrip(trips, "B1")
+	assert.Equal(t, []string{"B1", "B2"}, shiftIDs(got),
+		"three-shift block must isolate the B-shift; A and C belong to other physical buses")
+}
+
+func TestKeepShiftContainingTrip_TargetIsFirstTrip(t *testing.T) {
+	trips := []blockTripData{
+		shiftTrip("target", 100, 200),
+		shiftTrip("overlapping_next", 150, 300),
+		shiftTrip("after", 350, 450),
+	}
+	got := keepShiftContainingTrip(trips, "target")
+	assert.Equal(t, []string{"target"}, shiftIDs(got),
+		"target at start with overlapping next → just the target")
+}
+
+func TestKeepShiftContainingTrip_TargetIsLastTrip(t *testing.T) {
+	// "first" and "second" overlap → shift boundary between them.
+	// "target" doesn't overlap with "second" → stays in the same shift.
+	trips := []blockTripData{
+		shiftTrip("first", 100, 200),
+		shiftTrip("second", 150, 300), // overlaps with "first"
+		shiftTrip("target", 400, 500),
+	}
+	got := keepShiftContainingTrip(trips, "target")
+	assert.Equal(t, []string{"second", "target"}, shiftIDs(got),
+		"shift cut happens at the overlap between 'first' and 'second'; "+
+			"the rest of the chain (second, target) is target's shift")
+}
+
+func TestKeepShiftContainingTrip_BackToBackTouchingNoOverlap(t *testing.T) {
+	// trips[i].firstSeconds == trips[i-1].lastSeconds is NOT an overlap
+	// (one bus arrives just as another departs is fine). The function's
+	// test is strict less-than: `trips[i].firstSeconds < trips[i-1].lastSeconds`.
+	trips := []blockTripData{
+		shiftTrip("A", 100, 200),
+		shiftTrip("B", 200, 300), // exactly back-to-back
+		shiftTrip("C", 300, 400),
+	}
+	got := keepShiftContainingTrip(trips, "B")
+	assert.Equal(t, []string{"A", "B", "C"}, shiftIDs(got),
+		"touching boundaries (firstSeconds == prev lastSeconds) are not overlaps")
 }
