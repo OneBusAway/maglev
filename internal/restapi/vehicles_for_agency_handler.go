@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -80,11 +81,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			VehicleID: vid,
 		}
 
-		// Set timestamps
+		// Leave update times zero when no real update exists, so they are omitted (spec: absent when zero).
 		currentTime := models.NewModelTime(api.Clock.Now())
-		vehicleStatus.LastLocationUpdateTime = currentTime
-		vehicleStatus.LastUpdateTime = currentTime
-
 		if vehicle.Timestamp != nil {
 			ts := models.NewModelTime(*vehicle.Timestamp)
 			vehicleStatus.LastLocationUpdateTime = ts
@@ -131,10 +129,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				tripStatus.Orientation = float64(obaOrientation)
 			}
 
-			// Set timestamps on trip status to match vehicle timestamps
-			tripStatus.LastUpdateTime = currentTime
-			tripStatus.LastLocationUpdateTime = currentTime
-
+			// Leave trip status update times zero when no real update exists (spec: absent when zero).
 			if vehicle.Timestamp != nil {
 				ts := models.NewModelTime(*vehicle.Timestamp)
 				tripStatus.LastUpdateTime = ts
@@ -199,8 +194,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
 			defaultTripStatus.Phase = "scheduled"
-			defaultTripStatus.LastUpdateTime = currentTime
-			defaultTripStatus.LastLocationUpdateTime = currentTime
 			vehicleStatus.TripStatus = defaultTripStatus
 		}
 
@@ -229,6 +222,59 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	)
 	references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
 
-	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
+	response := models.NewListResponse(wrapVehicleStatusesForResponse(vehiclesList), *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// vehicleStatusResponse handles omission of (lastUpdateTime /
+// lastLocationUpdateTime absent when zero) for vehicles-for-agency only, since
+// the shared models.TripStatus must keep emitting 0 for other endpoints.
+type vehicleStatusResponse struct {
+	models.VehicleStatus
+}
+
+// tripStatusZeroOmittedTimeFields are omitted from the nested tripStatus when zero.
+var tripStatusZeroOmittedTimeFields = []string{"lastUpdateTime", "lastLocationUpdateTime"}
+
+func (v vehicleStatusResponse) MarshalJSON() ([]byte, error) {
+	// Marshal the outer entry first; its own time fields use omitzero already.
+	raw, err := json.Marshal(v.VehicleStatus)
+	if err != nil {
+		return nil, err
+	}
+	if v.TripStatus == nil {
+		return raw, nil
+	}
+
+	var entry map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return nil, err
+	}
+
+	var tripStatus map[string]json.RawMessage
+	if err := json.Unmarshal(entry["tripStatus"], &tripStatus); err != nil {
+		return nil, err
+	}
+	// Drop zero-valued time fields so they are absent rather than serialized as 0.
+	for _, field := range tripStatusZeroOmittedTimeFields {
+		if string(tripStatus[field]) == "0" {
+			delete(tripStatus, field)
+		}
+	}
+
+	patched, err := json.Marshal(tripStatus)
+	if err != nil {
+		return nil, err
+	}
+	entry["tripStatus"] = patched
+	return json.Marshal(entry)
+}
+
+// wrapVehicleStatusesForResponse wraps each entry so the omission applies.
+func wrapVehicleStatusesForResponse(list []models.VehicleStatus) []vehicleStatusResponse {
+	wrapped := make([]vehicleStatusResponse, len(list))
+	for i, vs := range list {
+		wrapped[i] = vehicleStatusResponse{VehicleStatus: vs}
+	}
+	return wrapped
 }

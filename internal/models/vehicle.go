@@ -2,8 +2,8 @@ package models
 
 type VehicleStatus struct {
 	VehicleID              string      `json:"vehicleId"`
-	LastLocationUpdateTime ModelTime   `json:"lastLocationUpdateTime"`
-	LastUpdateTime         ModelTime   `json:"lastUpdateTime"`
+	LastLocationUpdateTime ModelTime   `json:"lastLocationUpdateTime,omitzero"`
+	LastUpdateTime         ModelTime   `json:"lastUpdateTime,omitzero"`
 	Location               *Location   `json:"location"`
 	TripID                 string      `json:"tripId"`
 	TripStatus             *TripStatus `json:"tripStatus"`
