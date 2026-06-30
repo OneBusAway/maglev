@@ -3,6 +3,9 @@ package restapi
 import (
 	"cmp"
 	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
 	"math"
 	"slices"
 	"time"
@@ -283,18 +286,41 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	targetTripID string,
 	serviceDate time.Time,
 ) []string {
+	// Distinguish "this trip legitimately has no block" (sql.ErrNoRows + invalid
+	// nullable) from "DB blip" so that infrastructure problems don't silently
+	// degrade the snapshot to single-trip mode. The single-trip fallback IS
+	// the right behaviour for the not-found cases — it just shouldn't be
+	// reached on real DB errors without a warning.
 	blockID, err := api.GtfsManager.GtfsDB.Queries.GetBlockIDByTripID(ctx, targetTripID)
-	if err != nil || !blockID.Valid || blockID.String == "" {
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("blockTripIDsForServiceDate: GetBlockIDByTripID failed, degrading to single-trip mode",
+				slog.String("trip_id", targetTripID), slog.String("error", err.Error()))
+		}
+		return []string{targetTripID}
+	}
+	if !blockID.Valid || blockID.String == "" {
 		return []string{targetTripID}
 	}
 	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, blockID)
-	if err != nil || len(blockTrips) == 0 {
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
+				slog.String("trip_id", targetTripID), slog.String("block_id", blockID.String), slog.String("error", err.Error()))
+		}
+		return []string{targetTripID}
+	}
+	if len(blockTrips) == 0 {
 		return []string{targetTripID}
 	}
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(
 		ctx, serviceDate.Format("20060102"),
 	)
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("blockTripIDsForServiceDate: GetActiveServiceIDsForDate failed, degrading to single-trip mode",
+				slog.String("trip_id", targetTripID), slog.String("date", serviceDate.Format("20060102")), slog.String("error", err.Error()))
+		}
 		return []string{targetTripID}
 	}
 	activeSet := make(map[string]struct{}, len(activeServiceIDs))
@@ -371,6 +397,12 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 	}
 	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, ids)
 	if err != nil {
+		// Returning nil here causes projectStopsInSequence to write 0 for
+		// every geometric-projection stop, silently corrupting downstream
+		// DistanceAlongTrip. Surface the error in logs so operators see
+		// infrastructure issues; the snapshot still proceeds in degraded mode.
+		slog.Warn("fetchStopCoordsForStopTimes: GetStopsByIDs failed, projection distances will be zero",
+			slog.Int("stop_count", len(ids)), slog.String("error", err.Error()))
 		return nil
 	}
 	byID := make(map[string]gtfsdb.Stop, len(stops))
@@ -475,6 +507,15 @@ func projectStopGeometric(stop gtfsdb.Stop, shapePoints []gtfs.ShapePoint, cumul
 		} else if minDistance < goodMatchThreshold && d > minDistance+earlyExitThresholdMeters {
 			break
 		}
+	}
+	// Loop-route correctness: when the best match lands at the END of a
+	// segment (ratio ≈ 1.0), advance the cursor past that segment so the
+	// next stop doesn't snap back to it. Without this, a stop whose coords
+	// repeat earlier on the shape (figure-eight, lasso, Q-route loop) finds
+	// the same zero-distance match at the original segment and gets
+	// distance 0 instead of progressing along the loop.
+	if projectionRatio > 0.95 && cursor < len(shapePoints)-2 {
+		cursor++
 	}
 	var segmentLength float64
 	if closestSegmentIndex < len(shapePoints)-1 {
