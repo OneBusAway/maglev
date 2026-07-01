@@ -69,8 +69,9 @@ type MockVehicleOptions struct {
 	StopID              *string
 	CurrentStatus       *gtfs.CurrentStatus
 	OccupancyStatus     *gtfs.OccupancyStatus
-	NoTrip              bool // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle with no current trip assignment, which VehiclesForAgencyID filters out.
-	NoID                bool // NoID creates a vehicle with ID == nil, simulating a GTFS-RT vehicle that omits the vehicle descriptor.
+	NoTrip              bool       // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle with no current trip assignment, which VehiclesForAgencyID filters out.
+	NoID                bool       // NoID creates a vehicle with ID == nil, simulating a GTFS-RT vehicle that omits the vehicle descriptor.
+	Timestamp           *time.Time // Timestamp overrides the vehicle's last-update time; defaults to time.Now() when nil.
 }
 
 func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
@@ -83,6 +84,9 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 		}
 	}
 	now := time.Now()
+	if opts.Timestamp != nil {
+		now = *opts.Timestamp
+	}
 
 	var trip *gtfs.Trip
 	if !opts.NoTrip {
