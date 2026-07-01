@@ -36,31 +36,7 @@ func (m *Manager) MockAddRoute(id, agencyID, name string) {
 	})
 }
 func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
-	m.realTimeMutex.Lock()
-	defer m.realTimeMutex.Unlock()
-
-	for _, v := range m.realTimeVehicles {
-		if v.ID != nil && v.ID.ID == vehicleID {
-			return
-		}
-	}
-	now := time.Now()
-	m.realTimeVehicles = append(m.realTimeVehicles, gtfs.Vehicle{
-		ID:        &gtfs.VehicleID{ID: vehicleID},
-		Timestamp: &now,
-		Trip: &gtfs.Trip{
-			ID: gtfs.TripID{
-				ID:      tripID,
-				RouteID: routeID,
-			},
-		},
-	})
-
-	idx := len(m.realTimeVehicles) - 1
-	m.realTimeVehicleLookupByVehicle[vehicleID] = idx
-	if tripID != "" {
-		m.realTimeVehicleLookupByTrip[tripID] = idx
-	}
+	m.MockAddVehicleWithOptions(vehicleID, tripID, routeID, MockVehicleOptions{})
 }
 
 type MockVehicleOptions struct {
@@ -69,8 +45,9 @@ type MockVehicleOptions struct {
 	StopID              *string
 	CurrentStatus       *gtfs.CurrentStatus
 	OccupancyStatus     *gtfs.OccupancyStatus
-	NoTrip              bool // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle with no current trip assignment, which VehiclesForAgencyID filters out.
-	NoID                bool // NoID creates a vehicle with ID == nil, simulating a GTFS-RT vehicle that omits the vehicle descriptor.
+	NoTrip              bool   // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle with no current trip assignment.
+	NoID                bool   // NoID creates a vehicle with ID == nil, simulating a GTFS-RT vehicle that omits the vehicle descriptor.
+	FeedID              string // FeedID assigns the vehicle to a specific feed; defaults to "feed-0".
 }
 
 func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
@@ -109,15 +86,14 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 		CurrentStatus:       opts.CurrentStatus,
 		OccupancyStatus:     opts.OccupancyStatus,
 	}
-	m.realTimeVehicles = append(m.realTimeVehicles, v)
 
-	idx := len(m.realTimeVehicles) - 1
-	if vehicleID != "" && !opts.NoID {
-		m.realTimeVehicleLookupByVehicle[vehicleID] = idx
+	// Store per-feed and rebuild the merged view so lookups match production.
+	feedID := opts.FeedID
+	if feedID == "" {
+		feedID = "feed-0"
 	}
-	if tripID != "" && !opts.NoTrip {
-		m.realTimeVehicleLookupByTrip[tripID] = idx
-	}
+	m.feedVehicles[feedID] = append(m.feedVehicles[feedID], v)
+	m.rebuildMergedRealtimeLocked()
 }
 
 func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
@@ -156,6 +132,22 @@ func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 	m.rebuildMergedRealtimeLocked()
 }
 
+// MockSetFeedAgencyFilter assigns the set of agency IDs served by a feed, so
+// trip-less vehicles on that feed resolve to those agencies.
+func (m *Manager) MockSetFeedAgencyFilter(feedID string, agencyIDs ...string) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	filter := make(map[string]bool, len(agencyIDs))
+	for _, id := range agencyIDs {
+		filter[id] = true
+	}
+	if m.feedAgencyFilter == nil {
+		m.feedAgencyFilter = make(map[string]map[string]bool)
+	}
+	m.feedAgencyFilter[feedID] = filter
+}
+
 // MockResetRealTimeData clears all mock real-time vehicles, trip updates, and alerts.
 func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()
@@ -167,6 +159,7 @@ func (m *Manager) MockResetRealTimeData() {
 	m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
 	m.realTimeTrips = nil
 	m.realTimeTripLookup = make(map[string]int)
+	m.feedVehicles = make(map[string][]gtfs.Vehicle)
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	m.rebuildMergedRealtimeLocked()
 }

@@ -62,8 +62,7 @@ type Manager struct {
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
-	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
-	// No lock is required for reads.
+	// Populated during InitGTFSManager; reads/writes are guarded by realTimeMutex.
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
@@ -527,13 +526,23 @@ func (manager *Manager) VehiclesForAgencyID(ctx context.Context, agencyID string
 		routeIDs[route.ID] = true
 	}
 
-	// Step 2: Acquire real-time lock independently to read vehicles.
-	rtVehicles := manager.GetRealTimeVehicles()
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
 
 	var vehicles []gtfs.Vehicle
-	for _, v := range rtVehicles {
-		if v.Trip != nil && routeIDs[v.Trip.ID.RouteID] {
-			vehicles = append(vehicles, v)
+	for feedID, feedVehicles := range manager.feedVehicles {
+		for _, v := range feedVehicles {
+			if v.Trip != nil {
+				// Trip-bound vehicle: match via trip -> route -> agency.
+				if routeIDs[v.Trip.ID.RouteID] {
+					vehicles = append(vehicles, v)
+				}
+				continue
+			}
+			// Trip-less vehicle (spec Extension 5a): match via the feed's agency filter.
+			if filter := manager.feedAgencyFilter[feedID]; filter[agencyID] {
+				vehicles = append(vehicles, v)
+			}
 		}
 	}
 

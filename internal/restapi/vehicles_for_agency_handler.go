@@ -195,14 +195,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					url, color, textColor)
 
 			}
-		} else {
-			defaultTripStatus := models.NewTripStatus()
-			defaultTripStatus.Status = "default"
-			defaultTripStatus.Phase = "scheduled"
-			defaultTripStatus.LastUpdateTime = currentTime
-			defaultTripStatus.LastLocationUpdateTime = currentTime
-			vehicleStatus.TripStatus = defaultTripStatus
 		}
+		// Trip-less vehicle: tripId and tripStatus stay absent (spec Extension 5a).
 
 		vehiclesList = append(vehiclesList, vehicleStatus)
 	}

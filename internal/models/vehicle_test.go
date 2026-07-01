@@ -25,8 +25,6 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		assert.Contains(t, jsonStr, `"lastUpdateTime"`)
 		assert.Contains(t, jsonStr, `"lastLocationUpdateTime"`)
 		assert.Contains(t, jsonStr, `"location"`)
-		assert.Contains(t, jsonStr, `"tripId"`)
-		assert.Contains(t, jsonStr, `"tripStatus"`)
 
 		// Optional fields should be absent at the top level.
 		// Unmarshal to a map to avoid false positives from nested TripStatus JSON
@@ -42,8 +40,8 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		assert.Equal(t, float64(0), top["lastUpdateTime"], "lastUpdateTime must serialize as 0 when not set")
 		assert.Equal(t, float64(0), top["lastLocationUpdateTime"], "lastLocationUpdateTime must serialize as 0 when not set")
 		assert.Nil(t, top["location"], "location must serialize as JSON null when not set")
-		assert.Nil(t, top["tripStatus"], "tripStatus must serialize as JSON null when not set")
-		assert.Equal(t, "", top["tripId"], "tripId must serialize as empty string when not set")
+		assert.NotContains(t, top, "tripStatus", "tripStatus must be absent when nil")
+		assert.NotContains(t, top, "tripId", "tripId must be absent when empty")
 	})
 
 	t.Run("optional fields appear only when set", func(t *testing.T) {

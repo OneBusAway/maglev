@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -103,18 +104,73 @@ func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
 		"tripStatus.occupancyStatus must receive the same GTFS-RT value")
 }
 
-// TestVehiclesForAgencyHandler_VehicleWithoutTrip verifies the invariant that vehicles
-// with Trip == nil are excluded from the vehicles-for-agency response.
+// TestVehiclesForAgencyHandler_VehicleWithoutTrip verifies that a trip-less vehicle
+// belonging to the agency is included with tripId and tripStatus absent (spec Extension 5a).
 func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	trip := mustGetTrip(t, api)
-	// Inject a vehicle with Trip == nil. It shares a routeID with static data so that
-	// if the nil-Trip filter is removed, the vehicle would propagate to the handler.
-	const noTripVehicleID = "v_no_trip_regression"
-	api.GtfsManager.MockAddVehicleWithOptions(noTripVehicleID, "", trip.RouteID, gtfs.MockVehicleOptions{
+	// Trip-less vehicles resolve to an agency via the feed's agency filter.
+	api.GtfsManager.MockSetFeedAgencyFilter("feed-0", testdata.Raba.ID)
+
+	const noTripVehicleID = "v_no_trip"
+	api.GtfsManager.MockAddVehicleWithOptions(noTripVehicleID, "", "", gtfs.MockVehicleOptions{
+		NoTrip: true,
+	})
+
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, noTripVehicleID)
+	require.NotNil(t, entry, "trip-less vehicle must be included in the response")
+
+	_, hasTripID := entry["tripId"]
+	_, hasTripStatus := entry["tripStatus"]
+	assert.False(t, hasTripID, "trip-less vehicle must have tripId absent from the payload")
+	assert.False(t, hasTripStatus, "trip-less vehicle must have tripStatus absent from the payload")
+}
+
+// fetchVehiclesForAgencyRawList returns the data.list entries as raw JSON maps so
+// tests can assert field presence, not just decoded zero values.
+func fetchVehiclesForAgencyRawList(t testing.TB, api *RestAPI, endpoint string) []map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data struct {
+			List []map[string]json.RawMessage `json:"list"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data.List
+}
+
+// rawEntryByVehicleID returns the raw entry whose vehicleId matches, or nil.
+func rawEntryByVehicleID(t testing.TB, list []map[string]json.RawMessage, vehicleID string) map[string]json.RawMessage {
+	t.Helper()
+	for _, entry := range list {
+		if string(entry["vehicleId"]) == `"`+vehicleID+`"` {
+			return entry
+		}
+	}
+	return nil
+}
+
+// TestVehiclesForAgencyHandler_VehicleWithoutTripOtherAgency verifies a trip-less
+// vehicle on a feed serving a different agency is not returned.
+func TestVehiclesForAgencyHandler_VehicleWithoutTripOtherAgency(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	api.GtfsManager.MockSetFeedAgencyFilter("feed-0", "some-other-agency")
+
+	const noTripVehicleID = "v_no_trip_other"
+	api.GtfsManager.MockAddVehicleWithOptions(noTripVehicleID, "", "", gtfs.MockVehicleOptions{
 		NoTrip: true,
 	})
 
@@ -122,7 +178,7 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 
 	for _, v := range model.Data.List {
 		assert.NotEqual(t, noTripVehicleID, v.VehicleID,
-			"vehicle with Trip==nil must be excluded by VehiclesForAgencyID before reaching the handler")
+			"trip-less vehicle from another agency's feed must be excluded")
 	}
 }
 
