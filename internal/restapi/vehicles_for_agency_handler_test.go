@@ -238,6 +238,57 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
 }
 
+// TestVehiclesForAgencyHandler_IncludeReferencesFalse verifies that
+// includeReferences=false empties the references block while keeping the list.
+func TestVehiclesForAgencyHandler_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_refs_false", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"includeReferences": {"false"}}
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "list must still be populated when includeReferences=false")
+
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies, "agencies should be empty when includeReferences=false")
+	assert.Empty(t, refs.Routes, "routes should be empty when includeReferences=false")
+	assert.Empty(t, refs.Trips, "trips should be empty when includeReferences=false")
+	assert.Empty(t, refs.Stops, "stops should be empty when includeReferences=false")
+	assert.Empty(t, refs.Situations, "situations should be empty when includeReferences=false")
+}
+
+// TestVehiclesForAgencyHandler_IncludeReferencesDefault verifies that references
+// are populated when includeReferences is absent or explicitly true.
+func TestVehiclesForAgencyHandler_IncludeReferencesDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		params []url.Values
+	}{
+		{"absent", nil},
+		{"explicit true", []url.Values{{"includeReferences": {"true"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			trip := mustGetTrip(t, api)
+			api.GtfsManager.MockAddVehicleWithOptions("v_refs_default", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+			_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, tc.params...))
+
+			assert.NotEmpty(t, model.Data.References.Agencies,
+				"agencies should be populated when includeReferences is true/absent")
+		})
+	}
+}
+
 // vehiclesRealTimeDataClock is pinned just past the latest timestamp in
 // testdata/raba-vehicle-positions.pb (2025-06-08 21:08:26 UTC) so vehicles fall
 // inside the handler's 15-minute stale-vehicle window. With clock.RealClock{},
