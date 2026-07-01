@@ -62,8 +62,7 @@ type Manager struct {
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
-	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
-	// No lock is required for reads.
+	// Populated during InitGTFSManager; reads/writes are guarded by realTimeMutex.
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen

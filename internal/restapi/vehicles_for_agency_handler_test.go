@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -118,18 +119,45 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 		NoTrip: true,
 	})
 
-	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, noTripVehicleID)
+	require.NotNil(t, entry, "trip-less vehicle must be included in the response")
 
-	var entry *models.VehicleStatus
-	for i := range model.Data.List {
-		if model.Data.List[i].VehicleID == noTripVehicleID {
-			entry = &model.Data.List[i]
-			break
+	_, hasTripID := entry["tripId"]
+	_, hasTripStatus := entry["tripStatus"]
+	assert.False(t, hasTripID, "trip-less vehicle must have tripId absent from the payload")
+	assert.False(t, hasTripStatus, "trip-less vehicle must have tripStatus absent from the payload")
+}
+
+// fetchVehiclesForAgencyRawList returns the data.list entries as raw JSON maps so
+// tests can assert field presence, not just decoded zero values.
+func fetchVehiclesForAgencyRawList(t testing.TB, api *RestAPI, endpoint string) []map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data struct {
+			List []map[string]json.RawMessage `json:"list"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data.List
+}
+
+// rawEntryByVehicleID returns the raw entry whose vehicleId matches, or nil.
+func rawEntryByVehicleID(t testing.TB, list []map[string]json.RawMessage, vehicleID string) map[string]json.RawMessage {
+	t.Helper()
+	for _, entry := range list {
+		if string(entry["vehicleId"]) == `"`+vehicleID+`"` {
+			return entry
 		}
 	}
-	require.NotNil(t, entry, "trip-less vehicle must be included in the response")
-	assert.Empty(t, entry.TripID, "trip-less vehicle must have tripId absent")
-	assert.Nil(t, entry.TripStatus, "trip-less vehicle must have tripStatus absent")
+	return nil
 }
 
 // TestVehiclesForAgencyHandler_VehicleWithoutTripOtherAgency verifies a trip-less

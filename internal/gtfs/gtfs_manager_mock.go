@@ -135,9 +135,15 @@ func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 // MockSetFeedAgencyFilter assigns the set of agency IDs served by a feed, so
 // trip-less vehicles on that feed resolve to those agencies.
 func (m *Manager) MockSetFeedAgencyFilter(feedID string, agencyIDs ...string) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
 	filter := make(map[string]bool, len(agencyIDs))
 	for _, id := range agencyIDs {
 		filter[id] = true
+	}
+	if m.feedAgencyFilter == nil {
+		m.feedAgencyFilter = make(map[string]map[string]bool)
 	}
 	m.feedAgencyFilter[feedID] = filter
 }
