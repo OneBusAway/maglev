@@ -559,7 +559,7 @@ WHERE
     )
     AND r.id IN (sqlc.slice('route_ids'))
 ORDER BY
-    r.id, t.direction_id, st.departure_time;
+    r.id, COALESCE(t.direction_id, 0), st.departure_time;
 
 
 -- name: GetImportMetadata :one
