@@ -7,7 +7,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/twpayne/go-polyline"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -98,7 +97,6 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, includePolylines bool) (models.RouteEntry, []models.Stop, error) {
 	allStops := make(map[string]bool)
-	allPolylines := make([]models.Polyline, 0, 100)
 	var stopGroupings []models.StopGrouping
 
 	// Get trips for route that are active on the service date
@@ -106,29 +104,32 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		RouteID:    routeID,
 		ServiceIds: serviceIDs,
 	})
-
 	if err != nil {
 		return models.RouteEntry{}, nil, err
 	}
 
-	if len(trips) == 0 {
+	effectiveTrips := trips
+	if len(effectiveTrips) == 0 {
 		// Fallback: get all trips for this route regardless of service date
-		allTrips, err := api.GtfsManager.GtfsDB.Queries.GetAllTripsForRoute(ctx, routeID)
+		effectiveTrips, err = api.GtfsManager.GtfsDB.Queries.GetAllTripsForRoute(ctx, routeID)
 		if err != nil {
-			return models.RouteEntry{}, nil, err
-		}
-		if err := processTripGroups(ctx, api, agencyID, routeID, allTrips, &stopGroupings, allStops, &allPolylines); err != nil {
-			return models.RouteEntry{}, nil, err
-		}
-	} else {
-		// Process trips for the current service date
-		if err := processTripGroups(ctx, api, agencyID, routeID, trips, &stopGroupings, allStops, &allPolylines); err != nil {
 			return models.RouteEntry{}, nil, err
 		}
 	}
 
-	if !includePolylines {
-		allPolylines = []models.Polyline{}
+	if err := processTripGroups(ctx, api, agencyID, routeID, effectiveTrips, &stopGroupings, allStops, includePolylines); err != nil {
+		return models.RouteEntry{}, nil, err
+	}
+
+	// Entry-level polylines are an independent merge over the shapes of every
+	// qualifying trip, mirroring Java's getEncodedPolylinesForRoute — not a
+	// concatenation of the per-direction group polylines.
+	entryPolylines := []models.Polyline{}
+	if includePolylines {
+		entryPolylines, err = api.mergePolylinesForShapeIDs(ctx, distinctShapeIDs(effectiveTrips))
+		if err != nil {
+			return models.RouteEntry{}, nil, err
+		}
 	}
 
 	allStopsIds := formatStopIDs(agencyID, allStops)
@@ -138,7 +139,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 	}
 
 	result := models.RouteEntry{
-		Polylines:     allPolylines,
+		Polylines:     entryPolylines,
 		RouteID:       utils.FormCombinedID(agencyID, routeID),
 		StopGroupings: stopGroupings,
 		StopIds:       allStopsIds,
@@ -239,7 +240,7 @@ func processTripGroups(
 	trips []gtfsdb.Trip,
 	stopGroupings *[]models.StopGrouping,
 	allStops map[string]bool,
-	allPolylines *[]models.Polyline,
+	includePolylines bool,
 ) error {
 	dirGroups := groupTripsByDirection(trips)
 
@@ -296,27 +297,17 @@ func processTripGroups(
 			}
 		}
 
-		seenHeadsigns := make(map[string]bool)
-		var groupPolylines []models.Polyline
-		for _, trip := range tripsInGroup {
-			hs := trip.TripHeadsign.String
-			if seenHeadsigns[hs] {
-				continue
-			}
-			seenHeadsigns[hs] = true
-			shape, err := api.GtfsManager.GtfsDB.Queries.GetShapesGroupedByTripHeadSign(ctx,
-				gtfsdb.GetShapesGroupedByTripHeadSignParams{
-					RouteID:      routeID,
-					TripHeadsign: trip.TripHeadsign,
-				})
+		// groupPolylines stays a non-nil empty slice so it serializes as [] (not
+		// null) when includePolylines is false or a group has no shapes. The
+		// polylines are merged from the distinct shapes of this direction's trips,
+		// mirroring Java's getShapeIdsForStopSequenceBlock + merge.
+		groupPolylines := []models.Polyline{}
+		if includePolylines {
+			groupPolylines, err = api.mergePolylinesForShapeIDs(ctx, distinctShapeIDs(tripsInGroup))
 			if err != nil {
-				api.Logger.Warn("failed to fetch shapes for trip group", "route_id", routeID, "headsign", hs, "error", err)
-				continue
+				return err
 			}
-			pl := generatePolylines(shape)
-			groupPolylines = append(groupPolylines, pl...)
 		}
-		*allPolylines = append(*allPolylines, groupPolylines...)
 
 		formattedStopIDs := make([]string, len(orderedStopIDs))
 		for idx, id := range orderedStopIDs {
@@ -353,20 +344,107 @@ func processTripGroups(
 	return nil
 }
 
-func generatePolylines(shapes []gtfsdb.GetShapesGroupedByTripHeadSignRow) []models.Polyline {
-	var polylines []models.Polyline
-	// This prevents repeated memory re-allocation during the loop.
-	coords := make([][]float64, 0, len(shapes))
-	for _, shape := range shapes {
-		coords = append(coords, []float64{shape.Lat, shape.Lon})
+// distinctShapeIDs returns the unique, non-empty shape IDs of the given trips in
+// sorted order. Java iterates a HashSet of shape IDs (unspecified order); we sort
+// for deterministic output.
+func distinctShapeIDs(trips []gtfsdb.Trip) []string {
+	seen := make(map[string]bool)
+	var shapeIDs []string
+	for _, trip := range trips {
+		if !trip.ShapeID.Valid || trip.ShapeID.String == "" {
+			continue
+		}
+		if seen[trip.ShapeID.String] {
+			continue
+		}
+		seen[trip.ShapeID.String] = true
+		shapeIDs = append(shapeIDs, trip.ShapeID.String)
 	}
-	encodedPoints := polyline.EncodeCoords(coords)
-	polylines = append(polylines, models.Polyline{
-		Length: len(shapes),
-		Levels: "",
-		Points: string(encodedPoints),
-	})
-	return polylines
+	slices.Sort(shapeIDs)
+	return shapeIDs
+}
+
+// coordPoint is an exact-valued lat/lon used as a map key for edge de-duplication.
+type coordPoint struct {
+	lat float64
+	lon float64
+}
+
+// edgeKey is an undirected edge between two coordinate points, normalized so that
+// (a,b) and (b,a) compare equal — matching Java's Edge class in ShapeBeanServiceImpl.
+type edgeKey struct {
+	a coordPoint
+	b coordPoint
+}
+
+func makeEdge(p, q coordPoint) edgeKey {
+	if p.lat < q.lat || (p.lat == q.lat && p.lon <= q.lon) {
+		return edgeKey{a: p, b: q}
+	}
+	return edgeKey{a: q, b: p}
+}
+
+// mergePolylinesForShapeIDs ports Java's ShapeBeanServiceImpl.getMergedPolylinesForShapeIds.
+// It walks the ordered points of each shape while maintaining a shared set of
+// undirected edges. Consecutive duplicate points are dropped; when an edge has
+// already been seen, the current line is flushed as one polyline and a new line
+// begins, de-overlapping shared track. Each line is floor-encoded via
+// utils.EncodePolyline with length = the merged line's point count.
+func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []string) ([]models.Polyline, error) {
+	polylines := []models.Polyline{}
+	if len(shapeIDs) == 0 {
+		return polylines, nil
+	}
+
+	edges := make(map[edgeKey]struct{})
+	var currentLine [][]float64
+
+	flush := func() {
+		if len(currentLine) > 1 {
+			polylines = append(polylines, models.Polyline{
+				Length: len(currentLine),
+				Levels: "",
+				Points: utils.EncodePolyline(currentLine),
+			})
+		}
+		currentLine = nil
+	}
+
+	for _, shapeID := range shapeIDs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		points, err := api.GtfsManager.GtfsDB.Queries.GetShapeByID(ctx, shapeID)
+		if err != nil {
+			return nil, err
+		}
+		if len(points) == 0 {
+			api.Logger.Warn("no shape points for shape", "shape_id", shapeID)
+			continue
+		}
+
+		var prev coordPoint
+		havePrev := false
+		for _, p := range points {
+			loc := coordPoint{lat: p.Lat, lon: p.Lon}
+			if havePrev && prev != loc {
+				edge := makeEdge(prev, loc)
+				if _, seen := edges[edge]; seen {
+					flush()
+				} else {
+					edges[edge] = struct{}{}
+				}
+			}
+			if !havePrev || prev != loc {
+				currentLine = append(currentLine, []float64{loc.lat, loc.lon})
+			}
+			prev = loc
+			havePrev = true
+		}
+		flush()
+	}
+
+	return polylines, nil
 }
 
 func formatStopIDs(agencyID string, stops map[string]bool) []string {
