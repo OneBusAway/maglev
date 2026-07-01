@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"database/sql"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -231,15 +233,20 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Group schedule data by route
-	routeScheduleMap := make(map[string][]models.ScheduleStopTime)
-	// Track headsign counts to pick the most common one
-	routeHeadsignCounts := make(map[string]map[string]int)
+	// Group schedule data by route -> direction -> slice of stop times
+	routeDirectionScheduleMap := make(map[string]map[string][]models.ScheduleStopTime)
+	// Track headsign counts per route -> direction -> headsign -> count
+	routeDirectionHeadsignCounts := make(map[string]map[string]map[string]int)
 
 	for _, row := range scheduleRows {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
+		}
+
+		directionID := "0"
+		if row.DirectionID.Valid {
+			directionID = strconv.FormatInt(row.DirectionID.Int64, 10)
 		}
 
 		combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
@@ -287,33 +294,49 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			stopTime.DepartureEnabled = false
 		}
 
-		routeScheduleMap[combinedRouteID] = append(routeScheduleMap[combinedRouteID], stopTime)
+		if routeDirectionScheduleMap[combinedRouteID] == nil {
+			routeDirectionScheduleMap[combinedRouteID] = make(map[string][]models.ScheduleStopTime)
+		}
+		routeDirectionScheduleMap[combinedRouteID][directionID] = append(routeDirectionScheduleMap[combinedRouteID][directionID], stopTime)
 
 		if row.TripHeadsign.Valid && row.TripHeadsign.String != "" {
-			if routeHeadsignCounts[combinedRouteID] == nil {
-				routeHeadsignCounts[combinedRouteID] = make(map[string]int)
+			if routeDirectionHeadsignCounts[combinedRouteID] == nil {
+				routeDirectionHeadsignCounts[combinedRouteID] = make(map[string]map[string]int)
 			}
-			routeHeadsignCounts[combinedRouteID][row.TripHeadsign.String]++
+			if routeDirectionHeadsignCounts[combinedRouteID][directionID] == nil {
+				routeDirectionHeadsignCounts[combinedRouteID][directionID] = make(map[string]int)
+			}
+			routeDirectionHeadsignCounts[combinedRouteID][directionID][row.TripHeadsign.String]++
 		}
 	}
 
 	// Build the route schedules
 	var routeSchedules []models.StopRouteSchedule
-	for routeID, stopTimes := range routeScheduleMap {
-		// Select the most common headsign for this route
-		tripHeadsign := ""
-		maxCount := 0
-		if headsigns, exists := routeHeadsignCounts[routeID]; exists {
-			for headsign, count := range headsigns {
-				if count > maxCount {
-					maxCount = count
-					tripHeadsign = headsign
+	for routeID, directionMap := range routeDirectionScheduleMap {
+		var directionSchedules []models.StopRouteDirectionSchedule
+
+		for dirID, stopTimes := range directionMap {
+			tripHeadsign := ""
+			maxCount := 0
+			if dirHeadsigns, exists := routeDirectionHeadsignCounts[routeID][dirID]; exists {
+				for headsign, count := range dirHeadsigns {
+					if count > maxCount {
+						maxCount = count
+						tripHeadsign = headsign
+					}
 				}
 			}
+
+			directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, nil)
+			directionSchedules = append(directionSchedules, directionSchedule)
 		}
 
-		directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, nil)
-		routeSchedule := models.NewStopRouteSchedule(routeID, []models.StopRouteDirectionSchedule{directionSchedule})
+		// Sort direction groups alphabetically by headsign
+		slices.SortFunc(directionSchedules, func(a, b models.StopRouteDirectionSchedule) int {
+			return cmp.Compare(a.TripHeadsign, b.TripHeadsign)
+		})
+
+		routeSchedule := models.NewStopRouteSchedule(routeID, directionSchedules)
 		routeSchedules = append(routeSchedules, routeSchedule)
 	}
 

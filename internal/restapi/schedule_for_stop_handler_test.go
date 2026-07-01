@@ -529,9 +529,9 @@ func TestScheduleForStopQueryValidation(t *testing.T) {
 		// Check if we have schedules with stop times
 		if schedules, ok := entry["stopRouteSchedules"].([]any); ok && len(schedules) > 0 {
 			firstSchedule := schedules[0].(map[string]any)
-			if dirSchedules, ok := firstSchedule["schedules"].([]any); ok && len(dirSchedules) > 0 {
+			if dirSchedules, ok := firstSchedule["stopRouteDirectionSchedules"].([]any); ok && len(dirSchedules) > 0 {
 				dirSchedule := dirSchedules[0].(map[string]any)
-				if stopTimes, ok := dirSchedule["stopTimes"].([]any); ok && len(stopTimes) > 0 {
+				if stopTimes, ok := dirSchedule["scheduleStopTimes"].([]any); ok && len(stopTimes) > 0 {
 					stopTime := stopTimes[0].(map[string]any)
 
 					// Verify arrival and departure times are timestamps
@@ -623,5 +623,47 @@ func TestScheduleForStopHandlerBlockSequenceLogic(t *testing.T) {
 		require.True(ok, "trip not found in response for last stop")
 		assert.True(t, st["arrivalEnabled"].(bool), "arrivalEnabled must be TRUE")
 		assert.False(t, st["departureEnabled"].(bool), "departureEnabled must be FALSE for the absolute last stop")
+	})
+}
+
+func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencies := mustGetAgencies(t, api)
+	stops := mustGetStops(t, api)
+	require := assert.New(t)
+
+	t.Run("Validates direction partitioning and alphabetical sorting by headsign", func(t *testing.T) {
+		// Iterate through all stops on active test date 2025-06-12
+		for _, stop := range stops {
+			stopID := utils.FormCombinedID(agencies[0].ID, stop.ID)
+			endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=org.onebusaway.iphone&date=2025-06-12"
+			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+			require.Equal(http.StatusOK, resp.StatusCode)
+
+			data, ok := model.Data.(map[string]any)
+			require.True(ok)
+			entry, ok := data["entry"].(map[string]any)
+			require.True(ok)
+
+			schedules, ok := entry["stopRouteSchedules"].([]any)
+			require.True(ok)
+
+			for _, schedAny := range schedules {
+				sched := schedAny.(map[string]any)
+				dirSchedules, ok := sched["stopRouteDirectionSchedules"].([]any)
+				require.True(ok, "stopRouteDirectionSchedules should be an array")
+
+				// Direction groups within each route are sorted alphabetically by headsign
+				for i := 0; i < len(dirSchedules)-1; i++ {
+					currDir := dirSchedules[i].(map[string]any)
+					nextDir := dirSchedules[i+1].(map[string]any)
+					currHeadsign, _ := currDir["tripHeadsign"].(string)
+					nextHeadsign, _ := nextDir["tripHeadsign"].(string)
+					assert.LessOrEqual(t, currHeadsign, nextHeadsign, "Direction schedules must be sorted alphabetically by tripHeadsign")
+				}
+			}
+		}
 	})
 }
