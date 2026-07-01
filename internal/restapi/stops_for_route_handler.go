@@ -255,83 +255,10 @@ func processTripGroups(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-
-		tripsInGroup := group.Trips
-
-		headsignCounts := make(map[string]int)
-		var dirServiceIDs []string
-		seenServiceIDs := make(map[string]bool)
-		for _, trip := range tripsInGroup {
-			headsignCounts[trip.TripHeadsign.String]++
-			if !seenServiceIDs[trip.ServiceID] {
-				seenServiceIDs[trip.ServiceID] = true
-				dirServiceIDs = append(dirServiceIDs, trip.ServiceID)
-			}
-		}
-
-		var orderedStopIDs []string
-		var err error
-		if !group.DirectionID.Valid {
-			/*
-				direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
-				UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
-				zero rows. Fall back to single-trip ordering instead.
-			*/
-			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, tripsInGroup[0].ID)
-		} else {
-			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
-				gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
-					RouteID:     routeID,
-					DirectionID: group.DirectionID,
-					ServiceIds:  dirServiceIDs,
-				})
-		}
+		stopGroup, err := buildStopGroup(ctx, api, agencyID, routeID, group, allStops, includePolylines)
 		if err != nil {
 			return err
 		}
-		for _, stopID := range orderedStopIDs {
-			allStops[stopID] = true
-		}
-
-		groupHeadsign := ""
-		maxCount := 0
-		for headsign, count := range headsignCounts {
-			if count > maxCount || (count == maxCount && headsign < groupHeadsign) {
-				groupHeadsign = headsign
-				maxCount = count
-			}
-		}
-
-		// groupPolylines stays a non-nil empty slice so it serializes as [] (not
-		// null) when includePolylines is false or a group has no shapes. The
-		// polylines are merged from the distinct shapes of this direction's trips,
-		// mirroring Java's getShapeIdsForStopSequenceBlock + merge.
-		groupPolylines := []models.Polyline{}
-		if includePolylines {
-			groupPolylines, err = api.mergePolylinesForShapeIDs(ctx, distinctShapeIDs(tripsInGroup))
-			if err != nil {
-				return err
-			}
-		}
-
-		formattedStopIDs := make([]string, len(orderedStopIDs))
-		for idx, id := range orderedStopIDs {
-			formattedStopIDs[idx] = utils.FormCombinedID(agencyID, id)
-		}
-
-		groupID := group.GroupID
-
-		stopGroup := models.StopGroup{
-			ID: groupID,
-			Name: models.StopGroupName{
-				Name:  groupHeadsign,
-				Names: []string{groupHeadsign},
-				Type:  "destination",
-			},
-			StopIds:   formattedStopIDs,
-			Polylines: groupPolylines,
-		}
-
 		allStopGroups = append(allStopGroups, stopGroup)
 	}
 
@@ -347,6 +274,98 @@ func processTripGroups(
 		})
 	}
 	return nil
+}
+
+// buildStopGroup assembles a single direction's StopGroup: its ordered stop IDs,
+// most-common headsign name, and merged polylines. It also records the group's
+// stops in allStops.
+func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, routeID string, group directionGroup, allStops map[string]bool, includePolylines bool) (models.StopGroup, error) {
+	headsignCounts, dirServiceIDs := summarizeTrips(group.Trips)
+
+	orderedStopIDs, err := orderedStopIDsForGroup(ctx, api, routeID, group, dirServiceIDs)
+	if err != nil {
+		return models.StopGroup{}, err
+	}
+	for _, stopID := range orderedStopIDs {
+		allStops[stopID] = true
+	}
+
+	// groupPolylines stays a non-nil empty slice so it serializes as [] (not null)
+	// when includePolylines is false or a group has no shapes. The polylines are
+	// merged from the distinct shapes of this direction's trips, mirroring Java's
+	// getShapeIdsForStopSequenceBlock + merge.
+	groupPolylines := []models.Polyline{}
+	if includePolylines {
+		groupPolylines, err = api.mergePolylinesForShapeIDs(ctx, distinctShapeIDs(group.Trips))
+		if err != nil {
+			return models.StopGroup{}, err
+		}
+	}
+
+	formattedStopIDs := make([]string, len(orderedStopIDs))
+	for idx, id := range orderedStopIDs {
+		formattedStopIDs[idx] = utils.FormCombinedID(agencyID, id)
+	}
+
+	groupHeadsign := mostCommonHeadsign(headsignCounts)
+	return models.StopGroup{
+		ID: group.GroupID,
+		Name: models.StopGroupName{
+			Name:  groupHeadsign,
+			Names: []string{groupHeadsign},
+			Type:  "destination",
+		},
+		StopIds:   formattedStopIDs,
+		Polylines: groupPolylines,
+	}, nil
+}
+
+// summarizeTrips counts trip headsigns and collects the distinct service IDs of a
+// direction's trips (preserving first-seen order).
+func summarizeTrips(trips []gtfsdb.Trip) (map[string]int, []string) {
+	headsignCounts := make(map[string]int)
+	var dirServiceIDs []string
+	seenServiceIDs := make(map[string]bool)
+	for _, trip := range trips {
+		headsignCounts[trip.TripHeadsign.String]++
+		if !seenServiceIDs[trip.ServiceID] {
+			seenServiceIDs[trip.ServiceID] = true
+			dirServiceIDs = append(dirServiceIDs, trip.ServiceID)
+		}
+	}
+	return headsignCounts, dirServiceIDs
+}
+
+// orderedStopIDsForGroup returns the stop IDs of a direction in route sequence.
+func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, group directionGroup, dirServiceIDs []string) ([]string, error) {
+	if !group.DirectionID.Valid {
+		/*
+			direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
+			UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
+			zero rows. Fall back to single-trip ordering instead.
+		*/
+		return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, group.Trips[0].ID)
+	}
+	return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
+		gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
+			RouteID:     routeID,
+			DirectionID: group.DirectionID,
+			ServiceIds:  dirServiceIDs,
+		})
+}
+
+// mostCommonHeadsign returns the headsign with the highest count, breaking ties by
+// the lexicographically smaller headsign.
+func mostCommonHeadsign(headsignCounts map[string]int) string {
+	groupHeadsign := ""
+	maxCount := 0
+	for headsign, count := range headsignCounts {
+		if count > maxCount || (count == maxCount && headsign < groupHeadsign) {
+			groupHeadsign = headsign
+			maxCount = count
+		}
+	}
+	return groupHeadsign
 }
 
 // distinctShapeIDs returns the unique, non-empty shape IDs of the given trips in
@@ -396,25 +415,7 @@ func makeEdge(p, q coordPoint) edgeKey {
 // begins, de-overlapping shared track. Each line is floor-encoded via
 // utils.EncodePolyline with length = the merged line's point count.
 func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []string) ([]models.Polyline, error) {
-	polylines := []models.Polyline{}
-	if len(shapeIDs) == 0 {
-		return polylines, nil
-	}
-
-	edges := make(map[edgeKey]struct{})
-	var currentLine [][]float64
-
-	flush := func() {
-		if len(currentLine) > 1 {
-			polylines = append(polylines, models.Polyline{
-				Length: len(currentLine),
-				Levels: "",
-				Points: utils.EncodePolyline(currentLine),
-			})
-		}
-		currentLine = nil
-	}
-
+	merger := newPolylineMerger()
 	for _, shapeID := range shapeIDs {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -427,29 +428,61 @@ func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []st
 			api.Logger.Warn("no shape points for shape", "shape_id", shapeID)
 			continue
 		}
-
-		var prev coordPoint
-		havePrev := false
-		for _, p := range points {
-			loc := coordPoint{lat: p.Lat, lon: p.Lon}
-			if havePrev && prev != loc {
-				edge := makeEdge(prev, loc)
-				if _, seen := edges[edge]; seen {
-					flush()
-				} else {
-					edges[edge] = struct{}{}
-				}
-			}
-			if !havePrev || prev != loc {
-				currentLine = append(currentLine, []float64{loc.lat, loc.lon})
-			}
-			prev = loc
-			havePrev = true
-		}
-		flush()
+		merger.addShape(points)
 	}
+	return merger.polylines, nil
+}
 
-	return polylines, nil
+// polylineMerger accumulates shape points into de-overlapped polylines, tracking a
+// shared undirected edge set across all shapes added to it.
+type polylineMerger struct {
+	edges       map[edgeKey]struct{}
+	currentLine [][]float64
+	polylines   []models.Polyline
+}
+
+func newPolylineMerger() *polylineMerger {
+	return &polylineMerger{
+		edges:     make(map[edgeKey]struct{}),
+		polylines: []models.Polyline{},
+	}
+}
+
+// flush emits the current line as a polyline (if it has at least one segment) and
+// starts a new one.
+func (m *polylineMerger) flush() {
+	if len(m.currentLine) > 1 {
+		m.polylines = append(m.polylines, models.Polyline{
+			Length: len(m.currentLine),
+			Levels: "",
+			Points: utils.EncodePolyline(m.currentLine),
+		})
+	}
+	m.currentLine = nil
+}
+
+// addShape walks a shape's ordered points, dropping consecutive duplicates and
+// flushing whenever an already-seen edge is encountered.
+func (m *polylineMerger) addShape(points []gtfsdb.Shape) {
+	var prev coordPoint
+	havePrev := false
+	for _, p := range points {
+		loc := coordPoint{lat: p.Lat, lon: p.Lon}
+		if havePrev && prev != loc {
+			edge := makeEdge(prev, loc)
+			if _, seen := m.edges[edge]; seen {
+				m.flush()
+			} else {
+				m.edges[edge] = struct{}{}
+			}
+		}
+		if !havePrev || prev != loc {
+			m.currentLine = append(m.currentLine, []float64{loc.lat, loc.lon})
+		}
+		prev = loc
+		havePrev = true
+	}
+	m.flush()
 }
 
 func formatStopIDs(agencyID string, stops map[string]bool) []string {
