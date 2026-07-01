@@ -285,22 +285,28 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
+		tripsToInclude := []string{}
+
+		// Only include the main trip if includeTrip=true.
+		// Related trips (preceding/following/active) are appended independently.
 		if params.IncludeTrip {
-			tripsToInclude := []string{utils.FormCombinedID(agencyID, trip.ID)}
+			tripsToInclude = append(tripsToInclude, utils.FormCombinedID(agencyID, trip.ID))
+		}
 
-			if params.IncludeSchedule && schedule != nil {
-				if schedule.NextTripID != "" {
-					tripsToInclude = append(tripsToInclude, schedule.NextTripID)
-				}
-				if schedule.PreviousTripID != "" {
-					tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
-				}
+		if params.IncludeSchedule && schedule != nil {
+			if schedule.NextTripID != "" {
+				tripsToInclude = append(tripsToInclude, schedule.NextTripID)
 			}
-
-			if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
-				tripsToInclude = append(tripsToInclude, status.ActiveTripID)
+			if schedule.PreviousTripID != "" {
+				tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
 			}
+		}
 
+		if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
+			tripsToInclude = append(tripsToInclude, status.ActiveTripID)
+		}
+
+		if len(tripsToInclude) > 0 {
 			referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
