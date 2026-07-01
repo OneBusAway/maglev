@@ -319,7 +319,13 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			tripHeadsign := ""
 			maxCount := 0
 			if dirHeadsigns, exists := routeDirectionHeadsignCounts[routeID][dirID]; exists {
-				for headsign, count := range dirHeadsigns {
+				headsigns := make([]string, 0, len(dirHeadsigns))
+				for headsign := range dirHeadsigns {
+					headsigns = append(headsigns, headsign)
+				}
+				slices.Sort(headsigns)
+				for _, headsign := range headsigns {
+					count := dirHeadsigns[headsign]
 					if count > maxCount {
 						maxCount = count
 						tripHeadsign = headsign
