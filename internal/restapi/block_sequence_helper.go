@@ -11,13 +11,12 @@ import (
 func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID string, stopSequence int, serviceDate time.Time) int {
 	blockID, err := api.GtfsManager.GtfsDB.Queries.GetBlockIDByTripID(ctx, tripID)
 	if err != nil || !blockID.Valid || blockID.String == "" {
-		// Fallback to simpler logic if no block
-		return stopSequence
+		return rawSequenceToOrdinal(api, ctx, tripID, stopSequence)
 	}
 
 	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, blockID)
 	if err != nil {
-		return 0
+		return rawSequenceToOrdinal(api, ctx, tripID, stopSequence)
 	}
 
 	type TripWithDetails struct {
@@ -65,10 +64,47 @@ func (api *RestAPI) getBlockSequenceForStopSequence(ctx context.Context, tripID 
 		}
 
 		if trip.TripID == tripID {
-			return blockSequence + stopSequence
+			for i, st := range stopTimes {
+				if int(st.StopSequence) == stopSequence {
+					return blockSequence + i
+				}
+			}
+			return -1
 		}
 		blockSequence += len(stopTimes)
 	}
 
-	return stopSequence
+	return rawSequenceToOrdinal(api, ctx, tripID, stopSequence)
+}
+
+// rawSequenceToOrdinal converts a raw GTFS stop_sequence to a 0-based ordinal
+// by looking up the trip's stop times and finding the matching position.
+func rawSequenceToOrdinal(api *RestAPI, ctx context.Context, tripID string, stopSequence int) int {
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil {
+		return -1
+	}
+	for i, st := range stopTimes {
+		if int(st.StopSequence) == stopSequence {
+			return i
+		}
+	}
+	return -1
+}
+
+// getBlockSequenceForStopID returns the global block sequence index for the first
+// occurrence of stopID in the given trip. Returns -1 if not found.
+func (api *RestAPI) getBlockSequenceForStopID(ctx context.Context, tripID string, stopID string, serviceDate time.Time) int {
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil || len(stopTimes) == 0 {
+		return -1
+	}
+
+	for _, st := range stopTimes {
+		if st.StopID == stopID {
+			return api.getBlockSequenceForStopSequence(ctx, tripID, int(st.StopSequence), serviceDate)
+		}
+	}
+
+	return -1
 }

@@ -58,7 +58,7 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 	assert.False(t, entry.ScheduledDepartureTime.IsZero())
 	assert.True(t, entry.ArrivalEnabled)
 	assert.True(t, entry.DepartureEnabled)
-	assert.Equal(t, 16, entry.StopSequence)
+	assert.Equal(t, 17, entry.StopSequence)
 	assert.NotZero(t, entry.TotalStopsInTrip)
 
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
@@ -147,8 +147,8 @@ func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {
 	stopID := utils.FormCombinedID("25", "3028")
 	tripID := utils.FormCombinedID("25", "03969589-98dc-4fcd-a1c2-ce084b4ca5d2")
 	serviceDate := time.Now()
-	stopSequence := 19
-	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d", stopID, tripID, serviceDate.UnixMilli(), stopSequence)
+	stopOrdinal := 19
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d", stopID, tripID, serviceDate.UnixMilli(), stopOrdinal)
 	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
 
 	assert.Equal(t, http.StatusOK, model.Code)
@@ -168,7 +168,7 @@ func TestArrivalAndDepartureForStopHandlerWithStopSequence(t *testing.T) {
 	assert.False(t, entry.ScheduledDepartureTime.IsZero())
 	assert.True(t, entry.ArrivalEnabled)
 	assert.True(t, entry.DepartureEnabled)
-	assert.Equal(t, int(stopSequence-1), entry.StopSequence) // Zero-based
+	assert.Equal(t, stopOrdinal, entry.StopSequence)
 	assert.NotZero(t, entry.TotalStopsInTrip)
 
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
@@ -260,14 +260,15 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testin
 	require.NotEmpty(t, trips)
 
 	var validTripID, validStopID string
-	var stopSequence int64
+	// stopOrdinal is the 0-based trip-relative position. The second stop
+	// in the trip always has ordinal 1, regardless of raw GTFS stop_sequence.
+	var stopOrdinal int64 = 1
 
 	for _, trip := range trips {
 		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 		if err == nil && len(stopTimes) >= 2 {
 			validTripID = trip.ID
 			validStopID = stopTimes[1].StopID
-			stopSequence = stopTimes[1].StopSequence
 			break
 		}
 	}
@@ -277,11 +278,12 @@ func TestArrivalAndDepartureForStopHandlerWithValidTripAndStopSequence(t *testin
 	combinedTripID := utils.FormCombinedID(agency.ID, validTripID)
 	serviceDate := time.Now()
 
-	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d", combinedStopID, combinedTripID, serviceDate.UnixMilli(), stopSequence)
+	// Pass the 0-based ordinal as stopSequence
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d", combinedStopID, combinedTripID, serviceDate.UnixMilli(), stopOrdinal)
 	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, int(stopSequence-1), model.Data.Entry.StopSequence) // Zero-based
+	assert.Equal(t, int(stopOrdinal), model.Data.Entry.StopSequence)
 }
 
 func TestArrivalAndDepartureForStopHandlerWithWrongStopSequence(t *testing.T) {
@@ -294,13 +296,11 @@ func TestArrivalAndDepartureForStopHandlerWithWrongStopSequence(t *testing.T) {
 	require.NotEmpty(t, trips)
 
 	var validTripID, validStopID string
-	var stopSequence int64
 	for _, trip := range trips {
 		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(t.Context(), trip.ID)
 		if err == nil && len(stopTimes) >= 2 {
 			validTripID = trip.ID
 			validStopID = stopTimes[1].StopID
-			stopSequence = stopTimes[1].StopSequence
 			break
 		}
 	}
@@ -309,7 +309,8 @@ func TestArrivalAndDepartureForStopHandlerWithWrongStopSequence(t *testing.T) {
 	combinedStopID := utils.FormCombinedID(agency.ID, validStopID)
 	combinedTripID := utils.FormCombinedID(agency.ID, validTripID)
 	serviceDate := time.Now()
-	wrongSequence := stopSequence + 100
+	// Use an ordinal far beyond the actual number of stops in the trip
+	wrongSequence := int64(9999)
 
 	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d", combinedStopID, combinedTripID, serviceDate.UnixMilli(), wrongSequence)
 	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
@@ -372,9 +373,77 @@ func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
 	api := createTestApi(t)
 	vehicle := &gtfs.Vehicle{}
 
-	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now())
+	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now(), nil)
 
 	assert.Nil(t, result)
+}
+
+func TestGetNumberOfStopsAway_Valid(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "t_290969_b_80332_tn_0"
+	ctx := context.Background()
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 3, "test trip must have at least 3 stop times")
+
+	seqVehicle := stopTimes[0].StopSequence
+	seqTarget := stopTimes[2].StopSequence
+
+	currentSeq := uint32(seqVehicle)
+	vehicle := &gtfs.Vehicle{
+		CurrentStopSequence: &currentSeq,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID: tripID,
+			},
+		},
+	}
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, loc)
+
+	result := api.getNumberOfStopsAway(ctx, tripID, int(seqTarget), vehicle, serviceDate, nil)
+	require.NotNil(t, result)
+	assert.Equal(t, 2, *result)
+}
+
+func TestGetNumberOfStopsAway_UsesTripStatusNextStop(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "t_290969_b_80332_tn_0"
+	ctx := context.Background()
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 3, "test trip must have at least 3 stop times")
+
+	vehicle := &gtfs.Vehicle{
+		CurrentStopSequence: nil,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID: tripID,
+			},
+		},
+	}
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, loc)
+
+	nextStopID := stopTimes[0].StopID
+	tripStatus := &models.TripStatus{
+		NextStop: utils.FormCombinedID("25", nextStopID),
+	}
+
+	seqTarget := stopTimes[2].StopSequence
+	result := api.getNumberOfStopsAway(ctx, tripID, int(seqTarget), vehicle, serviceDate, tripStatus)
+	require.NotNil(t, result, "should not be nil when tripStatus.NextStop is available")
+	assert.Equal(t, 2, *result, "numberOfStopsAway should be 2 (target index 2 - vehicle next stop index 0)")
 }
 
 func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {
@@ -428,7 +497,7 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	assert.Contains(t, errs, "stopSequence")
 
 	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
-	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
+	assert.Equal(t, "must be a valid Unix timestamp in milliseconds or YYYY-MM-DD date", errs["serviceDate"][0])
 }
 
 func TestParseArrivalAndDepartureParams_NegativeValues(t *testing.T) {
@@ -702,7 +771,7 @@ func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *t
 
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	endpoint := fmt.Sprintf(
-		"/api/where/arrival-and-departure-for-stop/%s.json?key=test&tripId=%s&serviceDate=%d&stopSequence=1",
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=test&tripId=%s&serviceDate=%d&stopSequence=0",
 		combinedStopID,
 		utils.FormCombinedID(agencyID, tripID),
 		midnightJan15CET.UnixMilli(),
@@ -803,15 +872,15 @@ func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
 		serviceDateMs,
 	)
 
-	resp1, model1 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=2")
+	resp1, model1 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=0")
 	require.Equal(t, http.StatusOK, resp1.StatusCode)
 	require.Equal(t, http.StatusOK, model1.Code)
-	assert.Equal(t, 1, model1.Data.Entry.StopSequence, "expected zero-based index for stop_sequence=2")
+	assert.Equal(t, 0, model1.Data.Entry.StopSequence, "expected ordinal 0 for first stop")
 
-	resp2, model2 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=15")
+	resp2, model2 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=1")
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
 	require.Equal(t, http.StatusOK, model2.Code)
-	assert.Equal(t, 14, model2.Data.Entry.StopSequence, "expected zero-based index for stop_sequence=15")
+	assert.Equal(t, 1, model2.Data.Entry.StopSequence, "expected ordinal 1 for second stop")
 }
 
 func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
@@ -821,7 +890,7 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 
 	tripID := "36957461-b451-4390-af3a-bc42c51fd473"
 	stopID := "5007"
-	stopSequence := 6
+	stopOrdinal := 6
 	combinedStopID := utils.FormCombinedID("25", stopID)
 	combinedTripID := utils.FormCombinedID("25", tripID)
 	serviceDateMs := time.Now().UnixMilli()
@@ -835,7 +904,7 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 		combinedStopID,
 		combinedTripID,
 		serviceDateMs,
-		stopSequence,
+		stopOrdinal,
 	)
 
 	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
@@ -843,4 +912,89 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "", model.Data.Entry.VehicleID, "vehicleId should be empty for vehicle with nil ID")
+}
+
+func TestArrivalAndDepartureForStop_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", "0f36bccf-c435-4b31-b001-da345d06a57d")
+	serviceDate := time.Now()
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&includeReferences=false", stopID, tripID, serviceDate.UnixMilli())
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Trips)
+}
+
+func TestArrivalAndDepartureForStop_ExpandOutwardSearch(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", "0f36bccf-c435-4b31-b001-da345d06a57d")
+	serviceDate := time.Now()
+
+	endpointExact := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=17", stopID, tripID, serviceDate.UnixMilli())
+	respExact, modelExact := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointExact)
+	assert.Equal(t, http.StatusOK, respExact.StatusCode)
+	assert.Equal(t, 200, modelExact.Code)
+	assert.Equal(t, 17, modelExact.Data.Entry.StopSequence)
+
+	endpointShifted := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=16", stopID, tripID, serviceDate.UnixMilli())
+	respShifted, modelShifted := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointShifted)
+	assert.Equal(t, http.StatusOK, respShifted.StatusCode)
+	assert.Equal(t, 200, modelShifted.Code)
+	assert.Equal(t, 17, modelShifted.Data.Entry.StopSequence)
+
+	endpointWrong := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=-500", stopID, tripID, serviceDate.UnixMilli())
+	respWrong, modelWrong := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointWrong)
+	assert.Equal(t, http.StatusNotFound, respWrong.StatusCode)
+	assert.Equal(t, 404, modelWrong.Code)
+
+	badStopID := utils.FormCombinedID("25", "99999")
+	endpointBadStop := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=17", badStopID, tripID, serviceDate.UnixMilli())
+	respBad, modelBad := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpointBadStop)
+	assert.Equal(t, http.StatusNotFound, respBad.StatusCode)
+	assert.Equal(t, 404, modelBad.Code)
+}
+
+func TestArrivalAndDepartureForStop_ClosestStopVisit(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "2000")
+	tripID := utils.FormCombinedID("25", "t_290969_b_80332_tn_0")
+
+	stopAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(t.Context(), "25")
+	require.NoError(t, err)
+	loc, err := time.LoadLocation(stopAgency.Timezone)
+	require.NoError(t, err)
+
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, loc)
+
+	time1 := serviceDate.Add(15*time.Hour + 15*time.Minute)
+	endpoint1 := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%s&time=%d",
+		stopID, tripID, serviceDate.Format("2006-01-02"), time1.UnixMilli())
+
+	resp1, model1 := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint1)
+	assert.Equal(t, http.StatusOK, resp1.StatusCode)
+	assert.Equal(t, 200, model1.Code)
+	assert.Equal(t, 0, model1.Data.Entry.StopSequence)
+
+	time2 := serviceDate.Add(16*time.Hour + 40*time.Minute)
+	endpoint2 := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%s&time=%d",
+		stopID, tripID, serviceDate.Format("2006-01-02"), time2.UnixMilli())
+
+	resp2, model2 := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint2)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	assert.Equal(t, 200, model2.Code)
+	assert.True(t, model2.Data.Entry.StopSequence > 0, "StopSequence should be greater than 0 for the second visit")
+	t.Logf("Second visit StopSequence: %d", model2.Data.Entry.StopSequence)
 }

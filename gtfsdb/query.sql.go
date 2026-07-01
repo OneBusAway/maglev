@@ -4197,16 +4197,18 @@ SELECT
     st.drop_off_type,
     st.shape_dist_traveled,
     st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st3 WHERE st3.trip_id = ?1 AND st3.stop_sequence < st.stop_sequence) AS stop_ordinal,
     (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = ?1) AS total_stops
 FROM stop_times st
-WHERE st.trip_id = ?1 AND st.stop_id = ?2
-ORDER BY st.stop_sequence
+WHERE st.trip_id = ?1 AND st.stop_id = ?2 AND CAST(?3 AS INTEGER) IS NOT NULL
+ORDER BY ABS(st.arrival_time - CAST(?3 AS INTEGER)), st.stop_sequence
 LIMIT 1
 `
 
 type GetTargetStopTimeWithTotalStopsParams struct {
-	TripID string
-	StopID string
+	TripID      string
+	StopID      string
+	CurrentTime int64
 }
 
 type GetTargetStopTimeWithTotalStopsRow struct {
@@ -4220,13 +4222,15 @@ type GetTargetStopTimeWithTotalStopsRow struct {
 	DropOffType       sql.NullInt64
 	ShapeDistTraveled sql.NullFloat64
 	Timepoint         sql.NullInt64
+	StopOrdinal       int64
 	TotalStops        int64
 }
 
 // Optimized queries using SQLite window functions
-// Fetches a specific stop time for a trip+stop, along with the total stop count,
+// Fetches a specific stop time for a trip+stop, along with the total stop count
+// and a 0-based trip-relative ordinal (stop_ordinal) that is safe for sparse GTFS stop_sequences.
 func (q *Queries) GetTargetStopTimeWithTotalStops(ctx context.Context, arg GetTargetStopTimeWithTotalStopsParams) (GetTargetStopTimeWithTotalStopsRow, error) {
-	row := q.queryRow(ctx, q.getTargetStopTimeWithTotalStopsStmt, getTargetStopTimeWithTotalStops, arg.TripID, arg.StopID)
+	row := q.queryRow(ctx, q.getTargetStopTimeWithTotalStopsStmt, getTargetStopTimeWithTotalStops, arg.TripID, arg.StopID, arg.CurrentTime)
 	var i GetTargetStopTimeWithTotalStopsRow
 	err := row.Scan(
 		&i.TripID,
@@ -4239,6 +4243,7 @@ func (q *Queries) GetTargetStopTimeWithTotalStops(ctx context.Context, arg GetTa
 		&i.DropOffType,
 		&i.ShapeDistTraveled,
 		&i.Timepoint,
+		&i.StopOrdinal,
 		&i.TotalStops,
 	)
 	return i, err
@@ -4256,9 +4261,12 @@ SELECT
     st.drop_off_type,
     st.shape_dist_traveled,
     st.timepoint,
+    (SELECT COUNT(*) FROM stop_times st3 WHERE st3.trip_id = ?1 AND st3.stop_sequence < st.stop_sequence) AS stop_ordinal,
     (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = ?1) AS total_stops
 FROM stop_times st
-WHERE st.trip_id = ?1 AND st.stop_id = ?2 AND st.stop_sequence = ?3
+WHERE st.trip_id = ?1
+  AND st.stop_id = ?2
+  AND (SELECT COUNT(*) FROM stop_times st4 WHERE st4.trip_id = ?1 AND st4.stop_sequence < st.stop_sequence) = CAST(?3 AS INTEGER)
 LIMIT 1
 `
 
@@ -4279,10 +4287,13 @@ type GetTargetStopTimeWithTotalStopsBySequenceRow struct {
 	DropOffType       sql.NullInt64
 	ShapeDistTraveled sql.NullFloat64
 	Timepoint         sql.NullInt64
+	StopOrdinal       int64
 	TotalStops        int64
 }
 
-// Fetches a specific stop time for a trip+stop+sequence, along with the total stop count,
+// Fetches a specific stop time for a trip+stop+ordinal, along with the total stop count.
+// Uses a 0-based trip-relative ordinal (stop_ordinal) for matching instead of raw GTFS stop_sequence.
+// The ordinal equals the count of stops whose stop_sequence is strictly less than this row's.
 func (q *Queries) GetTargetStopTimeWithTotalStopsBySequence(ctx context.Context, arg GetTargetStopTimeWithTotalStopsBySequenceParams) (GetTargetStopTimeWithTotalStopsBySequenceRow, error) {
 	row := q.queryRow(ctx, q.getTargetStopTimeWithTotalStopsBySequenceStmt, getTargetStopTimeWithTotalStopsBySequence, arg.TripID, arg.StopID, arg.StopSequence)
 	var i GetTargetStopTimeWithTotalStopsBySequenceRow
@@ -4297,6 +4308,7 @@ func (q *Queries) GetTargetStopTimeWithTotalStopsBySequence(ctx context.Context,
 		&i.DropOffType,
 		&i.ShapeDistTraveled,
 		&i.Timepoint,
+		&i.StopOrdinal,
 		&i.TotalStops,
 	)
 	return i, err
