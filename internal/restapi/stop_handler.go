@@ -36,10 +36,35 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	utils.SortRoutesByName(routes)
 
 	combinedRouteIDs := make([]string, len(routes))
+	uniqueAgencyIDs := make(map[string]bool)
+
 	for i, route := range routes {
 		// Use route.AgencyID, not the stop's agencyID.
 		// A stop can be served by routes from other agencies.
 		combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
+		uniqueAgencyIDs[route.AgencyID] = true
+	}
+
+	// Validate the requested agency namespace
+	if len(routes) > 0 {
+		if !uniqueAgencyIDs[agencyID] {
+			// Stop exists, but is not served by the requested agency namespace.
+			api.sendNotFound(w, r)
+			return
+		}
+	} else {
+		// If the stop has no routes, we allow it to be retrieved under any valid agency namespace
+		// because Maglev stops do not have a dedicated agency_id column in the schema.
+		// Just ensure the requested agency actually exists.
+		agency, err := api.GtfsManager.FindAgency(ctx, agencyID)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		if agency == nil {
+			api.sendNotFound(w, r)
+			return
+		}
 	}
 
 	parentID := ""
@@ -66,7 +91,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Only populate references if the query parameter is absent or true
 	if ShouldIncludeReferences(r) {
-		uniqueAgencyIDs := make(map[string]bool)
 
 		// Add routes to references and collect unique agency IDs
 		for _, route := range routes {
