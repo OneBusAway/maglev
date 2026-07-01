@@ -272,6 +272,31 @@ func TestScheduleForStopHandlerReferences(t *testing.T) {
 		_, ok = references["routes"].([]any)
 		assert.True(t, ok, "Routes should exist in references")
 	})
+
+	t.Run("Ignore references when includeReferences=false", func(t *testing.T) {
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12&includeReferences=false"
+		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		data, ok := model.Data.(map[string]any)
+		assert.True(t, ok, "Data should be a map")
+
+		references, ok := data["references"].(map[string]any)
+		assert.True(t, ok, "References should exist")
+
+		agenciesRef, ok := references["agencies"].([]any)
+		assert.True(t, ok, "Agencies should be an array")
+		assert.Len(t, agenciesRef, 0, "Agencies array should be empty")
+
+		stopsRef, ok := references["stops"].([]any)
+		assert.True(t, ok, "Stops should be an array")
+		assert.Len(t, stopsRef, 0, "Stops array should be empty")
+
+		routesRef, ok := references["routes"].([]any)
+		assert.True(t, ok, "Routes should be an array")
+		assert.Len(t, routesRef, 0, "Routes array should be empty")
+	})
 }
 
 func TestScheduleForStopHandlerInvalidDateFormat(t *testing.T) {
