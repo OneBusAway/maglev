@@ -67,11 +67,24 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// The service-date filter is only applied when a time is supplied. With no
+	// time, the endpoint returns stops/shapes across all service dates, matching
+	// the Java reference default (display.serviceDateFiltering defaults to off).
 	timeParam := r.URL.Query().Get("time")
-	formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
-	if !success {
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
+	filterByDate := timeParam != ""
+
+	var serviceIDs []string
+	if filterByDate {
+		formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
+		if !success {
+			api.validationErrorResponse(w, r, fieldErrors)
+			return
+		}
+		serviceIDs, err = api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	_, err = api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
@@ -80,13 +93,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
-	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, params.IncludePolylines)
+	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, params.IncludePolylines)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -95,26 +102,24 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency)
 }
 
-func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, includePolylines bool) (models.RouteEntry, []models.Stop, error) {
+func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, filterByDate bool, includePolylines bool) (models.RouteEntry, []models.Stop, error) {
 	allStops := make(map[string]bool)
 	var stopGroupings []models.StopGrouping
 
-	// Get trips for route that are active on the service date
-	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsForRouteInActiveServiceIDs(ctx, gtfsdb.GetTripsForRouteInActiveServiceIDsParams{
-		RouteID:    routeID,
-		ServiceIds: serviceIDs,
-	})
+	var effectiveTrips []gtfsdb.Trip
+	var err error
+	if filterByDate {
+		// A time was supplied: restrict to trips active on that service date.
+		effectiveTrips, err = api.GtfsManager.GtfsDB.Queries.GetTripsForRouteInActiveServiceIDs(ctx, gtfsdb.GetTripsForRouteInActiveServiceIDsParams{
+			RouteID:    routeID,
+			ServiceIds: serviceIDs,
+		})
+	} else {
+		// No time: use every trip for the route, across all service dates.
+		effectiveTrips, err = api.GtfsManager.GtfsDB.Queries.GetAllTripsForRoute(ctx, routeID)
+	}
 	if err != nil {
 		return models.RouteEntry{}, nil, err
-	}
-
-	effectiveTrips := trips
-	if len(effectiveTrips) == 0 {
-		// Fallback: get all trips for this route regardless of service date
-		effectiveTrips, err = api.GtfsManager.GtfsDB.Queries.GetAllTripsForRoute(ctx, routeID)
-		if err != nil {
-			return models.RouteEntry{}, nil, err
-		}
 	}
 
 	if err := processTripGroups(ctx, api, agencyID, routeID, effectiveTrips, &stopGroupings, allStops, includePolylines); err != nil {
