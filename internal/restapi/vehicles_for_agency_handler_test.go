@@ -103,18 +103,46 @@ func TestVehiclesForAgencyHandler_OccupancyPropagation(t *testing.T) {
 		"tripStatus.occupancyStatus must receive the same GTFS-RT value")
 }
 
-// TestVehiclesForAgencyHandler_VehicleWithoutTrip verifies the invariant that vehicles
-// with Trip == nil are excluded from the vehicles-for-agency response.
+// TestVehiclesForAgencyHandler_VehicleWithoutTrip verifies that a trip-less vehicle
+// belonging to the agency is included with tripId and tripStatus absent (spec Extension 5a).
 func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	trip := mustGetTrip(t, api)
-	// Inject a vehicle with Trip == nil. It shares a routeID with static data so that
-	// if the nil-Trip filter is removed, the vehicle would propagate to the handler.
-	const noTripVehicleID = "v_no_trip_regression"
-	api.GtfsManager.MockAddVehicleWithOptions(noTripVehicleID, "", trip.RouteID, gtfs.MockVehicleOptions{
+	// Trip-less vehicles resolve to an agency via the feed's agency filter.
+	api.GtfsManager.MockSetFeedAgencyFilter("feed-0", testdata.Raba.ID)
+
+	const noTripVehicleID = "v_no_trip"
+	api.GtfsManager.MockAddVehicleWithOptions(noTripVehicleID, "", "", gtfs.MockVehicleOptions{
+		NoTrip: true,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	var entry *models.VehicleStatus
+	for i := range model.Data.List {
+		if model.Data.List[i].VehicleID == noTripVehicleID {
+			entry = &model.Data.List[i]
+			break
+		}
+	}
+	require.NotNil(t, entry, "trip-less vehicle must be included in the response")
+	assert.Empty(t, entry.TripID, "trip-less vehicle must have tripId absent")
+	assert.Nil(t, entry.TripStatus, "trip-less vehicle must have tripStatus absent")
+}
+
+// TestVehiclesForAgencyHandler_VehicleWithoutTripOtherAgency verifies a trip-less
+// vehicle on a feed serving a different agency is not returned.
+func TestVehiclesForAgencyHandler_VehicleWithoutTripOtherAgency(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	api.GtfsManager.MockSetFeedAgencyFilter("feed-0", "some-other-agency")
+
+	const noTripVehicleID = "v_no_trip_other"
+	api.GtfsManager.MockAddVehicleWithOptions(noTripVehicleID, "", "", gtfs.MockVehicleOptions{
 		NoTrip: true,
 	})
 
@@ -122,7 +150,7 @@ func TestVehiclesForAgencyHandler_VehicleWithoutTrip(t *testing.T) {
 
 	for _, v := range model.Data.List {
 		assert.NotEqual(t, noTripVehicleID, v.VehicleID,
-			"vehicle with Trip==nil must be excluded by VehiclesForAgencyID before reaching the handler")
+			"trip-less vehicle from another agency's feed must be excluded")
 	}
 }
 

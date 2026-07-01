@@ -5,8 +5,8 @@ type VehicleStatus struct {
 	LastLocationUpdateTime ModelTime   `json:"lastLocationUpdateTime"`
 	LastUpdateTime         ModelTime   `json:"lastUpdateTime"`
 	Location               *Location   `json:"location"`
-	TripID                 string      `json:"tripId"`
-	TripStatus             *TripStatus `json:"tripStatus"`
+	TripID                 string      `json:"tripId,omitempty"`
+	TripStatus             *TripStatus `json:"tripStatus,omitempty"`
 	OccupancyCapacity      int         `json:"occupancyCapacity"`
 	OccupancyCount         int         `json:"occupancyCount"`
 	OccupancyStatus        string      `json:"occupancyStatus,omitempty"`
