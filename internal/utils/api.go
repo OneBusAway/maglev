@@ -185,12 +185,15 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
-		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00"),
-		// then fall back to yyyy-MM-dd (e.g. "2024-03-15").
-		if parsed, dtErr := time.ParseInLocation("2006-01-02_15-04-05", timeParam, currentLocation); dtErr == nil {
-			parsedTime = parsed
-			validFormat = true
-		} else if parsed, dErr := time.ParseInLocation("2006-01-02", timeParam, currentLocation); dErr == nil {
+		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
+		parsed, err := time.ParseInLocation("2006-01-02_15-04-05", timeParam, currentLocation)
+		if err != nil {
+			// If it fails, fall back to yyyy-MM-dd (e.g. "2024-03-15")
+			parsed, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
+		}
+
+		// If either parsing attempt succeeded, apply the result
+		if err == nil {
 			parsedTime = parsed
 			validFormat = true
 		}
