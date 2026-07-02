@@ -74,14 +74,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 
 	// includeReferences defaults to true; when explicitly false the references
 	// block is returned with all sub-arrays empty (matches the Java reference).
-	includeReferences := true
-	if v := r.URL.Query().Get("includeReferences"); v != "" {
-		if parsed, err := strconv.ParseBool(v); err == nil {
-			includeReferences = parsed
-		}
-	}
-
-	if includeReferences {
+	if ShouldIncludeReferences(r) {
 		references.Routes = append(references.Routes, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, trip.RouteID),
 			route.AgencyID,
