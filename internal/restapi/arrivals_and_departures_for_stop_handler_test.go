@@ -360,7 +360,7 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 	agencyID := "dp-agency"
 	stopCode = "dp-stop"
 	routeID := "dp-route"
-	tripID = "dp-trip"
+	tripID = "dp-trip-" + t.Name()
 	serviceID := "dp-svc"
 
 	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
@@ -415,26 +415,36 @@ func TestPluralArrivals_ExactStopMatch(t *testing.T) {
 
 	stopCode, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 2)
 	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
-	delay := 60 * time.Second
 	seq := uint32(2)
+	arrivalTime := time.Date(2010, 1, 1, 8, 1, 0, 0, time.UTC)   // 08:01:00 = 08:00 + 60s
+	departureTime := time.Date(2010, 1, 1, 8, 6, 0, 0, time.UTC) // 08:06:00 = 08:05 + 60s
 	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
 		{
 			StopID: &stopCode, StopSequence: &seq,
-			Arrival:   &gtfs.StopTimeEvent{Delay: &delay},
-			Departure: &gtfs.StopTimeEvent{Delay: &delay},
+			Arrival:   &gtfs.StopTimeEvent{Time: &arrivalTime},
+			Departure: &gtfs.StopTimeEvent{Time: &departureTime},
 		},
 	})
 
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
-	a := model.Data.Entry.ArrivalsAndDepartures[0]
-	scheduledDepartureMs := scheduledArrivalMs + 300000 // departure is 5 min after arrival
-	assert.True(t, a.Predicted, "exact stop match should be predicted")
-	assert.Equal(t, scheduledArrivalMs+60000, a.PredictedArrivalTime.UnixMilli(),
-		"predicted arrival should be scheduled + 60s")
-	assert.Equal(t, scheduledDepartureMs+60000, a.PredictedDepartureTime.UnixMilli(),
-		"predicted departure should be scheduled + 60s")
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var found bool
+	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.TripID != expectedTripID {
+			continue
+		}
+		found = true
+		scheduledDepartureMs := scheduledArrivalMs + 300000 // departure is 5 min after arrival
+		assert.True(t, a.Predicted, "exact stop match should be predicted")
+		assert.Equal(t, scheduledArrivalMs+60000, a.PredictedArrivalTime.UnixMilli(),
+			"predicted arrival should be scheduled + 60s")
+		assert.Equal(t, scheduledDepartureMs+60000, a.PredictedDepartureTime.UnixMilli(),
+			"predicted departure should be scheduled + 60s")
+		break
+	}
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
 // TestPluralArrivals_PriorStopPropagation verifies that when no StopTimeUpdate
@@ -449,9 +459,10 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 3)
 	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
 	priorSeq := uint32(2)
+	priorTime := time.Date(2010, 1, 1, 8, 3, 0, 0, time.UTC) // 08:03:00; must be > mock clock 08:02 for isTripActive
 	delay := 90 * time.Second
 	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
-		{StopSequence: &priorSeq, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+		{StopSequence: &priorSeq, Arrival: &gtfs.StopTimeEvent{Time: &priorTime, Delay: &delay}},
 	})
 
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
@@ -488,18 +499,31 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
 	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
 	tripDelay := 120 * time.Second
-	api.GtfsManager.MockAddTripUpdate(tripID, &tripDelay, nil)
+	dummySeq := uint32(5)
+	dummyTime := time.Date(2010, 1, 1, 8, 3, 0, 0, time.UTC)
+	api.GtfsManager.MockAddTripUpdate(tripID, &tripDelay, []gtfs.StopTimeUpdate{
+		{StopSequence: &dummySeq, Arrival: &gtfs.StopTimeEvent{Time: &dummyTime}},
+	})
 
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
-	a := model.Data.Entry.ArrivalsAndDepartures[0]
 	scheduledDepartureMs := scheduledArrivalMs + 300000
-	assert.True(t, a.Predicted, "trip-level delay should mark arrival as predicted")
-	assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli(),
-		"predicted arrival should be scheduled + trip-level 120s delay")
-	assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
-		"predicted departure should be scheduled + trip-level 120s delay")
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var found bool
+	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.TripID != expectedTripID {
+			continue
+		}
+		found = true
+		assert.True(t, a.Predicted, "trip-level delay should mark arrival as predicted")
+		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli(),
+			"predicted arrival should be scheduled + trip-level 120s delay")
+		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
+			"predicted departure should be scheduled + trip-level 120s delay")
+		break
+	}
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
 // TestPluralArrivals_TripLevelDelayWithoutVehicle verifies that when a TripUpdate has a
@@ -513,16 +537,29 @@ func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
 	tripDelay := 120 * time.Second
-	api.GtfsManager.MockAddTripUpdate(tripID, &tripDelay, nil) // NO vehicle added
+	dummySeq := uint32(5)
+	dummyTime := time.Date(2010, 1, 1, 8, 3, 0, 0, time.UTC)
+	api.GtfsManager.MockAddTripUpdate(tripID, &tripDelay, []gtfs.StopTimeUpdate{
+		{StopSequence: &dummySeq, Arrival: &gtfs.StopTimeEvent{Time: &dummyTime}},
+	}) // NO vehicle added
 
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
-	a := model.Data.Entry.ArrivalsAndDepartures[0]
 	scheduledDepartureMs := scheduledArrivalMs + 300000
-	assert.True(t, a.Predicted, "trip-level delay without vehicle should still be predicted")
-	assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli())
-	assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli())
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var found bool
+	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.TripID != expectedTripID {
+			continue
+		}
+		found = true
+		assert.True(t, a.Predicted, "trip-level delay without vehicle should still be predicted")
+		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli())
+		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli())
+		break
+	}
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
 // TestPluralArrivals_TripUpdateWithoutVehicle verifies that a stop-level
@@ -537,26 +574,107 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
 
 	// Stop-level delay update WITHOUT a vehicle — the absence of MockAddVehicle is the test.
-	delay := 120 * time.Second
 	seq := uint32(1)
+	arrivalTime := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)   // 08:02:00 = 08:00 + 120s
+	departureTime := time.Date(2010, 1, 1, 8, 7, 0, 0, time.UTC) // 08:07:00 = 08:05 + 120s
 	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
 		{
 			StopSequence: &seq,
-			Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
-			Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+			Arrival:      &gtfs.StopTimeEvent{Time: &arrivalTime},
+			Departure:    &gtfs.StopTimeEvent{Time: &departureTime},
 		},
 	})
 
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
-	a := model.Data.Entry.ArrivalsAndDepartures[0]
 	scheduledDepartureMs := scheduledArrivalMs + 300000
-	assert.True(t, a.Predicted, "stop-level delay without vehicle should still be predicted")
-	assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli(),
-		"predicted arrival should be scheduled + 120s delay")
-	assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
-		"predicted departure should be scheduled + 120s delay")
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var found bool
+	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.TripID != expectedTripID {
+			continue
+		}
+		found = true
+		assert.True(t, a.Predicted, "stop-level delay without vehicle should still be predicted")
+		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli(),
+			"predicted arrival should be scheduled + 120s delay")
+		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
+			"predicted departure should be scheduled + 120s delay")
+		break
+	}
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
+}
+
+// TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime is the
+// handler-level regression for the blockNotActive discard signal. When the
+// trip-level delay exceeds 1h, the GetScheduleDeviationForBlock helper
+// returns (0, false) to mirror Java's "discard the whole VehicleLocationRecord"
+// behaviour. The handler MUST NOT then surface that delay through the
+// snapshot's effectiveTime shift — the response should look as if no RT
+// deviation data exists at all.
+//
+// We assert on the user-visible signals:
+//   - tripStatus.scheduleDeviation == 0 (no shift was recorded)
+//   - distanceFromStop/numberOfStopsAway come from an UNSHIFTED snapshot
+//     (same as a baseline run with no TripUpdate at all)
+//
+// A future refactor that "helpfully" applies the discarded deviation would
+// fail the first assertion; a refactor that fell through to STU-based
+// shifting would fail the second.
+func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+
+	// === Baseline: same fixture, NO TripUpdate. Captures the unshifted snapshot. ===
+	baselineAPI := createTestApiWithClock(t, mockClock)
+	defer baselineAPI.Shutdown()
+	_, combinedStopIDBaseline, baselineTripID, _ := setupDelayPropTestData(t, baselineAPI, 1)
+	baselineAPI.GtfsManager.MockAddVehicle("v1", baselineTripID, "dp-route")
+	_, baselineModel := callAPIHandler[ArrivalsAndDeparturesResponse](t, baselineAPI,
+		arrivalsAndDeparturesURL(combinedStopIDBaseline))
+
+	expectedTripIDBaseline := utils.FormCombinedID("dp-agency", baselineTripID)
+	var baseline *models.ArrivalAndDeparture
+	for i := range baselineModel.Data.Entry.ArrivalsAndDepartures {
+		if baselineModel.Data.Entry.ArrivalsAndDepartures[i].TripID == expectedTripIDBaseline {
+			baseline = &baselineModel.Data.Entry.ArrivalsAndDepartures[i]
+			break
+		}
+	}
+	require.NotNil(t, baseline, "baseline arrival missing for trip %s", expectedTripIDBaseline)
+
+	// === Subject: identical fixture + bogus 2h trip-level delay (above blockNotActive's 1h cap). ===
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	bogusDelay := 2 * time.Hour // > Java's 60-minute blockNotActive guard
+	api.GtfsManager.MockAddTripUpdate(tripID, &bogusDelay, nil)
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var subject *models.ArrivalAndDeparture
+	for i := range model.Data.Entry.ArrivalsAndDepartures {
+		if model.Data.Entry.ArrivalsAndDepartures[i].TripID == expectedTripID {
+			subject = &model.Data.Entry.ArrivalsAndDepartures[i]
+			break
+		}
+	}
+	require.NotNil(t, subject, "subject arrival missing for trip %s", expectedTripID)
+	require.NotNil(t, subject.TripStatus, "tripStatus must still be emitted even when RT is discarded")
+
+	// Java's blockNotActive: deviation surfaces as 0.
+	assert.Equal(t, 0, subject.TripStatus.ScheduleDeviation,
+		"|delay| > 1h must be discarded; tripStatus.scheduleDeviation should be 0, not %d", subject.TripStatus.ScheduleDeviation)
+
+	// Snapshot was NOT shifted by 2h: distance and stops-away match the no-RT baseline.
+	assert.InDelta(t, baseline.DistanceFromStop, subject.DistanceFromStop, 0.001,
+		"distanceFromStop must come from an unshifted snapshot (baseline=%.2f, got=%.2f)",
+		baseline.DistanceFromStop, subject.DistanceFromStop)
+	assert.Equal(t, baseline.NumberOfStopsAway, subject.NumberOfStopsAway,
+		"numberOfStopsAway must come from an unshifted snapshot (baseline=%d, got=%d)",
+		baseline.NumberOfStopsAway, subject.NumberOfStopsAway)
 }
 
 // TestPluralArrivals_NoMatchingOrPriorStop verifies that a TripUpdate with a
@@ -579,10 +697,19 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
-	a := model.Data.Entry.ArrivalsAndDepartures[0]
-	assert.False(t, a.Predicted, "update for a later stop should not predict current stop")
-	assert.True(t, a.PredictedArrivalTime.IsZero(), "predictedArrivalTime should be zero when not predicted")
-	assert.True(t, a.PredictedDepartureTime.IsZero(), "predictedDepartureTime should be zero when not predicted")
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var found bool
+	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.TripID != expectedTripID {
+			continue
+		}
+		found = true
+		assert.False(t, a.Predicted, "update for a later stop should not predict current stop")
+		assert.True(t, a.PredictedArrivalTime.IsZero(), "predictedArrivalTime should be zero when not predicted")
+		assert.True(t, a.PredictedDepartureTime.IsZero(), "predictedDepartureTime should be zero when not predicted")
+		break
+	}
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
 // TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a vehicle
@@ -599,10 +726,19 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
-	a := model.Data.Entry.ArrivalsAndDepartures[0]
-	assert.False(t, a.Predicted, "vehicle position alone should not mark arrival as predicted")
-	assert.True(t, a.PredictedArrivalTime.IsZero())
-	assert.True(t, a.PredictedDepartureTime.IsZero())
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var found bool
+	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.TripID != expectedTripID {
+			continue
+		}
+		found = true
+		assert.False(t, a.Predicted, "vehicle position alone should not mark arrival as predicted")
+		assert.True(t, a.PredictedArrivalTime.IsZero())
+		assert.True(t, a.PredictedDepartureTime.IsZero())
+		break
+	}
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
 // TestPluralArrivals_AbsoluteTimeStopEvent verifies that when a StopTimeUpdate provides
@@ -629,12 +765,21 @@ func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
-	a := model.Data.Entry.ArrivalsAndDepartures[0]
-	assert.True(t, a.Predicted, "absolute-time stop match should be predicted")
-	assert.Equal(t, absoluteArrival.UnixMilli(), a.PredictedArrivalTime.UnixMilli(),
-		"predictedArrivalTime should equal the absolute arrival timestamp")
-	assert.Equal(t, absoluteDeparture.UnixMilli(), a.PredictedDepartureTime.UnixMilli(),
-		"predictedDepartureTime should equal the absolute departure timestamp")
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	var found bool
+	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.TripID != expectedTripID {
+			continue
+		}
+		found = true
+		assert.True(t, a.Predicted, "absolute-time stop match should be predicted")
+		assert.Equal(t, absoluteArrival.UnixMilli(), a.PredictedArrivalTime.UnixMilli(),
+			"predictedArrivalTime should equal the absolute arrival timestamp")
+		assert.Equal(t, absoluteDeparture.UnixMilli(), a.PredictedDepartureTime.UnixMilli(),
+			"predictedDepartureTime should equal the absolute departure timestamp")
+		break
+	}
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
 // TestPluralArrivals_StalePropagatedDelayReset verifies that when the closest prior
@@ -653,23 +798,26 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 	// Sequence 2 (closer): has only an absolute Time, no Delay.
 	// Expected: propagatedDelayMs is reset to 0 when seq 2 becomes the closest prior.
 	seq1 := uint32(1)
+	seq1Time := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
 	delay90s := 90 * time.Second
 	seq2 := uint32(2)
 	absoluteTime := time.Date(2010, 1, 1, 7, 59, 0, 0, time.UTC)
+	dummySeq := uint32(4)
+	dummyTime := time.Date(2010, 1, 1, 8, 3, 0, 0, time.UTC)
 	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
-		{StopSequence: &seq1, Arrival: &gtfs.StopTimeEvent{Delay: &delay90s}},
+		{StopSequence: &seq1, Arrival: &gtfs.StopTimeEvent{Time: &seq1Time, Delay: &delay90s}},
 		{StopSequence: &seq2, Arrival: &gtfs.StopTimeEvent{Time: &absoluteTime}},
+		{StopSequence: &dummySeq, Departure: &gtfs.StopTimeEvent{Time: &dummyTime}},
 	})
 
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
 
-	// The queried stop is at seq=3 (0-based stopSequence=2). Prior tests may have inserted
-	// stops at seq=1 and seq=2 into the shared DB, so we locate the right arrival explicitly.
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
 	var found bool
 	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
-		if a.StopSequence != 2 {
+		if a.TripID != expectedTripID {
 			continue
 		}
 		found = true
@@ -678,7 +826,27 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 			"propagatedDelayMs should be 0 when closest prior stop only has absolute Time data")
 		break
 	}
-	assert.True(t, found, "expected to find arrival for seq=3 (stopSequence=2)")
+	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
+}
+
+// findRABAStopWithNeighbour returns a RABA stop that has at least one other
+// stop within getNearbyStopIDs's 100m radius. Skips the test if none exist
+// in the test fixture (RABA stops can be sparser than that).
+func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) gtfsdb.Stop {
+	t.Helper()
+	// Pull a generous pool of RABA-area stops, then pick one whose 100m
+	// neighbourhood actually contains another stop.
+	candidates := api.GtfsManager.GetStopsInBounds(ctx,
+		&internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 5000}, 200)
+	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
+	for _, c := range candidates {
+		nearby := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		if len(nearby) > 0 {
+			return c
+		}
+	}
+	t.Skip("no RABA stop has another stop within 100m — test fixture too sparse")
+	return gtfsdb.Stop{}
 }
 
 func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
@@ -688,13 +856,10 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
-	require.NotEmpty(t, stops, "precondition: RABA should have stops near Redding, CA")
-	currentStop := stops[0]
-
+	currentStop := findRABAStopWithNeighbour(t, api, ctx)
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
 
-	require.NotEmpty(t, result, "should find nearby stops")
+	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
 	for _, combinedID := range result {
 		agencyID, _, err := utils.ExtractAgencyIDAndCodeID(combinedID)
 		require.NoError(t, err, "combined ID should be parseable: %s", combinedID)
@@ -708,10 +873,7 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, &internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 2000}, 10)
-	require.NotEmpty(t, stops)
-	currentStop := stops[0]
-
+	currentStop := findRABAStopWithNeighbour(t, api, ctx)
 	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
 
 	for _, combinedID := range result {

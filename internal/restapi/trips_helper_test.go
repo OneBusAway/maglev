@@ -198,7 +198,7 @@ func TestCalculateBatchStopDistances(t *testing.T) {
 	// Setup a simple straight line shape (1 meter per point)
 	// Point 0: (0,0), Point 1: (0, 0.00001), ...
 	shapePoints := make([]gtfs.ShapePoint, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		shapePoints[i] = gtfs.ShapePoint{
 			Latitude:  0.0,
 			Longitude: float64(i) * 0.00001, // Roughly 1.1 meters per index
@@ -229,60 +229,6 @@ func TestCalculateBatchStopDistances(t *testing.T) {
 	assert.Greater(t, results[2].DistanceAlongTrip, results[1].DistanceAlongTrip, "Stop C should be further than Stop B")
 
 	assert.NotZero(t, results[0].DistanceAlongTrip, "Distance should not be zero")
-}
-
-// TestCalculatePreciseDistanceAlongTripWithCoords_Validation tests input validation
-func TestCalculatePreciseDistanceAlongTripWithCoords_Validation(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	t.Run("Mismatched array sizes", func(t *testing.T) {
-		shapePoints := []gtfs.ShapePoint{
-			{Latitude: 40.0, Longitude: -122.0},
-			{Latitude: 40.1, Longitude: -122.0},
-			{Latitude: 40.2, Longitude: -122.0},
-		}
-		// Wrong size - should have 3 elements, not 2
-		cumulativeDistances := []float64{0.0, 100.0}
-
-		distance := api.calculatePreciseDistanceAlongTripWithCoords(
-			40.05, -122.0, shapePoints, cumulativeDistances,
-		)
-
-		assert.Equal(t, 0.0, distance, "Should return 0 for mismatched array sizes")
-	})
-
-	t.Run("Less than 2 shape points", func(t *testing.T) {
-		shapePoints := []gtfs.ShapePoint{
-			{Latitude: 40.0, Longitude: -122.0},
-		}
-		cumulativeDistances := []float64{0.0}
-
-		distance := api.calculatePreciseDistanceAlongTripWithCoords(
-			40.05, -122.0, shapePoints, cumulativeDistances,
-		)
-
-		assert.Equal(t, 0.0, distance, "Should return 0 for single shape point")
-	})
-
-	t.Run("Valid inputs with simple shape", func(t *testing.T) {
-		shapePoints := []gtfs.ShapePoint{
-			{Latitude: 40.0, Longitude: -122.0},
-			{Latitude: 40.1, Longitude: -122.0},
-		}
-		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-
-		// Stop at the midpoint
-		distance := api.calculatePreciseDistanceAlongTripWithCoords(
-			40.05, -122.0, shapePoints, cumulativeDistances,
-		)
-
-		assert.Greater(t, distance, 0.0, "Should calculate a positive distance")
-		// The stop is roughly at the midpoint, so distance should be approximately half the total
-		totalDistance := cumulativeDistances[len(cumulativeDistances)-1]
-		assert.InDelta(t, totalDistance/2, distance, totalDistance*0.2,
-			"Distance should be approximately half for midpoint stop")
-	})
 }
 
 // TestBuildStopTimesList_ErrorHandling tests error handling when batch query fails
@@ -582,7 +528,7 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, model)
-	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), model.VehicleID)
+	assert.Equal(t, vehicleID, model.VehicleID)
 }
 
 func makeStopTimePtrs(stops []gtfsdb.StopTime) []*gtfsdb.StopTime {
@@ -1016,8 +962,8 @@ func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), status.VehicleID,
-		"VehicleID should be set from the pre-resolved vehicle")
+	assert.Equal(t, vehicleID, status.VehicleID,
+		"VehicleID should be the raw GTFS-RT id (no agency prefix), matching Java")
 
 	require.NotNil(t, status.LastKnownLocation)
 	assert.InDelta(t, float64(lat), status.LastKnownLocation.Lat, 0.001)
@@ -1073,7 +1019,7 @@ func BenchmarkDistanceToLineSegment(b *testing.B) {
 	x2, y2 := 1.0, 0.0
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = distanceToLineSegment(px, py, x1, y1, x2, y2)
 	}
 }
@@ -1116,7 +1062,7 @@ func BenchmarkBuildTripSchedule(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = api.BuildTripSchedule(ctx, agencyID, serviceDate, &tripRow, loc)
 	}
 }
@@ -1184,7 +1130,7 @@ func BenchmarkBuildTripSchedule_VaryingShapeSize(b *testing.B) {
 	for _, ti := range testTrips {
 		b.Run(fmt.Sprintf("ShapePoints_%d", ti.shapePoints), func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _ = api.BuildTripSchedule(ctx, agencyID, serviceDate, ti.trip, loc)
 			}
 		})
@@ -1197,7 +1143,7 @@ func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]s
 	stopsSize := 100   // 100 stops
 
 	shapePoints := make([]gtfs.ShapePoint, shapeSize)
-	for i := 0; i < shapeSize; i++ {
+	for i := range shapeSize {
 		shapePoints[i] = gtfs.ShapePoint{
 			Latitude:  40.0 + (float64(i) * 0.0001),
 			Longitude: -74.0 + (float64(i) * 0.0001),
@@ -1207,7 +1153,7 @@ func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]s
 	stopTimes := make([]gtfsdb.StopTime, stopsSize)
 	stopCoords := make(map[string]struct{ lat, lon float64 })
 
-	for i := 0; i < stopsSize; i++ {
+	for i := range stopsSize {
 		stopID := fmt.Sprintf("stop_%d", i)
 		// Place stops sequentially along the route
 		idx := i * (shapeSize / stopsSize)
@@ -1222,33 +1168,13 @@ func generateBenchmarkData() ([]gtfs.ShapePoint, []gtfsdb.StopTime, map[string]s
 	return shapePoints, stopTimes, stopCoords
 }
 
-// BENCHMARK OLD WAY (Simulating the loop over O(M) function)
-func BenchmarkLegacy_LinearScan(b *testing.B) {
-	api := &RestAPI{}
-	shape, stops, coords := generateBenchmarkData()
-
-	// Pre-calc happens once in the handler
-	cumDist := preCalculateCumulativeDistances(shape)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Simulate the handler loop
-		for _, st := range stops {
-			if c, ok := coords[st.StopID]; ok {
-				// Each call scans from 0 -> O(M)
-				api.calculatePreciseDistanceAlongTripWithCoords(c.lat, c.lon, shape, cumDist)
-			}
-		}
-	}
-}
-
 // BenchmarkOptimized_MonotonicBatch benchmarks the optimized batch distance calculation
 func BenchmarkOptimized_MonotonicBatch(b *testing.B) {
 	api := &RestAPI{}
 	shape, stops, coords := generateBenchmarkData()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		// Single call handles all logic -> O(N+M)
 		api.calculateBatchStopDistances(stops, shape, coords, "agency_1")
 	}
