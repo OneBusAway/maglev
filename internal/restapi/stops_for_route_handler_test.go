@@ -34,13 +34,13 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	entry := model.Data.Entry
 	assert.Equal(t, testdata.Route1.ID, entry.RouteID)
 
-	assert.Len(t, entry.Polylines, 2)
-	assert.Equal(t, 250, entry.Polylines[0].Length)
+	// Entry-level polylines are an independent merge over both direction shapes
+	// (shared undirected edge set), so opposite directions that retrace the same
+	// track de-overlap into multiple segments.
+	assert.Len(t, entry.Polylines, 21)
+	assert.Equal(t, 47, entry.Polylines[0].Length)
 	assert.Equal(t, "", entry.Polylines[0].Levels)
-	assert.Contains(t, entry.Polylines[0].Points, "exhwFlt|")
-	assert.Equal(t, 250, entry.Polylines[1].Length)
-	assert.Equal(t, "", entry.Polylines[1].Levels)
-	assert.Contains(t, entry.Polylines[1].Points, "exhwFlt|")
+	assert.Contains(t, entry.Polylines[0].Points, "_luvFxw_jV")
 
 	assert.Len(t, entry.StopIds, 39)
 
@@ -57,13 +57,22 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, "destination", outbound.Name.Type)
 	assert.Equal(t, []string{"Shasta Lake"}, outbound.Name.Names)
 	assert.Len(t, outbound.StopIds, 21)
-	assert.Len(t, outbound.Polylines, 1)
+	// Direction-0 shape retraces two of its own edges, splitting into 3 polylines.
+	require.Len(t, outbound.Polylines, 3)
+	assert.Equal(t, 47, outbound.Polylines[0].Length)
+	assert.Equal(t, 31, outbound.Polylines[1].Length)
+	assert.Equal(t, 162, outbound.Polylines[2].Length)
+	assert.Contains(t, outbound.Polylines[0].Points, "_luvFxw_jV")
 
 	inbound := grouping.StopGroups[1]
 	assert.Equal(t, "1", inbound.ID)
 	assert.Equal(t, "Shasta Lake", inbound.Name.Name)
 	assert.Equal(t, "destination", inbound.Name.Type)
 	assert.Len(t, inbound.StopIds, 22)
+	// Direction-1 shape retraces one of its own edges, splitting into 2 polylines.
+	require.Len(t, inbound.Polylines, 2)
+	assert.Equal(t, 23, inbound.Polylines[0].Length)
+	assert.Equal(t, 208, inbound.Polylines[1].Length)
 
 	refs := model.Data.References
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, refs.Agencies)
@@ -73,6 +82,43 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	assert.Empty(t, refs.Situations)
 	assert.Empty(t, refs.StopTimes)
 	assert.Empty(t, refs.Trips)
+}
+
+// TestStopsForRouteIncludePolylinesDefault verifies that with includePolylines
+// omitted (default true) the entry and every direction group carry polylines.
+func TestStopsForRouteIncludePolylinesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
+
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.Polylines, "default should return entry-level polylines")
+
+	require.Len(t, entry.StopGroupings, 1)
+	for _, g := range entry.StopGroupings[0].StopGroups {
+		assert.NotEmpty(t, g.Polylines, "group %s should carry polylines by default", g.ID)
+	}
+}
+
+// TestStopsForRouteIncludePolylinesFalse verifies that includePolylines=false
+// empties both the entry-level and every group-level polylines, and that they
+// serialize as [] (not null).
+func TestStopsForRouteIncludePolylinesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&includePolylines=false")
+
+	entry := model.Data.Entry
+	assert.NotNil(t, entry.Polylines, "entry polylines should be [] not null")
+	assert.Empty(t, entry.Polylines, "entry polylines should be empty when includePolylines=false")
+
+	require.Len(t, entry.StopGroupings, 1)
+	for _, g := range entry.StopGroupings[0].StopGroups {
+		assert.NotNil(t, g.Polylines, "group %s polylines should be [] not null", g.ID)
+		assert.Empty(t, g.Polylines, "group %s polylines should be empty when includePolylines=false", g.ID)
+	}
 }
 
 // TestStopsForRouteNoDuplicateStopGroups guards against the regression where
