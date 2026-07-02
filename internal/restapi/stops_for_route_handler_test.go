@@ -75,6 +75,41 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 	assert.Empty(t, refs.Trips)
 }
 
+// TestStopsForRouteIncludeReferencesFalse verifies that includeReferences=false
+// returns a references block that is present but empty.
+func TestStopsForRouteIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&includeReferences=false")
+
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies)
+	assert.Empty(t, refs.Routes)
+	assert.Empty(t, refs.Stops)
+	assert.Empty(t, refs.Trips)
+	assert.Empty(t, refs.Situations)
+	assert.Empty(t, refs.StopTimes)
+
+	// The entry payload is still populated.
+	assert.Equal(t, testdata.Route1.ID, model.Data.Entry.RouteID)
+	assert.NotEmpty(t, model.Data.Entry.StopIds)
+}
+
+// TestStopsForRouteIncludeReferencesDefault verifies that references are populated
+// when includeReferences is omitted (defaults to true).
+func TestStopsForRouteIncludeReferencesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
+
+	refs := model.Data.References
+	assert.NotEmpty(t, refs.Agencies)
+	assert.NotEmpty(t, refs.Routes)
+	assert.NotEmpty(t, refs.Stops)
+}
+
 // TestStopsForRouteNoDuplicateStopGroups guards against the regression where
 // trips with different headsigns in the same direction produced duplicate group
 // IDs (e.g. "0", "0", "1" instead of "0", "1").
