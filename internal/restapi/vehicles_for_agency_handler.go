@@ -24,8 +24,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if agency == nil {
-		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]any{}, *models.NewEmptyReferences(), false, api.Clock))
+		// Unknown/untracked agency: empty list, outOfRange=false.
+		api.sendResponse(w, r, models.NewListResponseWithRange([]any{}, *models.NewEmptyReferences(), false, api.Clock, false))
 		return
 	}
 
@@ -232,6 +232,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
 	}
 
-	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
+	// Agency is served by this instance, so outOfRange is always false.
+	response := models.NewListResponseWithRange(vehiclesList, *references, false, api.Clock, limitExceeded)
 	api.sendResponse(w, r, response)
 }
