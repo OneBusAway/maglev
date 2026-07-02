@@ -80,13 +80,22 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 		}
 	}
 
-	// Validate time
+	// Validate time — accepts either a Unix timestamp in milliseconds
+	// (e.g. "1718459400000") or a datetime in yyyy-MM-dd_HH-mm-ss format (e.g. "2024-06-15_14-30-00").
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
 		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			timeLoc := time.UTC
+			if len(loc) > 0 && loc[0] != nil {
+				timeLoc = loc[0]
+			}
+			if timeParam, err := time.ParseInLocation("2006-01-02_15-04-05", timeStr, timeLoc); err == nil {
+				params.Time = &timeParam
+			} else {
+				fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
+			}
 		}
 	}
 
@@ -165,6 +174,29 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
+
+	// When serviceDate is explicitly provided, validate that the trip operates on
+	// that date. Per the wiki spec: "serviceDate is provided but no
+	// block instance exists for that service date → HTTP 404".
+	if params.ServiceDate != nil {
+		formattedDate := serviceDate.Format("20060102")
+		activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+		if svcErr != nil {
+			api.serverErrorResponse(w, r, svcErr)
+			return
+		}
+		serviceActive := false
+		for _, svcID := range activeServiceIDs {
+			if svcID == trip.ServiceID {
+				serviceActive = true
+				break
+			}
+		}
+		if !serviceActive {
+			api.sendNotFound(w, r)
+			return
+		}
+	}
 
 	var requestedVehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
@@ -253,22 +285,28 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
+		tripsToInclude := []string{}
+
+		// Only include the main trip if includeTrip=true.
+		// Related trips (preceding/following/active) are appended independently.
 		if params.IncludeTrip {
-			tripsToInclude := []string{utils.FormCombinedID(agencyID, trip.ID)}
+			tripsToInclude = append(tripsToInclude, utils.FormCombinedID(agencyID, trip.ID))
+		}
 
-			if params.IncludeSchedule && schedule != nil {
-				if schedule.NextTripID != "" {
-					tripsToInclude = append(tripsToInclude, schedule.NextTripID)
-				}
-				if schedule.PreviousTripID != "" {
-					tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
-				}
+		if params.IncludeSchedule && schedule != nil {
+			if schedule.NextTripID != "" {
+				tripsToInclude = append(tripsToInclude, schedule.NextTripID)
 			}
-
-			if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
-				tripsToInclude = append(tripsToInclude, status.ActiveTripID)
+			if schedule.PreviousTripID != "" {
+				tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
 			}
+		}
 
+		if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
+			tripsToInclude = append(tripsToInclude, status.ActiveTripID)
+		}
+
+		if len(tripsToInclude) > 0 {
 			referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)

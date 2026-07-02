@@ -55,7 +55,7 @@ func TestNewEmptyTripDetails(t *testing.T) {
 	tripDetails := NewEmptyTripDetails()
 
 	assert.Equal(t, "", tripDetails.TripID)
-	assert.True(t, tripDetails.ServiceDate.Time.IsZero())
+	assert.True(t, tripDetails.ServiceDate.IsZero())
 	assert.Nil(t, tripDetails.Frequency)
 	assert.Nil(t, tripDetails.Status)
 	assert.Nil(t, tripDetails.Schedule)

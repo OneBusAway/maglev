@@ -4,7 +4,7 @@ import "time"
 
 type TripDetails struct {
 	Frequency    *Frequency  `json:"frequency,omitempty"` // omitempty intentional: trip-details callers expect the field absent when the trip is not frequency-based
-	Schedule     *Schedule   `json:"schedule"`
+	Schedule     *Schedule   `json:"schedule,omitempty"`
 	ServiceDate  ModelTime   `json:"serviceDate"`
 	SituationIDs []string    `json:"situationIds"`
 	Status       *TripStatus `json:"status,omitempty"`

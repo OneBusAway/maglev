@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -67,7 +68,16 @@ func TestScheduleForStopHandler(t *testing.T) {
 				entry, ok := data["entry"].(map[string]any)
 				assert.True(t, ok)
 				assert.Equal(t, tt.stopID, entry["stopId"])
-				assert.NotNil(t, entry["date"])
+
+				loc, err := time.LoadLocation(agencies[0].Timezone)
+				assert.NoError(t, err, "Should load agency timezone")
+
+				parsedTime, err := time.ParseInLocation("2006-01-02", "2025-06-12", loc)
+				assert.NoError(t, err, "Should parse test date")
+
+				expectedMillis := float64(parsedTime.UnixMilli())
+				assert.Equal(t, expectedMillis, entry["date"])
+
 				assert.NotNil(t, entry["stopRouteSchedules"])
 			}
 		})
@@ -84,7 +94,7 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	// Test valid date parameter
-	t.Run("Valid date parameter", func(t *testing.T) {
+	t.Run("Valid date parameter in format YYYY-MM-DD", func(t *testing.T) {
 		// NOTE: Hardcoded date 2025-06-12 used for test consistency with GTFS data validity
 		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
 		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
@@ -98,6 +108,31 @@ func TestScheduleForStopHandlerDateParam(t *testing.T) {
 		entry, ok := data["entry"].(map[string]any)
 		assert.True(t, ok)
 		assert.NotNil(t, entry["date"])
+	})
+
+	t.Run("Valid date parameter in format Unix Millisecond", func(t *testing.T) {
+		loc, err := time.LoadLocation(agencies[0].Timezone)
+		assert.NoError(t, err)
+
+		// Input: June 12, 2025 12:00 PM local time
+		inputTime := time.Date(2025, 6, 12, 12, 0, 0, 0, loc)
+		inputMillis := inputTime.UnixMilli()
+
+		endpoint := fmt.Sprintf("/api/where/schedule-for-stop/%s.json?key=TEST&date=%d", stopID, inputMillis)
+		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.Equal(t, "OK", model.Text)
+
+		data, ok := model.Data.(map[string]any)
+		assert.True(t, ok)
+		entry, ok := data["entry"].(map[string]any)
+		assert.True(t, ok)
+		assert.NotNil(t, entry["date"])
+
+		// Assert that the returned date echoes the EXACT input time
+		assert.Equal(t, float64(inputMillis), entry["date"])
 	})
 }
 
@@ -122,10 +157,7 @@ func TestScheduleForStopHandlerAgencyTimeZone(t *testing.T) {
 	assert.True(t, ok)
 	assert.NotNil(t, entry["date"])
 
-	loc, _ := time.LoadLocation(agency.Timezone)
-	localAgencyTime := clk.Now().In(loc)
-	y, m, d := localAgencyTime.Date()
-	expected := time.Date(y, m, d, 0, 0, 0, 0, loc).UnixMilli()
+	expected := clk.Now().UnixMilli()
 	assert.Equal(t, float64(expected), entry["date"])
 }
 
@@ -529,4 +561,67 @@ func TestScheduleForStopHandlerWithMalformedID(t *testing.T) {
 	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+}
+
+func TestScheduleForStopHandlerBlockSequenceLogic(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencies := mustGetAgencies(t, api)
+	require := assert.New(t)
+
+	// Helper function to fetch stop times for a specific stop
+	fetchStopTimesForStop := func(stopIDStr string) map[string]map[string]any {
+		stopID := utils.FormCombinedID(agencies[0].ID, stopIDStr)
+		// NOTE: Hardcoded date matches the mock GTFS data validity
+		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
+		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+		require.Equal(http.StatusOK, resp.StatusCode)
+
+		data := model.Data.(map[string]any)
+		entry := data["entry"].(map[string]any)
+		schedules := entry["stopRouteSchedules"].([]any)
+
+		// Flatten all stop times into a map for easy lookup by Trip ID
+		stopTimesByTrip := make(map[string]map[string]any)
+		for _, schedAny := range schedules {
+			sched := schedAny.(map[string]any)
+			for _, dirSchedAny := range sched["stopRouteDirectionSchedules"].([]any) {
+				dirSched := dirSchedAny.(map[string]any)
+				for _, stAny := range dirSched["scheduleStopTimes"].([]any) {
+					st := stAny.(map[string]any)
+					tripID := st["tripId"].(string)
+					stopTimesByTrip[tripID] = st
+				}
+			}
+		}
+		return stopTimesByTrip
+	}
+
+	t.Run("Evaluates absolute first stop as false", func(t *testing.T) {
+		stopTimesByTrip := fetchStopTimesForStop("1030")
+		firstTripID := utils.FormCombinedID(agencies[0].ID, "84f4520e-88b6-4ee6-8975-856799bc1359")
+		st, ok := stopTimesByTrip[firstTripID]
+		require.True(ok, "trip not found in response for first stop")
+		assert.False(t, st["arrivalEnabled"].(bool), "arrivalEnabled must be FALSE for the absolute first stop")
+		assert.True(t, st["departureEnabled"].(bool), "departureEnabled must be TRUE")
+	})
+
+	t.Run("Evaluates middle stop as true", func(t *testing.T) {
+		stopTimesByTrip := fetchStopTimesForStop("1014")
+		middleTripID := utils.FormCombinedID(agencies[0].ID, "109522ca-5218-47f9-9cd0-123648acfe17")
+		st, ok := stopTimesByTrip[middleTripID]
+		require.True(ok, "trip not found in response for middle stop")
+		assert.True(t, st["arrivalEnabled"].(bool), "arrivalEnabled must be TRUE for a middle stop")
+		assert.True(t, st["departureEnabled"].(bool), "departureEnabled must be TRUE for a middle stop")
+	})
+
+	t.Run("Evaluates absolute last stop as false", func(t *testing.T) {
+		stopTimesByTrip := fetchStopTimesForStop("2000")
+		lastTripID := utils.FormCombinedID(agencies[0].ID, "b137c8a8-db88-4f7b-8b7f-4ccfe1ee4103")
+		st, ok := stopTimesByTrip[lastTripID]
+		require.True(ok, "trip not found in response for last stop")
+		assert.True(t, st["arrivalEnabled"].(bool), "arrivalEnabled must be TRUE")
+		assert.False(t, st["departureEnabled"].(bool), "departureEnabled must be FALSE for the absolute last stop")
+	})
 }

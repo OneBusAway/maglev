@@ -1,7 +1,9 @@
 package restapi
 
 import (
+	"database/sql"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,17 +26,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Get the date parameter or use current date
 	dateParam := r.URL.Query().Get("date")
 
-	// Validate date parameter
-	if err := utils.ValidateDate(dateParam); err != nil {
-		fieldErrors := map[string][]string{
-			"date": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-
 	if err != nil {
 		api.sendNotFound(w, r)
 		return
@@ -45,30 +37,38 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	var date int64
-	var targetDate string
-	var weekday string
+
+	var startOfDay time.Time
+	var responseDate int64 // Stores the exact timestamp for the JSON response
 
 	if dateParam != "" {
-		parsedDate, err := time.ParseInLocation("2006-01-02", dateParam, loc)
+		var err error
+		startOfDay, err = utils.ParseDate(dateParam, loc)
 		if err != nil {
 			fieldErrors := map[string][]string{
-				"date": {"Invalid date format. Use YYYY-MM-DD"},
+				"date": {err.Error()},
 			}
 			api.validationErrorResponse(w, r, fieldErrors)
 			return
 		}
-		date = parsedDate.UnixMilli()
-		targetDate = parsedDate.Format("20060102")
-		weekday = strings.ToLower(parsedDate.Weekday().String())
+
+		// Echo the exact Unix timestamp if provided, else use midnight
+		if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
+			responseDate = unixMillis
+		} else {
+			responseDate = startOfDay.UnixMilli()
+		}
 	} else {
 		now := api.Clock.Now().In(loc)
+		// Echo current wall-clock time if omitted
+		responseDate = now.UnixMilli()
+
 		y, m, d := now.Date()
-		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
-		date = startOfDay.UnixMilli()
-		targetDate = startOfDay.Format("20060102")
-		weekday = strings.ToLower(startOfDay.Weekday().String())
+		startOfDay = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
+
+	targetDate := startOfDay.Format("20060102")
+	weekday := strings.ToLower(startOfDay.Weekday().String())
 
 	// Verify stop exists
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
@@ -90,7 +90,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	if len(routeIDs) == 0 {
 		api.sendResponse(w, r, models.NewEntryResponse(
-			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), date, nil),
+			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), responseDate, nil),
 			*models.NewEmptyReferences(),
 			api.Clock,
 		))
@@ -193,6 +193,44 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Extract unique block IDs directly from the scheduled rows
+	uniqueBlockIDsMap := make(map[string]bool)
+	for _, row := range scheduleRows {
+		if row.BlockID.Valid && row.BlockID.String != "" {
+			uniqueBlockIDsMap[row.BlockID.String] = true
+		}
+	}
+
+	// Batch fetch all trips within the identified blocks for the active service day
+	// This allows us to establish the chronological sequence of trips per vehicle
+	blockTripsMap := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
+	uniqueBlockIDs := make([]sql.NullString, 0, len(uniqueBlockIDsMap))
+	for blockID := range uniqueBlockIDsMap {
+		uniqueBlockIDs = append(uniqueBlockIDs, nulls.String(blockID))
+	}
+
+	if len(uniqueBlockIDs) > 0 {
+		activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		if len(activeServiceIDs) > 0 {
+			blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+				BlockIds:   uniqueBlockIDs,
+				ServiceIds: activeServiceIDs,
+			})
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+			// Group trips by block ID. The underlying query inherently sorts by min_arrival_time ASC.
+			for _, bt := range blockTrips {
+				blockTripsMap[bt.BlockID.String] = append(blockTripsMap[bt.BlockID.String], bt)
+			}
+		}
+	}
+
 	// Group schedule data by route
 	routeScheduleMap := make(map[string][]models.ScheduleStopTime)
 	// Track headsign counts to pick the most common one
@@ -209,7 +247,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in the agency's timezone in milliseconds
 		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
-		startOfDay := time.UnixMilli(date).In(loc)
 		arrivalDuration := time.Duration(row.ArrivalTime)
 		departureDuration := time.Duration(row.DepartureTime)
 		arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
@@ -222,6 +259,33 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			row.StopHeadsign.String,
 			combinedTripID,
 		)
+
+		// Determine the arrival/departure capabilities for this stop time based on its
+		// position within the vehicle's entire block for the service day.
+
+		// First, verify if the stop is at the temporal boundaries of its individual trip.
+		isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
+		isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
+
+		isFirstInBlock := isFirstInTrip
+		isLastInBlock := isLastInTrip
+
+		// If the trip belongs to a block, refine the boundaries to the block level.
+		if row.BlockID.Valid && row.BlockID.String != "" {
+			if bTrips, exists := blockTripsMap[row.BlockID.String]; exists && len(bTrips) > 0 {
+				isFirstInBlock = isFirstInTrip && (bTrips[0].ID == row.TripID)
+				isLastInBlock = isLastInTrip && (bTrips[len(bTrips)-1].ID == row.TripID)
+			}
+		}
+
+		// Disable arrivals for the first stop of a block (vehicle starts service here).
+		if isFirstInBlock {
+			stopTime.ArrivalEnabled = false
+		}
+		// Disable departures for the last stop of a block (vehicle ends service here).
+		if isLastInBlock {
+			stopTime.DepartureEnabled = false
+		}
 
 		routeScheduleMap[combinedRouteID] = append(routeScheduleMap[combinedRouteID], stopTime)
 
@@ -255,7 +319,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	// Create the entry
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
-	entry := models.NewScheduleForStopEntry(combinedStopID, date, routeSchedules)
+	entry := models.NewScheduleForStopEntry(combinedStopID, responseDate, routeSchedules)
 
 	// Convert reference maps to slices
 	references := models.NewEmptyReferences()

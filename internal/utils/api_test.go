@@ -530,6 +530,34 @@ func TestParseTimeParameter(t *testing.T) {
 				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
 			},
 		},
+		{
+			name:         "Valid yyyy-MM-dd_HH-mm-ss format",
+			timeParam:    "2024-03-15_12-00-00",
+			expectedDate: "20240315",
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				assert.Equal(t, 2024, parsedTime.Year())
+				assert.Equal(t, time.March, parsedTime.Month())
+				assert.Equal(t, 15, parsedTime.Day())
+				assert.Equal(t, 12, parsedTime.Hour())
+				assert.Equal(t, 0, parsedTime.Minute())
+				assert.Equal(t, 0, parsedTime.Second())
+			},
+		},
+		{
+			name:         "Valid yyyy-MM-dd_HH-mm-ss format with non-zero time",
+			timeParam:    "2024-06-20_14-30-45",
+			expectedDate: "20240620",
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				assert.Equal(t, 2024, parsedTime.Year())
+				assert.Equal(t, time.June, parsedTime.Month())
+				assert.Equal(t, 20, parsedTime.Day())
+				assert.Equal(t, 14, parsedTime.Hour())
+				assert.Equal(t, 30, parsedTime.Minute())
+				assert.Equal(t, 45, parsedTime.Second())
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1008,4 +1036,82 @@ func TestParseRequiredFloatParam(t *testing.T) {
 		assert.Contains(t, fieldErrors["lat"][0], "Missing required field")
 		assert.Equal(t, []string{"some error"}, fieldErrors["other"])
 	})
+}
+
+func TestParseDate(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("Failed to load timezone America/Los_Angeles: %v", err)
+	}
+	expectedErrMsg := "invalid date format, use YYYY-MM-DD or a Unix millisecond integer"
+
+	tests := []struct {
+		name        string
+		date        string
+		wantErr     bool
+		errMsg      string
+		checkBounds bool // Set to true to check if output is normalized to midnight
+		wantDate    string
+	}{
+		{
+			name:        "valid date YYYY-MM-DD",
+			date:        "2023-12-25",
+			wantErr:     false,
+			checkBounds: true,
+			wantDate:    "2023-12-25",
+		},
+		{
+			name:        "valid unix timestamp (noon, rounds to midnight)",
+			date:        "1703534400000", // Dec 25, 2023 12:00:00 PM PST
+			wantErr:     false,
+			checkBounds: true,
+			wantDate:    "2023-12-25",
+		},
+		{
+			name:    "negative timestamp",
+			date:    "-1000",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "extremely large timestamp",
+			date:    "999999999999999999",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "invalid date format",
+			date:    "12/25/2023",
+			wantErr: true,
+			errMsg:  expectedErrMsg,
+		},
+		{
+			name:    "empty date",
+			date:    "",
+			wantErr: true,
+			errMsg:  "date cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsedTime, err := ParseDate(tt.date, loc)
+			if tt.wantErr {
+				if assert.Error(t, err) {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+				if tt.checkBounds {
+					// Verify the time was snapped to midnight
+					hour, min, sec := parsedTime.Clock()
+					assert.Equal(t, 0, hour)
+					assert.Equal(t, 0, min)
+					assert.Equal(t, 0, sec)
+					assert.Equal(t, tt.wantDate, parsedTime.In(loc).Format("2006-01-02"))
+					assert.Equal(t, loc.String(), parsedTime.Location().String())
+				}
+			}
+		})
+	}
 }

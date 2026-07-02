@@ -493,6 +493,9 @@ SELECT
     t.service_id,
     t.route_id,
     t.trip_headsign,
+    t.block_id,
+    t.min_arrival_time,
+    t.max_departure_time,
     r.id as route_id,
     r.agency_id
 FROM
@@ -513,6 +516,9 @@ SELECT
     t.service_id,
     t.route_id,
     t.trip_headsign,
+    t.block_id,
+    t.min_arrival_time,
+    t.max_departure_time,
     r.id as route_id,
     r.agency_id
 FROM
@@ -1226,6 +1232,28 @@ FROM (
     UNION ALL
     SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
 );
+
+-- name: RouteHasFutureService :one
+-- Returns 1 if the given route has at least one trip whose calendar covers a date
+-- strictly after the given date (YYYYMMDD), 0 otherwise. Used to distinguish
+-- ServiceDateOutOfRange (no future service for this route) from NoServiceThatDay
+-- (the route still has service on a later date).
+SELECT EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN calendar c ON c.id = t.service_id
+    WHERE t.route_id = ?
+      AND c.end_date > ?
+      AND (c.monday = 1 OR c.tuesday = 1 OR c.wednesday = 1 OR c.thursday = 1
+           OR c.friday = 1 OR c.saturday = 1 OR c.sunday = 1)
+    UNION ALL
+    SELECT 1
+    FROM trips t
+    JOIN calendar_dates cd ON cd.service_id = t.service_id
+    WHERE t.route_id = ?
+      AND cd.exception_type = 1
+      AND cd.date > ?
+) AS has_future_service;
 
 -- Optimized queries using SQLite window functions
 

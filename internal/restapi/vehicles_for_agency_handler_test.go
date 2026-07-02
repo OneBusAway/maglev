@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,24 @@ func vehiclesForAgencyURL(agencyID string, params ...url.Values) string {
 		maps.Copy(q, p)
 	}
 	return "/api/where/vehicles-for-agency/" + agencyID + ".json?" + q.Encode()
+}
+
+// fetchRawData returns the response "data" object as raw JSON keys so tests can
+// assert field presence, not just decoded zero values.
+func fetchRawData(t testing.TB, api *RestAPI, endpoint string) map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data
 }
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
@@ -70,6 +89,23 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.Empty(t, model.Data.List)
+
+	data := fetchRawData(t, api, vehiclesForAgencyURL("nonexistent"))
+	raw, ok := data["outOfRange"]
+	require.True(t, ok, "outOfRange key must be present in the response payload")
+	assert.JSONEq(t, "false", string(raw), "unknown agency must return outOfRange=false (Extension 3a)")
+}
+
+// TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency verifies the success
+// path emits outOfRange=false for an agency served by this instance.
+func TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	data := fetchRawData(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	raw, ok := data["outOfRange"]
+	require.True(t, ok, "outOfRange key must be present in the response payload")
+	assert.JSONEq(t, "false", string(raw), "known agency must return outOfRange=false")
 }
 
 // TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
@@ -305,6 +341,57 @@ func TestVehiclesForAgencyHandler_TimeParameterInvalid(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+// TestVehiclesForAgencyHandler_IncludeReferencesFalse verifies that
+// includeReferences=false empties the references block while keeping the list.
+func TestVehiclesForAgencyHandler_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_refs_false", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"includeReferences": {"false"}}
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "list must still be populated when includeReferences=false")
+
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies, "agencies should be empty when includeReferences=false")
+	assert.Empty(t, refs.Routes, "routes should be empty when includeReferences=false")
+	assert.Empty(t, refs.Trips, "trips should be empty when includeReferences=false")
+	assert.Empty(t, refs.Stops, "stops should be empty when includeReferences=false")
+	assert.Empty(t, refs.Situations, "situations should be empty when includeReferences=false")
+}
+
+// TestVehiclesForAgencyHandler_IncludeReferencesDefault verifies that references
+// are populated when includeReferences is absent or explicitly true.
+func TestVehiclesForAgencyHandler_IncludeReferencesDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		params []url.Values
+	}{
+		{"absent", nil},
+		{"explicit true", []url.Values{{"includeReferences": {"true"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			trip := mustGetTrip(t, api)
+			api.GtfsManager.MockAddVehicleWithOptions("v_refs_default", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+			_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, tc.params...))
+
+			assert.NotEmpty(t, model.Data.References.Agencies,
+				"agencies should be populated when includeReferences is true/absent")
+		})
+	}
 }
 
 // vehiclesRealTimeDataClock is pinned just past the latest timestamp in

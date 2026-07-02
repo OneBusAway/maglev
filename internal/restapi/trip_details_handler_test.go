@@ -97,14 +97,13 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	trip := mustGetTrip(t, api)
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
-	tomorrow := time.Now().AddDate(0, 0, 1)
-	serviceDateMs := tomorrow.Unix() * 1000
-	// serviceDate in response is midnight in the agency's timezone, not the raw input epoch.
+	// Use a fixed date known to be within the test GTFS calendar range (Mon-Fri, 2024-01-01 to 2025-12-31).
+	// 2025-06-11 is a Wednesday.
 	agencyLoc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
-	sdInAgencyTz := tomorrow.In(agencyLoc)
-	expectedMidnight := time.Date(sdInAgencyTz.Year(), sdInAgencyTz.Month(), sdInAgencyTz.Day(),
-		0, 0, 0, 0, agencyLoc)
+	validDate := time.Date(2025, 6, 11, 12, 0, 0, 0, agencyLoc)
+	serviceDateMs := validDate.UnixMilli()
+	expectedMidnight := time.Date(2025, 6, 11, 0, 0, 0, 0, agencyLoc)
 
 	resp, model := callAPIHandler[TripDetailsResponse](t, api,
 		"/api/where/trip-details/"+tripID+".json?key=TEST&serviceDate="+
@@ -113,6 +112,28 @@ func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, expectedMidnight.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli())
+}
+
+// TestTripDetailsHandlerWithInvalidServiceDate verifies that when serviceDate is
+// explicitly provided but the trip does not operate on that date, HTTP 404 is returned.
+func TestTripDetailsHandlerWithInvalidServiceDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	// Use a date far in the past that is definitely outside any service calendar.
+	invalidDate := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	serviceDateMs := invalidDate.UnixMilli()
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&serviceDate="+
+			strconv.FormatInt(serviceDateMs, 10))
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
 }
 
 func TestTripDetailsHandlerWithServiceDateString(t *testing.T) {
@@ -125,10 +146,11 @@ func TestTripDetailsHandlerWithServiceDateString(t *testing.T) {
 
 	agencyLoc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
-	expectedMidnight := time.Date(2025, 7, 20, 0, 0, 0, 0, agencyLoc)
+	// 2025-07-21 is a Monday, within the test GTFS calendar range (Mon-Fri).
+	expectedMidnight := time.Date(2025, 7, 21, 0, 0, 0, 0, agencyLoc)
 
 	resp, model := callAPIHandler[TripDetailsResponse](t, api,
-		"/api/where/trip-details/"+tripID+".json?key=TEST&serviceDate=2025-07-20")
+		"/api/where/trip-details/"+tripID+".json?key=TEST&serviceDate=2025-07-21")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
@@ -147,7 +169,52 @@ func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, model.Data.References.Trips)
+
+	// Verify includeTrip=false omits the main trip but keeps related block and active trips.
+	for _, refTrip := range model.Data.References.Trips {
+		assert.NotEqual(t, tripID, refTrip.ID,
+			"main trip should not be included in references when includeTrip=false")
+	}
+}
+
+func TestTripDetailsHandlerIncludeTripFalseKeepsBlockTrips(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	_, withTrip := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=true&includeSchedule=true")
+
+	resp, withoutTrip := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false&includeSchedule=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Collect block trip IDs (excluding the main trip) from the includeTrip=true response.
+	expectedBlockTrips := map[string]bool{}
+	for _, refTrip := range withTrip.Data.References.Trips {
+		if refTrip.ID != tripID {
+			expectedBlockTrips[refTrip.ID] = true
+		}
+	}
+
+	assert.NotEmpty(t, expectedBlockTrips,
+		"test fixture should include preceding/following trips to meaningfully test this behavior")
+
+	gotTrips := map[string]bool{}
+	for _, refTrip := range withoutTrip.Data.References.Trips {
+		gotTrips[refTrip.ID] = true
+		assert.NotEqual(t, tripID, refTrip.ID,
+			"main trip should be excluded when includeTrip=false")
+	}
+
+	for blockTripID := range expectedBlockTrips {
+		assert.True(t, gotTrips[blockTripID],
+			"block trip %s should still be referenced when includeTrip=false", blockTripID)
+	}
 }
 
 func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
@@ -299,7 +366,22 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 		assert.NotNil(t, errs)
 		assert.Contains(t, errs, "time")
 		assert.Contains(t, errs, "serviceDate")
-		assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
+		assert.Equal(t, "must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format", errs["time"][0])
+	})
+
+	t.Run("time yyyy-MM-dd_HH-mm-ss format", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?time=2024-06-15_14-30-00", nil)
+
+		params, errs := api.parseTripParams(req, true)
+
+		assert.Nil(t, errs)
+		require.NotNil(t, params.Time)
+		assert.Equal(t, 2024, params.Time.Year())
+		assert.Equal(t, time.June, params.Time.Month())
+		assert.Equal(t, 15, params.Time.Day())
+		assert.Equal(t, 14, params.Time.Hour())
+		assert.Equal(t, 30, params.Time.Minute())
+		assert.Equal(t, 0, params.Time.Second())
 	})
 
 	t.Run("vehicleId is parsed", func(t *testing.T) {
@@ -413,4 +495,20 @@ func TestTripDetailsHandlerWithIncludeReferencesDefault(t *testing.T) {
 			assert.Equal(t, agency.ID, model.Data.References.Agencies[0].ID)
 		})
 	}
+}
+
+func TestTripDetailsHandlerWithTimeParameterString(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&time=2025-07-20_14-30-00")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.Entry.TripID)
 }
