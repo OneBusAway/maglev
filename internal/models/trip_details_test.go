@@ -181,7 +181,7 @@ func TestTripStatusJSON(t *testing.T) {
 
 func TestTripStatus_JSONAlwaysPresent(t *testing.T) {
 	status := *NewTripStatus()
-	status.Status = "default"
+	status.Status = DefaultTripStatusValue
 
 	data, err := json.Marshal(status)
 	require.NoError(t, err)
@@ -212,14 +212,14 @@ func TestTripStatus_JSONAlwaysPresent(t *testing.T) {
 func TestTripStatus_IsUntracked(t *testing.T) {
 	t.Run("default placeholder is untracked", func(t *testing.T) {
 		status := NewTripStatus()
-		status.Status = "default"
+		status.Status = DefaultTripStatusValue
 		// NewTripStatus sets Predicted=false by default
 		assert.True(t, status.IsUntracked())
 	})
 
 	t.Run("predicted status is not untracked", func(t *testing.T) {
 		status := NewTripStatus()
-		status.Status = "default"
+		status.Status = DefaultTripStatusValue
 		status.SetPredicted(true)
 		assert.False(t, status.IsUntracked())
 	})
