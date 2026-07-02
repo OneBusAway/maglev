@@ -74,7 +74,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 }
 
 // buildParentStationReferences resolves the unique parent stations referenced by
-// stopsList into minimal Stop records for the references block.
+// stopsList into full Stop records for the references block.
 func (api *RestAPI) buildParentStationReferences(ctx context.Context, agencyID string, stopsList []models.Stop) ([]models.Stop, error) {
 	seen := make(map[string]struct{})
 	var parentRawIDs []string
@@ -93,29 +93,9 @@ func (api *RestAPI) buildParentStationReferences(ctx context.Context, agencyID s
 		parentRawIDs = append(parentRawIDs, rawID)
 	}
 
-	if len(parentRawIDs) == 0 {
-		return []models.Stop{}, nil
-	}
-
-	parentStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, parentRawIDs)
+	parentRefs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, parentRawIDs)
 	if err != nil {
 		return nil, err
-	}
-
-	parentRefs := make([]models.Stop, 0, len(parentStops))
-	for _, ps := range parentStops {
-		parentRefs = append(parentRefs, models.Stop{
-			Code:               nulls.StringOrDefault(ps.Code, ps.ID),
-			Direction:          nulls.StringOrEmpty(ps.Direction),
-			ID:                 utils.FormCombinedID(agencyID, ps.ID),
-			Lat:                ps.Lat,
-			LocationType:       int(ps.LocationType.Int64),
-			Lon:                ps.Lon,
-			Name:               ps.Name.String,
-			RouteIDs:           []string{},
-			StaticRouteIDs:     []string{},
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(ps.WheelchairBoarding)),
-		})
 	}
 
 	return parentRefs, nil

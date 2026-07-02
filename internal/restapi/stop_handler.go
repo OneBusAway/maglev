@@ -111,30 +111,12 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stop.ParentStation.String)
-			if err == nil {
-				parentRoutes, _ := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, parentStop.ID)
-
-				// Sort parent routes naturally by ShortName
-				utils.SortRoutesByName(parentRoutes)
-
-				parentRouteIDs := make([]string, len(parentRoutes))
-				for i, r := range parentRoutes {
-					parentRouteIDs[i] = utils.FormCombinedID(r.AgencyID, r.ID)
-				}
-				references.Stops = append(references.Stops, models.Stop{
-					ID:                 utils.FormCombinedID(agencyID, parentStop.ID),
-					Name:               nulls.StringOrEmpty(parentStop.Name),
-					Lat:                parentStop.Lat,
-					Lon:                parentStop.Lon,
-					Code:               nulls.StringOrDefault(parentStop.Code, parentStop.ID),
-					Direction:          nulls.StringOrEmpty(parentStop.Direction),
-					LocationType:       int(nulls.Int64OrDefault(parentStop.LocationType, 0)),
-					WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(parentStop.WheelchairBoarding)),
-					RouteIDs:           parentRouteIDs,
-					StaticRouteIDs:     parentRouteIDs,
-				})
+			parentRefs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{stop.ParentStation.String})
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
 			}
+			references.Stops = append(references.Stops, parentRefs...)
 		}
 	}
 
