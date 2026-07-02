@@ -208,3 +208,32 @@ func TestTripStatus_JSONAlwaysPresent(t *testing.T) {
 	assert.Contains(t, jsonStr, `"occupancyStatus":""`, "occupancyStatus must always be present")
 	assert.Contains(t, jsonStr, `"vehicleId":""`, "vehicleId must always be present")
 }
+
+func TestTripStatus_IsUntracked(t *testing.T) {
+	t.Run("default placeholder is untracked", func(t *testing.T) {
+		status := NewTripStatus()
+		status.Status = "default"
+		// NewTripStatus sets Predicted=false by default
+		assert.True(t, status.IsUntracked())
+	})
+
+	t.Run("predicted status is not untracked", func(t *testing.T) {
+		status := NewTripStatus()
+		status.Status = "default"
+		status.SetPredicted(true)
+		assert.False(t, status.IsUntracked())
+	})
+
+	t.Run("non-default status is not untracked", func(t *testing.T) {
+		status := NewTripStatus()
+		status.Status = "SCHEDULED"
+		assert.False(t, status.IsUntracked())
+	})
+
+	t.Run("active tracking is not untracked", func(t *testing.T) {
+		status := NewTripStatus()
+		status.Status = "in_progress"
+		status.SetPredicted(true)
+		assert.False(t, status.IsUntracked())
+	})
+}

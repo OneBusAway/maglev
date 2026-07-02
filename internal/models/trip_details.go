@@ -66,6 +66,13 @@ type TripStatus struct {
 	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. Tracked as a known spec deviation.
 }
 
+// IsUntracked reports whether this TripStatus is merely the default placeholder
+// returned by BuildTripStatus when no real-time tracking record exists.
+// Extension 4e requires the status key to be omitted in this case.
+func (ts *TripStatus) IsUntracked() bool {
+	return ts.Status == "default" && !ts.Predicted
+}
+
 func (ts *TripStatus) SetPredicted(predicted bool) {
 	ts.Predicted = predicted
 	ts.Scheduled = !predicted
