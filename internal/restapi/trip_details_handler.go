@@ -10,7 +10,6 @@ import (
 	gtfs "github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -341,7 +340,16 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if params.IncludeSchedule && schedule != nil {
-			stops, err := api.buildStopReferences(ctx, agencyID, schedule.StopTimes)
+			stopIDs := make([]string, 0, len(schedule.StopTimes))
+			for _, st := range schedule.StopTimes {
+				_, rawStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
+				if err != nil {
+					continue
+				}
+				stopIDs = append(stopIDs, rawStopID)
+			}
+
+			stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -457,106 +465,4 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	}
 
 	return referencedTrips, nil
-}
-
-func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, stopTimes []models.StopTime) ([]models.Stop, error) {
-	stopIDSet := make(map[string]bool)
-	originalStopIDs := make([]string, 0, len(stopTimes))
-
-	for _, st := range stopTimes {
-		_, originalStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
-		if err != nil {
-			continue
-		}
-
-		if !stopIDSet[originalStopID] {
-			stopIDSet[originalStopID] = true
-			originalStopIDs = append(originalStopIDs, originalStopID)
-		}
-	}
-
-	if len(originalStopIDs) == 0 {
-		return []models.Stop{}, nil
-	}
-
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, originalStopIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	stopMap := make(map[string]gtfsdb.Stop)
-	for _, stop := range stops {
-		stopMap[stop.ID] = stop
-	}
-
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, originalStopIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	routesByStop := make(map[string][]gtfsdb.Route)
-	for _, routeRow := range allRoutes {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		route := gtfsdb.Route{
-			ID:        routeRow.ID,
-			AgencyID:  routeRow.AgencyID,
-			ShortName: routeRow.ShortName,
-			LongName:  routeRow.LongName,
-			Desc:      routeRow.Desc,
-			Type:      routeRow.Type,
-			Url:       routeRow.Url,
-			Color:     routeRow.Color,
-			TextColor: routeRow.TextColor,
-		}
-		routesByStop[routeRow.StopID] = append(routesByStop[routeRow.StopID], route)
-	}
-
-	modelStops := make([]models.Stop, 0, len(stopTimes))
-	processedStops := make(map[string]bool)
-
-	for _, st := range stopTimes {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		_, originalStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
-		if err != nil {
-			continue
-		}
-
-		if processedStops[originalStopID] {
-			continue
-		}
-		processedStops[originalStopID] = true
-
-		stop, exists := stopMap[originalStopID]
-		if !exists {
-			continue
-		}
-
-		routesForStop := routesByStop[originalStopID]
-		combinedRouteIDs := make([]string, len(routesForStop))
-		for i, rt := range routesForStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(agencyID, rt.ID)
-		}
-
-		stopModel := models.Stop{
-			ID:                 utils.FormCombinedID(agencyID, stop.ID),
-			Name:               stop.Name.String,
-			Lat:                stop.Lat,
-			Lon:                stop.Lon,
-			Code:               stop.Code.String,
-			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
-			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-			RouteIDs:           combinedRouteIDs,
-			StaticRouteIDs:     combinedRouteIDs,
-		}
-		modelStops = append(modelStops, stopModel)
-	}
-
-	return modelStops, nil
 }

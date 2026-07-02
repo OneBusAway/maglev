@@ -1,14 +1,17 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -266,4 +269,97 @@ func ShouldIncludeReferences(r *http.Request) bool {
 	}
 
 	return parsed
+}
+
+// BuildStopReferencesAndRouteIDsForStops builds full stop references and collects unique routes for the given stop IDs.
+func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
+	if len(stopIDs) == 0 {
+		return []models.Stop{}, map[string]gtfsdb.GetRoutesForStopsRow{}, nil
+	}
+
+	stopIDSet := make(map[string]struct{})
+	uniqueStopIDs := make([]string, 0, len(stopIDs))
+	for _, id := range stopIDs {
+		if _, exists := stopIDSet[id]; !exists {
+			stopIDSet[id] = struct{}{}
+			uniqueStopIDs = append(uniqueStopIDs, id)
+		}
+	}
+
+	stopsDB, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueStopIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	stopMap := make(map[string]gtfsdb.Stop)
+	for _, stop := range stopsDB {
+		stopMap[stop.ID] = stop
+	}
+
+	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, uniqueStopIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	routesByStop := make(map[string][]gtfsdb.Route)
+	uniqueRouteMap := make(map[string]gtfsdb.GetRoutesForStopsRow)
+	for _, routeRow := range allRoutes {
+		route := gtfsdb.Route{
+			ID:        routeRow.ID,
+			AgencyID:  routeRow.AgencyID,
+			ShortName: routeRow.ShortName,
+			LongName:  routeRow.LongName,
+			Desc:      routeRow.Desc,
+			Type:      routeRow.Type,
+			Url:       routeRow.Url,
+			Color:     routeRow.Color,
+			TextColor: routeRow.TextColor,
+		}
+		routesByStop[routeRow.StopID] = append(routesByStop[routeRow.StopID], route)
+		combinedID := utils.FormCombinedID(agencyID, routeRow.ID)
+		uniqueRouteMap[combinedID] = routeRow
+	}
+
+	modelStops := make([]models.Stop, 0, len(uniqueStopIDs))
+	for _, stopID := range uniqueStopIDs {
+		stop, exists := stopMap[stopID]
+		if !exists {
+			continue
+		}
+		routesForStop := routesByStop[stopID]
+		// Sort naturally by ShortName (falling back to LongName, then ID) so the
+		// route IDs are returned in a stable, human-friendly order.
+		slices.SortFunc(routesForStop, func(a, b gtfsdb.Route) int {
+			nameA := a.ShortName.String
+			if nameA == "" {
+				nameA = a.LongName.String
+			}
+			nameB := b.ShortName.String
+			if nameB == "" {
+				nameB = b.LongName.String
+			}
+			if res := utils.NaturalCompare(nameA, nameB); res != 0 {
+				return res
+			}
+			return cmp.Compare(a.ID, b.ID)
+		})
+		combinedRouteIDs := make([]string, len(routesForStop))
+		for i, rt := range routesForStop {
+			combinedRouteIDs[i] = utils.FormCombinedID(agencyID, rt.ID)
+		}
+		stopModel := models.Stop{
+			ID:                 utils.FormCombinedID(agencyID, stop.ID),
+			Name:               stop.Name.String,
+			Lat:                stop.Lat,
+			Lon:                stop.Lon,
+			Code:               stop.Code.String,
+			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
+			LocationType:       int(stop.LocationType.Int64),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			RouteIDs:           combinedRouteIDs,
+			StaticRouteIDs:     combinedRouteIDs,
+		}
+		modelStops = append(modelStops, stopModel)
+	}
+
+	return modelStops, uniqueRouteMap, nil
 }
