@@ -577,6 +577,7 @@ func TestStopHandler_WrongAgency(t *testing.T) {
 	respValid, modelValid := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(validAgency, stopID)))
 	require.Equal(t, http.StatusOK, respValid.StatusCode)
 	assert.Equal(t, http.StatusOK, modelValid.Code)
+	assert.Equal(t, utils.FormCombinedID(validAgency, stopID), modelValid.Data.Entry.ID)
 
 	// Test 2: Request with the invalid agency namespace -> 404 Not Found
 	respInvalid, modelInvalid := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(invalidAgency, stopID)))
@@ -597,4 +598,13 @@ func TestStopHandler_WrongAgency(t *testing.T) {
 	respOrphanGhost, modelOrphanGhost := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID("GhostAgency", orphanStopID)))
 	require.Equal(t, http.StatusNotFound, respOrphanGhost.StatusCode)
 	assert.Equal(t, http.StatusNotFound, modelOrphanGhost.Code)
+
+	// Create a fresh API instance to avoid rate limiting on the 6th request
+	api = createTestApi(t)
+	defer api.Shutdown()
+
+	// Test 6: Request invalid agency namespace with includeReferences=false -> 404 Not Found
+	respInvalid, modelInvalid = callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(invalidAgency, stopID))+"&includeReferences=false")
+	require.Equal(t, http.StatusNotFound, respInvalid.StatusCode)
+	assert.Equal(t, http.StatusNotFound, modelInvalid.Code)
 }

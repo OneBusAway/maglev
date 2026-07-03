@@ -90,7 +90,9 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	references := models.NewEmptyReferences()
 
 	// Only populate references if the query parameter is absent or true
-	if ShouldIncludeReferences(r) {
+	includeReferences := ShouldIncludeReferences(r)
+
+	if includeReferences {
 
 		// Add routes to references and collect unique agency IDs
 		for _, route := range routes {
@@ -106,7 +108,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 				route.TextColor.String)
 
 			references.Routes = append(references.Routes, routeModel)
-			uniqueAgencyIDs[route.AgencyID] = true
 		}
 
 		// Fetch references for ALL unique agencies involved, not just the first one.
