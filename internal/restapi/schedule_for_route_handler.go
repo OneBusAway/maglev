@@ -67,17 +67,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		scheduleDate = startOfDay.UnixMilli()
 	}
 
-	// Check if date exceeds the feed's max calendar end date -> ServiceDateOutOfRange
-	feedEndDateRaw, err := api.GtfsManager.GtfsDB.Queries.GetFeedEndDate(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	if feedEndDate, ok := feedEndDateRaw.(string); ok && feedEndDate != "" && targetDate > feedEndDate {
-		api.sendResponse(w, r, models.NewResponse(510, nil, "ServiceDateOutOfRange", api.Clock))
-		return
-	}
-
 	agencyModel := models.NewAgencyReference(
 		agency.ID,
 		agency.Name,
@@ -107,8 +96,34 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// noTripsResponse distinguishes the two no-service cases for this route: if the
+	// route has no service on any date after the requested one, the reason is
+	// ServiceDateOutOfRange; otherwise the route simply has no service that day
+	// (NoServiceThatDay). Both return body code 200 with an empty-schedule body.
+	noTripsResponse := func() (models.ResponseModel, error) {
+		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
+			RouteID:   routeID,
+			EndDate:   targetDate,
+			RouteID_2: routeID,
+			Date:      targetDate,
+		})
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		text := "NoServiceThatDay"
+		if hasFuture == 0 {
+			text = "ServiceDateOutOfRange"
+		}
+		return buildNoServiceResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, text, api.Clock), nil
+	}
+
 	if len(serviceIDs) == 0 {
-		api.sendResponse(w, r, buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock))
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 
@@ -122,7 +137,12 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(trips) == 0 {
-		api.sendResponse(w, r, buildNoServiceThatDayResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, api.Clock))
+		resp, err := noTripsResponse()
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		api.sendResponse(w, r, resp)
 		return
 	}
 
@@ -183,16 +203,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			globalStopIDSet[stopID] = struct{}{}
 		}
 
-		seenHeadsigns := make(map[string]bool)
-		var headsigns []string
-		for _, trip := range tripsInGroup {
-			hs := trip.TripHeadsign.String
-			if hs != "" && !seenHeadsigns[hs] {
-				seenHeadsigns[hs] = true
-				headsigns = append(headsigns, hs)
-			}
-		}
-
 		rawTripIDs := make([]string, 0, len(tripsInGroup))
 		for _, trip := range tripsInGroup {
 			rawTripIDs = append(rawTripIDs, trip.ID)
@@ -207,6 +217,42 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripsInGroup))
 		for _, st := range allStopTimes {
 			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+		}
+
+		// Collect headsigns; fall back to the last stop's name when a trip has no
+		// recorded headsign, matching the Java reference behavior.
+		seenHeadsigns := make(map[string]bool)
+		var headsigns []string
+		var fallbackStopIDs []string
+		seenFallbackStops := make(map[string]bool)
+		for _, trip := range tripsInGroup {
+			hs := trip.TripHeadsign.String
+			if hs != "" {
+				if !seenHeadsigns[hs] {
+					seenHeadsigns[hs] = true
+					headsigns = append(headsigns, hs)
+				}
+			} else if sts := stopTimesByTrip[trip.ID]; len(sts) > 0 {
+				lastStopID := sts[len(sts)-1].StopID
+				if !seenFallbackStops[lastStopID] {
+					seenFallbackStops[lastStopID] = true
+					fallbackStopIDs = append(fallbackStopIDs, lastStopID)
+				}
+			}
+		}
+		if len(fallbackStopIDs) > 0 {
+			lastStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, fallbackStopIDs)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+			for _, s := range lastStops {
+				name := s.Name.String
+				if name != "" && !seenHeadsigns[name] {
+					seenHeadsigns[name] = true
+					headsigns = append(headsigns, name)
+				}
+			}
 		}
 
 		var tripIDs []string
@@ -315,9 +361,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }
 
-// buildNoServiceThatDayResponse constructs the spec-compliant 510 NoServiceThatDay response,
-// which includes the entry stub and agency+route references required by the spec.
-func buildNoServiceThatDayResponse(agencyID, routeID string, scheduleDate int64, agencyModel models.AgencyReference, routeModel models.Route, clk clock.Clock) models.ResponseModel {
+// buildNoServiceResponse constructs the empty-schedule response for a route that has
+// no service on the requested date. Per the schedule-for-route Implementation Decisions,
+// the body uses code 200 — the route exists and the request succeeded, the schedule is
+// simply empty — while the text carries the reason ("ServiceDateOutOfRange" or
+// "NoServiceThatDay"). The body includes the route ID, schedule date, empty serviceIds
+// and stopTripGroupings arrays, plus agency and route references.
+func buildNoServiceResponse(agencyID, routeID string, scheduleDate int64, agencyModel models.AgencyReference, routeModel models.Route, text string, clk clock.Clock) models.ResponseModel {
 	refs := models.NewEmptyReferences()
 	refs.Agencies = append(refs.Agencies, agencyModel)
 	refs.Routes = append(refs.Routes, routeModel)
@@ -331,5 +381,5 @@ func buildNoServiceThatDayResponse(agencyID, routeID string, scheduleDate int64,
 		"entry":      entry,
 		"references": *refs,
 	}
-	return models.NewResponse(510, data, "NoServiceThatDay", clk)
+	return models.NewResponse(200, data, text, clk)
 }

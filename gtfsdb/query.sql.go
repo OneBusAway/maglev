@@ -5114,6 +5114,48 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 	return items, nil
 }
 
+const routeHasFutureService = `-- name: RouteHasFutureService :one
+SELECT EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN calendar c ON c.id = t.service_id
+    WHERE t.route_id = ?
+      AND c.end_date > ?
+      AND (c.monday = 1 OR c.tuesday = 1 OR c.wednesday = 1 OR c.thursday = 1
+           OR c.friday = 1 OR c.saturday = 1 OR c.sunday = 1)
+    UNION ALL
+    SELECT 1
+    FROM trips t
+    JOIN calendar_dates cd ON cd.service_id = t.service_id
+    WHERE t.route_id = ?
+      AND cd.exception_type = 1
+      AND cd.date > ?
+) AS has_future_service
+`
+
+type RouteHasFutureServiceParams struct {
+	RouteID   string
+	EndDate   string
+	RouteID_2 string
+	Date      string
+}
+
+// Returns 1 if the given route has at least one trip whose calendar covers a date
+// strictly after the given date (YYYYMMDD), 0 otherwise. Used to distinguish
+// ServiceDateOutOfRange (no future service for this route) from NoServiceThatDay
+// (the route still has service on a later date).
+func (q *Queries) RouteHasFutureService(ctx context.Context, arg RouteHasFutureServiceParams) (int64, error) {
+	row := q.queryRow(ctx, q.routeHasFutureServiceStmt, routeHasFutureService,
+		arg.RouteID,
+		arg.EndDate,
+		arg.RouteID_2,
+		arg.Date,
+	)
+	var has_future_service int64
+	err := row.Scan(&has_future_service)
+	return has_future_service, err
+}
+
 const updateFeedExpiresAt = `-- name: UpdateFeedExpiresAt :exec
 INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
 VALUES (1, '', 0, '', ?)
