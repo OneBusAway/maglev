@@ -558,31 +558,42 @@ func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, min
 
 // calculateBlockTripSequence calculates the index of a trip within its block's ordered trip sequence
 // for trips that are active on the given service date.
-// Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
+// Returns 0 when the sequence is unavailable, for callers that treat 0 as "no data".
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
+	seq, ok := api.blockTripSequence(ctx, tripID, serviceDate)
+	if !ok {
+		return 0
+	}
+	return seq
+}
+
+// blockTripSequence returns the zero-based index of a trip within its block's
+// ordered sequence for the given service date, and whether it was resolved.
+// Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
+func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) (int, bool) {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get trip",
+		slog.Warn("blockTripSequence: failed to get trip",
 			slog.String("trip_id", tripID),
 			slog.String("error", err.Error()))
-		return 0
+		return 0, false
 	}
 
 	if !trip.BlockID.Valid {
-		return 0
+		return 0, false
 	}
 
 	formattedDate := serviceDate.Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get active service IDs",
+		slog.Warn("blockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),
 			slog.String("date", formattedDate),
 			slog.String("error", err.Error()))
-		return 0
+		return 0, false
 	}
 	if len(activeServiceIDs) == 0 {
-		return 0
+		return 0, false
 	}
 
 	// Use optimized query with ROW_NUMBER() window function
@@ -593,15 +604,15 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	})
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("calculateBlockTripSequence: failed to get block trip sequence",
+			slog.Warn("blockTripSequence: failed to get block trip sequence",
 				slog.String("trip_id", tripID),
 				slog.String("block_id", trip.BlockID.String),
 				slog.String("error", err.Error()))
 		}
-		return 0
+		return 0, false
 	}
 
-	return int(seq)
+	return int(seq), true
 }
 
 // calculatePreciseDistanceAlongTripWithCoords calculates the distance along a trip's shape to a stop
