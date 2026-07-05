@@ -22,6 +22,8 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		jsonStr := string(data)
 
 		assert.Contains(t, jsonStr, `"vehicleId"`)
+		assert.Contains(t, jsonStr, `"lastUpdateTime"`)
+		assert.Contains(t, jsonStr, `"lastLocationUpdateTime"`)
 		assert.Contains(t, jsonStr, `"location"`)
 		assert.Contains(t, jsonStr, `"tripId"`)
 		assert.Contains(t, jsonStr, `"tripStatus"`)
@@ -37,8 +39,8 @@ func TestVehicleStatus_JSONFields(t *testing.T) {
 		assert.NotContains(t, top, "phase")
 		assert.NotContains(t, top, "status")
 
-		assert.NotContains(t, top, "lastUpdateTime", "lastUpdateTime must be absent when zero")
-		assert.NotContains(t, top, "lastLocationUpdateTime", "lastLocationUpdateTime must be absent when zero")
+		assert.Equal(t, float64(0), top["lastUpdateTime"], "lastUpdateTime must serialize as 0 when not set")
+		assert.Equal(t, float64(0), top["lastLocationUpdateTime"], "lastLocationUpdateTime must serialize as 0 when not set")
 		assert.Nil(t, top["location"], "location must serialize as JSON null when not set")
 		assert.Nil(t, top["tripStatus"], "tripStatus must serialize as JSON null when not set")
 		assert.Equal(t, "", top["tripId"], "tripId must serialize as empty string when not set")

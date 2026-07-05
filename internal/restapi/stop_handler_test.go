@@ -50,6 +50,8 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	require.Len(t, model.Data.References.Routes, len(testdata.Stop4062.RouteIDs),
 		"references.routes count should match entry.routeIds count")
 	assert.Equal(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Trips, "trips should always be empty for this endpoint")
+	assert.Empty(t, model.Data.References.StopTimes, "stopTimes should always be empty for this endpoint")
 	assert.Empty(t, model.Data.References.Situations, "situations should always be empty for this endpoint")
 }
 
