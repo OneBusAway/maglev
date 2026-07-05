@@ -573,9 +573,11 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) (int, bool) {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		slog.Warn("blockTripSequence: failed to get trip",
-			slog.String("trip_id", tripID),
-			slog.String("error", err.Error()))
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("blockTripSequence: failed to get trip",
+				slog.String("trip_id", tripID),
+				slog.String("error", err.Error()))
+		}
 		return 0, false
 	}
 
