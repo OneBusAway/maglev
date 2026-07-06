@@ -96,11 +96,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			VehicleID: vid,
 		}
 
-		// Set timestamps
+		// Update times default to 0 when no real update exists.
 		currentTime := models.NewModelTime(referenceTime)
-		vehicleStatus.LastLocationUpdateTime = currentTime
-		vehicleStatus.LastUpdateTime = currentTime
-
 		if vehicle.Timestamp != nil {
 			ts := models.NewModelTime(*vehicle.Timestamp)
 			vehicleStatus.LastLocationUpdateTime = ts
@@ -147,10 +144,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				tripStatus.Orientation = float64(obaOrientation)
 			}
 
-			// Set timestamps on trip status to match vehicle timestamps
-			tripStatus.LastUpdateTime = currentTime
-			tripStatus.LastLocationUpdateTime = currentTime
-
+			// Trip status update times default to 0 when no real update exists.
 			if vehicle.Timestamp != nil {
 				ts := models.NewModelTime(*vehicle.Timestamp)
 				tripStatus.LastUpdateTime = ts
@@ -215,8 +209,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
 			defaultTripStatus.Phase = "scheduled"
-			defaultTripStatus.LastUpdateTime = currentTime
-			defaultTripStatus.LastLocationUpdateTime = currentTime
 			vehicleStatus.TripStatus = defaultTripStatus
 		}
 
