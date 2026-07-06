@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -305,6 +306,16 @@ func rawEntryByVehicleID(t testing.TB, list []map[string]json.RawMessage, vehicl
 	return nil
 }
 
+// findVehicleInList returns the entry with the given vehicleId, or nil.
+func findVehicleInList(list []models.VehicleStatus, vehicleID string) *models.VehicleStatus {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
 // TestVehiclesForAgencyHandler_UpdateTimesZeroWhenNoUpdate verifies that
 // lastUpdateTime / lastLocationUpdateTime are emitted as 0 when the vehicle has
 // no update time, on both the outer entry and tripStatus.
@@ -361,6 +372,64 @@ func TestVehiclesForAgencyHandler_UpdateTimesPresentWhenSet(t *testing.T) {
 	require.True(t, hasTSLocUpdate, "tripStatus.lastLocationUpdateTime must be present when set")
 	assert.NotEqual(t, "0", string(tsUpdateRaw), "tripStatus.lastUpdateTime must be a real timestamp, not 0")
 	assert.NotEqual(t, "0", string(tsLocRaw), "tripStatus.lastLocationUpdateTime must be a real timestamp, not 0")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterEpochMs verifies the `time` parameter sets the reference time,
+// asserting against tripStatus.serviceDate as it deterministically reflects this time.
+func TestVehiclesForAgencyHandler_TimeParameterEpochMs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_time_epoch_test"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	refTime := time.Date(2024, 3, 15, 12, 0, 0, 0, time.UTC)
+	params := url.Values{"time": {strconv.FormatInt(refTime.UnixMilli(), 10)}}
+
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+	assert.Equal(t, refTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must reflect the supplied time parameter")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock verifies that when no
+// `time` parameter is supplied, the server's clock is used as the reference time.
+func TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock(t *testing.T) {
+	mockTime := time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(mockTime))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_time_absent_test"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+	assert.Equal(t, mockTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must fall back to the server clock when time is absent")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterInvalid verifies that an unparseable
+// `time` parameter yields an HTTP 400 validation error.
+func TestVehiclesForAgencyHandler_TimeParameterInvalid(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	params := url.Values{"time": {"notatime"}}
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
 // TestVehiclesForAgencyHandler_IncludeReferencesFalse verifies that
