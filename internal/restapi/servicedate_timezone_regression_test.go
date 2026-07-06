@@ -228,6 +228,10 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 
 			setupTzTestGTFS(t, api.GtfsManager.GtfsDB.Queries, td, days)
 
+			// Add a vehicle for the trip so BuildTripStatus returns a tracked
+			// status (extension 4e omits the status key when no tracking exists).
+			api.GtfsManager.MockAddVehicle(tc.prefix+"V", td.TripID2, td.RouteID)
+
 			combinedTrip := utils.FormCombinedID(td.AgencyID, td.TripID2)
 			endpoint := fmt.Sprintf(
 				"/api/where/trip-details/%s.json?key=TEST&serviceDate=%d&includeStatus=true",
@@ -239,6 +243,7 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 
 			data := model.Data.(map[string]any)
 			entry := data["entry"].(map[string]any)
+			require.Contains(t, entry, "status", "status should be present when a vehicle is tracked")
 			status := entry["status"].(map[string]any)
 
 			blockTripSeq := int(status["blockTripSequence"].(float64))
