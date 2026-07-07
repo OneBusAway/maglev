@@ -275,6 +275,17 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
 }
 
+// vehiclesForAgencyContainsID reports whether the response list contains a vehicle
+// with the given ID.
+func vehiclesForAgencyContainsID(list []models.VehicleStatus, vehicleID string) bool {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return true
+		}
+	}
+	return false
+}
+
 // fetchVehiclesForAgencyRawList returns the data.list entries as raw JSON maps so
 // tests can assert field presence, not just decoded zero values.
 func fetchVehiclesForAgencyRawList(t testing.TB, api *RestAPI, endpoint string) []map[string]json.RawMessage {
@@ -314,6 +325,96 @@ func findVehicleInList(list []models.VehicleStatus, vehicleID string) *models.Ve
 		}
 	}
 	return nil
+}
+
+// ageFilterClock is a fixed reference time used by the ageInSeconds tests so the
+// fresh/stale vehicle timestamps are deterministic relative to api.Clock.Now().
+var ageFilterClock = time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+
+// TestVehiclesForAgencyHandler_AgeInSecondsFiltersStale verifies that a positive
+// ageInSeconds excludes vehicles whose last update is older than the cutoff while
+// retaining fresh ones.
+func TestVehiclesForAgencyHandler_AgeInSecondsFiltersStale(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	freshTS := ageFilterClock.Add(-30 * time.Second)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_fresh", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &freshTS,
+	})
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"60"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_fresh"),
+		"vehicle updated within ageInSeconds must be retained")
+	assert.False(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale"),
+		"vehicle older than ageInSeconds must be excluded")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsZeroFiltersStrictly verifies that an
+// explicit ageInSeconds=0 applies a strict 0-second cutoff, excluding stale vehicles.
+func TestVehiclesForAgencyHandler_AgeInSecondsZeroFiltersStrictly(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_zero", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"0"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.False(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_zero"),
+		"ageInSeconds=0 must apply a strict cutoff and exclude stale vehicles")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter verifies that a
+// negative ageInSeconds disables the staleness filter.
+func TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_neg", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"-5"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_neg"),
+		"negative ageInSeconds must disable the filter and return all vehicles")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter verifies that omitting
+// ageInSeconds returns all vehicles regardless of staleness.
+func TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_absent", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_absent"),
+		"absent ageInSeconds must return all vehicles regardless of age")
 }
 
 // TestVehiclesForAgencyHandler_UpdateTimesZeroWhenNoUpdate verifies that
