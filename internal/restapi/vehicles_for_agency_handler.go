@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -29,10 +31,41 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Parse requested reference time for status entries, falling back to server clock if absent.
+	referenceTime := api.Clock.Now()
+	if timeParam := r.URL.Query().Get("time"); timeParam != "" {
+		loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		_, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, loc)
+		if !ok {
+			api.validationErrorResponse(w, r, fieldErrors)
+			return
+		}
+		referenceTime = parsedTime
+	}
+
 	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
+	}
+
+	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
+	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
+	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
+		if ageInSeconds, err := strconv.ParseInt(val, 10, 64); err == nil && ageInSeconds >= 0 && ageInSeconds <= maxAgeInSeconds {
+			cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
+			filtered := vehiclesForAgency[:0]
+			for _, vehicle := range vehiclesForAgency {
+				if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
+					filtered = append(filtered, vehicle)
+				}
+			}
+			vehiclesForAgency = filtered
+		}
 	}
 
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
@@ -77,11 +110,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			VehicleID: vid,
 		}
 
-		// Set timestamps
-		currentTime := models.NewModelTime(api.Clock.Now())
-		vehicleStatus.LastLocationUpdateTime = currentTime
-		vehicleStatus.LastUpdateTime = currentTime
-
+		// Update times default to 0 when no real update exists.
+		currentTime := models.NewModelTime(referenceTime)
 		if vehicle.Timestamp != nil {
 			ts := models.NewModelTime(*vehicle.Timestamp)
 			vehicleStatus.LastLocationUpdateTime = ts
@@ -128,10 +158,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				tripStatus.Orientation = float64(obaOrientation)
 			}
 
-			// Set timestamps on trip status to match vehicle timestamps
-			tripStatus.LastUpdateTime = currentTime
-			tripStatus.LastLocationUpdateTime = currentTime
-
+			// Trip status update times default to 0 when no real update exists.
 			if vehicle.Timestamp != nil {
 				ts := models.NewModelTime(*vehicle.Timestamp)
 				tripStatus.LastUpdateTime = ts
@@ -196,8 +223,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
 			defaultTripStatus.Phase = "scheduled"
-			defaultTripStatus.LastUpdateTime = currentTime
-			defaultTripStatus.LastLocationUpdateTime = currentTime
 			vehicleStatus.TripStatus = defaultTripStatus
 		}
 

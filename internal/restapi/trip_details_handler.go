@@ -229,6 +229,12 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 				"error", statusErr.Error())
 			status = nil
 		}
+
+		// Extension 4e: Explicitly nil out the status if there is no actual tracking record.
+		// BuildTripStatus returns a default placeholder when tracking is absent, so we nil it to trigger JSON omitempty.
+		if status != nil && status.IsUntracked() {
+			status = nil
+		}
 	}
 
 	if params.IncludeSchedule {

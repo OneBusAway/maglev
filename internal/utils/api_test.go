@@ -530,6 +530,34 @@ func TestParseTimeParameter(t *testing.T) {
 				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
 			},
 		},
+		{
+			name:         "Valid yyyy-MM-dd_HH-mm-ss format",
+			timeParam:    "2024-03-15_12-00-00",
+			expectedDate: "20240315",
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				assert.Equal(t, 2024, parsedTime.Year())
+				assert.Equal(t, time.March, parsedTime.Month())
+				assert.Equal(t, 15, parsedTime.Day())
+				assert.Equal(t, 12, parsedTime.Hour())
+				assert.Equal(t, 0, parsedTime.Minute())
+				assert.Equal(t, 0, parsedTime.Second())
+			},
+		},
+		{
+			name:         "Valid yyyy-MM-dd_HH-mm-ss format with non-zero time",
+			timeParam:    "2024-06-20_14-30-45",
+			expectedDate: "20240620",
+			expectError:  false,
+			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
+				assert.Equal(t, 2024, parsedTime.Year())
+				assert.Equal(t, time.June, parsedTime.Month())
+				assert.Equal(t, 20, parsedTime.Day())
+				assert.Equal(t, 14, parsedTime.Hour())
+				assert.Equal(t, 30, parsedTime.Minute())
+				assert.Equal(t, 45, parsedTime.Second())
+			},
+		},
 	}
 
 	for _, tt := range tests {
