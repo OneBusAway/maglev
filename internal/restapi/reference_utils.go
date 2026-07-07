@@ -362,7 +362,7 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 		Name:               stop.Name.String,
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
-		Code:               stop.Code.String,
+		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
 		Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 		LocationType:       int(stop.LocationType.Int64),
 		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
