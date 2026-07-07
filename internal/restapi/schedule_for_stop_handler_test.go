@@ -650,6 +650,15 @@ func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
 			schedules, ok := entry["stopRouteSchedules"].([]any)
 			require.True(ok)
 
+			// Route schedules must be sorted alphabetically by routeId
+			for i := 0; i < len(schedules)-1; i++ {
+				currSched := schedules[i].(map[string]any)
+				nextSched := schedules[i+1].(map[string]any)
+				currRouteID, _ := currSched["routeId"].(string)
+				nextRouteID, _ := nextSched["routeId"].(string)
+				assert.LessOrEqual(t, currRouteID, nextRouteID, "Route schedules must be sorted alphabetically by routeId")
+			}
+
 			for _, schedAny := range schedules {
 				sched := schedAny.(map[string]any)
 				dirSchedules, ok := sched["stopRouteDirectionSchedules"].([]any)

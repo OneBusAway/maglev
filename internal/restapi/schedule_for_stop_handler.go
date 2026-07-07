@@ -346,6 +346,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		routeSchedules = append(routeSchedules, routeSchedule)
 	}
 
+	// Sort route schedules by route ID for deterministic ordering
+	slices.SortStableFunc(routeSchedules, func(a, b models.StopRouteSchedule) int {
+		return cmp.Compare(a.RouteID, b.RouteID)
+	})
+
 	// Create the entry
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	entry := models.NewScheduleForStopEntry(combinedStopID, responseDate, routeSchedules)
