@@ -303,10 +303,9 @@ func TestValidateRadius(t *testing.T) {
 			errMsg:  "radius must be non-negative",
 		},
 		{
-			name:    "radius too large",
-			radius:  10001.0,
-			wantErr: true,
-			errMsg:  "radius too large (max 10000 meters)",
+			name:    "large radius allowed (clamped downstream)",
+			radius:  25000.0,
+			wantErr: false,
 		},
 	}
 
@@ -352,10 +351,9 @@ func TestValidateSpan(t *testing.T) {
 			errMsg:  "span must be non-negative",
 		},
 		{
-			name:    "span too large",
-			span:    5.1,
-			wantErr: true,
-			errMsg:  "span too large (max 5.0 degrees)",
+			name:    "large span allowed (clamped downstream)",
+			span:    10.0,
+			wantErr: false,
 		},
 	}
 

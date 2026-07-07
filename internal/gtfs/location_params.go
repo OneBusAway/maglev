@@ -17,12 +17,23 @@ type LocationParams struct {
 // If LatSpan and LonSpan are both positive, they define the box; otherwise the
 // box is computed from Radius (defaulting to DefaultSearchRadiusInMeters).
 func BoundsFromParams(loc *LocationParams) utils.CoordinateBounds {
-	if loc.LatSpan > 0 && loc.LonSpan > 0 {
-		return utils.CalculateBoundsFromSpan(loc.Lat, loc.Lon, loc.LatSpan/2, loc.LonSpan/2)
+	latSpan := loc.LatSpan
+	lonSpan := loc.LonSpan
+	if latSpan > models.MaxSearchSpanInDegrees {
+		latSpan = models.MaxSearchSpanInDegrees
+	}
+	if lonSpan > models.MaxSearchSpanInDegrees {
+		lonSpan = models.MaxSearchSpanInDegrees
+	}
+	if latSpan > 0 && lonSpan > 0 {
+		return utils.CalculateBoundsFromSpan(loc.Lat, loc.Lon, latSpan/2, lonSpan/2)
 	}
 	radius := loc.Radius
 	if radius == 0 {
 		radius = models.DefaultSearchRadiusInMeters
+	}
+	if radius > models.MaxSearchRadiusInMeters {
+		radius = models.MaxSearchRadiusInMeters
 	}
 	return utils.CalculateBounds(loc.Lat, loc.Lon, radius)
 }
