@@ -68,9 +68,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	vehiclesForAgency, limitExceeded := utils.PaginateSlice(vehiclesForAgency, offset, limit)
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
 
 	// Collect unique route IDs and batch-fetch routes
@@ -257,7 +254,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
 	}
 
-	// Agency is served by this instance, so outOfRange is always false.
-	response := models.NewListResponseWithRange(vehiclesList, *references, false, api.Clock, limitExceeded)
+	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
+	response := models.NewListResponse(vehiclesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

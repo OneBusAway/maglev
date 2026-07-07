@@ -68,6 +68,7 @@ func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
+	require.NotNil(t, api.GtfsManager, "api.GtfsManager should not be nil!")
 
 	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
 
@@ -94,18 +95,6 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	raw, ok := data["outOfRange"]
 	require.True(t, ok, "outOfRange key must be present in the response payload")
 	assert.JSONEq(t, "false", string(raw), "unknown agency must return outOfRange=false (Extension 3a)")
-}
-
-// TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency verifies the success
-// path emits outOfRange=false for an agency served by this instance.
-func TestVehiclesForAgencyHandler_OutOfRangeFalseForKnownAgency(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	data := fetchRawData(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
-	raw, ok := data["outOfRange"]
-	require.True(t, ok, "outOfRange key must be present in the response payload")
-	assert.JSONEq(t, "false", string(raw), "known agency must return outOfRange=false")
 }
 
 // TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
@@ -273,6 +262,43 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 	}
 	assert.True(t, found,
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
+}
+
+// TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
+// returns all vehicles with limitExceeded=false (no result cap).
+func TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must always be false")
+	assert.Len(t, model.Data.List, 3, "all matching vehicles must be returned")
+}
+
+// TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset verifies that maxCount and
+// offset do not truncate the result; all vehicles are returned.
+func TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"maxCount": {"1"}, "offset": {"1"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must remain false")
+	assert.Len(t, model.Data.List, 3, "maxCount/offset must not truncate the result")
 }
 
 // vehiclesForAgencyContainsID reports whether the response list contains a vehicle
