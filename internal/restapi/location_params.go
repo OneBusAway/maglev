@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -32,15 +31,9 @@ func (api *RestAPI) parseLocationParams(r *http.Request, fieldErrors map[string]
 		return nil, fieldErrors
 	}
 
-	if radius > models.MaxSearchRadiusInMeters {
-		radius = models.MaxSearchRadiusInMeters
-	}
-	if latSpan > models.MaxSearchSpanInDegrees {
-		latSpan = models.MaxSearchSpanInDegrees
-	}
-	if lonSpan > models.MaxSearchSpanInDegrees {
-		lonSpan = models.MaxSearchSpanInDegrees
-	}
+	radius = utils.ClampRadius(radius)
+	latSpan = utils.ClampSpan(latSpan)
+	lonSpan = utils.ClampSpan(lonSpan)
 
 	return &gtfs.LocationParams{
 		Lat:     lat,
