@@ -338,7 +338,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		// Sort direction groups alphabetically by headsign
-		slices.SortFunc(directionSchedules, func(a, b models.StopRouteDirectionSchedule) int {
+		slices.SortStableFunc(directionSchedules, func(a, b models.StopRouteDirectionSchedule) int {
 			return cmp.Compare(a.TripHeadsign, b.TripHeadsign)
 		})
 
