@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/models"
 )
 
 const (
@@ -48,7 +49,7 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			url := tripsForLocationURL(tt.latSpan, tt.lonSpan, "includeSchedule=true")
 
-			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+			resp, model := callAPIHandler[models.TripsForLocationResponse](t, api, url)
 
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.GreaterOrEqual(t, len(model.Data.List), tt.minExpected)
@@ -80,7 +81,7 @@ func TestTripsForLocationHandler_ReferencesAreConsistent(t *testing.T) {
 
 	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true")
 
-	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+	resp, model := callAPIHandler[models.TripsForLocationResponse](t, api, url)
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	refs := model.Data.References
@@ -132,7 +133,7 @@ func TestTripsForLocationHandler_ScheduleInclusion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			url := tripsForLocationURL(0.1, 0.1, fmt.Sprintf("includeSchedule=%v", tt.includeSchedule))
 
-			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+			resp, model := callAPIHandler[models.TripsForLocationResponse](t, api, url)
 
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			for _, entry := range model.Data.List {
@@ -166,7 +167,7 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			url := tripsForLocationURL(0.2, 0.2, fmt.Sprintf("includeStatus=%v", tt.includeStatus))
 
-			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+			resp, model := callAPIHandler[models.TripsForLocationResponse](t, api, url)
 
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			require.NotEmpty(t, model.Data.List, "expected at least one trip in the response to verify status behavior")
@@ -199,7 +200,7 @@ func TestTripsForLocationHandler_MissingParameters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, model := callAPIHandler[TripsForLocationResponse](t, api, tt.url)
+			resp, model := callAPIHandler[models.TripsForLocationResponse](t, api, tt.url)
 
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 			assert.Equal(t, http.StatusBadRequest, model.Code)
