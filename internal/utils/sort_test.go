@@ -43,7 +43,7 @@ func TestSortRoutesByName(t *testing.T) {
 		},
 	}
 
-	utils.SortRoutesByName(routes)
+	utils.SortRoutesByName(routes, utils.RouteRowSortKey)
 
 	assert.Equal(t, "1", routes[0].ID, "Expected ID 1: A, agency1")
 	assert.Equal(t, "3", routes[1].ID, "Expected ID 3: A, agency2")
@@ -87,7 +87,7 @@ func TestSortDBRoutesByName(t *testing.T) {
 		},
 	}
 
-	utils.SortDBRoutesByName(routes)
+	utils.SortRoutesByName(routes, utils.DBRouteSortKey)
 
 	assert.Equal(t, "1", routes[0].ID, "Expected ID 1: A, agency1")
 	assert.Equal(t, "3", routes[1].ID, "Expected ID 3: A, agency2")
@@ -105,7 +105,7 @@ func TestSortDBRoutesByNaturalOrder(t *testing.T) {
 		{ID: "b", ShortName: sql.NullString{String: "9", Valid: true}},
 	}
 
-	utils.SortDBRoutesByName(routes)
+	utils.SortRoutesByName(routes, utils.DBRouteSortKey)
 
 	assert.Equal(t, "a", routes[0].ID, "Expected 2 first")
 	assert.Equal(t, "b", routes[1].ID, "Expected 9 second")
