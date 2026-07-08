@@ -97,6 +97,7 @@ func TestTripsForLocationDataJSON(t *testing.T) {
 
 	assert.Equal(t, data.LimitExceeded, unmarshaledData.LimitExceeded)
 	assert.Equal(t, data.OutOfRange, unmarshaledData.OutOfRange)
+	assert.Equal(t, data.References, unmarshaledData.References)
 	assert.Equal(t, 2, len(unmarshaledData.List))
 	assert.Equal(t, entry1.TripId, unmarshaledData.List[0].TripId)
 	assert.Equal(t, entry2.TripId, unmarshaledData.List[1].TripId)
