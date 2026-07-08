@@ -229,6 +229,7 @@ func TestTripsForLocationHandler_BoundsClamping(t *testing.T) {
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.Equal(t, http.StatusOK, model.Code)
 			assert.False(t, model.Data.LimitExceeded)
+			assert.NotEmpty(t, model.Data.List, "clamped search should return trip results in the test area")
 		})
 	}
 }
