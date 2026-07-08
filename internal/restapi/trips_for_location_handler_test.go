@@ -3,6 +3,7 @@ package restapi
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -85,6 +86,7 @@ func TestTripsForLocationHandler_ReferencesAreConsistent(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	refs := model.Data.References
 	require.NotEmpty(t, refs.Stops, "expected stops in references")
+	require.NotEmpty(t, refs.Trips, "expected trips in references because includeTrip defaults to true when omitted")
 
 	routeIDs := make(map[string]bool, len(refs.Routes))
 	for _, r := range refs.Routes {
@@ -111,6 +113,12 @@ func TestTripsForLocationHandler_ReferencesAreConsistent(t *testing.T) {
 	for _, route := range refs.Routes {
 		assert.True(t, agencyIDs[route.AgencyID],
 			"agency %q referenced by route %q must appear in references.agencies", route.AgencyID, route.ID)
+	}
+
+	for _, trip := range refs.Trips {
+		assert.NotEmpty(t, trip.ID, "trip with empty ID found in references")
+		assert.Contains(t, trip.ID, "_", "trip ID %q should be in {agencyID}_{rawID} format", trip.ID)
+		assert.True(t, routeIDs[trip.RouteID], "route %q referenced by trip %q must appear in references.routes", trip.RouteID, trip.ID)
 	}
 }
 
@@ -203,6 +211,86 @@ func TestTripsForLocationHandler_MissingParameters(t *testing.T) {
 
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 			assert.Equal(t, http.StatusBadRequest, model.Code)
+		})
+	}
+}
+
+func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name                string
+		queryString         string
+		expectedIncludeTrip bool
+	}{
+		{
+			name:                "includeTrip omitted defaults to true",
+			queryString:         "lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1",
+			expectedIncludeTrip: true,
+		},
+		{
+			name:                "includeTrip=false returns false",
+			queryString:         "lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1&includeTrip=false",
+			expectedIncludeTrip: false,
+		},
+		{
+			name:                "includeTrip=true returns true",
+			queryString:         "lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1&includeTrip=true",
+			expectedIncludeTrip: true,
+		},
+		{
+			name:                "includeTrip=invalid_value safely defaults to false",
+			queryString:         "lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1&includeTrip=invalid_value",
+			expectedIncludeTrip: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/where/trips-for-location.json?"+tt.queryString, nil)
+
+			_, includeTrip, _, _, _, _, fieldErrors, err := api.parseAndValidateRequest(req)
+
+			assert.Empty(t, fieldErrors)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedIncludeTrip, includeTrip)
+		})
+	}
+}
+
+func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	tests := []struct {
+		name         string
+		includeParam string
+		expected     bool
+	}{
+		{name: "With Trip (Default/Omitted)", includeParam: "", expected: true},
+		{name: "With Trip (Explicit true)", includeParam: "includeTrip=true", expected: true},
+		{name: "Without Trip (Explicit false)", includeParam: "includeTrip=false", expected: false},
+		{name: "Without Trip (Invalid value)", includeParam: "includeTrip=invalid_value", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true")
+			if tt.includeParam != "" {
+				url += "&" + tt.includeParam
+			}
+
+			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			if tt.expected {
+				assert.NotEmpty(t, model.Data.References.Trips, "trips should be present in references when includeTrip is true or omitted")
+			} else {
+				assert.Empty(t, model.Data.References.Trips, "trips should be omitted when includeTrip=false or invalid")
+			}
 		})
 	}
 }

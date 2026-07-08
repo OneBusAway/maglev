@@ -135,8 +135,14 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 
 	queryParams := r.URL.Query()
 
-	includeTrip = queryParams.Get("includeTrip") == "true"
-	includeSchedule = queryParams.Get("includeSchedule") == "true"
+	if queryParams.Has("includeTrip") {
+		// Ignore parsing errors and default to false if the string is completely invalid
+		includeTrip, _ = strconv.ParseBool(queryParams.Get("includeTrip"))
+	} else {
+		includeTrip = true
+	}
+
+	includeSchedule, _ = strconv.ParseBool(queryParams.Get("includeSchedule"))
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 	if agenciesErr != nil || len(agencies) == 0 {
