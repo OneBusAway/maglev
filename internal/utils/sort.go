@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // RouteSortKey holds the fields used to order routes, decoupling the comparison
@@ -50,10 +51,10 @@ func SortRoutesByName[T any](routes []T, keyFn func(T) RouteSortKey) {
 
 // RouteRowSortKey adapts a GetRoutesForStopRow for SortRoutesByName.
 func RouteRowSortKey(r gtfsdb.GetRoutesForStopRow) RouteSortKey {
-	return RouteSortKey{r.ShortName.String, r.LongName.String, r.AgencyID, r.ID}
+	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
 }
 
 // DBRouteSortKey adapts a gtfsdb.Route for SortRoutesByName.
 func DBRouteSortKey(r gtfsdb.Route) RouteSortKey {
-	return RouteSortKey{r.ShortName.String, r.LongName.String, r.AgencyID, r.ID}
+	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
 }
