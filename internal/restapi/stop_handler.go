@@ -33,7 +33,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sort routes naturally by ShortName
-	utils.SortRoutesByName(routes, utils.RouteRowSortKey)
+	utils.SortRoutesForStopRowsByName(routes)
 
 	combinedRouteIDs := make([]string, len(routes))
 	for i, route := range routes {

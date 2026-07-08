@@ -40,21 +40,26 @@ func compareRouteSortKeys(a, b RouteSortKey) int {
 	return cmp.Compare(a.ID, b.ID)
 }
 
-// SortRoutesByName sorts any slice of route-like values naturally by ShortName
-// (falling back to LongName), then by AgencyID, then by ID. keyFn adapts each
-// element to the fields used for comparison.
-func SortRoutesByName[T any](routes []T, keyFn func(T) RouteSortKey) {
-	slices.SortFunc(routes, func(a, b T) int {
-		return compareRouteSortKeys(keyFn(a), keyFn(b))
+// SortRoutesForStopRowsByName sorts gtfsdb.GetRoutesForStopRow values naturally by
+// ShortName (falling back to LongName), then by AgencyID, then by ID.
+func SortRoutesForStopRowsByName(routes []gtfsdb.GetRoutesForStopRow) {
+	slices.SortFunc(routes, func(a, b gtfsdb.GetRoutesForStopRow) int {
+		return compareRouteSortKeys(routesForStopRowSortKey(a), routesForStopRowSortKey(b))
 	})
 }
 
-// RouteRowSortKey adapts a GetRoutesForStopRow for SortRoutesByName.
-func RouteRowSortKey(r gtfsdb.GetRoutesForStopRow) RouteSortKey {
+// SortRoutesByName sorts gtfsdb.Route values naturally by ShortName
+// (falling back to LongName), then by AgencyID, then by ID.
+func SortRoutesByName(routes []gtfsdb.Route) {
+	slices.SortFunc(routes, func(a, b gtfsdb.Route) int {
+		return compareRouteSortKeys(routeSortKey(a), routeSortKey(b))
+	})
+}
+
+func routesForStopRowSortKey(r gtfsdb.GetRoutesForStopRow) RouteSortKey {
 	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
 }
 
-// DBRouteSortKey adapts a gtfsdb.Route for SortRoutesByName.
-func DBRouteSortKey(r gtfsdb.Route) RouteSortKey {
+func routeSortKey(r gtfsdb.Route) RouteSortKey {
 	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
 }

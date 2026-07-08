@@ -347,7 +347,7 @@ func groupRoutesByStop(agencyID string, allRoutes []gtfsdb.GetRoutesForStopsRow)
 func (api *RestAPI) combinedRouteIDsForStop(agencyID string, routesForStop []gtfsdb.Route) []string {
 	// Sort naturally by ShortName (falling back to LongName, then AgencyID, then ID) so the
 	// route IDs are returned in a stable, human-friendly order.
-	utils.SortRoutesByName(routesForStop, utils.DBRouteSortKey)
+	utils.SortRoutesByName(routesForStop)
 	combinedRouteIDs := make([]string, len(routesForStop))
 	for i, rt := range routesForStop {
 		combinedRouteIDs[i] = utils.FormCombinedID(agencyID, rt.ID)

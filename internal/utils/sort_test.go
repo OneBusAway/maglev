@@ -9,7 +9,7 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
-func TestSortRoutesByName(t *testing.T) {
+func TestSortRoutesForStopRowsByName(t *testing.T) {
 	routes := []gtfsdb.GetRoutesForStopRow{
 		{
 			ID:        "3",
@@ -43,7 +43,7 @@ func TestSortRoutesByName(t *testing.T) {
 		},
 	}
 
-	utils.SortRoutesByName(routes, utils.RouteRowSortKey)
+	utils.SortRoutesForStopRowsByName(routes)
 
 	assert.Equal(t, "1", routes[0].ID, "Expected ID 1: A, agency1")
 	assert.Equal(t, "3", routes[1].ID, "Expected ID 3: A, agency2")
@@ -53,7 +53,7 @@ func TestSortRoutesByName(t *testing.T) {
 	assert.Equal(t, "6", routes[5].ID, "Expected ID 6: C, agency1, ID 6")
 }
 
-func TestSortDBRoutesByName(t *testing.T) {
+func TestSortRoutesByName(t *testing.T) {
 	routes := []gtfsdb.Route{
 		{
 			ID:        "3",
@@ -87,7 +87,7 @@ func TestSortDBRoutesByName(t *testing.T) {
 		},
 	}
 
-	utils.SortRoutesByName(routes, utils.DBRouteSortKey)
+	utils.SortRoutesByName(routes)
 
 	assert.Equal(t, "1", routes[0].ID, "Expected ID 1: A, agency1")
 	assert.Equal(t, "3", routes[1].ID, "Expected ID 3: A, agency2")
@@ -97,7 +97,7 @@ func TestSortDBRoutesByName(t *testing.T) {
 	assert.Equal(t, "6", routes[5].ID, "Expected ID 6: C, agency1, ID 6")
 }
 
-func TestSortDBRoutesByNaturalOrder(t *testing.T) {
+func TestSortRoutesByNaturalOrder(t *testing.T) {
 	// NaturalCompare should order numeric route names numerically, not lexically.
 	routes := []gtfsdb.Route{
 		{ID: "c", ShortName: sql.NullString{String: "10", Valid: true}},
@@ -105,7 +105,7 @@ func TestSortDBRoutesByNaturalOrder(t *testing.T) {
 		{ID: "b", ShortName: sql.NullString{String: "9", Valid: true}},
 	}
 
-	utils.SortRoutesByName(routes, utils.DBRouteSortKey)
+	utils.SortRoutesByName(routes)
 
 	assert.Equal(t, "a", routes[0].ID, "Expected 2 first")
 	assert.Equal(t, "b", routes[1].ID, "Expected 9 second")
