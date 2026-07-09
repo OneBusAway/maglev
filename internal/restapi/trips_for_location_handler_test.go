@@ -224,6 +224,7 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NotEmpty(t, model.Data.List, "expected at least one trip entry to verify ServiceDate")
 		for _, entry := range model.Data.List {
 			assert.Equal(t, targetMidnight.UnixMilli(), entry.ServiceDate, "entry.ServiceDate should match midnight of the requested time parameter")
 			if entry.Status != nil {
