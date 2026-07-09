@@ -206,3 +206,37 @@ func TestTripsForLocationHandler_MissingParameters(t *testing.T) {
 		})
 	}
 }
+
+func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	t.Run("Valid Time Parameter", func(t *testing.T) {
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+
+		targetTime := time.Date(2025, 6, 15, 14, 30, 0, 0, loc)
+		targetMidnight := time.Date(targetTime.Year(), targetTime.Month(), targetTime.Day(), 0, 0, 0, 0, loc)
+		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("includeStatus=true&time=%d", targetTime.UnixMilli()))
+
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		for _, entry := range model.Data.List {
+			assert.Equal(t, targetMidnight.UnixMilli(), entry.ServiceDate, "entry.ServiceDate should match midnight of the requested time parameter")
+			if entry.Status != nil {
+				assert.Equal(t, targetMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli(), "entry.Status.ServiceDate should match midnight of the requested time parameter")
+			}
+		}
+	})
+
+	t.Run("Invalid Time Parameter", func(t *testing.T) {
+		url := tripsForLocationURL(1.0, 1.0, "time=invalid-time-format")
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+	})
+}
