@@ -707,6 +707,7 @@ func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
 func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 	startOfDay := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
 	agencyID := "1"
+	rowCtx := scheduleRowContext{agencyID: agencyID, startOfDay: startOfDay}
 
 	makeRow := func(tripID, routeID string, directionID sql.NullInt64, headsign string) gtfsdb.GetScheduleForStopOnDateRow {
 		return gtfsdb.GetScheduleForStopOnDateRow{
@@ -727,7 +728,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		routeGroups, ok := schedules["1_10"]
@@ -747,7 +748,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-b", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		schedules, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		schedules, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1, "expected a single direction bucket")
@@ -760,7 +761,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Valid: false}, "Downtown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1)
@@ -775,7 +776,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in-1", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		_, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		_, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
@@ -791,7 +792,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		_, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, agencyID, startOfDay, nil)
+		_, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
