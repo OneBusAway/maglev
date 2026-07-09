@@ -169,7 +169,52 @@ func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, model.Data.References.Trips)
+
+	// Verify includeTrip=false omits the main trip but keeps related block and active trips.
+	for _, refTrip := range model.Data.References.Trips {
+		assert.NotEqual(t, tripID, refTrip.ID,
+			"main trip should not be included in references when includeTrip=false")
+	}
+}
+
+func TestTripDetailsHandlerIncludeTripFalseKeepsBlockTrips(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	_, withTrip := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=true&includeSchedule=true")
+
+	resp, withoutTrip := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false&includeSchedule=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Collect block trip IDs (excluding the main trip) from the includeTrip=true response.
+	expectedBlockTrips := map[string]bool{}
+	for _, refTrip := range withTrip.Data.References.Trips {
+		if refTrip.ID != tripID {
+			expectedBlockTrips[refTrip.ID] = true
+		}
+	}
+
+	assert.NotEmpty(t, expectedBlockTrips,
+		"test fixture should include preceding/following trips to meaningfully test this behavior")
+
+	gotTrips := map[string]bool{}
+	for _, refTrip := range withoutTrip.Data.References.Trips {
+		gotTrips[refTrip.ID] = true
+		assert.NotEqual(t, tripID, refTrip.ID,
+			"main trip should be excluded when includeTrip=false")
+	}
+
+	for blockTripID := range expectedBlockTrips {
+		assert.True(t, gotTrips[blockTripID],
+			"block trip %s should still be referenced when includeTrip=false", blockTripID)
+	}
 }
 
 func TestTripDetailsHandlerWithIncludeSchedule(t *testing.T) {
@@ -201,6 +246,36 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, model.Data.Entry.Status)
+}
+
+// TestTripDetailsHandlerStatusOmittedWhenNoTracking verifies Extension 4e:
+// The status key must be absent entirely when there is no tracking record, even if includeStatus=true.
+func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	// No vehicle, no trip updates — purely scheduled, no tracking record.
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Nil(t, model.Data.Entry.Status,
+		"status must be absent when the block has no current tracking record (extension 4e)")
+
+	// Verify at the raw JSON level that "status" key is truly absent, not just null.
+	// assert.Nil passes for both absent and null after unmarshal; the spec requires absence.
+	_, rawModel := callAPIHandler[map[string]any](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+	data := rawModel["data"].(map[string]any)
+	entry := data["entry"].(map[string]any)
+	_, hasStatus := entry["status"]
+	assert.False(t, hasStatus,
+		"status key must not be present in JSON (not even as null) per extension 4e")
 }
 
 func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {

@@ -2,12 +2,14 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -33,6 +35,24 @@ func vehiclesForAgencyURL(agencyID string, params ...url.Values) string {
 	return "/api/where/vehicles-for-agency/" + agencyID + ".json?" + q.Encode()
 }
 
+// fetchRawData returns the response "data" object as raw JSON keys so tests can
+// assert field presence, not just decoded zero values.
+func fetchRawData(t testing.TB, api *RestAPI, endpoint string) map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data
+}
+
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -48,6 +68,7 @@ func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
+	require.NotNil(t, api.GtfsManager, "api.GtfsManager should not be nil!")
 
 	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
 
@@ -69,6 +90,11 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.Empty(t, model.Data.List)
+
+	data := fetchRawData(t, api, vehiclesForAgencyURL("nonexistent"))
+	raw, ok := data["outOfRange"]
+	require.True(t, ok, "outOfRange key must be present in the response payload")
+	assert.JSONEq(t, "false", string(raw), "unknown agency must return outOfRange=false (Extension 3a)")
 }
 
 // TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
@@ -236,6 +262,352 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 	}
 	assert.True(t, found,
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
+}
+
+// TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
+// returns all vehicles with limitExceeded=false (no result cap).
+func TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must always be false")
+	assert.Len(t, model.Data.List, 3, "all matching vehicles must be returned")
+}
+
+// TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset verifies that maxCount and
+// offset do not truncate the result; all vehicles are returned.
+func TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"maxCount": {"1"}, "offset": {"1"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must remain false")
+	assert.Len(t, model.Data.List, 3, "maxCount/offset must not truncate the result")
+}
+
+// vehiclesForAgencyContainsID reports whether the response list contains a vehicle
+// with the given ID.
+func vehiclesForAgencyContainsID(list []models.VehicleStatus, vehicleID string) bool {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return true
+		}
+	}
+	return false
+}
+
+// fetchVehiclesForAgencyRawList returns the data.list entries as raw JSON maps so
+// tests can assert field presence, not just decoded zero values.
+func fetchVehiclesForAgencyRawList(t testing.TB, api *RestAPI, endpoint string) []map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data struct {
+			List []map[string]json.RawMessage `json:"list"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data.List
+}
+
+// rawEntryByVehicleID returns the raw entry whose vehicleId matches, or nil.
+func rawEntryByVehicleID(t testing.TB, list []map[string]json.RawMessage, vehicleID string) map[string]json.RawMessage {
+	t.Helper()
+	for _, entry := range list {
+		if string(entry["vehicleId"]) == `"`+vehicleID+`"` {
+			return entry
+		}
+	}
+	return nil
+}
+
+// findVehicleInList returns the entry with the given vehicleId, or nil.
+func findVehicleInList(list []models.VehicleStatus, vehicleID string) *models.VehicleStatus {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
+// ageFilterClock is a fixed reference time used by the ageInSeconds tests so the
+// fresh/stale vehicle timestamps are deterministic relative to api.Clock.Now().
+var ageFilterClock = time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+
+// TestVehiclesForAgencyHandler_AgeInSecondsFiltersStale verifies that a positive
+// ageInSeconds excludes vehicles whose last update is older than the cutoff while
+// retaining fresh ones.
+func TestVehiclesForAgencyHandler_AgeInSecondsFiltersStale(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	freshTS := ageFilterClock.Add(-30 * time.Second)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_fresh", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &freshTS,
+	})
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"60"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_fresh"),
+		"vehicle updated within ageInSeconds must be retained")
+	assert.False(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale"),
+		"vehicle older than ageInSeconds must be excluded")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsZeroFiltersStrictly verifies that an
+// explicit ageInSeconds=0 applies a strict 0-second cutoff, excluding stale vehicles.
+func TestVehiclesForAgencyHandler_AgeInSecondsZeroFiltersStrictly(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_zero", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"0"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.False(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_zero"),
+		"ageInSeconds=0 must apply a strict cutoff and exclude stale vehicles")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter verifies that a
+// negative ageInSeconds disables the staleness filter.
+func TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_neg", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"-5"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_neg"),
+		"negative ageInSeconds must disable the filter and return all vehicles")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter verifies that omitting
+// ageInSeconds returns all vehicles regardless of staleness.
+func TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_absent", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_absent"),
+		"absent ageInSeconds must return all vehicles regardless of age")
+}
+
+// TestVehiclesForAgencyHandler_UpdateTimesZeroWhenNoUpdate verifies that
+// lastUpdateTime / lastLocationUpdateTime are emitted as 0 when the vehicle has
+// no update time, on both the outer entry and tripStatus.
+func TestVehiclesForAgencyHandler_UpdateTimesZeroWhenNoUpdate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_no_ts", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		NoTimestamp: true,
+	})
+
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, "v_no_ts")
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+
+	assert.Equal(t, "0", string(entry["lastUpdateTime"]), "outer lastUpdateTime must be 0 when no update")
+	assert.Equal(t, "0", string(entry["lastLocationUpdateTime"]), "outer lastLocationUpdateTime must be 0 when no update")
+
+	var tripStatus map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry["tripStatus"], &tripStatus))
+	assert.Equal(t, "0", string(tripStatus["lastUpdateTime"]), "tripStatus.lastUpdateTime must be 0 when no update")
+	assert.Equal(t, "0", string(tripStatus["lastLocationUpdateTime"]), "tripStatus.lastLocationUpdateTime must be 0 when no update")
+}
+
+// TestVehiclesForAgencyHandler_UpdateTimesPresentWhenSet verifies that
+// lastUpdateTime / lastLocationUpdateTime are present (Unix ms) when the vehicle
+// has an update time, on both the outer entry and tripStatus.
+func TestVehiclesForAgencyHandler_UpdateTimesPresentWhenSet(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_with_ts", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, "v_with_ts")
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+
+	updateRaw, hasUpdate := entry["lastUpdateTime"]
+	locRaw, hasLocUpdate := entry["lastLocationUpdateTime"]
+	require.True(t, hasUpdate, "outer lastUpdateTime must be present when set")
+	require.True(t, hasLocUpdate, "outer lastLocationUpdateTime must be present when set")
+	assert.NotEqual(t, "0", string(updateRaw), "lastUpdateTime must be a real timestamp, not 0")
+	assert.NotEqual(t, "0", string(locRaw), "lastLocationUpdateTime must be a real timestamp, not 0")
+
+	var tripStatus map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry["tripStatus"], &tripStatus))
+	tsUpdateRaw, hasTSUpdate := tripStatus["lastUpdateTime"]
+	tsLocRaw, hasTSLocUpdate := tripStatus["lastLocationUpdateTime"]
+	require.True(t, hasTSUpdate, "tripStatus.lastUpdateTime must be present when set")
+	require.True(t, hasTSLocUpdate, "tripStatus.lastLocationUpdateTime must be present when set")
+	assert.NotEqual(t, "0", string(tsUpdateRaw), "tripStatus.lastUpdateTime must be a real timestamp, not 0")
+	assert.NotEqual(t, "0", string(tsLocRaw), "tripStatus.lastLocationUpdateTime must be a real timestamp, not 0")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterEpochMs verifies the `time` parameter sets the reference time,
+// asserting against tripStatus.serviceDate as it deterministically reflects this time.
+func TestVehiclesForAgencyHandler_TimeParameterEpochMs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_time_epoch_test"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	refTime := time.Date(2024, 3, 15, 12, 0, 0, 0, time.UTC)
+	params := url.Values{"time": {strconv.FormatInt(refTime.UnixMilli(), 10)}}
+
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+	assert.Equal(t, refTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must reflect the supplied time parameter")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock verifies that when no
+// `time` parameter is supplied, the server's clock is used as the reference time.
+func TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock(t *testing.T) {
+	mockTime := time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(mockTime))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_time_absent_test"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+	assert.Equal(t, mockTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must fall back to the server clock when time is absent")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterInvalid verifies that an unparseable
+// `time` parameter yields an HTTP 400 validation error.
+func TestVehiclesForAgencyHandler_TimeParameterInvalid(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	params := url.Values{"time": {"notatime"}}
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+// TestVehiclesForAgencyHandler_IncludeReferencesFalse verifies that
+// includeReferences=false empties the references block while keeping the list.
+func TestVehiclesForAgencyHandler_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_refs_false", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"includeReferences": {"false"}}
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "list must still be populated when includeReferences=false")
+
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies, "agencies should be empty when includeReferences=false")
+	assert.Empty(t, refs.Routes, "routes should be empty when includeReferences=false")
+	assert.Empty(t, refs.Trips, "trips should be empty when includeReferences=false")
+	assert.Empty(t, refs.Stops, "stops should be empty when includeReferences=false")
+	assert.Empty(t, refs.Situations, "situations should be empty when includeReferences=false")
+}
+
+// TestVehiclesForAgencyHandler_IncludeReferencesDefault verifies that references
+// are populated when includeReferences is absent or explicitly true.
+func TestVehiclesForAgencyHandler_IncludeReferencesDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		params []url.Values
+	}{
+		{"absent", nil},
+		{"explicit true", []url.Values{{"includeReferences": {"true"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			trip := mustGetTrip(t, api)
+			api.GtfsManager.MockAddVehicleWithOptions("v_refs_default", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+			_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, tc.params...))
+
+			assert.NotEmpty(t, model.Data.References.Agencies,
+				"agencies should be populated when includeReferences is true/absent")
+		})
+	}
 }
 
 // vehiclesRealTimeDataClock is pinned just past the latest timestamp in
