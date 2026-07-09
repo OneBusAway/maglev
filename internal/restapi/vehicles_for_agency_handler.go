@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -24,9 +26,25 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if agency == nil {
-		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]any{}, *models.NewEmptyReferences(), false, api.Clock))
+		// Unknown/untracked agency: empty list, outOfRange=false.
+		api.sendResponse(w, r, models.NewListResponseWithRange([]any{}, *models.NewEmptyReferences(), false, api.Clock, false))
 		return
+	}
+
+	// Parse requested reference time for status entries, falling back to server clock if absent.
+	referenceTime := api.Clock.Now()
+	if timeParam := r.URL.Query().Get("time"); timeParam != "" {
+		loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		_, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, loc)
+		if !ok {
+			api.validationErrorResponse(w, r, fieldErrors)
+			return
+		}
+		referenceTime = parsedTime
 	}
 
 	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
@@ -35,9 +53,21 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	vehiclesForAgency, limitExceeded := utils.PaginateSlice(vehiclesForAgency, offset, limit)
+	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
+	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
+	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
+		if ageInSeconds, err := strconv.ParseInt(val, 10, 64); err == nil && ageInSeconds >= 0 && ageInSeconds <= maxAgeInSeconds {
+			cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
+			filtered := vehiclesForAgency[:0]
+			for _, vehicle := range vehiclesForAgency {
+				if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
+					filtered = append(filtered, vehicle)
+				}
+			}
+			vehiclesForAgency = filtered
+		}
+	}
+
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
 
 	// Collect unique route IDs and batch-fetch routes
@@ -80,11 +110,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			VehicleID: vid,
 		}
 
-		// Set timestamps
-		currentTime := models.NewModelTime(api.Clock.Now())
-		vehicleStatus.LastLocationUpdateTime = currentTime
-		vehicleStatus.LastUpdateTime = currentTime
-
+		// Update times default to 0 when no real update exists.
+		currentTime := models.NewModelTime(referenceTime)
 		if vehicle.Timestamp != nil {
 			ts := models.NewModelTime(*vehicle.Timestamp)
 			vehicleStatus.LastLocationUpdateTime = ts
@@ -131,10 +158,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				tripStatus.Orientation = float64(obaOrientation)
 			}
 
-			// Set timestamps on trip status to match vehicle timestamps
-			tripStatus.LastUpdateTime = currentTime
-			tripStatus.LastLocationUpdateTime = currentTime
-
+			// Trip status update times default to 0 when no real update exists.
 			if vehicle.Timestamp != nil {
 				ts := models.NewModelTime(*vehicle.Timestamp)
 				tripStatus.LastUpdateTime = ts
@@ -212,17 +236,21 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		tripRefList = append(tripRefList, tripRef)
 	}
 
+	// Omit references entirely when includeReferences=false.
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
-	references.Routes = routeRefList
-	references.Trips = tripRefList
+	if ShouldIncludeReferences(r) {
+		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		references.Routes = routeRefList
+		references.Trips = tripRefList
 
-	alerts := deduplicateAlerts(
-		api.collectAlertsForRoutes(routeIDs),
-		api.GtfsManager.GetAlertsByIDs("", "", id),
-	)
-	references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
+		alerts := deduplicateAlerts(
+			api.collectAlertsForRoutes(routeIDs),
+			api.GtfsManager.GetAlertsByIDs("", "", id),
+		)
+		references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
+	}
 
-	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
+	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
+	response := models.NewListResponse(vehiclesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
