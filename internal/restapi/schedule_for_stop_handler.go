@@ -111,17 +111,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	includeReferences := ShouldIncludeReferences(r)
-	references := models.NewEmptyReferences()
-
-	if includeReferences {
-		references, err = api.buildScheduleForStopReferences(ctx, agencyID, agency, stop, scheduleRows, routeIDs)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-	}
-
 	// Extract unique block IDs directly from the scheduled rows
 	uniqueBlockIDsMap := make(map[string]bool)
 	for _, row := range scheduleRows {
@@ -249,6 +238,15 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Create the entry
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	entry := models.NewScheduleForStopEntry(combinedStopID, responseDate, routeSchedules)
+
+	references := models.NewEmptyReferences()
+	if ShouldIncludeReferences(r) {
+		references, err = api.buildScheduleForStopReferences(ctx, agencyID, agency, stop, scheduleRows, routeIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+	}
 
 	// Create and send response
 	response := models.NewEntryResponse(entry, *references, api.Clock)
