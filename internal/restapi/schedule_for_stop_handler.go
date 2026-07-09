@@ -87,7 +87,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	// Natural-sort by short name (falling back to long name, then agency/route ID) so that
 	// stopRouteSchedules can later be emitted in this same order, per spec.
-	utils.SortRoutesByName(routesForStop)
+	utils.SortRoutesForStopRowsByName(routesForStop)
 
 	routeIDs := make([]string, 0, len(routesForStop))
 	for _, rt := range routesForStop {
