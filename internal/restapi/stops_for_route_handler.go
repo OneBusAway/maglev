@@ -262,17 +262,15 @@ func processTripGroups(
 		allStopGroups = append(allStopGroups, stopGroup)
 	}
 
-	if len(allStopGroups) > 0 {
-		slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
-			return cmp.Compare(a.Name.Name, b.Name.Name)
-		})
+	slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
+		return cmp.Compare(a.Name.Name, b.Name.Name)
+	})
 
-		*stopGroupings = append(*stopGroupings, models.StopGrouping{
-			Ordered:    true,
-			StopGroups: allStopGroups,
-			Type:       "direction",
-		})
-	}
+	*stopGroupings = append(*stopGroupings, models.StopGrouping{
+		Ordered:    true,
+		StopGroups: allStopGroups,
+		Type:       "direction",
+	})
 	return nil
 }
 
