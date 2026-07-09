@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strconv"
@@ -114,111 +115,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	references := models.NewEmptyReferences()
 
 	if includeReferences {
-		// Build references maps
-		agencyRefs := make(map[string]models.AgencyReference)
-		routeRefs := make(map[string]models.Route)
-
-		// add the already fetched agency
-		agencyRefs[agencyID] = models.NewAgencyReference(
-			agency.ID,
-			agency.Name,
-			agency.Url,
-			agency.Timezone,
-			agency.Lang.String,
-			agency.Phone.String,
-			agency.Email.String,
-			agency.FareUrl.String,
-			"",    // disclaimer
-			false, // privateService
-		)
-
-		// Pre-process to gather unique IDs for batch fetching
-		uniqueRouteIDsMap := make(map[string]bool)
-		uniqueAgencyIDsMap := make(map[string]bool)
-
-		for _, row := range scheduleRows {
-			uniqueRouteIDsMap[row.RouteID] = true
-			uniqueAgencyIDsMap[row.AgencyID] = true
-		}
-
-		// Batch fetch routes
-		routeIDsToFetch := make([]string, 0, len(uniqueRouteIDsMap))
-		for routeID := range uniqueRouteIDsMap {
-			routeIDsToFetch = append(routeIDsToFetch, routeID)
-		}
-
-		if len(routeIDsToFetch) > 0 {
-			fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDsToFetch)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-
-			for _, route := range fetchedRoutes {
-				combinedRouteID := utils.FormCombinedID(agencyID, route.ID)
-				routeRefs[combinedRouteID] = models.NewRoute(
-					combinedRouteID,
-					route.AgencyID,
-					route.ShortName.String,
-					route.LongName.String,
-					route.Desc.String,
-					models.RouteType(route.Type),
-					route.Url.String,
-					route.Color.String,
-					route.TextColor.String)
-			}
-		}
-
-		agencyIDsToFetch := make([]string, 0, len(uniqueAgencyIDsMap))
-		for agencyID := range uniqueAgencyIDsMap {
-			agencyIDsToFetch = append(agencyIDsToFetch, agencyID)
-		}
-
-		fetchedAgencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDsToFetch)
+		references, err = api.buildScheduleForStopReferences(ctx, agencyID, agency, stop, scheduleRows, routeIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
-		for _, a := range fetchedAgencies {
-			if _, exists := agencyRefs[a.ID]; !exists {
-				agencyRefs[a.ID] = models.NewAgencyReference(
-					a.ID,
-					a.Name,
-					a.Url,
-					a.Timezone,
-					nulls.StringOrEmpty(a.Lang),
-					a.Phone.String,
-					a.Email.String,
-					a.FareUrl.String,
-					"",    // disclaimer
-					false, // privateService
-				)
-			}
-		}
-
-		references.Agencies = utils.MapValues(agencyRefs)
-		references.Routes = utils.MapValues(routeRefs)
-
-		routeIDsWithAgency := make([]string, 0, len(routeIDs))
-		for _, ri := range routeIDs {
-			routeIDsWithAgency = append(routeIDsWithAgency, utils.FormCombinedID(agencyID, ri))
-		}
-
-		stopRef := models.NewStop(
-			nulls.StringOrEmpty(stop.Code),
-			nulls.StringOrEmpty(stop.Direction),
-			utils.FormCombinedID(agencyID, stop.ID),
-			nulls.StringOrEmpty(stop.Name),
-			"",
-			utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-			stop.Lat,
-			stop.Lon,
-			int(stop.LocationType.Int64),
-			routeIDsWithAgency,
-			routeIDsWithAgency,
-		)
-
-		references.Stops = append(references.Stops, stopRef)
 	}
 
 	// Extract unique block IDs directly from the scheduled rows
@@ -352,4 +253,123 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Create and send response
 	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// buildScheduleForStopReferences builds the agency, route, and stop references
+// for the schedule-for-stop entry. Only called when includeReferences=true.
+func (api *RestAPI) buildScheduleForStopReferences(
+	ctx context.Context,
+	agencyID string,
+	agency gtfsdb.Agency,
+	stop gtfsdb.Stop,
+	scheduleRows []gtfsdb.GetScheduleForStopOnDateRow,
+	routeIDs []string,
+) (*models.ReferencesModel, error) {
+	references := models.NewEmptyReferences()
+
+	// Build references maps
+	agencyRefs := make(map[string]models.AgencyReference)
+	routeRefs := make(map[string]models.Route)
+
+	// add the already fetched agency
+	agencyRefs[agencyID] = models.NewAgencyReference(
+		agency.ID,
+		agency.Name,
+		agency.Url,
+		agency.Timezone,
+		agency.Lang.String,
+		agency.Phone.String,
+		agency.Email.String,
+		agency.FareUrl.String,
+		"",    // disclaimer
+		false, // privateService
+	)
+
+	// Pre-process to gather unique IDs for batch fetching
+	uniqueRouteIDsMap := make(map[string]bool)
+	uniqueAgencyIDsMap := make(map[string]bool)
+
+	for _, row := range scheduleRows {
+		uniqueRouteIDsMap[row.RouteID] = true
+		uniqueAgencyIDsMap[row.AgencyID] = true
+	}
+
+	// Batch fetch routes
+	routeIDsToFetch := make([]string, 0, len(uniqueRouteIDsMap))
+	for routeID := range uniqueRouteIDsMap {
+		routeIDsToFetch = append(routeIDsToFetch, routeID)
+	}
+
+	if len(routeIDsToFetch) > 0 {
+		fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDsToFetch)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, route := range fetchedRoutes {
+			combinedRouteID := utils.FormCombinedID(agencyID, route.ID)
+			routeRefs[combinedRouteID] = models.NewRoute(
+				combinedRouteID,
+				route.AgencyID,
+				route.ShortName.String,
+				route.LongName.String,
+				route.Desc.String,
+				models.RouteType(route.Type),
+				route.Url.String,
+				route.Color.String,
+				route.TextColor.String)
+		}
+	}
+
+	agencyIDsToFetch := make([]string, 0, len(uniqueAgencyIDsMap))
+	for id := range uniqueAgencyIDsMap {
+		agencyIDsToFetch = append(agencyIDsToFetch, id)
+	}
+
+	fetchedAgencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDsToFetch)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range fetchedAgencies {
+		if _, exists := agencyRefs[a.ID]; !exists {
+			agencyRefs[a.ID] = models.NewAgencyReference(
+				a.ID,
+				a.Name,
+				a.Url,
+				a.Timezone,
+				nulls.StringOrEmpty(a.Lang),
+				a.Phone.String,
+				a.Email.String,
+				a.FareUrl.String,
+				"",    // disclaimer
+				false, // privateService
+			)
+		}
+	}
+
+	references.Agencies = utils.MapValues(agencyRefs)
+	references.Routes = utils.MapValues(routeRefs)
+
+	routeIDsWithAgency := make([]string, 0, len(routeIDs))
+	for _, ri := range routeIDs {
+		routeIDsWithAgency = append(routeIDsWithAgency, utils.FormCombinedID(agencyID, ri))
+	}
+
+	stopRef := models.NewStop(
+		nulls.StringOrEmpty(stop.Code),
+		nulls.StringOrEmpty(stop.Direction),
+		utils.FormCombinedID(agencyID, stop.ID),
+		nulls.StringOrEmpty(stop.Name),
+		"",
+		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		stop.Lat,
+		stop.Lon,
+		int(stop.LocationType.Int64),
+		routeIDsWithAgency,
+		routeIDsWithAgency,
+	)
+
+	references.Stops = append(references.Stops, stopRef)
+
+	return references, nil
 }
