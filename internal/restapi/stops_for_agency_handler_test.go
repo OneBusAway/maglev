@@ -92,6 +92,9 @@ func TestStopsForAgencyInvalidAgency(t *testing.T) {
 
 	resp, model := callAPIHandler[StopsResponse](t, api, stopsForAgencyURL("invalid"))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "", model.Text)
+	// Maglev intentionally corrects the legacy 200+null behavior: an unknown
+	// agency returns 404, consistent with stop-ids-for-agency and other endpoints.
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }

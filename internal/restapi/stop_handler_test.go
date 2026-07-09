@@ -50,6 +50,8 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	require.Len(t, model.Data.References.Routes, len(testdata.Stop4062.RouteIDs),
 		"references.routes count should match entry.routeIds count")
 	assert.Equal(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Trips, "trips should always be empty for this endpoint")
+	assert.Empty(t, model.Data.References.StopTimes, "stopTimes should always be empty for this endpoint")
 	assert.Empty(t, model.Data.References.Situations, "situations should always be empty for this endpoint")
 }
 
@@ -571,4 +573,100 @@ func TestStopHandler_IncludeReferences(t *testing.T) {
 	assert.Empty(t, modelFalse.Data.References.StopTimes, "StopTimes must be empty when includeReferences=false")
 	assert.Empty(t, modelFalse.Data.References.Trips, "Trips must be empty when includeReferences=false")
 	assert.Empty(t, modelFalse.Data.References.Situations, "Situations must be empty when includeReferences=false")
+}
+
+// TestStopHandler_WrongAgency verifies that if a client requests a valid stop entity ID
+// but uses an incorrect agency namespace (one that does not serve the stop),
+// the API returns a 404 Not Found.
+func TestStopHandler_WrongAgency(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		validAgency   = "ValidAgency"
+		invalidAgency = "InvalidAgency"
+		stopID        = "Stop123"
+		orphanStopID  = "OrphanStop123"
+		routeID       = "RouteA"
+		tripID        = "TripA"
+		service       = "ServiceA"
+	)
+
+	// Create both agencies
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: validAgency, Name: "Valid Transit", Url: "http://valid.example.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: invalidAgency, Name: "Invalid Transit", Url: "http://invalid.example.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	// Create a stop with routes
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Name: nulls.String("Valid Stop"), Lat: 47.6, Lon: -122.3,
+	})
+	require.NoError(t, err)
+
+	// Create an orphan stop with no routes
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: orphanStopID, Name: nulls.String("Orphan Stop"), Lat: 47.6, Lon: -122.3,
+	})
+	require.NoError(t, err)
+
+	// Create a route/trip/stop_time belonging to ValidAgency for the first stop
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: validAgency, ShortName: nulls.String("Route A"), Type: 3,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: service, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1, StartDate: "20250101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: service,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1, ArrivalTime: 36000, DepartureTime: 36000,
+	})
+	require.NoError(t, err)
+
+	// Test 1: Request with the valid agency namespace -> 200 OK
+	respValid, modelValid := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(validAgency, stopID)))
+	require.Equal(t, http.StatusOK, respValid.StatusCode)
+	assert.Equal(t, http.StatusOK, modelValid.Code)
+	assert.Equal(t, utils.FormCombinedID(validAgency, stopID), modelValid.Data.Entry.ID)
+
+	// Test 2: Request with the invalid agency namespace -> 404 Not Found
+	respInvalid, modelInvalid := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(invalidAgency, stopID)))
+	require.Equal(t, http.StatusNotFound, respInvalid.StatusCode)
+	assert.Equal(t, http.StatusNotFound, modelInvalid.Code)
+
+	// Test 3: Request with an agency that doesn't even exist in the DB -> 404 Not Found
+	respGhost, modelGhost := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID("GhostAgency", stopID)))
+	require.Equal(t, http.StatusNotFound, respGhost.StatusCode)
+	assert.Equal(t, http.StatusNotFound, modelGhost.Code)
+
+	// Test 4: Request orphan stop with an existing agency namespace -> 200 OK
+	respOrphanValid, modelOrphanValid := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(validAgency, orphanStopID)))
+	require.Equal(t, http.StatusOK, respOrphanValid.StatusCode)
+	assert.Equal(t, http.StatusOK, modelOrphanValid.Code)
+
+	// Test 5: Request orphan stop with a non-existent agency namespace -> 404 Not Found
+	respOrphanGhost, modelOrphanGhost := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID("GhostAgency", orphanStopID)))
+	require.Equal(t, http.StatusNotFound, respOrphanGhost.StatusCode)
+	assert.Equal(t, http.StatusNotFound, modelOrphanGhost.Code)
+
+	// Create a fresh API instance to avoid rate limiting on the 6th request
+	api = createTestApi(t)
+	defer api.Shutdown()
+
+	// Test 6: Request invalid agency namespace with includeReferences=false -> 404 Not Found
+	respInvalid, modelInvalid = callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(invalidAgency, stopID))+"&includeReferences=false")
+	require.Equal(t, http.StatusNotFound, respInvalid.StatusCode)
+	assert.Equal(t, http.StatusNotFound, modelInvalid.Code)
 }
