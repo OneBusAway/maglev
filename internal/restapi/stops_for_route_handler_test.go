@@ -121,6 +121,39 @@ func TestStopsForRouteIncludePolylinesFalse(t *testing.T) {
 	}
 }
 
+// TestStopsForRouteTimeFilter_ActiveDate verifies that supplying a time parameter
+// restricts results to trips active on that service date.
+func TestStopsForRouteTimeFilter_ActiveDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// 2025-01-06 is a Monday; RABA route 151 runs Mon–Fri (service c_1658_b_18260_d_31).
+	_, model := callAPIHandler[StopsForRouteResponse](t, api,
+		"/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&time=2025-01-06")
+
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.StopIds, "weekday date should return stops")
+	require.Len(t, entry.StopGroupings, 1)
+	assert.NotEmpty(t, entry.StopGroupings[0].StopGroups, "weekday date should produce direction groups")
+}
+
+// TestStopsForRouteTimeFilter_NoServiceDate verifies that when the requested date
+// has no active service the stop list and direction groups are empty, but the
+// direction grouping element is still present.
+func TestStopsForRouteTimeFilter_NoServiceDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// 2025-01-05 is a Sunday; RABA route 151 has no Sunday service.
+	_, model := callAPIHandler[StopsForRouteResponse](t, api,
+		"/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&time=2025-01-05")
+
+	entry := model.Data.Entry
+	assert.Empty(t, entry.StopIds, "no-service date should return empty stop list")
+	require.Len(t, entry.StopGroupings, 1, "direction grouping element must still be present")
+	assert.Empty(t, entry.StopGroupings[0].StopGroups, "no-service date should return empty direction groups")
+}
+
 // TestStopsForRouteNoDuplicateStopGroups guards against the regression where
 // trips with different headsigns in the same direction produced duplicate group
 // IDs (e.g. "0", "0", "1" instead of "0", "1").
