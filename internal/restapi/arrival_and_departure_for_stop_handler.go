@@ -69,13 +69,15 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		}
 	}
 
-	// Validate time
+	// Validate time (accepts Unix ms or yyyy-MM-dd_HH-mm-ss)
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
+		} else if t, err := time.Parse("2006-01-02_15-04-05", timeStr); err == nil {
+			params.Time = &t
 		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or yyyy-MM-dd_HH-mm-ss"}
 		}
 	}
 
@@ -84,13 +86,15 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		params.TripID = tripIDStr
 	}
 
-	// Validate serviceDate
+	// Validate serviceDate (accepts Unix ms or YYYY-MM-DD)
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
+		} else if serviceDate, err := time.Parse("2006-01-02", serviceDateStr); err == nil {
+			params.ServiceDate = &serviceDate
 		} else {
-			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or YYYY-MM-DD date"}
 		}
 	}
 
@@ -197,12 +201,37 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 	if params.ServiceDate != nil {
-		localized := params.ServiceDate.In(loc)
-		params.ServiceDate = &localized
+		if params.ServiceDate.Location() == time.UTC {
+			localized := time.Date(
+				params.ServiceDate.Year(),
+				params.ServiceDate.Month(),
+				params.ServiceDate.Day(),
+				0, 0, 0, 0,
+				loc,
+			)
+			params.ServiceDate = &localized
+		} else {
+			localized := params.ServiceDate.In(loc)
+			params.ServiceDate = &localized
+		}
 	}
 	if params.Time != nil {
-		localized := params.Time.In(loc)
-		params.Time = &localized
+		if params.Time.Location() == time.UTC {
+			localized := time.Date(
+				params.Time.Year(),
+				params.Time.Month(),
+				params.Time.Day(),
+				params.Time.Hour(),
+				params.Time.Minute(),
+				params.Time.Second(),
+				params.Time.Nanosecond(),
+				loc,
+			)
+			params.Time = &localized
+		} else {
+			localized := params.Time.In(loc)
+			params.Time = &localized
+		}
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
@@ -216,29 +245,96 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+	// Set current time
+	var currentTime time.Time
+	if params.Time != nil {
+		currentTime = *params.Time
+	} else {
+		currentTime = api.Clock.Now().In(loc)
+	}
+
+	// serviceDate is already localized above; extract midnight in agency's TZ.
+	serviceDate := *params.ServiceDate
+	serviceMidnight := time.Date(
+		serviceDate.Year(),
+		serviceDate.Month(),
+		serviceDate.Day(),
+		0, 0, 0, 0,
+		loc,
+	)
 
 	var targetRow gtfsdb.GetTargetStopTimeWithTotalStopsRow
 
 	if params.StopSequence != nil {
-		seqRow, seqErr := api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
+		var seqRow gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceRow
+		var seqErr error
+		seqRow, seqErr = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
 			TripID:       tripID,
 			StopID:       stopCode,
 			StopSequence: int64(*params.StopSequence),
 		})
 		if seqErr != nil {
 			if errors.Is(seqErr, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
+				// Expand outward search fallback
+				stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+				if err != nil {
+					api.serverErrorResponse(w, r, err)
+					return
+				}
+				n := len(stopTimes)
+				if n == 0 {
+					api.sendNotFound(w, r)
+					return
+				}
+				startIdx := *params.StopSequence
+				if startIdx < 0 || startIdx >= n {
+					api.sendNotFound(w, r)
+					return
+				}
+				matchedOrdinal := -1
+				maxD := startIdx
+				if n-1-startIdx > maxD {
+					maxD = n - 1 - startIdx
+				}
+				for d := 0; d <= maxD; d++ {
+					if startIdx-d >= 0 && stopTimes[startIdx-d].StopID == stopCode {
+						matchedOrdinal = startIdx - d
+						break
+					}
+					if startIdx+d < n && stopTimes[startIdx+d].StopID == stopCode {
+						matchedOrdinal = startIdx + d
+						break
+					}
+				}
+				if matchedOrdinal == -1 {
+					api.sendNotFound(w, r)
+					return
+				}
+				seqRow, seqErr = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
+					TripID:       tripID,
+					StopID:       stopCode,
+					StopSequence: int64(matchedOrdinal),
+				})
+				if seqErr != nil {
+					if errors.Is(seqErr, sql.ErrNoRows) {
+						api.sendNotFound(w, r)
+					} else {
+						api.serverErrorResponse(w, r, seqErr)
+					}
+					return
+				}
 			} else {
 				api.serverErrorResponse(w, r, seqErr)
+				return
 			}
-			return
 		}
 
 		targetRow = gtfsdb.GetTargetStopTimeWithTotalStopsRow(seqRow)
 	} else {
 		targetRow, err = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStops(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsParams{
-			TripID: tripID,
-			StopID: stopCode,
+			TripID:      tripID,
+			StopID:      stopCode,
+			CurrentTime: currentTime.Sub(serviceMidnight).Nanoseconds(),
 		})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -259,25 +355,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		ArrivalTime:   targetRow.ArrivalTime,
 		DepartureTime: targetRow.DepartureTime,
 		StopSequence:  targetRow.StopSequence,
+		StopHeadsign:  targetRow.StopHeadsign.String,
 	}
-
-	// Set current time
-	var currentTime time.Time
-	if params.Time != nil {
-		currentTime = *params.Time
-	} else {
-		currentTime = api.Clock.Now().In(loc)
-	}
-
-	// serviceDate is already localized above; extract midnight in agency's TZ.
-	serviceDate := *params.ServiceDate
-	serviceMidnight := time.Date(
-		serviceDate.Year(),
-		serviceDate.Month(),
-		serviceDate.Day(),
-		0, 0, 0, 0,
-		loc,
-	)
 
 	// Arrival time is stored in nanoseconds since midnight → convert to duration
 	// arrival and departure time is stored in nanoseconds (sqlite)
@@ -319,7 +398,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	if vehicle != nil && vehicle.Trip != nil {
 		if vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
+			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
 		} else {
 			api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		}
@@ -336,9 +415,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if status != nil {
 		tripStatus = status
 
-		predictedArrivalTime = scheduledArrivalTime
-		predictedDepartureTime = scheduledDepartureTime
-
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
 		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
@@ -349,16 +425,18 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predicted = true
 		} else {
 			predicted = false
+			predictedArrivalTime = time.Time{}
+			predictedDepartureTime = time.Time{}
 		}
 
 		if vehicle != nil && vehicle.Position != nil {
 			distanceFromStop = api.getBlockDistanceToStop(ctx, tripID, stopCode, vehicle, serviceDate)
 
-			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate)
+			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate, tripStatus)
 			if numberOfStopsAwayPtr != nil {
 				numberOfStopsAway = *numberOfStopsAwayPtr
 			} else {
-				numberOfStopsAway = -1
+				numberOfStopsAway = 0
 			}
 		}
 	}
@@ -370,228 +448,259 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
 
+	stopOrdinal := int(targetRow.StopOrdinal)
+	arrivalEnabled := stopOrdinal > 0
+	departureEnabled := stopOrdinal < totalStopsInTrip-1
+
+	routeShortName := route.ShortName.String
+	if trip.TripShortName.Valid && trip.TripShortName.String != "" {
+		routeShortName = trip.TripShortName.String
+	}
+
+	tripHeadsign := trip.TripHeadsign.String
+	if targetStopTime.StopHeadsign != "" {
+		tripHeadsign = targetStopTime.StopHeadsign
+	}
+
+	entryStatus := "default"
+	if tripStatus != nil && tripStatus.Status != "" && tripStatus.Status != "SCHEDULED" {
+		entryStatus = tripStatus.Status
+	}
+
+	if entryStatus == "CANCELED" {
+		predicted = false
+		vehicleID = ""
+		predictedArrivalTime = time.Time{}
+		predictedDepartureTime = time.Time{}
+		lastUpdateTime = time.Time{}
+		tripStatus = nil
+	}
+
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
-		route.ShortName.String,                         // routeShortName
-		route.LongName.String,                          // routeLongName
-		utils.FormCombinedID(route.AgencyID, tripID),   // tripID
-		trip.TripHeadsign.String,                       // tripHeadsign
-		stopID,                                         // stopID
-		vehicleID,                                      // vehicleID
-		serviceMidnight,                                // serviceDate
-		scheduledArrivalTime,                           // scheduledArrivalTime
-		scheduledDepartureTime,                         // scheduledDepartureTime
-		predictedArrivalTime,                           // predictedArrivalTime
-		predictedDepartureTime,                         // predictedDepartureTime
-		lastUpdateTime,                                 // lastUpdateTime
-		predicted,                                      // predicted
-		true,                                           // arrivalEnabled
-		true,                                           // departureEnabled
-		int(targetStopTime.StopSequence)-1,             // stopSequence (Zero-based index)
-		totalStopsInTrip,                               // totalStopsInTrip
-		numberOfStopsAway,                              // numberOfStopsAway
-		blockTripSequence,                              // blockTripSequence
-		distanceFromStop,                               // distanceFromStop
-		"default",                                      // status
-		"",                                             // occupancyStatus
-		"",                                             // predictedOccupancy
-		"",                                             // historicalOccupancy
-		tripStatus,                                     // tripStatus
-		situationIDs,                                   // situationIds
+		routeShortName,        // routeShortName
+		route.LongName.String, // routeLongName
+		utils.FormCombinedID(route.AgencyID, tripID), // tripID
+		tripHeadsign,           // tripHeadsign
+		stopID,                 // stopID
+		vehicleID,              // vehicleID
+		serviceMidnight,        // serviceDate
+		scheduledArrivalTime,   // scheduledArrivalTime
+		scheduledDepartureTime, // scheduledDepartureTime
+		predictedArrivalTime,   // predictedArrivalTime
+		predictedDepartureTime, // predictedDepartureTime
+		lastUpdateTime,         // lastUpdateTime
+		predicted,              // predicted
+		arrivalEnabled,         // arrivalEnabled
+		departureEnabled,       // departureEnabled
+		stopOrdinal,            // stopSequence (0-based ordinal)
+		totalStopsInTrip,       // totalStopsInTrip
+		numberOfStopsAway,      // numberOfStopsAway
+		blockTripSequence,      // blockTripSequence
+		distanceFromStop,       // distanceFromStop
+		entryStatus,            // status
+		"",                     // occupancyStatus
+		"",                     // predictedOccupancy
+		"",                     // historicalOccupancy
+		tripStatus,             // tripStatus
+		situationIDs,           // situationIds
 	)
 
 	references := models.NewEmptyReferences()
 
-	// Add Stop Agency Reference
-	references.Agencies = append(references.Agencies, models.NewAgencyReference(
-		stopAgency.ID,
-		stopAgency.Name,
-		stopAgency.Url,
-		stopAgency.Timezone,
-		stopAgency.Lang.String,
-		stopAgency.Phone.String,
-		stopAgency.Email.String,
-		stopAgency.FareUrl.String,
-		"",
-		false,
-	))
+	includeRefs := r.URL.Query().Get("includeReferences") != "false"
+	if includeRefs {
+		// Add Stop Agency Reference
+		references.Agencies = append(references.Agencies, models.NewAgencyReference(
+			stopAgency.ID,
+			stopAgency.Name,
+			stopAgency.Url,
+			stopAgency.Timezone,
+			stopAgency.Lang.String,
+			stopAgency.Phone.String,
+			stopAgency.Email.String,
+			stopAgency.FareUrl.String,
+			"",
+			false,
+		))
 
-	// Add Route Agency Reference if different from Stop Agency
-	if route.AgencyID != stopAgency.ID {
-		routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
-		if err == nil {
-			references.Agencies = append(references.Agencies, models.NewAgencyReference(
-				routeAgency.ID,
-				routeAgency.Name,
-				routeAgency.Url,
-				routeAgency.Timezone,
-				routeAgency.Lang.String,
-				routeAgency.Phone.String,
-				routeAgency.Email.String,
-				routeAgency.FareUrl.String,
-				"",
-				false,
-			))
-		} else {
-			api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
-		}
-	}
-
-	tripRef := models.NewTripReference(
-		utils.FormCombinedID(route.AgencyID, tripID),
-		utils.FormCombinedID(route.AgencyID, trip.RouteID),
-		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
-		trip.TripHeadsign.String,
-		"", // trip short name
-		strconv.FormatInt(trip.DirectionID.Int64, 10),
-		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
-		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
-	)
-	references.Trips = append(references.Trips, *tripRef)
-
-	// Include active trip if it's different from the parameter trip and trip status is not null
-	if tripStatus != nil && tripStatus.ActiveTripID != "" {
-		_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
-		if err == nil && activeTripID != tripID {
-			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+		// Add Route Agency Reference if different from Stop Agency
+		if route.AgencyID != stopAgency.ID {
+			routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 			if err == nil {
-				activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
-				if err != nil {
-					api.Logger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
-				} else {
-					activeTripRef := models.NewTripReference(
-						utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
-						activeTrip.TripHeadsign.String,
-						"", // trip short name
-						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
-					)
-					references.Trips = append(references.Trips, *activeTripRef)
+				references.Agencies = append(references.Agencies, models.NewAgencyReference(
+					routeAgency.ID,
+					routeAgency.Name,
+					routeAgency.Url,
+					routeAgency.Timezone,
+					routeAgency.Lang.String,
+					routeAgency.Phone.String,
+					routeAgency.Email.String,
+					routeAgency.FareUrl.String,
+					"",
+					false,
+				))
+			} else {
+				api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
+			}
+		}
+
+		tripRef := models.NewTripReference(
+			utils.FormCombinedID(route.AgencyID, tripID),
+			utils.FormCombinedID(route.AgencyID, trip.RouteID),
+			utils.FormCombinedID(route.AgencyID, trip.ServiceID),
+			trip.TripHeadsign.String,
+			"", // trip short name
+			strconv.FormatInt(trip.DirectionID.Int64, 10),
+			utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
+			utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
+		)
+		references.Trips = append(references.Trips, *tripRef)
+
+		// Include active trip if it's different from the parameter trip and trip status is not null
+		if tripStatus != nil && tripStatus.ActiveTripID != "" {
+			_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
+			if err == nil && activeTripID != tripID {
+				activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+				if err == nil {
+					activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
+					if err != nil {
+						api.Logger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
+					} else {
+						activeTripRef := models.NewTripReference(
+							utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
+							activeTrip.TripHeadsign.String,
+							"", // trip short name
+							strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
+							utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
+						)
+						references.Trips = append(references.Trips, *activeTripRef)
+					}
 				}
 			}
 		}
-	}
 
-	// Build stops references
-	stopIDSet := make(map[string]bool)
-	routeIDSet := make(map[string]*gtfsdb.Route)
+		// Build stops references
+		stopIDSet := make(map[string]bool)
+		routeIDSet := make(map[string]*gtfsdb.Route)
 
-	stopIDSet[stop.ID] = true
+		stopIDSet[stop.ID] = true
 
-	// Include the next and closest stops if trip status is not null to stops reference
-	if tripStatus != nil {
-		if tripStatus.NextStop != "" {
-			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
+		// Include the next and closest stops if trip status is not null to stops reference
+		if tripStatus != nil {
+			if tripStatus.NextStop != "" {
+				_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
 
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
+				if err != nil {
+					api.serverErrorResponse(w, r, err)
+					return
+				}
+
+				stopIDSet[nextStopID] = true
+			}
+			if tripStatus.ClosestStop != "" {
+				_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
+
+				if err != nil {
+					api.serverErrorResponse(w, r, err)
+					return
+				}
+				stopIDSet[closestStopID] = true
+			}
+		}
+		// batch fetch
+		stopIDsSlice := make([]string, 0, len(stopIDSet))
+		for sid := range stopIDSet {
+			stopIDsSlice = append(stopIDsSlice, sid)
+		}
+
+		batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch stops for references", "error", err)
+			batchedStops = nil
+		}
+
+		stopDataMap := make(map[string]gtfsdb.Stop)
+		for _, s := range batchedStops {
+			stopDataMap[s.ID] = s
+		}
+
+		batchedRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
+		if err != nil {
+			api.Logger.Warn("failed to batch fetch routes for stops", "error", err)
+			batchedRoutesForStops = nil
+		}
+
+		routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
+		for _, routeRow := range batchedRoutesForStops {
+			routesByStopID[routeRow.StopID] = append(routesByStopID[routeRow.StopID], routeRow)
+		}
+
+		for _, sid := range stopIDsSlice {
+			stopData, exists := stopDataMap[sid]
+			if !exists {
+				continue
 			}
 
-			stopIDSet[nextStopID] = true
-		}
-		if tripStatus.ClosestStop != "" {
-			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
-
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
+			routesForThisStop := routesByStopID[sid]
+			combinedRouteIDs := make([]string, len(routesForThisStop))
+			for i, route := range routesForThisStop {
+				combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
+				routeCopy := gtfsdb.Route{
+					ID:        route.ID,
+					AgencyID:  route.AgencyID,
+					ShortName: route.ShortName,
+					LongName:  route.LongName,
+					Desc:      route.Desc,
+					Type:      route.Type,
+					Url:       route.Url,
+					Color:     route.Color,
+					TextColor: route.TextColor,
+				}
+				routeIDSet[route.ID] = &routeCopy
 			}
-			stopIDSet[closestStopID] = true
-		}
-	}
-	// batch fetch
-	stopIDsSlice := make([]string, 0, len(stopIDSet))
-	for sid := range stopIDSet {
-		stopIDsSlice = append(stopIDsSlice, sid)
-	}
 
-	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
-	if err != nil {
-		api.Logger.Warn("failed to batch fetch stops for references", "error", err)
-		batchedStops = nil
-	}
-
-	stopDataMap := make(map[string]gtfsdb.Stop)
-	for _, s := range batchedStops {
-		stopDataMap[s.ID] = s
-	}
-
-	batchedRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
-	if err != nil {
-		api.Logger.Warn("failed to batch fetch routes for stops", "error", err)
-		batchedRoutesForStops = nil
-	}
-
-	routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
-	for _, routeRow := range batchedRoutesForStops {
-		routesByStopID[routeRow.StopID] = append(routesByStopID[routeRow.StopID], routeRow)
-	}
-
-	for _, sid := range stopIDsSlice {
-		stopData, exists := stopDataMap[sid]
-		if !exists {
-			continue
-		}
-
-		routesForThisStop := routesByStopID[sid]
-		combinedRouteIDs := make([]string, len(routesForThisStop))
-		for i, route := range routesForThisStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
-			routeCopy := gtfsdb.Route{
-				ID:        route.ID,
-				AgencyID:  route.AgencyID,
-				ShortName: route.ShortName,
-				LongName:  route.LongName,
-				Desc:      route.Desc,
-				Type:      route.Type,
-				Url:       route.Url,
-				Color:     route.Color,
-				TextColor: route.TextColor,
+			stopRef := models.Stop{
+				ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
+				Name:               stopData.Name.String,
+				Lat:                stopData.Lat,
+				Lon:                stopData.Lon,
+				Code:               stopData.Code.String,
+				Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
+				LocationType:       int(stopData.LocationType.Int64),
+				WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
+				RouteIDs:           combinedRouteIDs,
+				StaticRouteIDs:     combinedRouteIDs,
 			}
-			routeIDSet[route.ID] = &routeCopy
+			references.Stops = append(references.Stops, stopRef)
 		}
 
-		stopRef := models.Stop{
-			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
-			Lat:                stopData.Lat,
-			Lon:                stopData.Lon,
-			Code:               stopData.Code.String,
-			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
-			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
-			RouteIDs:           combinedRouteIDs,
-			StaticRouteIDs:     combinedRouteIDs,
+		// Build routes references
+		routeRefs := make(map[string]models.Route, len(routeIDSet))
+		for _, route := range routeIDSet {
+			combinedID := utils.FormCombinedID(route.AgencyID, route.ID)
+			routeRefs[combinedID] = models.NewRoute(
+				combinedID,
+				route.AgencyID,
+				route.ShortName.String,
+				route.LongName.String,
+				route.Desc.String,
+				models.RouteType(route.Type),
+				route.Url.String,
+				route.Color.String,
+				route.TextColor.String)
 		}
-		references.Stops = append(references.Stops, stopRef)
-	}
+		references.Routes = utils.MapValues(routeRefs)
 
-	// Build routes references
-	routeRefs := make(map[string]models.Route, len(routeIDSet))
-	for _, route := range routeIDSet {
-		combinedID := utils.FormCombinedID(route.AgencyID, route.ID)
-		routeRefs[combinedID] = models.NewRoute(
-			combinedID,
-			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
-			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
-	}
-	references.Routes = utils.MapValues(routeRefs)
-
-	if len(situationIDs) > 0 {
-		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts)
-			references.Situations = append(references.Situations, situations...)
+		if len(situationIDs) > 0 {
+			alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
+			if len(alerts) > 0 {
+				situations := api.BuildSituationReferences(alerts)
+				references.Situations = append(references.Situations, situations...)
+			}
 		}
 	}
 
@@ -711,20 +820,33 @@ func (api *RestAPI) getPredictedTimes(
 	return predictedArrival, predictedDeparture, true
 }
 
-func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
-	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
-	if currentVehicleStopSequence == nil {
-		return nil
-	}
-
+func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time, tripStatus *models.TripStatus) *int {
 	activeTripID := GetVehicleActiveTripID(vehicle)
 	if activeTripID == "" {
 		activeTripID = targetTripID
 	}
 
 	targetGlobalSeq := api.getBlockSequenceForStopSequence(ctx, targetTripID, targetStopSequence, serviceDate)
-	vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
 
-	numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq - 1
-	return &numberOfStopsAway
+	if tripStatus != nil && tripStatus.NextStop != "" {
+		_, nextStopCode, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
+		if err == nil {
+			nextStopSeq := api.getBlockSequenceForStopID(ctx, activeTripID, nextStopCode, serviceDate)
+			if nextStopSeq != -1 && targetGlobalSeq != -1 {
+				numberOfStopsAway := targetGlobalSeq - nextStopSeq
+				return &numberOfStopsAway
+			}
+		}
+	}
+
+	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
+	if currentVehicleStopSequence != nil {
+		vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
+		if targetGlobalSeq != -1 && vehicleGlobalSeq != -1 {
+			numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq
+			return &numberOfStopsAway
+		}
+	}
+
+	return nil
 }
