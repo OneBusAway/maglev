@@ -209,29 +209,22 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 }
 
 func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, result models.RouteEntry, stopsList []models.Stop, currentAgency gtfsdb.Agency) {
-	agencyRef := models.NewAgencyReference(
-		currentAgency.ID,
-		currentAgency.Name,
-		currentAgency.Url,
-		currentAgency.Timezone,
-		currentAgency.Lang.String,
-		currentAgency.Phone.String,
-		currentAgency.Email.String,
-		currentAgency.FareUrl.String,
-		"",
-		false,
-	)
-
-	routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{agencyRef}
-	references.Routes = routes
-	references.Stops = stopsList
+
+	// When includeReferences=false the references block is present but empty.
+	if ShouldIncludeReferences(r) {
+		agencyRef := models.AgencyReferenceFromDatabase(&currentAgency)
+
+		routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		references.Agencies = []models.AgencyReference{agencyRef}
+		references.Routes = routes
+		references.Stops = stopsList
+	}
 
 	response := models.NewEntryResponse(result, *references, api.Clock)
 	api.sendResponse(w, r, response)
