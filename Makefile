@@ -35,7 +35,7 @@ LDFLAGS := -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=$(G
                     -X 'maglev.onebusaway.org/internal/buildinfo.Host=$(BUILD_HOST)'"
 
 .PHONY: build build-debug clean coverage-report check-jq check-k6 coverage test run lint watch fmt \
-        gtfstidy models check-golangci-lint \
+        gtfstidy models \
         test-latency bench-sqlite-all bench-sqlite-perftest \
         docker-build docker-push docker-run docker-stop docker-compose-up docker-compose-down docker-compose-dev docker-clean docker-clean-all \
         update-openapi check-openapi \
@@ -75,11 +75,8 @@ coverage:
 	$(SET_ENV) go test -tags "$(BUILD_TAGS)" -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
-check-golangci-lint:
-	@which golangci-lint > /dev/null 2>&1 || (echo "Error: golangci-lint is not installed. Please install it by running: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
-
-lint: check-golangci-lint
-	golangci-lint run --build-tags "$(BUILD_TAGS)"
+lint:
+	$(SET_ENV) go vet -tags "$(BUILD_TAGS)" ./...
 
 fmt:
 	go fmt ./...
