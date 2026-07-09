@@ -111,14 +111,12 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	includeReferences := ShouldIncludeReferences(r)
-
-	// Build references maps
-	var agencyRefs map[string]models.AgencyReference
-	var routeRefs map[string]models.Route
+	references := models.NewEmptyReferences()
 
 	if includeReferences {
-		agencyRefs = make(map[string]models.AgencyReference)
-		routeRefs = make(map[string]models.Route)
+		// Build references maps
+		agencyRefs := make(map[string]models.AgencyReference)
+		routeRefs := make(map[string]models.Route)
 
 		// add the already fetched agency
 		agencyRefs[agencyID] = models.NewAgencyReference(
@@ -197,6 +195,30 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 				)
 			}
 		}
+
+		references.Agencies = utils.MapValues(agencyRefs)
+		references.Routes = utils.MapValues(routeRefs)
+
+		routeIDsWithAgency := make([]string, 0, len(routeIDs))
+		for _, ri := range routeIDs {
+			routeIDsWithAgency = append(routeIDsWithAgency, utils.FormCombinedID(agencyID, ri))
+		}
+
+		stopRef := models.NewStop(
+			nulls.StringOrEmpty(stop.Code),
+			nulls.StringOrEmpty(stop.Direction),
+			utils.FormCombinedID(agencyID, stop.ID),
+			nulls.StringOrEmpty(stop.Name),
+			"",
+			utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			stop.Lat,
+			stop.Lon,
+			int(stop.LocationType.Int64),
+			routeIDsWithAgency,
+			routeIDsWithAgency,
+		)
+
+		references.Stops = append(references.Stops, stopRef)
 	}
 
 	// Extract unique block IDs directly from the scheduled rows
@@ -327,35 +349,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
 	entry := models.NewScheduleForStopEntry(combinedStopID, responseDate, routeSchedules)
 
-	// Convert reference maps to slices
-	references := models.NewEmptyReferences()
-
-	if includeReferences {
-
-		references.Agencies = utils.MapValues(agencyRefs)
-		references.Routes = utils.MapValues(routeRefs)
-
-		routeIDsWithAgency := make([]string, 0, len(routeIDs))
-		for _, ri := range routeIDs {
-			routeIDsWithAgency = append(routeIDsWithAgency, utils.FormCombinedID(agencyID, ri))
-		}
-
-		stopRef := models.NewStop(
-			nulls.StringOrEmpty(stop.Code),
-			nulls.StringOrEmpty(stop.Direction),
-			utils.FormCombinedID(agencyID, stop.ID),
-			nulls.StringOrEmpty(stop.Name),
-			"",
-			utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-			stop.Lat,
-			stop.Lon,
-			int(stop.LocationType.Int64),
-			routeIDsWithAgency,
-			routeIDsWithAgency,
-		)
-
-		references.Stops = append(references.Stops, stopRef)
-	}
 	// Create and send response
 	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
