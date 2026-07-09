@@ -1,12 +1,15 @@
 package restapi
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -698,5 +701,97 @@ func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
 				}
 			}
 		}
+	})
+}
+
+func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
+	startOfDay := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+	agencyID := "1"
+
+	makeRow := func(tripID, routeID string, directionID sql.NullInt64, headsign string) gtfsdb.GetScheduleForStopOnDateRow {
+		return gtfsdb.GetScheduleForStopOnDateRow{
+			TripID:        tripID,
+			ArrivalTime:   int64(8 * time.Hour),
+			DepartureTime: int64(8 * time.Hour),
+			ServiceID:     "svc1",
+			RouteID:       routeID,
+			AgencyID:      agencyID,
+			DirectionID:   directionID,
+			TripHeadsign:  sql.NullString{String: headsign, Valid: headsign != ""},
+		}
+	}
+
+	t.Run("splits rows on the same route into separate direction groups", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-out", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+			makeRow("trip-in", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
+		}
+
+		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		assert.NoError(t, err)
+
+		routeGroups, ok := schedules["1_10"]
+		assert.True(t, ok, "expected a group for route 1_10")
+		assert.Len(t, routeGroups, 2, "expected two distinct direction buckets")
+
+		assert.Len(t, routeGroups["0"], 1)
+		assert.Equal(t, "1_trip-out", routeGroups["0"][0].TripID)
+
+		assert.Len(t, routeGroups["1"], 1)
+		assert.Equal(t, "1_trip-in", routeGroups["1"][0].TripID)
+	})
+
+	t.Run("groups rows on the same route and direction together", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+			makeRow("trip-b", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+		}
+
+		schedules, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		assert.NoError(t, err)
+
+		assert.Len(t, schedules["1_10"], 1, "expected a single direction bucket")
+		assert.Len(t, schedules["1_10"]["0"], 2, "expected both stop times grouped together")
+		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
+	})
+
+	t.Run("defaults a missing direction_id to bucket 0", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-a", "10", sql.NullInt64{Valid: false}, "Downtown"),
+		}
+
+		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		assert.NoError(t, err)
+
+		assert.Len(t, schedules["1_10"], 1)
+		assert.Contains(t, schedules["1_10"], "0")
+		assert.Len(t, schedules["1_10"]["0"], 1)
+	})
+
+	t.Run("tracks headsign votes separately per direction", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-out-1", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+			makeRow("trip-out-2", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+			makeRow("trip-in-1", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
+		}
+
+		_, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, agencyID, startOfDay, nil)
+		assert.NoError(t, err)
+
+		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
+		assert.Equal(t, 1, headsignCounts["1_10"]["1"]["Uptown"])
+		assert.Equal(t, 0, headsignCounts["1_10"]["1"]["Downtown"], "direction 1 should not see direction 0's headsign votes")
+	})
+
+	t.Run("returns an error when the context is already canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+		}
+
+		_, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, agencyID, startOfDay, nil)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }

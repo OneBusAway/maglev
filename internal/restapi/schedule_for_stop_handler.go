@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"cmp"
+	"context"
 	"database/sql"
 	"net/http"
 	"slices"
@@ -237,81 +238,14 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Group schedule data by route -> direction -> slice of stop times
-	routeDirectionScheduleMap := make(map[string]map[string][]models.ScheduleStopTime)
-	// Track headsign counts per route -> direction -> headsign -> count
-	routeDirectionHeadsignCounts := make(map[string]map[string]map[string]int)
-
-	for _, row := range scheduleRows {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-			return
-		}
-
-		directionID := "0"
-		if row.DirectionID.Valid {
-			directionID = strconv.FormatInt(row.DirectionID.Int64, 10)
-		}
-
-		combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
-		combinedTripID := utils.FormCombinedID(agencyID, row.TripID)
-
-		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in the agency's timezone in milliseconds
-		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
-		arrivalDuration := time.Duration(row.ArrivalTime)
-		departureDuration := time.Duration(row.DepartureTime)
-		arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
-		departureTimeMs := startOfDay.Add(departureDuration).UnixMilli()
-
-		stopTime := models.NewScheduleStopTime(
-			arrivalTimeMs,
-			departureTimeMs,
-			utils.FormCombinedID(agencyID, row.ServiceID),
-			row.StopHeadsign.String,
-			combinedTripID,
-		)
-
-		// Determine the arrival/departure capabilities for this stop time based on its
-		// position within the vehicle's entire block for the service day.
-
-		// First, verify if the stop is at the temporal boundaries of its individual trip.
-		isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
-		isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
-
-		isFirstInBlock := isFirstInTrip
-		isLastInBlock := isLastInTrip
-
-		// If the trip belongs to a block, refine the boundaries to the block level.
-		if row.BlockID.Valid && row.BlockID.String != "" {
-			if bTrips, exists := blockTripsMap[row.BlockID.String]; exists && len(bTrips) > 0 {
-				isFirstInBlock = isFirstInTrip && (bTrips[0].ID == row.TripID)
-				isLastInBlock = isLastInTrip && (bTrips[len(bTrips)-1].ID == row.TripID)
-			}
-		}
-
-		// Disable arrivals for the first stop of a block (vehicle starts service here).
-		if isFirstInBlock {
-			stopTime.ArrivalEnabled = false
-		}
-		// Disable departures for the last stop of a block (vehicle ends service here).
-		if isLastInBlock {
-			stopTime.DepartureEnabled = false
-		}
-
-		if routeDirectionScheduleMap[combinedRouteID] == nil {
-			routeDirectionScheduleMap[combinedRouteID] = make(map[string][]models.ScheduleStopTime)
-		}
-		routeDirectionScheduleMap[combinedRouteID][directionID] = append(routeDirectionScheduleMap[combinedRouteID][directionID], stopTime)
-
-		if row.TripHeadsign.Valid && row.TripHeadsign.String != "" {
-			if routeDirectionHeadsignCounts[combinedRouteID] == nil {
-				routeDirectionHeadsignCounts[combinedRouteID] = make(map[string]map[string]int)
-			}
-			if routeDirectionHeadsignCounts[combinedRouteID][directionID] == nil {
-				routeDirectionHeadsignCounts[combinedRouteID][directionID] = make(map[string]int)
-			}
-			routeDirectionHeadsignCounts[combinedRouteID][directionID][row.TripHeadsign.String]++
-		}
+	// Group schedule data by route -> direction -> slice of stop times, and track
+	// per-direction headsign vote counts, per spec steps 6-7.
+	routeDirectionScheduleMap, routeDirectionHeadsignCounts, err := groupScheduleRowsByRouteAndDirection(
+		ctx, scheduleRows, agencyID, startOfDay, blockTripsMap,
+	)
+	if err != nil {
+		api.clientCanceledResponse(w, r, err)
+		return
 	}
 
 	// Build the route schedules in the natural-sort order established above (spec step 10):
@@ -389,4 +323,97 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Create and send response
 	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// groupScheduleRowsByRouteAndDirection partitions schedule rows first by route, then by
+// GTFS direction_id (defaulting to "0" when absent), per spec steps 6-7. It returns the
+// grouped stop times alongside per-direction headsign vote counts used to pick each
+// direction group's representative tripHeadsign. Returns a non-nil error only if ctx is
+// canceled mid-computation.
+func groupScheduleRowsByRouteAndDirection(
+	ctx context.Context,
+	scheduleRows []gtfsdb.GetScheduleForStopOnDateRow,
+	agencyID string,
+	startOfDay time.Time,
+	blockTripsMap map[string][]gtfsdb.GetTripsByBlockIDsRow,
+) (
+	routeDirectionScheduleMap map[string]map[string][]models.ScheduleStopTime,
+	routeDirectionHeadsignCounts map[string]map[string]map[string]int,
+	err error,
+) {
+	routeDirectionScheduleMap = make(map[string]map[string][]models.ScheduleStopTime)
+	routeDirectionHeadsignCounts = make(map[string]map[string]map[string]int)
+
+	for _, row := range scheduleRows {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+
+		directionID := "0"
+		if row.DirectionID.Valid {
+			directionID = strconv.FormatInt(row.DirectionID.Int64, 10)
+		}
+
+		combinedRouteID := utils.FormCombinedID(agencyID, row.RouteID)
+		combinedTripID := utils.FormCombinedID(agencyID, row.TripID)
+
+		// Convert GTFS time (nanoseconds since midnight) to Unix timestamp in the agency's timezone in milliseconds
+		// GTFS times are stored as time.Duration values (nanoseconds), need to add to the target date
+		arrivalDuration := time.Duration(row.ArrivalTime)
+		departureDuration := time.Duration(row.DepartureTime)
+		arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
+		departureTimeMs := startOfDay.Add(departureDuration).UnixMilli()
+
+		stopTime := models.NewScheduleStopTime(
+			arrivalTimeMs,
+			departureTimeMs,
+			utils.FormCombinedID(agencyID, row.ServiceID),
+			row.StopHeadsign.String,
+			combinedTripID,
+		)
+
+		// Determine the arrival/departure capabilities for this stop time based on its
+		// position within the vehicle's entire block for the service day.
+
+		// First, verify if the stop is at the temporal boundaries of its individual trip.
+		isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
+		isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
+
+		isFirstInBlock := isFirstInTrip
+		isLastInBlock := isLastInTrip
+
+		// If the trip belongs to a block, refine the boundaries to the block level.
+		if row.BlockID.Valid && row.BlockID.String != "" {
+			if bTrips, exists := blockTripsMap[row.BlockID.String]; exists && len(bTrips) > 0 {
+				isFirstInBlock = isFirstInTrip && (bTrips[0].ID == row.TripID)
+				isLastInBlock = isLastInTrip && (bTrips[len(bTrips)-1].ID == row.TripID)
+			}
+		}
+
+		// Disable arrivals for the first stop of a block (vehicle starts service here).
+		if isFirstInBlock {
+			stopTime.ArrivalEnabled = false
+		}
+		// Disable departures for the last stop of a block (vehicle ends service here).
+		if isLastInBlock {
+			stopTime.DepartureEnabled = false
+		}
+
+		if routeDirectionScheduleMap[combinedRouteID] == nil {
+			routeDirectionScheduleMap[combinedRouteID] = make(map[string][]models.ScheduleStopTime)
+		}
+		routeDirectionScheduleMap[combinedRouteID][directionID] = append(routeDirectionScheduleMap[combinedRouteID][directionID], stopTime)
+
+		if row.TripHeadsign.Valid && row.TripHeadsign.String != "" {
+			if routeDirectionHeadsignCounts[combinedRouteID] == nil {
+				routeDirectionHeadsignCounts[combinedRouteID] = make(map[string]map[string]int)
+			}
+			if routeDirectionHeadsignCounts[combinedRouteID][directionID] == nil {
+				routeDirectionHeadsignCounts[combinedRouteID][directionID] = make(map[string]int)
+			}
+			routeDirectionHeadsignCounts[combinedRouteID][directionID][row.TripHeadsign.String]++
+		}
+	}
+
+	return routeDirectionScheduleMap, routeDirectionHeadsignCounts, nil
 }
