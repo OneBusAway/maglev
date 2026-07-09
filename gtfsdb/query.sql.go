@@ -2949,11 +2949,11 @@ SELECT
     st.departure_time,
     st.stop_headsign,
     t.service_id,
-    t.route_id,
     t.trip_headsign,
     t.block_id,
     t.min_arrival_time,
     t.max_departure_time,
+    t.direction_id,
     r.id as route_id,
     r.agency_id
 FROM
@@ -2994,7 +2994,7 @@ WHERE
     )
     AND r.id IN (/*SLICE:route_ids*/?)
 ORDER BY
-    r.id, st.departure_time
+    r.id, COALESCE(t.direction_id, 0), st.departure_time
 `
 
 type GetScheduleForStopOnDateParams struct {
@@ -3010,12 +3010,12 @@ type GetScheduleForStopOnDateRow struct {
 	DepartureTime    int64
 	StopHeadsign     sql.NullString
 	ServiceID        string
-	RouteID          string
 	TripHeadsign     sql.NullString
 	BlockID          sql.NullString
 	MinArrivalTime   sql.NullInt64
 	MaxDepartureTime sql.NullInt64
-	RouteID_2        string
+	DirectionID      sql.NullInt64
+	RouteID          string
 	AgencyID         string
 }
 
@@ -3047,12 +3047,12 @@ func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleF
 			&i.DepartureTime,
 			&i.StopHeadsign,
 			&i.ServiceID,
-			&i.RouteID,
 			&i.TripHeadsign,
 			&i.BlockID,
 			&i.MinArrivalTime,
 			&i.MaxDepartureTime,
-			&i.RouteID_2,
+			&i.DirectionID,
+			&i.RouteID,
 			&i.AgencyID,
 		); err != nil {
 			return nil, err
