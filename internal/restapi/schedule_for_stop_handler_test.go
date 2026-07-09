@@ -650,13 +650,37 @@ func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
 			schedules, ok := entry["stopRouteSchedules"].([]any)
 			require.True(ok)
 
-			// Route schedules must be sorted alphabetically by routeId
+			references, ok := data["references"].(map[string]any)
+			require.True(ok)
+			routeRefs, ok := references["routes"].([]any)
+			require.True(ok)
+
+			// Build routeId -> sort name (shortName, falling back to longName) from references,
+			// matching the natural-sort key the spec requires for stopRouteSchedules ordering.
+			routeSortNameByID := make(map[string]string, len(routeRefs))
+			for _, routeAny := range routeRefs {
+				route := routeAny.(map[string]any)
+				id, _ := route["id"].(string)
+				shortName, _ := route["shortName"].(string)
+				longName, _ := route["longName"].(string)
+				name := shortName
+				if name == "" {
+					name = longName
+				}
+				routeSortNameByID[id] = name
+			}
+
+			// Route schedules must be sorted by route short name (falling back to long name)
+			// using a natural (numeric-aware) string sort, not a plain lexicographic sort on routeId.
 			for i := 0; i < len(schedules)-1; i++ {
 				currSched := schedules[i].(map[string]any)
 				nextSched := schedules[i+1].(map[string]any)
 				currRouteID, _ := currSched["routeId"].(string)
 				nextRouteID, _ := nextSched["routeId"].(string)
-				assert.LessOrEqual(t, currRouteID, nextRouteID, "Route schedules must be sorted alphabetically by routeId")
+				currName := routeSortNameByID[currRouteID]
+				nextName := routeSortNameByID[nextRouteID]
+				assert.LessOrEqual(t, utils.NaturalCompare(currName, nextName), 0,
+					"Route schedules must be sorted naturally by route short/long name (%q vs %q)", currName, nextName)
 			}
 
 			for _, schedAny := range schedules {

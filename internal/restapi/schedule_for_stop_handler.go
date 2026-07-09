@@ -85,6 +85,10 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Natural-sort by short name (falling back to long name, then agency/route ID) so that
+	// stopRouteSchedules can later be emitted in this same order, per spec.
+	utils.SortRoutesByName(routesForStop)
+
 	routeIDs := make([]string, 0, len(routesForStop))
 	for _, rt := range routesForStop {
 		routeIDs = append(routeIDs, rt.ID)
@@ -310,15 +314,22 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Build the route schedules
+	// Build the route schedules in the natural-sort order established above (spec step 10):
+	// by route short name, falling back to long name, then agency/route ID.
 	var routeSchedules []models.StopRouteSchedule
-	for routeID, directionMap := range routeDirectionScheduleMap {
+	for _, rt := range routesForStop {
+		combinedRouteID := utils.FormCombinedID(agencyID, rt.ID)
+		directionMap, hasSchedule := routeDirectionScheduleMap[combinedRouteID]
+		if !hasSchedule {
+			continue
+		}
+
 		var directionSchedules []models.StopRouteDirectionSchedule
 
 		for dirID, stopTimes := range directionMap {
 			tripHeadsign := ""
 			maxCount := 0
-			if dirHeadsigns, exists := routeDirectionHeadsignCounts[routeID][dirID]; exists {
+			if dirHeadsigns, exists := routeDirectionHeadsignCounts[combinedRouteID][dirID]; exists {
 				headsigns := make([]string, 0, len(dirHeadsigns))
 				for headsign := range dirHeadsigns {
 					headsigns = append(headsigns, headsign)
@@ -342,14 +353,9 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			return cmp.Compare(a.TripHeadsign, b.TripHeadsign)
 		})
 
-		routeSchedule := models.NewStopRouteSchedule(routeID, directionSchedules)
+		routeSchedule := models.NewStopRouteSchedule(combinedRouteID, directionSchedules)
 		routeSchedules = append(routeSchedules, routeSchedule)
 	}
-
-	// Sort route schedules by route ID for deterministic ordering
-	slices.SortStableFunc(routeSchedules, func(a, b models.StopRouteSchedule) int {
-		return cmp.Compare(a.RouteID, b.RouteID)
-	})
 
 	// Create the entry
 	combinedStopID := utils.FormCombinedID(agencyID, stopID)
