@@ -99,7 +99,8 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		for _, route := range routes {
 			combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
 
-			// Only add if we haven't seen this route yet
+			// GetRoutesForStop is already DISTINCT, so there are no duplicates here.
+			// This primarily seeds the dedup set for the parent station routes below.
 			if !uniqueRouteIDs[combinedRouteID] {
 				routeModel := models.NewRoute(
 					combinedRouteID,
