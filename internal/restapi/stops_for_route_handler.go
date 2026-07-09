@@ -213,18 +213,7 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 
 	// When includeReferences=false the references block is present but empty.
 	if ShouldIncludeReferences(r) {
-		agencyRef := models.NewAgencyReference(
-			currentAgency.ID,
-			currentAgency.Name,
-			currentAgency.Url,
-			currentAgency.Timezone,
-			currentAgency.Lang.String,
-			currentAgency.Phone.String,
-			currentAgency.Email.String,
-			currentAgency.FareUrl.String,
-			"",
-			false,
-		)
+		agencyRef := models.AgencyReferenceFromDatabase(&currentAgency)
 
 		routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)
 		if err != nil {
