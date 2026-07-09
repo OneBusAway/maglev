@@ -22,11 +22,11 @@ func TestTripsForRouteListEntry_GetTripId(t *testing.T) {
 }
 
 func TestTripsForRouteListEntryJSON(t *testing.T) {
-	frequency := int64(600)
+	frequency := newTestFrequency(600)
 	entry := TripsForRouteListEntry{
 		TripId:       "unitrans_trip_456",
 		ServiceDate:  1609459200000,
-		Frequency:    &frequency,
+		Frequency:    frequency,
 		Schedule:     nil,
 		Status:       nil,
 		SituationIds: []string{"situation_3"},
@@ -42,6 +42,6 @@ func TestTripsForRouteListEntryJSON(t *testing.T) {
 	assert.Equal(t, entry.TripId, unmarshaledEntry.TripId)
 	assert.Equal(t, entry.ServiceDate, unmarshaledEntry.ServiceDate)
 	assert.NotNil(t, unmarshaledEntry.Frequency)
-	assert.Equal(t, *entry.Frequency, *unmarshaledEntry.Frequency)
+	assert.Equal(t, entry.Frequency.Headway, unmarshaledEntry.Frequency.Headway)
 	assert.Equal(t, entry.SituationIds, unmarshaledEntry.SituationIds)
 }
