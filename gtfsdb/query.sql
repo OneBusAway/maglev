@@ -514,11 +514,11 @@ SELECT
     st.departure_time,
     st.stop_headsign,
     t.service_id,
-    t.route_id,
     t.trip_headsign,
     t.block_id,
     t.min_arrival_time,
     t.max_departure_time,
+    t.direction_id,
     r.id as route_id,
     r.agency_id
 FROM
@@ -559,7 +559,7 @@ WHERE
     )
     AND r.id IN (sqlc.slice('route_ids'))
 ORDER BY
-    r.id, st.departure_time;
+    r.id, COALESCE(t.direction_id, 0), st.departure_time;
 
 
 -- name: GetImportMetadata :one
