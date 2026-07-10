@@ -22,7 +22,7 @@ All commands are managed through the Makefile:
 - `make build` - Build the application binary to `bin/maglev`
 - `make test` - Run all tests
 - `make load-test` - Run smoketest and stresstest (k6)
-- `make lint` - Run golangci-lint (requires: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
+- `make lint` - Run `go vet`
 - `make coverage` - Generate test coverage report with HTML output
 - `make coverage-report` - Output per-package test coverage as JSON for CI parsing (requires jq)
 - `make models` - Regenerate sqlc models from SQL queries

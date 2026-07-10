@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -51,9 +53,21 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	vehiclesForAgency, limitExceeded := utils.PaginateSlice(vehiclesForAgency, offset, limit)
+	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
+	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
+	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
+		if ageInSeconds, err := strconv.ParseInt(val, 10, 64); err == nil && ageInSeconds >= 0 && ageInSeconds <= maxAgeInSeconds {
+			cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
+			filtered := vehiclesForAgency[:0]
+			for _, vehicle := range vehiclesForAgency {
+				if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
+					filtered = append(filtered, vehicle)
+				}
+			}
+			vehiclesForAgency = filtered
+		}
+	}
+
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
 
 	// Collect unique route IDs and batch-fetch routes
@@ -240,7 +254,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
 	}
 
-	// Agency is served by this instance, so outOfRange is always false.
-	response := models.NewListResponseWithRange(vehiclesList, *references, false, api.Clock, limitExceeded)
+	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
+	response := models.NewListResponse(vehiclesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

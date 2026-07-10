@@ -122,10 +122,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	references := models.NewEmptyReferences()
 
 	// Add the stop's agency to references immediately
-	references.Agencies = append(references.Agencies, models.NewAgencyReference(
-		agency.ID, agency.Name, agency.Url, agency.Timezone, agency.Lang.String,
-		agency.Phone.String, agency.Email.String, agency.FareUrl.String, "", false,
-	))
+	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
 	// Track which agencies we have already added to avoid duplicates
 	addedAgencyIDs := make(map[string]bool)
@@ -589,10 +586,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		if !addedAgencyIDs[route.AgencyID] {
 			routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 			if err == nil {
-				references.Agencies = append(references.Agencies, models.NewAgencyReference(
-					routeAgency.ID, routeAgency.Name, routeAgency.Url, routeAgency.Timezone, routeAgency.Lang.String,
-					routeAgency.Phone.String, routeAgency.Email.String, routeAgency.FareUrl.String, "", false,
-				))
+				references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&routeAgency))
 				addedAgencyIDs[route.AgencyID] = true
 			} else {
 				api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
