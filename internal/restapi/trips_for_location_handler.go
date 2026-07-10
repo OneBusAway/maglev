@@ -113,11 +113,18 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	references := api.BuildReference(w, r, ctx, ReferenceParams{
-		IncludeTrip: includeTrip,
-		Stops:       stops,
-		Trips:       result,
-	})
+	references := *models.NewEmptyReferences()
+
+	includeReferences := ShouldIncludeReferences(r)
+
+	if includeReferences {
+		references = api.BuildReference(w, r, ctx, ReferenceParams{
+			IncludeTrip: includeTrip,
+			Stops:       stops,
+			Trips:       result,
+		})
+	}
+
 	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(locationParams), api.Clock, false)
 	api.sendResponse(w, r, response)
 }
