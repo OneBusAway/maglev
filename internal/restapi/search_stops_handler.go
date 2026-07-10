@@ -86,7 +86,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	searchParams := gtfsdb.SearchStopsByNameParams{
 		SearchQuery: searchQuery,
-		Limit:       int64(limit),
+		Limit:       int64(limit + 1), // Request limit + 1 to accurately determine if pagination boundaries are exceeded.
 	}
 
 	// 3. Perform Full Text Search (with logged fallback)
@@ -123,6 +123,14 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			)
 			return
 		}
+	}
+
+	// Evaluate if we fetched more than the requested limit
+	isLimitExceeded := len(stops) > limit
+
+	// Truncate the slice back down to the actual limit if necessary
+	if isLimitExceeded {
+		stops = stops[:limit]
 	}
 
 	// 4. Batch Fetch Related Data
@@ -306,7 +314,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		OutOfRange    bool                   `json:"outOfRange"`
 		References    models.ReferencesModel `json:"references"`
 	}{
-		LimitExceeded: len(stops) >= limit,
+		LimitExceeded: isLimitExceeded,
 		List:          stopModels,
 		OutOfRange:    false,
 		References:    *references,
