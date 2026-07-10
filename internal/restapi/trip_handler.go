@@ -86,18 +86,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 			route.Color.String,
 			route.TextColor.String))
 
-		references.Agencies = append(references.Agencies, models.NewAgencyReference(
-			agency.ID,
-			agency.Name,
-			agency.Url,
-			agency.Timezone,
-			agency.Lang.String,
-			agency.Phone.String,
-			agency.Email.String,
-			agency.FareUrl.String,
-			"",
-			false,
-		))
+		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 	}
 
 	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, *references, api.Clock))
