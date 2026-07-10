@@ -201,7 +201,6 @@ func TestTripsForLocationHandler_MissingParameters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, model := callAPIHandler[TripsForLocationResponse](t, api, tt.url)
 
-			// FIX: Assert 200 OK with outOfRange=true and empty data list
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.Equal(t, http.StatusOK, model.Code)
 			assert.True(t, model.Data.OutOfRange)
