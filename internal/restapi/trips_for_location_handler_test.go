@@ -294,3 +294,36 @@ func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
 		})
 	}
 }
+
+func TestTripsForLocationHandler_IncludeReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify standard behavior (includeReferences=true implicitly)
+	urlTrue := tripsForLocationURL(2.0, 3.0, "includeSchedule=true")
+	respTrue, modelTrue := callAPIHandler[TripsForLocationResponse](t, api, urlTrue)
+	require.Equal(t, http.StatusOK, respTrue.StatusCode)
+	require.NotEmpty(t, modelTrue.Data.List, "list must be populated when includeReferences is true or absent")
+	assert.NotEmpty(t, modelTrue.Data.References.Stops, "Stops should be populated when includeReferences is true or absent")
+	assert.NotEmpty(t, modelTrue.Data.References.Routes, "Routes should be populated when includeReferences is true or absent")
+	assert.NotEmpty(t, modelTrue.Data.References.Agencies, "Agencies should be populated when includeReferences is true or absent")
+
+	// Verify explicit includeReferences=false behavior
+	urlFalse := tripsForLocationURL(2.0, 3.0, "includeSchedule=true", "includeReferences=false")
+	respFalse, modelFalse := callAPIHandler[TripsForLocationResponse](t, api, urlFalse)
+	require.Equal(t, http.StatusOK, respFalse.StatusCode)
+
+	// Ensure the list of trip entries is preserved and matches standard behavior
+	assert.NotEmpty(t, modelFalse.Data.List, "list must still be populated when includeReferences=false")
+	assert.Equal(t, len(modelTrue.Data.List), len(modelFalse.Data.List), "list length must match whether includeReferences is true or false")
+
+	// Verify the references object is present but all arrays are empty (as per spec)
+	assert.Empty(t, modelFalse.Data.References.Agencies, "Agencies must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Routes, "Routes must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Stops, "Stops must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.StopTimes, "StopTimes must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Trips, "Trips must be empty when includeReferences=false")
+	assert.Empty(t, modelFalse.Data.References.Situations, "Situations must be empty when includeReferences=false")
+}
