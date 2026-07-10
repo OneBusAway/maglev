@@ -31,8 +31,9 @@ Do not attribute commits to a coding agent (e.g. no `Co-Authored-By` lines for C
 Before committing any code, always run these steps and have them all succeed:
 
 1. Run `go vet -tags "sqlite_fts5 sqlite_math_functions" ./...` and fix any issues identified
-2. Run `make test` and fix any failing tests
-3. Run `go fmt ./...` and commit all of the formatting changes
+2. Run `go vet -tags "purego" ./...` and fix any issues identified
+3. Run `make test` and fix any failing tests
+4. Run `go fmt ./...` and commit all of the formatting changes
 
 ### Responding to Review Feedback
 
