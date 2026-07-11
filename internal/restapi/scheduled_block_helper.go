@@ -11,6 +11,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -298,13 +299,14 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 			slog.String("trip_id", targetTripID))
 		return fallback
 	}
-	if !blockID.Valid || blockID.String == "" {
+	blockIDStr := nulls.StringOrEmpty(blockID)
+	if blockIDStr == "" {
 		return fallback
 	}
 	blockTrips, err := q.GetTripsByBlockID(ctx, blockID)
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
-			slog.String("trip_id", targetTripID), slog.String("block_id", blockID.String))
+			slog.String("trip_id", targetTripID), slog.String("block_id", blockIDStr))
 		return fallback
 	}
 	if len(blockTrips) == 0 {
