@@ -34,7 +34,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Intentionally defaulting includeStatus to false to align with includeSchedule
 	// behavior for this endpoint, even though trips-for-route defaults to true.
-	includeStatus := r.URL.Query().Get("includeStatus") == "true"
+	includeStatus, _ := strconv.ParseBool(r.URL.Query().Get("includeStatus"))
 	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
 	currentTime := api.Clock.Now().In(currentLocation)
 

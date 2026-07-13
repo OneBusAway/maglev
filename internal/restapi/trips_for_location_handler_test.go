@@ -163,16 +163,24 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	tests := []struct {
-		name          string
-		includeStatus bool
+		name           string
+		statusParam    string
+		expectedStatus bool
 	}{
-		{name: "With Status", includeStatus: true},
-		{name: "Without Status", includeStatus: false},
+		{name: "With Status (Explicit true)", statusParam: "includeStatus=true", expectedStatus: true},
+		{name: "With Status (Integer 1)", statusParam: "includeStatus=1", expectedStatus: true},
+		{name: "With Status (Uppercase TRUE)", statusParam: "includeStatus=TRUE", expectedStatus: true},
+		{name: "Without Status (Explicit false)", statusParam: "includeStatus=false", expectedStatus: false},
+		{name: "Without Status (Invalid value)", statusParam: "includeStatus=invalid_value", expectedStatus: false},
+		{name: "Without Status (Default/Omitted)", statusParam: "", expectedStatus: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := tripsForLocationURL(0.2, 0.2, fmt.Sprintf("includeStatus=%v", tt.includeStatus))
+			url := tripsForLocationURL(0.2, 0.2)
+			if tt.statusParam != "" {
+				url += "&" + tt.statusParam
+			}
 
 			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
@@ -180,12 +188,12 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 			require.NotEmpty(t, model.Data.List, "expected at least one trip in the response to verify status behavior")
 
 			for _, entry := range model.Data.List {
-				if tt.includeStatus {
-					if assert.NotNil(t, entry.Status, "expected status when includeStatus=true") {
+				if tt.expectedStatus {
+					if assert.NotNil(t, entry.Status, "expected status when includeStatus=true/1/TRUE") {
 						assert.NotEmpty(t, entry.Status.Phase)
 					}
 				} else {
-					assert.Nil(t, entry.Status, "expected status to be omitted when includeStatus=false")
+					assert.Nil(t, entry.Status, "expected status to be omitted when includeStatus=false/invalid/omitted")
 				}
 			}
 		})
