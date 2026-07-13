@@ -323,18 +323,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		agencyModel := models.NewAgencyReference(
-			agency.ID,
-			agency.Name,
-			agency.Url,
-			agency.Timezone,
-			agency.Lang.String,
-			agency.Phone.String,
-			agency.Email.String,
-			agency.FareUrl.String,
-			"",
-			false,
-		)
+		agencyModel := models.AgencyReferenceFromDatabase(&agency)
 		references.Agencies = append(references.Agencies, agencyModel)
 
 		if len(situationsIDs) > 0 {
