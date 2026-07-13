@@ -217,8 +217,10 @@ func TestTripsForLocationHandler_MissingParameters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, model := callAPIHandler[TripsForLocationResponse](t, api, tt.url)
 
-			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-			assert.Equal(t, http.StatusBadRequest, model.Code)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.True(t, model.Data.OutOfRange)
+			assert.Empty(t, model.Data.List)
 		})
 	}
 }
