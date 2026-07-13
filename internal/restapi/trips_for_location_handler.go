@@ -662,18 +662,7 @@ func (rb *referenceBuilder) collectAgenciesAndRoutes() error {
 	}
 
 	for _, agency := range agencies {
-		rb.presentAgencies[agency.ID] = models.NewAgencyReference(
-			agency.ID,
-			agency.Name,
-			agency.Url,
-			agency.Timezone,
-			agency.Lang.String,
-			agency.Phone.String,
-			agency.Email.String,
-			agency.FareUrl.String,
-			"",
-			false,
-		)
+		rb.presentAgencies[agency.ID] = models.AgencyReferenceFromDatabase(&agency)
 	}
 	return nil
 }
