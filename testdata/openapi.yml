@@ -1,5 +1,5 @@
 # Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
-# Fetched: 2026-07-08
+# Fetched: 2026-07-13
 openapi: 3.0.0
 info:
   title: OneBusAway
@@ -157,14 +157,18 @@ paths:
           in: query
           schema:
             type: number
+            default: 0.0
           example: 47.653435
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
         - name: lon
           in: query
           schema:
             type: number
+            default: 0.0
           example: -122.305641
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
         - name: radius
           in: query
           schema:
@@ -278,15 +282,19 @@ paths:
       parameters:
         - name: lat
           in: query
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
           schema:
             type: number
+            default: 0.0
           example: 47.656422
         - name: lon
           in: query
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
           schema:
             type: number
+            default: 0.0
           example: -122.305641
         - name: radius
           in: query
@@ -651,18 +659,20 @@ paths:
       parameters:
         - name: lat
           in: query
-          required: true
+          required: false
           schema:
             type: number
             format: float
-          description: The latitude coordinate of the search center
+            default: 0.0
+          description: The latitude coordinate of the search center. If omitted, defaults to 0.0.
         - name: lon
           in: query
-          required: true
+          required: false
           schema:
             type: number
             format: float
-          description: The longitude coordinate of the search center
+            default: 0.0
+          description: The longitude coordinate of the search center. If omitted, defaults to 0.0.
         - name: latSpan
           in: query
           required: true
