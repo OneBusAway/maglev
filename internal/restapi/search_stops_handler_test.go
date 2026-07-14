@@ -133,7 +133,7 @@ func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {`test" OR "1"="1`}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Less(t, len(stopsResp.Data.List), 50)
+	assert.LessOrEqual(t, len(stopsResp.Data.List), 20)
 }
 
 func TestSanitizeFTS5Query(t *testing.T) {

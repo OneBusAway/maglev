@@ -47,7 +47,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 50
+	limit := 20
 	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
 		if parsed, err := strconv.Atoi(maxCountStr); err == nil && parsed > 0 {
 			limit = parsed
