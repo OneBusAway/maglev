@@ -170,3 +170,25 @@ func TestSanitizeFTS5Query(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Verify that multi-word search queries containing special characters are parsed
+	// and executed correctly by the FTS engine without throwing syntax errors.
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"pine st & 9th"}}))
+
+	// Ensure the API returns a successful HTTP 200 response for complex input strings.
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.Equal(t, "OK", stopsResp.Text)
+
+	// Verify that reserved FTS keywords (e.g., AND, OR) within the search input
+	// are safely sanitized and processed without causing database-level exceptions.
+	respFallback, stopsRespFallback := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Pine AND 9th OR Station"}}))
+
+	assert.Equal(t, http.StatusOK, respFallback.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsRespFallback.Code)
+	assert.Equal(t, "OK", stopsRespFallback.Text)
+}

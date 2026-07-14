@@ -219,7 +219,7 @@ END;
 -- FTS5 external content table for full-text stop search.
 -- Data lives in 'stops' table; only the search index is stored here.
 -- migrate
-CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5 (id UNINDEXED, stop_name, tokenize = 'porter');
+CREATE VIRTUAL TABLE IF NOT EXISTS stops_fts USING fts5 (id UNINDEXED, stop_name, tokenize = 'unicode61');
 
 -- The triggers below keep the index synchronized with the content table.
 -- migrate

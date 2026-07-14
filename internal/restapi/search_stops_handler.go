@@ -82,7 +82,12 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	searchQuery := `"` + sanitizedQuery + `*"`
+	terms := strings.Fields(sanitizedQuery)
+	var queryTerms []string
+	for _, term := range terms {
+		queryTerms = append(queryTerms, `"`+term+`"*`)
+	}
+	searchQuery := strings.Join(queryTerms, " AND ")
 
 	searchParams := gtfsdb.SearchStopsByNameParams{
 		SearchQuery: searchQuery,
@@ -103,7 +108,12 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 				"sanitized_input", sanitizedQuery,
 			)
 
-			searchQuery = `"` + sanitizedQuery + `"`
+			var fallbackTerms []string
+			for _, term := range terms {
+				fallbackTerms = append(fallbackTerms, `"`+term+`"`)
+			}
+			searchQuery = strings.Join(fallbackTerms, " AND ")
+			
 			searchParams.SearchQuery = searchQuery
 
 			stops, err = api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
