@@ -364,6 +364,25 @@ func findVehicleInList(list []models.VehicleStatus, vehicleID string) *models.Ve
 	return nil
 }
 
+// findTripWithBlock returns the first trip with a non-empty BlockID satisfying
+// pred, searching up to 200 trips. Returns the zero value if none match.
+func findTripWithBlock(t testing.TB, api *RestAPI, ctx context.Context, pred func(gtfsdb.Trip) bool) gtfsdb.Trip {
+	t.Helper()
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" {
+			continue
+		}
+		if pred(row) {
+			return row
+		}
+	}
+	return gtfsdb.Trip{}
+}
+
 // TestVehiclesForAgencyHandler_BlockTripSequenceResolved verifies that a vehicle on
 // a trip with a block active on the reference date gets a resolved (>= 0) sequence.
 func TestVehiclesForAgencyHandler_BlockTripSequenceResolved(t *testing.T) {
@@ -374,20 +393,10 @@ func TestVehiclesForAgencyHandler_BlockTripSequenceResolved(t *testing.T) {
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	ctx := context.Background()
-	trips, err := api.GtfsManager.GetTrips(ctx, 200)
-	require.NoError(t, err)
-
-	var blockTrip gtfsdb.Trip
-	for _, tr := range trips {
-		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
-		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" {
-			continue
-		}
-		if _, ok := api.blockTripSequence(ctx, tr.ID, serviceDate); ok {
-			blockTrip = row
-			break
-		}
-	}
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, ok := api.blockTripSequence(ctx, row.ID, serviceDate)
+		return ok
+	})
 	require.NotEmpty(t, blockTrip.ID, "need a trip with a resolvable block sequence in test data")
 
 	const vehicleID = "v_block_seq"
@@ -437,20 +446,10 @@ func TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime(t *testing.
 	requestedTime := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	ctx := context.Background()
-	trips, err := api.GtfsManager.GetTrips(ctx, 200)
-	require.NoError(t, err)
-
-	var blockTrip gtfsdb.Trip
-	for _, tr := range trips {
-		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
-		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" {
-			continue
-		}
-		if _, ok := api.blockTripSequence(ctx, tr.ID, requestedTime); ok {
-			blockTrip = row
-			break
-		}
-	}
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, ok := api.blockTripSequence(ctx, row.ID, requestedTime)
+		return ok
+	})
 	require.NotEmpty(t, blockTrip.ID, "need a trip with a block sequence resolvable on requestedTime in test data")
 
 	const vehicleID = "v_block_seq_reftime"
@@ -479,22 +478,11 @@ func TestVehiclesForAgencyHandler_BlockTripSequenceUsesAgencyLocalDate(t *testin
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	ctx := context.Background()
-	trips, err := api.GtfsManager.GetTrips(ctx, 200)
-	require.NoError(t, err)
-
-	var blockTrip gtfsdb.Trip
-	for _, tr := range trips {
-		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
-		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" {
-			continue
-		}
-		_, resolvesFriday := api.blockTripSequence(ctx, tr.ID, agencyLocalFriday)
-		_, resolvesSaturday := api.blockTripSequence(ctx, tr.ID, mockNow)
-		if resolvesFriday && !resolvesSaturday {
-			blockTrip = row
-			break
-		}
-	}
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, resolvesFriday := api.blockTripSequence(ctx, row.ID, agencyLocalFriday)
+		_, resolvesSaturday := api.blockTripSequence(ctx, row.ID, mockNow)
+		return resolvesFriday && !resolvesSaturday
+	})
 	require.NotEmpty(t, blockTrip.ID,
 		"need a trip whose block resolves Friday but not Saturday in test data")
 
