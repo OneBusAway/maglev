@@ -113,7 +113,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 				fallbackTerms = append(fallbackTerms, `"`+term+`"`)
 			}
 			searchQuery = strings.Join(fallbackTerms, " AND ")
-			
+
 			searchParams.SearchQuery = searchQuery
 
 			stops, err = api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
