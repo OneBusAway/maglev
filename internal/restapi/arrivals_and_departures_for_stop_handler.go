@@ -347,7 +347,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			int64(st.StopSequence),
 			schedArrTime,
 			schedDepTime,
-			params.Time,
 		)
 
 		if isPredicted {

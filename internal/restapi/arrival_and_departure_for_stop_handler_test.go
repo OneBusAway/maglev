@@ -325,7 +325,7 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	scheduledArrival := time.Now()
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture, time.Now())
+	predArrival, predDeparture, predicted := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -338,7 +338,7 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 	scheduledTime := time.Now()
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime, time.Now())
+	predArrival, predDeparture, predicted := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime)
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -579,7 +579,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime, currentTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 120s delay")
@@ -613,12 +613,76 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime, currentTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.True(t, predicted, "Should be predicted when trip-level delay is available")
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 300s trip-level delay")
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 300s trip-level delay")
+}
+
+// TestGetPredictedTimes_DelayOnlySTUs_NoAbsoluteTime covers the common
+// GTFS-RT pattern where StopTimeUpdates carry only Delay (no Arrival.Time or
+// Departure.Time). A prior gate rejected these updates entirely; Java accepts
+// them (delay-only STUs are the norm for many providers), so we must too.
+func TestGetPredictedTimes_DelayOnlySTUs_NoAbsoluteTime(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "delay_only_stus_trip"
+	stopID := "delay_only_stop"
+	targetStopSequence := int64(3)
+	seq := uint32(3)
+	delay := 120 * time.Second
+
+	mockTrip := gtfs.Trip{
+		ID: gtfs.TripID{ID: tripID},
+		StopTimeUpdates: []gtfs.StopTimeUpdate{
+			{
+				StopID:       &stopID,
+				StopSequence: &seq,
+				Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+				Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+			},
+		},
+	}
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
+
+	scheduledTime := time.Now()
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, stopID, targetStopSequence, scheduledTime, scheduledTime)
+
+	expectedTime := scheduledTime.Add(delay)
+	assert.True(t, predicted, "delay-only STU must still produce a prediction")
+	assert.Equal(t, expectedTime, predArrival, "arrival must be scheduled + STU.Arrival.Delay")
+	assert.Equal(t, expectedTime, predDeparture, "departure must be scheduled + STU.Departure.Delay")
+}
+
+// TestGetPredictedTimes_TripLevelDelayNoSTUs covers a TripUpdate carrying only
+// a trip-level Delay with zero StopTimeUpdates. Java applies this delay as the
+// schedule deviation (applyTripUpdatesToRecord, line 940-947); the earlier
+// isTripActive gate silently dropped it.
+func TestGetPredictedTimes_TripLevelDelayNoSTUs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "trip_level_delay_no_stus"
+	targetStopSequence := int64(5)
+	delayDuration := 240 * time.Second
+
+	mockTrip := gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Delay:           &delayDuration,
+		StopTimeUpdates: nil,
+	}
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
+
+	scheduledTime := time.Now()
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "any_stop", targetStopSequence, scheduledTime, scheduledTime)
+
+	expectedTime := scheduledTime.Add(delayDuration)
+	assert.True(t, predicted, "trip-level Delay with no STUs must produce a prediction")
+	assert.Equal(t, expectedTime, predArrival, "arrival must be scheduled + trip-level Delay")
+	assert.Equal(t, expectedTime, predDeparture, "departure must be scheduled + trip-level Delay")
 }
 
 func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {

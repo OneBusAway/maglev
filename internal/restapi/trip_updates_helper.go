@@ -205,44 +205,6 @@ func minAbs(a, b int64) int64 {
 	return b
 }
 
-// isTripActive returns true if the trip update's StopTimeUpdate predictions
-// are still within a relevant time window. Mirrors Java's
-// GtfsRealtimeTripLibrary.isTripActive:
-//
-//	currentTime + 1h > firstPrediction  &&  lastPrediction > currentTime
-//
-// When the last prediction is entirely in the past, the trip update is
-// considered inactive and should not be consumed.
-func isTripActive(tu gtfs.Trip, currentTime time.Time) bool {
-	if len(tu.StopTimeUpdates) == 0 {
-		return false
-	}
-	windowFuture := int64(60 * 60)
-	currentUnix := currentTime.Unix()
-
-	var firstPrediction, lastPrediction int64 = -1, -1
-
-	firstSTU := tu.StopTimeUpdates[0]
-	if firstSTU.Arrival != nil && firstSTU.Arrival.Time != nil {
-		firstPrediction = firstSTU.Arrival.Time.Unix()
-	} else if firstSTU.Departure != nil && firstSTU.Departure.Time != nil {
-		firstPrediction = firstSTU.Departure.Time.Unix()
-	}
-
-	lastSTU := tu.StopTimeUpdates[len(tu.StopTimeUpdates)-1]
-	if lastSTU.Departure != nil && lastSTU.Departure.Time != nil {
-		lastPrediction = lastSTU.Departure.Time.Unix()
-	} else if lastSTU.Arrival != nil && lastSTU.Arrival.Time != nil {
-		lastPrediction = lastSTU.Arrival.Time.Unix()
-	}
-
-	if firstPrediction < 0 || lastPrediction < 0 {
-		return false
-	}
-
-	return currentUnix+windowFuture > firstPrediction && lastPrediction > currentUnix
-}
-
 // stuPredictedFromArrival computes the predicted arrival-seconds-since-midnight
 // for an STU. Returns 0 when nothing useful is set.
 //
@@ -284,9 +246,6 @@ func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []t
 	picker := newSTUDeviationPicker(utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate))
 
 	for _, t := range tripUpdates {
-		if !isTripActive(t.tu, currentTime) {
-			continue
-		}
 		schedMap := loadScheduled(t.tripID)
 		for _, stu := range t.tu.StopTimeUpdates {
 			var schedArr, schedDep int64
@@ -409,17 +368,12 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 
 // GetStopDelaysFromTripUpdates returns a map of stop ID → per-stop delay information
 // (arrival and departure delays in seconds) derived from the GTFS-RT StopTimeUpdates
-// for the given trip. Returns an empty map when no real-time data is available or the
-// trip update is inactive (all predictions are in the past).
-func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string, currentTime time.Time) map[string]StopDelayInfo {
+// for the given trip. Returns an empty map when no real-time data is available.
+func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopDelayInfo {
 	delays := make(map[string]StopDelayInfo)
 
 	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
 	if len(tripUpdates) == 0 {
-		return delays
-	}
-
-	if !isTripActive(tripUpdates[0], currentTime) {
 		return delays
 	}
 
