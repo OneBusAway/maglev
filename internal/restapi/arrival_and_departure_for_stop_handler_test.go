@@ -685,6 +685,95 @@ func TestGetPredictedTimes_TripLevelDelayNoSTUs(t *testing.T) {
 	assert.Equal(t, expectedTime, predDeparture, "departure must be scheduled + trip-level Delay")
 }
 
+// TestGetPredictedTimes_BlockNotActiveDropsPredictions covers Java's
+// blockNotActive filter (GtfsRealtimeSource.java:811-821): when the resolved
+// prediction offset exceeds ±1h, the RT record is treated as poisoned and
+// the prediction must be dropped. Without this gate, BuildTripStatus reports
+// scheduleDeviation=0, predicted=false, while getPredictedTimes would still
+// emit predictedArrivalTime derived from the same outlier delay — a
+// self-contradictory response.
+func TestGetPredictedTimes_BlockNotActiveDropsPredictions(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "block_not_active_trip_level"
+	targetStopSequence := int64(5)
+	outlierDelay := 70 * time.Minute // 4200s — over the 3600s threshold
+
+	mockTrip := gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Delay:           &outlierDelay,
+		StopTimeUpdates: nil,
+	}
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
+
+	scheduledTime := time.Now()
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "any_stop", targetStopSequence, scheduledTime, scheduledTime)
+
+	assert.False(t, predicted, "70-min trip-level Delay must be discarded")
+	assert.True(t, predArrival.IsZero())
+	assert.True(t, predDeparture.IsZero())
+}
+
+// TestGetPredictedTimes_BlockNotActiveDropsSTUDelay covers the per-STU case:
+// even when the outlier delay is on a StopTimeUpdate rather than trip-level,
+// the same threshold applies so the two response halves stay in sync.
+func TestGetPredictedTimes_BlockNotActiveDropsSTUDelay(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "block_not_active_stu_delay"
+	stopID := "target_stop"
+	targetStopSequence := int64(3)
+	seq := uint32(3)
+	outlierDelay := 90 * time.Minute // 5400s — over threshold
+
+	mockTrip := gtfs.Trip{
+		ID: gtfs.TripID{ID: tripID},
+		StopTimeUpdates: []gtfs.StopTimeUpdate{
+			{
+				StopID:       &stopID,
+				StopSequence: &seq,
+				Arrival:      &gtfs.StopTimeEvent{Delay: &outlierDelay},
+				Departure:    &gtfs.StopTimeEvent{Delay: &outlierDelay},
+			},
+		},
+	}
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
+
+	scheduledTime := time.Now()
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, stopID, targetStopSequence, scheduledTime, scheduledTime)
+
+	assert.False(t, predicted, "90-min per-STU Delay must be discarded")
+	assert.True(t, predArrival.IsZero())
+	assert.True(t, predDeparture.IsZero())
+}
+
+// TestGetPredictedTimes_JustUnderThresholdStillEmits confirms the guard uses
+// a strict > comparison (not ≥) — exactly ±1h delay still emits a prediction,
+// matching Java's `Math.abs(...) > 60 * 60`.
+func TestGetPredictedTimes_JustUnderThresholdStillEmits(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := "just_under_threshold"
+	borderline := 60 * time.Minute // exactly 3600s
+
+	mockTrip := gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Delay:           &borderline,
+		StopTimeUpdates: nil,
+	}
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
+
+	scheduledTime := time.Now()
+	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "any_stop", 5, scheduledTime, scheduledTime)
+
+	assert.True(t, predicted, "exactly 60-min delay must still emit a prediction (Java uses strict >)")
+	assert.Equal(t, scheduledTime.Add(borderline), predArrival)
+	assert.Equal(t, scheduledTime.Add(borderline), predDeparture)
+}
+
 func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
