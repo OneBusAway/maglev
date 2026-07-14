@@ -122,6 +122,22 @@ func TestStaleDetector_ExactThreshold(t *testing.T) {
 	assert.False(t, d.Check(vehicle, now), "vehicle at exactly 15 minutes should not be stale")
 }
 
+func TestStaleDetector_VehicleTimestampAfterCurrentTime(t *testing.T) {
+	d := NewStaleDetector()
+	now := time.Now()
+	future := now.Add(20 * time.Minute)
+	vehicle := &gtfs.Vehicle{Timestamp: &future}
+	assert.True(t, d.Check(vehicle, now), "vehicle timestamp 20 minutes after currentTime should be stale")
+}
+
+func TestStaleDetector_VehicleTimestampSlightlyAfterCurrentTime(t *testing.T) {
+	d := NewStaleDetector()
+	now := time.Now()
+	future := now.Add(5 * time.Minute)
+	vehicle := &gtfs.Vehicle{Timestamp: &future}
+	assert.False(t, d.Check(vehicle, now), "vehicle timestamp 5 minutes after currentTime should not be stale")
+}
+
 func TestBuildVehicleStatus_NilVehicleSetsDefaultStatus(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

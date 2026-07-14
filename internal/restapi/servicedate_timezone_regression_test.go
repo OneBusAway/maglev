@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -230,7 +231,8 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 
 			// Add a vehicle for the trip so BuildTripStatus returns a tracked
 			// status (extension 4e omits the status key when no tracking exists).
-			api.GtfsManager.MockAddVehicle(tc.prefix+"V", td.TripID2, td.RouteID)
+			vehicleTS := tc.localTime
+			api.GtfsManager.MockAddVehicleWithOptions(tc.prefix+"V", td.TripID2, td.RouteID, internalgtfs.MockVehicleOptions{Timestamp: &vehicleTS})
 
 			combinedTrip := utils.FormCombinedID(td.AgencyID, td.TripID2)
 			endpoint := fmt.Sprintf(
