@@ -22,7 +22,7 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	locationParams, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
+	locationParams, includeTrip, includeSchedule, currentLocation, currentTime, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -35,8 +35,6 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Intentionally defaulting includeStatus to false to align with includeSchedule
 	// behavior for this endpoint, even though trips-for-route defaults to true.
 	includeStatus := r.URL.Query().Get("includeStatus") == "true"
-	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
-	currentTime := api.Clock.Now().In(currentLocation)
 
 	stops := api.GtfsManager.GetStopsInBounds(ctx, locationParams, 100)
 	stopIDs := extractStopIDs(stops)
@@ -133,12 +131,15 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	location *internalgtfs.LocationParams,
 	includeTrip, includeSchedule bool,
 	currentLocation *time.Location,
+	currentTime time.Time,
 	todayMidnight time.Time,
 	serviceDate time.Time,
 	fieldErrors map[string][]string,
 	serverErr error,
 ) {
-	loc, fieldErrors := api.parseLocationParams(r, nil)
+
+	var loc *internalgtfs.LocationParams
+	loc, fieldErrors = api.parseLocationParams(r, nil)
 
 	queryParams := r.URL.Query()
 
@@ -147,35 +148,38 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 	if agenciesErr != nil || len(agencies) == 0 {
-		return nil, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
+		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
 	currentAgency := agencies[0]
 	currentLocation, serverErr = loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if serverErr != nil {
-		return nil, false, false, nil, time.Time{}, time.Time{}, nil, serverErr
+		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, nil, serverErr
 	}
 
 	timeParam := queryParams.Get("time")
-	currentTime := api.Clock.Now().In(currentLocation)
-	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-
-	var timeFieldErrors map[string][]string
-	_, serviceDate, timeFieldErrors, _ = utils.ParseTimeParameter(timeParam, currentLocation)
-	if len(timeFieldErrors) > 0 {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
-		for k, v := range timeFieldErrors {
-			fieldErrors[k] = append(fieldErrors[k], v...)
+	if timeParam == "" {
+		currentTime = api.Clock.Now().In(currentLocation)
+	} else {
+		var timeFieldErrors map[string][]string
+		_, currentTime, timeFieldErrors, _ = utils.ParseTimeParameter(timeParam, currentLocation)
+		if len(timeFieldErrors) > 0 {
+			if fieldErrors == nil {
+				fieldErrors = make(map[string][]string)
+			}
+			for k, v := range timeFieldErrors {
+				fieldErrors[k] = append(fieldErrors[k], v...)
+			}
 		}
 	}
+
+	serviceDate, todayMidnight = utils.ServiceDateMidnight(nil, currentTime)
 
 	if len(fieldErrors) > 0 {
-		return nil, false, false, nil, time.Time{}, time.Time{}, fieldErrors, nil
+		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, fieldErrors, nil
 	}
 
-	return loc, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil, nil
+	return loc, includeTrip, includeSchedule, currentLocation, currentTime, todayMidnight, serviceDate, nil, nil
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
