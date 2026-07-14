@@ -372,12 +372,11 @@ func findTripWithBlock(t testing.TB, api *RestAPI, ctx context.Context, pred fun
 	require.NoError(t, err)
 
 	for _, tr := range trips {
-		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
-		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" {
+		if !tr.BlockID.Valid || tr.BlockID.String == "" {
 			continue
 		}
-		if pred(row) {
-			return row
+		if pred(tr) {
+			return tr
 		}
 	}
 	return gtfsdb.Trip{}
