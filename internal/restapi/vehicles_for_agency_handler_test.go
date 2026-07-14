@@ -421,6 +421,50 @@ func TestVehiclesForAgencyHandler_BlockTripSequenceUnavailable(t *testing.T) {
 		"blockTripSequence must be -1 when the sequence is unavailable")
 }
 
+// TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime verifies that
+// blockTripSequence is resolved against the request's `time` parameter rather
+// than the server's wall-clock "now".
+func TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime(t *testing.T) {
+	// "Now" is set far outside the RABA feed's service calendar (2024-2025), so no
+	// trip's block sequence can resolve against api.Clock.Now().
+	farFutureNow := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(farFutureNow))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// The requested reference time, which does fall within the active service
+	// window and has a resolvable block sequence.
+	requestedTime := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	ctx := context.Background()
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	var blockTrip gtfsdb.Trip
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" {
+			continue
+		}
+		if _, ok := api.blockTripSequence(ctx, tr.ID, requestedTime); ok {
+			blockTrip = row
+			break
+		}
+	}
+	require.NotEmpty(t, blockTrip.ID, "need a trip with a block sequence resolvable on requestedTime in test data")
+
+	const vehicleID = "v_block_seq_reftime"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"time": {strconv.FormatInt(requestedTime.UnixMilli(), 10)}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must resolve using the requested `time` parameter, not api.Clock.Now()")
+}
+
 // ageFilterClock is a fixed reference time used by the ageInSeconds tests so the
 // fresh/stale vehicle timestamps are deterministic relative to api.Clock.Now().
 var ageFilterClock = time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
