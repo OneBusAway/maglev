@@ -703,6 +703,16 @@ func (api *RestAPI) getPredictedTimes(
 		departureOffset = &propagatedDelay
 	}
 
+	// Java's blockNotActive filter applies here too: if the resolved offset
+	// exceeds ±1h, the entire RT record would be discarded upstream in Java.
+	// Without this guard, BuildTripStatus (via GetScheduleDeviationForBlock)
+	// reports "no RT" while we would emit a predictedArrivalTime derived from
+	// the same delay, producing self-contradictory responses.
+	if exceedsBlockNotActiveThreshold(int(arrivalOffset.Seconds())) ||
+		exceedsBlockNotActiveThreshold(int(departureOffset.Seconds())) {
+		return time.Time{}, time.Time{}, false
+	}
+
 	// Rule 1: arrival == departure (Simplified Logic)
 	if scheduledArrivalTime.Equal(scheduledDepartureTime) {
 		offset := *arrivalOffset

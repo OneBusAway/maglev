@@ -50,9 +50,33 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		return dev, true
 	}
 	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, currentTime); ok {
+		if exceedsBlockNotActiveThreshold(dev) {
+			return 0, false
+		}
 		return dev, true
 	}
-	return pickReverseWalkSTUDelay(tripUpdates)
+	if dev, ok := pickReverseWalkSTUDelay(tripUpdates); ok {
+		if exceedsBlockNotActiveThreshold(dev) {
+			return 0, false
+		}
+		return dev, true
+	}
+	return 0, false
+}
+
+// blockNotActiveThresholdSeconds mirrors Java's blockNotActive filter
+// (GtfsRealtimeSource.java:811-821): a schedule deviation whose absolute
+// value exceeds 1h causes the entire VehicleLocationRecord to be discarded.
+// Every consumer that derives a schedule deviation or a prediction offset
+// from a TripUpdate must gate on this same threshold — otherwise the two
+// halves of a response (tripStatus.scheduleDeviation from BuildTripStatus
+// and predictedArrivalTime from getPredictedTimes) diverge and contradict
+// each other when a real-time feed reports an outlier delay.
+const blockNotActiveThresholdSeconds = 60 * 60
+
+func exceedsBlockNotActiveThreshold(deviationSeconds int) bool {
+	return deviationSeconds > blockNotActiveThresholdSeconds ||
+		deviationSeconds < -blockNotActiveThresholdSeconds
 }
 
 type tripUpdateForTrip struct {
@@ -96,8 +120,7 @@ func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool, bool) {
 	if !found {
 		return 0, false, false
 	}
-	const javaBlockNotActiveThreshold = 60 * 60
-	if deviation > javaBlockNotActiveThreshold || deviation < -javaBlockNotActiveThreshold {
+	if exceedsBlockNotActiveThreshold(deviation) {
 		return 0, false, true
 	}
 	return deviation, true, false
