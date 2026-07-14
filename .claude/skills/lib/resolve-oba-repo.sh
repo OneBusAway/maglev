@@ -33,7 +33,7 @@ usage() {
 }
 
 REPO="${1:-}"
-if [ -z "$REPO" ]; then
+if [[ -z "$REPO" ]]; then
   usage
   exit 1
 fi
@@ -59,7 +59,7 @@ warn_if_stale() {
   local branch upstream_ref local_rev remote_rev behind last_date
 
   branch="$(git -C "$path" symbolic-ref --short HEAD 2>/dev/null || echo "")"
-  if [ -z "$branch" ]; then
+  if [[ -z "$branch" ]]; then
     echo "Note: $REPO at $path is in a detached HEAD state; skipping staleness check." >&2
     return
   fi
@@ -76,7 +76,7 @@ warn_if_stale() {
 
   local_rev="$(git -C "$path" rev-parse HEAD)"
   remote_rev="$(git -C "$path" rev-parse "$upstream_ref")"
-  if [ "$local_rev" != "$remote_rev" ]; then
+  if [[ "$local_rev" != "$remote_rev" ]]; then
     behind="$(git -C "$path" rev-list --count "HEAD..$upstream_ref" 2>/dev/null || echo "?")"
     last_date="$(git -C "$path" log -1 --format=%ad --date=short)"
     echo "Warning: $REPO at $path (branch $branch) is $behind commit(s) behind origin/$branch (last local commit: $last_date). This checkout was found independently, not cloned by this script, so it was not updated automatically - results below may reflect stale code. Run 'git -C $path pull' to update it, or unset OBA_WORKSPACE / move it aside to let this script manage a fresh copy in its cache instead." >&2
@@ -86,7 +86,7 @@ warn_if_stale() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 1. Explicit workspace override
-if [ -n "${OBA_WORKSPACE:-}" ] && [ -d "$OBA_WORKSPACE/$REPO" ]; then
+if [[ -n "${OBA_WORKSPACE:-}" && -d "$OBA_WORKSPACE/$REPO" ]]; then
   warn_if_stale "$OBA_WORKSPACE/$REPO"
   echo "$OBA_WORKSPACE/$REPO"
   exit 0
@@ -96,7 +96,7 @@ fi
 #    <maglev-root>/.claude/skills/lib/resolve-oba-repo.sh)
 MAGLEV_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SIBLING="$(dirname "$MAGLEV_ROOT")/$REPO"
-if [ -d "$SIBLING/.git" ]; then
+if [[ -d "$SIBLING/.git" ]]; then
   warn_if_stale "$SIBLING"
   echo "$SIBLING"
   exit 0
@@ -106,9 +106,9 @@ fi
 CACHE_ROOT="${OBA_SKILL_CACHE:-$HOME/.cache/oba-api-review}/repos"
 TARGET="$CACHE_ROOT/$REPO"
 
-if [ -d "$TARGET/.git" ]; then
+if [[ -d "$TARGET/.git" ]]; then
   BRANCH="$(git -C "$TARGET" symbolic-ref --short HEAD 2>/dev/null || echo "")"
-  if [ -n "$BRANCH" ]; then
+  if [[ -n "$BRANCH" ]]; then
     echo "Updating cached checkout of $REPO..." >&2
     if git -C "$TARGET" fetch --depth 1 origin "$BRANCH" >&2; then
       git -C "$TARGET" reset --hard "origin/$BRANCH" >&2 || true
