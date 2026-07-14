@@ -459,7 +459,7 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 3)
 	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
 	priorSeq := uint32(2)
-	priorTime := time.Date(2010, 1, 1, 8, 3, 0, 0, time.UTC) // 08:03:00; must be > mock clock 08:02 for isTripActive
+	priorTime := time.Date(2010, 1, 1, 8, 3, 0, 0, time.UTC)
 	delay := 90 * time.Second
 	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
 		{StopSequence: &priorSeq, Arrival: &gtfs.StopTimeEvent{Time: &priorTime, Delay: &delay}},

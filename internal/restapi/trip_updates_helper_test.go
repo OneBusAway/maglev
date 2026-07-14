@@ -181,7 +181,7 @@ func TestGetStopDelaysFromTripUpdates_NoUpdates(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	delays := api.GetStopDelaysFromTripUpdates("no-such-trip", devNow)
+	delays := api.GetStopDelaysFromTripUpdates("no-such-trip")
 	assert.Empty(t, delays)
 }
 
@@ -198,7 +198,7 @@ func TestGetStopDelaysFromTripUpdates_WithArrivalDelay(t *testing.T) {
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-arrival", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-arrival", devNow)
+	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-arrival")
 	assert.Len(t, delays, 1)
 	assert.Equal(t, int64(45), delays["stop-A"].ArrivalDelay)
 	assert.Equal(t, int64(0), delays["stop-A"].DepartureDelay)
@@ -217,7 +217,7 @@ func TestGetStopDelaysFromTripUpdates_WithDepartureDelay(t *testing.T) {
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-departure", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-departure", devNow)
+	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-departure")
 	assert.Len(t, delays, 1)
 	assert.Equal(t, int64(0), delays["stop-B"].ArrivalDelay)
 	assert.Equal(t, int64(75), delays["stop-B"].DepartureDelay)
@@ -235,7 +235,7 @@ func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopID(t *testing.T) {
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-nil-stopid", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-nil-stopid", devNow)
+	delays := api.GetStopDelaysFromTripUpdates("trip-nil-stopid")
 	assert.Empty(t, delays, "stop updates without StopID should be skipped")
 }
 
@@ -252,7 +252,7 @@ func TestGetStopDelaysFromTripUpdates_IncludesStopWithZeroDelays(t *testing.T) {
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-zero-delays", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-zero-delays", devNow)
+	delays := api.GetStopDelaysFromTripUpdates("trip-zero-delays")
 	assert.Len(t, delays, 1, "stops with zero delays should be included")
 	assert.Contains(t, delays, "stop-C")
 	assert.Equal(t, int64(0), delays["stop-C"].ArrivalDelay)
@@ -329,7 +329,7 @@ func TestGetStopDelaysFromTripUpdates_MultipleStops(t *testing.T) {
 	}
 	api.GtfsManager.MockAddTripUpdate("trip-multi-stops", nil, updates)
 
-	delays := api.GetStopDelaysFromTripUpdates("trip-multi-stops", devNow)
+	delays := api.GetStopDelaysFromTripUpdates("trip-multi-stops")
 	assert.Len(t, delays, 3, "all stops with StopID should be included")
 	assert.Equal(t, int64(30), delays["stop-A"].ArrivalDelay)
 	assert.Equal(t, int64(60), delays["stop-B"].DepartureDelay)
