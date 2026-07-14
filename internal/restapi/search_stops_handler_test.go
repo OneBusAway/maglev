@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -175,20 +176,33 @@ func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	// Verify that multi-word search queries containing special characters are parsed
-	// and executed correctly by the FTS engine without throwing syntax errors.
-	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"pine st & 9th"}}))
+	// Query "pine & 5th" tests that special chars are sanitized and multi-word prefix matching works.
+	// Based on testdata, we expect this to match "Pine St & 5th Ave".
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"pine & 5th"}}))
 
-	// Ensure the API returns a successful HTTP 200 response for complex input strings.
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
-	assert.Equal(t, "OK", stopsResp.Text)
+	assert.NotEmpty(t, stopsResp.Data.List, "Expected prefix intersection matching to return results")
 
-	// Verify that reserved FTS keywords (e.g., AND, OR) within the search input
-	// are safely sanitized and processed without causing database-level exceptions.
-	respFallback, stopsRespFallback := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Pine AND 9th OR Station"}}))
+	matched := false
+	for _, stop := range stopsResp.Data.List {
+		if strings.Contains(stop.Name, "Pine") && strings.Contains(stop.Name, "5th") {
+			matched = true
+			break
+		}
+	}
+	assert.True(t, matched, "Expected results to contain 'Pine St & 5th Ave'")
+}
+
+func TestSearchStopsHandlerFallbackOnSyntaxError(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// The hyphen is not stripped by sanitization. FTS5 evaluates `"-"*` as an empty
+	// phrase followed by a wildcard, which forces a "syntax error near '*'" exception.
+	// The handler should catch this, log a warning, and gracefully fallback to `"-"`.
+	respFallback, stopsRespFallback := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
 
 	assert.Equal(t, http.StatusOK, respFallback.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsRespFallback.Code)
-	assert.Equal(t, "OK", stopsRespFallback.Text)
 }
