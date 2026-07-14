@@ -465,6 +465,53 @@ func TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime(t *testing.
 		"blockTripSequence must resolve using the requested `time` parameter, not api.Clock.Now()")
 }
 
+// TestVehiclesForAgencyHandler_BlockTripSequenceUsesAgencyLocalDate verifies that,
+// when no `time` parameter is supplied, blockTripSequence resolves against the
+// agency's local calendar date rather than the server clock's own timezone.
+func TestVehiclesForAgencyHandler_BlockTripSequenceUsesAgencyLocalDate(t *testing.T) {
+	// 2024-11-09 04:00 UTC is Saturday in UTC, but still Friday 20:00 in RABA's
+	// agency timezone (America/Los_Angeles, UTC-8 in November).
+	mockNow := time.Date(2024, 11, 9, 4, 0, 0, 0, time.UTC)
+	agencyLocalFriday := time.Date(2024, 11, 8, 12, 0, 0, 0, time.UTC)
+
+	api := createTestApiWithClock(t, clock.NewMockClock(mockNow))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	var blockTrip gtfsdb.Trip
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" {
+			continue
+		}
+		_, resolvesFriday := api.blockTripSequence(ctx, tr.ID, agencyLocalFriday)
+		_, resolvesSaturday := api.blockTripSequence(ctx, tr.ID, mockNow)
+		if resolvesFriday && !resolvesSaturday {
+			blockTrip = row
+			break
+		}
+	}
+	require.NotEmpty(t, blockTrip.ID,
+		"need a trip whose block resolves Friday but not Saturday in test data")
+
+	const vehicleID = "v_block_seq_tz"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	// No `time` param: the handler must localize "now" to the agency's timezone
+	// (still Friday locally), not use the un-localized UTC instant (already
+	// Saturday).
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must resolve against the agency's local calendar date, not the server clock's UTC date")
+}
+
 // ageFilterClock is a fixed reference time used by the ageInSeconds tests so the
 // fresh/stale vehicle timestamps are deterministic relative to api.Clock.Now().
 var ageFilterClock = time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
