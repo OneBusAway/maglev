@@ -171,8 +171,7 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 		}
 	}
 
-	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	serviceDate = todayMidnight
+	serviceDate, todayMidnight = utils.ServiceDateMidnight(nil, currentTime)
 
 	if len(fieldErrors) > 0 {
 		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, fieldErrors, nil
