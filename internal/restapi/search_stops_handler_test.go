@@ -176,9 +176,9 @@ func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	// Query "pine & 5th" tests that special chars are sanitized and multi-word prefix matching works.
-	// Based on testdata, we expect this to match "Pine St & 5th Ave".
-	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"pine & 5th"}}))
+	// Query "montg @ lib" tests that special chars are sanitized (@ removed) and multi-word prefix matching works.
+	// Based on testdata (raba.zip), we expect this to match stop ID "25_8006" ("Montgomery Creek (SR 299 @ Montgomery Creek Library)").
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"montg @ lib"}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
@@ -186,12 +186,12 @@ func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
 
 	matched := false
 	for _, stop := range stopsResp.Data.List {
-		if strings.Contains(stop.Name, "Pine") && strings.Contains(stop.Name, "5th") {
+		if stop.ID == "25_8006" && strings.Contains(stop.Name, "Montgomery") && strings.Contains(stop.Name, "Library") {
 			matched = true
 			break
 		}
 	}
-	assert.True(t, matched, "Expected results to contain 'Pine St & 5th Ave'")
+	assert.True(t, matched, "Expected results to contain stop ID '25_8006' ('Montgomery Creek (SR 299 @ Montgomery Creek Library)')")
 }
 
 func TestSearchStopsHandlerFallbackOnSyntaxError(t *testing.T) {
