@@ -219,6 +219,7 @@ END;
 -- FTS5 external content table for full-text stop search.
 -- Data lives in 'stops' table; only the search index is stored here.
 -- migrate
+-- Intentionally drop and repopulate stops_fts on boot to ensure existing databases migrate to unicode61 tokenizer. Do not remove.
 DROP TABLE IF EXISTS stops_fts;
 
 -- migrate

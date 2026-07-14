@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
@@ -35,6 +36,21 @@ func sanitizeFTS5Query(input string) string {
 	return sanitized
 }
 
+// extractFTS5Terms splits sanitized input into terms and filters out stray punctuation
+// (such as "/" or "-") that FTS5 tokenizes to nothing and would otherwise cause syntax errors.
+func extractFTS5Terms(sanitizedQuery string) []string {
+	rawTerms := strings.Fields(sanitizedQuery)
+	terms := make([]string, 0, len(rawTerms))
+	for _, term := range rawTerms {
+		if strings.ContainsFunc(term, func(r rune) bool {
+			return unicode.IsLetter(r) || unicode.IsDigit(r)
+		}) {
+			terms = append(terms, term)
+		}
+	}
+	return terms
+}
+
 // searchStopsHandler searches for stops matching a user-provided query string
 // using full-text search, with optional geographic bounds filtering.
 func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
@@ -56,36 +72,17 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Sanitize and construct FTS5 query
 	sanitizedQuery := sanitizeFTS5Query(query)
+	terms := extractFTS5Terms(sanitizedQuery)
 
-	if sanitizedQuery == "" {
-		data := struct {
-			LimitExceeded bool                   `json:"limitExceeded"`
-			List          []models.Stop          `json:"list"`
-			OutOfRange    bool                   `json:"outOfRange"`
-			References    models.ReferencesModel `json:"references"`
-		}{
-			LimitExceeded: false,
-			List:          []models.Stop{},
-			OutOfRange:    false,
-			References:    *models.NewEmptyReferences(),
-		}
-
-		response := models.ResponseModel{
-			Code:        200,
-			CurrentTime: models.ResponseCurrentTime(api.Clock),
-			Version:     models.APIVersion,
-			Text:        "OK",
-			Data:        data,
-		}
-
+	if len(terms) == 0 {
+		response := models.NewListResponseWithRange([]models.Stop{}, *models.NewEmptyReferences(), false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
 
-	terms := strings.Fields(sanitizedQuery)
-	var queryTerms []string
-	for _, term := range terms {
-		queryTerms = append(queryTerms, `"`+term+`"*`)
+	queryTerms := make([]string, len(terms))
+	for i, term := range terms {
+		queryTerms[i] = `"` + term + `"*`
 	}
 	searchQuery := strings.Join(queryTerms, " AND ")
 
@@ -108,9 +105,9 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 				"sanitized_input", sanitizedQuery,
 			)
 
-			var fallbackTerms []string
-			for _, term := range terms {
-				fallbackTerms = append(fallbackTerms, `"`+term+`"`)
+			fallbackTerms := make([]string, len(terms))
+			for i, term := range terms {
+				fallbackTerms[i] = `"` + term + `"`
 			}
 			searchQuery = strings.Join(fallbackTerms, " AND ")
 
@@ -310,25 +307,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situations...)
 
-	data := struct {
-		LimitExceeded bool                   `json:"limitExceeded"`
-		List          []models.Stop          `json:"list"`
-		OutOfRange    bool                   `json:"outOfRange"`
-		References    models.ReferencesModel `json:"references"`
-	}{
-		LimitExceeded: len(stops) >= limit,
-		List:          stopModels,
-		OutOfRange:    false,
-		References:    *references,
-	}
-
-	response := models.ResponseModel{
-		Code:        200,
-		CurrentTime: models.ResponseCurrentTime(api.Clock),
-		Version:     models.APIVersion,
-		Text:        "OK",
-		Data:        data,
-	}
-
+	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, len(stops) >= limit)
 	api.sendResponse(w, r, response)
 }
