@@ -137,7 +137,9 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	fieldErrors map[string][]string,
 	serverErr error,
 ) {
-	loc, fieldErrors := api.parseLocationParams(r, nil)
+
+	var loc *internalgtfs.LocationParams
+	loc, fieldErrors = api.parseLocationParams(r, nil)
 
 	queryParams := r.URL.Query()
 
