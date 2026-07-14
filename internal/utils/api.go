@@ -350,3 +350,17 @@ func ParseDate(date string, loc *time.Location) (time.Time, error) {
 
 	return time.Time{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
 }
+
+// ParseRequiredStringParam retrieves a required string parameter.
+// Returns the value and a populated error map if missing.
+func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[string][]string) (string, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
+	}
+	return val, fieldErrors
+}

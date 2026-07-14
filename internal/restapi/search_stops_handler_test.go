@@ -104,24 +104,37 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 }
 
 func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
 	tests := []struct {
-		name     string
-		maxCount string
+		name           string
+		maxCount       string
+		expectedStatus int
+		expectError    bool
 	}{
-		{"zero", "0"},
-		{"negative", "-1"},
-		{"tooLarge", "101"},
+		{"omitted", "", http.StatusOK, false},
+		{"valid", "10", http.StatusOK, false},
+		{"zero", "0", http.StatusBadRequest, true},
+		{"negative", "-1", http.StatusBadRequest, true},
+		{"tooLarge", "251", http.StatusBadRequest, true},
+		{"nonInteger", "abc", http.StatusBadRequest, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {tt.maxCount}}))
+			api := createTestApi(t)
+			defer api.Shutdown()
 
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.NotEmpty(t, stopsResp.Data.List)
+			params := url.Values{"input": {"Buenaventura"}}
+			if tt.maxCount != "" {
+				params.Set("maxCount", tt.maxCount)
+			}
+			resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(params))
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			if tt.expectError {
+				assert.Contains(t, stopsResp.Data.FieldErrors, "maxCount")
+			} else {
+				assert.NotEmpty(t, stopsResp.Data.List)
+			}
 		})
 	}
 }
