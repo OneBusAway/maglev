@@ -170,3 +170,25 @@ func TestSanitizeFTS5Query(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchStopsHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{
+		"input":             {"Buenaventura"},
+		"includeReferences": {"false"},
+	}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	// We should still get stops in the list
+	require.NotEmpty(t, stopsResp.Data.List)
+
+	// But all reference arrays should be completely empty
+	assert.Empty(t, stopsResp.Data.References.Agencies)
+	assert.Empty(t, stopsResp.Data.References.Routes)
+	assert.Empty(t, stopsResp.Data.References.Situations)
+	assert.Empty(t, stopsResp.Data.References.Stops)
+}

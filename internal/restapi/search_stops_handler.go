@@ -290,15 +290,19 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		stopModels = append(stopModels, stopModel)
 	}
 
+	includeReferences := ShouldIncludeReferences(r)
+
 	// 7. Build References
 	references := models.NewEmptyReferences()
-	references.Routes = utils.MapValues(routesMap)
-	references.Agencies = utils.MapValues(agenciesMap)
+	if includeReferences {
+		references.Routes = utils.MapValues(routesMap)
+		references.Agencies = utils.MapValues(agenciesMap)
 
-	// Populate situation references for alerts affecting the returned stops
-	alerts := api.collectAlertsForStops(stopIDs)
-	situations := api.BuildSituationReferences(alerts)
-	references.Situations = append(references.Situations, situations...)
+		// Populate situation references for alerts affecting the returned stops
+		alerts := api.collectAlertsForStops(stopIDs)
+		situations := api.BuildSituationReferences(alerts)
+		references.Situations = append(references.Situations, situations...)
+	}
 
 	data := struct {
 		LimitExceeded bool                   `json:"limitExceeded"`
