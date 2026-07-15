@@ -194,15 +194,15 @@ func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
 	assert.True(t, matched, "Expected results to contain stop ID '25_8006' ('Montgomery Creek (SR 299 @ Montgomery Creek Library)')")
 }
 
-func TestSearchStopsHandlerFallbackOnSyntaxError(t *testing.T) {
+func TestSearchStopsHandlerIgnoredPunctuation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	// The hyphen is not stripped by sanitization. FTS5 evaluates `"-"*` as an empty
-	// phrase followed by a wildcard, which forces a "syntax error near '*'" exception.
-	// The handler should catch this, log a warning, and gracefully fallback to `"-"`.
-	respFallback, stopsRespFallback := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
+	// The hyphen is not stripped by sanitization but is filtered out by term extraction
+	// since it lacks alphanumeric characters. This triggers the empty-query path.
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
 
-	assert.Equal(t, http.StatusOK, respFallback.StatusCode)
-	assert.Equal(t, http.StatusOK, stopsRespFallback.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.Empty(t, stopsResp.Data.List)
 }
