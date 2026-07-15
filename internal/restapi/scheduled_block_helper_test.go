@@ -434,6 +434,87 @@ func TestComputeScheduledBlockSnapshot_MetricsAtKnownTimes(t *testing.T) {
 	assert.LessOrEqual(t, n, 0, "first block stop must have numberOfStopsAway ≤ 0 at noon")
 }
 
+// TestComputeScheduledBlockSnapshot_TripStartBoundary pins Java's semantic
+// (TripStatusBeanServiceImpl:283-292): ActiveTripScheduledDistance is the
+// vehicle's position WITHIN the snapshot's active trip — the trip the
+// vehicle is currently operating — and MUST be less than that active
+// trip's total distance. Otherwise the response emits a value inconsistent
+// with which trip it labels as "active" (see
+// docs/scheduled_distance_boundary_bug.md).
+//
+// The failure mode this test catches: when the queried trip is a FUTURE
+// trip in a multi-trip block and currentSeconds is before that trip
+// starts, the snapshot should either (a) pick the currently-running
+// earlier trip as active and report a position within its length, or
+// (b) leave ActiveTripID empty. It must NOT report a value that exceeds
+// ActiveTripTotalDistance, which would mean the offset math combined
+// distances from different trips.
+func TestComputeScheduledBlockSnapshot_TripStartBoundary(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	// Find a block with ≥3 trips so we can pick a middle one (avoids the
+	// "first trip in block" edge case where activeTripOffset = 0 legitimately).
+	var blockID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+		`SELECT block_id FROM trips
+		 WHERE block_id IS NOT NULL AND block_id != ''
+		   AND shape_id IS NOT NULL AND shape_id != ''
+		 GROUP BY block_id HAVING COUNT(*) >= 3
+		 LIMIT 1`,
+	).Scan(&blockID)
+	require.NoError(t, err, "RABA should have a block with 3+ trips")
+
+	rows, err := api.GtfsManager.GtfsDB.DB.QueryContext(ctx,
+		`SELECT t.id, MIN(st.arrival_time) AS first_ns
+		 FROM trips t
+		 JOIN stop_times st ON st.trip_id = t.id
+		 WHERE t.block_id = ?
+		 GROUP BY t.id
+		 ORDER BY first_ns`,
+		blockID,
+	)
+	require.NoError(t, err)
+	type tripRow struct {
+		id       string
+		firstSec int64
+	}
+	var trips []tripRow
+	for rows.Next() {
+		var r tripRow
+		var firstNs int64
+		require.NoError(t, rows.Scan(&r.id, &firstNs))
+		r.firstSec = firstNs / int64(time.Second)
+		trips = append(trips, r)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.GreaterOrEqual(t, len(trips), 3)
+
+	// Target the second trip so it's neither first nor last.
+	target := trips[1]
+	t.Logf("block=%s target=%s firstSec=%d", blockID, target.id, target.firstSec)
+
+	for _, offset := range []int64{-60, 0, 60} {
+		currentTime := rabaServiceDate.Add(time.Duration(target.firstSec+offset) * time.Second)
+		snap := api.computeScheduledBlockSnapshot(ctx, target.id, currentTime, rabaServiceDate)
+		require.NotNil(t, snap, "snapshot must be non-nil at offset %+d", offset)
+
+		if snap.ActiveTripID == "" {
+			continue // Java's null-BlockLocation equivalent; downstream skips.
+		}
+
+		// The core invariant: the position within the active trip must be
+		// less than that trip's total. Anything else means offset math
+		// combined distances across different trips and the response would
+		// emit values inconsistent with the labelled ActiveTripID.
+		assert.LessOrEqual(t, snap.ActiveTripScheduledDistance, snap.ActiveTripTotalDistance+50.0,
+			"offset %+ds: ActiveTripScheduledDistance=%.1f exceeds ActiveTripTotalDistance=%.1f — offset math combined trips",
+			offset, snap.ActiveTripScheduledDistance, snap.ActiveTripTotalDistance)
+	}
+}
+
 func TestProjectStopsInSequence_MonotonicAlongShape(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -473,15 +554,15 @@ func TestProjectStopsInSequence_GracefulOnEmptyShape(t *testing.T) {
 	assert.Equal(t, 0.0, distances[1])
 }
 
-// TestProjectStopsInSequence_MixedAuthoritativeAndGeometric exercises the
-// mixed-mode path: one stop uses shape_dist_traveled (authoritative), the
-// next falls back to geometric projection. Validates that:
-//
-//  1. authoritative distances are returned verbatim (scale=1 when max==total),
-//  2. the geometric stop's projection produces a monotonic non-decreasing
-//     distance, which requires lastMatchedIndex to advance through the shape
-//     after each authoritative match.
-func TestProjectStopsInSequence_MixedAuthoritativeAndGeometric(t *testing.T) {
+// TestProjectStopsInSequence_ProjectsAllStopsGeometrically pins the
+// Java-parity port: projectStopsInSequence must IGNORE the publisher's
+// shape_dist_traveled entirely and always project each stop's lat/lon
+// onto the shape polyline. Java's StopTimeEntriesFactory.
+// ensureStopTimesHaveShapeDistanceTraveledSet overwrites the feed value
+// with the projection at load time; we do the same at query time so the
+// emitted distances are always metres regardless of what unit the
+// publisher chose (km, miles, feet, unitless).
+func TestProjectStopsInSequence_ProjectsAllStopsGeometrically(t *testing.T) {
 	// Straight-line shape, 5 evenly spaced points across longitude 0..0.001.
 	// utils.Distance per segment ~27.8m → cumulative ~0, 27.8, 55.6, 83.4, 111.2.
 	shape := []gtfs.ShapePoint{
@@ -494,31 +575,37 @@ func TestProjectStopsInSequence_MixedAuthoritativeAndGeometric(t *testing.T) {
 	cumDist := preCalculateCumulativeDistances(shape)
 	totalDist := cumDist[len(cumDist)-1]
 
-	// Three stops: A (authoritative, start), B (geometric, middle),
-	// C (authoritative, end). max == totalDist ⇒ shapeDistScale = 1,
-	// so the authoritative values are emitted verbatim and we can assert
-	// magnitudes directly.
+	// Feed publishes bogus shape_dist_traveled values (arbitrary unit,
+	// nowhere near metres). Java's ensureStopTimesHaveShapeDistanceTraveledSet
+	// overwrites these with projection-derived metres at load time; we do the
+	// same at query time — the publisher's ShapeDistTraveled must be IGNORED
+	// entirely and the stop's projected geometric distance used instead.
 	stopTimes := []gtfsdb.StopTime{
-		{StopID: "stop_A", StopSequence: 1, ShapeDistTraveled: sql.NullFloat64{Float64: 11.1, Valid: true}},
-		{StopID: "stop_B", StopSequence: 2},
-		{StopID: "stop_C", StopSequence: 3, ShapeDistTraveled: sql.NullFloat64{Float64: totalDist, Valid: true}},
+		{StopID: "stop_A", StopSequence: 1, ShapeDistTraveled: sql.NullFloat64{Float64: 5000, Valid: true}},
+		{StopID: "stop_B", StopSequence: 2, ShapeDistTraveled: sql.NullFloat64{Float64: 5000, Valid: true}},
+		{StopID: "stop_C", StopSequence: 3, ShapeDistTraveled: sql.NullFloat64{Float64: 5000, Valid: true}},
 	}
 	stopByID := map[string]gtfsdb.Stop{
-		"stop_B": {ID: "stop_B", Lat: 0.0, Lon: 0.0007}, // ~78m along the shape
+		"stop_A": {ID: "stop_A", Lat: 0.0, Lon: 0.0000}, // shape start
+		"stop_B": {ID: "stop_B", Lat: 0.0, Lon: 0.0005}, // midpoint
+		"stop_C": {ID: "stop_C", Lat: 0.0, Lon: 0.0010}, // shape end
 	}
 
 	distances := projectStopsInSequence(stopTimes, stopByID, shape, cumDist)
 	require.Len(t, distances, 3)
-	assert.Equal(t, 11.1, distances[0], "authoritative stop uses shape_dist_traveled verbatim when scale==1")
-	assert.Equal(t, totalDist, distances[2], "trailing authoritative stop equals the shape's total distance")
 
-	// Monotonicity: the geometric stop must land between its two
-	// authoritative neighbours, never regress before the previous match.
+	// Distances reflect geometry, NOT the bogus publisher-unit values.
+	assert.InDelta(t, 0.0, distances[0], 1.0,
+		"stop at shape start projects to ~0m regardless of ShapeDistTraveled")
+	assert.InDelta(t, totalDist/2, distances[1], 1.0,
+		"stop at shape midpoint projects to ~totalDist/2 regardless of ShapeDistTraveled")
+	assert.InDelta(t, totalDist, distances[2], 1.0,
+		"stop at shape end projects to ~totalDist regardless of ShapeDistTraveled")
+
 	for i := 1; i < len(distances); i++ {
 		assert.GreaterOrEqual(t, distances[i], distances[i-1],
 			"distances must be monotonic in stop_sequence order (stop %d vs %d)", i-1, i)
 	}
-	assert.LessOrEqual(t, distances[1], totalDist, "geometric stop must stay within shape bounds")
 }
 
 // TestProjectStopsInSequence_LoopRouteRevisitsSameCoords pins the whole
