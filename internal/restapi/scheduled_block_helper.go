@@ -38,6 +38,16 @@ type scheduledBlockSnapshot struct {
 	// Block-level interpolated distance at currentTime.
 	DistanceAlongBlock float64
 
+	// InRange is true when currentTime falls within the shift's [firstStop,
+	// lastStop] scheduled span. When false, DistanceAlongBlock is clamped to
+	// a block boundary and downstream code must NOT treat the derived
+	// per-trip fields (ActiveTripScheduledDistance, distanceFromStop) as
+	// meaningful. Mirrors Java's null-BlockLocation semantics
+	// (ScheduledBlockLocationServiceImpl.java:241-244 returns null when
+	// scheduleTime is past the block's last stop; the arrivals bean then
+	// leaves tripStatus fields at their defaults).
+	InRange bool
+
 	// Active trip = the latest block trip whose first stop has already passed.
 	// Empty when currentTime is before any block trip starts.
 	ActiveTripID                  string
@@ -128,11 +138,14 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		}
 	}
 
+	firstStopSec := stops[0].EffectiveStopSeconds
+	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	snap := &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
 		NextStopIndex:      nextStopIdx,
 		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds),
+		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 	}
 	if activeIdx >= 0 {
 		active := trips[activeIdx]
@@ -414,8 +427,13 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 // a naive global-minimum search picks the same segment for both occurrences,
 // producing the catastrophic distanceFromStop outliers we saw on the Q route.
 //
-// Prefers GTFS shape_dist_traveled (scaled to metres) when present, falls
-// back to forward-walking geometric projection.
+// Always uses geometric projection against the shape polyline — Java's
+// StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet
+// overwrites the publisher's shape_dist_traveled at load time with the
+// projected value from DistanceAlongShapeLibrary, so downstream code reads
+// metres regardless of what unit the feed published. We do the same
+// projection at query time (via projectStopGeometric with a monotonic
+// cursor for loop-route correctness).
 func projectStopsInSequence(
 	stopTimes []gtfsdb.StopTime,
 	stopByID map[string]gtfsdb.Stop,
@@ -426,17 +444,9 @@ func projectStopsInSequence(
 	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
 		return distances
 	}
-	shapeDistScale := computeShapeDistScale(stopTimes, cumulativeDistances)
 
 	lastMatchedIndex := 0
 	for i, st := range stopTimes {
-		// Prefer GTFS shape_dist_traveled when available; it's authoritative
-		// for loops and uniquely identifies the right occurrence.
-		if st.ShapeDistTraveled.Valid {
-			distances[i] = st.ShapeDistTraveled.Float64 * shapeDistScale
-			lastMatchedIndex = advanceCursorThroughCumDist(lastMatchedIndex, cumulativeDistances, distances[i])
-			continue
-		}
 		stop, ok := stopByID[st.StopID]
 		if !ok {
 			distances[i] = 0
@@ -445,34 +455,6 @@ func projectStopsInSequence(
 		distances[i], lastMatchedIndex = projectStopGeometric(stop, shapePoints, cumulativeDistances, lastMatchedIndex)
 	}
 	return distances
-}
-
-// computeShapeDistScale derives a per-trip scale factor so publisher units
-// (km/miles/...) come out as metres. Identical to calculateBatchStopDistances.
-func computeShapeDistScale(stopTimes []gtfsdb.StopTime, cumulativeDistances []float64) float64 {
-	totalShapeDist := cumulativeDistances[len(cumulativeDistances)-1]
-	var maxStopDist float64
-	for _, st := range stopTimes {
-		if st.ShapeDistTraveled.Valid && st.ShapeDistTraveled.Float64 > maxStopDist {
-			maxStopDist = st.ShapeDistTraveled.Float64
-		}
-	}
-	if maxStopDist > 0 && totalShapeDist > 0 {
-		return totalShapeDist / maxStopDist
-	}
-	return 1.0
-}
-
-// advanceCursorThroughCumDist moves the monotonic cursor forward through the
-// shape to the segment that contains `distance`. Used after the
-// shape_dist_traveled branch so subsequent geometric stops don't regress.
-func advanceCursorThroughCumDist(cursor int, cumulativeDistances []float64, distance float64) int {
-	for j := cursor; j < len(cumulativeDistances)-1; j++ {
-		if cumulativeDistances[j+1] >= distance {
-			return j
-		}
-	}
-	return cursor
 }
 
 // projectStopGeometric projects a stop's lat/lon onto the shape, scanning

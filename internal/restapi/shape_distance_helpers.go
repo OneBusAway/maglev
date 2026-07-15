@@ -18,31 +18,20 @@ func shapeRowsToPoints(rows []gtfsdb.Shape) []gtfs.ShapePoint {
 	return pts
 }
 
-func (api *RestAPI) getStopDistanceAlongShape(ctx context.Context, tripID, stopID string) float64 {
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
-	if err == nil {
-		for _, st := range stopTimes {
-			if st.StopID == stopID && st.ShapeDistTraveled.Valid {
-				return st.ShapeDistTraveled.Float64
-			}
-		}
-	}
-
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
-	if err != nil || len(shapeRows) < 2 {
-		return 0
-	}
-
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil {
-		return 0
-	}
-
-	shapePoints := shapeRowsToPoints(shapeRows)
-
-	return getDistanceAlongShape(stop.Lat, stop.Lon, shapePoints)
-}
-
+// getVehicleDistanceAlongShapeContextual projects the vehicle's GPS position
+// onto the trip's shape polyline in metres, using the vehicle's CurrentStopSequence
+// to constrain the search range on loop routes (prevents matching against a
+// coordinate-identical earlier occurrence of the same segment).
+//
+// The prev/next stop bounds are computed via projectStopsInSequence — the same
+// sequence-aware monotonic-cursor projection used everywhere else — so on a
+// loop route the bounds land on the CORRECT occurrence of each stop rather
+// than the geometrically-closest one, which would collapse to the earlier
+// loop pass and mis-locate the vehicle by many kilometres.
+//
+// Publisher-provided shape_dist_traveled is ignored throughout for the same
+// reason as getStopDistanceAlongShape — units are not standardised in GTFS
+// and Java re-derives everything from geometry.
 func (api *RestAPI) getVehicleDistanceAlongShapeContextual(ctx context.Context, tripID string, vehicle *gtfs.Vehicle) float64 {
 	if vehicle == nil || vehicle.Position == nil || vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
 		return 0
@@ -61,23 +50,20 @@ func (api *RestAPI) getVehicleDistanceAlongShapeContextual(ctx context.Context, 
 	if vehicle.CurrentStopSequence != nil {
 		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 		if err == nil && len(stopTimes) > 0 {
+			// Precompute every stop's distance in sequence order — the
+			// monotonic cursor picks the right occurrence on loop routes.
+			cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+			stopByID := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+			stopDistances := projectStopsInSequence(stopTimes, stopByID, shapePoints, cumulativeDistances)
+
 			currentSeq := int64(*vehicle.CurrentStopSequence)
 			var prevStopDist, nextStopDist float64
 			foundNext := false
-
 			for i, st := range stopTimes {
 				if st.StopSequence >= currentSeq {
-					if st.ShapeDistTraveled.Valid {
-						nextStopDist = st.ShapeDistTraveled.Float64
-					} else {
-						nextStopDist = api.getStopDistanceAlongShape(ctx, tripID, st.StopID)
-					}
+					nextStopDist = stopDistances[i]
 					if i > 0 {
-						if stopTimes[i-1].ShapeDistTraveled.Valid {
-							prevStopDist = stopTimes[i-1].ShapeDistTraveled.Float64
-						} else {
-							prevStopDist = api.getStopDistanceAlongShape(ctx, tripID, stopTimes[i-1].StopID)
-						}
+						prevStopDist = stopDistances[i-1]
 					}
 					foundNext = true
 					break

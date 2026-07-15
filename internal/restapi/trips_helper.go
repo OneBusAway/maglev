@@ -204,24 +204,41 @@ func (api *RestAPI) BuildTripStatus(
 				}
 			}
 
-			// Java's TripStatusBeanServiceImpl:287-288 formula:
+			// Java's TripStatusBeanServiceImpl:283-292 formula:
 			//   scheduledDistanceAlongTrip =
 			//       blockLocation.scheduledDistanceAlongBlock
 			//       − activeBlockTrip.distanceAlongBlock
-			// which is exactly what snapshot.ActiveTripScheduledDistance gives
-			// us in scheduled_block_helper.go (see line 173). The snapshot
-			// must be built at effectiveTime = currentTime − scheduleDeviation
-			// so the deviation shift is applied, then we read ActiveTripScheduledDistance.
+			// where activeBlockTrip is the SNAPSHOT's active trip (the trip
+			// the vehicle is currently on), NOT necessarily the queried trip.
+			// When the queried trip is a future trip in the same block, the
+			// bus is still finishing an earlier trip; the response's
+			// activeTripId, scheduledDistanceAlongTrip, and totalDistanceAlongTrip
+			// must all reflect the SNAPSHOT'S active trip so they remain
+			// self-consistent. Otherwise scheduledDistanceAlongTrip subtracts
+			// the wrong offset and spikes by ~one trip length at trip-start
+			// boundaries (docs/scheduled_distance_boundary_bug.md).
 			effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
-			if snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate); snapshot != nil && snapshot.ActiveTripID != "" {
+			if snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate); snapshot != nil && snapshot.ActiveTripID != "" && snapshot.InRange {
+				status.ActiveTripID = utils.FormCombinedID(agencyID, snapshot.ActiveTripID)
 				status.ScheduledDistanceAlongTrip = snapshot.ActiveTripScheduledDistance
+				if snapshot.ActiveTripTotalDistance > 0 {
+					status.TotalDistanceAlongTrip = snapshot.ActiveTripTotalDistance
+				}
 			}
 		} else if len(stopTimes) > 0 {
 			// No real-time vehicle: position fields refer to the block's currently-
 			// active trip, not the target trip. Java: TripStatusBeanServiceImpl
 			// setScheduledDistanceAlongTrip(blockScheduledDist − activeBlockTrip.distanceAlongBlock).
+			//
+			// Snapshot.InRange guard: matches Java's null-BlockLocation semantics
+			// (ScheduledBlockLocationServiceImpl.java:241-244). When currentTime
+			// falls outside the shift's [firstStop, lastStop] range, Java returns
+			// null and the arrivals bean leaves tripStatus position fields at
+			// their defaults. Without this guard, our interpolation clamps to a
+			// block boundary and emits misleading trip-length distances for
+			// scheduled-only arrivals of past or future trips.
 			snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, currentTime, serviceDate)
-			if snapshot != nil && snapshot.ActiveTripID != "" {
+			if snapshot != nil && snapshot.ActiveTripID != "" && snapshot.InRange {
 				status.ActiveTripID = utils.FormCombinedID(agencyID, snapshot.ActiveTripID)
 				status.ScheduledDistanceAlongTrip = snapshot.ActiveTripScheduledDistance
 				if snapshot.ActiveTripTotalDistance > 0 {
@@ -238,8 +255,10 @@ func (api *RestAPI) BuildTripStatus(
 					}
 				}
 			} else {
-				// currentTime is before the block starts — fall back to within-target
-				// interpolation so position / orientation are not (0, 0).
+				// currentTime is outside the shift's schedule — fall back to
+				// within-target interpolation so position / orientation are not
+				// (0, 0). scheduledDistanceAlongTrip stays at its default; Java
+				// leaves it unset in this case too.
 				api.applyScheduledTripPositionToStatus(
 					ctx, status, stopTimes, shapePoints, cumulativeDistances, currentTime, serviceDate,
 				)
@@ -846,32 +865,17 @@ func (api *RestAPI) calculateBatchStopDistances(
 		return stopTimesList
 	}
 
-	// shape_dist_traveled is publisher-defined (km, miles, feet…); scale it to
-	// metres by matching the trip's max value to the shape's geometric metre total.
-	// Scale stays 1.0 when the feed already uses metres or omits shape_dist_traveled.
-	shapeDistScale := 1.0
-	totalShapeDist := cumulativeDistances[len(cumulativeDistances)-1]
-	var maxStopDist float64
-	for _, st := range timeStops {
-		if st.ShapeDistTraveled.Valid && st.ShapeDistTraveled.Float64 > maxStopDist {
-			maxStopDist = st.ShapeDistTraveled.Float64
-		}
-	}
-	if maxStopDist > 0 && totalShapeDist > 0 {
-		shapeDistScale = totalShapeDist / maxStopDist
-	}
-
+	// Java overwrites shape_dist_traveled at load time with a projection-derived
+	// value in metres (StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet).
+	// We do the same at query time: always project the stop's lat/lon onto the shape
+	// polyline and use metre-valued cumulative distances, ignoring the publisher's
+	// shape_dist_traveled entirely so the emitted units are always metres.
 	lastMatchedIndex := 0
 
 	for _, stopTime := range timeStops {
 		var distanceAlongTrip float64
 
-		// Prefer shape_dist_traveled from the GTFS feed — it is authoritative and
-		// handles stops that are off the main shape geometry (e.g. loop ends, branching
-		// routes) correctly. Only fall back to geometric projection when missing.
-		if stopTime.ShapeDistTraveled.Valid {
-			distanceAlongTrip = stopTime.ShapeDistTraveled.Float64 * shapeDistScale
-		} else if coords, exists := stopCoords[stopTime.StopID]; exists {
+		if coords, exists := stopCoords[stopTime.StopID]; exists {
 			stopLat := coords.lat
 			stopLon := coords.lon
 
