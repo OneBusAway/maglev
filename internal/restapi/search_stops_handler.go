@@ -47,6 +47,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeReferences := ShouldIncludeReferences(r)
+
 	limit := 50
 	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
 		if parsed, err := strconv.Atoi(maxCountStr); err == nil && parsed > 0 {
@@ -154,70 +156,75 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
-
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
 
-		if _, exists := routesMap[combinedRouteID]; !exists {
+		if includeReferences {
+			if _, exists := routesMap[combinedRouteID]; !exists {
+				shortName := ""
+				if row.ShortName.Valid {
+					shortName = row.ShortName.String
+				}
 
-			shortName := ""
-			if row.ShortName.Valid {
-				shortName = row.ShortName.String
+				longName := ""
+				if row.LongName.Valid {
+					longName = row.LongName.String
+				}
+
+				desc := ""
+				if row.Desc.Valid {
+					desc = row.Desc.String
+				}
+
+				url := ""
+				if row.Url.Valid {
+					url = row.Url.String
+				}
+
+				color := ""
+				if row.Color.Valid {
+					color = row.Color.String
+				}
+
+				textColor := ""
+				if row.TextColor.Valid {
+					textColor = row.TextColor.String
+				}
+
+				routesMap[combinedRouteID] = models.NewRoute(
+					combinedRouteID,
+					row.AgencyID,
+					shortName,
+					longName,
+					desc,
+					models.RouteType(row.Type),
+					url,
+					color,
+					textColor)
 			}
-
-			longName := ""
-			if row.LongName.Valid {
-				longName = row.LongName.String
-			}
-
-			desc := ""
-			if row.Desc.Valid {
-				desc = row.Desc.String
-			}
-
-			url := ""
-			if row.Url.Valid {
-				url = row.Url.String
-			}
-
-			color := ""
-			if row.Color.Valid {
-				color = row.Color.String
-			}
-
-			textColor := ""
-			if row.TextColor.Valid {
-				textColor = row.TextColor.String
-			}
-
-			routesMap[combinedRouteID] = models.NewRoute(
-				combinedRouteID,
-				row.AgencyID,
-				shortName,
-				longName,
-				desc,
-				models.RouteType(row.Type),
-				url,
-				color,
-				textColor)
-
 		}
 	}
 
 	agenciesMap := make(map[string]models.AgencyReference)
+	uniqueAgencies := make(map[string]bool)
+
 	for _, row := range agencyRows {
-		if _, exists := agenciesMap[row.ID]; !exists {
-			agenciesMap[row.ID] = models.NewAgencyReference(
-				row.ID,
-				row.Name,
-				row.Url,
-				row.Timezone,
-				row.Lang.String,
-				row.Phone.String,
-				row.Email.String,
-				row.FareUrl.String,
-				"",
-				false,
-			)
+		uniqueAgencies[row.ID] = true
+
+		if includeReferences {
+			if _, exists := agenciesMap[row.ID]; !exists {
+				agenciesMap[row.ID] = models.NewAgencyReference(
+					row.ID,
+					row.Name,
+					row.Url,
+					row.Timezone,
+					row.Lang.String,
+					row.Phone.String,
+					row.Email.String,
+					row.FareUrl.String,
+					"",
+					false,
+				)
+			}
 		}
 	}
 
@@ -234,8 +241,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		if rts, ok := routesByStopID[s.ID]; ok && len(rts) > 0 {
 			agencyID, _, _ = utils.ExtractAgencyIDAndCodeID(rts[0])
-		} else if len(agenciesMap) == 1 {
-			for id := range agenciesMap {
+		} else if len(uniqueAgencies) == 1 {
+			for id := range uniqueAgencies {
 				agencyID = id
 				break
 			}
@@ -289,8 +296,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		stopModels = append(stopModels, stopModel)
 	}
-
-	includeReferences := ShouldIncludeReferences(r)
 
 	// 7. Build References
 	references := models.NewEmptyReferences()
