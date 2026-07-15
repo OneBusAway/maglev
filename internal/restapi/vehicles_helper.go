@@ -126,10 +126,8 @@ func (api *RestAPI) BuildVehicleStatus(
 			Lon: float64(*vehicle.Position.Longitude),
 		}
 		status.LastKnownLocation = &actualPosition
-		// Position is initially set to the raw GPS position.
-		// BuildTripStatus will refine this by projecting it onto the route shape
-		// after fetching shape data. Note: getVehicleDistanceAlongShapeContextual
-		// makes its own GetShapePointsByTripID call; these two fetches are separate.
+		// Position is initially set to the raw GPS position; BuildTripStatus
+		// refines it by projecting onto the route shape after fetching shape data.
 		status.Position = actualPosition
 
 		status.LastLocationUpdateTime = models.NewModelTime(lastUpdateTime)

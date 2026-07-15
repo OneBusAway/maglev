@@ -182,11 +182,6 @@ func (api *RestAPI) BuildTripStatus(
 		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
 
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-			// Refine the raw GPS position (set by BuildVehicleStatus) by projecting
-			// it onto the route shape. Reuses the already-fetched shapePoints.
-			actualDistance := api.getVehicleDistanceAlongShapeContextual(ctx, activeTripRawID, vehicle)
-			status.DistanceAlongTrip = actualDistance
-
 			if status.LastKnownLocation != nil {
 				actualPosition := *status.LastKnownLocation
 
@@ -204,23 +199,22 @@ func (api *RestAPI) BuildTripStatus(
 				}
 			}
 
-			// Java's TripStatusBeanServiceImpl:283-292 formula:
-			//   scheduledDistanceAlongTrip =
-			//       blockLocation.scheduledDistanceAlongBlock
-			//       − activeBlockTrip.distanceAlongBlock
-			// where activeBlockTrip is the SNAPSHOT's active trip (the trip
-			// the vehicle is currently on), NOT necessarily the queried trip.
-			// When the queried trip is a future trip in the same block, the
-			// bus is still finishing an earlier trip; the response's
-			// activeTripId, scheduledDistanceAlongTrip, and totalDistanceAlongTrip
-			// must all reflect the SNAPSHOT'S active trip so they remain
-			// self-consistent. Otherwise scheduledDistanceAlongTrip subtracts
-			// the wrong offset and spikes by ~one trip length at trip-start
-			// boundaries (docs/scheduled_distance_boundary_bug.md).
+			// Java's TripStatusBeanServiceImpl:283-292 sets BOTH
+			// scheduledDistanceAlongTrip and distanceAlongTrip from
+			// (blockLocation.getDistanceAlongBlock() − activeBlockTrip.getDistanceAlongBlock()),
+			// and blockLocation.distanceAlongBlock is itself set from
+			// scheduledLocation.getDistanceAlongBlock() (AbstractBlockLocationServiceImpl:150).
+			// Both fields therefore come from the same schedule-derived,
+			// deviation-adjusted position — never the raw GPS projection.
+			// activeBlockTrip is the SNAPSHOT's active trip (the trip the vehicle
+			// is currently on), NOT necessarily the queried trip, so activeTripId,
+			// scheduledDistanceAlongTrip, distanceAlongTrip, and totalDistanceAlongTrip
+			// all reflect it together and stay self-consistent.
 			effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
 			if snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate); snapshot != nil && snapshot.ActiveTripID != "" && snapshot.InRange {
 				status.ActiveTripID = utils.FormCombinedID(agencyID, snapshot.ActiveTripID)
 				status.ScheduledDistanceAlongTrip = snapshot.ActiveTripScheduledDistance
+				status.DistanceAlongTrip = snapshot.ActiveTripScheduledDistance
 				if snapshot.ActiveTripTotalDistance > 0 {
 					status.TotalDistanceAlongTrip = snapshot.ActiveTripTotalDistance
 				}
