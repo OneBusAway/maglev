@@ -11,6 +11,8 @@ Four [Claude Code](https://claude.com/claude-code) skills for reviewing changes 
 
 Usually you only need `oba-api-review` — it dispatches to the other three as appropriate. Call one of the others directly if you want to isolate a single concern (e.g. just the client-impact analysis).
 
+**A note on spec changes:** `oba-api-spec-check` will sometimes flag that `maglev.wiki` needs updating — a missing Implementation Decisions entry, a gap in coverage, and so on. It only flags this; it doesn't edit the wiki. Treat any actual spec change as needing broader review than the PR it came up in — raise it in Slack first rather than updating the wiki unilaterally.
+
 ## Where these came from
 
 These skills were built to support the [OBA API Spec Review project](https://github.com/orgs/OneBusAway/projects/11), which tracks reviewing all 27 OneBusAway API endpoints' behavioural specs against Maglev's implementation: each endpoint gets reviewed, gaps get filed as linked `spec-gap` issues, and PRs close them out.

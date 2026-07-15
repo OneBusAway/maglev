@@ -4,6 +4,8 @@ Assess whether a change is consistent with the relevant `maglev.wiki` spec, and 
 
 Typically invoked by `oba-api-review`. Can be called directly when you want to isolate spec alignment from other review concerns. Run with the current working directory set to the root of your `maglev` checkout.
 
+**This skill identifies where a spec is inconsistent, incomplete, or needs a new Implementation Decisions entry — it does not edit `maglev.wiki` itself.** A spec change affects every client and every future review, so it needs broader review than a single PR: raise it in Slack first rather than editing the wiki unilaterally, even to close out this skill's findings.
+
 ## Arguments
 
 1. The endpoint name.
@@ -43,7 +45,7 @@ For each production change (or proposed change):
 
 For any change that deviates from legacy behaviour (i.e. touches a Suspected Defect or introduces a deliberate difference):
 - Does an **Implementation Decisions** entry already exist for this deviation?
-- If not, flag it: the spec must be updated before the change is merged to maintain the audit trail.
+- If not, flag it: the spec needs a new entry to maintain the audit trail. Don't add it yourself — raise it in Slack so the entry gets broader review before it's added.
 
 For description mode this is prospective: "if this change were implemented, would a new Implementation Decisions entry be required?"
 
