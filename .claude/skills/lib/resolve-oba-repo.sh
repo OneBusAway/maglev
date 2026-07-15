@@ -78,8 +78,10 @@ warn_if_stale() {
   remote_rev="$(git -C "$path" rev-parse "$upstream_ref")"
   if [[ "$local_rev" != "$remote_rev" ]]; then
     behind="$(git -C "$path" rev-list --count "HEAD..$upstream_ref" 2>/dev/null || echo "?")"
-    last_date="$(git -C "$path" log -1 --format=%ad --date=short)"
-    echo "Warning: $REPO at $path (branch $branch) is $behind commit(s) behind origin/$branch (last local commit: $last_date). This checkout was found independently, not cloned by this script, so it was not updated automatically - results below may reflect stale code. Run 'git -C $path pull' to update it, or unset OBA_WORKSPACE / move it aside to let this script manage a fresh copy in its cache instead." >&2
+    if [[ "$behind" != "0" ]]; then
+      last_date="$(git -C "$path" log -1 --format=%ad --date=short)"
+      echo "Warning: $REPO at $path (branch $branch) is $behind commit(s) behind origin/$branch (last local commit: $last_date). This checkout was found independently, not cloned by this script, so it was not updated automatically - results below may reflect stale code. Run 'git -C $path pull' to update it, or unset OBA_WORKSPACE / move it aside to let this script manage a fresh copy in its cache instead." >&2
+    fi
   fi
 }
 
