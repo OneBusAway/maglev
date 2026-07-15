@@ -11,8 +11,8 @@ import (
 
 // devDate is a placeholder service date for tests that don't exercise the
 // Time-based deviation path. Trip IDs in these mocks don't exist in the
-// static DB, so the absolute-time selection logic falls back to the simple
-// "reverse-walk for the latest Delay" branch.
+// static DB, so the absolute-time selection logic falls back to the
+// pickFirstAvailableSTUDelay branch (first STU with a Delay, forward order).
 var devDate = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 var devNow = devDate.Add(12 * time.Hour) // arbitrary currentTime
 
@@ -72,7 +72,7 @@ func TestGetScheduleDeviation_StopLevelArrivalDelay(t *testing.T) {
 	api.GtfsManager.MockAddTripUpdate("trip-arrival-test", nil, updates)
 
 	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-arrival-test"}, devDate, devNow)
-	assert.Equal(t, 60, deviation, "delay-only update with no DB schedule falls through to reverse-walk fallback")
+	assert.Equal(t, 60, deviation, "delay-only update with no DB schedule falls through to pickFirstAvailableSTUDelay")
 	assert.True(t, hasData)
 }
 
@@ -175,6 +175,71 @@ func TestGetScheduleDeviation_BlockNotActiveDoesNotFallThroughToSTU(t *testing.T
 		"blockNotActive must discard the entire record — not fall through to STU")
 	assert.False(t, hasData,
 		"hasData=false signals the caller to skip the deviation shift entirely")
+}
+
+// TestGetScheduleDeviation_FallbackPicksFreshestSTU covers the Tier-3
+// fallback (pickFirstAvailableSTUDelay) — the path that fires when the
+// static schedule for a trip isn't in the DB and Java's closest-in-time
+// picker can't run. A bus is currently 10 min late at its next stop, mid
+// stop is 5 min late, terminal has absorbed the delay to 0s (recovery
+// time built into the last leg). The right answer is 600s (freshest,
+// closest to now); the terminal-STU-first behavior returned 0s and made
+// tripStatus report "on time" while the bus was 10 minutes late.
+func TestGetScheduleDeviation_FallbackPicksFreshestSTU(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	nextStop, midStop, endStop := "stop-next", "stop-mid", "stop-terminal"
+	nextDelay := 600 * time.Second
+	midDelay := 300 * time.Second
+	endDelay := 0 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopID: &nextStop, Arrival: &gtfs.StopTimeEvent{Delay: &nextDelay}},
+		{StopID: &midStop, Arrival: &gtfs.StopTimeEvent{Delay: &midDelay}},
+		{StopID: &endStop, Arrival: &gtfs.StopTimeEvent{Delay: &endDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-recovery-time-fallback", nil, updates)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(
+		context.Background(), []string{"trip-recovery-time-fallback"}, devDate, devNow,
+	)
+	assert.True(t, hasData)
+	assert.Equal(t, 600, deviation,
+		"fallback must return the freshest (first) STU's delay, not the terminal's 0s")
+}
+
+// TestGetScheduleDeviation_FallbackForwardWalkAcrossBlockTrips confirms the
+// walk crosses block-trip boundaries in forward order — the first STU with
+// a delay wins, even if it's in the last of several block trips (unusual,
+// but the previous reverse-walk would have picked a terminal STU regardless).
+func TestGetScheduleDeviation_FallbackForwardWalkAcrossBlockTrips(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	firstTripStop := "first-stop"
+	firstDelay := 42 * time.Second
+	firstUpdates := []gtfs.StopTimeUpdate{
+		{StopID: &firstTripStop, Arrival: &gtfs.StopTimeEvent{Delay: &firstDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-block-forward-first", nil, firstUpdates)
+
+	secondTripStop := "second-stop"
+	secondDelay := 999 * time.Second
+	secondUpdates := []gtfs.StopTimeUpdate{
+		{StopID: &secondTripStop, Arrival: &gtfs.StopTimeEvent{Delay: &secondDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-block-forward-second", nil, secondUpdates)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(
+		context.Background(),
+		[]string{"trip-block-forward-first", "trip-block-forward-second"},
+		devDate, devNow,
+	)
+	assert.True(t, hasData)
+	assert.Equal(t, 42, deviation,
+		"outer walk must be forward — first block trip's STU wins over later trips'")
 }
 
 func TestGetStopDelaysFromTripUpdates_NoUpdates(t *testing.T) {

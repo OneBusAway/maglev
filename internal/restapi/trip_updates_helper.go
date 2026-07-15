@@ -55,7 +55,7 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		}
 		return dev, true
 	}
-	if dev, ok := pickReverseWalkSTUDelay(tripUpdates); ok {
+	if dev, ok := pickFirstAvailableSTUDelay(tripUpdates); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
 			return 0, false
 		}
@@ -327,14 +327,23 @@ func absInt64(v int64) int64 {
 	return v
 }
 
-// pickReverseWalkSTUDelay is the final fallback when schedule lookup failed
-// (e.g. test fixtures without static stop times) but the feed still carries
-// per-stop delays. Returns the latest stop's delay in block-iteration order.
-func pickReverseWalkSTUDelay(tripUpdates []tripUpdateForTrip) (int, bool) {
-	for i := len(tripUpdates) - 1; i >= 0; i-- {
-		stus := tripUpdates[i].tu.StopTimeUpdates
-		for j := len(stus) - 1; j >= 0; j-- {
-			stu := stus[j]
+// pickFirstAvailableSTUDelay is the final fallback when schedule lookup
+// failed (missing static stop_times, real-time-only trip IDs, sparse feeds)
+// and Java's closest-in-time picker cannot run.
+//
+// Java's updateBestScheduleDeviation picks the STU whose predicted stop-time
+// is nearest to now (GtfsRealtimeTripLibrary.java:1256-1272). We can't do
+// that here without schedule times, so we approximate: return the delay of
+// the FIRST STU with one, in block-iteration order.
+//
+// Rationale: real-world feeds publish delays in stop-sequence order and
+// typically only for upcoming stops, so the first STU is the freshest
+// signal for "the bus's current deviation." Terminal STUs are the worst
+// choice — schedules bake recovery time into the last leg, so end-of-line
+// delays decay toward 0 even for a bus that is currently very late.
+func pickFirstAvailableSTUDelay(tripUpdates []tripUpdateForTrip) (int, bool) {
+	for _, t := range tripUpdates {
+		for _, stu := range t.tu.StopTimeUpdates {
 			if stu.Arrival != nil && stu.Arrival.Delay != nil {
 				return int(stu.Arrival.Delay.Seconds()), true
 			}
