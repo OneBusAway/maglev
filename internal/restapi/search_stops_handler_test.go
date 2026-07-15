@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func searchStopsURL(params url.Values) string {
@@ -168,5 +169,34 @@ func TestSanitizeFTS5Query(t *testing.T) {
 			out := sanitizeFTS5Query(tt.input)
 			assert.Equal(t, tt.expected, out)
 		})
+	}
+}
+
+func TestSearchStopsHandlerReferencesSorting(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	routes := stopsResp.Data.References.Routes
+	require.GreaterOrEqual(t, len(routes), 2, "expected at least two routes to verify sorting behavior")
+	for i := 1; i < len(routes); i++ {
+		keyA := routes[i-1].ShortName
+		if keyA == "" {
+			keyA = routes[i-1].LongName
+		}
+		keyB := routes[i].ShortName
+		if keyB == "" {
+			keyB = routes[i].LongName
+		}
+		assert.LessOrEqual(t, utils.NaturalCompare(keyA, keyB), 0, "routes inside references must be naturally sorted by ShortName/LongName")
+	}
+
+	agencies := stopsResp.Data.References.Agencies
+	require.NotEmpty(t, agencies, "expected at least one agency in references")
+	for i := 1; i < len(agencies); i++ {
+		assert.LessOrEqual(t, agencies[i-1].ID, agencies[i].ID, "agencies inside references must be sorted alphabetically by ID")
 	}
 }
