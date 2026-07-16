@@ -17,6 +17,7 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
@@ -264,6 +265,16 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
 }
 
+// findVehicleStatusByID returns the entry with the given vehicleId, or nil.
+func findVehicleStatusByID(list []models.VehicleStatus, vehicleID string) *models.VehicleStatus {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
 // TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
 // returns all vehicles with limitExceeded=false (no result cap).
 func TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
@@ -351,6 +362,141 @@ func findVehicleInList(list []models.VehicleStatus, vehicleID string) *models.Ve
 		}
 	}
 	return nil
+}
+
+// findTripWithBlock returns the first trip with a non-empty BlockID satisfying
+// pred, searching up to 200 trips. Returns the zero value if none match.
+func findTripWithBlock(t testing.TB, api *RestAPI, ctx context.Context, pred func(gtfsdb.Trip) bool) gtfsdb.Trip {
+	t.Helper()
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	for _, tr := range trips {
+		if !tr.BlockID.Valid || tr.BlockID.String == "" {
+			continue
+		}
+		if pred(tr) {
+			return tr
+		}
+	}
+	return gtfsdb.Trip{}
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceResolved verifies that a vehicle on
+// a trip with a block active on the reference date gets a resolved (>= 0) sequence.
+func TestVehiclesForAgencyHandler_BlockTripSequenceResolved(t *testing.T) {
+	// Monday within the RABA dataset's active service period.
+	serviceDate := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, ok := api.blockTripSequence(ctx, row.ID, serviceDate)
+		return ok
+	})
+	require.NotEmpty(t, blockTrip.ID, "need a trip with a resolvable block sequence in test data")
+
+	const vehicleID = "v_block_seq"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must be a resolved zero-based index")
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceUnavailable verifies that a vehicle
+// whose trip has no resolvable block sequence gets blockTripSequence = -1.
+func TestVehiclesForAgencyHandler_BlockTripSequenceUnavailable(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	// A synthetic trip ID that does not exist in the DB has no block.
+	const vehicleID = "v_block_seq_none"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, "nonexistent-trip", trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.Equal(t, -1, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must be -1 when the sequence is unavailable")
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime verifies that
+// blockTripSequence is resolved against the request's `time` parameter rather
+// than the server's wall-clock "now".
+func TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime(t *testing.T) {
+	// "Now" is set far outside the RABA feed's service calendar (2024-2025), so no
+	// trip's block sequence can resolve against api.Clock.Now().
+	farFutureNow := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(farFutureNow))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// The requested reference time, which does fall within the active service
+	// window and has a resolvable block sequence.
+	requestedTime := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	ctx := context.Background()
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, ok := api.blockTripSequence(ctx, row.ID, requestedTime)
+		return ok
+	})
+	require.NotEmpty(t, blockTrip.ID, "need a trip with a block sequence resolvable on requestedTime in test data")
+
+	const vehicleID = "v_block_seq_reftime"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"time": {strconv.FormatInt(requestedTime.UnixMilli(), 10)}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must resolve using the requested `time` parameter, not api.Clock.Now()")
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceUsesAgencyLocalDate verifies that,
+// when no `time` parameter is supplied, blockTripSequence resolves against the
+// agency's local calendar date rather than the server clock's own timezone.
+func TestVehiclesForAgencyHandler_BlockTripSequenceUsesAgencyLocalDate(t *testing.T) {
+	// 2024-11-09 04:00 UTC is Saturday in UTC, but still Friday 20:00 in RABA's
+	// agency timezone (America/Los_Angeles, UTC-8 in November).
+	mockNow := time.Date(2024, 11, 9, 4, 0, 0, 0, time.UTC)
+	agencyLocalFriday := time.Date(2024, 11, 8, 12, 0, 0, 0, time.UTC)
+
+	api := createTestApiWithClock(t, clock.NewMockClock(mockNow))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, resolvesFriday := api.blockTripSequence(ctx, row.ID, agencyLocalFriday)
+		_, resolvesSaturday := api.blockTripSequence(ctx, row.ID, mockNow)
+		return resolvesFriday && !resolvesSaturday
+	})
+	require.NotEmpty(t, blockTrip.ID,
+		"need a trip whose block resolves Friday but not Saturday in test data")
+
+	const vehicleID = "v_block_seq_tz"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	// No `time` param: the handler must localize "now" to the agency's timezone
+	// (still Friday locally), not use the un-localized UTC instant (already
+	// Saturday).
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must resolve against the agency's local calendar date, not the server clock's UTC date")
 }
 
 // ageFilterClock is a fixed reference time used by the ageInSeconds tests so the
