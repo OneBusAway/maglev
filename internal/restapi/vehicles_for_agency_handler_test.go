@@ -23,6 +23,7 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
@@ -890,8 +891,11 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 
 	// Find a (nominal trip, reference time) pair where the trip executing at that
 	// time differs from the nominal trip — i.e. interlining is actually exercised.
+	// Prefer a cross-route scenario (active trip on a different route) so the
+	// active-route reference is meaningfully tested; fall back to any interlining.
 	var nominalID, resolvedActiveID string
 	var refTime time.Time
+	var crossRoute bool
 	seen := make(map[string]bool)
 	for _, tr := range trips {
 		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
@@ -913,12 +917,24 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 			}
 			midNs := (candidate.EarliestTime.Int64 + candidate.LatestTime.Int64) / 2
 			rt := serviceDate.Add(time.Duration(midNs))
-			if got := api.resolveActiveTripID(ctx, nominal.ID, rt); got != nominal.ID {
-				nominalID, resolvedActiveID, refTime = nominal.ID, got, rt
+			got := api.resolveActiveTripID(ctx, nominal.ID, rt)
+			if got == nominal.ID {
+				continue
+			}
+			// Record the first interlining scenario; upgrade to a cross-route one if found.
+			gotRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, got)
+			if err != nil {
+				continue
+			}
+			isCrossRoute := row.RouteID != gotRow.RouteID
+			if resolvedActiveID == "" || (isCrossRoute && !crossRoute) {
+				nominalID, resolvedActiveID, refTime, crossRoute = nominal.ID, got, rt, isCrossRoute
+			}
+			if crossRoute {
 				break
 			}
 		}
-		if resolvedActiveID != "" {
+		if crossRoute {
 			break
 		}
 	}
@@ -947,11 +963,51 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 	assert.NotEqual(t, entry.TripID, entry.TripStatus.ActiveTripID,
 		"interlining: activeTripId must differ from the outer tripId")
 
-	// Both trips must appear in references.trips.
-	refTripIDs := make(map[string]bool)
+	activeRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, resolvedActiveID)
+	require.NoError(t, err)
+	expectedNominalRoute := testdata.Raba.ID + "_" + nominalRow.RouteID
+	expectedActiveRoute := testdata.Raba.ID + "_" + activeRow.RouteID
+
+	// Both trips must appear in references.trips with the correct routeId.
+	refTrips := make(map[string]string) // trip id -> route id
 	for _, tr := range model.Data.References.Trips {
-		refTripIDs[tr.ID] = true
+		refTrips[tr.ID] = tr.RouteID
 	}
-	assert.True(t, refTripIDs[expectedNominal], "nominal trip must be in references.trips")
-	assert.True(t, refTripIDs[expectedActive], "active trip must be in references.trips")
+	require.Contains(t, refTrips, expectedNominal, "nominal trip must be in references.trips")
+	require.Contains(t, refTrips, expectedActive, "active trip must be in references.trips")
+	assert.Equal(t, expectedNominalRoute, refTrips[expectedNominal],
+		"nominal trip reference must carry its routeId")
+	assert.Equal(t, expectedActiveRoute, refTrips[expectedActive],
+		"active trip reference must carry its routeId")
+
+	// Both referenced routes must appear in references.routes.
+	refRouteIDs := make(map[string]bool)
+	for _, rt := range model.Data.References.Routes {
+		refRouteIDs[rt.ID] = true
+	}
+	assert.True(t, refRouteIDs[expectedNominalRoute], "nominal route must be in references.routes")
+	assert.True(t, refRouteIDs[expectedActiveRoute], "active route must be in references.routes")
+}
+
+// TestAddRouteReference verifies a gtfsdb.Route is keyed by its combined
+// agencyID_routeID and its nullable fields are mapped through.
+func TestAddRouteReference(t *testing.T) {
+	routeRefs := make(map[string]models.Route)
+	addRouteReference(routeRefs, gtfsdb.Route{
+		ID:        "R1",
+		AgencyID:  "40",
+		ShortName: nulls.String("10"),
+		LongName:  nulls.String("Downtown"),
+		Type:      3,
+		Color:     nulls.String("FF0000"),
+	})
+
+	ref, ok := routeRefs["40_R1"]
+	require.True(t, ok, "route must be keyed by combined agencyID_routeID")
+	assert.Equal(t, "40_R1", ref.ID)
+	assert.Equal(t, "40", ref.AgencyID)
+	assert.Equal(t, "10", ref.ShortName)
+	assert.Equal(t, "Downtown", ref.LongName)
+	assert.Equal(t, "FF0000", ref.Color)
+	assert.Equal(t, "", ref.TextColor, "unset nullable fields map to empty string")
 }

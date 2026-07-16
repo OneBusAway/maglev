@@ -7,6 +7,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -192,49 +193,28 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				RouteID: utils.FormCombinedID(id, vehicle.Trip.ID.RouteID),
 			}
 
-			// For interlining, also add the active trip to references.
+			// Add the nominal trip's route to references (from batch-fetched map).
+			if route, ok := routeByID[vehicle.Trip.ID.RouteID]; ok {
+				addRouteReference(routeRefs, route)
+			}
+
+			// For interlining, also add the active trip and its route to references.
 			if activeTripID != vehicle.Trip.ID.ID {
 				if activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID); err == nil {
 					tripRefs[activeTripID] = models.Trip{
 						ID:      utils.FormCombinedID(id, activeTripID),
 						RouteID: utils.FormCombinedID(id, activeTrip.RouteID),
 					}
+					activeRoute, ok := routeByID[activeTrip.RouteID]
+					if !ok {
+						if fetched, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID); err == nil {
+							activeRoute, ok = fetched, true
+						}
+					}
+					if ok {
+						addRouteReference(routeRefs, activeRoute)
+					}
 				}
-			}
-
-			// Add route to references (from batch-fetched map)
-			if route, ok := routeByID[vehicle.Trip.ID.RouteID]; ok {
-				shortName := ""
-				if route.ShortName.Valid {
-					shortName = route.ShortName.String
-				}
-				longName := ""
-				if route.LongName.Valid {
-					longName = route.LongName.String
-				}
-				desc := ""
-				if route.Desc.Valid {
-					desc = route.Desc.String
-				}
-				url := ""
-				if route.Url.Valid {
-					url = route.Url.String
-				}
-				color := ""
-				if route.Color.Valid {
-					color = route.Color.String
-				}
-				textColor := ""
-				if route.TextColor.Valid {
-					textColor = route.TextColor.String
-				}
-
-				combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
-				routeRefs[combinedRouteID] = models.NewRoute(
-					combinedRouteID, route.AgencyID, shortName, longName,
-					desc, models.RouteType(route.Type),
-					url, color, textColor)
-
 			}
 		} else {
 			defaultTripStatus := models.NewTripStatus()
@@ -274,4 +254,19 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
 	response := models.NewListResponse(vehiclesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// addRouteReference inserts a route reference keyed by its combined agencyID_routeID.
+func addRouteReference(routeRefs map[string]models.Route, route gtfsdb.Route) {
+	combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
+	routeRefs[combinedRouteID] = models.NewRoute(
+		combinedRouteID, route.AgencyID,
+		nulls.StringOrEmpty(route.ShortName),
+		nulls.StringOrEmpty(route.LongName),
+		nulls.StringOrEmpty(route.Desc),
+		models.RouteType(route.Type),
+		nulls.StringOrEmpty(route.Url),
+		nulls.StringOrEmpty(route.Color),
+		nulls.StringOrEmpty(route.TextColor),
+	)
 }
