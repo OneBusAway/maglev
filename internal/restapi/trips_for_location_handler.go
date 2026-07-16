@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -34,7 +35,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Intentionally defaulting includeStatus to false to align with includeSchedule
 	// behavior for this endpoint, even though trips-for-route defaults to true.
-	includeStatus := r.URL.Query().Get("includeStatus") == "true"
+	includeStatus, _ := strconv.ParseBool(r.URL.Query().Get("includeStatus"))
 
 	stops := api.GtfsManager.GetStopsInBounds(ctx, locationParams, 100)
 	stopIDs := extractStopIDs(stops)
@@ -143,8 +144,8 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 
 	queryParams := r.URL.Query()
 
-	includeTrip = queryParams.Get("includeTrip") == "true"
-	includeSchedule = queryParams.Get("includeSchedule") == "true"
+	includeTrip = parseIncludeTrip(queryParams)
+	includeSchedule, _ = strconv.ParseBool(queryParams.Get("includeSchedule"))
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 	if agenciesErr != nil || len(agencies) == 0 {
@@ -157,21 +158,9 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, nil, serverErr
 	}
 
-	timeParam := queryParams.Get("time")
-	if timeParam == "" {
-		currentTime = api.Clock.Now().In(currentLocation)
-	} else {
-		var timeFieldErrors map[string][]string
-		_, currentTime, timeFieldErrors, _ = utils.ParseTimeParameter(timeParam, currentLocation)
-		if len(timeFieldErrors) > 0 {
-			if fieldErrors == nil {
-				fieldErrors = make(map[string][]string)
-			}
-			for k, v := range timeFieldErrors {
-				fieldErrors[k] = append(fieldErrors[k], v...)
-			}
-		}
-	}
+	var timeFieldErrors map[string][]string
+	currentTime, timeFieldErrors = api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
+	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
 
 	serviceDate, todayMidnight = utils.ServiceDateMidnight(nil, currentTime)
 
@@ -180,6 +169,40 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
 	}
 
 	return loc, includeTrip, includeSchedule, currentLocation, currentTime, todayMidnight, serviceDate, nil, nil
+}
+
+// parseIncludeTrip parses the includeTrip query parameter, defaulting to true when omitted
+// and to false when present but not a valid boolean.
+func parseIncludeTrip(queryParams url.Values) bool {
+	if !queryParams.Has("includeTrip") {
+		return true
+	}
+	includeTrip, _ := strconv.ParseBool(queryParams.Get("includeTrip"))
+	return includeTrip
+}
+
+// resolveCurrentTime resolves the query time: the explicit time parameter if supplied,
+// otherwise the current server clock.
+func (api *RestAPI) resolveCurrentTime(timeParam string, currentLocation *time.Location) (time.Time, map[string][]string) {
+	if timeParam == "" {
+		return api.Clock.Now().In(currentLocation), nil
+	}
+	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation)
+	return currentTime, timeFieldErrors
+}
+
+// mergeFieldErrors appends src's entries onto dst, allocating dst if necessary.
+func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string][]string)
+	}
+	for k, v := range src {
+		dst[k] = append(dst[k], v...)
+	}
+	return dst
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
