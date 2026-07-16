@@ -476,7 +476,9 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
   "env": "test",
   "api-keys": ["test-key"],
   "rate-limit": 50,
-  "gtfs-url": "` + absTestDataPath + `",
+  "gtfs-static-feed": {
+    "url": "` + absTestDataPath + `"
+  },
   "data-path": ":memory:"
 }`
 		err = os.WriteFile(testConfigPath, []byte(testConfigContent), 0644)
