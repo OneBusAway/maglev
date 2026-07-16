@@ -134,7 +134,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			vehicleStatus.TripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
 
 			tripStatus := models.NewTripStatus()
-			tripStatus.ActiveTripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
+			// Resolve the executing trip; may differ from the nominal trip when interlining.
+			activeTripID := api.resolveActiveTripID(ctx, vehicle.Trip.ID.ID, referenceTime)
+			tripStatus.ActiveTripID = utils.FormCombinedID(id, activeTripID)
 			// Resolve the block trip sequence; -1 when unavailable.
 			if seq, ok := api.blockTripSequence(ctx, vehicle.Trip.ID.ID, referenceTime); ok {
 				tripStatus.BlockTripSequence = seq
@@ -188,6 +190,16 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			tripRefs[vehicle.Trip.ID.ID] = models.Trip{
 				ID:      utils.FormCombinedID(id, vehicle.Trip.ID.ID),
 				RouteID: utils.FormCombinedID(id, vehicle.Trip.ID.RouteID),
+			}
+
+			// For interlining, also add the active trip to references.
+			if activeTripID != vehicle.Trip.ID.ID {
+				if activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID); err == nil {
+					tripRefs[activeTripID] = models.Trip{
+						ID:      utils.FormCombinedID(id, activeTripID),
+						RouteID: utils.FormCombinedID(id, activeTrip.RouteID),
+					}
+				}
 			}
 
 			// Add route to references (from batch-fetched map)

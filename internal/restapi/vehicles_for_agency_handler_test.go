@@ -864,3 +864,94 @@ func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func(
 	}
 	return api, cleanup
 }
+
+// TestVehiclesForAgencyHandler_InterliningActiveTrip verifies that when a vehicle's
+// nominal trip differs from the trip executing at the reference time (interlining),
+// tripStatus.activeTripId reflects the executing trip and both trips appear in
+// references.trips.
+func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
+	ctx := context.Background()
+
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// The handler resolves reference time in the agency's timezone, so the test
+	// must build reference times in the same location for the windows to line up.
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+
+	formattedDate := serviceDate.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	// Find a (nominal trip, reference time) pair where the trip executing at that
+	// time differs from the nominal trip — i.e. interlining is actually exercised.
+	var nominalID, resolvedActiveID string
+	var refTime time.Time
+	seen := make(map[string]bool)
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" || seen[row.BlockID.String] {
+			continue
+		}
+		seen[row.BlockID.String] = true
+		ordered, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+			BlockID:    row.BlockID,
+			ServiceIds: serviceIDs,
+		})
+		if err != nil || len(ordered) < 2 {
+			continue
+		}
+		nominal := ordered[0]
+		for _, candidate := range ordered[1:] {
+			if !candidate.EarliestTime.Valid || !candidate.LatestTime.Valid {
+				continue
+			}
+			midNs := (candidate.EarliestTime.Int64 + candidate.LatestTime.Int64) / 2
+			rt := serviceDate.Add(time.Duration(midNs))
+			if got := api.resolveActiveTripID(ctx, nominal.ID, rt); got != nominal.ID {
+				nominalID, resolvedActiveID, refTime = nominal.ID, got, rt
+				break
+			}
+		}
+		if resolvedActiveID != "" {
+			break
+		}
+	}
+	require.NotEmpty(t, resolvedActiveID, "need an interlining scenario in test data")
+
+	api.Clock = clock.NewMockClock(refTime)
+
+	nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalID)
+	require.NoError(t, err)
+
+	// Vehicle's GTFS-RT trip is the nominal trip.
+	const vehicleID = "v_interlining"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, nominalID, nominalRow.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+
+	expectedActive := testdata.Raba.ID + "_" + resolvedActiveID
+	expectedNominal := testdata.Raba.ID + "_" + nominalID
+	assert.Equal(t, expectedActive, entry.TripStatus.ActiveTripID,
+		"activeTripId must reflect the executing (interlined) trip")
+	assert.Equal(t, expectedNominal, entry.TripID,
+		"outer tripId must remain the nominal trip")
+	assert.NotEqual(t, entry.TripID, entry.TripStatus.ActiveTripID,
+		"interlining: activeTripId must differ from the outer tripId")
+
+	// Both trips must appear in references.trips.
+	refTripIDs := make(map[string]bool)
+	for _, tr := range model.Data.References.Trips {
+		refTripIDs[tr.ID] = true
+	}
+	assert.True(t, refTripIDs[expectedNominal], "nominal trip must be in references.trips")
+	assert.True(t, refTripIDs[expectedActive], "active trip must be in references.trips")
+}
