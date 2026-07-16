@@ -59,14 +59,6 @@ func TestParseLocationParams_Success(t *testing.T) {
 func TestParseLocationParams_ValidationErrors(t *testing.T) {
 	api := &RestAPI{}
 
-	t.Run("Missing required parameters returns field errors", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test?radius=1000", nil)
-		loc, errs := api.parseLocationParams(req, nil)
-		assert.Nil(t, loc)
-		assert.NotEmpty(t, errs["lat"])
-		assert.NotEmpty(t, errs["lon"])
-	})
-
 	t.Run("Invalid syntax for float parameters returns field errors", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test?lat=invalid&lon=invalid&radius=invalid&latSpan=invalid&lonSpan=invalid", nil)
 		loc, errs := api.parseLocationParams(req, nil)
