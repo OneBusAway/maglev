@@ -7,6 +7,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -156,6 +157,46 @@ func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
 	}
 
 	return vehicle.Trip.ID.ID
+}
+
+// resolveActiveTripID returns the trip actually being executed at referenceTime
+// within nominalTripID's block (interlining, spec Extension 5b). It falls back to
+// nominalTripID when there is no block or no better match.
+func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID string, referenceTime time.Time) string {
+	nominalTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalTripID)
+	if err != nil || !nominalTrip.BlockID.Valid || nominalTrip.BlockID.String == "" {
+		return nominalTripID
+	}
+
+	formattedDate := referenceTime.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	if err != nil || len(serviceIDs) == 0 {
+		return nominalTripID
+	}
+
+	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+		BlockID:    nominalTrip.BlockID,
+		ServiceIds: serviceIDs,
+	})
+	if err != nil || len(blockTrips) == 0 {
+		return nominalTripID
+	}
+
+	// Reference time-of-day as nanoseconds since midnight, matching stored trip times.
+	midnight := time.Date(referenceTime.Year(), referenceTime.Month(), referenceTime.Day(), 0, 0, 0, 0, referenceTime.Location())
+	sinceMidnightNs := int64(referenceTime.Sub(midnight))
+
+	// The active trip is the block trip whose scheduled window contains referenceTime.
+	for _, bt := range blockTrips {
+		if !bt.EarliestTime.Valid || !bt.LatestTime.Valid {
+			continue
+		}
+		if sinceMidnightNs >= bt.EarliestTime.Int64 && sinceMidnightNs <= bt.LatestTime.Int64 {
+			return bt.ID
+		}
+	}
+
+	return nominalTripID
 }
 
 // projectPositionWithShapePoints projects actualPos onto the nearest segment

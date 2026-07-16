@@ -8,7 +8,10 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestGetVehicleStatusAndPhase_NilVehicle(t *testing.T) {
@@ -263,4 +266,83 @@ func TestBuildVehicleStatus_BearingConversion(t *testing.T) {
 			assert.Equal(t, tt.expectedOrientation, status.LastKnownOrientation, "LastKnownOrientation should match Orientation")
 		})
 	}
+}
+
+func TestResolveActiveTripID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	// Monday within the RABA dataset's active service period.
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
+	formattedDate := serviceDate.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs)
+
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	// Find a block with at least two ordered trips that have scheduled windows.
+	var blockTrips []gtfsdb.GetTripsByBlockIDOrderedRow
+	seen := make(map[string]bool)
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" || seen[row.BlockID.String] {
+			continue
+		}
+		seen[row.BlockID.String] = true
+
+		ordered, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+			BlockID:    nulls.String(row.BlockID.String),
+			ServiceIds: serviceIDs,
+		})
+		if err != nil {
+			continue
+		}
+		var withWindows []gtfsdb.GetTripsByBlockIDOrderedRow
+		for _, bt := range ordered {
+			if bt.EarliestTime.Valid && bt.LatestTime.Valid {
+				withWindows = append(withWindows, bt)
+			}
+		}
+		if len(withWindows) >= 2 {
+			blockTrips = withWindows
+			break
+		}
+	}
+	require.GreaterOrEqual(t, len(blockTrips), 2, "need a block with >=2 scheduled trips in test data")
+
+	nominal := blockTrips[0]
+	active := blockTrips[1]
+
+	t.Run("returns interlining active trip at its scheduled time", func(t *testing.T) {
+		// A reference time inside the second trip's window while the nominal trip is the first.
+		midWindowNs := (active.EarliestTime.Int64 + active.LatestTime.Int64) / 2
+		refTime := serviceDate.Add(time.Duration(midWindowNs))
+
+		got := api.resolveActiveTripID(ctx, nominal.ID, refTime)
+		assert.Equal(t, active.ID, got,
+			"expected the trip whose scheduled window contains the reference time")
+	})
+
+	t.Run("returns nominal trip within its own window", func(t *testing.T) {
+		midWindowNs := (nominal.EarliestTime.Int64 + nominal.LatestTime.Int64) / 2
+		refTime := serviceDate.Add(time.Duration(midWindowNs))
+
+		got := api.resolveActiveTripID(ctx, nominal.ID, refTime)
+		assert.Equal(t, nominal.ID, got)
+	})
+
+	t.Run("falls back to nominal when no window matches", func(t *testing.T) {
+		// A time before any block trip starts.
+		refTime := serviceDate.Add(-1 * time.Hour)
+		got := api.resolveActiveTripID(ctx, nominal.ID, refTime)
+		assert.Equal(t, nominal.ID, got)
+	})
+
+	t.Run("falls back to nominal for unknown trip", func(t *testing.T) {
+		got := api.resolveActiveTripID(ctx, "nonexistent-trip", serviceDate)
+		assert.Equal(t, "nonexistent-trip", got)
+	})
 }
