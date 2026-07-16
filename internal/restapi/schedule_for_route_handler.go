@@ -67,18 +67,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		scheduleDate = startOfDay.UnixMilli()
 	}
 
-	agencyModel := models.NewAgencyReference(
-		agency.ID,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Lang.String,
-		agency.Phone.String,
-		agency.Email.String,
-		agency.FareUrl.String,
-		"",
-		false,
-	)
+	agencyModel := models.AgencyReferenceFromDatabase(&agency)
 	routeModel := models.NewRoute(
 		utils.FormCombinedID(agencyID, route.ID),
 		route.AgencyID,
