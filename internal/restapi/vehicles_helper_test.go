@@ -345,4 +345,43 @@ func TestResolveActiveTripID(t *testing.T) {
 		got := api.resolveActiveTripID(ctx, "nonexistent-trip", serviceDate)
 		assert.Equal(t, "nonexistent-trip", got)
 	})
+
+	t.Run("resolves a past-midnight trip on the following calendar day", func(t *testing.T) {
+		// Build a synthetic block on an existing active service. The second trip's
+		// window runs past 24:00 (25:00-25:30), i.e. 01:00-01:30 the next calendar day.
+		serviceID := serviceIDs[0]
+		nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, blockTrips[0].ID)
+		require.NoError(t, err)
+		routeID := nominalRow.RouteID
+
+		blockID := nulls.String("rollover-block")
+		const dayNs = int64(24 * time.Hour)
+
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "rollover-nominal",
+			RouteID:          routeID,
+			ServiceID:        serviceID,
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(23 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(23*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "rollover-past-midnight",
+			RouteID:          routeID,
+			ServiceID:        serviceID,
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour)),                // 25:00
+			MaxDepartureTime: nulls.Int64(dayNs + int64(time.Hour+30*time.Minute)), // 25:30
+		})
+		require.NoError(t, err)
+
+		// 01:15 on the day after the service date falls inside the 25:00-25:30 window
+		// of the previous service day.
+		refTime := serviceDate.AddDate(0, 0, 1).Add(75 * time.Minute)
+		got := api.resolveActiveTripID(ctx, "rollover-nominal", refTime)
+		assert.Equal(t, "rollover-past-midnight", got,
+			"a trip whose window exceeds 24:00 must match a reference time on the next calendar day")
+	})
 }

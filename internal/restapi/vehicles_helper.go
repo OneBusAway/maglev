@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"math"
 	"time"
 
@@ -168,35 +169,49 @@ func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID strin
 		return nominalTripID
 	}
 
-	formattedDate := referenceTime.Format("20060102")
-	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
-	if err != nil || len(serviceIDs) == 0 {
-		return nominalTripID
-	}
-
-	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
-		BlockID:    nominalTrip.BlockID,
-		ServiceIds: serviceIDs,
-	})
-	if err != nil || len(blockTrips) == 0 {
-		return nominalTripID
-	}
-
-	// Reference time-of-day as nanoseconds since midnight, matching stored trip times.
 	midnight := time.Date(referenceTime.Year(), referenceTime.Month(), referenceTime.Day(), 0, 0, 0, 0, referenceTime.Location())
 	sinceMidnightNs := int64(referenceTime.Sub(midnight))
 
-	// The active trip is the block trip whose scheduled window contains referenceTime.
+	// Check the current service day, then the previous day for trips whose windows
+	// run past 24:00 (GTFS allows e.g. 25:30:00). A trip belonging to the previous
+	// service day is matched against referenceTime offset by +24h.
+	if tripID, ok := api.activeTripInBlockAt(ctx, nominalTrip.BlockID, referenceTime, sinceMidnightNs); ok {
+		return tripID
+	}
+	prevDay := referenceTime.AddDate(0, 0, -1)
+	if tripID, ok := api.activeTripInBlockAt(ctx, nominalTrip.BlockID, prevDay, sinceMidnightNs+int64(24*time.Hour)); ok {
+		return tripID
+	}
+
+	return nominalTripID
+}
+
+// activeTripInBlockAt returns the block trip whose scheduled window contains
+// sinceMidnightNs on serviceDay's active services, if any.
+func (api *RestAPI) activeTripInBlockAt(ctx context.Context, blockID sql.NullString, serviceDay time.Time, sinceMidnightNs int64) (string, bool) {
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDay.Format("20060102"))
+	if err != nil || len(serviceIDs) == 0 {
+		return "", false
+	}
+
+	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+		BlockID:    blockID,
+		ServiceIds: serviceIDs,
+	})
+	if err != nil {
+		return "", false
+	}
+
 	for _, bt := range blockTrips {
 		if !bt.EarliestTime.Valid || !bt.LatestTime.Valid {
 			continue
 		}
 		if sinceMidnightNs >= bt.EarliestTime.Int64 && sinceMidnightNs <= bt.LatestTime.Int64 {
-			return bt.ID
+			return bt.ID, true
 		}
 	}
 
-	return nominalTripID
+	return "", false
 }
 
 // projectPositionWithShapePoints projects actualPos onto the nearest segment
