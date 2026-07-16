@@ -3,11 +3,13 @@ package webui
 import (
 	"context"
 	"embed"
-	"html/template"
+	"encoding/json"
+	"fmt"
+	"html"
+	"io"
 	"log/slog"
 	"net/http"
 
-	"github.com/davecgh/go-spew/spew"
 	"maglev.onebusaway.org/internal/appconf"
 )
 
@@ -20,25 +22,28 @@ type debugData struct {
 }
 
 func writeDebugData(w http.ResponseWriter, title string, data any) {
-	content := spew.Sdump(data)
-	w.Header().Set("Content-Type", "text/html")
-	tmpl, err := template.ParseFS(templateFS, "debug_index.html")
-	if err != nil {
-		slog.Error("failed to parse debug template", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	fmt.Fprintf(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title></head><body>", html.EscapeString(title))
+	fmt.Fprintf(w, "<h1>%s</h1><pre>", html.EscapeString(title))
+
+	if data == nil {
+		io.WriteString(w, "nil")
+	} else {
+		switch v := data.(type) {
+		case string:
+			fmt.Fprint(w, html.EscapeString(v))
+		default:
+			if b, err := json.MarshalIndent(v, "", "  "); err == nil {
+				fmt.Fprint(w, html.EscapeString(string(b)))
+			} else {
+				fmt.Fprint(w, html.EscapeString(fmt.Sprint(v)))
+			}
+		}
 	}
 
-	dataStruct := debugData{
-		Title: title,
-		Pre:   content,
-	}
-
-	err = tmpl.Execute(w, dataStruct)
-	if err != nil {
-		slog.Error("failed to execute debug template", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-	}
+	io.WriteString(w, "</pre></body></html>")
 }
 
 func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
