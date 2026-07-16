@@ -398,8 +398,9 @@ func (manager *Manager) GetStopsInBounds(
 	ctx context.Context,
 	loc *LocationParams,
 	maxCount int,
+	clamp ...bool,
 ) []gtfsdb.Stop {
-	bounds := BoundsFromParams(loc)
+	bounds := BoundsFromParams(loc, clamp...)
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))

@@ -350,3 +350,11 @@ func ParseDate(date string, loc *time.Location) (time.Time, error) {
 
 	return time.Time{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
 }
+
+// ClampRadius restricts a radius value to MaxSearchRadiusInMeters
+func ClampRadius(radius float64) float64 {
+	if radius > models.MaxSearchRadiusInMeters {
+		return models.MaxSearchRadiusInMeters
+	}
+	return radius
+}
