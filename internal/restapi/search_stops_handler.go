@@ -125,13 +125,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Evaluate if we fetched more than the requested limit
-	isLimitExceeded := len(stops) > limit
-
-	// Truncate the slice back down to the actual limit if necessary
-	if isLimitExceeded {
-		stops = stops[:limit]
-	}
+	stops, isLimitExceeded := utils.PaginateSlice(stops, 0, limit)
 
 	// 4. Batch Fetch Related Data
 	stopIDs := make([]string, len(stops))
