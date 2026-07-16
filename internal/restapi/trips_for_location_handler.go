@@ -38,7 +38,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
 	currentTime := api.Clock.Now().In(currentLocation)
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, locationParams, 100)
+	stops := api.GtfsManager.GetStopsInBounds(ctx, locationParams, models.DefaultMaxCountForStops, true)
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -48,7 +48,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	activeTrips := api.getActiveTrips(stopTimes, api.GtfsManager.GetRealTimeVehicles())
 
-	bounds := internalgtfs.BoundsFromParams(locationParams)
+	bounds := internalgtfs.BoundsFromParams(locationParams, true)
 	visibleTripIDs := make([]string, 0, len(activeTrips))
 	for _, vehicle := range activeTrips {
 		if ctx.Err() != nil {

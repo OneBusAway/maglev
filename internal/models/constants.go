@@ -14,7 +14,6 @@ const (
 	DefaultSearchRadiusInMeters = 600
 	QuerySearchRadiusInMeters   = 10000
 	MaxSearchRadiusInMeters     = 20000
-	MaxSearchSpanInDegrees      = 5.0
 )
 
 // Cache durations (in seconds) for different API data types.

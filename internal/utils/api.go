@@ -358,11 +358,3 @@ func ClampRadius(radius float64) float64 {
 	}
 	return radius
 }
-
-// ClampSpan restricts a span value to MaxSearchSpanInDegrees
-func ClampSpan(span float64) float64 {
-	if span > models.MaxSearchSpanInDegrees {
-		return models.MaxSearchSpanInDegrees
-	}
-	return span
-}

@@ -7,10 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/internal/models"
 )
 
-func TestParseLocationParams_SuccessAndClamping(t *testing.T) {
+func TestParseLocationParams_Success(t *testing.T) {
 	api := &RestAPI{}
 
 	tests := []struct {
@@ -21,18 +20,18 @@ func TestParseLocationParams_SuccessAndClamping(t *testing.T) {
 		expectedLonSpan float64
 	}{
 		{
-			name:            "Radius exceeding max is auto-corrected to 20000",
+			name:            "Radius exceeding max is parsed as-is without clamping",
 			url:             "/test?lat=47.6&lon=-122.3&radius=50000",
-			expectedRadius:  models.MaxSearchRadiusInMeters,
+			expectedRadius:  50000,
 			expectedLatSpan: 0,
 			expectedLonSpan: 0,
 		},
 		{
-			name:            "Spans exceeding max are auto-corrected to 5.0",
+			name:            "Spans exceeding max are parsed as-is without clamping",
 			url:             "/test?lat=47.6&lon=-122.3&latSpan=15.0&lonSpan=25.0",
 			expectedRadius:  0,
-			expectedLatSpan: models.MaxSearchSpanInDegrees,
-			expectedLonSpan: models.MaxSearchSpanInDegrees,
+			expectedLatSpan: 15.0,
+			expectedLonSpan: 25.0,
 		},
 		{
 			name:            "Normal bounds within limits remain unchanged",

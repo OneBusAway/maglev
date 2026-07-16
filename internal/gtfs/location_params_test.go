@@ -8,7 +8,7 @@ import (
 )
 
 func TestBoundsFromParams(t *testing.T) {
-	t.Run("Radius exceeding max is clamped to MaxSearchRadiusInMeters", func(t *testing.T) {
+	t.Run("Radius exceeding max is clamped to MaxSearchRadiusInMeters when clamp=true", func(t *testing.T) {
 		largeParams := &LocationParams{
 			Lat:    47.6,
 			Lon:    -122.3,
@@ -19,23 +19,40 @@ func TestBoundsFromParams(t *testing.T) {
 			Lon:    -122.3,
 			Radius: models.MaxSearchRadiusInMeters,
 		}
-		assert.Equal(t, BoundsFromParams(maxParams), BoundsFromParams(largeParams))
+		assert.Equal(t, BoundsFromParams(maxParams, true), BoundsFromParams(largeParams, true))
+		assert.NotEqual(t, BoundsFromParams(maxParams, false), BoundsFromParams(largeParams, false))
 	})
 
-	t.Run("Spans exceeding max are clamped to MaxSearchSpanInDegrees", func(t *testing.T) {
+	t.Run("Spans exceeding max circle dimensions are clamped when clamp=true", func(t *testing.T) {
 		largeParams := &LocationParams{
 			Lat:     47.6,
 			Lon:     -122.3,
 			LatSpan: 15.0,
 			LonSpan: 20.0,
 		}
-		maxParams := &LocationParams{
+		boundsClamped := BoundsFromParams(largeParams, true)
+		boundsUnclamped := BoundsFromParams(largeParams, false)
+		assert.NotEqual(t, boundsUnclamped, boundsClamped)
+
+		maxCircleBounds := BoundsFromParams(&LocationParams{Lat: 47.6, Lon: -122.3, Radius: models.MaxSearchRadiusInMeters})
+		assert.InDelta(t, maxCircleBounds.MaxLat-maxCircleBounds.MinLat, boundsClamped.MaxLat-boundsClamped.MinLat, 0.0001)
+		assert.InDelta(t, maxCircleBounds.MaxLon-maxCircleBounds.MinLon, boundsClamped.MaxLon-boundsClamped.MinLon, 0.0001)
+	})
+
+	t.Run("Radius takes precedence when both Radius > 0 and Spans > 0 are provided", func(t *testing.T) {
+		paramsWithBoth := &LocationParams{
 			Lat:     47.6,
 			Lon:     -122.3,
-			LatSpan: models.MaxSearchSpanInDegrees,
-			LonSpan: models.MaxSearchSpanInDegrees,
+			Radius:  1500,
+			LatSpan: 10.0,
+			LonSpan: 10.0,
 		}
-		assert.Equal(t, BoundsFromParams(maxParams), BoundsFromParams(largeParams))
+		paramsOnlyRadius := &LocationParams{
+			Lat:    47.6,
+			Lon:    -122.3,
+			Radius: 1500,
+		}
+		assert.Equal(t, BoundsFromParams(paramsOnlyRadius), BoundsFromParams(paramsWithBoth))
 	})
 
 	t.Run("Zero radius and zero spans defaults to DefaultSearchRadiusInMeters", func(t *testing.T) {
