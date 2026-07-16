@@ -260,11 +260,11 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/where/trips-for-location.json?"+tt.queryString, nil)
 
-			_, includeTrip, _, _, _, _, _, fieldErrors, err := api.parseAndValidateRequest(req)
+			parsedReq, fieldErrors, err := api.parseAndValidateRequest(req)
 
 			assert.Empty(t, fieldErrors)
 			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedIncludeTrip, includeTrip)
+			assert.Equal(t, tt.expectedIncludeTrip, parsedReq.IncludeTrip)
 		})
 	}
 }
