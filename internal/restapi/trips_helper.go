@@ -28,13 +28,22 @@ import (
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
 // trip ID so the correct schedule data is used.
+// BuildTripStatus returns the trip status and the snapshot it built along
+// the way. Callers that also need per-stop block metrics (distanceFromStop,
+// numberOfStopsAway) should reuse the returned snapshot instead of calling
+// computeScheduledBlockSnapshot a second time — the amplification matters
+// for the plural arrivals-and-departures endpoint which is called
+// per-arrival-row across wide time windows.
+//
+// Snapshot may be nil (no live vehicle, no in-range block, etc.); callers
+// should handle that case.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
 	vehicle *gtfs.Vehicle,
 	serviceDate time.Time,
 	currentTime time.Time,
-) (*models.TripStatus, error) {
+) (*models.TripStatus, *scheduledBlockSnapshot, error) {
 	if vehicle == nil {
 		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 	}
@@ -72,12 +81,12 @@ func (api *RestAPI) BuildTripStatus(
 	if status.Status == "CANCELED" {
 		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 		status.Scheduled = !status.Predicted
-		return status, nil
+		return status, nil, nil
 	}
 
 	_, activeTripRawID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 	if err != nil {
-		return status, err
+		return status, nil, err
 	}
 
 	// Determine which trip ID to use for DB lookups (stop times, shapes, etc.).
@@ -176,6 +185,10 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", shapeErr.Error()))
 	}
+	// snap survives to the return so callers (notably the plural arrivals
+	// handler) can reuse it for per-stop metrics without paying for
+	// computeScheduledBlockSnapshot a second time.
+	var snap *scheduledBlockSnapshot
 	if shapeErr == nil && len(shapeRows) > 1 {
 		shapePoints := shapeRowsToPoints(shapeRows)
 		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
@@ -211,12 +224,13 @@ func (api *RestAPI) BuildTripStatus(
 			// scheduledDistanceAlongTrip, distanceAlongTrip, and totalDistanceAlongTrip
 			// all reflect it together and stay self-consistent.
 			effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
-			if snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate); snapshot != nil && snapshot.ActiveTripID != "" && snapshot.InRange {
-				status.ActiveTripID = utils.FormCombinedID(agencyID, snapshot.ActiveTripID)
-				status.ScheduledDistanceAlongTrip = snapshot.ActiveTripScheduledDistance
-				status.DistanceAlongTrip = snapshot.ActiveTripScheduledDistance
-				if snapshot.ActiveTripTotalDistance > 0 {
-					status.TotalDistanceAlongTrip = snapshot.ActiveTripTotalDistance
+			snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
+			if snap != nil && snap.ActiveTripID != "" && snap.InRange {
+				status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
+				status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
+				status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
+				if snap.ActiveTripTotalDistance > 0 {
+					status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
 				}
 			}
 		} else if len(stopTimes) > 0 {
@@ -231,17 +245,17 @@ func (api *RestAPI) BuildTripStatus(
 			// their defaults. Without this guard, our interpolation clamps to a
 			// block boundary and emits misleading trip-length distances for
 			// scheduled-only arrivals of past or future trips.
-			snapshot := api.computeScheduledBlockSnapshot(ctx, dbTripID, currentTime, serviceDate)
-			if snapshot != nil && snapshot.ActiveTripID != "" && snapshot.InRange {
-				status.ActiveTripID = utils.FormCombinedID(agencyID, snapshot.ActiveTripID)
-				status.ScheduledDistanceAlongTrip = snapshot.ActiveTripScheduledDistance
-				if snapshot.ActiveTripTotalDistance > 0 {
-					status.TotalDistanceAlongTrip = snapshot.ActiveTripTotalDistance
+			snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, currentTime, serviceDate)
+			if snap != nil && snap.ActiveTripID != "" && snap.InRange {
+				status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
+				status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
+				if snap.ActiveTripTotalDistance > 0 {
+					status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
 				}
 				if pos, orient := positionAndOrientationAtDistance(
-					snapshot.ActiveTripShape,
-					snapshot.ActiveTripCumulativeDistances,
-					snapshot.ActiveTripScheduledDistance,
+					snap.ActiveTripShape,
+					snap.ActiveTripCumulativeDistances,
+					snap.ActiveTripScheduledDistance,
 				); pos != nil {
 					status.Position = *pos
 					if orient >= 0 {
@@ -265,7 +279,7 @@ func (api *RestAPI) BuildTripStatus(
 		status.BlockTripSequence = blockTripSequence
 	}
 
-	return status, nil
+	return status, snap, nil
 }
 
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {

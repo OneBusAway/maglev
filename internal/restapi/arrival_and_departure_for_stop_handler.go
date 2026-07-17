@@ -344,7 +344,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
+	status, snapshot, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
 	if statusErr != nil {
 		api.Logger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -369,17 +369,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predicted = false
 		}
 
-		// Interpolate the block schedule at currentTime−scheduleDeviation.
-		// GPS lat/lon doesn't enter the formula. No RT vehicle → no shift.
-		effectiveTime := currentTime
-		if vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
-			blockTripIDs := api.blockTripIDsSortedByStartTime(ctx,
-				api.blockTripIDsForServiceDate(ctx, tripID, serviceMidnight))
-			if dev, hasRT := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceMidnight, currentTime); hasRT {
-				effectiveTime = currentTime.Add(-time.Duration(dev) * time.Second)
-			}
-		}
-		if snapshot := api.computeScheduledBlockSnapshot(ctx, tripID, effectiveTime, serviceMidnight); snapshot != nil {
+		// Reuse the snapshot BuildTripStatus already computed for this trip.
+		// It applies the same schedule-deviation shift internally, so
+		// recomputing here just to run metricsForStop was duplicating work.
+		if snapshot != nil {
 			if d, n, ok := snapshot.metricsForStop(tripID, int(targetStopTime.StopSequence)); ok {
 				distanceFromStop = d
 				numberOfStopsAway = n

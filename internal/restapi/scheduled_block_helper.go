@@ -78,8 +78,10 @@ type blockTripData struct {
 // targetTripID. Trips with no block are treated as a one-trip block. Returns
 // nil when no stop times can be loaded.
 //
-// TODO(perf): each call issues ~(3 + 3N) DB queries where N = block size, and
-// the plural arrivals handler calls this twice per arrival row.
+// TODO(perf): each call issues ~(3 + 3N) DB queries where N = block size.
+// BuildTripStatus returns the snapshot to callers so per-row consumers
+// (notably the plural arrivals handler) don't recompute it; the remaining
+// amplification is the per-row call itself.
 func (api *RestAPI) computeScheduledBlockSnapshot(
 	ctx context.Context,
 	targetTripID string,
