@@ -88,7 +88,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	searchParams := gtfsdb.SearchStopsByNameParams{
 		SearchQuery: searchQuery,
-		Limit:       int64(limit) + 1, // Request limit + 1 to accurately determine if pagination boundaries are exceeded.
+		Limit:       int64(limit + 1), // Request limit + 1 to accurately determine if pagination boundaries are exceeded.
 	}
 
 	// 3. Perform Full Text Search (with logged fallback)
