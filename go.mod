@@ -4,11 +4,10 @@ go 1.25.0
 
 require (
 	github.com/OneBusAway/go-gtfs v1.1.1
-	github.com/davecgh/go-spew v1.1.1
 	github.com/getkin/kin-openapi v0.141.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.19.0
-	github.com/mattn/go-sqlite3 v1.14.47
+	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
 	github.com/twpayne/go-polyline v1.1.1
@@ -25,6 +24,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cubicdaiya/gonp v1.0.4 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/go-openapi/jsonpointer v0.22.5 // indirect
