@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -41,17 +40,15 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// 1. Parse Parameters
-	query := r.URL.Query().Get("input")
-	if query == "" {
-		api.validationErrorResponse(w, r, map[string][]string{"input": {"required"}})
-		return
-	}
+	queryParams := r.URL.Query()
+	fieldErrors := make(map[string][]string)
 
-	limit := 50
-	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
-		if parsed, err := strconv.Atoi(maxCountStr); err == nil && parsed > 0 {
-			limit = parsed
-		}
+	// Standardized parameter parsing
+	query, fieldErrors := utils.ParseRequiredStringParam(queryParams, "input", fieldErrors)
+	limit, fieldErrors := utils.ParseMaxCount(queryParams, 20, fieldErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
 	}
 
 	// 2. Sanitize and construct FTS5 query
@@ -302,25 +299,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situations...)
 
-	data := struct {
-		LimitExceeded bool                   `json:"limitExceeded"`
-		List          []models.Stop          `json:"list"`
-		OutOfRange    bool                   `json:"outOfRange"`
-		References    models.ReferencesModel `json:"references"`
-	}{
-		LimitExceeded: isLimitExceeded,
-		List:          stopModels,
-		OutOfRange:    false,
-		References:    *references,
-	}
-
-	response := models.ResponseModel{
-		Code:        200,
-		CurrentTime: models.ResponseCurrentTime(api.Clock),
-		Version:     models.APIVersion,
-		Text:        "OK",
-		Data:        data,
-	}
-
+	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
