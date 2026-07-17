@@ -34,7 +34,8 @@ func (d *StaleDetector) Check(vehicle *gtfs.Vehicle, currentTime time.Time) bool
 	if vehicle.Timestamp == nil {
 		return vehicle.Position == nil
 	}
-	return currentTime.Sub(*vehicle.Timestamp) > d.threshold
+	// Absolute gap: currentTime may precede vehicle.Timestamp when a `time` query param is set.
+	return (currentTime.Sub(*vehicle.Timestamp)).Abs() > d.threshold
 }
 
 var defaultStaleDetector = NewStaleDetector()
