@@ -117,12 +117,6 @@ func TestInputValidationIntegration(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "radius must be non-negative",
 		},
-		{
-			name:           "Radius too large",
-			endpoint:       "/api/where/stops-for-location.json?key=TEST&lat=38.0&lon=-77.0&radius=50000",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "radius too large",
-		},
 
 		// Test malicious query parameters
 		{
@@ -301,8 +295,8 @@ func TestEdgeCaseValidation(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Maximum allowed radius",
-			endpoint:       "/api/where/stops-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=10000",
+			name:           "Large radius clamped and allowed",
+			endpoint:       "/api/where/stops-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=50000",
 			expectedStatus: http.StatusOK,
 		},
 		{

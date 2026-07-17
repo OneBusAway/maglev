@@ -95,7 +95,7 @@ FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid
 WHERE fts.stop_name MATCH ?
-ORDER BY s.name
+ORDER BY s.id
 LIMIT ?
 `
 
