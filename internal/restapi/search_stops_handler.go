@@ -132,7 +132,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	stops, _ = utils.PaginateSlice(stops, 0, limit)
+	stops, isLimitExceeded := utils.PaginateSlice(stops, 0, limit)
 
 	// 4. Batch Fetch Related Data
 	stopIDs := make([]string, len(stops))
@@ -309,6 +309,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situations...)
 
-	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, len(stops) >= limit)
+	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
