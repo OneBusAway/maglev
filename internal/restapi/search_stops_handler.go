@@ -299,25 +299,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situations...)
 
-	data := struct {
-		LimitExceeded bool                   `json:"limitExceeded"`
-		List          []models.Stop          `json:"list"`
-		OutOfRange    bool                   `json:"outOfRange"`
-		References    models.ReferencesModel `json:"references"`
-	}{
-		LimitExceeded: isLimitExceeded,
-		List:          stopModels,
-		OutOfRange:    false,
-		References:    *references,
-	}
-
-	response := models.ResponseModel{
-		Code:        200,
-		CurrentTime: models.ResponseCurrentTime(api.Clock),
-		Version:     models.APIVersion,
-		Text:        "OK",
-		Data:        data,
-	}
-
+	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
