@@ -363,7 +363,7 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 		},
 	})
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -403,7 +403,7 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
 	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -430,7 +430,7 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	currentTime := serviceDate.Add(8 * time.Hour)
 
 	// No vehicle, no trip updates — purely scheduled
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -497,7 +497,7 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 		},
 	})
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -528,7 +528,7 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 	ctx := context.Background()
 
 	currentTime := time.Now()
-	model, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, currentTime, currentTime)
+	model, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, currentTime, currentTime)
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, model)
@@ -896,7 +896,7 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 		CurrentStatus: &stoppedAt,
 	})
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -964,7 +964,7 @@ func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -1006,7 +1006,7 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 		},
 	}
 
-	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
