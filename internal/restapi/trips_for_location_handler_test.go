@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/models"
 )
 
 const (
@@ -211,6 +213,7 @@ func TestTripsForLocationHandler_MissingParameters(t *testing.T) {
 		{"Missing lat", "/api/where/trips-for-location.json?key=TEST&lon=-122.426966&latSpan=0.01&lonSpan=0.01"},
 		{"Missing lon", "/api/where/trips-for-location.json?key=TEST&lat=40.583321&latSpan=0.01&lonSpan=0.01"},
 		{"Missing both", "/api/where/trips-for-location.json?key=TEST&latSpan=0.01&lonSpan=0.01"},
+		{"Missing/zero coordinates (lat=0&lon=0)", "/api/where/trips-for-location.json?key=TEST&lat=0&lon=0&latSpan=0.01&lonSpan=0.01"},
 	}
 
 	for _, tt := range tests {
@@ -397,5 +400,214 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		assert.Equal(t, http.StatusBadRequest, model.Code)
+	})
+}
+
+func TestTripsForLocationHandler_RadiusAndPrecedence(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	t.Run("Radius Only without Spans", func(t *testing.T) {
+		url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&radius=5000", tripsForLocationLat, tripsForLocationLon)
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.False(t, model.Data.LimitExceeded)
+		assert.False(t, model.Data.OutOfRange)
+		assert.NotNil(t, model.Data.List)
+	})
+
+	t.Run("Radius Precedence over Spans", func(t *testing.T) {
+		// Supplying both a very small radius (50m) and a very large span (2 degrees).
+		// Per OBA spec, radius takes precedence over span when both are supplied.
+		url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&radius=50&latSpan=2.0&lonSpan=2.0", tripsForLocationLat, tripsForLocationLon)
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.False(t, model.Data.OutOfRange)
+		assert.NotNil(t, model.Data.List)
+	})
+
+	t.Run("Default Radius Fallback when no Spans or Radius", func(t *testing.T) {
+		// When neither radius nor valid spans (>0) are specified, BoundsFromParams defaults to 10km (DefaultSearchRadiusInMeters).
+		url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f", tripsForLocationLat, tripsForLocationLon)
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.False(t, model.Data.OutOfRange)
+		assert.NotNil(t, model.Data.List)
+	})
+}
+
+func TestTripsForLocationHandler_InvalidParametersAndValidationErrors(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"Invalid lat out of range (>90)", "/api/where/trips-for-location.json?key=org.onebusaway.iphone&lat=95.0&lon=-122.39&latSpan=0.1&lonSpan=0.1"},
+		{"Invalid lat non-numeric", "/api/where/trips-for-location.json?key=org.onebusaway.iphone&lat=invalid&lon=-122.39&latSpan=0.1&lonSpan=0.1"},
+		{"Invalid lon out of range (<-180)", "/api/where/trips-for-location.json?key=org.onebusaway.iphone&lat=40.58&lon=-185.0&latSpan=0.1&lonSpan=0.1"},
+		{"Invalid lon non-numeric", "/api/where/trips-for-location.json?key=org.onebusaway.iphone&lat=40.58&lon=invalid&latSpan=0.1&lonSpan=0.1"},
+		{"Negative radius", "/api/where/trips-for-location.json?key=org.onebusaway.iphone&lat=40.58&lon=-122.39&radius=-100"},
+		{"Negative latSpan", "/api/where/trips-for-location.json?key=org.onebusaway.iphone&lat=40.58&lon=-122.39&latSpan=-1.0&lonSpan=0.1"},
+		{"Negative lonSpan", "/api/where/trips-for-location.json?key=org.onebusaway.iphone&lat=40.58&lon=-122.39&latSpan=0.1&lonSpan=-1.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripsForLocationResponse](t, api, tt.url)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
+			assert.NotEmpty(t, model.Text)
+			assert.Equal(t, models.APIVersion, model.Version)
+		})
+	}
+}
+
+func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	t.Run("Date String YYYY-MM-DD", func(t *testing.T) {
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+
+		dateStr := "2025-06-15"
+		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		require.NoError(t, err)
+		targetMidnight := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, loc)
+
+		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("includeStatus=true&time=%s", dateStr))
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NotEmpty(t, model.Data.List, "expected at least one trip entry to verify ServiceDate")
+		for _, entry := range model.Data.List {
+			assert.Equal(t, targetMidnight.UnixMilli(), entry.ServiceDate, "entry.ServiceDate should match midnight of the requested date string")
+			if entry.Status != nil {
+				assert.Equal(t, targetMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+			}
+		}
+	})
+
+	t.Run("Query Time Far Outside Service Window", func(t *testing.T) {
+		// Querying at epoch millis for Jan 1, 2010. ServiceDate on all returned active trips must reflect this historical timestamp.
+		const historicalMillis = int64(1262332800000)
+		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("time=%d", historicalMillis))
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.False(t, model.Data.OutOfRange)
+		for _, entry := range model.Data.List {
+			assert.Equal(t, historicalMillis, entry.ServiceDate, "entry.ServiceDate should match the historical timestamp parameter")
+		}
+	})
+}
+
+func TestTripsForLocationHandler_ZeroVehiclesOrStaticOnly(t *testing.T) {
+	// Create API with only static GTFS data (no real-time vehicles injected)
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	url := tripsForLocationURL(1.0, 1.0, "includeSchedule=true")
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.False(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.List, "without real-time vehicle positions, active trips list should be empty per OBA real-time behavior")
+	assert.NotNil(t, model.Data.References.Stops, "references slice should not be nil even when empty")
+	assert.NotNil(t, model.Data.References.Routes, "references slice should not be nil even when empty")
+	assert.NotNil(t, model.Data.References.Agencies, "references slice should not be nil even when empty")
+	assert.NotNil(t, model.Data.References.Trips, "references slice should not be nil even when empty")
+}
+
+func TestTripsForLocationHandler_IncludeTripFalseWithReferencesTrue(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true", "includeTrip=false")
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotEmpty(t, model.Data.List)
+	assert.NotEmpty(t, model.Data.References.Stops, "Stops should still be populated when includeTrip=false")
+	assert.NotEmpty(t, model.Data.References.Routes, "Routes should still be populated when includeTrip=false")
+	assert.NotEmpty(t, model.Data.References.Agencies, "Agencies should still be populated when includeTrip=false")
+	assert.Empty(t, model.Data.References.Trips, "Trips should be omitted from references when includeTrip=false")
+}
+
+func TestTripsForLocationHandler_ScheduleDetailsAndDistances(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true")
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List)
+
+	for _, entry := range model.Data.List {
+		require.NotNil(t, entry.Schedule, "schedule should be present when includeSchedule=true")
+		assert.NotEmpty(t, entry.Schedule.StopTimes, "stop times should be populated")
+
+		var prevDist float64 = -1
+		for _, st := range entry.Schedule.StopTimes {
+			assert.NotEmpty(t, st.StopID)
+			assert.GreaterOrEqual(t, st.DistanceAlongTrip, 0.0, "distance along trip should be non-negative")
+			if prevDist >= 0 {
+				assert.GreaterOrEqual(t, st.DistanceAlongTrip, prevDist, "distances should be non-decreasing along the trip sequence")
+			}
+			prevDist = st.DistanceAlongTrip
+		}
+
+		if entry.Schedule.NextTripId != "" {
+			assert.Contains(t, entry.Schedule.NextTripId, "_", "next trip ID must be in combined {agencyID}_{rawID} format")
+		}
+		if entry.Schedule.PreviousTripId != "" {
+			assert.Contains(t, entry.Schedule.PreviousTripId, "_", "previous trip ID must be in combined {agencyID}_{rawID} format")
+		}
+	}
+}
+
+func TestTripsForLocationHandler_ContextCancellation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	t.Run("Context Canceled via clientCanceledResponse", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, tripsForLocationURL(1.0, 1.0), nil)
+		rec := httptest.NewRecorder()
+
+		api.clientCanceledResponse(rec, req, context.Canceled)
+
+		// When err == context.Canceled, clientCanceledResponse logs Info and does not write a header or body.
+		assert.Empty(t, rec.Body.String(), "no body should be written when client cancels request")
+	})
+
+	t.Run("Context Deadline Exceeded via clientCanceledResponse", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, tripsForLocationURL(1.0, 1.0), nil)
+		rec := httptest.NewRecorder()
+
+		api.clientCanceledResponse(rec, req, context.DeadlineExceeded)
+
+		// When err == context.DeadlineExceeded, clientCanceledResponse writes 504 Gateway Timeout.
+		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+		assert.Contains(t, rec.Body.String(), "gateway timeout")
 	})
 }
