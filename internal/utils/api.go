@@ -364,3 +364,11 @@ func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[str
 	}
 	return val, fieldErrors
 }
+
+// ClampRadius restricts a radius value to MaxSearchRadiusInMeters
+func ClampRadius(radius float64) float64 {
+	if radius > models.MaxSearchRadiusInMeters {
+		return models.MaxSearchRadiusInMeters
+	}
+	return radius
+}

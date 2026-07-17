@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -182,4 +183,31 @@ func TestSanitizeFTS5Query(t *testing.T) {
 			assert.Equal(t, tt.expected, out)
 		})
 	}
+}
+
+func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Establish a baseline of total available records for the test query.
+	respAll, stopsRespAll := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {"100"}}))
+	require.Equal(t, http.StatusOK, respAll.StatusCode)
+	require.False(t, stopsRespAll.Data.LimitExceeded, "Expected LimitExceeded to be false when retrieving the complete result set")
+
+	totalMatches := len(stopsRespAll.Data.List)
+	require.Greater(t, totalMatches, 1, "Test requires a minimum of 2 matching records in the mock data")
+
+	// Verify strict boundary condition where the requested limit equals total records.
+	exactCountStr := strconv.Itoa(totalMatches)
+	respExact, stopsRespExact := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {exactCountStr}}))
+	assert.Equal(t, http.StatusOK, respExact.StatusCode)
+	assert.False(t, stopsRespExact.Data.LimitExceeded, "Expected LimitExceeded to be false when maxCount exactly matches total available records")
+	assert.Len(t, stopsRespExact.Data.List, totalMatches)
+
+	// Verify pagination flag triggers correctly when results exceed the requested limit.
+	exceededCountStr := strconv.Itoa(totalMatches - 1)
+	respExceeded, stopsRespExceeded := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {exceededCountStr}}))
+	assert.Equal(t, http.StatusOK, respExceeded.StatusCode)
+	assert.True(t, stopsRespExceeded.Data.LimitExceeded, "Expected LimitExceeded to be true when available records exceed maxCount")
+	assert.Len(t, stopsRespExceeded.Data.List, totalMatches-1)
 }
