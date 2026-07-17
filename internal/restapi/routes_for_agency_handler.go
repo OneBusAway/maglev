@@ -51,8 +51,11 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{
-		models.AgencyReferenceFromDatabase(agency),
+	// When includeReferences=false the references block is present but empty.
+	if ShouldIncludeReferences(r) {
+		references.Agencies = []models.AgencyReference{
+			models.AgencyReferenceFromDatabase(agency),
+		}
 	}
 
 	response := models.NewListResponse(routesList, *references, limitExceeded, api.Clock)
