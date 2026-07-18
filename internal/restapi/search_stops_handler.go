@@ -43,6 +43,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 	fieldErrors := make(map[string][]string)
 
+	includeReferences := ShouldIncludeReferences(r)
+
 	// Standardized parameter parsing
 	query, fieldErrors := utils.ParseRequiredStringParam(queryParams, "input", fieldErrors)
 	limit, fieldErrors := utils.ParseMaxCount(queryParams, 20, fieldErrors)
@@ -55,26 +57,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	sanitizedQuery := sanitizeFTS5Query(query)
 
 	if sanitizedQuery == "" {
-		data := struct {
-			LimitExceeded bool                   `json:"limitExceeded"`
-			List          []models.Stop          `json:"list"`
-			OutOfRange    bool                   `json:"outOfRange"`
-			References    models.ReferencesModel `json:"references"`
-		}{
-			LimitExceeded: false,
-			List:          []models.Stop{},
-			OutOfRange:    false,
-			References:    *models.NewEmptyReferences(),
-		}
-
-		response := models.ResponseModel{
-			Code:        200,
-			CurrentTime: models.ResponseCurrentTime(api.Clock),
-			Version:     models.APIVersion,
-			Text:        "OK",
-			Data:        data,
-		}
-
+		response := models.NewListResponseWithRange([]models.Stop{}, *models.NewEmptyReferences(), false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -144,7 +127,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Organize Data
 	routesByStopID := make(map[string][]string)
-	routesMap := make(map[string]models.Route)
 
 	for _, row := range routesRows {
 		if ctx.Err() != nil {
@@ -153,71 +135,12 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
-
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
-
-		if _, exists := routesMap[combinedRouteID]; !exists {
-
-			shortName := ""
-			if row.ShortName.Valid {
-				shortName = row.ShortName.String
-			}
-
-			longName := ""
-			if row.LongName.Valid {
-				longName = row.LongName.String
-			}
-
-			desc := ""
-			if row.Desc.Valid {
-				desc = row.Desc.String
-			}
-
-			url := ""
-			if row.Url.Valid {
-				url = row.Url.String
-			}
-
-			color := ""
-			if row.Color.Valid {
-				color = row.Color.String
-			}
-
-			textColor := ""
-			if row.TextColor.Valid {
-				textColor = row.TextColor.String
-			}
-
-			routesMap[combinedRouteID] = models.NewRoute(
-				combinedRouteID,
-				row.AgencyID,
-				shortName,
-				longName,
-				desc,
-				models.RouteType(row.Type),
-				url,
-				color,
-				textColor)
-
-		}
 	}
 
-	agenciesMap := make(map[string]models.AgencyReference)
+	uniqueAgencies := make(map[string]bool)
 	for _, row := range agencyRows {
-		if _, exists := agenciesMap[row.ID]; !exists {
-			agenciesMap[row.ID] = models.NewAgencyReference(
-				row.ID,
-				row.Name,
-				row.Url,
-				row.Timezone,
-				row.Lang.String,
-				row.Phone.String,
-				row.Email.String,
-				row.FareUrl.String,
-				"",
-				false,
-			)
-		}
+		uniqueAgencies[row.ID] = true
 	}
 
 	// 6. Construct Stop Models
@@ -233,8 +156,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		if rts, ok := routesByStopID[s.ID]; ok && len(rts) > 0 {
 			agencyID, _, _ = utils.ExtractAgencyIDAndCodeID(rts[0])
-		} else if len(agenciesMap) == 1 {
-			for id := range agenciesMap {
+		} else if len(uniqueAgencies) == 1 {
+			for id := range uniqueAgencies {
 				agencyID = id
 				break
 			}
@@ -291,13 +214,15 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 7. Build References
 	references := models.NewEmptyReferences()
-	references.Routes = utils.MapValues(routesMap)
-	references.Agencies = utils.MapValues(agenciesMap)
+	if includeReferences {
+		references.Routes = routeReferencesForStops(routesRows)
+		references.Agencies = agencyReferencesForStops(agencyRows)
 
-	// Populate situation references for alerts affecting the returned stops
-	alerts := api.collectAlertsForStops(stopIDs)
-	situations := api.BuildSituationReferences(alerts)
-	references.Situations = append(references.Situations, situations...)
+		// Populate situation references for alerts affecting the returned stops
+		alerts := api.collectAlertsForStops(stopIDs)
+		situations := api.BuildSituationReferences(alerts)
+		references.Situations = append(references.Situations, situations...)
+	}
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
