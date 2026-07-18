@@ -1115,3 +1115,8 @@ func TestParseDate(t *testing.T) {
 		})
 	}
 }
+
+func TestClampRadius(t *testing.T) {
+	assert.Equal(t, 5000.0, ClampRadius(5000.0))
+	assert.Equal(t, float64(models.MaxSearchRadiusInMeters), ClampRadius(models.MaxSearchRadiusInMeters+10000.0))
+}

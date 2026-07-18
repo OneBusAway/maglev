@@ -77,11 +77,7 @@ func ValidateRadius(radius float64) error {
 		return errors.New("radius must be non-negative")
 	}
 
-	// Reasonable maximum radius of 10km for transit searches
-	if radius > 10000 {
-		return errors.New("radius too large (max 10000 meters)")
-	}
-
+	// Upper bound validation removed; values will be clamped downstream
 	return nil
 }
 
@@ -91,11 +87,7 @@ func ValidateSpan(span float64) error {
 		return errors.New("span must be non-negative")
 	}
 
-	// Maximum span of 5 degrees (roughly 500km at equator)
-	if span > 5.0 {
-		return errors.New("span too large (max 5.0 degrees)")
-	}
-
+	// Upper bound validation removed; values will be clamped downstream
 	return nil
 }
 
