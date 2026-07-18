@@ -48,9 +48,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Service date is midnight of the reference date in the agency timezone.
-	serviceDate := models.NewModelTime(time.Date(
-		referenceTime.Year(), referenceTime.Month(), referenceTime.Day(),
-		0, 0, 0, 0, referenceTime.Location()))
+	serviceDate := models.NewModelTime(utils.CalculateServiceDate(referenceTime))
 
 	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
 	if err != nil {
