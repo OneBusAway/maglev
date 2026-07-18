@@ -9,7 +9,6 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -227,55 +226,4 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
-}
-
-// routeReferencesForStops deduplicates routesRows into the Route reference objects
-// for the search results' references block.
-func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.Route {
-	routesMap := make(map[string]models.Route)
-	for _, row := range routesRows {
-		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
-		if _, exists := routesMap[combinedRouteID]; exists {
-			continue
-		}
-
-		routesMap[combinedRouteID] = models.NewRoute(
-			combinedRouteID,
-			row.AgencyID,
-			nulls.StringOrEmpty(row.ShortName),
-			nulls.StringOrEmpty(row.LongName),
-			nulls.StringOrEmpty(row.Desc),
-			models.RouteType(row.Type),
-			nulls.StringOrEmpty(row.Url),
-			nulls.StringOrEmpty(row.Color),
-			nulls.StringOrEmpty(row.TextColor))
-	}
-
-	return utils.MapValues(routesMap)
-}
-
-// agencyReferencesForStops deduplicates agencyRows into the AgencyReference objects
-// for the search results' references block.
-func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []models.AgencyReference {
-	agenciesMap := make(map[string]models.AgencyReference)
-	for _, row := range agencyRows {
-		if _, exists := agenciesMap[row.ID]; exists {
-			continue
-		}
-
-		agenciesMap[row.ID] = models.NewAgencyReference(
-			row.ID,
-			row.Name,
-			row.Url,
-			row.Timezone,
-			nulls.StringOrEmpty(row.Lang),
-			nulls.StringOrEmpty(row.Phone),
-			nulls.StringOrEmpty(row.Email),
-			nulls.StringOrEmpty(row.FareUrl),
-			"",
-			false,
-		)
-	}
-
-	return utils.MapValues(agenciesMap)
 }
