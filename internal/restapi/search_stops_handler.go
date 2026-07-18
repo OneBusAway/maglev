@@ -9,6 +9,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -146,7 +147,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Organize Data
 	routesByStopID := make(map[string][]string)
-	routesMap := make(map[string]models.Route)
 
 	for _, row := range routesRows {
 		if ctx.Err() != nil {
@@ -156,75 +156,11 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
-
-		if includeReferences {
-			if _, exists := routesMap[combinedRouteID]; !exists {
-				shortName := ""
-				if row.ShortName.Valid {
-					shortName = row.ShortName.String
-				}
-
-				longName := ""
-				if row.LongName.Valid {
-					longName = row.LongName.String
-				}
-
-				desc := ""
-				if row.Desc.Valid {
-					desc = row.Desc.String
-				}
-
-				url := ""
-				if row.Url.Valid {
-					url = row.Url.String
-				}
-
-				color := ""
-				if row.Color.Valid {
-					color = row.Color.String
-				}
-
-				textColor := ""
-				if row.TextColor.Valid {
-					textColor = row.TextColor.String
-				}
-
-				routesMap[combinedRouteID] = models.NewRoute(
-					combinedRouteID,
-					row.AgencyID,
-					shortName,
-					longName,
-					desc,
-					models.RouteType(row.Type),
-					url,
-					color,
-					textColor)
-			}
-		}
 	}
 
-	agenciesMap := make(map[string]models.AgencyReference)
 	uniqueAgencies := make(map[string]bool)
-
 	for _, row := range agencyRows {
 		uniqueAgencies[row.ID] = true
-
-		if includeReferences {
-			if _, exists := agenciesMap[row.ID]; !exists {
-				agenciesMap[row.ID] = models.NewAgencyReference(
-					row.ID,
-					row.Name,
-					row.Url,
-					row.Timezone,
-					row.Lang.String,
-					row.Phone.String,
-					row.Email.String,
-					row.FareUrl.String,
-					"",
-					false,
-				)
-			}
-		}
 	}
 
 	// 6. Construct Stop Models
@@ -299,8 +235,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	// 7. Build References
 	references := models.NewEmptyReferences()
 	if includeReferences {
-		references.Routes = utils.MapValues(routesMap)
-		references.Agencies = utils.MapValues(agenciesMap)
+		references.Routes = routeReferencesForStops(routesRows)
+		references.Agencies = agencyReferencesForStops(agencyRows)
 
 		// Populate situation references for alerts affecting the returned stops
 		alerts := api.collectAlertsForStops(stopIDs)
@@ -310,4 +246,55 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
+}
+
+// routeReferencesForStops deduplicates routesRows into the Route reference objects
+// for the search results' references block.
+func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.Route {
+	routesMap := make(map[string]models.Route)
+	for _, row := range routesRows {
+		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
+		if _, exists := routesMap[combinedRouteID]; exists {
+			continue
+		}
+
+		routesMap[combinedRouteID] = models.NewRoute(
+			combinedRouteID,
+			row.AgencyID,
+			nulls.StringOrEmpty(row.ShortName),
+			nulls.StringOrEmpty(row.LongName),
+			nulls.StringOrEmpty(row.Desc),
+			models.RouteType(row.Type),
+			nulls.StringOrEmpty(row.Url),
+			nulls.StringOrEmpty(row.Color),
+			nulls.StringOrEmpty(row.TextColor))
+	}
+
+	return utils.MapValues(routesMap)
+}
+
+// agencyReferencesForStops deduplicates agencyRows into the AgencyReference objects
+// for the search results' references block.
+func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []models.AgencyReference {
+	agenciesMap := make(map[string]models.AgencyReference)
+	for _, row := range agencyRows {
+		if _, exists := agenciesMap[row.ID]; exists {
+			continue
+		}
+
+		agenciesMap[row.ID] = models.NewAgencyReference(
+			row.ID,
+			row.Name,
+			row.Url,
+			row.Timezone,
+			nulls.StringOrEmpty(row.Lang),
+			nulls.StringOrEmpty(row.Phone),
+			nulls.StringOrEmpty(row.Email),
+			nulls.StringOrEmpty(row.FareUrl),
+			"",
+			false,
+		)
+	}
+
+	return utils.MapValues(agenciesMap)
 }
