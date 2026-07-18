@@ -58,26 +58,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	sanitizedQuery := sanitizeFTS5Query(query)
 
 	if sanitizedQuery == "" {
-		data := struct {
-			LimitExceeded bool                   `json:"limitExceeded"`
-			List          []models.Stop          `json:"list"`
-			OutOfRange    bool                   `json:"outOfRange"`
-			References    models.ReferencesModel `json:"references"`
-		}{
-			LimitExceeded: false,
-			List:          []models.Stop{},
-			OutOfRange:    false,
-			References:    *models.NewEmptyReferences(),
-		}
-
-		response := models.ResponseModel{
-			Code:        200,
-			CurrentTime: models.ResponseCurrentTime(api.Clock),
-			Version:     models.APIVersion,
-			Text:        "OK",
-			Data:        data,
-		}
-
+		response := models.NewListResponseWithRange([]models.Stop{}, *models.NewEmptyReferences(), false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
