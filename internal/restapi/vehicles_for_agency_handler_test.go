@@ -667,8 +667,13 @@ func TestVehiclesForAgencyHandler_TimeParameterEpochMs(t *testing.T) {
 	vehicle := findVehicleInList(model.Data.List, vehicleID)
 	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
 	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
-	assert.Equal(t, refTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
-		"tripStatus.serviceDate must reflect the supplied time parameter")
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	ref := refTime.In(loc)
+	expectedMidnight := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, loc)
+	assert.Equal(t, expectedMidnight.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must be midnight of the supplied time in the agency timezone")
 }
 
 // TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock verifies that when no
@@ -688,8 +693,13 @@ func TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock(t *testing.T) {
 	vehicle := findVehicleInList(model.Data.List, vehicleID)
 	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
 	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
-	assert.Equal(t, mockTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
-		"tripStatus.serviceDate must fall back to the server clock when time is absent")
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	ref := mockTime.In(loc)
+	expectedMidnight := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, loc)
+	assert.Equal(t, expectedMidnight.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must be midnight of the server clock in the agency timezone when time is absent")
 }
 
 // TestVehiclesForAgencyHandler_TimeParameterInvalid verifies that an unparseable
@@ -703,6 +713,36 @@ func TestVehiclesForAgencyHandler_TimeParameterInvalid(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+// TestVehiclesForAgencyHandler_ServiceDateIsMidnight verifies tripStatus.serviceDate
+// is midnight of the reference date in the agency timezone, not the reference time.
+func TestVehiclesForAgencyHandler_ServiceDateIsMidnight(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_service_date_midnight"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	refTime := time.Date(2024, 3, 15, 14, 37, 42, 0, time.UTC)
+	params := url.Values{"time": {strconv.FormatInt(refTime.UnixMilli(), 10)}}
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	ref := refTime.In(loc)
+	expectedMidnight := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, loc)
+
+	assert.Equal(t, expectedMidnight.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"serviceDate must be midnight in the agency timezone")
+	assert.NotEqual(t, refTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"serviceDate must not be the raw reference timestamp")
 }
 
 // TestVehiclesForAgencyHandler_IncludeReferencesFalse verifies that
