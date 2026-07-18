@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -41,19 +40,17 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// 1. Parse Parameters
-	query := r.URL.Query().Get("input")
-	if query == "" {
-		api.validationErrorResponse(w, r, map[string][]string{"input": {"required"}})
-		return
-	}
+	queryParams := r.URL.Query()
+	fieldErrors := make(map[string][]string)
 
 	includeReferences := ShouldIncludeReferences(r)
 
-	limit := 50
-	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
-		if parsed, err := strconv.Atoi(maxCountStr); err == nil && parsed > 0 {
-			limit = parsed
-		}
+	// Standardized parameter parsing
+	query, fieldErrors := utils.ParseRequiredStringParam(queryParams, "input", fieldErrors)
+	limit, fieldErrors := utils.ParseMaxCount(queryParams, 20, fieldErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
 	}
 
 	// 2. Sanitize and construct FTS5 query
@@ -88,7 +85,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	searchParams := gtfsdb.SearchStopsByNameParams{
 		SearchQuery: searchQuery,
-		Limit:       int64(limit),
+		Limit:       int64(limit + 1), // Request limit + 1 to accurately determine if pagination boundaries are exceeded.
 	}
 
 	// 3. Perform Full Text Search (with logged fallback)
@@ -126,6 +123,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	stops, isLimitExceeded := utils.PaginateSlice(stops, 0, limit)
 
 	// 4. Batch Fetch Related Data
 	stopIDs := make([]string, len(stops))
@@ -309,25 +308,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		references.Situations = append(references.Situations, situations...)
 	}
 
-	data := struct {
-		LimitExceeded bool                   `json:"limitExceeded"`
-		List          []models.Stop          `json:"list"`
-		OutOfRange    bool                   `json:"outOfRange"`
-		References    models.ReferencesModel `json:"references"`
-	}{
-		LimitExceeded: len(stops) >= limit,
-		List:          stopModels,
-		OutOfRange:    false,
-		References:    *references,
-	}
-
-	response := models.ResponseModel{
-		Code:        200,
-		CurrentTime: models.ResponseCurrentTime(api.Clock),
-		Version:     models.APIVersion,
-		Text:        "OK",
-		Data:        data,
-	}
-
+	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
