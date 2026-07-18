@@ -161,6 +161,16 @@ func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
 	return vehicle.Trip.ID.ID
 }
 
+// wallClockSinceMidnightNs returns nanoseconds from local midnight to t using its
+// wall-clock fields, so the value is unaffected by DST offset changes.
+func wallClockSinceMidnightNs(t time.Time) int64 {
+	d := time.Duration(t.Hour())*time.Hour +
+		time.Duration(t.Minute())*time.Minute +
+		time.Duration(t.Second())*time.Second +
+		time.Duration(t.Nanosecond())
+	return int64(d)
+}
+
 // resolveActiveTripID returns the trip actually being executed at referenceTime
 // within nominalTripID's block (interlining, spec Extension 5b). It falls back to
 // nominalTripID when there is no block or no better match.
@@ -170,8 +180,9 @@ func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID strin
 		return nominalTripID
 	}
 
-	midnight := time.Date(referenceTime.Year(), referenceTime.Month(), referenceTime.Day(), 0, 0, 0, 0, referenceTime.Location())
-	sinceMidnightNs := int64(referenceTime.Sub(midnight))
+	// Wall-clock time since midnight, matching GTFS times which are wall-clock
+	// durations (not elapsed physical time, which shifts by an hour across DST).
+	sinceMidnightNs := wallClockSinceMidnightNs(referenceTime)
 
 	// Check the current service day, then the previous day for trips whose windows
 	// run past 24:00 (GTFS allows e.g. 25:30:00). A trip belonging to the previous

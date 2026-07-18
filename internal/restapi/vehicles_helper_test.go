@@ -400,4 +400,60 @@ func TestResolveActiveTripID(t *testing.T) {
 		assert.Equal(t, "rollover-past-midnight", got,
 			"a trip whose window exceeds 24:00 must match a reference time on the next calendar day")
 	})
+
+	t.Run("matches wall-clock window across a DST transition", func(t *testing.T) {
+		// 2024-11-03 is a fall-back DST day in America/Los_Angeles and has an active
+		// RABA service. After the 02:00->01:00 shift, wall-clock 10:15 is 11h15m of
+		// elapsed physical time since midnight, so elapsed-time math would miss a
+		// 10:00-10:30 wall-clock window; wall-clock math matches it.
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		dstDate := time.Date(2024, 11, 3, 0, 0, 0, 0, loc)
+		dstServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dstDate.Format("20060102"))
+		require.NoError(t, err)
+		require.NotEmpty(t, dstServiceIDs, "need an active RABA service on the DST date")
+
+		nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, blockTrips[0].ID)
+		require.NoError(t, err)
+
+		blockID := nulls.String("dst-block")
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "dst-nominal",
+			RouteID:          nominalRow.RouteID,
+			ServiceID:        dstServiceIDs[0],
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(8 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(8*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "dst-active",
+			RouteID:          nominalRow.RouteID,
+			ServiceID:        dstServiceIDs[0],
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(10 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(10*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		refTime := time.Date(2024, 11, 3, 10, 15, 0, 0, loc)
+		got := api.resolveActiveTripID(ctx, "dst-nominal", refTime)
+		assert.Equal(t, "dst-active", got,
+			"GTFS windows are wall-clock and must match across a DST transition")
+	})
+}
+
+func TestWallClockSinceMidnightNs(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	// Fall-back day: 10:15 wall-clock is 11h15m of elapsed time since midnight, but
+	// the wall-clock value must remain 10h15m.
+	dst := time.Date(2024, 11, 3, 10, 15, 0, 0, loc)
+	assert.Equal(t, int64(10*time.Hour+15*time.Minute), wallClockSinceMidnightNs(dst))
+
+	// A normal day is unaffected.
+	normal := time.Date(2024, 6, 1, 10, 15, 30, 0, loc)
+	assert.Equal(t, int64(10*time.Hour+15*time.Minute+30*time.Second), wallClockSinceMidnightNs(normal))
 }
