@@ -216,7 +216,10 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	references := models.NewEmptyReferences()
 	if includeReferences {
 		references.Routes = routeReferencesForStops(routesRows)
+		utils.SortModelRoutesByName(references.Routes)
+
 		references.Agencies = agencyReferencesForStops(agencyRows)
+		utils.SortAgencyReferencesByID(references.Agencies)
 
 		// Populate situation references for alerts affecting the returned stops
 		alerts := api.collectAlertsForStops(stopIDs)
