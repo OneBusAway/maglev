@@ -263,7 +263,7 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 			parsedReq, fieldErrors, err := api.parseAndValidateRequest(req)
 
 			assert.Empty(t, fieldErrors)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expectedIncludeTrip, parsedReq.IncludeTrip)
 		})
 	}

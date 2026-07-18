@@ -72,8 +72,9 @@ func TestSearchStopsHandlerNoResults(t *testing.T) {
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"NonExistentStopName12345"}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
+	assert.Equal(t, "resource not found", stopsResp.Text)
 }
 
 func TestSearchStopsHandlerMaxCount(t *testing.T) {
@@ -92,8 +93,9 @@ func TestSearchStopsHandlerWhitespaceOnlyInput(t *testing.T) {
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"    "}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
+	assert.Equal(t, "resource not found", stopsResp.Text)
 }
 
 func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
@@ -102,8 +104,9 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {`*()"`}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
+	assert.Equal(t, "resource not found", stopsResp.Text)
 }
 
 func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
@@ -146,10 +149,13 @@ func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
+	// After sanitization the injection payload no longer contains FTS5 operators/quotes; in our test fixtures it matches no stops.
+	// The key assertion is that an injection attempt does not cause a 500 error (or return an unbounded result set).
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {`test" OR "1"="1`}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.LessOrEqual(t, len(stopsResp.Data.List), 20)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
+	assert.Equal(t, "resource not found", stopsResp.Text)
 }
 
 func TestSanitizeFTS5Query(t *testing.T) {
@@ -217,9 +223,9 @@ func TestSearchStopsHandlerIgnoredPunctuation(t *testing.T) {
 	// since it lacks alphanumeric characters. This triggers the empty-query path.
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, stopsResp.Code)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
+	assert.Equal(t, "resource not found", stopsResp.Text)
 }
 
 func TestSearchStopsHandlerReferencesSorting(t *testing.T) {
