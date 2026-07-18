@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -466,6 +468,45 @@ func TestTripDetailsHandlerWithVehicleId(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, tripID, model.Data.Entry.TripID)
+	})
+}
+
+// Guards the handler currentTime -> StaleDetector wiring at the endpoint (#1169).
+func TestTripDetailsHandler_StaleVehicleFallbackForPastTime(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(agency.ID, trip.ID)
+
+	vehicleTS := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	lat, lon := float32(40.0), float32(-122.0)
+	api.GtfsManager.MockAddVehicleWithOptions("stale-fallback-vehicle", trip.ID, trip.RouteID, internalgtfs.MockVehicleOptions{
+		Timestamp: &vehicleTS,
+		Position:  &gtfs.Position{Latitude: &lat, Longitude: &lon},
+	})
+	base := "/api/where/trip-details/" + tripID + ".json?key=TEST&includeStatus=true&vehicleId=" +
+		utils.FormCombinedID(agency.ID, "stale-fallback-vehicle")
+
+	t.Run("query at vehicle time keeps the live status", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			base+"&time="+strconv.FormatInt(vehicleTS.UnixMilli(), 10))
+		require.NotNil(t, model.Data.Entry.Status, "fresh vehicle must produce a tracked status")
+		assert.NotEqual(t, "default", model.Data.Entry.Status.Status)
+		assert.NotNil(t, model.Data.Entry.Status.LastKnownLocation)
+	})
+
+	t.Run("query one hour before vehicle time falls back to schedule", func(t *testing.T) {
+		staleMs := strconv.FormatInt(vehicleTS.Add(-1*time.Hour).UnixMilli(), 10)
+		_, model := callAPIHandler[TripDetailsResponse](t, api, base+"&time="+staleMs)
+		assert.Nil(t, model.Data.Entry.Status, "vehicle newer than query time by >15m must be stale")
+
+		_, raw := callAPIHandler[map[string]any](t, api, base+"&time="+staleMs)
+		entry := raw["data"].(map[string]any)["entry"].(map[string]any)
+		_, hasStatus := entry["status"]
+		assert.False(t, hasStatus, "status key must be absent (not null) on schedule fallback")
 	})
 }
 
