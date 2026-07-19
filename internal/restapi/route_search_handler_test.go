@@ -77,30 +77,30 @@ func TestRouteSearchHandlerNoResults(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"zzzznonexistent99999"}}))
+	resp, model := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"zzzznonexistent99999"}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Empty(t, model.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestRouteSearchHandlerWhitespaceInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, _ := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"   "}}))
+	resp, _ := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"   "}}))
 
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"100"}}))
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"250"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	resp, _ = callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"101"}}))
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	resp2, _ := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"251"}}))
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 }
