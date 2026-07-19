@@ -176,7 +176,22 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, a
 		}
 		// TODO(perf): hoist out of the loop; fetch the union of stop IDs once.
 		stopByID := api.fetchStopCoordsForStopTimes(ctx, t.stopTimes)
-		tripStopDistances := projectStopsInSequence(t.stopTimes, stopByID, t.shapePoints, t.cumDistances)
+		var tripStopDistances []float64
+		var tripLength float64
+		if len(t.shapePoints) >= 2 {
+			tripStopDistances = projectStopsInSequence(t.stopTimes, stopByID, t.shapePoints, t.cumDistances)
+			tripLength = t.totalDist
+		} else {
+			// Shapeless trip (missing shape_id, unresolvable shape, or shape
+			// has <2 points). Java's StopTimeEntriesFactory.ensureStopTimes
+			// HaveShapeDistanceTraveledSet:266-280 falls back to cumulative
+			// haversine between consecutive stops; we do the same so the
+			// trip contributes a real length to the block cursor and every
+			// stop gets a distinct DistanceAlongBlock. Without this the
+			// trip collapses to zero and every later trip in the block is
+			// short by this trip's length.
+			tripStopDistances, tripLength = haversineStopDistances(t.stopTimes, stopByID)
+		}
 		for k, st := range t.stopTimes {
 			stops = append(stops, blockStopMetric{
 				TripID:               t.id,
@@ -189,7 +204,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, a
 			})
 			blockSeq++
 		}
-		cumulativeBlockDist += t.totalDist
+		cumulativeBlockDist += tripLength
 	}
 	return stops, activeTripOffset
 }
@@ -360,9 +375,10 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 		if err != nil || len(stopTimes) == 0 {
 			continue
 		}
-		// TODO(correctness): shape errors leave totalDist=0 — trip is still
-		// appended so block_sequence stays consistent, but its DistanceAlongTrip
-		// values are zero. Stop-only Haversine fallback would fix this.
+		// Shape errors leave shapePoints empty here; emitBlockStops falls back
+		// to stop-only haversine (haversineStopDistances) so shapeless trips
+		// still contribute a real length to the block cursor. Trip is still
+		// appended so block_sequence stays consistent.
 		shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, id)
 		shapePoints := shapeRowsToPoints(shapeRows)
 		var cumDistances []float64
@@ -457,6 +473,41 @@ func projectStopsInSequence(
 		distances[i], lastMatchedIndex = projectStopGeometric(stop, shapePoints, cumulativeDistances, lastMatchedIndex)
 	}
 	return distances
+}
+
+// haversineStopDistances is the fallback used when a trip has no shape
+// polyline (missing shape_id, GetShapePointsByTripID error, or fewer than
+// two shape points). It accumulates the great-circle distance between
+// consecutive stops using their static lat/lon and returns per-stop
+// cumulative distances plus the trip's total length.
+//
+// Mirrors Java's StopTimeEntriesFactory.ensureStopTimesHaveShapeDistance
+// TraveledSet:266-280, which does the same "make do without" cumulative
+// haversine when shape data is unavailable. Without this fallback,
+// shapeless trips collapse to a per-stop distance of zero and their
+// entire length disappears from the block cursor — every later trip in
+// the block is then short by the missing trip's length.
+//
+// Returns a zero-filled slice and length 0 only when a stop's static
+// coordinates cannot be resolved (unknown stop_id in stopByID); at that
+// point we can't do any better than the pre-fix behaviour.
+func haversineStopDistances(stopTimes []gtfsdb.StopTime, stopByID map[string]gtfsdb.Stop) ([]float64, float64) {
+	distances := make([]float64, len(stopTimes))
+	if len(stopTimes) == 0 {
+		return distances, 0
+	}
+	var cumulative float64
+	prev, prevOK := stopByID[stopTimes[0].StopID]
+	distances[0] = 0
+	for i := 1; i < len(stopTimes); i++ {
+		curr, currOK := stopByID[stopTimes[i].StopID]
+		if prevOK && currOK {
+			cumulative += utils.Distance(prev.Lat, prev.Lon, curr.Lat, curr.Lon)
+		}
+		distances[i] = cumulative
+		prev, prevOK = curr, currOK
+	}
+	return distances, cumulative
 }
 
 // projectStopGeometric projects a stop's lat/lon onto the shape, scanning
