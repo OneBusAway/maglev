@@ -71,6 +71,69 @@ func TestInterpolateBlockDistance_ZeroSpan(t *testing.T) {
 	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 100))
 }
 
+// TestHaversineStopDistances_MonotonicAndNonZero pins the shapeless-trip
+// fallback (docs/scheduled_block_helper.go). When a block trip has no
+// usable shape, we accumulate haversine between consecutive stop
+// coordinates so every stop gets a distinct DistanceAlongBlock and the
+// trip contributes a real length to the block cursor. Without this,
+// shapeless trips silently collapse to zero.
+func TestHaversineStopDistances_MonotonicAndNonZero(t *testing.T) {
+	stopTimes := []gtfsdb.StopTime{
+		{StopID: "A", StopSequence: 1},
+		{StopID: "B", StopSequence: 2},
+		{StopID: "C", StopSequence: 3},
+	}
+	stopByID := map[string]gtfsdb.Stop{
+		"A": {ID: "A", Lat: 0.0, Lon: 0.0},
+		"B": {ID: "B", Lat: 0.0, Lon: 0.00050}, // ~55.6 m east of A
+		"C": {ID: "C", Lat: 0.0, Lon: 0.00100}, // ~55.6 m east of B
+	}
+	dists, total := haversineStopDistances(stopTimes, stopByID)
+	require.Len(t, dists, 3)
+	assert.Equal(t, 0.0, dists[0], "first stop is always the origin (0)")
+	assert.InDelta(t, 55.6, dists[1], 1.0, "second stop ~55.6m from origin")
+	assert.InDelta(t, 111.2, dists[2], 1.0, "third stop ~111.2m from origin")
+	assert.InDelta(t, 111.2, total, 1.0, "total equals last stop's cumulative distance")
+
+	// Monotonic non-decreasing — required for the block cursor to advance
+	// correctly across shapeless trips.
+	for i := 1; i < len(dists); i++ {
+		assert.GreaterOrEqual(t, dists[i], dists[i-1],
+			"cumulative distances must be non-decreasing (stop %d vs %d)", i-1, i)
+	}
+}
+
+// TestHaversineStopDistances_UnknownStopSkipsGracefully covers the case
+// where a stop_id in the trip's stop_times has no matching row in stopByID.
+// The gap between the missing stop's neighbours is dropped; nothing panics.
+func TestHaversineStopDistances_UnknownStopSkipsGracefully(t *testing.T) {
+	stopTimes := []gtfsdb.StopTime{
+		{StopID: "A", StopSequence: 1},
+		{StopID: "MISSING", StopSequence: 2},
+		{StopID: "C", StopSequence: 3},
+	}
+	stopByID := map[string]gtfsdb.Stop{
+		"A": {ID: "A", Lat: 0.0, Lon: 0.0},
+		"C": {ID: "C", Lat: 0.0, Lon: 0.00100},
+	}
+	dists, total := haversineStopDistances(stopTimes, stopByID)
+	require.Len(t, dists, 3)
+	assert.Equal(t, 0.0, dists[0])
+	// The A→MISSING and MISSING→C legs both skip (prev/curr coord missing);
+	// total stays 0 for this pair. This is degraded but doesn't panic.
+	assert.Equal(t, 0.0, dists[1])
+	assert.Equal(t, 0.0, dists[2])
+	assert.Equal(t, 0.0, total)
+}
+
+// TestHaversineStopDistances_EmptyStopTimes ensures the empty-input case
+// returns cleanly.
+func TestHaversineStopDistances_EmptyStopTimes(t *testing.T) {
+	dists, total := haversineStopDistances(nil, nil)
+	assert.Empty(t, dists)
+	assert.Equal(t, 0.0, total)
+}
+
 func TestPositionAndOrientationAtDistance_UnusableShape(t *testing.T) {
 	pos, orient := positionAndOrientationAtDistance(nil, nil, 100)
 	assert.Nil(t, pos)
