@@ -104,3 +104,21 @@ func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
 	resp2, _ := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"251"}}))
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 }
+
+func TestRouteSearchHandlerLimitExceeded(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Using a generic search term that should match multiple routes
+	// Setting maxCount=1 should force limitExceeded=true
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"1"}, "maxCount": {"1"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	// If the dataset has multiple matches for "1", the limit should be exceeded
+	if len(model.Data.List) > 0 {
+		assert.True(t, model.Data.LimitExceeded, "limitExceeded should be true when results are truncated")
+		assert.Equal(t, 1, len(model.Data.List), "results should be truncated to maxCount")
+	}
+}
