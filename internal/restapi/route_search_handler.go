@@ -126,9 +126,11 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	situations := api.BuildSituationReferences(alerts)
 
 	references := models.NewEmptyReferences()
+	utils.SortAgencyReferencesByID(agencies)
 	references.Agencies = agencies
 	references.Situations = situations
 
+	utils.SortModelRoutesByName(results)
 	response := models.NewListResponseWithRange(results, *references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
