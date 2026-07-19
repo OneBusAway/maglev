@@ -510,6 +510,7 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.False(t, model.Data.OutOfRange)
+		require.NotEmpty(t, model.Data.List, "expected at least one entry to verify ServiceDate equality")
 		for _, entry := range model.Data.List {
 			assert.Equal(t, historicalMillis, entry.ServiceDate, "entry.ServiceDate should match the historical timestamp parameter")
 		}
@@ -590,23 +591,27 @@ func TestTripsForLocationHandler_ContextCancellation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	t.Run("Context Canceled via clientCanceledResponse", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, tripsForLocationURL(1.0, 1.0), nil)
+	t.Run("Context Canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately to simulate a client cancellation
+		req := httptest.NewRequest(http.MethodGet, tripsForLocationURL(1.0, 1.0), nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
 
-		api.clientCanceledResponse(rec, req, context.Canceled)
+		api.tripsForLocationHandler(rec, req)
 
-		// When err == context.Canceled, clientCanceledResponse logs Info and does not write a header or body.
+		// When context is canceled, clientCanceledResponse logs Info and does not write a header or body.
 		assert.Empty(t, rec.Body.String(), "no body should be written when client cancels request")
 	})
 
-	t.Run("Context Deadline Exceeded via clientCanceledResponse", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, tripsForLocationURL(1.0, 1.0), nil)
+	t.Run("Context Deadline Exceeded", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 0) // Deadline already exceeded
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, tripsForLocationURL(1.0, 1.0), nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
 
-		api.clientCanceledResponse(rec, req, context.DeadlineExceeded)
+		api.tripsForLocationHandler(rec, req)
 
-		// When err == context.DeadlineExceeded, clientCanceledResponse writes 504 Gateway Timeout.
+		// When context deadline is exceeded, clientCanceledResponse writes 504 Gateway Timeout.
 		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
 		assert.Contains(t, rec.Body.String(), "gateway timeout")
 	})
