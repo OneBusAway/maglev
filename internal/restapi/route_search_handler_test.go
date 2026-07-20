@@ -88,9 +88,11 @@ func TestRouteSearchHandlerWhitespaceInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, _ := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"   "}}))
+	resp, model := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"   "}}))
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
@@ -116,9 +118,6 @@ func TestRouteSearchHandlerLimitExceeded(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	// If the dataset has multiple matches for "1", the limit should be exceeded
-	if len(model.Data.List) > 0 {
-		assert.True(t, model.Data.LimitExceeded, "limitExceeded should be true when results are truncated")
-		assert.Equal(t, 1, len(model.Data.List), "results should be truncated to maxCount")
-	}
+	assert.True(t, model.Data.LimitExceeded, "limitExceeded should be true when results are truncated")
+	assert.Equal(t, 1, len(model.Data.List), "results should be truncated to maxCount")
 }
