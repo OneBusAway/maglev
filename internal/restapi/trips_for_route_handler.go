@@ -32,7 +32,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			references := models.NewEmptyReferences()
+			response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, *references, false, api.Clock, false)
+			api.sendResponse(w, r, response)
+			return
+		}
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 
