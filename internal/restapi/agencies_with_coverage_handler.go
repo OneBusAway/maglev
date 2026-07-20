@@ -23,7 +23,11 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Apply pagination
+	// Apply pagination.
+	// Note: The legacy OBA specification explicitly documents a defect for this endpoint
+	// where maxCount was accepted but never applied (limitExceeded was always false).
+	// We intentionally deviate from the legacy behavior here to correctly implement
+	// pagination and limitExceeded, fixing the known defect.
 	offset, limit := utils.ParsePaginationParams(r)
 	agencies, limitExceeded := utils.PaginateSlice(agencies, offset, limit)
 
