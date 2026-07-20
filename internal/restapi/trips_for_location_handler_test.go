@@ -421,15 +421,16 @@ func TestTripsForLocationHandler_RadiusAndPrecedence(t *testing.T) {
 	})
 
 	t.Run("Radius Precedence over Spans", func(t *testing.T) {
-		// Supplying both a very small radius (50m) and a very large span (2 degrees).
+		// Supplying both a very tiny radius (1m) and a very large span (2 degrees).
 		// Per OBA spec, radius takes precedence over span when both are supplied.
-		url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&radius=50&latSpan=2.0&lonSpan=2.0", tripsForLocationLat, tripsForLocationLon)
+		// A 2 degree span would return trips, but a 1m radius will return empty.
+		url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&radius=1&latSpan=2.0&lonSpan=2.0", tripsForLocationLat, tripsForLocationLon)
 		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.False(t, model.Data.OutOfRange)
-		assert.NotNil(t, model.Data.List)
+		assert.Empty(t, model.Data.List, "Expected empty list since 1m radius precedence should filter out trips otherwise caught by the 2 degree span")
 	})
 
 	t.Run("Default Radius Fallback when no Spans or Radius", func(t *testing.T) {
