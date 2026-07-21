@@ -1175,7 +1175,7 @@ SELECT
 FROM shapes s
 JOIN trips t ON t.shape_id = s.shape_id
 WHERE t.id IN (sqlc.slice('trip_ids'))
-ORDER BY t.id, s.shape_pt_sequence;
+ORDER BY t.id ASC, s.shape_pt_sequence ASC;
 
 -- name: GetTripStartTimesByIDs :many
 -- Returns cached min_arrival_time (nanoseconds since midnight) for each

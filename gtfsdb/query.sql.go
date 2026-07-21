@@ -3264,7 +3264,7 @@ SELECT
 FROM shapes s
 JOIN trips t ON t.shape_id = s.shape_id
 WHERE t.id IN (/*SLICE:trip_ids*/?)
-ORDER BY t.id, s.shape_pt_sequence
+ORDER BY t.id ASC, s.shape_pt_sequence ASC
 `
 
 type GetShapePointsByTripIDsRow struct {
