@@ -834,113 +834,71 @@ func (api *RestAPI) findNextStopAfter(
 	return "", 0
 }
 
+// calculateBatchStopDistances builds a per-stop models.StopTime slice for the
+// trip response, filling DistanceAlongTrip via projectStopsInSequence — the
+// same sequence-aware projection the block-level path uses. Sharing that
+// projection keeps distanceAlongTrip in trip-details stopTimes consistent
+// with distanceFromStop in arrivals responses (they used to drift because
+// each path had its own copy of the projection loop, and only one of the
+// copies had the loop-route cursor advance).
 func (api *RestAPI) calculateBatchStopDistances(
 	timeStops []gtfsdb.StopTime,
 	shapePoints []gtfs.ShapePoint,
 	stopCoords map[string]struct{ lat, lon float64 },
 	agencyID string,
 ) []models.StopTime {
-
 	stopTimesList := make([]models.StopTime, 0, len(timeStops))
 
-	if len(shapePoints) < 2 {
-		for _, stopTime := range timeStops {
-			stopTimesList = append(stopTimesList, models.StopTime{
-				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
-				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
-				StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
-				DistanceAlongTrip:   0.0,
-				HistoricalOccupancy: "",
-			})
-		}
-		return stopTimesList
+	// Pre-compute the shape's cumulative distances once so projectStopsInSequence
+	// can operate on them without re-walking the polyline. When the shape is
+	// missing / too short, projectStopsInSequence returns zeros — the response
+	// still emits every stop with distanceAlongTrip=0 (same as before).
+	var cumulativeDistances []float64
+	var distances []float64
+	if len(shapePoints) >= 2 {
+		cumulativeDistances = preCalculateCumulativeDistances(shapePoints)
+	}
+	if len(cumulativeDistances) == len(shapePoints) {
+		stopByID := stopByIDFromCoords(timeStops, stopCoords)
+		distances = projectStopsInSequence(timeStops, stopByID, shapePoints, cumulativeDistances)
+	} else {
+		distances = make([]float64, len(timeStops))
 	}
 
-	// Pre-calculate cumulative distances
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-	if len(cumulativeDistances) != len(shapePoints) {
-		for _, stopTime := range timeStops {
-			stopTimesList = append(stopTimesList, models.StopTime{
-				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
-				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
-				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
-				StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
-				DistanceAlongTrip:   0.0,
-				HistoricalOccupancy: "",
-			})
-		}
-		return stopTimesList
-	}
-
-	// Java overwrites shape_dist_traveled at load time with a projection-derived
-	// value in metres (StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet).
-	// We do the same at query time: always project the stop's lat/lon onto the shape
-	// polyline and use metre-valued cumulative distances, ignoring the publisher's
-	// shape_dist_traveled entirely so the emitted units are always metres.
-	lastMatchedIndex := 0
-
-	for _, stopTime := range timeStops {
-		var distanceAlongTrip float64
-
-		if coords, exists := stopCoords[stopTime.StopID]; exists {
-			stopLat := coords.lat
-			stopLon := coords.lon
-
-			// ensure lastMatchedIndex didn't go out of bounds
-			if lastMatchedIndex >= len(shapePoints)-1 {
-				lastMatchedIndex = len(shapePoints) - 2
-			}
-
-			var minDistance = math.Inf(1)
-			var closestSegmentIndex = lastMatchedIndex
-			var projectionRatio float64
-
-			// Early exit threshold to speed up search.
-			// Only exit early once we have a close match (< 500m) to avoid getting
-			// stuck when stops are far from the shape (e.g. past the end of the shape).
-			const earlyExitThresholdMeters = 100.0
-			const goodMatchThreshold = 500.0
-
-			// Start from lastMatchedIndex
-			for i := lastMatchedIndex; i < len(shapePoints)-1; i++ {
-				distance, ratio := distanceToLineSegment(
-					stopLat, stopLon,
-					shapePoints[i].Latitude, shapePoints[i].Longitude,
-					shapePoints[i+1].Latitude, shapePoints[i+1].Longitude,
-				)
-
-				if distance < minDistance {
-					minDistance = distance
-					closestSegmentIndex = i
-					projectionRatio = ratio
-					lastMatchedIndex = i
-				} else if minDistance < goodMatchThreshold && distance > minDistance+earlyExitThresholdMeters {
-					break
-				}
-			}
-
-			// Calculate distance along trip
-			var segmentLength float64
-			if closestSegmentIndex < len(shapePoints)-1 {
-				segmentLength = utils.Distance(
-					shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
-					shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
-				)
-			}
-			distanceAlongTrip = interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
-		}
-
+	for i, stopTime := range timeStops {
 		stopTimesList = append(stopTimesList, models.StopTime{
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 			ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
 			DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
 			StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
-			DistanceAlongTrip:   distanceAlongTrip,
+			DistanceAlongTrip:   distances[i],
 			HistoricalOccupancy: "",
 		})
 	}
 	return stopTimesList
+}
+
+// stopByIDFromCoords bridges calculateBatchStopDistances's stopCoords map
+// (its callers pass an untyped {lat, lon} pair) to the gtfsdb.Stop shape
+// projectStopsInSequence expects. Only the stops referenced in timeStops
+// are added, and any stop whose coords are missing is left out — matching
+// projectStopsInSequence's own "unknown stop → distance 0" branch.
+func stopByIDFromCoords(
+	timeStops []gtfsdb.StopTime,
+	stopCoords map[string]struct{ lat, lon float64 },
+) map[string]gtfsdb.Stop {
+	out := make(map[string]gtfsdb.Stop, len(stopCoords))
+	for _, st := range timeStops {
+		if _, done := out[st.StopID]; done {
+			continue
+		}
+		coords, ok := stopCoords[st.StopID]
+		if !ok {
+			continue
+		}
+		out[st.StopID] = gtfsdb.Stop{ID: st.StopID, Lat: coords.lat, Lon: coords.lon}
+	}
+	return out
 }
 
 func (api *RestAPI) findStopsByScheduleDeviation(
