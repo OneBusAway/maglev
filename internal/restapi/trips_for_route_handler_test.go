@@ -273,6 +273,18 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			includeSchedule: "false",
 			wantTripsLen:    1,
 		},
+		{
+			name:            "Exclude Trip (Uppercase FALSE)",
+			includeTrip:     "FALSE",
+			includeSchedule: "true",
+			wantTripsLen:    0,
+		},
+		{
+			name:            "Exclude Trip (Numeric 0)",
+			includeTrip:     "0",
+			includeSchedule: "true",
+			wantTripsLen:    0,
+		},
 	}
 
 	timeMs := tripsForRouteTestClock.UnixMilli()
