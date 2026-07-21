@@ -130,30 +130,32 @@ func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool, bool) {
 // stop_id; loop/lasso trips need multiple entries per stop_id.
 type schedEntry struct{ seq, arr, dep int64 }
 
-// loadScheduledForTrip returns a lazy loader that caches per-trip scheduled
-// stop-time entries keyed by stop_id (with multiple entries per stop_id for
-// loop trips). Closure captures the cache map for the lifetime of one
-// pickClosestSTUDeviation call.
-func (api *RestAPI) loadScheduledForTrip(ctx context.Context) func(string) map[string][]schedEntry {
-	cache := map[string]map[string][]schedEntry{}
-	return func(tripID string) map[string][]schedEntry {
-		if s, ok := cache[tripID]; ok {
-			return s
-		}
-		s := map[string][]schedEntry{}
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
-		if err == nil {
-			for _, st := range stopTimes {
-				s[st.StopID] = append(s[st.StopID], schedEntry{
-					seq: st.StopSequence,
-					arr: st.ArrivalTime / int64(time.Second),
-					dep: st.DepartureTime / int64(time.Second),
-				})
-			}
-		}
-		cache[tripID] = s
-		return s
+// loadScheduledForTrips batch-loads every trip's scheduled stop-time entries
+// (keyed by stop_id, with multiple entries per stop_id for loop trips) via
+// one GetStopTimesForTripIDs call instead of one GetStopTimesForTrip per
+// trip in a lazy loader loop. Missing trips get an empty map so callers
+// don't need to nil-check.
+func (api *RestAPI) loadScheduledForTrips(ctx context.Context, tripIDs []string) map[string]map[string][]schedEntry {
+	out := make(map[string]map[string][]schedEntry, len(tripIDs))
+	for _, id := range tripIDs {
+		out[id] = map[string][]schedEntry{}
 	}
+	if len(tripIDs) == 0 {
+		return out
+	}
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
+	if err != nil {
+		return out
+	}
+	for _, st := range stopTimes {
+		m := out[st.TripID]
+		m[st.StopID] = append(m[st.StopID], schedEntry{
+			seq: st.StopSequence,
+			arr: st.ArrivalTime / int64(time.Second),
+			dep: st.DepartureTime / int64(time.Second),
+		})
+	}
+	return out
 }
 
 // matchScheduleEntry resolves the right scheduled (arr, dep) for an STU
@@ -265,11 +267,20 @@ func stuPredictedFromDeparture(stu gtfs.StopTimeUpdate, schedDep int64, serviceD
 // predicted stop-time is closest to currentTime; tiebreak prefers stops
 // still in the future.
 func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (int, bool) {
-	loadScheduled := api.loadScheduledForTrip(ctx)
+	tripIDs := make([]string, 0, len(tripUpdates))
+	seen := make(map[string]struct{}, len(tripUpdates))
+	for _, t := range tripUpdates {
+		if _, ok := seen[t.tripID]; ok {
+			continue
+		}
+		seen[t.tripID] = struct{}{}
+		tripIDs = append(tripIDs, t.tripID)
+	}
+	scheduled := api.loadScheduledForTrips(ctx, tripIDs)
 	picker := newSTUDeviationPicker(utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate))
 
 	for _, t := range tripUpdates {
-		schedMap := loadScheduled(t.tripID)
+		schedMap := scheduled[t.tripID]
 		for _, stu := range t.tu.StopTimeUpdates {
 			var schedArr, schedDep int64
 			if stu.StopID != nil {
@@ -357,44 +368,39 @@ func pickFirstAvailableSTUDelay(tripUpdates []tripUpdateForTrip) (int, bool) {
 
 // blockTripIDsSortedByStartTime returns the block's trip IDs sorted by each
 // trip's earliest scheduled arrival time — the order Java iterates them in
-// applyTripUpdatesToRecord. Falls back to the input order if any trip's
-// stop times can't be loaded.
+// applyTripUpdatesToRecord. Uses the cached trips.min_arrival_time column
+// (populated at import time — see gtfsdb/schema.sql:294) via a single
+// batched query, so this is one DB round-trip regardless of block size
+// instead of N GetStopTimesForTrip calls. Falls back to input order on
+// DB error or when any trip is missing a cached start time.
 func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs []string) []string {
 	if len(tripIDs) <= 1 {
 		return tripIDs
 	}
-	type tripWithStart struct {
-		id    string
-		start int64
-	}
-	withStart := make([]tripWithStart, 0, len(tripIDs))
-	for _, id := range tripIDs {
-		sts, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, id)
-		if err != nil {
-			// A real DB error (vs. sql.ErrNoRows / empty) on a partial sort
-			// would silently scramble block-trip order — and pickTripLevelDeviation
-			// depends on that order ("last delay wins"). Warn and bail.
-			warnIfRealDBError(err, "blockTripIDsSortedByStartTime: GetStopTimesForTrip failed, returning input order",
-				slog.String("trip_id", id))
-			return tripIDs
-		}
-		if len(sts) == 0 {
-			// Trip has no stop_times — skip it from the sort but keep going;
-			// it can't contribute a meaningful start time anyway.
-			continue
-		}
-		withStart = append(withStart, tripWithStart{id: id, start: sts[0].ArrivalTime})
-	}
-	if len(withStart) < len(tripIDs) {
-		// Some trips had no stop_times. Returning a partial sort would drop
-		// those IDs from the block; keep input order to preserve them.
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetTripStartTimesByIDs(ctx, tripIDs)
+	if err != nil {
+		// A real DB error on a partial sort would silently scramble
+		// block-trip order — pickTripLevelDeviation depends on that order
+		// ("last delay wins"). Warn and bail to input order.
+		warnIfRealDBError(err, "blockTripIDsSortedByStartTime: GetTripStartTimesByIDs failed, returning input order",
+			slog.Int("trip_count", len(tripIDs)))
 		return tripIDs
 	}
-	slices.SortFunc(withStart, func(a, b tripWithStart) int { return cmp.Compare(a.start, b.start) })
-	out := make([]string, len(withStart))
-	for i, t := range withStart {
-		out[i] = t.id
+	startByID := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		if !r.MinArrivalTime.Valid {
+			continue
+		}
+		startByID[r.ID] = r.MinArrivalTime.Int64
 	}
+	if len(startByID) < len(tripIDs) {
+		// Any trip is missing a cached min_arrival_time — a partial sort
+		// would drop those IDs; keep input order to preserve them.
+		return tripIDs
+	}
+	out := make([]string, len(tripIDs))
+	copy(out, tripIDs)
+	slices.SortFunc(out, func(a, b string) int { return cmp.Compare(startByID[a], startByID[b]) })
 	return out
 }
 

@@ -364,23 +364,49 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	return ids
 }
 
-// loadBlockTripData fetches stop_times + shape for each tripID and bundles them.
-// Skips trips with no stop times or unusable shape data.
+// loadBlockTripData fetches stop_times + shape for every tripID in one pair
+// of batched queries (GetStopTimesForTripIDs + GetShapePointsByTripIDs)
+// instead of the per-trip pair. For a block with N trips this is 2 DB
+// round-trips instead of 2N — a real handle on the plural arrivals
+// handler's amplification.
 //
-// TODO(perf): 2N round-trips; batch via GetStopTimesForTrips / GetShapePointsForTrips.
+// Trips with no stop_times are skipped. Shape errors / missing shapes
+// leave shapePoints empty; emitBlockStops falls back to stop-only
+// haversine (haversineStopDistances) so shapeless trips still contribute
+// a real length to the block cursor. Trip is still appended so
+// block_sequence stays consistent.
 func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []blockTripData {
+	if len(tripIDs) == 0 {
+		return nil
+	}
+	q := api.GtfsManager.GtfsDB.Queries
+
+	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
+	if err != nil {
+		return nil
+	}
+	stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripIDs))
+	for _, st := range stopTimeRows {
+		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+	}
+
+	// Shape errors are non-fatal — emitBlockStops falls back to haversine.
+	// A total failure of the batch query means we degrade every trip to
+	// the fallback, still correct just less precise.
+	shapeRows, _ := q.GetShapePointsByTripIDs(ctx, tripIDs)
+	shapePointsByTrip := make(map[string][]gtfs.ShapePoint, len(tripIDs))
+	for _, sr := range shapeRows {
+		shapePointsByTrip[sr.TripID] = append(shapePointsByTrip[sr.TripID],
+			gtfs.ShapePoint{Latitude: sr.Lat, Longitude: sr.Lon})
+	}
+
 	out := make([]blockTripData, 0, len(tripIDs))
 	for _, id := range tripIDs {
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, id)
-		if err != nil || len(stopTimes) == 0 {
+		stopTimes := stopTimesByTrip[id]
+		if len(stopTimes) == 0 {
 			continue
 		}
-		// Shape errors leave shapePoints empty here; emitBlockStops falls back
-		// to stop-only haversine (haversineStopDistances) so shapeless trips
-		// still contribute a real length to the block cursor. Trip is still
-		// appended so block_sequence stays consistent.
-		shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, id)
-		shapePoints := shapeRowsToPoints(shapeRows)
+		shapePoints := shapePointsByTrip[id]
 		var cumDistances []float64
 		var totalDist float64
 		if len(shapePoints) >= 2 {
