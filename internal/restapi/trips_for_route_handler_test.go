@@ -239,6 +239,68 @@ func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
 	}
 }
 
+func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	tests := []struct {
+		name            string
+		includeTrip     string
+		includeSchedule string
+		wantTripsLen    int
+	}{
+		{
+			name:            "Include Trip (default)",
+			includeTrip:     "",
+			includeSchedule: "true",
+			wantTripsLen:    1,
+		},
+		{
+			name:            "Include Trip Explicit",
+			includeTrip:     "true",
+			includeSchedule: "true",
+			wantTripsLen:    1,
+		},
+		{
+			name:            "Exclude Trip",
+			includeTrip:     "false",
+			includeSchedule: "true",
+			wantTripsLen:    0,
+		},
+		{
+			name:            "No Schedule But Still Include Trip",
+			includeTrip:     "",
+			includeSchedule: "false",
+			wantTripsLen:    1,
+		},
+	}
+
+	timeMs := tripsForRouteTestClock.UnixMilli()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=%s&time=%d",
+				combinedRouteID, tt.includeSchedule, timeMs)
+			if tt.includeTrip != "" {
+				url += "&includeTrip=" + tt.includeTrip
+			}
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.List,
+				"fixture guarantees a trip at the pinned clock")
+			assert.Equal(t, tt.wantTripsLen, len(model.Data.References.Trips),
+				"references.trips should have the expected number of entries")
+
+			for i, entry := range model.Data.List {
+				assert.NotEmpty(t, entry.TripId,
+					"list[%d].tripId should always be present regardless of includeTrip", i)
+			}
+		})
+	}
+}
+
 func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

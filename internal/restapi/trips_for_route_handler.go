@@ -29,6 +29,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
 	includeStatus := r.URL.Query().Get("includeStatus") != "false"
+	includeTrip := r.URL.Query().Get("includeTrip") != "false"
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -182,7 +183,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
-		references := buildTripReferences(api, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+		references := buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
 		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
@@ -447,7 +448,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	references := buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
+	references := buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
 	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
