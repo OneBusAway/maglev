@@ -131,14 +131,14 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		stopIndex[scheduledStopKey{TripID: s.TripID, StopSequenceInTrip: s.StopSequenceInTrip}] = i
 	}
 
-	// TODO(perf): linear scan; stops are sorted by EffectiveStopSeconds so
-	// this can be slices.BinarySearchFunc — O(log N) instead of O(N).
+	// stops are sorted by EffectiveStopSeconds so we can binary-search the
+	// first index whose stop time is >= currentSeconds.
+	idx, _ := slices.BinarySearchFunc(stops, currentSeconds, func(s blockStopMetric, target int64) int {
+		return cmp.Compare(s.EffectiveStopSeconds, target)
+	})
 	nextStopIdx := -1
-	for i, s := range stops {
-		if s.EffectiveStopSeconds >= currentSeconds {
-			nextStopIdx = i
-			break
-		}
+	if idx < len(stops) {
+		nextStopIdx = idx
 	}
 
 	firstStopSec := stops[0].EffectiveStopSeconds
@@ -167,6 +167,15 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 // slice and the activeTripOffset (block-distance to the start of the
 // active trip; 0 when activeIdx < 0).
 func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, activeIdx int) ([]blockStopMetric, float64) {
+	// Fetch the union of every trip's stop coords in one batched call
+	// instead of one per trip. fetchStopCoordsForStopTimes deduplicates
+	// internally, so the block's overlapping terminals cost nothing extra.
+	unionStopTimes := make([]gtfsdb.StopTime, 0, len(trips)*40)
+	for _, t := range trips {
+		unionStopTimes = append(unionStopTimes, t.stopTimes...)
+	}
+	stopByID := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes)
+
 	stops := make([]blockStopMetric, 0, len(trips)*40)
 	var cumulativeBlockDist float64
 	var blockSeq int
@@ -175,8 +184,6 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, a
 		if i == activeIdx {
 			activeTripOffset = cumulativeBlockDist
 		}
-		// TODO(perf): hoist out of the loop; fetch the union of stop IDs once.
-		stopByID := api.fetchStopCoordsForStopTimes(ctx, t.stopTimes)
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
@@ -588,7 +595,8 @@ func projectStopGeometric(stop gtfsdb.Stop, shapePoints []gtfs.ShapePoint, cumul
 // at currentSeconds between the two surrounding stops. Clamped to the first /
 // last stop when currentSeconds is outside the block's scheduled span.
 //
-// TODO(perf): linear scan over `stops`; binary-search the bracketing pair.
+// stops are sorted by EffectiveStopSeconds so we binary-search the bracketing
+// pair in O(log N).
 func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64) float64 {
 	if len(stops) == 0 {
 		return 0
@@ -600,18 +608,27 @@ func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64) flo
 	if currentSeconds >= last.EffectiveStopSeconds {
 		return last.DistanceAlongBlock
 	}
-	for i := 0; i < len(stops)-1; i++ {
-		from, to := stops[i], stops[i+1]
-		if currentSeconds >= from.EffectiveStopSeconds && currentSeconds <= to.EffectiveStopSeconds {
-			span := to.EffectiveStopSeconds - from.EffectiveStopSeconds
-			if span == 0 {
-				return from.DistanceAlongBlock
-			}
-			ratio := float64(currentSeconds-from.EffectiveStopSeconds) / float64(span)
-			return from.DistanceAlongBlock + ratio*(to.DistanceAlongBlock-from.DistanceAlongBlock)
-		}
+	// Find the first stop whose time is > currentSeconds; `to` is that stop,
+	// `from` is the one before it. Guaranteed to be in [1, len(stops)-1]
+	// because we already clamped both endpoints above.
+	idx, _ := slices.BinarySearchFunc(stops, currentSeconds, func(s blockStopMetric, target int64) int {
+		return cmp.Compare(s.EffectiveStopSeconds, target)
+	})
+	// BinarySearchFunc returns the position of the first element >= target.
+	// currentSeconds < last.EffectiveStopSeconds, so idx >= 1 (would be 0
+	// only if currentSeconds <= stops[0].EffectiveStopSeconds, ruled out
+	// above). Ensure idx points to the trailing bound.
+	if idx == 0 {
+		idx = 1
 	}
-	return last.DistanceAlongBlock
+	from := stops[idx-1]
+	to := stops[idx]
+	span := to.EffectiveStopSeconds - from.EffectiveStopSeconds
+	if span == 0 {
+		return from.DistanceAlongBlock
+	}
+	ratio := float64(currentSeconds-from.EffectiveStopSeconds) / float64(span)
+	return from.DistanceAlongBlock + ratio*(to.DistanceAlongBlock-from.DistanceAlongBlock)
 }
 
 // positionAndOrientationAtDistance projects a distance-along-shape back to a
