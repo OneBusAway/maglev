@@ -153,6 +153,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Organize Data
 	routesByStopID := make(map[string][]string)
+	routeTypes := make(map[string]int64)
 
 	for _, row := range routesRows {
 		if ctx.Err() != nil {
@@ -162,6 +163,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
+		routeTypes[combinedRouteID] = row.Type
 	}
 
 	uniqueAgencies := make(map[string]bool)
@@ -197,8 +199,16 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		routeIDs := routesByStopID[s.ID]
-		if routeIDs == nil {
-			routeIDs = []string{}
+		if len(routeIDs) == 0 {
+			continue
+		}
+
+		if len(routeIDs) == 1 {
+			if t, ok := routeTypes[routeIDs[0]]; ok {
+				if t == 711 || t == 712 || t == 713 || t == 714 {
+					continue
+				}
+			}
 		}
 
 		name := ""

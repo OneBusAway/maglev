@@ -299,3 +299,45 @@ func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
 	assert.True(t, stopsRespExceeded.Data.LimitExceeded, "Expected LimitExceeded to be true when available records exceed maxCount")
 	assert.Len(t, stopsRespExceeded.Data.List, totalMatches-1)
 }
+
+func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	db := api.GtfsManager.GtfsDB.DB
+
+	// Insert mock data for exclusion testing
+	_, err := db.Exec(`
+		-- Stop with 0 routes
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('zero_route_stop', 'Ghost Stop', 40.0, -120.0, 0);
+
+		-- Stop with 1 school bus route (type 712)
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('school_bus_stop', 'School Bus Stop', 40.0, -120.0, 0);
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('school_route_1', 'RABA', 'School Route', 712);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('school_trip_1', 'school_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'school_bus_stop', 1, 28800, 28800);
+
+		-- Stop with 1 valid route (type 3 - Bus)
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('valid_bus_stop', 'Valid Bus Stop', 40.0, -120.0, 0);
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('valid_route_1', 'RABA', 'Valid Route', 3);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('valid_trip_1', 'valid_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'valid_bus_stop', 1, 28800, 28800);
+	`)
+	require.NoError(t, err)
+
+	// Test 0 routes exclusion
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ghost"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, stopsResp.Data.List, "Expected Ghost Stop to be excluded (0 routes)")
+
+	// Test School bus exclusion
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"School Bus"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, stopsResp.Data.List, "Expected School Bus Stop to be excluded (single route type 712)")
+
+	// Test valid bus inclusion
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Valid Bus"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, stopsResp.Data.List, 1, "Expected Valid Bus Stop to be included")
+	assert.True(t, strings.HasSuffix(stopsResp.Data.List[0].ID, "valid_bus_stop"))
+}
