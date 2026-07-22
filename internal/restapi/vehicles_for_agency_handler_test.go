@@ -963,6 +963,19 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 	assert.NotEqual(t, entry.TripID, entry.TripStatus.ActiveTripID,
 		"interlining: activeTripId must differ from the outer tripId")
 
+	// blockTripSequence must reflect the active (interlined) trip's position in the
+	// block, not the nominal trip's — the two necessarily differ since they are
+	// distinct trips in the same ordered block.
+	expectedSeq, ok := api.blockTripSequence(ctx, resolvedActiveID, refTime)
+	require.True(t, ok, "expected the active trip to have a resolvable block sequence")
+	assert.Equal(t, expectedSeq, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must reflect the active trip's position in the block, not the nominal trip's")
+
+	nominalSeq, nominalOk := api.blockTripSequence(ctx, nominalID, refTime)
+	require.True(t, nominalOk, "expected the nominal trip to have a resolvable block sequence")
+	assert.NotEqual(t, nominalSeq, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must differ from the nominal trip's own position when interlining is in play")
+
 	activeRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, resolvedActiveID)
 	require.NoError(t, err)
 	expectedNominalRoute := testdata.Raba.ID + "_" + nominalRow.RouteID

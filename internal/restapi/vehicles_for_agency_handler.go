@@ -138,8 +138,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			// Resolve the executing trip; may differ from the nominal trip when interlining.
 			activeTripID := api.resolveActiveTripID(ctx, vehicle.Trip.ID.ID, referenceTime)
 			tripStatus.ActiveTripID = utils.FormCombinedID(id, activeTripID)
-			// Resolve the block trip sequence; -1 when unavailable.
-			if seq, ok := api.blockTripSequence(ctx, vehicle.Trip.ID.ID, referenceTime); ok {
+			// Resolve the block trip sequence for the active (not nominal) trip,
+			// so it reflects the position of the trip actually being executed.
+			if seq, ok := api.blockTripSequence(ctx, activeTripID, referenceTime); ok {
 				tripStatus.BlockTripSequence = seq
 			} else {
 				tripStatus.BlockTripSequence = -1
