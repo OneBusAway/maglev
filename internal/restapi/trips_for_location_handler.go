@@ -23,7 +23,7 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	locationParams, includeTrip, includeSchedule, currentLocation, currentTime, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
+	parsedReq, fieldErrors, err := api.parseAndValidateRequest(r)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -33,11 +33,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Intentionally defaulting includeStatus to false to align with includeSchedule
-	// behavior for this endpoint, even though trips-for-route defaults to true.
-	includeStatus, _ := strconv.ParseBool(r.URL.Query().Get("includeStatus"))
-
-	stops := api.GtfsManager.GetStopsInBounds(ctx, locationParams, 100)
+	stops := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -47,7 +43,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	activeTrips := api.getActiveTrips(stopTimes, api.GtfsManager.GetRealTimeVehicles())
 
-	bounds := internalgtfs.BoundsFromParams(locationParams)
+	bounds := internalgtfs.BoundsFromParams(parsedReq.LocationParams, true)
 	visibleTripIDs := make([]string, 0, len(activeTrips))
 	for _, vehicle := range activeTrips {
 		if ctx.Err() != nil {
@@ -102,7 +98,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, includeSchedule, includeStatus, currentLocation, currentTime, todayMidnight, serviceDate, w, r)
+	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
 	if result == nil {
 		return
 	}
@@ -118,57 +114,71 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	if includeReferences {
 		references = api.BuildReference(w, r, ctx, ReferenceParams{
-			IncludeTrip: includeTrip,
+			IncludeTrip: parsedReq.IncludeTrip,
 			Stops:       stops,
 			Trips:       result,
 		})
 	}
 
-	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(locationParams), api.Clock, false)
+	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(parsedReq.LocationParams), api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
-func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
-	location *internalgtfs.LocationParams,
-	includeTrip, includeSchedule bool,
-	currentLocation *time.Location,
-	currentTime time.Time,
-	todayMidnight time.Time,
-	serviceDate time.Time,
-	fieldErrors map[string][]string,
-	serverErr error,
-) {
+// tripsForLocationRequest holds the parsed and validated query parameters for
+// the trips-for-location endpoint.
+type tripsForLocationRequest struct {
+	LocationParams  *internalgtfs.LocationParams
+	IncludeTrip     bool
+	IncludeSchedule bool
+	IncludeStatus   bool
+	CurrentLocation *time.Location
+	CurrentTime     time.Time
+	TodayMidnight   time.Time
+	ServiceDate     time.Time
+}
 
-	var loc *internalgtfs.LocationParams
-	loc, fieldErrors = api.parseLocationParams(r, nil)
+func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
+	loc, fieldErrors := api.parseLocationParams(r, nil)
 
 	queryParams := r.URL.Query()
 
-	includeTrip = parseIncludeTrip(queryParams)
-	includeSchedule, _ = strconv.ParseBool(queryParams.Get("includeSchedule"))
+	includeTrip := parseIncludeTrip(queryParams)
+	includeSchedule, _ := strconv.ParseBool(queryParams.Get("includeSchedule"))
+	// Intentionally defaulting includeStatus to false to align with includeSchedule
+	// behavior for this endpoint, even though trips-for-route defaults to true.
+	includeStatus, _ := strconv.ParseBool(queryParams.Get("includeStatus"))
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 	if agenciesErr != nil || len(agencies) == 0 {
-		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
+		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, serverErr = loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
+	currentLocation, serverErr := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if serverErr != nil {
-		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, nil, serverErr
+		return nil, nil, serverErr
 	}
 
-	var timeFieldErrors map[string][]string
-	currentTime, timeFieldErrors = api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
+	currentTime, timeFieldErrors := api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
 	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
 
-	serviceDate, todayMidnight = utils.ServiceDateMidnight(nil, currentTime)
+	serviceDate, todayMidnight := utils.ServiceDateMidnight(nil, currentTime)
 
 	if len(fieldErrors) > 0 {
-		return nil, false, false, nil, time.Time{}, time.Time{}, time.Time{}, fieldErrors, nil
+		return nil, fieldErrors, nil
 	}
 
-	return loc, includeTrip, includeSchedule, currentLocation, currentTime, todayMidnight, serviceDate, nil, nil
+	parsedReq := &tripsForLocationRequest{
+		LocationParams:  loc,
+		IncludeTrip:     includeTrip,
+		IncludeSchedule: includeSchedule,
+		IncludeStatus:   includeStatus,
+		CurrentLocation: currentLocation,
+		CurrentTime:     currentTime,
+		TodayMidnight:   todayMidnight,
+		ServiceDate:     serviceDate,
+	}
+	return parsedReq, nil, nil
 }
 
 // parseIncludeTrip parses the includeTrip query parameter, defaulting to true when omitted

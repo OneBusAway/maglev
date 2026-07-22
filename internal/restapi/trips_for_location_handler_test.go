@@ -260,11 +260,11 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/where/trips-for-location.json?"+tt.queryString, nil)
 
-			_, includeTrip, _, _, _, _, _, fieldErrors, err := api.parseAndValidateRequest(req)
+			parsedReq, fieldErrors, err := api.parseAndValidateRequest(req)
 
 			assert.Empty(t, fieldErrors)
 			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedIncludeTrip, includeTrip)
+			assert.Equal(t, tt.expectedIncludeTrip, parsedReq.IncludeTrip)
 		})
 	}
 }
@@ -301,6 +301,33 @@ func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
 			} else {
 				assert.Empty(t, model.Data.References.Trips, "trips should be omitted when includeTrip=false or invalid")
 			}
+		})
+	}
+}
+
+func TestTripsForLocationHandler_BoundsClamping(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"Radius over 10km (15km)", "/api/where/trips-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=15000"},
+		{"Radius exceeding max 20km (25km)", "/api/where/trips-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=25000"},
+		{"Spans exceeding max 5 degrees (6.0)", "/api/where/trips-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&latSpan=6.0&lonSpan=6.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripsForLocationResponse](t, api, tt.url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.False(t, model.Data.LimitExceeded)
+			assert.NotEmpty(t, model.Data.List, "clamped search should return trip results in the test area")
 		})
 	}
 }
