@@ -55,6 +55,14 @@ type scheduledBlockSnapshot struct {
 	ActiveTripCumulativeDistances []float64
 	ActiveTripScheduledDistance   float64 // within-active-trip distance at currentTime
 	ActiveTripTotalDistance       float64
+
+	// ShiftTripIDs is the set of trip IDs in the shift the snapshot was
+	// built for, after keepShiftContainingTrip filtering. Callers use it to
+	// decide whether a live vehicle whose declared trip differs from the
+	// queried one still counts as operating this arrival's block instance
+	// — Java's BlockLocation flows down to every arrival in the same
+	// BlockInstance, not just the vehicle's declared-trip row.
+	ShiftTripIDs map[string]struct{}
 }
 
 type scheduledStopKey struct {
@@ -111,17 +119,9 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 
-	// Pick the active trip: the latest one whose first stop has already passed.
-	// Java's BlockLocation keeps the prior trip as "active" during the gap
-	// between two consecutive trips, hence the loose `>= firstSeconds` test.
-	activeIdx := -1
-	for i, t := range trips {
-		if currentSeconds >= t.firstSeconds {
-			activeIdx = i
-		}
-	}
-
-	stops, activeTripOffset := api.emitBlockStops(ctx, trips, activeIdx)
+	// Emit stops first so we have DistanceAlongBlock ready before picking
+	// the active trip — Java picks by distance-along-block, not clock time.
+	stops, tripOffsets := api.emitBlockStops(ctx, trips)
 	if len(stops) == 0 {
 		return nil
 	}
@@ -143,12 +143,31 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 
 	firstStopSec := stops[0].EffectiveStopSeconds
 	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
+	shiftTripIDs := make(map[string]struct{}, len(trips))
+	for _, t := range trips {
+		shiftTripIDs[t.id] = struct{}{}
+	}
 	snap := &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
 		NextStopIndex:      nextStopIdx,
 		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds),
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
+		ShiftTripIDs:       shiftTripIDs,
+	}
+
+	// Java's getScheduledBlockLocationBetweenStopTimes:337-352 picks the
+	// active trip by comparing DistanceAlongBlock to each trip's block
+	// offset — once the interpolated block-position crosses a later trip's
+	// start offset, that trip becomes active. Time-based selection drifts
+	// from Java at trip transitions when the vehicle is running late or
+	// early (the deviation shift moves DistanceAlongBlock across the
+	// boundary before clock time crosses the next trip's firstSeconds).
+	activeIdx := -1
+	for i, offset := range tripOffsets {
+		if snap.DistanceAlongBlock >= offset {
+			activeIdx = i
+		}
 	}
 	if activeIdx >= 0 {
 		active := trips[activeIdx]
@@ -156,7 +175,7 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		snap.ActiveTripShape = active.shapePoints
 		snap.ActiveTripCumulativeDistances = active.cumDistances
 		snap.ActiveTripTotalDistance = active.totalDist
-		snap.ActiveTripScheduledDistance = math.Max(0, snap.DistanceAlongBlock-activeTripOffset)
+		snap.ActiveTripScheduledDistance = math.Max(0, snap.DistanceAlongBlock-tripOffsets[activeIdx])
 	}
 	return snap
 }
@@ -164,26 +183,18 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 // emitBlockStops walks the block trips in order, projecting each trip's
 // stops onto its shape and emitting one blockStopMetric per stop with
 // cumulative DistanceAlongBlock and BlockSequence. Returns the assembled
-// slice and the activeTripOffset (block-distance to the start of the
-// active trip; 0 when activeIdx < 0).
-func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, activeIdx int) ([]blockStopMetric, float64) {
-	// Fetch the union of every trip's stop coords in one batched call
-	// instead of one per trip. fetchStopCoordsForStopTimes deduplicates
-	// internally, so the block's overlapping terminals cost nothing extra.
-	unionStopTimes := make([]gtfsdb.StopTime, 0, len(trips)*40)
-	for _, t := range trips {
-		unionStopTimes = append(unionStopTimes, t.stopTimes...)
-	}
-	stopByID := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes)
-
+// slice and the per-trip block-start offsets so callers can pick the
+// active trip by comparing DistanceAlongBlock to those offsets — Java's
+// ScheduledBlockLocationServiceImpl.getScheduledBlockLocationBetweenStop
+// Times:337-352 picks by distance-along-block, not clock time.
+func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) ([]blockStopMetric, []float64) {
 	stops := make([]blockStopMetric, 0, len(trips)*40)
+	tripOffsets := make([]float64, len(trips))
 	var cumulativeBlockDist float64
 	var blockSeq int
-	var activeTripOffset float64
 	for i, t := range trips {
-		if i == activeIdx {
-			activeTripOffset = cumulativeBlockDist
-		}
+		tripOffsets[i] = cumulativeBlockDist
+		stopByID := api.fetchStopCoordsForStopTimes(ctx, t.stopTimes)
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
@@ -214,7 +225,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData, a
 		}
 		cumulativeBlockDist += tripLength
 	}
-	return stops, activeTripOffset
+	return stops, tripOffsets
 }
 
 // metricsForStop is the Java applyBlockLocationToBean formula:
