@@ -312,8 +312,10 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('zero_route_stop', 'Ghost Stop', 40.0, -120.0, 0);
 
 		-- Stop with 1 school bus route (type 712)
-		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('school_bus_stop', 'School Bus Stop', 40.0, -120.0, 0);
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('school_bus_stop', 'Single Special Stop', 40.0, -120.0, 0);
+		INSERT OR IGNORE INTO agencies (id, name, url, timezone) VALUES ('RABA', 'RABA', 'http://raba.com', 'America/Los_Angeles');
 		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('school_route_1', 'RABA', 'School Route', 712);
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20230101', '20251231');
 		INSERT INTO trips (id, route_id, service_id) VALUES ('school_trip_1', 'school_route_1', 'service_1');
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'school_bus_stop', 1, 28800, 28800);
 
@@ -344,9 +346,9 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	assert.Empty(t, stopsResp.Data.List, "Expected Ghost Stop to be excluded (0 routes)")
 
 	// Test School bus exclusion
-	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"School Bus"}}))
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Single Special"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List, "Expected School Bus Stop to be excluded (single route type 712)")
+	assert.Empty(t, stopsResp.Data.List, "Expected Single Special Stop to be excluded (single route type 712)")
 
 	// Test valid bus inclusion
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Valid Bus"}}))
@@ -354,10 +356,11 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	require.Len(t, stopsResp.Data.List, 1, "Expected Valid Bus Stop to be included")
 	assert.True(t, strings.HasSuffix(stopsResp.Data.List[0].ID, "valid_bus_stop"))
 
-	// Test exclusion of stop with multiple special routes
+	// Test inclusion of stop with multiple special routes (matching legacy defect #3)
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Double School"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List, "Expected Double School Bus Stop to be excluded (all routes are 712)")
+	require.Len(t, stopsResp.Data.List, 1, "Expected Double School Bus Stop to be included despite all routes being special")
+	assert.True(t, strings.HasSuffix(stopsResp.Data.List[0].ID, "two_school_routes_stop"))
 
 	// Test maxCount filtering scenario
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Limit Test"}, "maxCount": {"2"}}))
