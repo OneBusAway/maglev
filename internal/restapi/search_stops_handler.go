@@ -171,6 +171,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Construct Stop Models
 	stopModels := make([]models.Stop, 0, len(stops))
+	var parentRawIDs []string
 
 	for _, s := range stops {
 		if ctx.Err() != nil {
@@ -217,8 +218,13 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		parentStation := ""
-		if s.ParentStation.Valid {
-			parentStation = s.ParentStation.String
+		if s.ParentStation.Valid && s.ParentStation.String != "" {
+			if agencyID != "" {
+				parentStation = utils.FormCombinedID(agencyID, s.ParentStation.String)
+			} else {
+				parentStation = s.ParentStation.String
+			}
+			parentRawIDs = append(parentRawIDs, s.ParentStation.String)
 		}
 
 		stopModel := models.Stop{
@@ -251,6 +257,79 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		alerts := api.collectAlertsForStops(stopIDs)
 		situations := api.BuildSituationReferences(alerts)
 		references.Situations = append(references.Situations, situations...)
+
+		if len(parentRawIDs) > 0 {
+			uniqueParentIDs := dedupeStrings(parentRawIDs)
+			parentStopsDB, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueParentIDs)
+			if err != nil {
+				api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch parent stops: %w", err))
+				return
+			}
+
+			parentRoutesDB, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, uniqueParentIDs)
+			if err != nil {
+				api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch routes for parent stops: %w", err))
+				return
+			}
+
+			parentRoutesByStop := make(map[string][]string)
+			for _, row := range parentRoutesDB {
+				combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
+				parentRoutesByStop[row.StopID] = append(parentRoutesByStop[row.StopID], combinedRouteID)
+			}
+
+			for _, ps := range parentStopsDB {
+				var pAgencyID string
+				if rts, ok := parentRoutesByStop[ps.ID]; ok && len(rts) > 0 {
+					pAgencyID, _, _ = utils.ExtractAgencyIDAndCodeID(rts[0])
+				} else if len(uniqueAgencies) == 1 {
+					for id := range uniqueAgencies {
+						pAgencyID = id
+						break
+					}
+				}
+
+				var combinedParentID string
+				if pAgencyID != "" {
+					combinedParentID = utils.FormCombinedID(pAgencyID, ps.ID)
+				} else {
+					combinedParentID = ps.ID
+				}
+
+				rIDs := parentRoutesByStop[ps.ID]
+				if rIDs == nil {
+					rIDs = []string{}
+				}
+
+				name := ""
+				if ps.Name.Valid {
+					name = ps.Name.String
+				}
+				code := ""
+				if ps.Code.Valid {
+					code = ps.Code.String
+				}
+				direction := ""
+				if ps.Direction.Valid {
+					direction = ps.Direction.String
+				}
+
+				parentStopModel := models.Stop{
+					ID:                 combinedParentID,
+					Name:               name,
+					Lat:                ps.Lat,
+					Lon:                ps.Lon,
+					Code:               code,
+					Direction:          direction,
+					LocationType:       int(ps.LocationType.Int64),
+					WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(ps.WheelchairBoarding.Int64)),
+					RouteIDs:           rIDs,
+					StaticRouteIDs:     rIDs,
+					Parent:             "",
+				}
+				references.Stops = append(references.Stops, parentStopModel)
+			}
+		}
 	}
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)

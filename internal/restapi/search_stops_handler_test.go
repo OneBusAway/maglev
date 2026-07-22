@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"maps"
 	"net/http"
 	"net/url"
@@ -298,4 +299,55 @@ func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
 	assert.Equal(t, http.StatusOK, respExceeded.StatusCode)
 	assert.True(t, stopsRespExceeded.Data.LimitExceeded, "Expected LimitExceeded to be true when available records exceed maxCount")
 	assert.Len(t, stopsRespExceeded.Data.List, totalMatches-1)
+}
+
+func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding)
+		VALUES ('parent_stat_1', 'P1', 'Parent Station One', 40.0, -120.0, 1, 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_1', 'C1', 'Child Stop One', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO routes (id, agency_id, short_name, type)
+		VALUES ('route_parent_test', '25', 'RT-P', 3)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO trips (id, route_id, service_id)
+		VALUES ('trip_parent_test', 'route_parent_test', 'service_1')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test', 'child_stop_1', 1, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop One"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	require.Len(t, stopsResp.Data.List, 1)
+	childStop := stopsResp.Data.List[0]
+	assert.Equal(t, "25_child_stop_1", childStop.ID)
+	assert.Equal(t, "25_parent_stat_1", childStop.Parent)
+
+	require.Len(t, stopsResp.Data.References.Stops, 1, "Expected 1 parent station in references.stops")
+	parentStop := stopsResp.Data.References.Stops[0]
+	assert.Equal(t, "25_parent_stat_1", parentStop.ID)
+	assert.Equal(t, "Parent Station One", parentStop.Name)
 }
