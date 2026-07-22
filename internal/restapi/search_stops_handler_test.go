@@ -321,7 +321,7 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 
 	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
 		INSERT INTO routes (id, agency_id, short_name, type)
-		VALUES ('route_parent_test', '25', 'RT-P', 3)
+		VALUES ('route_parent_test', '999', 'RT-P', 3)
 	`)
 	require.NoError(t, err)
 
@@ -337,17 +337,24 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	t.Cleanup(func() {
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id = 'trip_parent_test'`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id = 'trip_parent_test'`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id = 'route_parent_test'`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1')`)
+	})
+
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop One"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
 
 	require.Len(t, stopsResp.Data.List, 1)
 	childStop := stopsResp.Data.List[0]
-	assert.Equal(t, "25_child_stop_1", childStop.ID)
-	assert.Equal(t, "25_parent_stat_1", childStop.Parent)
+	assert.Equal(t, "999_child_stop_1", childStop.ID)
+	assert.Equal(t, "999_parent_stat_1", childStop.Parent)
 
 	require.Len(t, stopsResp.Data.References.Stops, 1, "Expected 1 parent station in references.stops")
 	parentStop := stopsResp.Data.References.Stops[0]
-	assert.Equal(t, "25_parent_stat_1", parentStop.ID)
+	assert.Equal(t, "999_parent_stat_1", parentStop.ID)
 	assert.Equal(t, "Parent Station One", parentStop.Name)
 }
