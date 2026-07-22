@@ -319,6 +319,22 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
 			}
 
+			// A trip in this block may resolve its own ServiceDate to yesterday (see
+			// resolveTripServiceDate below, for trips running past midnight). Its
+			// block-mates from that same service day still need to be fetched here,
+			// or the service_id IN (...) filter below excludes them entirely and
+			// NextTripId/PreviousTripId silently come back empty even though the
+			// trip's own ServiceDate is correctly resolved. calculateNextPrevFromMemory
+			// filters block trips down to the current trip's own ServiceID, so
+			// widening this to both days doesn't mix schedules across service days.
+			prevDateStr := serviceDate.AddDate(0, 0, -1).Format("20060102")
+			prevActiveServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, prevDateStr)
+			if err != nil {
+				prevActiveServiceIDs = []string{}
+				api.Logger.Warn("failed to fetch previous-day active service IDs for block logic", "error", err)
+			}
+			activeServiceIDs = append(activeServiceIDs, prevActiveServiceIDs...)
+
 			blockIDsNull := make([]sql.NullString, len(blockIDs))
 			for i, id := range blockIDs {
 				blockIDsNull[i] = nulls.String(id)

@@ -467,3 +467,89 @@ func TestBuildTripsForLocationEntries_OvernightTripServiceDate(t *testing.T) {
 			"status.serviceDate must match the entry-level serviceDate")
 	}
 }
+
+// TestBuildTripsForLocationEntries_OvernightBlockScheduleUsesPreviousDayServices
+// verifies that an overnight trip's block-mate (the next trip in the same block)
+// is still found for schedule.NextTripId, even though the request-level "today"
+// (naively derived from the query's wall-clock date, exactly as the real handler
+// computes it) doesn't cover the trips' actual, previous-day active service_id.
+// Before this fix, the block-trips lookup was scoped to only "today"'s active
+// service_ids, so an overnight block's trips — sharing yesterday's service_id —
+// were silently excluded and NextTripId/PreviousTripId came back empty even though
+// the entry's own ServiceDate correctly resolved to the previous day.
+func TestBuildTripsForLocationEntries_OvernightBlockScheduleUsesPreviousDayServices(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+
+	// A weekday-only RABA service: Nov 1, 2024 is a Friday, Nov 2 is a Saturday.
+	// The naive "today" (the day after serviceDate) must NOT be a day this service
+	// is active, or the test can't distinguish the fix from the pre-fix behavior —
+	// both would find the block's trips by coincidence.
+	serviceDate := time.Date(2024, 11, 1, 0, 0, 0, 0, loc)
+	const weekdayOnlyServiceID = "c_868_b_79978_d_31"
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	require.NoError(t, err)
+	require.Contains(t, serviceIDs, weekdayOnlyServiceID, "need this weekday-only RABA service active on serviceDate")
+	nextDayServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.AddDate(0, 0, 1).Format("20060102"))
+	require.NoError(t, err)
+	require.NotContains(t, nextDayServiceIDs, weekdayOnlyServiceID,
+		"the day after serviceDate must NOT have this service active, or the test can't discriminate the fix")
+	serviceID := weekdayOnlyServiceID
+
+	anyTrip := mustGetTrip(t, api)
+	blockID := nulls.String("tfl-overnight-block")
+
+	const dayNs = int64(24 * time.Hour)
+	firstTrip, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "tfl-overnight-first",
+		RouteID:          anyTrip.RouteID,
+		ServiceID:        serviceID,
+		BlockID:          blockID,
+		MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour)),                // 25:00
+		MaxDepartureTime: nulls.Int64(dayNs + int64(time.Hour+30*time.Minute)), // 25:30
+	})
+	require.NoError(t, err)
+
+	secondTrip, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "tfl-overnight-second",
+		RouteID:          anyTrip.RouteID,
+		ServiceID:        serviceID,
+		BlockID:          blockID,
+		MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour+40*time.Minute)), // 25:40
+		MaxDepartureTime: nulls.Int64(dayNs + 2*int64(time.Hour)),              // 26:00
+	})
+	require.NoError(t, err)
+
+	// 01:15 the day after serviceDate falls within firstTrip's 25:00-25:30 window.
+	refTime := serviceDate.AddDate(0, 0, 1).Add(75 * time.Minute)
+	// Naive request-level values, derived from refTime exactly as the real handler
+	// computes them — both land on refTime's calendar day (the day *after*
+	// serviceDate), which is the "assume today" value this fix corrects for.
+	naiveServiceDate, naiveTodayMidnight := utils.ServiceDateMidnight(nil, refTime)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	result := api.buildTripsForLocationEntries(
+		ctx,
+		[]gtfsdb.Trip{firstTrip},
+		map[string]string{firstTrip.ID: testdata.Raba.ID},
+		true,  // includeSchedule
+		false, // includeStatus
+		loc,
+		refTime,
+		naiveTodayMidnight,
+		naiveServiceDate,
+		w, r,
+	)
+
+	require.Len(t, result, 1)
+	entry := result[0]
+	require.NotNil(t, entry.Schedule, "schedule must be populated when includeSchedule=true")
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, secondTrip.ID), entry.Schedule.NextTripId,
+		"the block's next trip must be found even though the request-level serviceDate naively resolves to the day after the overnight trips' actual service day")
+}
