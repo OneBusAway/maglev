@@ -30,6 +30,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
 	includeStatus := r.URL.Query().Get("includeStatus") != "false"
 
+	// NOTE: maxCount is parsed for validation but intentionally unimplemented
+	// to match the upstream Java defect documented in the spec.
+	if _, errs := utils.ParseMaxCount(r.URL.Query(), 0, nil); len(errs) > 0 {
+		api.validationErrorResponse(w, r, errs)
+		return
+	}
+
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		api.sendNotFound(w, r)
