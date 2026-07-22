@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 const (
@@ -398,4 +403,67 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		assert.Equal(t, http.StatusBadRequest, model.Code)
 	})
+}
+
+// TestBuildTripsForLocationEntries_OvernightTripServiceDate verifies that a trip
+// whose stop_times exceed 24:00:00 (running past midnight) reports the service
+// date it actually belongs to — the previous calendar day — rather than the naive
+// "today" derived from the query's wall-clock date. Calls buildTripsForLocationEntries
+// directly since reaching this trip through the full HTTP path would additionally
+// require mocking a real-time vehicle positioned inside a matching bounding box,
+// which is orthogonal to what this test is checking.
+func TestBuildTripsForLocationEntries_OvernightTripServiceDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+	formattedDate := serviceDate.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs, "need an active RABA service on serviceDate")
+
+	anyTrip := mustGetTrip(t, api)
+
+	const dayNs = int64(24 * time.Hour)
+	overnightTrip, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "tfl-overnight-trip",
+		RouteID:          anyTrip.RouteID,
+		ServiceID:        serviceIDs[0],
+		MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour)),                // 25:00
+		MaxDepartureTime: nulls.Int64(dayNs + int64(time.Hour+30*time.Minute)), // 25:30
+	})
+	require.NoError(t, err)
+
+	// 01:15 on the day after serviceDate falls within the 25:00-25:30 window,
+	// which belongs to serviceDate's service_id, not the next day's.
+	refTime := serviceDate.AddDate(0, 0, 1).Add(75 * time.Minute)
+	_, naiveTodayMidnight := utils.ServiceDateMidnight(nil, refTime)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	result := api.buildTripsForLocationEntries(
+		ctx,
+		[]gtfsdb.Trip{overnightTrip},
+		map[string]string{overnightTrip.ID: testdata.Raba.ID},
+		false, // includeSchedule
+		true,  // includeStatus
+		loc,
+		refTime,
+		naiveTodayMidnight,
+		serviceDate,
+		w, r,
+	)
+
+	require.Len(t, result, 1)
+	entry := result[0]
+	assert.Equal(t, serviceDate.UnixMilli(), entry.ServiceDate,
+		"serviceDate must be the previous calendar day for an overnight trip, not today")
+	if entry.Status != nil {
+		assert.Equal(t, serviceDate.UnixMilli(), entry.Status.ServiceDate.UnixMilli(),
+			"status.serviceDate must match the entry-level serviceDate")
+	}
 }

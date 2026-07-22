@@ -355,6 +355,15 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 	}
 
+	// tripID comes from a live GTFS-RT vehicle report, not a schedule-window search, so
+	// its actual reported time may fall outside the trip's exact static window — same
+	// "running late/early" tolerance the spec documents for this endpoint's candidate
+	// discovery (30 min before, 10 min after; BlockStatusServiceImpl).
+	const (
+		runningLateWindow  = 30 * time.Minute
+		runningEarlyWindow = 10 * time.Minute
+	)
+
 	var result []models.TripsForLocationListEntry
 
 	for _, tripID := range validVehicleTrips {
@@ -366,6 +375,14 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		tripData, tripFound := tripsMap[tripID]
 		if !tripFound {
 			continue
+		}
+
+		// Re-resolve the service date from the trip's own schedule per trip rather than
+		// assuming "today", so a vehicle running an overnight trip reports the correct
+		// service date instead of silently falling back to today's.
+		tripServiceDate := todayMidnight
+		if resolved, ok := api.resolveTripServiceDate(ctx, tripID, currentTime, runningEarlyWindow, runningLateWindow); ok {
+			tripServiceDate = resolved
 		}
 
 		var schedule *models.TripsSchedule
@@ -395,7 +412,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, tripServiceDate, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
@@ -406,7 +423,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  tripServiceDate.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(ctx, tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
