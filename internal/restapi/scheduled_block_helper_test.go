@@ -444,10 +444,16 @@ func TestComputeScheduledBlockSnapshot_ClampedBeforeBlockStarts(t *testing.T) {
 	snap := api.computeScheduledBlockSnapshot(ctx, tripID, currentTime, rabaServiceDate)
 	require.NotNil(t, snap)
 
-	// Block hasn't started — DistanceAlongBlock clamps to first stop's distance,
-	// no active trip is selected.
+	// Block hasn't started — DistanceAlongBlock clamps to the first stop's
+	// distance. Callers must gate on InRange before trusting ActiveTrip*
+	// fields; matches Java's getScheduledBlockLocationBeforeStartOfBlock
+	// (ScheduledBlockLocationServiceImpl.java:232-235) which still returns
+	// a location with activeTrip = first block trip in the "clamped before
+	// start" case.
 	assert.Equal(t, snap.Stops[0].DistanceAlongBlock, snap.DistanceAlongBlock)
-	assert.Empty(t, snap.ActiveTripID, "no active trip when currentTime precedes the block")
+	assert.False(t, snap.InRange, "InRange must be false when currentTime precedes the block")
+	assert.Equal(t, snap.Stops[0].TripID, snap.ActiveTripID,
+		"distance-based picker resolves activeTripID to the first block trip when clamped before start")
 	// NextStopIndex should point at the first stop.
 	assert.GreaterOrEqual(t, snap.NextStopIndex, 0)
 }
