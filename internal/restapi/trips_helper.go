@@ -624,7 +624,11 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 // service_id belongs to the previous calendar day. Checks today's active services
 // first, then yesterday's (with the wall-clock comparison offset by +24h) before
 // reporting failure.
-func (api *RestAPI) resolveTripServiceDate(ctx context.Context, tripID string, referenceTime time.Time) (time.Time, bool) {
+//
+// before/after widen the trip's scheduled window by the given tolerance (e.g. to
+// match a caller's own "running late/early" slack when its trip discovery already
+// admits candidates outside the trip's exact window); pass 0, 0 for an exact match.
+func (api *RestAPI) resolveTripServiceDate(ctx context.Context, tripID string, referenceTime time.Time, before, after time.Duration) (time.Time, bool) {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil || !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
 		return time.Time{}, false
@@ -633,22 +637,24 @@ func (api *RestAPI) resolveTripServiceDate(ctx context.Context, tripID string, r
 	sinceMidnightNs := wallClockSinceMidnightNs(referenceTime)
 
 	today := utils.CalculateServiceDate(referenceTime)
-	if api.tripActiveOnDate(ctx, trip, today, sinceMidnightNs) {
+	if api.tripActiveOnDate(ctx, trip, today, sinceMidnightNs, before, after) {
 		return today, true
 	}
 
 	yesterday := utils.CalculateServiceDate(referenceTime.AddDate(0, 0, -1))
-	if api.tripActiveOnDate(ctx, trip, yesterday, sinceMidnightNs+int64(24*time.Hour)) {
+	if api.tripActiveOnDate(ctx, trip, yesterday, sinceMidnightNs+int64(24*time.Hour), before, after) {
 		return yesterday, true
 	}
 
 	return time.Time{}, false
 }
 
-// tripActiveOnDate reports whether trip's scheduled window contains sinceMidnightNs
-// and trip's service_id is among the active services on date.
-func (api *RestAPI) tripActiveOnDate(ctx context.Context, trip gtfsdb.Trip, date time.Time, sinceMidnightNs int64) bool {
-	if sinceMidnightNs < trip.MinArrivalTime.Int64 || sinceMidnightNs > trip.MaxDepartureTime.Int64 {
+// tripActiveOnDate reports whether trip's scheduled window, widened by before/after,
+// contains sinceMidnightNs, and trip's service_id is among the active services on date.
+func (api *RestAPI) tripActiveOnDate(ctx context.Context, trip gtfsdb.Trip, date time.Time, sinceMidnightNs int64, before, after time.Duration) bool {
+	windowStart := trip.MinArrivalTime.Int64 - int64(before)
+	windowEnd := trip.MaxDepartureTime.Int64 + int64(after)
+	if sinceMidnightNs < windowStart || sinceMidnightNs > windowEnd {
 		return false
 	}
 

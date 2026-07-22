@@ -72,7 +72,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	// Per spec, serviceDate is derived from the trip itself: for trips extending past
 	// midnight, the service date is the previous calendar day, not "today".
 	serviceDate := utils.CalculateServiceDate(currentTime)
-	if resolved, ok := api.resolveTripServiceDate(ctx, tripID, currentTime); ok {
+	if resolved, ok := api.resolveTripServiceDate(ctx, tripID, currentTime, 0, 0); ok {
 		serviceDate = resolved
 	}
 

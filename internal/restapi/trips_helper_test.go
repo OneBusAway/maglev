@@ -2096,14 +2096,14 @@ func TestResolveTripServiceDate(t *testing.T) {
 		midWindowNs := (sameDayTrip.MinArrivalTime.Int64 + sameDayTrip.MaxDepartureTime.Int64) / 2
 		refTime := serviceDate.Add(time.Duration(midWindowNs))
 
-		got, ok := api.resolveTripServiceDate(ctx, sameDayTrip.ID, refTime)
+		got, ok := api.resolveTripServiceDate(ctx, sameDayTrip.ID, refTime, 0, 0)
 		require.True(t, ok)
 		assert.True(t, got.Equal(serviceDate),
 			"expected resolved date %v to equal service date %v", got, serviceDate)
 	})
 
 	t.Run("returns false for an unknown trip", func(t *testing.T) {
-		_, ok := api.resolveTripServiceDate(ctx, "nonexistent-trip", serviceDate)
+		_, ok := api.resolveTripServiceDate(ctx, "nonexistent-trip", serviceDate, 0, 0)
 		assert.False(t, ok)
 	})
 
@@ -2115,7 +2115,7 @@ func TestResolveTripServiceDate(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, ok := api.resolveTripServiceDate(ctx, "sd-no-window-trip", serviceDate)
+		_, ok := api.resolveTripServiceDate(ctx, "sd-no-window-trip", serviceDate, 0, 0)
 		assert.False(t, ok)
 	})
 
@@ -2132,7 +2132,7 @@ func TestResolveTripServiceDate(t *testing.T) {
 		// 20:00 matches neither today's [8:00-8:30] window nor yesterday's
 		// (20:00 + 24h = 44:00, still outside [8:00-8:30]).
 		refTime := serviceDate.Add(20 * time.Hour)
-		_, ok := api.resolveTripServiceDate(ctx, "sd-no-match-trip", refTime)
+		_, ok := api.resolveTripServiceDate(ctx, "sd-no-match-trip", refTime, 0, 0)
 		assert.False(t, ok)
 	})
 
@@ -2150,9 +2150,76 @@ func TestResolveTripServiceDate(t *testing.T) {
 		// 01:15 on the day after serviceDate falls within the 25:00-25:30 window,
 		// which belongs to serviceDate's service_id, not the next day's.
 		refTime := serviceDate.AddDate(0, 0, 1).Add(75 * time.Minute)
-		got, ok := api.resolveTripServiceDate(ctx, "sd-rollover-trip", refTime)
+		got, ok := api.resolveTripServiceDate(ctx, "sd-rollover-trip", refTime, 0, 0)
 		require.True(t, ok)
 		assert.True(t, got.Equal(serviceDate),
 			"a trip whose window exceeds 24:00 must resolve to the previous calendar day's service date")
+	})
+
+	t.Run("tolerance widens the window before the trip's scheduled start", func(t *testing.T) {
+		_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "sd-early-tolerance-trip",
+			RouteID:          sameDayTrip.RouteID,
+			ServiceID:        serviceID,
+			MinArrivalTime:   nulls.Int64(8 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(8*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		// 07:50 is 10 minutes before the trip's 8:00 start.
+		refTime := serviceDate.Add(7*time.Hour + 50*time.Minute)
+
+		_, ok := api.resolveTripServiceDate(ctx, "sd-early-tolerance-trip", refTime, 0, 0)
+		assert.False(t, ok, "must not match without tolerance")
+
+		got, ok := api.resolveTripServiceDate(ctx, "sd-early-tolerance-trip", refTime, 10*time.Minute, 0)
+		require.True(t, ok, "must match once tolerance covers the gap before the window")
+		assert.True(t, got.Equal(serviceDate))
+	})
+
+	t.Run("tolerance widens the window after the trip's scheduled end", func(t *testing.T) {
+		_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "sd-late-tolerance-trip",
+			RouteID:          sameDayTrip.RouteID,
+			ServiceID:        serviceID,
+			MinArrivalTime:   nulls.Int64(8 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(8*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		// 09:00 is 30 minutes after the trip's 8:30 end.
+		refTime := serviceDate.Add(9 * time.Hour)
+
+		_, ok := api.resolveTripServiceDate(ctx, "sd-late-tolerance-trip", refTime, 0, 0)
+		assert.False(t, ok, "must not match without tolerance")
+
+		got, ok := api.resolveTripServiceDate(ctx, "sd-late-tolerance-trip", refTime, 0, 30*time.Minute)
+		require.True(t, ok, "must match once tolerance covers the gap after the window")
+		assert.True(t, got.Equal(serviceDate))
+	})
+
+	t.Run("tolerance combined with the previous-day rollover", func(t *testing.T) {
+		const dayNs = int64(24 * time.Hour)
+		_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "sd-rollover-tolerance-trip",
+			RouteID:          sameDayTrip.RouteID,
+			ServiceID:        serviceID,
+			MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour)),                // 25:00
+			MaxDepartureTime: nulls.Int64(dayNs + int64(time.Hour+30*time.Minute)), // 25:30
+		})
+		require.NoError(t, err)
+
+		// 00:50 the day after serviceDate is 10 minutes before the trip's 25:00
+		// (01:00) start — a candidate a buffered discovery query could admit, but
+		// outside the trip's exact window on either day without tolerance.
+		refTime := serviceDate.AddDate(0, 0, 1).Add(50 * time.Minute)
+
+		_, ok := api.resolveTripServiceDate(ctx, "sd-rollover-tolerance-trip", refTime, 0, 0)
+		assert.False(t, ok, "must not match without tolerance")
+
+		got, ok := api.resolveTripServiceDate(ctx, "sd-rollover-tolerance-trip", refTime, 10*time.Minute, 0)
+		require.True(t, ok, "must match once tolerance covers the gap before the rolled-over window")
+		assert.True(t, got.Equal(serviceDate),
+			"must still resolve to the previous calendar day's service date, not the day the reference time falls on")
 	})
 }

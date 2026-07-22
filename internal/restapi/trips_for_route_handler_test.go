@@ -36,12 +36,19 @@ const (
 	tripsForRouteHeadsign = "Test Headsign"
 )
 
+// tripsForRouteDefaultStopTimes: first stop at 11:55, last at 12:05 — pinned clock
+// at 12:00 (tripsForRouteTestClock) falls inside the handler's (-30min/+10min)
+// active window.
+const tripsForRouteDefaultStopTimes = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+	tripsForRouteTripID + ",11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+	tripsForRouteTripID + ",12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n"
+
 // createTestApiWithTripsForRouteFixture builds a RestAPI backed by a minimal
-// in-memory GTFS dataset with a single trip active at tripsForRouteTestClock.
-// This guarantees the trips-for-route handler returns at least one entry, so
-// the per-entry assertions below validate real data instead of running over
-// an empty list (the RABA fixture's block_trip_indexes don't cover this path).
-func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
+// in-memory GTFS dataset with a single trip, using the given stop_times.txt
+// content. This guarantees the trips-for-route handler returns at least one
+// entry, so the per-entry assertions below validate real data instead of running
+// over an empty list (the RABA fixture's block_trip_indexes don't cover this path).
+func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock, stopTimesCSV string) *RestAPI {
 	t.Helper()
 	ctx := context.Background()
 
@@ -59,11 +66,7 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
 			tripsForRouteRouteID + ",tfr-svc," + tripsForRouteTripID + "," + tripsForRouteHeadsign + ",0,tfr-block\n",
-		// First stop at 11:55, last at 12:05 — pinned clock at 12:00 falls inside the
-		// handler's (-30min/+10min) active window.
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			tripsForRouteTripID + ",11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
-			tripsForRouteTripID + ",12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
+		"stop_times.txt": stopTimesCSV,
 	}
 	for name, content := range files {
 		f, err := w.Create(name)
@@ -102,7 +105,7 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 }
 
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock), tripsForRouteDefaultStopTimes)
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	tests := []struct {
@@ -196,7 +199,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 }
 
 func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock), tripsForRouteDefaultStopTimes)
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	tests := []struct {
@@ -236,6 +239,48 @@ func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// tripsForRouteOvernightTestClock is 01:20 on the day after the fixture trip's
+// service day — inside the trip's 25:15-25:25 (01:15-01:25) window.
+var tripsForRouteOvernightTestClock = time.Date(2025, 6, 13, 1, 20, 0, 0, time.UTC)
+
+// tripsForRouteOvernightStopTimes: the trip runs past midnight (25:15-25:25,
+// i.e. 01:15-01:25 the next calendar day), still belonging to the service day
+// it was scheduled on rather than the day the times roll into.
+const tripsForRouteOvernightStopTimes = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+	tripsForRouteTripID + ",25:15:00,25:15:00," + tripsForRouteStop1ID + ",1\n" +
+	tripsForRouteTripID + ",25:25:00,25:25:00," + tripsForRouteStop2ID + ",2\n"
+
+// TestTripsForRouteHandler_OvernightTripServiceDate verifies that a trip whose
+// stop_times exceed 24:00:00 (running past midnight) reports the service date it
+// actually belongs to — the previous calendar day — rather than the naive "today"
+// derived from the query's wall-clock date. The block-discovery logic already
+// finds such trips via its own previous-day search; this guards the serviceDate
+// value specifically, which previously used "today" unconditionally.
+func TestTripsForRouteHandler_OvernightTripServiceDate(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteOvernightTestClock), tripsForRouteOvernightStopTimes)
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	expectedServiceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	timeMs := tripsForRouteOvernightTestClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List,
+		"the block-discovery logic's own previous-day search should find the overnight trip")
+
+	for i, entry := range model.Data.List {
+		assert.Equal(t, expectedServiceDate.UnixMilli(), entry.ServiceDate,
+			"list[%d].serviceDate must be the previous calendar day for an overnight trip, not today", i)
+		if entry.Status != nil {
+			assert.Equal(t, expectedServiceDate.UnixMilli(), entry.Status.ServiceDate.UnixMilli(),
+				"list[%d].status.serviceDate must match the entry-level serviceDate", i)
+		}
 	}
 }
 

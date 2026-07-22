@@ -322,6 +322,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
+		// The block search above already checks both today's and yesterday's active
+		// services to find trips running past midnight, but doesn't retain which day
+		// matched. Re-resolve it per trip from the trip's own schedule rather than
+		// assuming "today" so overnight trips report the correct service date. Widened
+		// by the same runningEarly/runningLate tolerance used to discover this trip in
+		// the first place (in particular, GetActiveTripsWithNullBlockForRoute admits
+		// candidates outside their exact scheduled window) — otherwise a trip found only
+		// via that slack can fail an exact-window check on both today and yesterday and
+		// silently fall back to todayMidnight.
+		tripServiceDate := todayMidnight
+		if resolved, ok := api.resolveTripServiceDate(ctx, tripID, currentTime, runningEarly, runningLate); ok {
+			tripServiceDate = resolved
+		}
+
 		var schedule *models.TripsSchedule
 		var status *models.TripStatus
 
@@ -339,7 +353,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, tripServiceDate, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
@@ -350,7 +364,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  tripServiceDate.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(r.Context(), tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
@@ -389,6 +403,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
+		// Same day resolution as the base-trip loop above. DUPLICATED trips are extra
+		// real-time runs, so the base trip's static window may not exactly contain the
+		// vehicle's actual current time even on the correct day — same tolerance applies.
+		tripServiceDate := todayMidnight
+		if resolved, ok := api.resolveTripServiceDate(ctx, baseTripID, currentTime, runningEarly, runningLate); ok {
+			tripServiceDate = resolved
+		}
+
 		var schedule *models.TripsSchedule
 		if includeSchedule {
 			var schedErr error
@@ -403,7 +425,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			status, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, tripServiceDate, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
@@ -414,7 +436,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  tripServiceDate.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(r.Context(), baseTripID),
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
