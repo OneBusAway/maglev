@@ -284,6 +284,46 @@ func TestTripsForRouteHandler_OvernightTripServiceDate(t *testing.T) {
 	}
 }
 
+// TestTripsForRouteHandler_DuplicatedTripUsesStartDate verifies that a DUPLICATED
+// trip's serviceDate is derived from the feed's own start_date rather than checked
+// against the base trip's static schedule window. DUPLICATED trips can legitimately
+// run at an entirely different time than the trip they copy, so a base-trip-window
+// check is the wrong reference point.
+//
+// Uses the overnight fixture so the route has a genuinely active trip at query time
+// (satisfying the handler's own "nothing active at all" early return) whose
+// window-derived serviceDate (2025-06-12, the previous calendar day) is deliberately
+// different from the duplicate's injected start_date (2025-06-10) — proving the
+// DUPLICATED entry's serviceDate comes from its own start_date, not a coincidental
+// match with the base trip's resolution.
+func TestTripsForRouteHandler_DuplicatedTripUsesStartDate(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteOvernightTestClock), tripsForRouteOvernightStopTimes)
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	startDate := time.Date(2025, 6, 10, 0, 0, 0, 0, time.UTC)
+	const dupTripID = tripsForRouteTripID + ".00060" // vendor-style numeric suffix, stripped back to the base trip ID
+	const dupVehicleID = "tfr-dup-vehicle"
+	api.GtfsManager.MockAddDuplicatedVehicle(dupVehicleID, dupTripID, tripsForRouteRouteID, &startDate)
+
+	timeMs := tripsForRouteOvernightTestClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	dupTripCombinedID := utils.FormCombinedID(tripsForRouteAgencyID, dupTripID)
+	var dupEntry *models.TripsForRouteListEntry
+	for i, entry := range model.Data.List {
+		if entry.TripId == dupTripCombinedID {
+			dupEntry = &model.Data.List[i]
+		}
+	}
+	require.NotNil(t, dupEntry, "the DUPLICATED vehicle should produce an entry with tripId %q", dupTripCombinedID)
+	assert.Equal(t, startDate.UnixMilli(), dupEntry.ServiceDate,
+		"a DUPLICATED trip's serviceDate must come from the feed's start_date, not the base trip's static window or today's wall-clock date")
+}
+
 func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
 )
@@ -61,6 +62,44 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 	if tripID != "" {
 		m.realTimeVehicleLookupByTrip[tripID] = idx
 	}
+}
+
+// MockAddDuplicatedVehicle registers a vehicle serving a DUPLICATED trip (GTFS-RT
+// schedule_relationship=DUPLICATED) for routeID, surfaced by GetDuplicatedVehiclesForRoute.
+// When startDate is non-nil, it's set as the trip's GTFS-RT start_date, mirroring a feed
+// that supplies one for the duplicate.
+func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, startDate *time.Time) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	for _, v := range m.realTimeVehicles {
+		if v.ID != nil && v.ID.ID == vehicleID {
+			return
+		}
+	}
+	now := time.Now()
+	tripDescriptor := gtfs.TripID{
+		ID:                   tripID,
+		RouteID:              routeID,
+		ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+	}
+	if startDate != nil {
+		tripDescriptor.HasStartDate = true
+		tripDescriptor.StartDate = *startDate
+	}
+	vehicle := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip:      &gtfs.Trip{ID: tripDescriptor},
+	}
+	m.realTimeVehicles = append(m.realTimeVehicles, vehicle)
+
+	idx := len(m.realTimeVehicles) - 1
+	m.realTimeVehicleLookupByVehicle[vehicleID] = idx
+	if tripID != "" {
+		m.realTimeVehicleLookupByTrip[tripID] = idx
+	}
+	m.duplicatedVehicleByRoute[routeID] = append(m.duplicatedVehicleByRoute[routeID], vehicle)
 }
 
 type MockVehicleOptions struct {
