@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,7 +90,7 @@ func TestSearchStopsHandlerWhitespaceOnlyInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"   "}}))
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"    "}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Empty(t, stopsResp.Data.List)
@@ -184,6 +185,41 @@ func TestSanitizeFTS5Query(t *testing.T) {
 			assert.Equal(t, tt.expected, out)
 		})
 	}
+}
+
+func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Query "montg @ lib" tests that special chars are sanitized (@ removed) and multi-word prefix matching works.
+	// Based on testdata (raba.zip), we expect this to match stop ID "25_8006" ("Montgomery Creek (SR 299 @ Montgomery Creek Library)").
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"montg @ lib"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.NotEmpty(t, stopsResp.Data.List, "Expected prefix intersection matching to return results")
+
+	matched := false
+	for _, stop := range stopsResp.Data.List {
+		if stop.ID == "25_8006" && strings.Contains(stop.Name, "Montgomery") && strings.Contains(stop.Name, "Library") {
+			matched = true
+			break
+		}
+	}
+	assert.True(t, matched, "Expected results to contain stop ID '25_8006' ('Montgomery Creek (SR 299 @ Montgomery Creek Library)')")
+}
+
+func TestSearchStopsHandlerIgnoredPunctuation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// The hyphen is not stripped by sanitization but is filtered out by term extraction
+	// since it lacks alphanumeric characters. This triggers the empty-query path.
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.Empty(t, stopsResp.Data.List)
 }
 
 func TestSearchStopsHandlerReferencesSorting(t *testing.T) {

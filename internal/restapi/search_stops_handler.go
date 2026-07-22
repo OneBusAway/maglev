@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
@@ -34,6 +35,21 @@ func sanitizeFTS5Query(input string) string {
 	return sanitized
 }
 
+// extractFTS5Terms splits sanitized input into terms and filters out stray punctuation
+// (such as "/" or "-") that FTS5 tokenizes to nothing and would otherwise cause syntax errors.
+func extractFTS5Terms(sanitizedQuery string) []string {
+	rawTerms := strings.Fields(sanitizedQuery)
+	terms := make([]string, 0, len(rawTerms))
+	for _, term := range rawTerms {
+		if strings.ContainsFunc(term, func(r rune) bool {
+			return unicode.IsLetter(r) || unicode.IsDigit(r)
+		}) {
+			terms = append(terms, term)
+		}
+	}
+	return terms
+}
+
 // searchStopsHandler searches for stops matching a user-provided query string
 // using full-text search, with optional geographic bounds filtering.
 func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
@@ -55,14 +71,19 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Sanitize and construct FTS5 query
 	sanitizedQuery := sanitizeFTS5Query(query)
+	terms := extractFTS5Terms(sanitizedQuery)
 
-	if sanitizedQuery == "" {
+	if len(terms) == 0 {
 		response := models.NewListResponseWithRange([]models.Stop{}, *models.NewEmptyReferences(), false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
 
-	searchQuery := `"` + sanitizedQuery + `*"`
+	queryTerms := make([]string, len(terms))
+	for i, term := range terms {
+		queryTerms[i] = `"` + term + `"*`
+	}
+	searchQuery := strings.Join(queryTerms, " AND ")
 
 	searchParams := gtfsdb.SearchStopsByNameParams{
 		SearchQuery: searchQuery,
@@ -83,7 +104,12 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 				"sanitized_input", sanitizedQuery,
 			)
 
-			searchQuery = `"` + sanitizedQuery + `"`
+			fallbackTerms := make([]string, len(terms))
+			for i, term := range terms {
+				fallbackTerms[i] = `"` + term + `"`
+			}
+			searchQuery = strings.Join(fallbackTerms, " AND ")
+
 			searchParams.SearchQuery = searchQuery
 
 			stops, err = api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
