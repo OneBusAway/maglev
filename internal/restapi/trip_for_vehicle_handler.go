@@ -65,7 +65,16 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
+	// trip-for-vehicle has no documented serviceDate request parameter — legacy Java's
+	// TripForVehicleAction has no corresponding setter, and no client sends one.
+	// (params.ServiceDate is populated only because parseTripParams is shared with
+	// trip-details, which does document one; it's intentionally not read here.)
+	// Per spec, serviceDate is derived from the trip itself: for trips extending past
+	// midnight, the service date is the previous calendar day, not "today".
+	serviceDate := utils.CalculateServiceDate(currentTime)
+	if resolved, ok := api.resolveTripServiceDate(ctx, tripID, currentTime); ok {
+		serviceDate = resolved
+	}
 
 	var status *models.TripStatus
 	if params.IncludeStatus {
@@ -118,7 +127,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:  models.NewModelTime(midnight),
+		ServiceDate:  models.NewModelTime(serviceDate),
 		Frequency:    nil,
 		Status:       status,
 		Schedule:     schedule,

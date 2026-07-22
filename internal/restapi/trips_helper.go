@@ -617,6 +617,54 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	return int(seq), true
 }
 
+// resolveTripServiceDate determines which calendar service date a trip belongs to
+// for a given wall-clock reference time. GTFS allows stop times to exceed 24:00:00
+// for trips that run past midnight (e.g. 25:30:00 for 1:30 AM the next day), so a
+// trip's scheduled window can still be open after local midnight while its
+// service_id belongs to the previous calendar day. Checks today's active services
+// first, then yesterday's (with the wall-clock comparison offset by +24h) before
+// reporting failure.
+func (api *RestAPI) resolveTripServiceDate(ctx context.Context, tripID string, referenceTime time.Time) (time.Time, bool) {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil || !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+		return time.Time{}, false
+	}
+
+	sinceMidnightNs := wallClockSinceMidnightNs(referenceTime)
+
+	today := utils.CalculateServiceDate(referenceTime)
+	if api.tripActiveOnDate(ctx, trip, today, sinceMidnightNs) {
+		return today, true
+	}
+
+	yesterday := utils.CalculateServiceDate(referenceTime.AddDate(0, 0, -1))
+	if api.tripActiveOnDate(ctx, trip, yesterday, sinceMidnightNs+int64(24*time.Hour)) {
+		return yesterday, true
+	}
+
+	return time.Time{}, false
+}
+
+// tripActiveOnDate reports whether trip's scheduled window contains sinceMidnightNs
+// and trip's service_id is among the active services on date.
+func (api *RestAPI) tripActiveOnDate(ctx context.Context, trip gtfsdb.Trip, date time.Time, sinceMidnightNs int64) bool {
+	if sinceMidnightNs < trip.MinArrivalTime.Int64 || sinceMidnightNs > trip.MaxDepartureTime.Int64 {
+		return false
+	}
+
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, date.Format("20060102"))
+	if err != nil {
+		return false
+	}
+
+	for _, serviceID := range activeServiceIDs {
+		if serviceID == trip.ServiceID {
+			return true
+		}
+	}
+	return false
+}
+
 // calculatePreciseDistanceAlongTripWithCoords calculates the distance along a trip's shape to a stop
 // This optimized version accepts pre-calculated cumulative distances and stop coordinates
 func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(

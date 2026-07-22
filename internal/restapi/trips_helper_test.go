@@ -2056,3 +2056,103 @@ func testTripIDs(trips []gtfsdb.Trip) []string {
 	}
 	return ids
 }
+
+func TestResolveTripServiceDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	// Monday within the RABA dataset's active service period.
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
+	formattedDate := serviceDate.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs, "need an active RABA service on serviceDate")
+	serviceID := serviceIDs[0]
+
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	// Find a real trip that is actually active on serviceDate, with a resolvable window.
+	var sameDayTrip gtfsdb.Trip
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.MinArrivalTime.Valid || !row.MaxDepartureTime.Valid {
+			continue
+		}
+		for _, sid := range serviceIDs {
+			if sid == row.ServiceID {
+				sameDayTrip = row
+				break
+			}
+		}
+		if sameDayTrip.ID != "" {
+			break
+		}
+	}
+	require.NotEmpty(t, sameDayTrip.ID, "need a trip active on serviceDate in test data")
+
+	t.Run("resolves the same calendar day when the reference time falls within the trip's window", func(t *testing.T) {
+		midWindowNs := (sameDayTrip.MinArrivalTime.Int64 + sameDayTrip.MaxDepartureTime.Int64) / 2
+		refTime := serviceDate.Add(time.Duration(midWindowNs))
+
+		got, ok := api.resolveTripServiceDate(ctx, sameDayTrip.ID, refTime)
+		require.True(t, ok)
+		assert.True(t, got.Equal(serviceDate),
+			"expected resolved date %v to equal service date %v", got, serviceDate)
+	})
+
+	t.Run("returns false for an unknown trip", func(t *testing.T) {
+		_, ok := api.resolveTripServiceDate(ctx, "nonexistent-trip", serviceDate)
+		assert.False(t, ok)
+	})
+
+	t.Run("returns false when the trip has no scheduled window", func(t *testing.T) {
+		_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:        "sd-no-window-trip",
+			RouteID:   sameDayTrip.RouteID,
+			ServiceID: serviceID,
+		})
+		require.NoError(t, err)
+
+		_, ok := api.resolveTripServiceDate(ctx, "sd-no-window-trip", serviceDate)
+		assert.False(t, ok)
+	})
+
+	t.Run("returns false when the reference time falls outside the window on both days", func(t *testing.T) {
+		_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "sd-no-match-trip",
+			RouteID:          sameDayTrip.RouteID,
+			ServiceID:        serviceID,
+			MinArrivalTime:   nulls.Int64(8 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(8*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		// 20:00 matches neither today's [8:00-8:30] window nor yesterday's
+		// (20:00 + 24h = 44:00, still outside [8:00-8:30]).
+		refTime := serviceDate.Add(20 * time.Hour)
+		_, ok := api.resolveTripServiceDate(ctx, "sd-no-match-trip", refTime)
+		assert.False(t, ok)
+	})
+
+	t.Run("resolves a past-midnight trip to the previous calendar day", func(t *testing.T) {
+		const dayNs = int64(24 * time.Hour)
+		_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "sd-rollover-trip",
+			RouteID:          sameDayTrip.RouteID,
+			ServiceID:        serviceID,
+			MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour)),                // 25:00
+			MaxDepartureTime: nulls.Int64(dayNs + int64(time.Hour+30*time.Minute)), // 25:30
+		})
+		require.NoError(t, err)
+
+		// 01:15 on the day after serviceDate falls within the 25:00-25:30 window,
+		// which belongs to serviceDate's service_id, not the next day's.
+		refTime := serviceDate.AddDate(0, 0, 1).Add(75 * time.Minute)
+		got, ok := api.resolveTripServiceDate(ctx, "sd-rollover-trip", refTime)
+		require.True(t, ok)
+		assert.True(t, got.Equal(serviceDate),
+			"a trip whose window exceeds 24:00 must resolve to the previous calendar day's service date")
+	})
+}
