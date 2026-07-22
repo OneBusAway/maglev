@@ -290,6 +290,11 @@ func TestTripsForRouteHandler_MaxCountValidation(t *testing.T) {
 			maxCount:     "abc",
 			expectStatus: http.StatusBadRequest,
 		},
+		{
+			name:         "maxCount at limit",
+			maxCount:     "250",
+			expectStatus: http.StatusOK,
+		},
 	}
 
 	timeMs := tripsForRouteTestClock.UnixMilli()
