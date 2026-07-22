@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -263,6 +264,59 @@ func TestTripForVehicleHandler_ServiceDateParamIgnored(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, serviceDate.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli(),
 		"serviceDate must be derived from the trip's own schedule, not the unsupported query parameter")
+}
+
+// TestTripForVehicleHandler_OvernightTripRunningLate verifies that serviceDate
+// resolution tolerates a live-tracked vehicle reporting a few minutes past its
+// trip's static scheduled window — an ordinary "running late" occurrence — rather
+// than only matching an exact window. Without tolerance, resolveTripServiceDate
+// fails to match on either day and silently falls back to today's wall-clock date,
+// reproducing the exact bug this endpoint's serviceDate resolution exists to fix.
+func TestTripForVehicleHandler_OvernightTripRunningLate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+	formattedDate := serviceDate.Format("20060102")
+
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs, "need an active RABA service on serviceDate")
+
+	anyTrip := mustGetTrip(t, api)
+
+	const dayNs = int64(24 * time.Hour)
+	overnightTrip, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "tfv-overnight-running-late-trip",
+		RouteID:          anyTrip.RouteID,
+		ServiceID:        serviceIDs[0],
+		MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour)),                // 25:00
+		MaxDepartureTime: nulls.Int64(dayNs + int64(time.Hour+30*time.Minute)), // 25:30
+	})
+	require.NoError(t, err)
+
+	// 01:33 the day after serviceDate — 3 minutes past the trip's 25:30 (01:30)
+	// scheduled end. A vehicle still finishing its trip is routine, not an edge case.
+	refTime := serviceDate.AddDate(0, 0, 1).Add(1*time.Hour + 33*time.Minute)
+
+	const mockVehicleID = "MOCK_VEHICLE_OVERNIGHT_LATE"
+	combinedRouteID := utils.FormCombinedID(testdata.Raba.ID, overnightTrip.RouteID)
+	api.GtfsManager.MockAddAgency(testdata.Raba.ID, "unitrans")
+	api.GtfsManager.MockAddRoute(combinedRouteID, testdata.Raba.ID, combinedRouteID)
+	api.GtfsManager.MockAddVehicle(mockVehicleID, overnightTrip.ID, combinedRouteID)
+	vehicleID := utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		tripForVehicleURL(vehicleID, url.Values{"time": {fmt.Sprintf("%d", refTime.UnixMilli())}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, serviceDate.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli(),
+		"a vehicle reported a few minutes past its trip's scheduled end must still resolve to the trip's actual (previous-day) service date, not today's")
 }
 
 func TestTripForVehicleHandlerWithTimeParameter(t *testing.T) {

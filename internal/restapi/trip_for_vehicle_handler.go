@@ -71,8 +71,20 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	// trip-details, which does document one; it's intentionally not read here.)
 	// Per spec, serviceDate is derived from the trip itself: for trips extending past
 	// midnight, the service date is the previous calendar day, not "today".
+	//
+	// tripID comes from a live GTFS-RT vehicle report, not a schedule-window search, so
+	// its actual reported time may fall outside the trip's exact static window even on
+	// the correct day (e.g. a vehicle still lingering a few minutes past its trip's
+	// scheduled end). Without tolerance, that case fails to resolve on either day and
+	// falls back to "today" — silently reproducing the bug this resolution exists to fix.
+	// Same "running late/early" tolerance as trips-for-route/trips-for-location
+	// (30 min before, 10 min after; BlockStatusServiceImpl).
+	const (
+		runningLateWindow  = 30 * time.Minute
+		runningEarlyWindow = 10 * time.Minute
+	)
 	serviceDate := utils.CalculateServiceDate(currentTime)
-	if resolved, ok := api.resolveTripServiceDate(ctx, tripID, currentTime, 0, 0); ok {
+	if resolved, ok := api.resolveTripServiceDate(ctx, tripID, currentTime, runningEarlyWindow, runningLateWindow); ok {
 		serviceDate = resolved
 	}
 
