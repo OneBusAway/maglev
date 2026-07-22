@@ -216,7 +216,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		
+
 		if allSpecial {
 			continue
 		}
