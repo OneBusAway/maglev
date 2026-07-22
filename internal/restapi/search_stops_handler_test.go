@@ -322,6 +322,19 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('valid_route_1', 'RABA', 'Valid Route', 3);
 		INSERT INTO trips (id, route_id, service_id) VALUES ('valid_trip_1', 'valid_route_1', 'service_1');
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'valid_bus_stop', 1, 28800, 28800);
+
+		-- Stop with 2 school bus routes (type 712) to test allSpecial logic
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('two_school_routes_stop', 'Double School Bus Stop', 40.0, -120.0, 0);
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('school_route_2', 'RABA', 'School Route 2', 712);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('school_trip_2', 'school_route_2', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'two_school_routes_stop', 2, 28800, 28800);
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_2', 'two_school_routes_stop', 1, 28800, 28800);
+
+		-- Stops for maxCount filtering test
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_ghost_1', 'Limit Test Ghost 1', 40.0, -120.0, 0);
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_ghost_2', 'Limit Test Ghost 2', 40.0, -120.0, 0);
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_valid_3', 'Limit Test Valid 3', 40.0, -120.0, 0);
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'limit_valid_3', 2, 28800, 28800);
 	`)
 	require.NoError(t, err)
 
@@ -340,4 +353,17 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Len(t, stopsResp.Data.List, 1, "Expected Valid Bus Stop to be included")
 	assert.True(t, strings.HasSuffix(stopsResp.Data.List[0].ID, "valid_bus_stop"))
+
+	// Test exclusion of stop with multiple special routes
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Double School"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, stopsResp.Data.List, "Expected Double School Bus Stop to be excluded (all routes are 712)")
+
+	// Test maxCount filtering scenario
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Limit Test"}, "maxCount": {"2"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.True(t, stopsResp.Data.LimitExceeded, "Expected LimitExceeded to be true because FTS query matched 3 limits")
+	// The final list will have length <= 2. Because FTS limits to 2+1=3, PaginateSlice truncates to 2.
+	// Out of the 2, at least one (limit_ghost_1 or limit_ghost_2) will be filtered out.
+	assert.LessOrEqual(t, len(stopsResp.Data.List), 1, "Expected at most 1 item after filtering truncated results")
 }

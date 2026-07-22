@@ -203,12 +203,22 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if len(routeIDs) == 1 {
-			if t, ok := routeTypes[routeIDs[0]]; ok {
-				if t == 711 || t == 712 || t == 713 || t == 714 {
-					continue
+		allSpecial := true
+		for _, rID := range routeIDs {
+			if t, ok := routeTypes[rID]; ok {
+				if t != 711 && t != 712 && t != 713 && t != 714 {
+					allSpecial = false
+					break
 				}
+			} else {
+				// If we can't find the route type, assume it's normal so we don't accidentally hide it
+				allSpecial = false
+				break
 			}
+		}
+		
+		if allSpecial {
+			continue
 		}
 
 		name := ""
