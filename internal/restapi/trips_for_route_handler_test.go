@@ -463,6 +463,94 @@ func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
 	}
 }
 
+func TestTripsForRouteHandler_MaxCountValidation(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	tests := []struct {
+		name         string
+		maxCount     string
+		expectStatus int
+	}{
+		{
+			name:         "No maxCount (default)",
+			maxCount:     "",
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "Valid maxCount",
+			maxCount:     "100",
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "maxCount zero",
+			maxCount:     "0",
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "maxCount negative",
+			maxCount:     "-1",
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "maxCount exceeds limit",
+			maxCount:     "300",
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "maxCount invalid",
+			maxCount:     "abc",
+			expectStatus: http.StatusBadRequest,
+		},
+		{
+			name:         "maxCount at limit",
+			maxCount:     "250",
+			expectStatus: http.StatusOK,
+		},
+	}
+
+	timeMs := tripsForRouteTestClock.UnixMilli()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+				combinedRouteID, timeMs)
+			if tt.maxCount != "" {
+				url += "&maxCount=" + tt.maxCount
+			}
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+			assert.Equal(t, tt.expectStatus, resp.StatusCode)
+			if tt.expectStatus != http.StatusOK {
+				assert.Equal(t, tt.expectStatus, model.Code)
+				_, ok := model.Data.FieldErrors["maxCount"]
+				assert.True(t, ok, "response should contain a fieldError for maxCount")
+			}
+		})
+	}
+}
+
+func TestTripsForRouteHandler_MaxCountDoesNotTruncate(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := tripsForRouteTestClock.UnixMilli()
+
+	baseURL := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+		combinedRouteID, timeMs)
+
+	// First request without maxCount parameter
+	resp1, model1 := callAPIHandler[TripsForRouteResponse](t, api, baseURL)
+	require.Equal(t, http.StatusOK, resp1.StatusCode)
+	initialCount := len(model1.Data.List)
+
+	// Second request with maxCount=1
+	resp2, model2 := callAPIHandler[TripsForRouteResponse](t, api, baseURL+"&maxCount=1")
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+	maxCountOneCount := len(model2.Data.List)
+
+	assert.Equal(t, initialCount, maxCountOneCount, "result count with maxCount=1 must be identical to result count without maxCount")
+}
 func TestStripNumericSuffix(t *testing.T) {
 	tests := []struct {
 		input    string

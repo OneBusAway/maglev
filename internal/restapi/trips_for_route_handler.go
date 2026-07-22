@@ -32,6 +32,18 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	includeTrip := parseIncludeTrip(r.URL.Query())
 	includeReferences := ShouldIncludeReferences(r)
 
+	// NOTE: maxCount is intentionally unimplemented to match the upstream Java defect
+	// documented in the spec (TripsForRouteAction accepts any integer without range limits).
+	// We only reject non-numeric inputs (which cause a 400 upstream via Struts2 type conversion).
+	if maxCountStr := r.URL.Query().Get("maxCount"); maxCountStr != "" {
+		if _, err := strconv.Atoi(maxCountStr); err != nil {
+			api.validationErrorResponse(w, r, map[string][]string{
+				"maxCount": {`Invalid field value for field "maxCount".`},
+			})
+			return
+		}
+	}
+
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
