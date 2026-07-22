@@ -43,20 +43,3 @@ func TestAgenciesWithCoverageHandlerEndToEnd(t *testing.T) {
 	assert.Empty(t, model.Data.References.Stops)
 	assert.Empty(t, model.Data.References.Trips)
 }
-
-func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
-	// Test data (raba.zip) has 1 agency
-	api := createTestApi(t)
-
-	_, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&limit=1")
-	assert.Len(t, model.Data.List, 1)
-	assert.False(t, model.Data.LimitExceeded)
-
-	_, model = callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&limit=0")
-	assert.Len(t, model.Data.List, 1)
-	assert.False(t, model.Data.LimitExceeded)
-
-	_, model = callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
-	assert.Len(t, model.Data.List, 0)
-	assert.False(t, model.Data.LimitExceeded)
-}

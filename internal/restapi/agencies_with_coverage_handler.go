@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 // agenciesWithCoverageHandler returns all transit agencies along with their geographic coverage areas.
@@ -23,9 +22,10 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	agencies, limitExceeded := utils.PaginateSlice(agencies, offset, limit)
+	// Pagination is intentionally omitted for this endpoint to strictly align
+	// with the OneBusAway specification, which defines that maxCount is
+	// accepted but not applied, and limitExceeded is always false.
+	limitExceeded := false
 
 	boundsMap := api.GtfsManager.GetRegionBounds()
 	// Important to use an empty slice rather than nil so that empty json responses don't return nil.
