@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -337,24 +338,89 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding)
+		VALUES ('parent_stat_2', 'P2', 'Parent Station Two', 40.0, -120.0, 1, 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_2', 'C2', 'Child Stop Two', 40.0, -120.0, 0, 'parent_stat_2', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO routes (id, agency_id, short_name, type)
+		VALUES ('route_parent_test_2', '888', 'RT-P2', 3)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO trips (id, route_id, service_id)
+		VALUES ('trip_parent_test_2', 'route_parent_test_2', 'service_1')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test_2', 'child_stop_2', 1, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_unmapped', 'C3', 'Child Stop Unmapped', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
 	t.Cleanup(func() {
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id = 'trip_parent_test'`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id = 'trip_parent_test'`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id = 'route_parent_test'`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1')`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2')`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_unmapped')`)
 	})
 
-	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop One"}}))
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
 
-	require.Len(t, stopsResp.Data.List, 1)
-	childStop := stopsResp.Data.List[0]
-	assert.Equal(t, "999_child_stop_1", childStop.ID)
-	assert.Equal(t, "999_parent_stat_1", childStop.Parent)
+	require.Len(t, stopsResp.Data.List, 3)
 
-	require.Len(t, stopsResp.Data.References.Stops, 1, "Expected 1 parent station in references.stops")
-	parentStop := stopsResp.Data.References.Stops[0]
-	assert.Equal(t, "999_parent_stat_1", parentStop.ID)
-	assert.Equal(t, "Parent Station One", parentStop.Name)
+	var child1, child2, childUnmapped *models.Stop
+	for i := range stopsResp.Data.List {
+		if strings.Contains(stopsResp.Data.List[i].Name, "One") {
+			child1 = &stopsResp.Data.List[i]
+		} else if strings.Contains(stopsResp.Data.List[i].Name, "Two") {
+			child2 = &stopsResp.Data.List[i]
+		} else if strings.Contains(stopsResp.Data.List[i].Name, "Unmapped") {
+			childUnmapped = &stopsResp.Data.List[i]
+		}
+	}
+	require.NotNil(t, child1)
+	require.NotNil(t, child2)
+	require.NotNil(t, childUnmapped)
+
+	assert.Equal(t, "999_child_stop_1", child1.ID)
+	assert.Equal(t, "999_parent_stat_1", child1.Parent)
+
+	assert.Equal(t, "888_child_stop_2", child2.ID)
+	assert.Equal(t, "888_parent_stat_2", child2.Parent)
+
+	assert.Equal(t, "child_stop_unmapped", childUnmapped.ID)
+	assert.Equal(t, "parent_stat_1", childUnmapped.Parent)
+
+	require.Len(t, stopsResp.Data.References.Stops, 2, "Expected 2 parent stations in references.stops")
+	var p1, p2 *models.Stop
+	for i := range stopsResp.Data.References.Stops {
+		if stopsResp.Data.References.Stops[i].ID == "999_parent_stat_1" {
+			p1 = &stopsResp.Data.References.Stops[i]
+		} else if stopsResp.Data.References.Stops[i].ID == "888_parent_stat_2" {
+			p2 = &stopsResp.Data.References.Stops[i]
+		}
+	}
+	require.NotNil(t, p1)
+	require.NotNil(t, p2)
+	assert.Equal(t, "Parent Station One", p1.Name)
+	assert.Equal(t, "Parent Station Two", p2.Name)
 }
