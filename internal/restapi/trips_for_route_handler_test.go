@@ -251,6 +251,51 @@ func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
+func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := tripsForRouteTestClock.UnixMilli()
+
+	tests := []struct {
+		name         string
+		extraQuery   string
+		wantSchedule bool
+		wantStatus   bool
+	}{
+		{name: "defaults", extraQuery: "", wantSchedule: true, wantStatus: true},
+		{name: "schedule=true", extraQuery: "includeSchedule=true", wantSchedule: true, wantStatus: true},
+		{name: "schedule=false", extraQuery: "includeSchedule=false", wantSchedule: false, wantStatus: true},
+		{name: "schedule=junk defaults to false", extraQuery: "includeSchedule=junk", wantSchedule: false, wantStatus: true},
+		{name: "status=junk defaults to false", extraQuery: "includeStatus=junk", wantSchedule: true, wantStatus: false},
+		{name: "status=false", extraQuery: "includeStatus=false", wantSchedule: true, wantStatus: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+			if tt.extraQuery != "" {
+				url += "&" + tt.extraQuery
+			}
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.List)
+			for i, entry := range model.Data.List {
+				if tt.wantSchedule {
+					require.NotNil(t, entry.Schedule, "list[%d].schedule should be present", i)
+				} else {
+					assert.Nil(t, entry.Schedule, "list[%d].schedule should be nil", i)
+				}
+				if tt.wantStatus {
+					require.NotNil(t, entry.Status, "list[%d].status should be non-nil", i)
+				} else {
+					assert.Nil(t, entry.Status, "list[%d].status should be nil", i)
+				}
+			}
+		})
+	}
+}
+
 func TestStripNumericSuffix(t *testing.T) {
 	tests := []struct {
 		input    string
