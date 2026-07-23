@@ -268,6 +268,9 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 		{name: "schedule=junk defaults to false", extraQuery: "includeSchedule=junk", wantSchedule: false, wantStatus: true},
 		{name: "status=junk defaults to false", extraQuery: "includeStatus=junk", wantSchedule: true, wantStatus: false},
 		{name: "status=false", extraQuery: "includeStatus=false", wantSchedule: true, wantStatus: false},
+		{name: "schedule empty defaults to false", extraQuery: "includeSchedule=", wantSchedule: false, wantStatus: true},
+		{name: "status empty defaults to false", extraQuery: "includeStatus=", wantSchedule: true, wantStatus: false},
+		{name: "status=true", extraQuery: "includeStatus=true", wantSchedule: true, wantStatus: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
