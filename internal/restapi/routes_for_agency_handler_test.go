@@ -75,6 +75,30 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 	}
 }
 
+func TestRoutesForAgencyHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		"/api/where/routes-for-agency/25.json?key=TEST&includeReferences=false")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List, "list must still be populated")
+	assert.Empty(t, model.Data.References.Agencies, "references must be suppressed when includeReferences=false")
+}
+
+func TestRoutesForAgencyHandlerIncludeReferencesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		"/api/where/routes-for-agency/25.json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies,
+		"references default to populated when includeReferences is absent")
+}
+
 // TestRoutesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
 // returns all routes with limitExceeded=false (no result cap).
 func TestRoutesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
