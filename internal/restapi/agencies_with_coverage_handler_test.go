@@ -78,6 +78,7 @@ func TestAgenciesWithCoverageHandlerIncludeReferencesFalse(t *testing.T) {
 	assert.Len(t, model.Data.List, 1)
 
 	// But References.Agencies should be explicitly empty, not containing Raba
+	assert.NotNil(t, model.Data.References.Agencies)
 	assert.Empty(t, model.Data.References.Agencies)
 	assert.Empty(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Situations)
