@@ -83,6 +83,56 @@ func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Rout
 	return modelRoutes, nil
 }
 
+// routeReferencesForStops deduplicates the rows returned by GetRoutesForStops into Route
+// reference objects, keyed by each row's own agency ID so results spanning multiple
+// agencies are handled correctly.
+func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.Route {
+	routesMap := make(map[string]models.Route)
+	for _, row := range routesRows {
+		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
+		if _, exists := routesMap[combinedRouteID]; exists {
+			continue
+		}
+
+		routesMap[combinedRouteID] = models.NewRoute(
+			combinedRouteID,
+			row.AgencyID,
+			nulls.StringOrEmpty(row.ShortName),
+			nulls.StringOrEmpty(row.LongName),
+			nulls.StringOrEmpty(row.Desc),
+			models.RouteType(row.Type),
+			nulls.StringOrEmpty(row.Url),
+			nulls.StringOrEmpty(row.Color),
+			nulls.StringOrEmpty(row.TextColor))
+	}
+
+	return utils.MapValues(routesMap)
+}
+
+// agencyReferencesForStops deduplicates the rows returned by GetAgenciesForStops into
+// AgencyReference objects, reusing AgencyReferenceFromDatabase for the field mapping.
+func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []models.AgencyReference {
+	agenciesMap := make(map[string]models.AgencyReference)
+	for _, row := range agencyRows {
+		if _, exists := agenciesMap[row.ID]; exists {
+			continue
+		}
+
+		agenciesMap[row.ID] = models.AgencyReferenceFromDatabase(&gtfsdb.Agency{
+			ID:       row.ID,
+			Name:     row.Name,
+			Url:      row.Url,
+			Timezone: row.Timezone,
+			Lang:     row.Lang,
+			Phone:    row.Phone,
+			FareUrl:  row.FareUrl,
+			Email:    row.Email,
+		})
+	}
+
+	return utils.MapValues(agenciesMap)
+}
+
 func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 

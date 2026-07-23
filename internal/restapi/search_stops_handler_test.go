@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func searchStopsURL(params url.Values) string {
@@ -88,7 +90,7 @@ func TestSearchStopsHandlerWhitespaceOnlyInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"   "}}))
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"    "}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Empty(t, stopsResp.Data.List)
@@ -183,6 +185,92 @@ func TestSanitizeFTS5Query(t *testing.T) {
 			assert.Equal(t, tt.expected, out)
 		})
 	}
+}
+
+func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Query "montg @ lib" tests that special chars are sanitized (@ removed) and multi-word prefix matching works.
+	// Based on testdata (raba.zip), we expect this to match stop ID "25_8006" ("Montgomery Creek (SR 299 @ Montgomery Creek Library)").
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"montg @ lib"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.NotEmpty(t, stopsResp.Data.List, "Expected prefix intersection matching to return results")
+
+	matched := false
+	for _, stop := range stopsResp.Data.List {
+		if stop.ID == "25_8006" && strings.Contains(stop.Name, "Montgomery") && strings.Contains(stop.Name, "Library") {
+			matched = true
+			break
+		}
+	}
+	assert.True(t, matched, "Expected results to contain stop ID '25_8006' ('Montgomery Creek (SR 299 @ Montgomery Creek Library)')")
+}
+
+func TestSearchStopsHandlerIgnoredPunctuation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// The hyphen is not stripped by sanitization but is filtered out by term extraction
+	// since it lacks alphanumeric characters. This triggers the empty-query path.
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.Empty(t, stopsResp.Data.List)
+}
+
+func TestSearchStopsHandlerReferencesSorting(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	routes := stopsResp.Data.References.Routes
+	require.GreaterOrEqual(t, len(routes), 2, "expected at least two routes to verify sorting behavior")
+	for i := 1; i < len(routes); i++ {
+		keyA := routes[i-1].ShortName
+		if keyA == "" {
+			keyA = routes[i-1].LongName
+		}
+		keyB := routes[i].ShortName
+		if keyB == "" {
+			keyB = routes[i].LongName
+		}
+		assert.LessOrEqual(t, utils.NaturalCompare(keyA, keyB), 0, "routes inside references must be naturally sorted by ShortName/LongName")
+	}
+
+	agencies := stopsResp.Data.References.Agencies
+	require.NotEmpty(t, agencies, "expected at least one agency in references")
+	for i := 1; i < len(agencies); i++ {
+		assert.LessOrEqual(t, agencies[i-1].ID, agencies[i].ID, "agencies inside references must be sorted alphabetically by ID")
+	}
+}
+
+func TestSearchStopsHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{
+		"input":             {"Buenaventura"},
+		"includeReferences": {"false"},
+	}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	// We should still get stops in the list
+	require.NotEmpty(t, stopsResp.Data.List)
+
+	// But all reference arrays should be completely empty
+	assert.Empty(t, stopsResp.Data.References.Agencies)
+	assert.Empty(t, stopsResp.Data.References.Routes)
+	assert.Empty(t, stopsResp.Data.References.Situations)
+	assert.Empty(t, stopsResp.Data.References.Stops)
 }
 
 func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
