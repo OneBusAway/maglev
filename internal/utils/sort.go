@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 )
 
@@ -56,10 +57,29 @@ func SortRoutesByName(routes []gtfsdb.Route) {
 	})
 }
 
+// SortModelRoutesByName sorts models.Route values naturally by ShortName
+// (falling back to LongName), then by AgencyID, then by ID.
+func SortModelRoutesByName(routes []models.Route) {
+	slices.SortFunc(routes, func(a, b models.Route) int {
+		return compareRouteSortKeys(modelRouteSortKey(a), modelRouteSortKey(b))
+	})
+}
+
+// SortAgencyReferencesByID sorts models.AgencyReference values alphabetically by ID.
+func SortAgencyReferencesByID(agencies []models.AgencyReference) {
+	slices.SortFunc(agencies, func(a, b models.AgencyReference) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+}
+
 func routesForStopRowSortKey(r gtfsdb.GetRoutesForStopRow) RouteSortKey {
 	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
 }
 
 func routeSortKey(r gtfsdb.Route) RouteSortKey {
 	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
+}
+
+func modelRouteSortKey(r models.Route) RouteSortKey {
+	return RouteSortKey{r.ShortName, r.LongName, r.AgencyID, r.ID}
 }

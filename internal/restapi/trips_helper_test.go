@@ -403,17 +403,19 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 	routeID := trips[0].RouteID
 	vehicleID := "VEHICLE_POS_TEST"
 
+	// Set currentTime during the trip using the first stop's arrival time
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, routeID, internalgtfs.MockVehicleOptions{
+		Timestamp: &currentTime,
 		Position: &gtfs.Position{
 			Latitude:  &lat,
 			Longitude: &lon,
 		},
 	})
-
-	// Set currentTime during the trip using the first stop's arrival time
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
-	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
@@ -536,16 +538,18 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	lon := float32(stops[0].Lon)
 	vehicleID := "VEHICLE_SHAPE_TEST"
 
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, routeID, internalgtfs.MockVehicleOptions{
+		Timestamp: &currentTime,
 		Position: &gtfs.Position{
 			Latitude:  &lat,
 			Longitude: &lon,
 		},
 	})
-
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
-	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
@@ -929,9 +933,15 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	routeID := trips[0].RouteID
 	vehicleID := "VEHICLE_STOPID_TEST"
 
-	// Mark the vehicle as STOPPED_AT to exercise the StopID + isStoppedAt branch
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	// Mark the vehicle as STOPPED_AT to exercise the StopID + isStoppedAt branch.
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	stoppedAt := gtfs.CurrentStatus(1)
 	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, routeID, internalgtfs.MockVehicleOptions{
+		Timestamp: &currentTime,
 		Position: &gtfs.Position{
 			Latitude:  &lat,
 			Longitude: &lon,
@@ -939,10 +949,6 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 		StopID:        &midStopID,
 		CurrentStatus: &stoppedAt,
 	})
-
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
-	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
@@ -1038,11 +1044,14 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 	trip := mustGetTrip(t, api)
 	tripID := trip.ID
 
-	now := time.Now()
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	canceledRelationship := gtfsrt.TripDescriptor_CANCELED
 	vehicle := &gtfs.Vehicle{
 		ID:        &gtfs.VehicleID{ID: "canceled-vehicle"},
-		Timestamp: &now,
+		Timestamp: &currentTime,
 		Trip: &gtfs.Trip{
 			ID: gtfs.TripID{
 				ID:                   tripID,
@@ -1050,9 +1059,6 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 			},
 		},
 	}
-
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	currentTime := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
 	require.NoError(t, err)

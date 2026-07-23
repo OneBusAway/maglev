@@ -40,10 +40,10 @@ Check whether the branch is linked to a GitHub issue. If so, fetch it.
 
 **Working tree (empty argument):**
 ```bash
-git diff HEAD --name-only
+git diff main...HEAD --name-only
 git status --short
 ```
-Check whether the current branch is linked to a GitHub issue. If so, fetch it.
+`git diff main...HEAD` captures the branch's full committed divergence from `main`, not just uncommitted edits — a branch can be entirely committed (and pushed as a PR) with nothing left in the working tree. `git status --short` additionally surfaces any uncommitted changes on top of that. Check whether the current branch is linked to a GitHub issue, or has an open PR (`gh pr list --head <branch>`). If so, fetch it.
 
 ### 2. Partition the changes
 
