@@ -349,6 +349,7 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Single Special"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Empty(t, stopsResp.Data.List, "Expected Single Special Stop to be excluded (single route type 712)")
+	assert.Empty(t, stopsResp.Data.References.Routes, "Expected excluded stop's routes to not leak into references")
 
 	// Test valid bus inclusion
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Valid Bus"}}))
