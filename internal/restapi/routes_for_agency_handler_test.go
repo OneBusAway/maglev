@@ -75,43 +75,29 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 	}
 }
 
-func TestRoutesForAgencyHandlerPagination(t *testing.T) {
+// TestRoutesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
+// returns all routes with limitExceeded=false (no result cap).
+func TestRoutesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	var results []models.Route
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&limit=5")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Len(t, model.Data.List, 5)
-	assert.True(t, model.Data.LimitExceeded)
-	results = append(results, model.Data.List...)
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST")
 
-	resp, model = callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&offset=5&limit=5")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Len(t, model.Data.List, 5)
-	assert.True(t, model.Data.LimitExceeded)
-	results = append(results, model.Data.List...)
-
-	resp, model = callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&offset=10&limit=5")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Len(t, model.Data.List, 3)
-	assert.False(t, model.Data.LimitExceeded)
-	results = append(results, model.Data.List...)
-
-	assert.ElementsMatch(t, testdata.RabaRoutes, results)
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must always be false")
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List, "all matching routes must be returned")
 }
 
-func TestRoutesForAgencyHandlerLimitExceedsMax(t *testing.T) {
+// TestRoutesForAgencyHandler_IgnoresPaginationParams verifies that limit, maxCount,
+// and offset do not truncate the result; all routes are returned.
+func TestRoutesForAgencyHandler_IgnoresPaginationParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&limit=100")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		"/api/where/routes-for-agency/25.json?key=TEST&limit=5&maxCount=1&offset=1")
 
-	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List)
-	assert.False(t, model.Data.LimitExceeded, "limitExceeded should be false when all items returned")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must remain false")
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List, "pagination params must not truncate the result")
 }

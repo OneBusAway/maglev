@@ -32,9 +32,6 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	routesForAgency, limitExceeded := utils.PaginateSlice(routesForAgency, offset, limit)
 	routesList := make([]models.Route, 0, len(routesForAgency))
 
 	for _, route := range routesForAgency {
@@ -55,6 +52,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		models.AgencyReferenceFromDatabase(agency),
 	}
 
-	response := models.NewListResponse(routesList, *references, limitExceeded, api.Clock)
+	// Spec: this endpoint returns all matching routes, so limitExceeded is always false.
+	response := models.NewListResponse(routesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
