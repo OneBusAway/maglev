@@ -403,21 +403,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// A DUPLICATED trip can run at an entirely different service date/time than the
-		// base trip it copies (that's what DUPLICATED means: an extra run of the same
-		// pattern, not a slightly-off-schedule instance of it), so the base trip's own
-		// static window is the wrong thing to check against the vehicle's current time.
-		// When the feed supplies an explicit start_date for the duplicate, that's the
-		// authoritative service date. Only fall back to the base-trip window/tolerance
-		// check — the same one the base-trip loop above uses for genuine schedule slop —
-		// when the feed omits start_date.
-		tripServiceDate := todayMidnight
-		if vehicle.Trip.ID.HasStartDate {
-			sd := vehicle.Trip.ID.StartDate
-			tripServiceDate = time.Date(sd.Year(), sd.Month(), sd.Day(), 0, 0, 0, 0, currentLocation)
-		} else if resolved, ok := api.resolveTripServiceDate(ctx, baseTripID, currentTime, runningEarly, runningLate); ok {
-			tripServiceDate = resolved
-		}
+		// GTFS-RT requires start_date on a DUPLICATED trip's descriptor — it's the only
+		// authoritative service date for a trip that, by definition, may run at an
+		// entirely different date/time than the base trip it copies. Legacy OBA
+		// (DuplicatedTripServiceParserImpl) makes the same assumption: it always derives
+		// the service date from the feed's start_date, never from the base trip's static
+		// schedule.
+		sd := vehicle.Trip.ID.StartDate
+		tripServiceDate := time.Date(sd.Year(), sd.Month(), sd.Day(), 0, 0, 0, 0, currentLocation)
 
 		var schedule *models.TripsSchedule
 		if includeSchedule {

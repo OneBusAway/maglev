@@ -303,7 +303,7 @@ func TestTripsForRouteHandler_DuplicatedTripUsesStartDate(t *testing.T) {
 	startDate := time.Date(2025, 6, 10, 0, 0, 0, 0, time.UTC)
 	const dupTripID = tripsForRouteTripID + ".00060" // vendor-style numeric suffix, stripped back to the base trip ID
 	const dupVehicleID = "tfr-dup-vehicle"
-	api.GtfsManager.MockAddDuplicatedVehicle(dupVehicleID, dupTripID, tripsForRouteRouteID, &startDate)
+	api.GtfsManager.MockAddDuplicatedVehicle(dupVehicleID, dupTripID, tripsForRouteRouteID, startDate)
 
 	timeMs := tripsForRouteOvernightTestClock.UnixMilli()
 	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)

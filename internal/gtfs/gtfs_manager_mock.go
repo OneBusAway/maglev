@@ -66,9 +66,10 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 
 // MockAddDuplicatedVehicle registers a vehicle serving a DUPLICATED trip (GTFS-RT
 // schedule_relationship=DUPLICATED) for routeID, surfaced by GetDuplicatedVehiclesForRoute.
-// When startDate is non-nil, it's set as the trip's GTFS-RT start_date, mirroring a feed
-// that supplies one for the duplicate.
-func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, startDate *time.Time) {
+// startDate is set as the trip's GTFS-RT start_date, mirroring a real feed — GTFS-RT
+// requires start_date on a DUPLICATED trip's descriptor, so there's no "absent" case
+// to simulate.
+func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, startDate time.Time) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
 
@@ -82,10 +83,8 @@ func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, st
 		ID:                   tripID,
 		RouteID:              routeID,
 		ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
-	}
-	if startDate != nil {
-		tripDescriptor.HasStartDate = true
-		tripDescriptor.StartDate = *startDate
+		HasStartDate:         true,
+		StartDate:            startDate,
 	}
 	vehicle := gtfs.Vehicle{
 		ID:        &gtfs.VehicleID{ID: vehicleID},
