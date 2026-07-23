@@ -1,275 +1,155 @@
 package restapi
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
+	"maps"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
+
+func searchStopsURL(params url.Values) string {
+	q := url.Values{"key": {"TEST"}}
+	maps.Copy(q, params)
+	return "/api/where/search/stop.json?" + q.Encode()
+}
 
 func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	// Try without key
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/search/stop.json?input=test")
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, "/api/where/search/stop.json?input=test")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	assert.Equal(t, http.StatusUnauthorized, model.Code)
-	assert.Equal(t, "permission denied", model.Text)
+	assert.Equal(t, http.StatusUnauthorized, stopsResp.Code)
+	assert.Equal(t, "permission denied", stopsResp.Text)
 
-	// Try with invalid key
-	resp, _ = serveApiAndRetrieveEndpoint(t, api, "/api/where/search/stop.json?input=test&key=invalid")
+	resp, _ = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"test"}, "key": {"invalid"}}))
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
 func TestSearchStopsHandlerMissingInput(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/api/where/search/stop.json?key=TEST")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{}))
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-
-	var errorResponse struct {
-		Code int `json:"code"`
-		Data struct {
-			FieldErrors map[string][]string `json:"fieldErrors"`
-		} `json:"data"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
-	require.NoError(t, err)
-
-	assert.Contains(t, errorResponse.Data.FieldErrors, "input")
+	assert.Contains(t, stopsResp.Data.FieldErrors, "input")
 }
 
 func TestSearchStopsHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	stops := mustGetStops(t, api)
-	require.NotEmpty(t, stops)
-	targetStop := stops[0]
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}}))
 
-	query := url.QueryEscape(targetStop.Name.String)
-	reqUrl := fmt.Sprintf("/api/where/search/stop.json?key=TEST&input=%s", query)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.Equal(t, "OK", stopsResp.Text)
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
+	require.NotEmpty(t, stopsResp.Data.List)
+	assert.False(t, stopsResp.Data.LimitExceeded)
+	assert.False(t, stopsResp.Data.OutOfRange)
 
-	resp, err := http.Get(server.URL + reqUrl)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
+	for _, stop := range stopsResp.Data.List {
+		assert.NotEmpty(t, stop.ID)
+		assert.NotEmpty(t, stop.Name)
+		assert.NotZero(t, stop.Lat)
+		assert.NotZero(t, stop.Lon)
+	}
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, string(bodyBytes))
-
-	var model models.ResponseModel
-	err = json.Unmarshal(bodyBytes, &model)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, "OK", model.Text)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	assert.Equal(t, false, data["limitExceeded"])
-	assert.Equal(t, false, data["outOfRange"])
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, list)
-
-	firstResult, ok := list[0].(map[string]any)
-	require.True(t, ok)
-
-	assert.NotEmpty(t, firstResult["id"])
-	assert.NotEmpty(t, firstResult["name"])
-	assert.NotEmpty(t, firstResult["lat"])
-	assert.NotEmpty(t, firstResult["lon"])
-
-	references, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	agenciesRef, ok := references["agencies"].([]any)
-	assert.True(t, ok)
-	assert.NotEmpty(t, agenciesRef)
+	assert.NotEmpty(t, stopsResp.Data.References.Agencies)
 }
 
 func TestSearchStopsHandlerNoResults(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(
-		t,
-		api,
-		"/api/where/search/stop.json?key=TEST&input=NonExistentStopName12345",
-	)
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"NonExistentStopName12345"}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-	assert.Empty(t, list)
+	assert.Empty(t, stopsResp.Data.List)
 }
 
 func TestSearchStopsHandlerMaxCount(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	stops := mustGetStops(t, api)
-	if len(stops) < 2 {
-		t.Skip("Not enough stops")
-	}
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {"1"}}))
 
-	targetStop := stops[0]
-	query := url.QueryEscape(targetStop.Name.String)
-
-	reqUrl := fmt.Sprintf(
-		"/api/where/search/stop.json?key=TEST&input=%s&maxCount=1",
-		query,
-	)
-
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + reqUrl)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, string(bodyBytes))
-
-	var model models.ResponseModel
-	err = json.Unmarshal(bodyBytes, &model)
-	require.NoError(t, err)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-
-	assert.LessOrEqual(t, len(list), 1)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.LessOrEqual(t, len(stopsResp.Data.List), 1)
 }
 
 func TestSearchStopsHandlerWhitespaceOnlyInput(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(
-		t,
-		api,
-		"/api/where/search/stop.json?key=TEST&input=%20%20%20",
-	)
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"    "}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-
-	assert.Empty(t, list)
+	assert.Empty(t, stopsResp.Data.List)
 }
 
 func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	query := url.QueryEscape(`*()"`)
-	resp, model := serveApiAndRetrieveEndpoint(
-		t,
-		api,
-		"/api/where/search/stop.json?key=TEST&input="+query,
-	)
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {`*()"`}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-
-	assert.Empty(t, list)
+	assert.Empty(t, stopsResp.Data.List)
 }
 
 func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
-	api := createTestApi(t)
-
-	stops := mustGetStops(t, api)
-	require.NotEmpty(t, stops)
-
-	targetStop := stops[0]
-	query := url.QueryEscape(targetStop.Name.String)
-
 	tests := []struct {
-		name     string
-		maxCount string
+		name           string
+		maxCount       string
+		expectedStatus int
+		expectError    bool
 	}{
-		{"zero", "0"},
-		{"negative", "-1"},
-		{"tooLarge", "101"},
+		{"omitted", "", http.StatusOK, false},
+		{"valid", "10", http.StatusOK, false},
+		{"zero", "0", http.StatusBadRequest, true},
+		{"negative", "-1", http.StatusBadRequest, true},
+		{"tooLarge", "251", http.StatusBadRequest, true},
+		{"nonInteger", "abc", http.StatusBadRequest, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reqUrl := fmt.Sprintf(
-				"/api/where/search/stop.json?key=TEST&input=%s&maxCount=%s",
-				query,
-				tt.maxCount,
-			)
+			api := createTestApi(t)
+			defer api.Shutdown()
 
-			resp, model := serveApiAndRetrieveEndpoint(t, api, reqUrl)
+			params := url.Values{"input": {"Buenaventura"}}
+			if tt.maxCount != "" {
+				params.Set("maxCount", tt.maxCount)
+			}
+			resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(params))
 
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-			data, ok := model.Data.(map[string]any)
-			require.True(t, ok)
-
-			list, ok := data["list"].([]any)
-			require.True(t, ok)
-
-			assert.NotEmpty(t, list)
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			if tt.expectError {
+				assert.Contains(t, stopsResp.Data.FieldErrors, "maxCount")
+			} else {
+				assert.NotEmpty(t, stopsResp.Data.List)
+			}
 		})
 	}
 }
 
 func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
-	query := url.QueryEscape(`test" OR "1"="1`)
-	resp, model := serveApiAndRetrieveEndpoint(
-		t,
-		api,
-		"/api/where/search/stop.json?key=TEST&input="+query,
-	)
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {`test" OR "1"="1`}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-
-	assert.Less(t, len(list), 50)
+	assert.LessOrEqual(t, len(stopsResp.Data.List), 20)
 }
 
 func TestSanitizeFTS5Query(t *testing.T) {
@@ -278,101 +158,25 @@ func TestSanitizeFTS5Query(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "whitespace only",
-			input:    "     ",
-			expected: "",
-		},
-		{
-			name:     "all special characters",
-			input:    `"*()`,
-			expected: "",
-		},
-		{
-			name:     "mixed case operators AND",
-			input:    "test AND foo",
-			expected: "test foo",
-		},
-		{
-			name:     "mixed case operators And",
-			input:    "test And foo",
-			expected: "test foo",
-		},
-		{
-			name:     "mixed case operators aNd",
-			input:    "test aNd foo",
-			expected: "test foo",
-		},
-		{
-			name:     "consecutive operators",
-			input:    "foo AND AND bar",
-			expected: "foo bar",
-		},
-		{
-			name:     "operator at beginning",
-			input:    "AND test",
-			expected: "test",
-		},
-		{
-			name:     "operator at end",
-			input:    "test OR",
-			expected: "test",
-		},
-		{
-			name:     "unicode input",
-			input:    "中央駅 テスト",
-			expected: "中央駅 テスト",
-		},
-		{
-			name:     "colon character",
-			input:    "column:value",
-			expected: "column value",
-		},
-		{
-			name:     "caret character",
-			input:    "test^2",
-			expected: "test 2",
-		},
-		{
-			name:     "curly braces",
-			input:    "test{foo}bar",
-			expected: "test foo bar",
-		},
-		{
-			name:     "square brackets",
-			input:    "test[foo]bar",
-			expected: "test foo bar",
-		},
-		{
-			name:     "angle brackets",
-			input:    "test<foo>bar",
-			expected: "test foo bar",
-		},
-		{
-			name:     "tilde character",
-			input:    "test~2",
-			expected: "test 2",
-		},
-		{
-			name:     "pipe character",
-			input:    "test|foo",
-			expected: "test foo",
-		},
-		{
-			name:     "NEAR operator",
-			input:    "test NEAR foo",
-			expected: "test foo",
-		},
-		{
-			name:     "NEAR operator mixed case",
-			input:    "test near foo",
-			expected: "test foo",
-		},
+		{"empty string", "", ""},
+		{"whitespace only", "     ", ""},
+		{"all special characters", `"*()`, ""},
+		{"mixed case operators AND", "test AND foo", "test foo"},
+		{"mixed case operators And", "test And foo", "test foo"},
+		{"mixed case operators aNd", "test aNd foo", "test foo"},
+		{"consecutive operators", "foo AND AND bar", "foo bar"},
+		{"operator at beginning", "AND test", "test"},
+		{"operator at end", "test OR", "test"},
+		{"unicode input", "中央駅 テスト", "中央駅 テスト"},
+		{"colon character", "column:value", "column value"},
+		{"caret character", "test^2", "test 2"},
+		{"curly braces", "test{foo}bar", "test foo bar"},
+		{"square brackets", "test[foo]bar", "test foo bar"},
+		{"angle brackets", "test<foo>bar", "test foo bar"},
+		{"tilde character", "test~2", "test 2"},
+		{"pipe character", "test|foo", "test foo"},
+		{"NEAR operator", "test NEAR foo", "test foo"},
+		{"NEAR operator mixed case", "test near foo", "test foo"},
 	}
 
 	for _, tt := range tests {
@@ -381,4 +185,117 @@ func TestSanitizeFTS5Query(t *testing.T) {
 			assert.Equal(t, tt.expected, out)
 		})
 	}
+}
+
+func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Query "montg @ lib" tests that special chars are sanitized (@ removed) and multi-word prefix matching works.
+	// Based on testdata (raba.zip), we expect this to match stop ID "25_8006" ("Montgomery Creek (SR 299 @ Montgomery Creek Library)").
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"montg @ lib"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.NotEmpty(t, stopsResp.Data.List, "Expected prefix intersection matching to return results")
+
+	matched := false
+	for _, stop := range stopsResp.Data.List {
+		if stop.ID == "25_8006" && strings.Contains(stop.Name, "Montgomery") && strings.Contains(stop.Name, "Library") {
+			matched = true
+			break
+		}
+	}
+	assert.True(t, matched, "Expected results to contain stop ID '25_8006' ('Montgomery Creek (SR 299 @ Montgomery Creek Library)')")
+}
+
+func TestSearchStopsHandlerIgnoredPunctuation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// The hyphen is not stripped by sanitization but is filtered out by term extraction
+	// since it lacks alphanumeric characters. This triggers the empty-query path.
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+	assert.Empty(t, stopsResp.Data.List)
+}
+
+func TestSearchStopsHandlerReferencesSorting(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	routes := stopsResp.Data.References.Routes
+	require.GreaterOrEqual(t, len(routes), 2, "expected at least two routes to verify sorting behavior")
+	for i := 1; i < len(routes); i++ {
+		keyA := routes[i-1].ShortName
+		if keyA == "" {
+			keyA = routes[i-1].LongName
+		}
+		keyB := routes[i].ShortName
+		if keyB == "" {
+			keyB = routes[i].LongName
+		}
+		assert.LessOrEqual(t, utils.NaturalCompare(keyA, keyB), 0, "routes inside references must be naturally sorted by ShortName/LongName")
+	}
+
+	agencies := stopsResp.Data.References.Agencies
+	require.NotEmpty(t, agencies, "expected at least one agency in references")
+	for i := 1; i < len(agencies); i++ {
+		assert.LessOrEqual(t, agencies[i-1].ID, agencies[i].ID, "agencies inside references must be sorted alphabetically by ID")
+	}
+}
+
+func TestSearchStopsHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{
+		"input":             {"Buenaventura"},
+		"includeReferences": {"false"},
+	}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	// We should still get stops in the list
+	require.NotEmpty(t, stopsResp.Data.List)
+
+	// But all reference arrays should be completely empty
+	assert.Empty(t, stopsResp.Data.References.Agencies)
+	assert.Empty(t, stopsResp.Data.References.Routes)
+	assert.Empty(t, stopsResp.Data.References.Situations)
+	assert.Empty(t, stopsResp.Data.References.Stops)
+}
+
+func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Establish a baseline of total available records for the test query.
+	respAll, stopsRespAll := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {"100"}}))
+	require.Equal(t, http.StatusOK, respAll.StatusCode)
+	require.False(t, stopsRespAll.Data.LimitExceeded, "Expected LimitExceeded to be false when retrieving the complete result set")
+
+	totalMatches := len(stopsRespAll.Data.List)
+	require.Greater(t, totalMatches, 1, "Test requires a minimum of 2 matching records in the mock data")
+
+	// Verify strict boundary condition where the requested limit equals total records.
+	exactCountStr := strconv.Itoa(totalMatches)
+	respExact, stopsRespExact := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {exactCountStr}}))
+	assert.Equal(t, http.StatusOK, respExact.StatusCode)
+	assert.False(t, stopsRespExact.Data.LimitExceeded, "Expected LimitExceeded to be false when maxCount exactly matches total available records")
+	assert.Len(t, stopsRespExact.Data.List, totalMatches)
+
+	// Verify pagination flag triggers correctly when results exceed the requested limit.
+	exceededCountStr := strconv.Itoa(totalMatches - 1)
+	respExceeded, stopsRespExceeded := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Buenaventura"}, "maxCount": {exceededCountStr}}))
+	assert.Equal(t, http.StatusOK, respExceeded.StatusCode)
+	assert.True(t, stopsRespExceeded.Data.LimitExceeded, "Expected LimitExceeded to be true when available records exceed maxCount")
+	assert.Len(t, stopsRespExceeded.Data.List, totalMatches-1)
 }

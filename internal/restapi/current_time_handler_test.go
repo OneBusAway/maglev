@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func TestCurrentTimeHandlerRequiresValidApiKey(t *testing.T) {
@@ -26,7 +27,7 @@ func TestCurrentTimeHandler(t *testing.T) {
 	// Check basic response structure
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
-	assert.Equal(t, 2, model.Version)
+	assert.Equal(t, models.APIVersion, model.Version)
 
 	// Get the current time to compare with response time
 	now := time.Now().UnixNano() / int64(time.Millisecond)

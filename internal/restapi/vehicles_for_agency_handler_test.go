@@ -2,12 +2,14 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -15,11 +17,13 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
@@ -31,6 +35,24 @@ func vehiclesForAgencyURL(agencyID string, params ...url.Values) string {
 		maps.Copy(q, p)
 	}
 	return "/api/where/vehicles-for-agency/" + agencyID + ".json?" + q.Encode()
+}
+
+// fetchRawData returns the response "data" object as raw JSON keys so tests can
+// assert field presence, not just decoded zero values.
+func fetchRawData(t testing.TB, api *RestAPI, endpoint string) map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data
 }
 
 func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
@@ -48,6 +70,7 @@ func TestVehiclesForAgencyHandlerRequiresValidApiKey(t *testing.T) {
 func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
+	require.NotNil(t, api.GtfsManager, "api.GtfsManager should not be nil!")
 
 	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
 
@@ -69,6 +92,11 @@ func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.Empty(t, model.Data.List)
+
+	data := fetchRawData(t, api, vehiclesForAgencyURL("nonexistent"))
+	raw, ok := data["outOfRange"]
+	require.True(t, ok, "outOfRange key must be present in the response payload")
+	assert.JSONEq(t, "false", string(raw), "unknown agency must return outOfRange=false (Extension 3a)")
 }
 
 // TestVehiclesForAgencyHandler_OccupancyPropagation verifies that when a vehicle
@@ -238,6 +266,497 @@ func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
 		"expected a trip reference with routeId=%q (combined agencyID_routeID format)", expectedRouteID)
 }
 
+// findVehicleStatusByID returns the entry with the given vehicleId, or nil.
+func findVehicleStatusByID(list []models.VehicleStatus, vehicleID string) *models.VehicleStatus {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
+// TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
+// returns all vehicles with limitExceeded=false (no result cap).
+func TestVehiclesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_le_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must always be false")
+	assert.Len(t, model.Data.List, 3, "all matching vehicles must be returned")
+}
+
+// TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset verifies that maxCount and
+// offset do not truncate the result; all vehicles are returned.
+func TestVehiclesForAgencyHandler_IgnoresMaxCountAndOffset(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_1", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_2", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+	api.GtfsManager.MockAddVehicleWithOptions("v_pg_3", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"maxCount": {"1"}, "offset": {"1"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must remain false")
+	assert.Len(t, model.Data.List, 3, "maxCount/offset must not truncate the result")
+}
+
+// vehiclesForAgencyContainsID reports whether the response list contains a vehicle
+// with the given ID.
+func vehiclesForAgencyContainsID(list []models.VehicleStatus, vehicleID string) bool {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return true
+		}
+	}
+	return false
+}
+
+// fetchVehiclesForAgencyRawList returns the data.list entries as raw JSON maps so
+// tests can assert field presence, not just decoded zero values.
+func fetchVehiclesForAgencyRawList(t testing.TB, api *RestAPI, endpoint string) []map[string]json.RawMessage {
+	t.Helper()
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + endpoint)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Data struct {
+			List []map[string]json.RawMessage `json:"list"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	return envelope.Data.List
+}
+
+// rawEntryByVehicleID returns the raw entry whose vehicleId matches, or nil.
+func rawEntryByVehicleID(t testing.TB, list []map[string]json.RawMessage, vehicleID string) map[string]json.RawMessage {
+	t.Helper()
+	for _, entry := range list {
+		if string(entry["vehicleId"]) == `"`+vehicleID+`"` {
+			return entry
+		}
+	}
+	return nil
+}
+
+// findVehicleInList returns the entry with the given vehicleId, or nil.
+func findVehicleInList(list []models.VehicleStatus, vehicleID string) *models.VehicleStatus {
+	for i := range list {
+		if list[i].VehicleID == vehicleID {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
+// findTripWithBlock returns the first trip with a non-empty BlockID satisfying
+// pred, searching up to 200 trips. Returns the zero value if none match.
+func findTripWithBlock(t testing.TB, api *RestAPI, ctx context.Context, pred func(gtfsdb.Trip) bool) gtfsdb.Trip {
+	t.Helper()
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	for _, tr := range trips {
+		if !tr.BlockID.Valid || tr.BlockID.String == "" {
+			continue
+		}
+		if pred(tr) {
+			return tr
+		}
+	}
+	return gtfsdb.Trip{}
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceResolved verifies that a vehicle on
+// a trip with a block active on the reference date gets a resolved (>= 0) sequence.
+func TestVehiclesForAgencyHandler_BlockTripSequenceResolved(t *testing.T) {
+	// Monday within the RABA dataset's active service period.
+	serviceDate := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, ok := api.blockTripSequence(ctx, row.ID, serviceDate)
+		return ok
+	})
+	require.NotEmpty(t, blockTrip.ID, "need a trip with a resolvable block sequence in test data")
+
+	const vehicleID = "v_block_seq"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must be a resolved zero-based index")
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceUnavailable verifies that a vehicle
+// whose trip has no resolvable block sequence gets blockTripSequence = -1.
+func TestVehiclesForAgencyHandler_BlockTripSequenceUnavailable(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	// A synthetic trip ID that does not exist in the DB has no block.
+	const vehicleID = "v_block_seq_none"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, "nonexistent-trip", trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.Equal(t, -1, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must be -1 when the sequence is unavailable")
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime verifies that
+// blockTripSequence is resolved against the request's `time` parameter rather
+// than the server's wall-clock "now".
+func TestVehiclesForAgencyHandler_BlockTripSequenceUsesRequestedTime(t *testing.T) {
+	// "Now" is set far outside the RABA feed's service calendar (2024-2025), so no
+	// trip's block sequence can resolve against api.Clock.Now().
+	farFutureNow := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(farFutureNow))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// The requested reference time, which does fall within the active service
+	// window and has a resolvable block sequence.
+	requestedTime := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	ctx := context.Background()
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, ok := api.blockTripSequence(ctx, row.ID, requestedTime)
+		return ok
+	})
+	require.NotEmpty(t, blockTrip.ID, "need a trip with a block sequence resolvable on requestedTime in test data")
+
+	const vehicleID = "v_block_seq_reftime"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"time": {strconv.FormatInt(requestedTime.UnixMilli(), 10)}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must resolve using the requested `time` parameter, not api.Clock.Now()")
+}
+
+// TestVehiclesForAgencyHandler_BlockTripSequenceUsesAgencyLocalDate verifies that,
+// when no `time` parameter is supplied, blockTripSequence resolves against the
+// agency's local calendar date rather than the server clock's own timezone.
+func TestVehiclesForAgencyHandler_BlockTripSequenceUsesAgencyLocalDate(t *testing.T) {
+	// 2024-11-09 04:00 UTC is Saturday in UTC, but still Friday 20:00 in RABA's
+	// agency timezone (America/Los_Angeles, UTC-8 in November).
+	mockNow := time.Date(2024, 11, 9, 4, 0, 0, 0, time.UTC)
+	agencyLocalFriday := time.Date(2024, 11, 8, 12, 0, 0, 0, time.UTC)
+
+	api := createTestApiWithClock(t, clock.NewMockClock(mockNow))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	blockTrip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		_, resolvesFriday := api.blockTripSequence(ctx, row.ID, agencyLocalFriday)
+		_, resolvesSaturday := api.blockTripSequence(ctx, row.ID, mockNow)
+		return resolvesFriday && !resolvesSaturday
+	})
+	require.NotEmpty(t, blockTrip.ID,
+		"need a trip whose block resolves Friday but not Saturday in test data")
+
+	const vehicleID = "v_block_seq_tz"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, blockTrip.ID, blockTrip.RouteID, gtfs.MockVehicleOptions{})
+
+	// No `time` param: the handler must localize "now" to the agency's timezone
+	// (still Friday locally), not use the un-localized UTC instant (already
+	// Saturday).
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	assert.GreaterOrEqual(t, entry.TripStatus.BlockTripSequence, 0,
+		"blockTripSequence must resolve against the agency's local calendar date, not the server clock's UTC date")
+}
+
+// ageFilterClock is a fixed reference time used by the ageInSeconds tests so the
+// fresh/stale vehicle timestamps are deterministic relative to api.Clock.Now().
+var ageFilterClock = time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+
+// TestVehiclesForAgencyHandler_AgeInSecondsFiltersStale verifies that a positive
+// ageInSeconds excludes vehicles whose last update is older than the cutoff while
+// retaining fresh ones.
+func TestVehiclesForAgencyHandler_AgeInSecondsFiltersStale(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	freshTS := ageFilterClock.Add(-30 * time.Second)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_fresh", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &freshTS,
+	})
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"60"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_fresh"),
+		"vehicle updated within ageInSeconds must be retained")
+	assert.False(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale"),
+		"vehicle older than ageInSeconds must be excluded")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsZeroFiltersStrictly verifies that an
+// explicit ageInSeconds=0 applies a strict 0-second cutoff, excluding stale vehicles.
+func TestVehiclesForAgencyHandler_AgeInSecondsZeroFiltersStrictly(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_zero", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"0"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.False(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_zero"),
+		"ageInSeconds=0 must apply a strict cutoff and exclude stale vehicles")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter verifies that a
+// negative ageInSeconds disables the staleness filter.
+func TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_neg", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	params := url.Values{"ageInSeconds": {"-5"}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_neg"),
+		"negative ageInSeconds must disable the filter and return all vehicles")
+}
+
+// TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter verifies that omitting
+// ageInSeconds returns all vehicles regardless of staleness.
+func TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	staleTS := ageFilterClock.Add(-10 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("v_stale_absent", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Timestamp: &staleTS,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_absent"),
+		"absent ageInSeconds must return all vehicles regardless of age")
+}
+
+// TestVehiclesForAgencyHandler_UpdateTimesZeroWhenNoUpdate verifies that
+// lastUpdateTime / lastLocationUpdateTime are emitted as 0 when the vehicle has
+// no update time, on both the outer entry and tripStatus.
+func TestVehiclesForAgencyHandler_UpdateTimesZeroWhenNoUpdate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_no_ts", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		NoTimestamp: true,
+	})
+
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, "v_no_ts")
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+
+	assert.Equal(t, "0", string(entry["lastUpdateTime"]), "outer lastUpdateTime must be 0 when no update")
+	assert.Equal(t, "0", string(entry["lastLocationUpdateTime"]), "outer lastLocationUpdateTime must be 0 when no update")
+
+	var tripStatus map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry["tripStatus"], &tripStatus))
+	assert.Equal(t, "0", string(tripStatus["lastUpdateTime"]), "tripStatus.lastUpdateTime must be 0 when no update")
+	assert.Equal(t, "0", string(tripStatus["lastLocationUpdateTime"]), "tripStatus.lastLocationUpdateTime must be 0 when no update")
+}
+
+// TestVehiclesForAgencyHandler_UpdateTimesPresentWhenSet verifies that
+// lastUpdateTime / lastLocationUpdateTime are present (Unix ms) when the vehicle
+// has an update time, on both the outer entry and tripStatus.
+func TestVehiclesForAgencyHandler_UpdateTimesPresentWhenSet(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_with_ts", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	list := fetchVehiclesForAgencyRawList(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := rawEntryByVehicleID(t, list, "v_with_ts")
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+
+	updateRaw, hasUpdate := entry["lastUpdateTime"]
+	locRaw, hasLocUpdate := entry["lastLocationUpdateTime"]
+	require.True(t, hasUpdate, "outer lastUpdateTime must be present when set")
+	require.True(t, hasLocUpdate, "outer lastLocationUpdateTime must be present when set")
+	assert.NotEqual(t, "0", string(updateRaw), "lastUpdateTime must be a real timestamp, not 0")
+	assert.NotEqual(t, "0", string(locRaw), "lastLocationUpdateTime must be a real timestamp, not 0")
+
+	var tripStatus map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry["tripStatus"], &tripStatus))
+	tsUpdateRaw, hasTSUpdate := tripStatus["lastUpdateTime"]
+	tsLocRaw, hasTSLocUpdate := tripStatus["lastLocationUpdateTime"]
+	require.True(t, hasTSUpdate, "tripStatus.lastUpdateTime must be present when set")
+	require.True(t, hasTSLocUpdate, "tripStatus.lastLocationUpdateTime must be present when set")
+	assert.NotEqual(t, "0", string(tsUpdateRaw), "tripStatus.lastUpdateTime must be a real timestamp, not 0")
+	assert.NotEqual(t, "0", string(tsLocRaw), "tripStatus.lastLocationUpdateTime must be a real timestamp, not 0")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterEpochMs verifies the `time` parameter sets the reference time,
+// asserting against tripStatus.serviceDate as it deterministically reflects this time.
+func TestVehiclesForAgencyHandler_TimeParameterEpochMs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_time_epoch_test"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	refTime := time.Date(2024, 3, 15, 12, 0, 0, 0, time.UTC)
+	params := url.Values{"time": {strconv.FormatInt(refTime.UnixMilli(), 10)}}
+
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+	assert.Equal(t, refTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must reflect the supplied time parameter")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock verifies that when no
+// `time` parameter is supplied, the server's clock is used as the reference time.
+func TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock(t *testing.T) {
+	mockTime := time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(mockTime))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_time_absent_test"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+	assert.Equal(t, mockTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must fall back to the server clock when time is absent")
+}
+
+// TestVehiclesForAgencyHandler_TimeParameterInvalid verifies that an unparseable
+// `time` parameter yields an HTTP 400 validation error.
+func TestVehiclesForAgencyHandler_TimeParameterInvalid(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	params := url.Values{"time": {"notatime"}}
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+// TestVehiclesForAgencyHandler_IncludeReferencesFalse verifies that
+// includeReferences=false empties the references block while keeping the list.
+func TestVehiclesForAgencyHandler_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockAddVehicleWithOptions("v_refs_false", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	params := url.Values{"includeReferences": {"false"}}
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "list must still be populated when includeReferences=false")
+
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies, "agencies should be empty when includeReferences=false")
+	assert.Empty(t, refs.Routes, "routes should be empty when includeReferences=false")
+	assert.Empty(t, refs.Trips, "trips should be empty when includeReferences=false")
+	assert.Empty(t, refs.Stops, "stops should be empty when includeReferences=false")
+	assert.Empty(t, refs.Situations, "situations should be empty when includeReferences=false")
+}
+
+// TestVehiclesForAgencyHandler_IncludeReferencesDefault verifies that references
+// are populated when includeReferences is absent or explicitly true.
+func TestVehiclesForAgencyHandler_IncludeReferencesDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		params []url.Values
+	}{
+		{"absent", nil},
+		{"explicit true", []url.Values{{"includeReferences": {"true"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			trip := mustGetTrip(t, api)
+			api.GtfsManager.MockAddVehicleWithOptions("v_refs_default", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+			_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, tc.params...))
+
+			assert.NotEmpty(t, model.Data.References.Agencies,
+				"agencies should be populated when includeReferences is true/absent")
+		})
+	}
+}
+
 // vehiclesRealTimeDataClock is pinned just past the latest timestamp in
 // testdata/raba-vehicle-positions.pb (2025-06-08 21:08:26 UTC) so vehicles fall
 // inside the handler's 15-minute stale-vehicle window. With clock.RealClock{},
@@ -345,4 +864,163 @@ func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func(
 		gtfsManager.Shutdown()
 	}
 	return api, cleanup
+}
+
+// TestVehiclesForAgencyHandler_InterliningActiveTrip verifies that when a vehicle's
+// nominal trip differs from the trip executing at the reference time (interlining),
+// tripStatus.activeTripId reflects the executing trip and both trips appear in
+// references.trips.
+func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
+	ctx := context.Background()
+
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// The handler resolves reference time in the agency's timezone, so the test
+	// must build reference times in the same location for the windows to line up.
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+
+	formattedDate := serviceDate.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	// Find a (nominal trip, reference time) pair where the trip executing at that
+	// time differs from the nominal trip — i.e. interlining is actually exercised.
+	// Prefer a cross-route scenario (active trip on a different route) so the
+	// active-route reference is meaningfully tested; fall back to any interlining.
+	var nominalID, resolvedActiveID string
+	var refTime time.Time
+	var crossRoute bool
+	seen := make(map[string]bool)
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" || seen[row.BlockID.String] {
+			continue
+		}
+		seen[row.BlockID.String] = true
+		ordered, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+			BlockID:    row.BlockID,
+			ServiceIds: serviceIDs,
+		})
+		if err != nil || len(ordered) < 2 {
+			continue
+		}
+		nominal := ordered[0]
+		for _, candidate := range ordered[1:] {
+			if !candidate.EarliestTime.Valid || !candidate.LatestTime.Valid {
+				continue
+			}
+			midNs := (candidate.EarliestTime.Int64 + candidate.LatestTime.Int64) / 2
+			rt := serviceDate.Add(time.Duration(midNs))
+			got := api.resolveActiveTripID(ctx, nominal.ID, rt)
+			if got == nominal.ID {
+				continue
+			}
+			// Record the first interlining scenario; upgrade to a cross-route one if found.
+			gotRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, got)
+			if err != nil {
+				continue
+			}
+			isCrossRoute := row.RouteID != gotRow.RouteID
+			if resolvedActiveID == "" || (isCrossRoute && !crossRoute) {
+				nominalID, resolvedActiveID, refTime, crossRoute = nominal.ID, got, rt, isCrossRoute
+			}
+			if crossRoute {
+				break
+			}
+		}
+		if crossRoute {
+			break
+		}
+	}
+	require.NotEmpty(t, resolvedActiveID, "need an interlining scenario in test data")
+
+	api.Clock = clock.NewMockClock(refTime)
+
+	nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalID)
+	require.NoError(t, err)
+
+	// Vehicle's GTFS-RT trip is the nominal trip.
+	const vehicleID = "v_interlining"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, nominalID, nominalRow.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+
+	expectedActive := testdata.Raba.ID + "_" + resolvedActiveID
+	expectedNominal := testdata.Raba.ID + "_" + nominalID
+	assert.Equal(t, expectedActive, entry.TripStatus.ActiveTripID,
+		"activeTripId must reflect the executing (interlined) trip")
+	assert.Equal(t, expectedNominal, entry.TripID,
+		"outer tripId must remain the nominal trip")
+	assert.NotEqual(t, entry.TripID, entry.TripStatus.ActiveTripID,
+		"interlining: activeTripId must differ from the outer tripId")
+
+	// blockTripSequence must reflect the active (interlined) trip's position in the
+	// block, not the nominal trip's — the two necessarily differ since they are
+	// distinct trips in the same ordered block.
+	expectedSeq, ok := api.blockTripSequence(ctx, resolvedActiveID, refTime)
+	require.True(t, ok, "expected the active trip to have a resolvable block sequence")
+	assert.Equal(t, expectedSeq, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must reflect the active trip's position in the block, not the nominal trip's")
+
+	nominalSeq, nominalOk := api.blockTripSequence(ctx, nominalID, refTime)
+	require.True(t, nominalOk, "expected the nominal trip to have a resolvable block sequence")
+	assert.NotEqual(t, nominalSeq, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must differ from the nominal trip's own position when interlining is in play")
+
+	activeRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, resolvedActiveID)
+	require.NoError(t, err)
+	expectedNominalRoute := testdata.Raba.ID + "_" + nominalRow.RouteID
+	expectedActiveRoute := testdata.Raba.ID + "_" + activeRow.RouteID
+
+	// Both trips must appear in references.trips with the correct routeId.
+	refTrips := make(map[string]string) // trip id -> route id
+	for _, tr := range model.Data.References.Trips {
+		refTrips[tr.ID] = tr.RouteID
+	}
+	require.Contains(t, refTrips, expectedNominal, "nominal trip must be in references.trips")
+	require.Contains(t, refTrips, expectedActive, "active trip must be in references.trips")
+	assert.Equal(t, expectedNominalRoute, refTrips[expectedNominal],
+		"nominal trip reference must carry its routeId")
+	assert.Equal(t, expectedActiveRoute, refTrips[expectedActive],
+		"active trip reference must carry its routeId")
+
+	// Both referenced routes must appear in references.routes.
+	refRouteIDs := make(map[string]bool)
+	for _, rt := range model.Data.References.Routes {
+		refRouteIDs[rt.ID] = true
+	}
+	assert.True(t, refRouteIDs[expectedNominalRoute], "nominal route must be in references.routes")
+	assert.True(t, refRouteIDs[expectedActiveRoute], "active route must be in references.routes")
+}
+
+// TestAddRouteReference verifies a gtfsdb.Route is keyed by its combined
+// agencyID_routeID and its nullable fields are mapped through.
+func TestAddRouteReference(t *testing.T) {
+	routeRefs := make(map[string]models.Route)
+	addRouteReference(routeRefs, gtfsdb.Route{
+		ID:        "R1",
+		AgencyID:  "40",
+		ShortName: nulls.String("10"),
+		LongName:  nulls.String("Downtown"),
+		Type:      3,
+		Color:     nulls.String("FF0000"),
+	})
+
+	ref, ok := routeRefs["40_R1"]
+	require.True(t, ok, "route must be keyed by combined agencyID_routeID")
+	assert.Equal(t, "40_R1", ref.ID)
+	assert.Equal(t, "40", ref.AgencyID)
+	assert.Equal(t, "10", ref.ShortName)
+	assert.Equal(t, "Downtown", ref.LongName)
+	assert.Equal(t, "FF0000", ref.Color)
+	assert.Equal(t, "", ref.TextColor, "unset nullable fields map to empty string")
 }

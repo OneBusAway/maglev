@@ -2876,6 +2876,9 @@ SELECT
     t.service_id,
     t.route_id,
     t.trip_headsign,
+    t.block_id,
+    t.min_arrival_time,
+    t.max_departure_time,
     r.id as route_id,
     r.agency_id
 FROM
@@ -2885,19 +2888,22 @@ FROM
 WHERE
     st.stop_id = ?
 ORDER BY
-    r.id, st.arrival_time
+    r.id, st.departure_time
 `
 
 type GetScheduleForStopRow struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopHeadsign  sql.NullString
-	ServiceID     string
-	RouteID       string
-	TripHeadsign  sql.NullString
-	RouteID_2     string
-	AgencyID      string
+	TripID           string
+	ArrivalTime      int64
+	DepartureTime    int64
+	StopHeadsign     sql.NullString
+	ServiceID        string
+	RouteID          string
+	TripHeadsign     sql.NullString
+	BlockID          sql.NullString
+	MinArrivalTime   sql.NullInt64
+	MaxDepartureTime sql.NullInt64
+	RouteID_2        string
+	AgencyID         string
 }
 
 func (q *Queries) GetScheduleForStop(ctx context.Context, stopID string) ([]GetScheduleForStopRow, error) {
@@ -2917,6 +2923,9 @@ func (q *Queries) GetScheduleForStop(ctx context.Context, stopID string) ([]GetS
 			&i.ServiceID,
 			&i.RouteID,
 			&i.TripHeadsign,
+			&i.BlockID,
+			&i.MinArrivalTime,
+			&i.MaxDepartureTime,
 			&i.RouteID_2,
 			&i.AgencyID,
 		); err != nil {
@@ -2940,8 +2949,11 @@ SELECT
     st.departure_time,
     st.stop_headsign,
     t.service_id,
-    t.route_id,
     t.trip_headsign,
+    t.block_id,
+    t.min_arrival_time,
+    t.max_departure_time,
+    t.direction_id,
     r.id as route_id,
     r.agency_id
 FROM
@@ -2982,7 +2994,7 @@ WHERE
     )
     AND r.id IN (/*SLICE:route_ids*/?)
 ORDER BY
-    r.id, st.arrival_time
+    r.id, COALESCE(t.direction_id, 0), st.departure_time
 `
 
 type GetScheduleForStopOnDateParams struct {
@@ -2993,15 +3005,18 @@ type GetScheduleForStopOnDateParams struct {
 }
 
 type GetScheduleForStopOnDateRow struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopHeadsign  sql.NullString
-	ServiceID     string
-	RouteID       string
-	TripHeadsign  sql.NullString
-	RouteID_2     string
-	AgencyID      string
+	TripID           string
+	ArrivalTime      int64
+	DepartureTime    int64
+	StopHeadsign     sql.NullString
+	ServiceID        string
+	TripHeadsign     sql.NullString
+	BlockID          sql.NullString
+	MinArrivalTime   sql.NullInt64
+	MaxDepartureTime sql.NullInt64
+	DirectionID      sql.NullInt64
+	RouteID          string
+	AgencyID         string
 }
 
 func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleForStopOnDateParams) ([]GetScheduleForStopOnDateRow, error) {
@@ -3032,9 +3047,12 @@ func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleF
 			&i.DepartureTime,
 			&i.StopHeadsign,
 			&i.ServiceID,
-			&i.RouteID,
 			&i.TripHeadsign,
-			&i.RouteID_2,
+			&i.BlockID,
+			&i.MinArrivalTime,
+			&i.MaxDepartureTime,
+			&i.DirectionID,
+			&i.RouteID,
 			&i.AgencyID,
 		); err != nil {
 			return nil, err
@@ -5094,6 +5112,48 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const routeHasFutureService = `-- name: RouteHasFutureService :one
+SELECT EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN calendar c ON c.id = t.service_id
+    WHERE t.route_id = ?
+      AND c.end_date > ?
+      AND (c.monday = 1 OR c.tuesday = 1 OR c.wednesday = 1 OR c.thursday = 1
+           OR c.friday = 1 OR c.saturday = 1 OR c.sunday = 1)
+    UNION ALL
+    SELECT 1
+    FROM trips t
+    JOIN calendar_dates cd ON cd.service_id = t.service_id
+    WHERE t.route_id = ?
+      AND cd.exception_type = 1
+      AND cd.date > ?
+) AS has_future_service
+`
+
+type RouteHasFutureServiceParams struct {
+	RouteID   string
+	EndDate   string
+	RouteID_2 string
+	Date      string
+}
+
+// Returns 1 if the given route has at least one trip whose calendar covers a date
+// strictly after the given date (YYYYMMDD), 0 otherwise. Used to distinguish
+// ServiceDateOutOfRange (no future service for this route) from NoServiceThatDay
+// (the route still has service on a later date).
+func (q *Queries) RouteHasFutureService(ctx context.Context, arg RouteHasFutureServiceParams) (int64, error) {
+	row := q.queryRow(ctx, q.routeHasFutureServiceStmt, routeHasFutureService,
+		arg.RouteID,
+		arg.EndDate,
+		arg.RouteID_2,
+		arg.Date,
+	)
+	var has_future_service int64
+	err := row.Scan(&has_future_service)
+	return has_future_service, err
 }
 
 const updateFeedExpiresAt = `-- name: UpdateFeedExpiresAt :exec

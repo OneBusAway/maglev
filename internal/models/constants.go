@@ -13,6 +13,7 @@ const (
 const (
 	DefaultSearchRadiusInMeters = 600
 	QuerySearchRadiusInMeters   = 10000
+	MaxSearchRadiusInMeters     = 20000
 )
 
 // Cache durations (in seconds) for different API data types.
@@ -30,3 +31,6 @@ const (
 
 // RangeSearchBufferMeters provides a 50m tolerance for GPS inaccuracy and curve approximation.
 const RangeSearchBufferMeters = 50.0
+
+// APIVersion is the standard version returned in all response envelopes
+const APIVersion = 2

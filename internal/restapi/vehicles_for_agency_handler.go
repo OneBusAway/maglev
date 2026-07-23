@@ -2,9 +2,12 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -24,9 +27,25 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if agency == nil {
-		// return an empty list response.
-		api.sendResponse(w, r, models.NewListResponse([]any{}, *models.NewEmptyReferences(), false, api.Clock))
+		// Unknown/untracked agency: empty list, outOfRange=false.
+		api.sendResponse(w, r, models.NewListResponseWithRange([]any{}, *models.NewEmptyReferences(), false, api.Clock, false))
 		return
+	}
+
+	// Parse requested reference time for status entries, falling back to server clock if absent.
+	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	referenceTime := api.Clock.Now().In(loc)
+	if timeParam := r.URL.Query().Get("time"); timeParam != "" {
+		_, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, loc)
+		if !ok {
+			api.validationErrorResponse(w, r, fieldErrors)
+			return
+		}
+		referenceTime = parsedTime
 	}
 
 	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
@@ -35,9 +54,21 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	vehiclesForAgency, limitExceeded := utils.PaginateSlice(vehiclesForAgency, offset, limit)
+	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
+	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
+	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
+		if ageInSeconds, err := strconv.ParseInt(val, 10, 64); err == nil && ageInSeconds >= 0 && ageInSeconds <= maxAgeInSeconds {
+			cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
+			filtered := vehiclesForAgency[:0]
+			for _, vehicle := range vehiclesForAgency {
+				if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
+					filtered = append(filtered, vehicle)
+				}
+			}
+			vehiclesForAgency = filtered
+		}
+	}
+
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
 
 	// Collect unique route IDs and batch-fetch routes
@@ -80,11 +111,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			VehicleID: vid,
 		}
 
-		// Set timestamps
-		currentTime := models.NewModelTime(api.Clock.Now())
-		vehicleStatus.LastLocationUpdateTime = currentTime
-		vehicleStatus.LastUpdateTime = currentTime
-
+		// Update times default to 0 when no real update exists.
+		currentTime := models.NewModelTime(referenceTime)
 		if vehicle.Timestamp != nil {
 			ts := models.NewModelTime(*vehicle.Timestamp)
 			vehicleStatus.LastLocationUpdateTime = ts
@@ -107,8 +135,16 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			vehicleStatus.TripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
 
 			tripStatus := models.NewTripStatus()
-			tripStatus.ActiveTripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
-			tripStatus.BlockTripSequence = 0
+			// Resolve the executing trip; may differ from the nominal trip when interlining.
+			activeTripID := api.resolveActiveTripID(ctx, vehicle.Trip.ID.ID, referenceTime)
+			tripStatus.ActiveTripID = utils.FormCombinedID(id, activeTripID)
+			// Resolve the block trip sequence for the active (not nominal) trip,
+			// so it reflects the position of the trip actually being executed.
+			if seq, ok := api.blockTripSequence(ctx, activeTripID, referenceTime); ok {
+				tripStatus.BlockTripSequence = seq
+			} else {
+				tripStatus.BlockTripSequence = -1
+			}
 			tripStatus.Phase = vehicleStatus.Phase
 			tripStatus.Status = vehicleStatus.Status
 
@@ -131,10 +167,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				tripStatus.Orientation = float64(obaOrientation)
 			}
 
-			// Set timestamps on trip status to match vehicle timestamps
-			tripStatus.LastUpdateTime = currentTime
-			tripStatus.LastLocationUpdateTime = currentTime
-
+			// Trip status update times default to 0 when no real update exists.
 			if vehicle.Timestamp != nil {
 				ts := models.NewModelTime(*vehicle.Timestamp)
 				tripStatus.LastUpdateTime = ts
@@ -161,46 +194,33 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				RouteID: utils.FormCombinedID(id, vehicle.Trip.ID.RouteID),
 			}
 
-			// Add route to references (from batch-fetched map)
+			// Add the nominal trip's route to references (from batch-fetched map).
 			if route, ok := routeByID[vehicle.Trip.ID.RouteID]; ok {
-				shortName := ""
-				if route.ShortName.Valid {
-					shortName = route.ShortName.String
-				}
-				longName := ""
-				if route.LongName.Valid {
-					longName = route.LongName.String
-				}
-				desc := ""
-				if route.Desc.Valid {
-					desc = route.Desc.String
-				}
-				url := ""
-				if route.Url.Valid {
-					url = route.Url.String
-				}
-				color := ""
-				if route.Color.Valid {
-					color = route.Color.String
-				}
-				textColor := ""
-				if route.TextColor.Valid {
-					textColor = route.TextColor.String
-				}
+				addRouteReference(routeRefs, route)
+			}
 
-				combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
-				routeRefs[combinedRouteID] = models.NewRoute(
-					combinedRouteID, route.AgencyID, shortName, longName,
-					desc, models.RouteType(route.Type),
-					url, color, textColor)
-
+			// For interlining, also add the active trip and its route to references.
+			if activeTripID != vehicle.Trip.ID.ID {
+				if activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID); err == nil {
+					tripRefs[activeTripID] = models.Trip{
+						ID:      utils.FormCombinedID(id, activeTripID),
+						RouteID: utils.FormCombinedID(id, activeTrip.RouteID),
+					}
+					activeRoute, ok := routeByID[activeTrip.RouteID]
+					if !ok {
+						if fetched, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID); err == nil {
+							activeRoute, ok = fetched, true
+						}
+					}
+					if ok {
+						addRouteReference(routeRefs, activeRoute)
+					}
+				}
 			}
 		} else {
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
 			defaultTripStatus.Phase = "scheduled"
-			defaultTripStatus.LastUpdateTime = currentTime
-			defaultTripStatus.LastLocationUpdateTime = currentTime
 			vehicleStatus.TripStatus = defaultTripStatus
 		}
 
@@ -218,17 +238,36 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		tripRefList = append(tripRefList, tripRef)
 	}
 
+	// Omit references entirely when includeReferences=false.
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
-	references.Routes = routeRefList
-	references.Trips = tripRefList
+	if ShouldIncludeReferences(r) {
+		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		references.Routes = routeRefList
+		references.Trips = tripRefList
 
-	alerts := deduplicateAlerts(
-		api.collectAlertsForRoutes(routeIDs),
-		api.GtfsManager.GetAlertsByIDs("", "", id),
-	)
-	references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
+		alerts := deduplicateAlerts(
+			api.collectAlertsForRoutes(routeIDs),
+			api.GtfsManager.GetAlertsByIDs("", "", id),
+		)
+		references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
+	}
 
-	response := models.NewListResponse(vehiclesList, *references, limitExceeded, api.Clock)
+	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
+	response := models.NewListResponse(vehiclesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// addRouteReference inserts a route reference keyed by its combined agencyID_routeID.
+func addRouteReference(routeRefs map[string]models.Route, route gtfsdb.Route) {
+	combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
+	routeRefs[combinedRouteID] = models.NewRoute(
+		combinedRouteID, route.AgencyID,
+		nulls.StringOrEmpty(route.ShortName),
+		nulls.StringOrEmpty(route.LongName),
+		nulls.StringOrEmpty(route.Desc),
+		models.RouteType(route.Type),
+		nulls.StringOrEmpty(route.Url),
+		nulls.StringOrEmpty(route.Color),
+		nulls.StringOrEmpty(route.TextColor),
+	)
 }

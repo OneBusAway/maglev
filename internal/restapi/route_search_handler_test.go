@@ -1,97 +1,106 @@
 package restapi
 
 import (
+	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
+func routeSearchURL(params url.Values) string {
+	q := url.Values{"key": {"TEST"}}
+	maps.Copy(q, params)
+	return "/api/where/search/route.json?" + q.Encode()
+}
+
 func TestRouteSearchHandlerRequiresValidApiKey(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=invalid&input=1")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		routeSearchURL(url.Values{"input": {"1"}, "key": {"invalid"}}))
+
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
 }
 
 func TestRouteSearchHandlerEndToEnd(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=TEST&input=shasta")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, list)
+	require.NotEmpty(t, model.Data.List)
 
 	found := false
-	for _, item := range list {
-		route, ok := item.(map[string]any)
-		require.True(t, ok)
-		assert.Contains(t, route, "id")
-		assert.Contains(t, route, "agencyId")
-		assert.Contains(t, route, "shortName")
-		assert.Contains(t, route, "longName")
-		assert.Contains(t, route, "type")
-
-		if route["shortName"] == "17" {
-			longName, _ := route["longName"].(string)
-			assert.True(t, strings.Contains(strings.ToLower(longName), "shasta"))
+	for _, route := range model.Data.List {
+		if route.ShortName == "17" {
+			assert.True(t, strings.Contains(strings.ToLower(route.LongName), "shasta"))
 			found = true
 		}
 	}
 	assert.True(t, found, "expected Shasta route to be returned")
 
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
-
-	agencies, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, agencies)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
 }
 
 func TestRouteSearchHandlerRequiresInput(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=TEST&input=")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, _ := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {""}}))
+
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestRouteSearchHandlerValidatesMaxCount(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=TEST&input=1&maxCount=-1")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, _ := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"1"}, "maxCount": {"-1"}}))
+
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestRouteSearchHandlerNoResults(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=TEST&input=zzzznonexistent99999")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"zzzznonexistent99999"}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
-
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-
-	list, ok := data["list"].([]any)
-	require.True(t, ok)
-	assert.Empty(t, list)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestRouteSearchHandlerWhitespaceInput(t *testing.T) {
-	_, resp, _ := serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=TEST&input=%20%20%20")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, _ := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"   "}}))
+
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
-	// Exactly 100 should work
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=TEST&input=shasta&maxCount=100")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"100"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	// 101 should fail
-	_, resp, _ = serveAndRetrieveEndpoint(t, "/api/where/search/route.json?key=TEST&input=shasta&maxCount=101")
+	resp, _ = callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"101"}}))
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

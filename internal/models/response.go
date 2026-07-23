@@ -66,7 +66,7 @@ func NewResponse(code int, data any, text string, c clock.Clock) ResponseModel {
 		CurrentTime: ResponseCurrentTime(c),
 		Data:        data,
 		Text:        text,
-		Version:     2,
+		Version:     APIVersion,
 	}
 }
 

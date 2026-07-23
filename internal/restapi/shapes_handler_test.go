@@ -187,15 +187,15 @@ func TestShapesHandler_PolylineDecoding(t *testing.T) {
 			expected: [][2]float64{{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}, {1.0, 1.0}, {0.0, 0.0}},
 		},
 		{
-			name:    "Consecutive duplicates (B repeats) are deduplicated",
+			name:    "Consecutive duplicates are preserved (no point reduction)",
 			shapeID: "duplicate_shape",
 			input: []shapePoint{
 				{0.0, 0.0, 1},
 				{1.0, 1.0, 2},
-				{1.0, 1.0, 3}, // duplicate of previous point — handler filters this
+				{1.0, 1.0, 3}, // duplicate of previous point — must NOT be filtered (spec: all points included)
 				{2.0, 2.0, 4},
 			},
-			expected: [][2]float64{{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}},
+			expected: [][2]float64{{0.0, 0.0}, {1.0, 1.0}, {1.0, 1.0}, {2.0, 2.0}},
 		},
 	}
 

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -184,9 +185,16 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
-		// Assume YYYY-MM-DD format
-		parsedTime, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
+		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
+		parsed, err := time.ParseInLocation("2006-01-02_15-04-05", timeParam, currentLocation)
+		if err != nil {
+			// If it fails, fall back to yyyy-MM-dd (e.g. "2024-03-15")
+			parsed, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
+		}
+
+		// If either parsing attempt succeeded, apply the result
 		if err == nil {
+			parsedTime = parsed
 			validFormat = true
 		}
 	}
@@ -310,4 +318,57 @@ func ValidateNumericParam(s string) string {
 		return ""
 	}
 	return s
+}
+
+const (
+	minUnixMillis = int64(0)
+	maxUnixMillis = int64(32503680000000) // year 3000
+)
+
+// ParseDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
+// It returns a time.Time set to midnight (start of day) in the provided location.
+func ParseDate(date string, loc *time.Location) (time.Time, error) {
+	if date == "" {
+		return time.Time{}, errors.New("date cannot be empty")
+	}
+
+	// Parsing as an integer (Unix milliseconds)
+	if v, err := strconv.ParseInt(date, 10, 64); err == nil {
+		if v < minUnixMillis || v > maxUnixMillis {
+			return time.Time{}, errors.New("unix millisecond timestamp out of reasonable bounds")
+		}
+		// Convert to the provided timezone and explicitly set to midnight
+		t := time.UnixMilli(v).In(loc)
+		y, m, d := t.Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, loc), nil
+	}
+
+	// Parsing in YYYY-MM-DD format
+	if parsedDate, err := time.ParseInLocation("2006-01-02", date, loc); err == nil {
+		return parsedDate, nil
+	}
+
+	return time.Time{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
+}
+
+// ParseRequiredStringParam retrieves a required string parameter.
+// Returns the value and a populated error map if missing.
+func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[string][]string) (string, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
+	}
+	return val, fieldErrors
+}
+
+// ClampRadius restricts a radius value to MaxSearchRadiusInMeters
+func ClampRadius(radius float64) float64 {
+	if radius > models.MaxSearchRadiusInMeters {
+		return models.MaxSearchRadiusInMeters
+	}
+	return radius
 }

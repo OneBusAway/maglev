@@ -117,12 +117,6 @@ func TestInputValidationIntegration(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "radius must be non-negative",
 		},
-		{
-			name:           "Radius too large",
-			endpoint:       "/api/where/stops-for-location.json?key=TEST&lat=38.0&lon=-77.0&radius=50000",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "radius too large",
-		},
 
 		// Test malicious query parameters
 		{
@@ -147,13 +141,13 @@ func TestInputValidationIntegration(t *testing.T) {
 		// Test malicious date parameters
 		{
 			name:           "Invalid date format",
-			endpoint:       "/api/where/schedule-for-stop/raba_12345?key=TEST&date=12/25/2023",
+			endpoint:       "/api/where/schedule-for-stop/25_12345.json?key=TEST&date=12/25/2023",
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "invalid date format",
 		},
 		{
 			name:           "Date with script injection",
-			endpoint:       "/api/where/schedule-for-stop/raba_12345?key=TEST&date=2023-01-01<script>alert('xss')</script>",
+			endpoint:       "/api/where/schedule-for-stop/25_12345.json?key=TEST&date=2023-01-01<script>alert('xss')</script>",
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "invalid date format",
 		},
@@ -301,8 +295,8 @@ func TestEdgeCaseValidation(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Maximum allowed radius",
-			endpoint:       "/api/where/stops-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=10000",
+			name:           "Large radius clamped and allowed",
+			endpoint:       "/api/where/stops-for-location.json?key=TEST&lat=38.9&lon=-77.0&radius=50000",
 			expectedStatus: http.StatusOK,
 		},
 		{
@@ -312,8 +306,8 @@ func TestEdgeCaseValidation(t *testing.T) {
 		},
 		{
 			name:           "Empty date parameter is valid",
-			endpoint:       "/api/where/schedule-for-stop/raba_12345?key=TEST&date=",
-			expectedStatus: http.StatusNotFound, // Stop doesn't exist in test data
+			endpoint:       "/api/where/schedule-for-stop/25_12345.json?key=TEST&date=",
+			expectedStatus: http.StatusNotFound, // Stop doesn't exist in test data, meaning date validation passed!
 		},
 	}
 

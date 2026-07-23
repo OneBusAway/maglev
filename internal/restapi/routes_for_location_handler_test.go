@@ -200,20 +200,26 @@ func TestRoutesForLocationHandlerInRangeWithNoResults(t *testing.T) {
 func TestRoutesForLocationMissingLat(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lon=-122.426966")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.True(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestRoutesForLocationMissingLon(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.True(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestRoutesForLocationMissingBothLatAndLon(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.True(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.List)
 }

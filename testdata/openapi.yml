@@ -1,5 +1,5 @@
 # Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
-# Fetched: 2026-05-22
+# Fetched: 2026-07-13
 openapi: 3.0.0
 info:
   title: OneBusAway
@@ -157,14 +157,18 @@ paths:
           in: query
           schema:
             type: number
+            default: 0.0
           example: 47.653435
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
         - name: lon
           in: query
           schema:
             type: number
+            default: 0.0
           example: -122.305641
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
         - name: radius
           in: query
           schema:
@@ -278,15 +282,19 @@ paths:
       parameters:
         - name: lat
           in: query
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
           schema:
             type: number
+            default: 0.0
           example: 47.656422
         - name: lon
           in: query
-          required: true
+          required: false
+          description: If omitted, defaults to 0.0.
           schema:
             type: number
+            default: 0.0
           example: -122.305641
         - name: radius
           in: query
@@ -651,18 +659,20 @@ paths:
       parameters:
         - name: lat
           in: query
-          required: true
+          required: false
           schema:
             type: number
             format: float
-          description: The latitude coordinate of the search center
+            default: 0.0
+          description: The latitude coordinate of the search center. If omitted, defaults to 0.0.
         - name: lon
           in: query
-          required: true
+          required: false
           schema:
             type: number
             format: float
-          description: The longitude coordinate of the search center
+            default: 0.0
+          description: The longitude coordinate of the search center. If omitted, defaults to 0.0.
         - name: latSpan
           in: query
           required: true
@@ -682,7 +692,8 @@ paths:
           required: false
           schema:
             type: boolean
-          description: Whether to include full trip elements in the references section. Defaults to false.
+            default: true
+          description: Whether to include full trip elements in the references section. Defaults to true.
         - name: includeSchedule
           in: query
           required: false
@@ -1776,6 +1787,7 @@ components:
           description: Distance of the arriving transit vehicle from the stop, in meters.
         frequency:
           type: string
+          nullable: true
           description: Information about frequency-based scheduling, if applicable to the trip.
         historicalOccupancy:
           type: string
@@ -1794,12 +1806,14 @@ components:
           description: Indicates if real-time arrival info is available for this trip.
         predictedArrivalInterval:
           type: string
+          nullable: true
           description: Interval for predicted arrival time, if available.
         predictedArrivalTime:
           type: integer
           description: Predicted arrival time, in milliseconds since Unix epoch (zero if no real-time available).
         predictedDepartureInterval:
           type: string
+          nullable: true
           description: Interval for predicted departure time, if available.
         predictedDepartureTime:
           type: integer
@@ -1818,12 +1832,14 @@ components:
           description: Optional route short name that potentially overrides the route short name in the referenced route element.
         scheduledArrivalInterval:
           type: string
+          nullable: true
           description: Interval for scheduled arrival time.
         scheduledArrivalTime:
           type: integer
           description: Scheduled arrival time, in milliseconds since Unix epoch.
         scheduledDepartureInterval:
           type: string
+          nullable: true
           description: Interval for scheduled departure time.
         scheduledDepartureTime:
           type: integer
@@ -2183,6 +2199,7 @@ components:
           description: Distance, in meters, the transit vehicle has progressed along the active trip.
         frequency:
           type: string
+          nullable: true
           description: Information about frequency-based scheduling, if applicable to the trip.
         lastKnownDistanceAlongTrip:
           type: number
@@ -2309,6 +2326,7 @@ components:
 
     TripSchedule:
       type: object
+      nullable: true
       properties:
         frequency:
           type: string

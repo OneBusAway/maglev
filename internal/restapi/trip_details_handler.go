@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
+	gtfs "github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -21,6 +21,7 @@ type TripParams struct {
 	IncludeSchedule bool
 	IncludeStatus   bool
 	Time            *time.Time
+	VehicleID       string
 }
 
 // parseTripParams parses and validates the common trip query params
@@ -35,13 +36,22 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 
 	fieldErrors := make(map[string][]string)
 
-	// Validate serviceDate
+	// Validate serviceDate — accepts either a Unix timestamp in milliseconds
+	// (e.g. "1718409600000") or a calendar date in yyyy-MM-dd format (e.g. "2024-06-15").
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
 		} else {
-			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			dateLoc := time.UTC
+			if len(loc) > 0 && loc[0] != nil {
+				dateLoc = loc[0]
+			}
+			if serviceDate, err := time.ParseInLocation("2006-01-02", serviceDateStr, dateLoc); err == nil {
+				params.ServiceDate = &serviceDate
+			} else {
+				fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"}
+			}
 		}
 	}
 
@@ -69,15 +79,26 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 		}
 	}
 
-	// Validate time
+	// Validate time — accepts either a Unix timestamp in milliseconds
+	// (e.g. "1718459400000") or a datetime in yyyy-MM-dd_HH-mm-ss format (e.g. "2024-06-15_14-30-00").
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
 		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+			timeLoc := time.UTC
+			if len(loc) > 0 && loc[0] != nil {
+				timeLoc = loc[0]
+			}
+			if timeParam, err := time.ParseInLocation("2006-01-02_15-04-05", timeStr, timeLoc); err == nil {
+				params.Time = &timeParam
+			} else {
+				fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
+			}
 		}
 	}
+
+	params.VehicleID = r.URL.Query().Get("vehicleId")
 
 	if len(fieldErrors) > 0 {
 		return params, fieldErrors
@@ -153,16 +174,64 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
+	// When serviceDate is explicitly provided, validate that the trip operates on
+	// that date. Per the wiki spec: "serviceDate is provided but no
+	// block instance exists for that service date → HTTP 404".
+	if params.ServiceDate != nil {
+		formattedDate := serviceDate.Format("20060102")
+		activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+		if svcErr != nil {
+			api.serverErrorResponse(w, r, svcErr)
+			return
+		}
+		serviceActive := false
+		for _, svcID := range activeServiceIDs {
+			if svcID == trip.ServiceID {
+				serviceActive = true
+				break
+			}
+		}
+		if !serviceActive {
+			api.sendNotFound(w, r)
+			return
+		}
+	}
+
+	var requestedVehicle *gtfs.Vehicle
+	if params.VehicleID != "" {
+		vehicleAgencyID, rawVehicleID, vErr := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
+		if vErr != nil {
+			api.sendNotFound(w, r)
+			return
+		}
+		if vehicleAgencyID != agencyID {
+			api.sendNotFound(w, r)
+			return
+		}
+		v, vErr := api.GtfsManager.GetVehicleByID(rawVehicleID)
+		if vErr != nil || v == nil {
+			api.sendNotFound(w, r)
+			return
+		}
+		requestedVehicle = v
+	}
+
 	var schedule *models.Schedule
 	var status *models.TripStatus
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, nil, serviceDate, currentTime)
+		status, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed",
 				"trip_id", trip.ID,
 				"error", statusErr.Error())
+			status = nil
+		}
+
+		// Extension 4e: Explicitly nil out the status if there is no actual tracking record.
+		// BuildTripStatus returns a default placeholder when tracking is absent, so we nil it to trigger JSON omitempty.
+		if status != nil && status.IsUntracked() {
 			status = nil
 		}
 	}
@@ -218,8 +287,16 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	references := models.NewEmptyReferences()
 
-	if params.IncludeTrip {
-		tripsToInclude := []string{utils.FormCombinedID(agencyID, trip.ID)}
+	includeReferences := ShouldIncludeReferences(r)
+
+	if includeReferences {
+		tripsToInclude := []string{}
+
+		// Only include the main trip if includeTrip=true.
+		// Related trips (preceding/following/active) are appended independently.
+		if params.IncludeTrip {
+			tripsToInclude = append(tripsToInclude, utils.FormCombinedID(agencyID, trip.ID))
+		}
 
 		if params.IncludeSchedule && schedule != nil {
 			if schedule.NextTripID != "" {
@@ -234,54 +311,54 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			tripsToInclude = append(tripsToInclude, status.ActiveTripID)
 		}
 
-		referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
+		if len(tripsToInclude) > 0 {
+			referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+
+			for _, t := range referencedTrips {
+				references.Trips = append(references.Trips, *t)
+			}
 		}
 
-		for _, t := range referencedTrips {
-			references.Trips = append(references.Trips, *t)
-		}
-	}
+		agencyModel := models.AgencyReferenceFromDatabase(&agency)
+		references.Agencies = append(references.Agencies, agencyModel)
 
-	agencyModel := models.NewAgencyReference(
-		agency.ID,
-		agency.Name,
-		agency.Url,
-		agency.Timezone,
-		agency.Lang.String,
-		agency.Phone.String,
-		agency.Email.String,
-		agency.FareUrl.String,
-		"",
-		false,
-	)
-	references.Agencies = append(references.Agencies, agencyModel)
-
-	if len(situationsIDs) > 0 {
-		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts)
-			references.Situations = append(references.Situations, situations...)
-		}
-	}
-
-	if params.IncludeSchedule && schedule != nil {
-		stops, err := api.buildStopReferences(ctx, agencyID, schedule.StopTimes)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-		references.Stops = stops
-
-		routes, err := api.BuildRouteReference(ctx, agencyID, stops)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
+		if len(situationsIDs) > 0 {
+			alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
+			if len(alerts) > 0 {
+				situations := api.BuildSituationReferences(alerts)
+				references.Situations = append(references.Situations, situations...)
+			}
 		}
 
-		references.Routes = routes
+		if params.IncludeSchedule && schedule != nil {
+			stopIDs := make([]string, 0, len(schedule.StopTimes))
+			for _, st := range schedule.StopTimes {
+				_, rawStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
+				if err != nil {
+					continue
+				}
+				stopIDs = append(stopIDs, rawStopID)
+			}
+
+			stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+			references.Stops = stops
+
+			routes, err := api.BuildRouteReferences(ctx, agencyID, stops)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+
+			references.Routes = routes
+		}
 	}
 
 	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
@@ -383,162 +460,4 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	}
 
 	return referencedTrips, nil
-}
-
-func (api *RestAPI) buildStopReferences(ctx context.Context, agencyID string, stopTimes []models.StopTime) ([]models.Stop, error) {
-	stopIDSet := make(map[string]bool)
-	originalStopIDs := make([]string, 0, len(stopTimes))
-
-	for _, st := range stopTimes {
-		_, originalStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
-		if err != nil {
-			continue
-		}
-
-		if !stopIDSet[originalStopID] {
-			stopIDSet[originalStopID] = true
-			originalStopIDs = append(originalStopIDs, originalStopID)
-		}
-	}
-
-	if len(originalStopIDs) == 0 {
-		return []models.Stop{}, nil
-	}
-
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, originalStopIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	stopMap := make(map[string]gtfsdb.Stop)
-	for _, stop := range stops {
-		stopMap[stop.ID] = stop
-	}
-
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, originalStopIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	routesByStop := make(map[string][]gtfsdb.Route)
-	for _, routeRow := range allRoutes {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		route := gtfsdb.Route{
-			ID:        routeRow.ID,
-			AgencyID:  routeRow.AgencyID,
-			ShortName: routeRow.ShortName,
-			LongName:  routeRow.LongName,
-			Desc:      routeRow.Desc,
-			Type:      routeRow.Type,
-			Url:       routeRow.Url,
-			Color:     routeRow.Color,
-			TextColor: routeRow.TextColor,
-		}
-		routesByStop[routeRow.StopID] = append(routesByStop[routeRow.StopID], route)
-	}
-
-	modelStops := make([]models.Stop, 0, len(stopTimes))
-	processedStops := make(map[string]bool)
-
-	for _, st := range stopTimes {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		_, originalStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
-		if err != nil {
-			continue
-		}
-
-		if processedStops[originalStopID] {
-			continue
-		}
-		processedStops[originalStopID] = true
-
-		stop, exists := stopMap[originalStopID]
-		if !exists {
-			continue
-		}
-
-		routesForStop := routesByStop[originalStopID]
-		combinedRouteIDs := make([]string, len(routesForStop))
-		for i, rt := range routesForStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(agencyID, rt.ID)
-		}
-
-		stopModel := models.Stop{
-			ID:                 utils.FormCombinedID(agencyID, stop.ID),
-			Name:               stop.Name.String,
-			Lat:                stop.Lat,
-			Lon:                stop.Lon,
-			Code:               stop.Code.String,
-			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
-			LocationType:       int(stop.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-			RouteIDs:           combinedRouteIDs,
-			StaticRouteIDs:     combinedRouteIDs,
-		}
-		modelStops = append(modelStops, stopModel)
-	}
-
-	return modelStops, nil
-}
-
-func (api *RestAPI) BuildRouteReference(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
-
-	routeIDSet := make(map[string]bool)
-	originalRouteIDs := make([]string, 0)
-
-	for _, stop := range stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		for _, routeID := range stop.StaticRouteIDs {
-			_, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				continue
-			}
-
-			if !routeIDSet[originalRouteID] {
-				routeIDSet[originalRouteID] = true
-				originalRouteIDs = append(originalRouteIDs, originalRouteID)
-			}
-		}
-	}
-
-	if len(originalRouteIDs) == 0 {
-		return []models.Route{}, nil
-	}
-
-	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, originalRouteIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	modelRoutes := make([]models.Route, 0, len(routes))
-	for _, route := range routes {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		routeModel := models.Route{
-			ID:                utils.FormCombinedID(agencyID, route.ID),
-			AgencyID:          agencyID,
-			ShortName:         route.ShortName.String,
-			LongName:          route.LongName.String,
-			Description:       route.Desc.String,
-			Type:              models.RouteType(route.Type),
-			URL:               route.Url.String,
-			Color:             route.Color.String,
-			TextColor:         route.TextColor.String,
-			NullSafeShortName: route.ShortName.String,
-		}
-		modelRoutes = append(modelRoutes, routeModel)
-	}
-
-	return modelRoutes, nil
 }

@@ -35,7 +35,7 @@ func TestCurrentTimeModel(t *testing.T) {
 			timeModel.ReadableTime, unmarshaledModel.ReadableTime)
 	}
 
-	if !unmarshaledModel.Time.Time.Equal(timeModel.Time.Time) {
+	if !unmarshaledModel.Time.Equal(timeModel.Time.Time) {
 		t.Errorf("Expected Time %v, got %v",
 			timeModel.Time, unmarshaledModel.Time)
 	}
@@ -74,7 +74,7 @@ func TestCurrentTimeData(t *testing.T) {
 			timeData.Entry.ReadableTime, unmarshaledData.Entry.ReadableTime)
 	}
 
-	if !unmarshaledData.Entry.Time.Time.Equal(timeData.Entry.Time.Time) {
+	if !unmarshaledData.Entry.Time.Equal(timeData.Entry.Time.Time) {
 		t.Errorf("Expected Entry.Time %v, got %v",
 			timeData.Entry.Time, unmarshaledData.Entry.Time)
 	}
@@ -170,8 +170,8 @@ func TestCurrentTimeDataEndToEnd(t *testing.T) {
 		t.Errorf("Expected text 'OK', got %v", result["text"])
 	}
 
-	if version, ok := result["version"].(float64); !ok || int(version) != 2 {
-		t.Errorf("Expected version 2, got %v", result["version"])
+	if version, ok := result["version"].(float64); !ok || int(version) != APIVersion {
+		t.Errorf("Expected version %d, got %v", APIVersion, result["version"])
 	}
 
 	// Check data structure

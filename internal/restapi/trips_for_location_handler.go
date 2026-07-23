@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	locationParams, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, fieldErrors, err := api.parseAndValidateRequest(r)
+	parsedReq, fieldErrors, err := api.parseAndValidateRequest(r)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -32,13 +33,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Intentionally defaulting includeStatus to false to align with includeSchedule
-	// behavior for this endpoint, even though trips-for-route defaults to true.
-	includeStatus := r.URL.Query().Get("includeStatus") == "true"
-	// Note: re-deriving currentTime here rather than returning it from parseAndValidateRequest(line: 150)
-	currentTime := api.Clock.Now().In(currentLocation)
-
-	stops := api.GtfsManager.GetStopsInBounds(ctx, locationParams, 100)
+	stops := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
 	stopIDs := extractStopIDs(stops)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
@@ -48,7 +43,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	activeTrips := api.getActiveTrips(stopTimes, api.GtfsManager.GetRealTimeVehicles())
 
-	bounds := internalgtfs.BoundsFromParams(locationParams)
+	bounds := internalgtfs.BoundsFromParams(parsedReq.LocationParams, true)
 	visibleTripIDs := make([]string, 0, len(activeTrips))
 	for _, vehicle := range activeTrips {
 		if ctx.Err() != nil {
@@ -103,7 +98,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, includeSchedule, includeStatus, currentLocation, currentTime, todayMidnight, serviceDate, w, r)
+	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
 	if result == nil {
 		return
 	}
@@ -113,62 +108,111 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	references := api.BuildReference(w, r, ctx, ReferenceParams{
-		IncludeTrip: includeTrip,
-		Stops:       stops,
-		Trips:       result,
-	})
-	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(locationParams), api.Clock, false)
+	references := *models.NewEmptyReferences()
+
+	includeReferences := ShouldIncludeReferences(r)
+
+	if includeReferences {
+		references = api.BuildReference(w, r, ctx, ReferenceParams{
+			IncludeTrip: parsedReq.IncludeTrip,
+			Stops:       stops,
+			Trips:       result,
+		})
+	}
+
+	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(parsedReq.LocationParams), api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
-func (api *RestAPI) parseAndValidateRequest(r *http.Request) (
-	location *internalgtfs.LocationParams,
-	includeTrip, includeSchedule bool,
-	currentLocation *time.Location,
-	todayMidnight time.Time,
-	serviceDate time.Time,
-	fieldErrors map[string][]string,
-	serverErr error,
-) {
+// tripsForLocationRequest holds the parsed and validated query parameters for
+// the trips-for-location endpoint.
+type tripsForLocationRequest struct {
+	LocationParams  *internalgtfs.LocationParams
+	IncludeTrip     bool
+	IncludeSchedule bool
+	IncludeStatus   bool
+	CurrentLocation *time.Location
+	CurrentTime     time.Time
+	TodayMidnight   time.Time
+	ServiceDate     time.Time
+}
+
+func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
 	loc, fieldErrors := api.parseLocationParams(r, nil)
 
 	queryParams := r.URL.Query()
 
-	includeTrip = queryParams.Get("includeTrip") == "true"
-	includeSchedule = queryParams.Get("includeSchedule") == "true"
+	includeTrip := parseIncludeTrip(queryParams)
+	includeSchedule, _ := strconv.ParseBool(queryParams.Get("includeSchedule"))
+	// Intentionally defaulting includeStatus to false to align with includeSchedule
+	// behavior for this endpoint, even though trips-for-route defaults to true.
+	includeStatus, _ := strconv.ParseBool(queryParams.Get("includeStatus"))
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 	if agenciesErr != nil || len(agencies) == 0 {
-		return nil, false, false, nil, time.Time{}, time.Time{}, nil, errors.New("no agencies configured in GTFS manager")
+		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
 	currentAgency := agencies[0]
-	currentLocation, serverErr = loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
+	currentLocation, serverErr := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
 	if serverErr != nil {
-		return nil, false, false, nil, time.Time{}, time.Time{}, nil, serverErr
+		return nil, nil, serverErr
 	}
 
-	timeParam := queryParams.Get("time")
-	currentTime := api.Clock.Now().In(currentLocation)
-	todayMidnight = time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
+	currentTime, timeFieldErrors := api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
+	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
 
-	var timeFieldErrors map[string][]string
-	_, serviceDate, timeFieldErrors, _ = utils.ParseTimeParameter(timeParam, currentLocation)
-	if len(timeFieldErrors) > 0 {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
-		for k, v := range timeFieldErrors {
-			fieldErrors[k] = append(fieldErrors[k], v...)
-		}
-	}
+	serviceDate, todayMidnight := utils.ServiceDateMidnight(nil, currentTime)
 
 	if len(fieldErrors) > 0 {
-		return nil, false, false, nil, time.Time{}, time.Time{}, fieldErrors, nil
+		return nil, fieldErrors, nil
 	}
 
-	return loc, includeTrip, includeSchedule, currentLocation, todayMidnight, serviceDate, nil, nil
+	parsedReq := &tripsForLocationRequest{
+		LocationParams:  loc,
+		IncludeTrip:     includeTrip,
+		IncludeSchedule: includeSchedule,
+		IncludeStatus:   includeStatus,
+		CurrentLocation: currentLocation,
+		CurrentTime:     currentTime,
+		TodayMidnight:   todayMidnight,
+		ServiceDate:     serviceDate,
+	}
+	return parsedReq, nil, nil
+}
+
+// parseIncludeTrip parses the includeTrip query parameter, defaulting to true when omitted
+// and to false when present but not a valid boolean.
+func parseIncludeTrip(queryParams url.Values) bool {
+	if !queryParams.Has("includeTrip") {
+		return true
+	}
+	includeTrip, _ := strconv.ParseBool(queryParams.Get("includeTrip"))
+	return includeTrip
+}
+
+// resolveCurrentTime resolves the query time: the explicit time parameter if supplied,
+// otherwise the current server clock.
+func (api *RestAPI) resolveCurrentTime(timeParam string, currentLocation *time.Location) (time.Time, map[string][]string) {
+	if timeParam == "" {
+		return api.Clock.Now().In(currentLocation), nil
+	}
+	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation)
+	return currentTime, timeFieldErrors
+}
+
+// mergeFieldErrors appends src's entries onto dst, allocating dst if necessary.
+func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string][]string)
+	}
+	for k, v := range src {
+		dst[k] = append(dst[k], v...)
+	}
+	return dst
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
@@ -652,18 +696,7 @@ func (rb *referenceBuilder) collectAgenciesAndRoutes() error {
 	}
 
 	for _, agency := range agencies {
-		rb.presentAgencies[agency.ID] = models.NewAgencyReference(
-			agency.ID,
-			agency.Name,
-			agency.Url,
-			agency.Timezone,
-			agency.Lang.String,
-			agency.Phone.String,
-			agency.Email.String,
-			agency.FareUrl.String,
-			"",
-			false,
-		)
+		rb.presentAgencies[agency.ID] = models.AgencyReferenceFromDatabase(&agency)
 	}
 	return nil
 }

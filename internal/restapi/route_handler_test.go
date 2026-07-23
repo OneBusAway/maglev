@@ -81,6 +81,30 @@ func TestRouteHandlerWithMalformedID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
+// TestRouteHandler_EntityIDWithUnderscores verifies that the handler correctly
+// processes IDs where the entity portion contains underscores (e.g. KCM_40_100479
+// splits into agency "KCM" and entity "40_100479" via SplitN with limit 2).
+func TestRouteHandler_EntityIDWithUnderscores(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name    string
+		routeID string
+	}{
+		{"agency with underscore in entity", "KCM_40_100479"},
+		{"existing agency with underscore in entity", "25_40_100479"},
+		{"multiple underscores in entity", "AGENCY_part1_part2_part3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[RouteEntryResponse](t, api, routeURL(tt.routeID))
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+			assert.Equal(t, http.StatusNotFound, model.Code)
+		})
+	}
+}
+
 // TestRouteHandlerWithSituations verifies that a real-time alert informing a
 // route shows up in references.situations for that route's response.
 func TestRouteHandlerWithSituations(t *testing.T) {
@@ -106,4 +130,45 @@ func TestRouteHandlerWithSituations(t *testing.T) {
 	require.Len(t, model.Data.References.Situations, 1,
 		"expected exactly one situation matching the seeded alert")
 	assert.Equal(t, alertID, model.Data.References.Situations[0].ID)
+}
+
+// TestRouteHandler_IncludeReferencesFalse verifies that when includeReferences=false,
+// the response contains an empty agencies array and skips the agency database lookup.
+func TestRouteHandler_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	url := "/api/where/route/" + testdata.Route1.ID + ".json?key=TEST&includeReferences=false"
+	resp, model := callAPIHandler[RouteEntryResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, testdata.Route1, model.Data.Entry)
+	assert.Empty(t, model.Data.References.Agencies,
+		"agencies should be empty when includeReferences=false")
+}
+
+// TestRouteHandler_IncludeReferencesDefault verifies that the default behaviour
+// (includeReferences absent or explicitly true) returns the owning agency.
+func TestRouteHandler_IncludeReferencesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"absent", routeURL(testdata.Route1.ID)},
+		{"explicit true", "/api/where/route/" + testdata.Route1.ID + ".json?key=TEST&includeReferences=true"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[RouteEntryResponse](t, api, tt.url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Len(t, model.Data.References.Agencies, 1,
+				"agencies should contain the owning agency")
+			assert.Equal(t, testdata.Raba.ID, model.Data.References.Agencies[0].ID)
+		})
+	}
 }

@@ -119,20 +119,3 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/where/trips-for-route/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.tripsForRouteHandler)))
 	mux.Handle("GET /api/where/arrivals-and-departures-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.arrivalsAndDeparturesForStopHandler)))
 }
-
-// SetupAPIRoutes creates and configures the API router with all middleware applied globally
-func (api *RestAPI) SetupAPIRoutes() http.Handler {
-	// Create the base router
-	mux := http.NewServeMux()
-
-	// Register all API routes
-	api.SetRoutes(mux)
-
-	// Apply global middleware chain: expiry -> freshness -> compression -> base routes
-	var handler http.Handler = mux
-	handler = GtfsExpiryMiddleware(api.GtfsManager)(handler)
-	handler = api.FreshnessMiddleware(handler)
-	handler = CompressionMiddleware(handler)
-
-	return handler
-}

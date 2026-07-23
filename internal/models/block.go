@@ -19,8 +19,14 @@ type TripBlock struct {
 }
 
 type BlockStopTime struct {
-	AccumulatedSlackTime ModelDuration `json:"accumulatedSlackTime"`
-	BlockSequence        int           `json:"blockSequence"`
-	DistanceAlongBlock   float64       `json:"distanceAlongBlock"`
-	StopTime             StopTime      `json:"stopTime"`
+	AccumulatedSlackTime ModelDuration     `json:"accumulatedSlackTime"`
+	BlockSequence        int               `json:"blockSequence"`
+	DistanceAlongBlock   float64           `json:"distanceAlongBlock"`
+	StopTime             BlockStopTimeData `json:"stopTime"`
+}
+
+type BlockStopTimeData struct {
+	StopTime
+	DropOffType int `json:"dropOffType"`
+	PickupType  int `json:"pickupType"`
 }

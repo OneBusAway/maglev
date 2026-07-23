@@ -147,7 +147,7 @@ func TestRouteResponseJSON(t *testing.T) {
 		CurrentTime: 1633046400000,
 		Data:        routeData,
 		Text:        "OK",
-		Version:     2,
+		Version:     APIVersion,
 	}
 
 	jsonData, err := json.Marshal(response)
@@ -171,12 +171,10 @@ func TestRouteResponseJSON(t *testing.T) {
 }
 
 func TestRouteNullSafeShortNameFallback(t *testing.T) {
-	// When shortName is empty, NullSafeShortName should fall back to longName
-	route := NewRoute("1", "agency-1", "", "Downtown Express", "", 3, "", "", "")
-	assert.Equal(t, "Downtown Express", route.NullSafeShortName)
-	assert.Equal(t, "", route.ShortName) // ShortName itself stays empty
+	route := NewRoute("25_100", "agency-1", "", "Downtown Express", "", 3, "", "", "")
+	assert.Equal(t, "25_100", route.NullSafeShortName)
+	assert.Equal(t, "", route.ShortName)
 
-	// When shortName is present, NullSafeShortName should use it
-	route2 := NewRoute("2", "agency-1", "DX", "Downtown Express", "", 3, "", "", "")
+	route2 := NewRoute("25_200", "agency-1", "DX", "Downtown Express", "", 3, "", "", "")
 	assert.Equal(t, "DX", route2.NullSafeShortName)
 }
