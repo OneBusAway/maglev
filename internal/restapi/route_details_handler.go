@@ -49,6 +49,7 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 	if timeParam == "" {
 		timeParam = r.URL.Query().Get("serviceDate")
 	}
+	filterByDate := timeParam != ""
 
 	formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
 	if !success {
@@ -75,7 +76,7 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	routeEntry, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, false)
+	routeEntry, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, false)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
