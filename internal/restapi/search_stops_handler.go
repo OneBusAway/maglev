@@ -237,33 +237,36 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, response)
 }
 
-func buildStopModel(s gtfsdb.Stop, routesByStop map[string][]string, uniqueAgencies map[string]bool, agencyOverride string) (models.Stop, string) {
-	var agencyID string
+func resolveAgencyID(stopID string, routesByStop map[string][]string, uniqueAgencies map[string]bool, agencyOverride string) string {
 	if agencyOverride != "" {
-		agencyID = agencyOverride
-	} else if rts, ok := routesByStop[s.ID]; ok && len(rts) > 0 {
-		agencyID, _, _ = utils.ExtractAgencyIDAndCodeID(rts[0])
-	} else if len(uniqueAgencies) == 1 {
+		return agencyOverride
+	}
+	if rts, ok := routesByStop[stopID]; ok && len(rts) > 0 {
+		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(rts[0])
+		return agencyID
+	}
+	if len(uniqueAgencies) == 1 {
 		for id := range uniqueAgencies {
-			agencyID = id
-			break
+			return id
 		}
 	}
+	return ""
+}
 
-	var combinedStopID string
+func formatStopID(agencyID, rawID string) string {
 	if agencyID != "" {
-		combinedStopID = utils.FormCombinedID(agencyID, s.ID)
-	} else {
-		combinedStopID = s.ID
+		return utils.FormCombinedID(agencyID, rawID)
 	}
+	return rawID
+}
+
+func buildStopModel(s gtfsdb.Stop, routesByStop map[string][]string, uniqueAgencies map[string]bool, agencyOverride string) (models.Stop, string) {
+	agencyID := resolveAgencyID(s.ID, routesByStop, uniqueAgencies, agencyOverride)
+	combinedStopID := formatStopID(agencyID, s.ID)
 
 	parentStation := ""
 	if s.ParentStation.Valid && s.ParentStation.String != "" {
-		if agencyID != "" {
-			parentStation = utils.FormCombinedID(agencyID, s.ParentStation.String)
-		} else {
-			parentStation = s.ParentStation.String
-		}
+		parentStation = formatStopID(agencyID, s.ParentStation.String)
 	}
 
 	routeIDs := routesByStop[s.ID]
