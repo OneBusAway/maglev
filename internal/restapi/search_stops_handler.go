@@ -153,6 +153,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Organize Data
 	routesByStopID := make(map[string][]string)
+	routeTypes := make(map[string]int64)
 
 	for _, row := range routesRows {
 		if ctx.Err() != nil {
@@ -162,6 +163,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
+		routeTypes[combinedRouteID] = row.Type
 	}
 
 	uniqueAgencies := make(map[string]bool)
@@ -171,6 +173,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Construct Stop Models
 	stopModels := make([]models.Stop, 0, len(stops))
+	keptStopIDs := make([]string, 0, len(stops))
+	keptStopsSet := make(map[string]bool)
 
 	for _, s := range stops {
 		if ctx.Err() != nil {
@@ -197,8 +201,16 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		routeIDs := routesByStopID[s.ID]
-		if routeIDs == nil {
-			routeIDs = []string{}
+		if len(routeIDs) == 0 {
+			continue
+		}
+
+		if len(routeIDs) == 1 {
+			if t, ok := routeTypes[routeIDs[0]]; ok {
+				if t == 711 || t == 712 || t == 713 || t == 714 {
+					continue // Legacy behaviour: only filter stops with exactly one route
+				}
+			}
 		}
 
 		name := ""
@@ -236,19 +248,33 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stopModels = append(stopModels, stopModel)
+		keptStopIDs = append(keptStopIDs, s.ID)
+		keptStopsSet[s.ID] = true
 	}
 
 	// 7. Build References
 	references := models.NewEmptyReferences()
 	if includeReferences {
-		references.Routes = routeReferencesForStops(routesRows)
+		keptRoutesRows := make([]gtfsdb.GetRoutesForStopsRow, 0, len(routesRows))
+		for _, row := range routesRows {
+			if keptStopsSet[row.StopID] {
+				keptRoutesRows = append(keptRoutesRows, row)
+			}
+		}
+		references.Routes = routeReferencesForStops(keptRoutesRows)
 		utils.SortModelRoutesByName(references.Routes)
 
-		references.Agencies = agencyReferencesForStops(agencyRows)
+		keptAgencyRows := make([]gtfsdb.GetAgenciesForStopsRow, 0, len(agencyRows))
+		for _, row := range agencyRows {
+			if keptStopsSet[row.StopID] {
+				keptAgencyRows = append(keptAgencyRows, row)
+			}
+		}
+		references.Agencies = agencyReferencesForStops(keptAgencyRows)
 		utils.SortAgencyReferencesByID(references.Agencies)
 
 		// Populate situation references for alerts affecting the returned stops
-		alerts := api.collectAlertsForStops(stopIDs)
+		alerts := api.collectAlertsForStops(keptStopIDs)
 		situations := api.BuildSituationReferences(alerts)
 		references.Situations = append(references.Situations, situations...)
 	}
