@@ -6,7 +6,7 @@ require (
 	github.com/OneBusAway/go-gtfs v1.1.1
 	github.com/getkin/kin-openapi v0.142.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.19.1
 	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
