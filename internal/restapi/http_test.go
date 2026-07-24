@@ -167,23 +167,35 @@ func serveAndRetrieveEndpoint(t testing.TB, endpoint string) (*RestAPI, *http.Re
 
 // serveApiAndRetrieveEndpoint performs the request against an existing API instance
 // Accepts testing.TB to support both *testing.T and *testing.B
-func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string) (*http.Response, models.ResponseModel) {
-	return callAPIHandler[models.ResponseModel](t, api, endpoint)
+func serveApiAndRetrieveEndpoint(t testing.TB, api *RestAPI, endpoint string, reqHeaders ...map[string]string) (*http.Response, models.ResponseModel) {
+	return callAPIHandler[models.ResponseModel](t, api, endpoint, reqHeaders...)
 }
 
-func callAPIHandler[ResponseType any](t testing.TB, api *RestAPI, endpoint string) (*http.Response, ResponseType) {
+func callAPIHandler[ResponseType any](t testing.TB, api *RestAPI, endpoint string, reqHeaders ...map[string]string) (*http.Response, ResponseType) {
 	// Use SetupAPIRoutes to ensure global middleware (like compression) is applied
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
-	resp, err := http.Get(server.URL + endpoint)
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+endpoint, nil)
+	require.NoError(t, err)
+
+	if len(reqHeaders) > 0 && reqHeaders[0] != nil {
+		for k, v := range reqHeaders[0] {
+			req.Header.Set(k, v)
+		}
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer logging.SafeCloseWithLogging(resp.Body,
 		slog.Default().With(slog.String("component", "test")),
 		"http_response_body")
 
 	var response ResponseType
-	err = json.NewDecoder(resp.Body).Decode(&response)
-	require.NoError(t, err)
+	if resp.StatusCode != http.StatusNotModified {
+		err = json.NewDecoder(resp.Body).Decode(&response)
+		require.NoError(t, err)
+	}
 
 	return resp, response
 }

@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,7 +9,7 @@ import (
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
-type RouteDetailsResponse struct {
+type routeDetailsResponse struct {
 	models.ResponseModel
 	Data struct {
 		LimitExceeded bool                       `json:"limitExceeded"`
@@ -31,7 +30,7 @@ func TestRouteDetailsHandler_Success(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api, routeDetailsURL(testdata.Route1.ID))
+	resp, model := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURL(testdata.Route1.ID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
@@ -49,7 +48,7 @@ func TestRouteDetailsHandler_NotFound(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api, routeDetailsURL("1_999999"))
+	resp, model := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURL("1_999999"))
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
@@ -59,7 +58,7 @@ func TestRouteDetailsHandler_InvalidTime(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api, routeDetailsURLWithTime(testdata.Route1.ID, "invalid_time"))
+	resp, model := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURLWithTime(testdata.Route1.ID, "invalid_time"))
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
@@ -69,7 +68,7 @@ func TestRouteDetailsHandler_InvalidRouteIDFormat(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api, routeDetailsURL("garbage"))
+	resp, model := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURL("garbage"))
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
@@ -79,7 +78,7 @@ func TestRouteDetailsHandler_ServiceDateParam(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api,
+	resp, model := callAPIHandler[routeDetailsResponse](t, api,
 		"/api/where/route-details/"+testdata.Route1.ID+".json?key=TEST&serviceDate=2024-01-01")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -91,7 +90,7 @@ func TestRouteDetailsHandler_NoActiveServiceForDate(t *testing.T) {
 	defer api.Shutdown()
 
 	// pick a date far outside the test GTFS feed's service period
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api,
+	resp, model := callAPIHandler[routeDetailsResponse](t, api,
 		"/api/where/route-details/"+testdata.Route1.ID+".json?key=TEST&time=1999-01-01")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -116,7 +115,7 @@ func TestRouteDetailsHandler_NoActiveTrips(t *testing.T) {
 	defer api.Shutdown()
 
 	// A date far outside the test GTFS feed's service calendar
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api,
+	resp, model := callAPIHandler[routeDetailsResponse](t, api,
 		routeDetailsURLWithTime(testdata.Route1.ID, "946684800000")) // 2000-01-01 in ms
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -133,13 +132,13 @@ func TestRouteDetailsHandler_RequiresValidApiKey(t *testing.T) {
 	defer api.Shutdown()
 
 	// No key at all
-	resp, model := callAPIHandler[RouteDetailsResponse](t, api,
+	resp, model := callAPIHandler[routeDetailsResponse](t, api,
 		"/api/where/route-details/"+testdata.Route1.ID+".json")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 
 	// Invalid/unknown key
-	resp2, model2 := callAPIHandler[RouteDetailsResponse](t, api,
+	resp2, model2 := callAPIHandler[routeDetailsResponse](t, api,
 		"/api/where/route-details/"+testdata.Route1.ID+".json?key=WRONGKEY")
 	assert.Equal(t, http.StatusUnauthorized, resp2.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model2.Code)
@@ -149,14 +148,7 @@ func TestRouteDetailsHandler_SetsCacheHeaders(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	server := httptest.NewServer(api.SetupAPIRoutes())
-	defer server.Close()
-
-	url := server.URL + routeDetailsURL(testdata.Route1.ID)
-
-	resp, err := http.Get(url)
-	assert.NoError(t, err)
-	defer resp.Body.Close()
+	resp, _ := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURL(testdata.Route1.ID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	etag := resp.Header.Get("ETag")
@@ -164,10 +156,9 @@ func TestRouteDetailsHandler_SetsCacheHeaders(t *testing.T) {
 	assert.Equal(t, "public, max-age=300", resp.Header.Get("Cache-Control"))
 
 	// Reissue request with ETag
-	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Set("If-None-Match", etag)
-	resp2, err := http.DefaultClient.Do(req)
-	assert.NoError(t, err)
-	defer resp2.Body.Close()
+	resp2, _ := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURL(testdata.Route1.ID), map[string]string{
+		"If-None-Match": etag,
+	})
+
 	assert.Equal(t, http.StatusNotModified, resp2.StatusCode)
 }
