@@ -75,16 +75,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate and sanitize query
-	sanitizedQuery, err := utils.ValidateAndSanitizeQuery(query)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"query": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-	query = sanitizedQuery
+	// Sanitize query
+	query = utils.SanitizeInput(query)
 
 	ctx := r.Context()
 
