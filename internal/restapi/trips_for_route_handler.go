@@ -183,7 +183,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
 		references := buildTripReferences(api, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
-		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
+		response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -448,7 +448,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	references := buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
-	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
+	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
 

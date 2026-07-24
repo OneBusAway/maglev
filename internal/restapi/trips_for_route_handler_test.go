@@ -157,7 +157,6 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			assert.Equal(t, 2, model.Version)
 			assert.NotZero(t, model.CurrentTime)
 			assert.False(t, model.Data.LimitExceeded)
-			assert.False(t, model.Data.OutOfRange)
 
 			assert.GreaterOrEqual(t, len(model.Data.List), tt.minExpected)
 			assert.LessOrEqual(t, len(model.Data.List), tt.maxExpected)
@@ -267,6 +266,23 @@ func TestStripNumericSuffix(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.expected, stripNumericSuffix(tt.input), "input: %q", tt.input)
 	}
+}
+
+func TestTripsForRouteHandler_OutOfRangeNotEmitted(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.UnixMilli())
+	data := fetchRawData(t, api, url)
+
+	_, ok := data["outOfRange"]
+	assert.False(t, ok, "outOfRange key must NOT be present in trips-for-route response (spec-compliant)")
+	_, ok = data["limitExceeded"]
+	assert.True(t, ok, "limitExceeded key must still be present")
+	_, ok = data["list"]
+	assert.True(t, ok, "list key must be present")
+	_, ok = data["references"]
+	assert.True(t, ok, "references key must be present")
 }
 
 func TestCollectStopIDsFromSchedule_NilSchedule(t *testing.T) {
