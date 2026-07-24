@@ -279,6 +279,10 @@ func TestTripsForRouteHandler_ReferencesInclusion(t *testing.T) {
 
 	timeMs := tripsForRouteTestClock.UnixMilli()
 
+	baselineURL := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d", combinedRouteID, timeMs)
+	_, baselineModel := callAPIHandler[TripsForRouteResponse](t, api, baselineURL)
+	expectedList := baselineModel.Data.List
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
@@ -290,6 +294,7 @@ func TestTripsForRouteHandler_ReferencesInclusion(t *testing.T) {
 			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
 
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, expectedList, model.Data.List, "data.list should remain exactly the same regardless of includeReferences flag")
 			require.NotEmpty(t, model.Data.List,
 				"fixture guarantees a trip at the pinned clock")
 
@@ -320,7 +325,7 @@ func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
 	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
-	outOfServiceTimeMs := tripsForRouteTestClock.UnixMilli() + (12 * 60 * 60 * 1000)
+	outOfServiceTimeMs := tripsForRouteTestClock.Add(12 * time.Hour).UnixMilli()
 
 	tests := []struct {
 		name              string
