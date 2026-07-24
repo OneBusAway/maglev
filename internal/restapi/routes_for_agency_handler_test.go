@@ -75,43 +75,53 @@ func TestRoutesForAgencyHandlerReturnsCompoundRouteIDs(t *testing.T) {
 	}
 }
 
-func TestRoutesForAgencyHandlerPagination(t *testing.T) {
+func TestRoutesForAgencyHandlerIncludeReferencesFalse(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	var results []models.Route
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&limit=5")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Len(t, model.Data.List, 5)
-	assert.True(t, model.Data.LimitExceeded)
-	results = append(results, model.Data.List...)
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		"/api/where/routes-for-agency/25.json?key=TEST&includeReferences=false")
 
-	resp, model = callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&offset=5&limit=5")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Len(t, model.Data.List, 5)
-	assert.True(t, model.Data.LimitExceeded)
-	results = append(results, model.Data.List...)
-
-	resp, model = callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&offset=10&limit=5")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Len(t, model.Data.List, 3)
-	assert.False(t, model.Data.LimitExceeded)
-	results = append(results, model.Data.List...)
-
-	assert.ElementsMatch(t, testdata.RabaRoutes, results)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List, "list must still be populated")
+	assert.Empty(t, model.Data.References.Agencies, "references must be suppressed when includeReferences=false")
 }
 
-func TestRoutesForAgencyHandlerLimitExceedsMax(t *testing.T) {
+func TestRoutesForAgencyHandlerIncludeReferencesDefault(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST&limit=100")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		"/api/where/routes-for-agency/25.json?key=TEST")
 
-	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List)
-	assert.False(t, model.Data.LimitExceeded, "limitExceeded should be false when all items returned")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies,
+		"references default to populated when includeReferences is absent")
+}
+
+// TestRoutesForAgencyHandler_LimitExceededAlwaysFalse verifies the endpoint
+// returns all routes with limitExceeded=false (no result cap).
+func TestRoutesForAgencyHandler_LimitExceededAlwaysFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-agency/25.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must always be false")
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List, "all matching routes must be returned")
+}
+
+// TestRoutesForAgencyHandler_IgnoresPaginationParams verifies that limit, maxCount,
+// and offset do not truncate the result; all routes are returned.
+func TestRoutesForAgencyHandler_IgnoresPaginationParams(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		"/api/where/routes-for-agency/25.json?key=TEST&limit=5&maxCount=1&offset=1")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded must remain false")
+	assert.ElementsMatch(t, testdata.RabaRoutes, model.Data.List, "pagination params must not truncate the result")
 }
