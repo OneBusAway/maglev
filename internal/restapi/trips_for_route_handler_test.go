@@ -303,15 +303,65 @@ func TestTripsForRouteHandler_ReferencesInclusion(t *testing.T) {
 				assert.NotEmpty(t, model.Data.References.Stops,
 					"references.stops should be populated when includeSchedule=true")
 			} else {
-				assert.Empty(t, model.Data.References.Agencies,
-					"references.agencies should be empty")
-				assert.Empty(t, model.Data.References.Routes,
-					"references.routes should be empty")
-				assert.Empty(t, model.Data.References.Trips,
-					"references.trips should be empty")
-				assert.Empty(t, model.Data.References.Stops,
-					"references.stops should be empty")
+				assert.NotNil(t, model.Data.References.Agencies, "references.agencies should be non-nil")
+				assert.Empty(t, model.Data.References.Agencies, "references.agencies should be empty")
+				assert.NotNil(t, model.Data.References.Routes, "references.routes should be non-nil")
+				assert.Empty(t, model.Data.References.Routes, "references.routes should be empty")
+				assert.NotNil(t, model.Data.References.Trips, "references.trips should be non-nil")
+				assert.Empty(t, model.Data.References.Trips, "references.trips should be empty")
+				assert.NotNil(t, model.Data.References.Stops, "references.stops should be non-nil")
+				assert.Empty(t, model.Data.References.Stops, "references.stops should be empty")
 			}
+		})
+	}
+}
+
+func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	outOfServiceTimeMs := tripsForRouteTestClock.UnixMilli() + (12 * 60 * 60 * 1000)
+
+	tests := []struct {
+		name              string
+		includeReferences string
+		wantRefsPopulated bool
+	}{
+		{
+			name:              "Empty List - Include References Explicit",
+			includeReferences: "true",
+			wantRefsPopulated: true,
+		},
+		{
+			name:              "Empty List - Exclude References",
+			includeReferences: "false",
+			wantRefsPopulated: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+				combinedRouteID, outOfServiceTimeMs)
+
+			if tt.includeReferences != "" {
+				url += "&includeReferences=" + tt.includeReferences
+			}
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			require.Empty(t, model.Data.List, "fixture should guarantee NO trips at this out-of-service time")
+
+			assert.NotNil(t, model.Data.References.Agencies, "references.agencies should be non-nil")
+			assert.Empty(t, model.Data.References.Agencies, "references.agencies should be empty")
+			assert.NotNil(t, model.Data.References.Routes, "references.routes should be non-nil")
+			assert.Empty(t, model.Data.References.Routes, "references.routes should be empty")
+			assert.NotNil(t, model.Data.References.Trips, "references.trips should be non-nil")
+			assert.Empty(t, model.Data.References.Trips, "references.trips should be empty")
+			assert.NotNil(t, model.Data.References.Stops, "references.stops should be non-nil")
+			assert.Empty(t, model.Data.References.Stops, "references.stops should be empty")
 		})
 	}
 }
