@@ -104,3 +104,19 @@ func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
 	resp, _ = callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"101"}}))
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
+func TestRouteSearchHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "includeReferences": {"false"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.List)
+
+	// When includeReferences is false, the references block should be completely empty
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Situations)
+}
