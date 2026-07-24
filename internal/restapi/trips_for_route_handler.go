@@ -27,8 +27,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
-	includeStatus := r.URL.Query().Get("includeStatus") != "false"
+	includeSchedule := true
+	if r.URL.Query().Has("includeSchedule") {
+		includeSchedule, _ = strconv.ParseBool(r.URL.Query().Get("includeSchedule"))
+	}
+
+	includeStatus := true
+	if r.URL.Query().Has("includeStatus") {
+		includeStatus, _ = strconv.ParseBool(r.URL.Query().Get("includeStatus"))
+	}
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
