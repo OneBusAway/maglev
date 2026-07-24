@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -103,7 +104,7 @@ func TestRouteDetailsHandler_NoActiveServiceForDate(t *testing.T) {
 	// route should still appear in references even with no active trips
 	found := false
 	for _, r := range model.Data.References.Routes {
-		if r.ID != "" {
+		if r.ID == testdata.Route1.ID {
 			found = true
 		}
 	}
@@ -148,9 +149,25 @@ func TestRouteDetailsHandler_SetsCacheHeaders(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, _ := callAPIHandler[RouteDetailsResponse](t, api, routeDetailsURL(testdata.Route1.ID))
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	url := server.URL + routeDetailsURL(testdata.Route1.ID)
+
+	resp, err := http.Get(url)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.NotEmpty(t, resp.Header.Get("ETag"))
-	assert.NotEmpty(t, resp.Header.Get("Cache-Control"))
+	etag := resp.Header.Get("ETag")
+	assert.NotEmpty(t, etag)
+	assert.Equal(t, "public, max-age=300", resp.Header.Get("Cache-Control"))
+
+	// Reissue request with ETag
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("If-None-Match", etag)
+	resp2, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp2.Body.Close()
+	assert.Equal(t, http.StatusNotModified, resp2.StatusCode)
 }

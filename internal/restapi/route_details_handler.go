@@ -1,11 +1,13 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -39,21 +41,8 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	currentLocation, err := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
-	timeParam := r.URL.Query().Get("time")
-	if timeParam == "" {
-		timeParam = r.URL.Query().Get("serviceDate")
-	}
-	filterByDate := timeParam != ""
-
-	formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
-	if !success {
-		api.validationErrorResponse(w, r, fieldErrors)
+	formattedDate, filterByDate, ok := api.parseDateForRouteDetails(w, r, currentAgency.ID, currentAgency.Timezone)
+	if !ok {
 		return
 	}
 
@@ -82,14 +71,44 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	result := models.RouteDetailsEntry{
-		RouteID: models.AgencyAndId{
-			AgencyID: agencyID,
-			ID:       routeID,
-		},
-		StopGroupings: routeEntry.StopGroupings,
+	result := models.NewRouteDetailsEntry(
+		models.NewAgencyAndId(agencyID, routeID),
+		routeEntry.StopGroupings,
+	)
+
+	references, err := api.assembleRouteDetailsReferences(ctx, agencyID, currentAgency, route, stopsList)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
+	response := models.NewListResponse([]models.RouteDetailsEntry{result}, *references, false, api.Clock)
+	api.sendResponse(w, r, response)
+}
+
+func (api *RestAPI) parseDateForRouteDetails(w http.ResponseWriter, r *http.Request, agencyID, timezone string) (string, bool, bool) {
+	currentLocation, err := loadAgencyLocation(agencyID, timezone)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return "", false, false
+	}
+
+	timeParam := r.URL.Query().Get("time")
+	if timeParam == "" {
+		timeParam = r.URL.Query().Get("serviceDate")
+	}
+	filterByDate := timeParam != ""
+
+	formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
+	if !success {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return "", false, false
+	}
+
+	return formattedDate, filterByDate, true
+}
+
+func (api *RestAPI) assembleRouteDetailsReferences(ctx context.Context, agencyID string, currentAgency gtfsdb.Agency, route gtfsdb.Route, stopsList []models.Stop) (*models.ReferencesModel, error) {
 	agencyRef := models.NewAgencyReference(
 		currentAgency.ID,
 		currentAgency.Name,
@@ -105,8 +124,7 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 
 	routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+		return nil, err
 	}
 
 	routeData := models.NewRoute(
@@ -136,10 +154,9 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 	references.Routes = routes
 	references.Stops = stopsList
 
-	alerts := api.GtfsManager.GetAlertsForRoute(routeID)
+	alerts := api.GtfsManager.GetAlertsForRoute(route.ID)
 	situations := api.BuildSituationReferences(alerts)
 	references.Situations = append(references.Situations, situations...)
 
-	response := models.NewListResponse([]models.RouteDetailsEntry{result}, *references, false, api.Clock)
-	api.sendResponse(w, r, response)
+	return references, nil
 }
