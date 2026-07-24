@@ -191,10 +191,22 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			require.Len(t, refs.Routes, 1, "response should reference the single fixture route")
 			assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID), refs.Routes[0].ID)
 			require.Len(t, refs.Stops, 2, "response should reference both fixture stops when includeSchedule=true")
-			for _, s := range refs.Stops {
-				assert.Contains(t, s.ID, "_",
-					"reference stop IDs must be combined IDs to match schedule stop times")
+
+			expectedStopIDs := make(map[string]bool)
+			for _, trip := range model.Data.List {
+				if trip.Schedule != nil {
+					for _, st := range trip.Schedule.StopTimes {
+						expectedStopIDs[st.StopID] = true
+					}
+				}
 			}
+
+			actualStopIDs := make(map[string]bool)
+			for _, s := range refs.Stops {
+				actualStopIDs[s.ID] = true
+			}
+
+			assert.Equal(t, expectedStopIDs, actualStopIDs, "reference stop IDs must exactly match the deduped schedule stop IDs")
 		})
 	}
 }
