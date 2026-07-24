@@ -8,7 +8,10 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestGetVehicleStatusAndPhase_NilVehicle(t *testing.T) {
@@ -279,4 +282,178 @@ func TestBuildVehicleStatus_BearingConversion(t *testing.T) {
 			assert.Equal(t, tt.expectedOrientation, status.LastKnownOrientation, "LastKnownOrientation should match Orientation")
 		})
 	}
+}
+
+func TestResolveActiveTripID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	// Monday within the RABA dataset's active service period.
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
+	formattedDate := serviceDate.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs)
+
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	// Find a block with at least two ordered trips that have scheduled windows.
+	var blockTrips []gtfsdb.GetTripsByBlockIDOrderedRow
+	seen := make(map[string]bool)
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" || seen[row.BlockID.String] {
+			continue
+		}
+		seen[row.BlockID.String] = true
+
+		ordered, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+			BlockID:    nulls.String(row.BlockID.String),
+			ServiceIds: serviceIDs,
+		})
+		if err != nil {
+			continue
+		}
+		var withWindows []gtfsdb.GetTripsByBlockIDOrderedRow
+		for _, bt := range ordered {
+			if bt.EarliestTime.Valid && bt.LatestTime.Valid {
+				withWindows = append(withWindows, bt)
+			}
+		}
+		if len(withWindows) >= 2 {
+			blockTrips = withWindows
+			break
+		}
+	}
+	require.GreaterOrEqual(t, len(blockTrips), 2, "need a block with >=2 scheduled trips in test data")
+
+	nominal := blockTrips[0]
+	active := blockTrips[1]
+
+	t.Run("returns interlining active trip at its scheduled time", func(t *testing.T) {
+		// A reference time inside the second trip's window while the nominal trip is the first.
+		midWindowNs := (active.EarliestTime.Int64 + active.LatestTime.Int64) / 2
+		refTime := serviceDate.Add(time.Duration(midWindowNs))
+
+		got := api.resolveActiveTripID(ctx, nominal.ID, refTime)
+		assert.Equal(t, active.ID, got,
+			"expected the trip whose scheduled window contains the reference time")
+	})
+
+	t.Run("returns nominal trip within its own window", func(t *testing.T) {
+		midWindowNs := (nominal.EarliestTime.Int64 + nominal.LatestTime.Int64) / 2
+		refTime := serviceDate.Add(time.Duration(midWindowNs))
+
+		got := api.resolveActiveTripID(ctx, nominal.ID, refTime)
+		assert.Equal(t, nominal.ID, got)
+	})
+
+	t.Run("falls back to nominal when no window matches", func(t *testing.T) {
+		// A time before any block trip starts.
+		refTime := serviceDate.Add(-1 * time.Hour)
+		got := api.resolveActiveTripID(ctx, nominal.ID, refTime)
+		assert.Equal(t, nominal.ID, got)
+	})
+
+	t.Run("falls back to nominal for unknown trip", func(t *testing.T) {
+		got := api.resolveActiveTripID(ctx, "nonexistent-trip", serviceDate)
+		assert.Equal(t, "nonexistent-trip", got)
+	})
+
+	t.Run("resolves a past-midnight trip on the following calendar day", func(t *testing.T) {
+		// Build a synthetic block on an existing active service. The second trip's
+		// window runs past 24:00 (25:00-25:30), i.e. 01:00-01:30 the next calendar day.
+		serviceID := serviceIDs[0]
+		nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, blockTrips[0].ID)
+		require.NoError(t, err)
+		routeID := nominalRow.RouteID
+
+		blockID := nulls.String("rollover-block")
+		const dayNs = int64(24 * time.Hour)
+
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "rollover-nominal",
+			RouteID:          routeID,
+			ServiceID:        serviceID,
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(23 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(23*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "rollover-past-midnight",
+			RouteID:          routeID,
+			ServiceID:        serviceID,
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(dayNs + int64(time.Hour)),                // 25:00
+			MaxDepartureTime: nulls.Int64(dayNs + int64(time.Hour+30*time.Minute)), // 25:30
+		})
+		require.NoError(t, err)
+
+		// 01:15 on the day after the service date falls inside the 25:00-25:30 window
+		// of the previous service day.
+		refTime := serviceDate.AddDate(0, 0, 1).Add(75 * time.Minute)
+		got := api.resolveActiveTripID(ctx, "rollover-nominal", refTime)
+		assert.Equal(t, "rollover-past-midnight", got,
+			"a trip whose window exceeds 24:00 must match a reference time on the next calendar day")
+	})
+
+	t.Run("matches wall-clock window across a DST transition", func(t *testing.T) {
+		// 2024-11-03 is a fall-back DST day in America/Los_Angeles and has an active
+		// RABA service. After the 02:00->01:00 shift, wall-clock 10:15 is 11h15m of
+		// elapsed physical time since midnight, so elapsed-time math would miss a
+		// 10:00-10:30 wall-clock window; wall-clock math matches it.
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		dstDate := time.Date(2024, 11, 3, 0, 0, 0, 0, loc)
+		dstServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dstDate.Format("20060102"))
+		require.NoError(t, err)
+		require.NotEmpty(t, dstServiceIDs, "need an active RABA service on the DST date")
+
+		nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, blockTrips[0].ID)
+		require.NoError(t, err)
+
+		blockID := nulls.String("dst-block")
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "dst-nominal",
+			RouteID:          nominalRow.RouteID,
+			ServiceID:        dstServiceIDs[0],
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(8 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(8*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "dst-active",
+			RouteID:          nominalRow.RouteID,
+			ServiceID:        dstServiceIDs[0],
+			BlockID:          blockID,
+			MinArrivalTime:   nulls.Int64(10 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(10*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		refTime := time.Date(2024, 11, 3, 10, 15, 0, 0, loc)
+		got := api.resolveActiveTripID(ctx, "dst-nominal", refTime)
+		assert.Equal(t, "dst-active", got,
+			"GTFS windows are wall-clock and must match across a DST transition")
+	})
+}
+
+func TestWallClockSinceMidnightNs(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	// Fall-back day: 10:15 wall-clock is 11h15m of elapsed time since midnight, but
+	// the wall-clock value must remain 10h15m.
+	dst := time.Date(2024, 11, 3, 10, 15, 0, 0, loc)
+	assert.Equal(t, int64(10*time.Hour+15*time.Minute), wallClockSinceMidnightNs(dst))
+
+	// A normal day is unaffected.
+	normal := time.Date(2024, 6, 1, 10, 15, 30, 0, loc)
+	assert.Equal(t, int64(10*time.Hour+15*time.Minute+30*time.Second), wallClockSinceMidnightNs(normal))
 }
