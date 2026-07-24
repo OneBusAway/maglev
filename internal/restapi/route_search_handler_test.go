@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func routeSearchURL(params url.Values) string {
@@ -103,4 +104,47 @@ func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
 
 	resp, _ = callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"101"}}))
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestRouteSearchHandlerSorting(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"1"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List)
+
+	// Ensure routes are sorted by natural short name order
+	isSortedRoutes := true
+	for i := 1; i < len(model.Data.List); i++ {
+		prev := model.Data.List[i-1]
+		curr := model.Data.List[i]
+
+		namePrev := prev.ShortName
+		if namePrev == "" {
+			namePrev = prev.LongName
+		}
+
+		nameCurr := curr.ShortName
+		if nameCurr == "" {
+			nameCurr = curr.LongName
+		}
+
+		if utils.NaturalCompare(namePrev, nameCurr) > 0 {
+			isSortedRoutes = false
+			break
+		}
+	}
+	assert.True(t, isSortedRoutes, "Routes should be sorted by short name")
+
+	// Ensure agencies are sorted by ID
+	isSortedAgencies := true
+	for i := 1; i < len(model.Data.References.Agencies); i++ {
+		if strings.Compare(model.Data.References.Agencies[i-1].ID, model.Data.References.Agencies[i].ID) > 0 {
+			isSortedAgencies = false
+			break
+		}
+	}
+	assert.True(t, isSortedAgencies, "Agencies should be sorted by ID")
 }
