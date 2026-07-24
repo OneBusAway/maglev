@@ -439,22 +439,22 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		result = []models.TripsForRouteListEntry{}
 	}
 
-	var stops []gtfsdb.Stop
-	if len(stopIDsMap) > 0 {
-		stopIDs := make([]string, 0, len(stopIDsMap))
-		for stopID := range stopIDsMap {
-			stopIDs = append(stopIDs, stopID)
-		}
-		var err error
-		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-		if err != nil {
-			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
-			stops = []gtfsdb.Stop{}
-		}
-	}
-
 	var references models.ReferencesModel
 	if includeReferences {
+		var stops []gtfsdb.Stop
+		if len(stopIDsMap) > 0 {
+			stopIDs := make([]string, 0, len(stopIDsMap))
+			for stopID := range stopIDsMap {
+				stopIDs = append(stopIDs, stopID)
+			}
+			var err error
+			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+			if err != nil {
+				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+				stops = []gtfsdb.Stop{}
+			}
+		}
+
 		references = buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
 	} else {
 		references = *models.NewEmptyReferences()
