@@ -191,6 +191,10 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			require.Len(t, refs.Routes, 1, "response should reference the single fixture route")
 			assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID), refs.Routes[0].ID)
 			require.Len(t, refs.Stops, 2, "response should reference both fixture stops when includeSchedule=true")
+			for _, s := range refs.Stops {
+				assert.Contains(t, s.ID, "_",
+					"reference stop IDs must be combined IDs to match schedule stop times")
+			}
 		})
 	}
 }
@@ -270,7 +274,7 @@ func TestStripNumericSuffix(t *testing.T) {
 }
 
 func TestCollectStopIDsFromSchedule_NilSchedule(t *testing.T) {
-	stopIDsMap := map[string]bool{}
+	stopIDsMap := map[string]string{}
 
 	collectStopIDsFromSchedule(nil, stopIDsMap)
 
@@ -285,14 +289,14 @@ func TestCollectStopIDsFromSchedule_PopulatesMap(t *testing.T) {
 			{StopID: "25_1003"},
 		},
 	}
-	stopIDsMap := map[string]bool{}
+	stopIDsMap := map[string]string{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
-	assert.Equal(t, map[string]bool{
-		"1001": true,
-		"1002": true,
-		"1003": true,
+	assert.Equal(t, map[string]string{
+		"1001": "25_1001",
+		"1002": "25_1002",
+		"1003": "25_1003",
 	}, stopIDsMap)
 }
 
@@ -303,17 +307,17 @@ func TestCollectStopIDsFromSchedule_SkipsMalformedIDs(t *testing.T) {
 			{StopID: "no-underscore"},
 		},
 	}
-	stopIDsMap := map[string]bool{}
+	stopIDsMap := map[string]string{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
-	assert.Equal(t, map[string]bool{"good": true}, stopIDsMap,
+	assert.Equal(t, map[string]string{"good": "25_good"}, stopIDsMap,
 		"malformed stop IDs must be silently skipped")
 }
 
 func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 	schedule := &models.TripsSchedule{StopTimes: []models.StopTime{}}
-	stopIDsMap := map[string]bool{}
+	stopIDsMap := map[string]string{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
