@@ -74,8 +74,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	terms := extractFTS5Terms(sanitizedQuery)
 
 	if len(terms) == 0 {
-		response := models.NewListResponseWithRange([]models.Stop{}, *models.NewEmptyReferences(), false, api.Clock, false)
-		api.sendResponse(w, r, response)
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -129,6 +128,13 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			)
 			return
 		}
+	}
+
+	// Pre-filter check: if no stops matched the prefix query at all, return 404
+	// per OBA spec (Minimal Guarantees & Extensions 2a).
+	if len(stops) == 0 {
+		api.sendNotFound(w, r)
+		return
 	}
 
 	stops, isLimitExceeded := utils.PaginateSlice(stops, 0, limit)
