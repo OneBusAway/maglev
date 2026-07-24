@@ -2,6 +2,9 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -24,8 +27,10 @@ type ArrivalsStopParams struct {
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
 func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
-	const maxBefore = 60 * time.Minute
-	const maxAfter = 240 * time.Minute
+	// Cap at one service day. Java doesn't cap; we do to bound per-request
+	// work — the handler iterates only ±1 day of stop_times anyway.
+	const maxBefore = 24 * time.Hour
+	const maxAfter = 24 * time.Hour
 
 	params := ArrivalsStopParams{
 		After:  35 * time.Minute, // Default
@@ -105,7 +110,13 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		// Unknown agency (e.g. wrong-case agency in the URL) is a client
+		// error — surface 404 instead of 500.
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -149,8 +160,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 		if err != nil {
-			api.Logger.Warn("failed to query active service IDs",
+			// dayOffset==0 is the user's actual service date — silently
+			// dropping it would emit a 200 with the most important day's
+			// arrivals missing. Fail loud for that case so clients can
+			// retry. ±1-day failures stay best-effort (window-spillover only).
+			if dayOffset == 0 {
+				api.serverErrorResponse(w, r, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err))
+				return
+			}
+			api.Logger.Warn("failed to query active service IDs for window-spillover day, skipping",
 				slog.String("date", serviceDateStr),
+				slog.Int("day_offset", dayOffset),
 				slog.Any("error", err))
 			continue
 		}
@@ -335,61 +355,61 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			predictedDepartureTime = predDep
 		}
 
-		if vehicle != nil {
-			// Use route.AgencyID instead of stopAgencyID for BuildTripStatus
-			status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
-			if statusErr != nil {
-				api.Logger.Warn("BuildTripStatus failed for arrival",
-					"tripID", st.TripID, "error", statusErr)
+		// Always built — Java attaches a BlockLocation (real-time or scheduled) to
+		// every arrival, so tripStatus is always non-null.
+		status, snapshot, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
+		if statusErr != nil {
+			api.Logger.Warn("BuildTripStatus failed for arrival",
+				"tripID", st.TripID, "error", statusErr)
+		}
+		if status != nil {
+			tripStatus = status
+
+			if status.NextStop != "" {
+				_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop)
+				if err == nil {
+					stopIDSet[nextStopID] = true
+				}
 			}
-			if status != nil {
-				tripStatus = status
-
-				if status.NextStop != "" {
-					_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop)
-					if err == nil {
-						stopIDSet[nextStopID] = true
-					}
+			if status.ClosestStop != "" {
+				_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop)
+				if err == nil {
+					stopIDSet[closestStopID] = true
 				}
-				if status.ClosestStop != "" {
-					_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop)
-					if err == nil {
-						stopIDSet[closestStopID] = true
-					}
+			}
+
+			// Reuse the snapshot BuildTripStatus already computed for this trip.
+			// BuildTripStatus applies the same schedule-deviation shift internally,
+			// so recomputing here just to run metricsForStop was doubling every
+			// per-arrival snapshot cost — a real problem on the plural handler
+			// where minutesBefore/minutesAfter can be 24h in each direction.
+			if snapshot != nil {
+				if d, n, ok := snapshot.metricsForStop(st.TripID, int(st.StopSequence)); ok {
+					distanceFromStop = d
+					numberOfStopsAway = n
 				}
+			}
 
-				if vehicle.Position != nil {
-					distanceFromStop = api.getBlockDistanceToStop(ctx, st.TripID, stopCode, vehicle, params.Time)
-
-					numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, st.TripID, int(st.StopSequence), vehicle, params.Time)
-					if numberOfStopsAwayPtr != nil {
-						numberOfStopsAway = *numberOfStopsAwayPtr
-					} else {
-						numberOfStopsAway = -1
-					}
-				}
-
-				// If there's an active trip that's different from the current trip, add it to references
-				if status.ActiveTripID != "" {
-					_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
-					if err == nil && activeTripID != st.TripID {
-						// Check cache for active trip
-						if _, exists := tripIDSet[activeTripID]; !exists {
-							activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
-							if err != nil {
-								api.Logger.Debug("skipping active trip reference: trip not found",
-									slog.String("activeTripID", activeTripID),
-									slog.String("scheduledTripID", st.TripID),
-									slog.Any("error", err))
+			// If there's an active trip that's different from the current trip, add it to references
+			if status.ActiveTripID != "" {
+				_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
+				if err == nil && activeTripID != st.TripID {
+					// Check cache for active trip
+					if _, exists := tripIDSet[activeTripID]; !exists {
+						activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+						if err != nil {
+							api.Logger.Debug("skipping active trip reference: trip not found",
+								slog.String("activeTripID", activeTripID),
+								slog.String("scheduledTripID", st.TripID),
+								slog.Any("error", err))
+						} else {
+							tripIDSet[activeTrip.ID] = &activeTrip
+							activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
+							if err == nil {
+								routeIDSet[activeRoute.ID] = &activeRoute
 							} else {
-								tripIDSet[activeTrip.ID] = &activeTrip
-								activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
-								if err == nil {
-									routeIDSet[activeRoute.ID] = &activeRoute
-								} else {
-									api.Logger.Warn("failed to fetch route for active trip reference",
-										"tripID", activeTripID, "routeID", activeTrip.RouteID, "error", err)
-								}
+								api.Logger.Warn("failed to fetch route for active trip reference",
+									"tripID", activeTripID, "routeID", activeTrip.RouteID, "error", err)
 							}
 						}
 					}
@@ -626,8 +646,16 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
-	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: 10000, LatSpan: 100, LonSpan: 100}
-	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, 5)
+	// Mirrors Java: StopWithArrivalsAndDeparturesBeanServiceImpl calls
+	// NearbyStopsBeanService with radius=100 m and no count limit
+	// (StopWithArrivalsAndDeparturesBeanServiceImpl.java:74-75 +
+	// NearbyStopsBeanServiceImpl.java:60-72). LatSpan/LonSpan must stay
+	// zero so BoundsFromParams uses Radius — otherwise span-in-degrees
+	// takes precedence and produces a city-sized bounding box.
+	const nearbyRadiusMeters = 100
+	const nearbyLimit = 0 // 0 = no cap
+	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: nearbyRadiusMeters}
+	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, nearbyLimit)
 	if len(nearbyIDs) == 0 {
 		return nil
 	}

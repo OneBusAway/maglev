@@ -126,10 +126,8 @@ func (api *RestAPI) BuildVehicleStatus(
 			Lon: float64(*vehicle.Position.Longitude),
 		}
 		status.LastKnownLocation = &actualPosition
-		// Position is initially set to the raw GPS position.
-		// BuildTripStatus will refine this by projecting it onto the route shape
-		// after fetching shape data. Note: getVehicleDistanceAlongShapeContextual
-		// makes its own GetShapePointsByTripID call; these two fetches are separate.
+		// Position is initially set to the raw GPS position; BuildTripStatus
+		// refines it by projecting onto the route shape after fetching shape data.
 		status.Position = actualPosition
 
 		status.LastLocationUpdateTime = models.NewModelTime(lastUpdateTime)
@@ -259,12 +257,4 @@ func projectPositionWithShapePoints(shapePoints []gtfs.ShapePoint, actualPos mod
 func projectPointToSegment(px, py, x1, y1, x2, y2 float64) (float64, models.Location) {
 	dist, _, projLat, projLon := projectOntoSegment(px, py, x1, y1, x2, y2)
 	return dist, models.Location{Lat: projLat, Lon: projLon}
-}
-
-func getCurrentVehicleStopSequence(vehicle *gtfs.Vehicle) *int {
-	if vehicle == nil || vehicle.CurrentStopSequence == nil {
-		return nil
-	}
-	val := int(*vehicle.CurrentStopSequence)
-	return &val
 }

@@ -1415,13 +1415,28 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 					continue
 				}
 
+				// Java's BlockTripLayoverTimeComparator defines the layover
+				// window as [prev-trip last-stop DEPARTURE, next-trip first-stop
+				// ARRIVAL] — i.e. the interval during which the vehicle is idle
+				// at the terminal. Using arrival/departure would widen the
+				// window across in-service dwell times at both ends.
+				layoverStart := int64(lastStopCurrent.DepartureTime)
+				layoverEnd := int64(firstStopNext.ArrivalTime)
+				// Skips schedule anomalies where trips overlap at the shared
+				// stop (next arrives before prev departs). Also protects the
+				// CHECK (layover_start <= layover_end) constraint from
+				// aborting the whole import transaction on one bad pair.
+				if layoverStart > layoverEnd {
+					continue
+				}
+
 				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
 					BlockID:       key.blockID,
 					ServiceID:     key.serviceID,
 					RouteID:       nextTrip.Route.Id,
 					LayoverStopID: lastStopCurrent.Stop.Id,
-					LayoverStart:  int64(lastStopCurrent.DepartureTime),
-					LayoverEnd:    int64(firstStopNext.ArrivalTime),
+					LayoverStart:  layoverStart,
+					LayoverEnd:    layoverEnd,
 					NextTripID:    nextTrip.ID,
 				})
 				if err != nil {

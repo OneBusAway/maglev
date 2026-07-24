@@ -3253,6 +3253,72 @@ func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shap
 	return items, nil
 }
 
+const getShapePointsByTripIDs = `-- name: GetShapePointsByTripIDs :many
+SELECT
+    t.id AS trip_id,
+    s.shape_id,
+    s.lat,
+    s.lon,
+    s.shape_pt_sequence,
+    s.shape_dist_traveled
+FROM shapes s
+JOIN trips t ON t.shape_id = s.shape_id
+WHERE t.id IN (/*SLICE:trip_ids*/?)
+ORDER BY t.id ASC, s.shape_pt_sequence ASC
+`
+
+type GetShapePointsByTripIDsRow struct {
+	TripID            string
+	ShapeID           string
+	Lat               float64
+	Lon               float64
+	ShapePtSequence   int64
+	ShapeDistTraveled sql.NullFloat64
+}
+
+// Batch equivalent of GetShapePointsByTripID for N+1 avoidance when loading
+// an entire block's worth of trips at once (loadBlockTripData). Rows are
+// returned with their originating trip_id so callers can group them.
+func (q *Queries) GetShapePointsByTripIDs(ctx context.Context, tripIds []string) ([]GetShapePointsByTripIDsRow, error) {
+	query := getShapePointsByTripIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetShapePointsByTripIDsRow
+	for rows.Next() {
+		var i GetShapePointsByTripIDsRow
+		if err := rows.Scan(
+			&i.TripID,
+			&i.ShapeID,
+			&i.Lat,
+			&i.Lon,
+			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getShapePointsForTrip = `-- name: GetShapePointsForTrip :many
 SELECT DISTINCT shapes.lat, shapes.lon, shapes.shape_pt_sequence
 FROM shapes
@@ -4329,6 +4395,53 @@ func (q *Queries) GetTrip(ctx context.Context, id string) (Trip, error) {
 		&i.MaxDepartureTime,
 	)
 	return i, err
+}
+
+const getTripStartTimesByIDs = `-- name: GetTripStartTimesByIDs :many
+SELECT id, min_arrival_time
+FROM trips
+WHERE id IN (/*SLICE:trip_ids*/?)
+`
+
+type GetTripStartTimesByIDsRow struct {
+	ID             string
+	MinArrivalTime sql.NullInt64
+}
+
+// Returns cached min_arrival_time (nanoseconds since midnight) for each
+// trip_id. Callers use this to sort a block's trips by start time without
+// pulling every stop_times row per trip.
+func (q *Queries) GetTripStartTimesByIDs(ctx context.Context, tripIds []string) ([]GetTripStartTimesByIDsRow, error) {
+	query := getTripStartTimesByIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTripStartTimesByIDsRow
+	for rows.Next() {
+		var i GetTripStartTimesByIDsRow
+		if err := rows.Scan(&i.ID, &i.MinArrivalTime); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getTripsByBlockID = `-- name: GetTripsByBlockID :many
