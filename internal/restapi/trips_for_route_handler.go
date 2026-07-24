@@ -182,7 +182,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
-		references := buildTripReferences(api, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+		references := buildTripReferences(api, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil, nil)
 		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
@@ -306,7 +306,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	stopIDsMap := make(map[string]bool)
+	stopIDsMap := make(map[string]string)
 
 	var result []models.TripsForRouteListEntry
 	for _, fetchedTrip := range fetchedTrips {
@@ -435,31 +435,33 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var stops []gtfsdb.Stop
 	if len(stopIDsMap) > 0 {
-		stopIDs := make([]string, 0, len(stopIDsMap))
-		for stopID := range stopIDsMap {
-			stopIDs = append(stopIDs, stopID)
+		bareIDs := make([]string, 0, len(stopIDsMap))
+		for bareID := range stopIDsMap {
+			bareIDs = append(bareIDs, bareID)
 		}
 		var err error
-		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
 		if err != nil {
-			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
 			stops = []gtfsdb.Stop{}
 		}
 	}
 
-	references := buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
+	references := buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips, stopIDsMap)
 	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
-func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]bool) {
+func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]string) {
 	if schedule == nil {
 		return
 	}
 	for _, stopTime := range schedule.StopTimes {
-		_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
+		_, bareID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 		if err == nil {
-			stopIDsMap[stopID] = true
+			if _, exists := stopIDsMap[bareID]; !exists {
+				stopIDsMap[bareID] = stopTime.StopID
+			}
 		}
 	}
 }
@@ -471,6 +473,7 @@ func buildTripReferences(
 	trips []models.TripsForRouteListEntry,
 	stops []gtfsdb.Stop,
 	preFetchedTrips []gtfsdb.Trip,
+	stopIDMap map[string]string,
 ) models.ReferencesModel {
 
 	presentTrips := make(map[string]models.Trip)
@@ -610,6 +613,11 @@ func buildTripReferences(
 
 	stopList := make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
+		stopID := stop.ID
+		if combinedID, ok := stopIDMap[stop.ID]; ok {
+			stopID = combinedID
+		}
+
 		routeIdsString := stopRouteIDs[stop.ID]
 		if routeIdsString == nil {
 			routeIdsString = []string{}
@@ -623,7 +631,7 @@ func buildTripReferences(
 		stopList = append(stopList, models.Stop{
 			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
-			ID:                 stop.ID,
+			ID:                 stopID,
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       0,
