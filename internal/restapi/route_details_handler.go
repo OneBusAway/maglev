@@ -31,13 +31,8 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
-		api.serverErrorResponse(w, r, err)
+	currentAgency, ok := api.getAgencyForHandler(ctx, w, r, agencyID)
+	if !ok {
 		return
 	}
 
@@ -46,17 +41,8 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	if route.ID == "" {
-		api.sendNotFound(w, r)
+	route, ok := api.getRouteForHandler(ctx, w, r, routeID)
+	if !ok {
 		return
 	}
 
@@ -170,4 +156,34 @@ func (api *RestAPI) assembleRouteDetailsReferences(ctx context.Context, agencyID
 	references.Situations = append(references.Situations, situations...)
 
 	return references, nil
+}
+
+func (api *RestAPI) getAgencyForHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, agencyID string) (gtfsdb.Agency, bool) {
+	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+			return gtfsdb.Agency{}, false
+		}
+		api.serverErrorResponse(w, r, err)
+		return gtfsdb.Agency{}, false
+	}
+	return agency, true
+}
+
+func (api *RestAPI) getRouteForHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, routeID string) (gtfsdb.Route, bool) {
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+			return gtfsdb.Route{}, false
+		}
+		api.serverErrorResponse(w, r, err)
+		return gtfsdb.Route{}, false
+	}
+	if route.ID == "" {
+		api.sendNotFound(w, r)
+		return gtfsdb.Route{}, false
+	}
+	return route, true
 }

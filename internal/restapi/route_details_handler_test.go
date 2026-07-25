@@ -43,6 +43,18 @@ func TestRouteDetailsHandler_Success(t *testing.T) {
 	assert.Len(t, entry.StopGroupings, 2)
 	assert.Equal(t, "heuristic", entry.StopGroupings[0].Type)
 	assert.Equal(t, "direction", entry.StopGroupings[1].Type)
+
+	hasPolylines := false
+	for _, grouping := range entry.StopGroupings {
+		for _, stopGroup := range grouping.StopGroups {
+			if len(stopGroup.Polylines) > 0 {
+				hasPolylines = true
+				break
+			}
+		}
+	}
+	assert.True(t, hasPolylines, "expected at least one stop group to have polylines")
+
 	assert.NotEmpty(t, model.Data.References.Agencies)
 	assert.NotEmpty(t, model.Data.References.Routes)
 }
