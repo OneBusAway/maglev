@@ -308,6 +308,7 @@ func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, routeID 
 		},
 		StopIds:   formattedStopIDs,
 		Polylines: groupPolylines,
+		SubGroups: []models.StopGroup{},
 	}, nil
 }
 
