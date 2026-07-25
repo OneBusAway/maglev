@@ -51,11 +51,13 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 
 	require.Len(t, grouping.StopGroups, 2)
 
+	// Both RABA directions share the headsign "Shasta Lake", so each group's
+	// name is disambiguated with its direction id (and the sort is deterministic).
 	outbound := grouping.StopGroups[0]
 	assert.Equal(t, "0", outbound.ID)
-	assert.Equal(t, "Shasta Lake", outbound.Name.Name)
+	assert.Equal(t, "Shasta Lake - 0", outbound.Name.Name)
 	assert.Equal(t, "destination", outbound.Name.Type)
-	assert.Equal(t, []string{"Shasta Lake"}, outbound.Name.Names)
+	assert.Equal(t, []string{"Shasta Lake - 0"}, outbound.Name.Names)
 	assert.Len(t, outbound.StopIds, 21)
 	// Direction-0 shape retraces two of its own edges, splitting into 3 polylines.
 	require.Len(t, outbound.Polylines, 3)
@@ -66,8 +68,9 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 
 	inbound := grouping.StopGroups[1]
 	assert.Equal(t, "1", inbound.ID)
-	assert.Equal(t, "Shasta Lake", inbound.Name.Name)
+	assert.Equal(t, "Shasta Lake - 1", inbound.Name.Name)
 	assert.Equal(t, "destination", inbound.Name.Type)
+	assert.Equal(t, []string{"Shasta Lake - 1"}, inbound.Name.Names)
 	assert.Len(t, inbound.StopIds, 22)
 	// Direction-1 shape retraces one of its own edges, splitting into 2 polylines.
 	require.Len(t, inbound.Polylines, 2)
@@ -341,4 +344,42 @@ func TestStopsForRouteNullDirectionID(t *testing.T) {
 	stopGroups := entry.StopGroupings[0].StopGroups
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
 	assert.Len(t, stopGroups[0].StopIds, 2, "expected both stops to appear in the stop group")
+}
+
+func TestDisambiguateGroupNames(t *testing.T) {
+	group := func(id, name string) models.StopGroup {
+		return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+	}
+
+	tests := []struct {
+		name      string
+		groups    []models.StopGroup
+		wantNames []string
+	}{
+		{
+			name:      "distinct names are left untouched",
+			groups:    []models.StopGroup{group("0", "Downtown"), group("1", "Airport")},
+			wantNames: []string{"Downtown", "Airport"},
+		},
+		{
+			name:      "shared name is disambiguated with the direction id",
+			groups:    []models.StopGroup{group("0", "Shasta Lake"), group("1", "Shasta Lake")},
+			wantNames: []string{"Shasta Lake - 0", "Shasta Lake - 1"},
+		},
+		{
+			name:      "any collision disambiguates every group",
+			groups:    []models.StopGroup{group("0", "Loop"), group("1", "Loop"), group("2", "Express")},
+			wantNames: []string{"Loop - 0", "Loop - 1", "Express - 2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			disambiguateGroupNames(tt.groups)
+			for i, want := range tt.wantNames {
+				assert.Equal(t, want, tt.groups[i].Name.Name)
+				assert.Equal(t, []string{want}, tt.groups[i].Name.Names)
+			}
+		})
+	}
 }

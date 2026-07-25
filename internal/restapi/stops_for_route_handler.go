@@ -255,6 +255,8 @@ func processTripGroups(
 		allStopGroups = append(allStopGroups, stopGroup)
 	}
 
+	disambiguateGroupNames(allStopGroups)
+
 	slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
 		return cmp.Compare(a.Name.Name, b.Name.Name)
 	})
@@ -343,6 +345,27 @@ func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, g
 			DirectionID: group.DirectionID,
 			ServiceIds:  dirServiceIDs,
 		})
+}
+
+// disambiguateGroupNames mirrors the Java reference: when two or more direction
+// groups resolve to the same destination name, every group's name gets its
+// direction id appended ("Shasta Lake" -> "Shasta Lake - 0") so the groups stay
+// distinguishable. It runs only on an actual collision, and appending the id
+// also makes the later name-based group sort deterministic.
+func disambiguateGroupNames(groups []models.StopGroup) {
+	distinctNames := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		distinctNames[group.Name.Name] = struct{}{}
+	}
+	if len(distinctNames) == len(groups) {
+		return
+	}
+
+	for i := range groups {
+		disambiguated := groups[i].Name.Name + " - " + groups[i].ID
+		groups[i].Name.Name = disambiguated
+		groups[i].Name.Names = []string{disambiguated}
+	}
 }
 
 // mostCommonHeadsign returns the headsign with the highest count, breaking ties by
