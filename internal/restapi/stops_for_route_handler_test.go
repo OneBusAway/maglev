@@ -367,9 +367,9 @@ func TestDisambiguateGroupNames(t *testing.T) {
 			wantNames: []string{"Shasta Lake - 0", "Shasta Lake - 1"},
 		},
 		{
-			name:      "any collision disambiguates every group",
+			name:      "only colliding groups are suffixed, unique name is left alone",
 			groups:    []models.StopGroup{group("0", "Loop"), group("1", "Loop"), group("2", "Express")},
-			wantNames: []string{"Loop - 0", "Loop - 1", "Express - 2"},
+			wantNames: []string{"Loop - 0", "Loop - 1", "Express"},
 		},
 	}
 

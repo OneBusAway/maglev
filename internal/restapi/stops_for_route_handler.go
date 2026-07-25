@@ -347,21 +347,23 @@ func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, g
 		})
 }
 
-// disambiguateGroupNames mirrors the Java reference: when two or more direction
-// groups resolve to the same destination name, every group's name gets its
-// direction id appended ("Shasta Lake" -> "Shasta Lake - 0") so the groups stay
-// distinguishable. It runs only on an actual collision, and appending the id
-// also makes the later name-based group sort deterministic.
+// disambiguateGroupNames keeps direction groups distinguishable: when two or
+// more groups resolve to the same destination name, only those colliding groups
+// get their direction id appended ("Shasta Lake" -> "Shasta Lake - 0"); a name
+// that is already unique is left untouched. Suffixing collisions also makes the
+// later name-based group sort deterministic. (The Java reference suffixes every
+// group whenever any collision exists; leaving unique names alone is a
+// deliberate, less noisy divergence.)
 func disambiguateGroupNames(groups []models.StopGroup) {
-	distinctNames := make(map[string]struct{}, len(groups))
+	nameCounts := make(map[string]int, len(groups))
 	for _, group := range groups {
-		distinctNames[group.Name.Name] = struct{}{}
-	}
-	if len(distinctNames) == len(groups) {
-		return
+		nameCounts[group.Name.Name]++
 	}
 
 	for i := range groups {
+		if nameCounts[groups[i].Name.Name] <= 1 {
+			continue
+		}
 		disambiguated := groups[i].Name.Name + " - " + groups[i].ID
 		groups[i].Name.Name = disambiguated
 		groups[i].Name.Names = []string{disambiguated}
