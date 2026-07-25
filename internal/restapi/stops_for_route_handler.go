@@ -333,9 +333,16 @@ func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, g
 		/*
 			direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
 			UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
-			zero rows. Fall back to single-trip ordering instead.
+			zero rows. Fall back to ordering by the group's trips directly, still
+			collecting the union of stops across all of them — otherwise stops
+			served only by trips after the first would be dropped from both the
+			flat stop list and this group.
 		*/
-		return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, group.Trips[0].ID)
+		tripIDs := make([]string, len(group.Trips))
+		for i, trip := range group.Trips {
+			tripIDs[i] = trip.ID
+		}
+		return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrips(ctx, tripIDs)
 	}
 	return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
 		gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
