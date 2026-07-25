@@ -65,15 +65,26 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	routeEntry, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, false)
+	// The Java API always includes polylines in the route-details response
+	routeEntry, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, true)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
 
+	// The legacy Java API duplicates direction groupings and relabels them as "heuristic"
+	var finalGroupings []models.StopGrouping
+	for _, g := range routeEntry.StopGroupings {
+		heuristicGrouping := g // shallow copy
+		heuristicGrouping.Type = "heuristic"
+		finalGroupings = append(finalGroupings, heuristicGrouping)
+	}
+	// Append the original direction groupings as well
+	finalGroupings = append(finalGroupings, routeEntry.StopGroupings...)
+
 	result := models.NewRouteDetailsEntry(
 		models.NewAgencyAndId(agencyID, routeID),
-		routeEntry.StopGroupings,
+		finalGroupings,
 	)
 
 	references, err := api.assembleRouteDetailsReferences(ctx, agencyID, currentAgency, route, stopsList)

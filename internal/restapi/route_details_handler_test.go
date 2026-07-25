@@ -40,6 +40,9 @@ func TestRouteDetailsHandler_Success(t *testing.T) {
 	assert.Equal(t, testdata.Raba.ID, entry.RouteID.AgencyID)
 	assert.Equal(t, "151", entry.RouteID.ID)
 	assert.NotNil(t, entry.StopGroupings)
+	assert.Len(t, entry.StopGroupings, 2)
+	assert.Equal(t, "heuristic", entry.StopGroupings[0].Type)
+	assert.Equal(t, "direction", entry.StopGroupings[1].Type)
 	assert.NotEmpty(t, model.Data.References.Agencies)
 	assert.NotEmpty(t, model.Data.References.Routes)
 }
