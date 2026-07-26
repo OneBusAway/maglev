@@ -521,6 +521,210 @@ path); an empty `list` (not an error) when nothing covers a location. The namesp
 is always mounted — a feed with zero flex data yields empty lists, never 404s, so
 clients can probe cheaply.
 
+### 3.4 Response schemas
+
+All responses use the standard Maglev envelope (`internal/models/response.go`):
+
+```jsonc
+{
+  "code": 200,
+  "currentTime": 1753560000000,      // Unix ms
+  "text": "OK",
+  "version": 2,
+  "data": { /* entry-or-list payload below */ }
+}
+```
+
+`service/{id}` uses the entry payload `{ "entry": <onDemandService>, "references":
+<references> }`. The two list endpoints use `{ "limitExceeded": false, "list":
+[<onDemandService>], "references": <references> }`; `services-for-location`
+additionally carries `"outOfRange"`, mirroring `stops-for-location` semantics.
+Convention for the new object types: absent optional values are JSON `null`
+(not omitted keys and not empty strings), except where a field is explicitly
+documented as omitted-when-empty.
+
+#### Field schemas
+
+**`onDemandService`** (entry and list element):
+
+| Field | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | string | no | Combined ID; for flex, equals the route's combined ID |
+| `agencyId` | string | no | For GOFS: the synthesized agency (§4) |
+| `routeId` | string | yes | `null` for GOFS-sourced services |
+| `name` | string | no | Route short/long name; GOFS: brand/system name |
+| `description` | string | yes | |
+| `url` | string | yes | |
+| `rules` | array of `availabilityRule` | no | May be empty (degenerate feeds, §2.3) |
+
+**`availabilityRule`**:
+
+| Field | Type | Nullable | Notes |
+|---|---|---|---|
+| `fromIds` | array of string | no | IDs in the shared stop/location/locationGroup namespace |
+| `toIds` | array of string | no | |
+| `startPickupTime` | string `"HH:MM:SS"` | yes | May exceed `24:00:00`; all three time fields `null` = all service-day hours |
+| `endPickupTime` | string `"HH:MM:SS"` | yes | |
+| `endDropOffTime` | string `"HH:MM:SS"` | yes | Also `null` when equal to `endPickupTime` |
+| `calendarIds` | array of string | no | ≥1 element; → `references.calendars` |
+| `pickupType` | integer | no | 0 scheduled, 2 must book, 3 coordinate with driver (1 cannot appear: pickup-capable records only) |
+| `dropOffType` | integer | no | Same value set |
+| `pickupBookingRuleId` | string | yes | → `references.bookingRules` |
+| `dropOffBookingRuleId` | string | yes | |
+| `safeDurationFactor` | number | yes | §2.2 |
+| `safeDurationOffset` | number | yes | Seconds |
+
+**`serviceArea`** (reference):
+
+| Field | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | string | no | Combined ID |
+| `name` | string | yes | `properties.stop_name` |
+| `bbox` | `[number, number, number, number]` | no | `[minLon, minLat, maxLon, maxLat]` (RFC 7946 order) |
+| `geometry` | GeoJSON geometry object | — | `Polygon` or `MultiPolygon`; **key omitted** (not null) when the endpoint's geometry policy (§3) excludes it |
+
+**`locationGroup`** (reference): `id` string, `name` string nullable,
+`stopIds` array of string (members also appear in `references.stops`).
+
+**`bookingRule`** (reference):
+
+| Field | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | string | no | Combined ID; synthesized for GOFS (§4) |
+| `bookingType` | integer | no | 0 real-time, 1 same-day, 2 prior-day(s) |
+| `priorNoticeDurationMin` | integer | yes | Minutes; `bookingType` 1 only |
+| `priorNoticeDurationMax` | integer | yes | Minutes |
+| `priorNoticeLastDay` | integer | yes | Days before travel; `bookingType` 2 |
+| `priorNoticeLastTime` | string `"HH:MM:SS"` | yes | |
+| `priorNoticeStartDay` | integer | yes | |
+| `priorNoticeStartTime` | string `"HH:MM:SS"` | yes | |
+| `priorNoticeCalendarId` | string | yes | GOFS field name; sourced from GTFS `prior_notice_service_id` |
+| `message` / `pickupMessage` / `dropOffMessage` | string | yes | |
+| `phoneNumber` | string | yes | As published in the feed |
+| `infoUrl` / `bookingUrl` | string | yes | |
+
+**`calendar`** (reference): `id` string; `days` array drawn from
+`["mon","tue","wed","thu","fri","sat","sun"]`; `startDate`/`endDate`
+`"YYYY-MM-DD"`; `exceptedDates` array of `"YYYY-MM-DD"` (possibly empty).
+Time semantics per §2.4.
+
+**References block** (`/ondemand` responses only): the six standard keys
+(`agencies`, `routes`, `situations`, `stopTimes`, `stops`, `trips` — shapes
+unchanged from `/where`) plus `serviceAreas`, `locationGroups`, `bookingRules`,
+`calendars`. All ten keys always present, empty arrays when unused.
+
+**Pointer field** (`/where` stop and route entries): `"onDemandServiceIds"`,
+array of string — the one omitted-when-empty exception, preserving byte-identical
+output for non-flex feeds.
+
+#### Worked example: `GET /api/ondemand/service/5088_77652.json` (Alexandria)
+
+```jsonc
+{
+  "code": 200,
+  "currentTime": 1753560000000,
+  "text": "OK",
+  "version": 2,
+  "data": {
+    "entry": {
+      "id": "5088_77652",
+      "agencyId": "5088",
+      "routeId": "5088_77652",
+      "name": "DOT Paratransit",
+      "description": null,
+      "url": null,
+      "rules": [
+        {
+          "fromIds": ["5088_area_1449"],
+          "toIds": ["5088_area_1449"],
+          "startPickupTime": "07:00:00",
+          "endPickupTime": "24:50:00",
+          "endDropOffTime": "25:00:00",
+          "calendarIds": ["5088_c_71675_b_85952_d_64"],   // Sunday only (§5)
+          "pickupType": 2,
+          "dropOffType": 2,
+          "pickupBookingRuleId": "5088_booking_route_77652",
+          "dropOffBookingRuleId": "5088_booking_route_77652",
+          "safeDurationFactor": 1.0,
+          "safeDurationOffset": 0.0
+        },
+        {
+          "fromIds": ["5088_area_1449"],
+          "toIds": ["5088_area_1449"],
+          "startPickupTime": "05:00:00",
+          "endPickupTime": "24:50:00",
+          "endDropOffTime": "25:00:00",
+          "calendarIds": ["5088_c_71675_b_85952_d_63"],   // Mon–Sat
+          "pickupType": 2,
+          "dropOffType": 2,
+          "pickupBookingRuleId": "5088_booking_route_77652",
+          "dropOffBookingRuleId": "5088_booking_route_77652",
+          "safeDurationFactor": 1.0,
+          "safeDurationOffset": 0.0
+        }
+      ]
+    },
+    "references": {
+      "agencies": [ { /* standard AgencyReference: id "5088", name "Alexandria DOT",
+                       timezone "America/Los_Angeles", … */ } ],
+      "routes":   [ { /* standard Route: id "5088_77652", longName "DOT Paratransit",
+                       onDemandServiceIds ["5088_77652"], … */ } ],
+      "situations": [], "stopTimes": [], "stops": [], "trips": [],
+      "serviceAreas": [
+        {
+          "id": "5088_area_1449",
+          "name": null,
+          "bbox": [-77.5372039, 38.617508, -76.9092198, 39.057831],
+          "geometry": { "type": "Polygon", "coordinates": [ /* 4,239-point ring */ ] }
+        }
+      ],
+      "locationGroups": [],
+      "bookingRules": [
+        {
+          "id": "5088_booking_route_77652",
+          "bookingType": 2,
+          "priorNoticeDurationMin": null,
+          "priorNoticeDurationMax": null,
+          "priorNoticeLastDay": 1,
+          "priorNoticeLastTime": "17:00:00",
+          "priorNoticeStartDay": 14,
+          "priorNoticeStartTime": "00:00:00",
+          "priorNoticeCalendarId": null,
+          "message": "DOT is the City of Alexandria's paratransit program, …",
+          "pickupMessage": null,
+          "dropOffMessage": null,
+          "phoneNumber": "703-746-5222",
+          "infoUrl": "https://www.alexandriava.gov/Paratransit",
+          "bookingUrl": "https://spare-rider-alexandriadot-production.vercel.app/…"
+        }
+      ],
+      "calendars": [
+        {
+          "id": "5088_c_71675_b_85952_d_63",
+          "days": ["mon", "tue", "wed", "thu", "fri", "sat"],
+          "startDate": "2025-12-01",
+          "endDate": "2026-12-01",
+          "exceptedDates": []
+        },
+        {
+          "id": "5088_c_71675_b_85952_d_64",
+          "days": ["sun"],
+          "startDate": "2025-12-01",
+          "endDate": "2026-12-01",
+          "exceptedDates": []
+        }
+      ]
+    }
+  }
+}
+```
+
+The list endpoints return the same `onDemandService` objects (full `rules`
+included — rule counts are small, §3) inside the list payload; their
+`serviceAreas` references carry `bbox` but omit `geometry` unless
+`includeGeometry=true`. This worked example doubles as the golden-file shape for
+the §5 Alexandria endpoint tests.
+
 ## 4. GOFS Forward Compatibility
 
 GOFS (v1.0, MobilityData-stewarded since 2025) is **a second importer, not a second
