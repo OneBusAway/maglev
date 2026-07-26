@@ -88,6 +88,35 @@ lands in the org's own fork (closing the ❌ rows in its README) as a prerequisi
 Maglev consumes the new structs through its existing `ParseStatic` → bulk-insert path
 (`gtfsdb/helpers.go`).
 
+Reviewing the go-gtfs source (`static.go`, `interpolate.go`) pins down what the
+upstream change actually is — it is more than adding optional columns:
+
+- **Flex rows are dropped entirely today.** `stop_id` is a required column and any
+  row whose stop doesn't resolve is silently skipped (`parseScheduledStopTimes`:
+  `if stopTime.Stop == nil { continue }`). The Alexandria feed currently imports as
+  a route with two trips and zero stop times. `stop_id` must become optional at
+  both column level (a pure zone-based feed may omit the column entirely) and row
+  level, with rows kept when exactly one of stop/location/location-group resolves
+  and skipped — via the existing `Static.Warnings` mechanism, not `log.Print` —
+  when none does.
+- **Struct surface:** `Static` gains `Locations`, `LocationGroups`, and
+  `BookingRules` slices; `ScheduledStopTime` gains `Location`/`LocationGroup`
+  pointers (alongside the existing `Stop`), the two window durations, and
+  pickup/drop-off booking-rule references; `ScheduledTrip` gains the two
+  safe-duration fields.
+- **`locations.geojson` is not CSV.** `ParseStatic`'s dispatch is a table of
+  CSV-file handlers; the GeoJSON file needs its own parse path outside that loop.
+- **Time interpolation must exempt windowed records.** go-gtfs interpolates
+  missing arrival/departure times across each trip (`interpolateStopTimes`,
+  by-shape-dist variant included). On a deviated trip this would fabricate times
+  for the zone records sitting between timed stops — records the GTFS spec forbids
+  times on. Windowed records are excluded from interpolation.
+- **Missing vs. midnight:** `ScheduledStopTime.ArrivalTime` is a non-pointer
+  `time.Duration`, so a zero value is ambiguous between "absent" and "00:00:00".
+  No breaking pointer change is needed: window presence is the discriminator
+  (the spec forbids times when windows are set), and Maglev's importer writes NULL
+  arrival/departure exactly when a record carries windows.
+
 Real-world feeds still carry draft-era GTFS-Flex columns. The Alexandria test feed
 puts `mean_duration_factor`/`mean_duration_offset` (dropped from the adopted spec)
 and `safe_duration_factor`/`safe_duration_offset` (adopted, but on `trips.txt`) in
@@ -529,7 +558,11 @@ a mismatched agency-vs-stop timezone.
    (upstream PR; prerequisite).
 2. Maglev schema (including the `stop_times` arrival/departure nullability
    migration and its query fallout) + import + rule compilation (no API changes;
-   testable via DB).
+   testable via DB). Includes an audit of every `st.Stop` dereference in Maglev —
+   e.g. `gtfsdb/helpers.go:419` (`st.Stop.Id` at insert), `:1284` (first-stop
+   lookup), `:1414`/`:1422` (block layover pairing) — which will panic on
+   stop-less records the moment the upgraded go-gtfs stops dropping them; the
+   go-gtfs version bump and these guards must land in the same change.
 3. `/api/ondemand` endpoints + extended references model.
 4. `/where` pointer fields + legacy-surface exclusions + additive regression test.
 5. Test fixtures (`alexandria-flex.zip` + the minimal synthetic
