@@ -345,12 +345,17 @@ same trip:
    ∈ {0, 2, 3} for timed-stop records. Pair each pickup-capable record with each
    subsequent drop-off-capable record. Pairs where both records are timed fixed
    stops are skipped — that is ordinary fixed-route travel, not an on-demand rule.
-3. Each pair emits one rule: `fromIds` from the pickup record, `toIds` from the
-   drop-off record. Windows: `startPickupTime`/`endPickupTime` come from the pickup
-   record's window (for a timed fixed stop, a point window at its departure time);
-   `endDropOffTime` comes from the drop-off record's window end (or arrival time
-   for a timed stop), nulled when equal to `endPickupTime`. Calendar = the trip's
-   `service_id`; booking-rule IDs and safe-duration values carried through.
+3. Each pair emits one rule, with field provenance split by side: all
+   pickup-side fields — `fromIds`, `pickupType`, `startPickupTime`/
+   `endPickupTime` (for a timed fixed stop, a point window at its departure
+   time), and `pickupBookingRuleId` — come from the pickup-capable record; all
+   drop-off-side fields — `toIds`, `dropOffType`, `endDropOffTime` (window end,
+   or arrival time for a timed stop; nulled when equal to `endPickupTime`), and
+   `dropOffBookingRuleId` — from the drop-off-capable record. (Both records
+   carry both booking-rule columns in real feeds; the side split disambiguates.)
+   Calendar = the trip's `service_id`. `safeDuration*` comes from the trip, with
+   the §1.1 stop_times fallback reading the pickup record first, then the
+   drop-off record.
 4. Rules identical except for `trip_id` collapse to one row per distinct
    (from, to, windows, calendar, types, booking) tuple, and rules identical except
    for calendar merge their `calendarIds`; the stored `trip_id` is a representative
@@ -471,9 +476,17 @@ OBA envelope. Registered in `internal/restapi/routes.go` next to the `/where` ro
 
 Geometry policy (§2.4): `service/{id}` embeds full `serviceAreas` geometry by
 default; the two list endpoints return `bbox`-only Features unless
-`includeGeometry=true`. List responses use the standard list envelope with
-`limitExceeded: false` and no `maxCount` in v1 — on-demand service counts are small
-(most feeds have a handful; Alexandria has one).
+`includeGeometry=true`. The parameter is honored symmetrically: `service/{id}`
+accepts `includeGeometry=false` to get bbox-only. List responses use the standard
+list envelope with `limitExceeded: false` and no `maxCount` in v1 — on-demand
+service counts are small (most feeds have a handful; Alexandria has one).
+
+Parameter precedence and matching modes follow the existing
+`BoundsFromParams` conventions: when both `radius` and `latSpan`/`lonSpan` are
+supplied, radius wins; in viewport mode the stop-based test becomes
+stops-within-viewport in place of stops-within-radius. All three endpoints are
+static-data surfaces and get the same middleware tier as `/where` static routes:
+`CacheControlMiddleware(CacheDurationLong)` plus the static ETag.
 
 That is the entire v1 surface. `services-for-stop` / `services-for-route` lookups are
 deliberately omitted — pointer fields make them redundant (YAGNI).
@@ -515,7 +528,9 @@ spec, to be proposed upstream together with the namespace once proven.
 
 ### 3.3 Errors
 
-Standard OBA semantics: `404` entry-not-found for unknown service IDs; `400` with
+Standard OBA semantics: `404` entry-not-found for unknown service IDs **and for
+unknown agency IDs on `services-for-agency`** (matching `routes-for-agency`; a
+known agency with zero on-demand services returns an empty list); `400` with
 `fieldErrors` for missing/invalid coordinates (existing `utils.ParseFloatParam`
 path); an empty `list` (not an error) when nothing covers a location. The namespace
 is always mounted — a feed with zero flex data yields empty lists, never 404s, so
@@ -538,10 +553,24 @@ All responses use the standard Maglev envelope (`internal/models/response.go`):
 `service/{id}` uses the entry payload `{ "entry": <onDemandService>, "references":
 <references> }`. The two list endpoints use `{ "limitExceeded": false, "list":
 [<onDemandService>], "references": <references> }`; `services-for-location`
-additionally carries `"outOfRange"`, mirroring `stops-for-location` semantics.
+additionally carries `"outOfRange"`. **`outOfRange` cannot simply reuse the
+`/where` computation**: `CheckIfOutOfBounds` derives per-agency region bounds
+from stops only, and a flex agency like Alexandria has one stop inside a ~50 km
+zone — a point inside the zone would match services yet read as out of range.
+For `/ondemand`, `outOfRange` is computed against the union of the agency stop
+bounds and all `serviceAreas` bboxes; `agencies-with-coverage` (which uses the
+same stop-derived bounds) is deliberately left untouched in v1 per the additive
+rule, noted as a future improvement for flex-heavy agencies.
+
 Convention for the new object types: absent optional values are JSON `null`
 (not omitted keys and not empty strings), except where a field is explicitly
 documented as omitted-when-empty.
+
+**Ordering is part of the contract** (golden files and caching need determinism):
+`rules` sort by (`startPickupTime` ascending, nulls first; then `endPickupTime`;
+then `calendarIds[0]`); `list` sorts by service `id`; every reference array sorts
+by `id`. Golden-file comparison in §5 is structural (parsed JSON), not byte
+order — Go struct serialization fixes key order anyway.
 
 #### Field schemas
 
@@ -580,6 +609,7 @@ documented as omitted-when-empty.
 |---|---|---|---|
 | `id` | string | no | Combined ID |
 | `name` | string | yes | `properties.stop_name` |
+| `description` | string | yes | `properties.stop_desc` |
 | `bbox` | `[number, number, number, number]` | no | `[minLon, minLat, maxLon, maxLat]` (RFC 7946 order) |
 | `geometry` | GeoJSON geometry object | — | `Polygon` or `MultiPolygon`; **key omitted** (not null) when the endpoint's geometry policy (§3) excludes it |
 
@@ -598,7 +628,7 @@ documented as omitted-when-empty.
 | `priorNoticeLastTime` | string `"HH:MM:SS"` | yes | |
 | `priorNoticeStartDay` | integer | yes | |
 | `priorNoticeStartTime` | string `"HH:MM:SS"` | yes | |
-| `priorNoticeCalendarId` | string | yes | GOFS field name; sourced from GTFS `prior_notice_service_id` |
+| `priorNoticeCalendarId` | string | yes | Combined ID → `references.calendars` (the import compiles a calendar for any `prior_notice_service_id` it sees); GOFS field name, sourced from GTFS `prior_notice_service_id` |
 | `message` / `pickupMessage` / `dropOffMessage` | string | yes | |
 | `phoneNumber` | string | yes | As published in the feed |
 | `infoUrl` / `bookingUrl` | string | yes | |
@@ -613,19 +643,19 @@ Time semantics per §2.4.
 unchanged from `/where`) plus `serviceAreas`, `locationGroups`, `bookingRules`,
 `calendars`. All ten keys always present, empty arrays when unused.
 
-**Pointer field** (`/where` stop and route entries): `"onDemandServiceIds"`,
-array of string — the one omitted-when-empty exception, preserving byte-identical
-output for non-flex feeds.
+**Pointer field**: `"onDemandServiceIds"`, array of string, on **any
+serialization of the Route and Stop models** — entries and references, in both
+namespaces (references reuse `models.Route`/`models.Stop`, so this falls out of
+the type system). It is the one omitted-when-empty exception, preserving
+byte-identical output for non-flex feeds.
 
 #### Worked example: `GET /api/ondemand/service/5088_77652.json` (Alexandria)
 
 ```jsonc
 {
   "code": 200,
-  "currentTime": 1753560000000,
-  "text": "OK",
-  "version": 2,
-  "data": {
+  "currentTime": 1785096000000,     // keys follow ResponseModel struct order:
+  "data": {                         // code, currentTime, data, text, version
     "entry": {
       "id": "5088_77652",
       "agencyId": "5088",
@@ -633,14 +663,14 @@ output for non-flex feeds.
       "name": "DOT Paratransit",
       "description": null,
       "url": null,
-      "rules": [
+      "rules": [                    // sorted per §3.4: startPickupTime ascending
         {
           "fromIds": ["5088_area_1449"],
           "toIds": ["5088_area_1449"],
-          "startPickupTime": "07:00:00",
+          "startPickupTime": "05:00:00",
           "endPickupTime": "24:50:00",
           "endDropOffTime": "25:00:00",
-          "calendarIds": ["5088_c_71675_b_85952_d_64"],   // Sunday only (§5)
+          "calendarIds": ["5088_c_71675_b_85952_d_63"],   // Mon–Sat
           "pickupType": 2,
           "dropOffType": 2,
           "pickupBookingRuleId": "5088_booking_route_77652",
@@ -651,10 +681,10 @@ output for non-flex feeds.
         {
           "fromIds": ["5088_area_1449"],
           "toIds": ["5088_area_1449"],
-          "startPickupTime": "05:00:00",
+          "startPickupTime": "07:00:00",
           "endPickupTime": "24:50:00",
           "endDropOffTime": "25:00:00",
-          "calendarIds": ["5088_c_71675_b_85952_d_63"],   // Mon–Sat
+          "calendarIds": ["5088_c_71675_b_85952_d_64"],   // Sunday only (§5)
           "pickupType": 2,
           "dropOffType": 2,
           "pickupBookingRuleId": "5088_booking_route_77652",
@@ -674,6 +704,7 @@ output for non-flex feeds.
         {
           "id": "5088_area_1449",
           "name": null,
+          "description": null,
           "bbox": [-77.5372039, 38.617508, -76.9092198, 39.057831],
           "geometry": { "type": "Polygon", "coordinates": [ /* 4,239-point ring */ ] }
         }
@@ -715,7 +746,9 @@ output for non-flex feeds.
         }
       ]
     }
-  }
+  },
+  "text": "OK",
+  "version": 2
 }
 ```
 
