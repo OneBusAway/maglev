@@ -50,6 +50,7 @@ changes.
 | `/where` coupling | Additive pointer fields (`onDemandServiceIds`) on stop and route entries; omitted when empty |
 | Geometry encoding | Embedded GeoJSON (not encoded polylines) |
 | Parsing | Extend `OneBusAway/go-gtfs` upstream |
+| Test data | Real feed: City of Alexandria VA flex v2 (Trillium), plus minimal synthetic fixtures only for patterns Alexandria doesn't exercise |
 
 ### Why a separate namespace (and why it is not "two protocols")
 
@@ -86,6 +87,13 @@ lands in the org's own fork (closing the ❌ rows in its README) as a prerequisi
 
 Maglev consumes the new structs through its existing `ParseStatic` → bulk-insert path
 (`gtfsdb/helpers.go`).
+
+Real-world feeds still carry draft-era GTFS-Flex columns. The Alexandria test feed
+puts `mean_duration_factor`/`mean_duration_offset` (dropped from the adopted spec)
+and `safe_duration_factor`/`safe_duration_offset` (adopted, but on `trips.txt`) in
+`stop_times.txt`. The parser must tolerate the unknown draft columns, and the
+importer reads `safe_duration_*` from `trips.txt` first, falling back to the
+draft-era `stop_times.txt` placement when the trips columns are absent.
 
 ### 1.2 Schema (sqlc; `gtfsdb/schema.sql`)
 
@@ -136,6 +144,14 @@ Additive columns:
 - `stop_times`: the six flex columns above (times as int64 ns-since-midnight,
   matching the existing convention). `stop_id` becomes nullable with a CHECK that
   exactly one of `stop_id` / `location_id` / `location_group_id` is set.
+  **`arrival_time` and `departure_time` also become nullable** — the spec forbids
+  them on windowed records, and every windowed row in a real feed has them empty —
+  with the existing `arrival_time <= departure_time` CHECK applying only when both
+  are present. Downstream effects to handle explicitly: the cached
+  `trips.min_arrival_time`/`max_departure_time` columns stay NULL for flex-only
+  trips (which correctly drops them from time-window queries like
+  trips-for-location), and every query ordering or filtering on `arrival_time`
+  must exclude NULL rows rather than sort phantom zeros.
 - `trips`: `safe_duration_factor REAL`, `safe_duration_offset REAL`.
 
 Plus the compiled-rule table produced at import (§2.3):
@@ -149,9 +165,10 @@ ondemand_rules (
     from_kind                 INTEGER NOT NULL,  -- 0 stop, 1 location, 2 location group
     to_id                     TEXT NOT NULL,
     to_kind                   INTEGER NOT NULL,
-    start_time                INTEGER NOT NULL,  -- ns since midnight; may exceed 24h
-    end_time                  INTEGER NOT NULL,
-    gtfs_service_id           TEXT NOT NULL,     -- calendar reference
+    start_pickup_time         INTEGER,           -- ns since midnight; may exceed 24h.
+    end_pickup_time           INTEGER,           -- NULL window = available all service-day
+    end_drop_off_time         INTEGER,           -- hours (the GOFS windowless-rule case)
+    gtfs_service_id           TEXT NOT NULL,     -- calendar reference; one row per calendar
     pickup_type               INTEGER NOT NULL,
     drop_off_type             INTEGER NOT NULL,
     pickup_booking_rule_id    TEXT,
@@ -225,9 +242,10 @@ a daily time window, a calendar:
 {
   "fromIds": ["25_area_708"],          // shared stop/location/locationGroup namespace
   "toIds": ["25_area_708"],
-  "startTime": "08:00:00",             // "HH:MM:SS", >24h legal (both specs' semantics)
-  "endTime": "17:00:00",
-  "calendarId": "25_weekday",
+  "startPickupTime": "08:00:00",       // "HH:MM:SS", >24h legal (both specs' semantics)
+  "endPickupTime": "17:00:00",
+  "endDropOffTime": "17:30:00",        // null when it matches endPickupTime
+  "calendarIds": ["25_weekday"],
   "pickupType": 2,                     // 2 = must book; 3 = coordinate with driver
   "dropOffType": 2,
   "pickupBookingRuleId": "25_booking_route_74362",
@@ -236,6 +254,15 @@ a daily time window, a calendar:
   "safeDurationOffset": null           // compute the spec's 95th-percentile estimate
 }
 ```
+
+The window is split into pickup and drop-off ends because both the real world and
+GOFS require it: the Alexandria feed permits pickups until 24:50 but drop-offs until
+25:00, and GOFS models exactly this as `end_dropoff_window`. A single intersected
+window would silently discard the drop-off tail. All three time fields null means
+the service runs all hours of its service days (GOFS's windowless-rule semantics).
+`calendarIds` is an array because GOFS operating rules carry calendar arrays; flex
+compilation emits one element, and rules identical except for calendar merge their
+`calendarIds`.
 
 ### 2.3 Rule compilation (import time)
 
@@ -252,12 +279,15 @@ same trip:
    subsequent drop-off-capable record. Pairs where both records are timed fixed
    stops are skipped — that is ordinary fixed-route travel, not an on-demand rule.
 3. Each pair emits one rule: `fromIds` from the pickup record, `toIds` from the
-   drop-off record, window from the windowed side(s) (intersection when both are
-   windowed), calendar = the trip's `service_id`, booking-rule IDs and
-   safe-duration values carried through.
+   drop-off record. Windows: `startPickupTime`/`endPickupTime` come from the pickup
+   record's window (for a timed fixed stop, a point window at its departure time);
+   `endDropOffTime` comes from the drop-off record's window end (or arrival time
+   for a timed stop), nulled when equal to `endPickupTime`. Calendar = the trip's
+   `service_id`; booking-rule IDs and safe-duration values carried through.
 4. Rules identical except for `trip_id` collapse to one row per distinct
-   (from, to, window, calendar, types, booking) tuple; the stored `trip_id` is a
-   representative retained for traceability only and is not exposed in the API.
+   (from, to, windows, calendar, types, booking) tuple, and rules identical except
+   for calendar merge their `calendarIds`; the stored `trip_id` is a representative
+   retained for traceability only and is not exposed in the API.
 
 Pattern projections:
 
@@ -270,23 +300,36 @@ Pattern projections:
 
 A degenerate feed (e.g. the published Hermann example, which technically permits no
 pickups anywhere) compiles to a service with areas and booking info but few or no
-rules — still renderable. Rule counts are bounded in practice (flex trips have 2–3
-records; deviated routes pair only adjacent segments), and compilation happens once
-at import, so queries stay cheap.
+rules — still renderable. The algorithm is all-pairs by construction (that is what
+the GTFS reachability rule requires — a deviated route's zones pair with every later
+capable record, not just adjacent ones), but counts stay small in practice because
+flex trips have few records (pure-zone trips have two; deviated trips a couple dozen),
+and compilation happens once at import, so queries stay cheap.
 
 ### 2.4 New reference types
 
-Added to the standard `references` block alongside `agencies`/`routes`/`stops`/etc.:
+Added to the `references` block of `/api/ondemand` responses alongside
+`agencies`/`routes`/`stops`/etc. **Mechanism:** the `/ondemand` handlers use an
+extended references model that embeds the existing `ReferencesModel` struct and adds
+the four new sections; the `/where` struct is untouched, so no new (even empty)
+JSON keys ever appear in `/where` responses — that would violate the byte-identical
+guarantee, and §5's regression test asserts it.
 
-**`serviceAreas`** — GeoJSON Features, verbatim geometry:
+**`serviceAreas`** — GeoJSON Features with an always-present bounding box:
 
 ```jsonc
 {
   "id": "25_area_708",
   "name": "Brown County",
-  "geometry": { "type": "Polygon", "coordinates": [ /* … */ ] }
+  "bbox": [-94.87, 44.10, -94.25, 44.53],   // [minLon, minLat, maxLon, maxLat]
+  "geometry": { "type": "Polygon", "coordinates": [ /* … */ ] }   // presence per §3
 }
 ```
+
+Real zone geometries are large — Alexandria's single polygon is a 4,239-point ring,
+~340 KB of JSON — so `geometry` inclusion is endpoint policy (§3): full geometry on
+`service/{id}` by default; list endpoints send `bbox` only unless the caller passes
+`includeGeometry=true`. Gzip (already in the middleware chain) does the rest.
 
 **`locationGroups`**:
 
@@ -332,8 +375,18 @@ already the shared Flex/GOFS dialect:
 
 Removed-service exceptions (`calendar_dates` type 2) become `exceptedDates`;
 added-service exceptions (type 1) become standalone single-range calendars referenced
-by additional rules — the GOFS idiom. All API dates are `YYYY-MM-DD` strings in the
-agency's timezone; all times of day are `"HH:MM:SS"` strings that may exceed 24:00:00.
+by additional rules — the GOFS idiom. The *structure* matches GOFS; the date *format*
+deliberately does not (GOFS uses `YYYYMMDD`) — a future GOFS importer normalizes on
+ingest rather than passing dates through.
+
+**Time semantics, stated once for the whole API:** dates are `YYYY-MM-DD` strings and
+times of day are `"HH:MM:SS"` strings that may exceed `24:00:00`, both interpreted as
+service-day values in the timezone of the service's referenced agency
+(`references.agencies[].timezone` — per GTFS this is `agency.agency_timezone`, never
+`stops.stop_timezone`; the Alexandria feed, which declares a Los Angeles agency
+timezone alongside a New York stop timezone, is imported exactly per that rule). For
+future GOFS services the synthesized agency (§4) carries
+`system_information.timezone`.
 
 Stops referenced by rules or group memberships appear in `references.stops` in the
 standard shape; routes and agencies likewise.
@@ -345,9 +398,15 @@ OBA envelope. Registered in `internal/restapi/routes.go` next to the `/where` ro
 
 | Endpoint | Contract |
 |---|---|
-| `/api/ondemand/services-for-location.json` | `lat` + `lon` (required floats) → list of services whose areas contain the point. Optional `latSpan` + `lonSpan` switch to viewport-intersection mode, mirroring `stops-for-location` conventions. Services matched via location-group member stops or plain windowed stops use those stops' coordinates. |
+| `/api/ondemand/services-for-location.json` | `lat` + `lon` (required floats) → services whose areas contain the point **or** whose rule-referenced stops fall within `radius` meters (optional; same default as `stops-for-location`) — without the radius, stop-based services (location groups, windowed stops) would be unreachable from a point query. Optional `latSpan` + `lonSpan` switch to viewport-intersection mode, mirroring `stops-for-location` conventions. List response. |
 | `/api/ondemand/services-for-agency/{id}.json` | All on-demand services for the agency. List response. |
 | `/api/ondemand/service/{id}.json` | Single service, full rules + references. Entry response. |
+
+Geometry policy (§2.4): `service/{id}` embeds full `serviceAreas` geometry by
+default; the two list endpoints return `bbox`-only Features unless
+`includeGeometry=true`. List responses use the standard list envelope with
+`limitExceeded: false` and no `maxCount` in v1 — on-demand service counts are small
+(most feeds have a handful; Alexandria has one).
 
 That is the entire v1 surface. `services-for-stop` / `services-for-route` lookups are
 deliberately omitted — pointer fields make them redundant (YAGNI).
@@ -357,8 +416,10 @@ types have separate ID spaces, so this collides with nothing.
 
 ### 3.1 Pointer fields on `/api/where` (the entire coupling surface)
 
-- **Stop entries** gain `"onDemandServiceIds": [...]` when the stop belongs to a
-  location group or appears in windowed stop_times.
+- **Stop entries** gain `"onDemandServiceIds": [...]` when the stop is referenced by
+  any compiled rule or location-group membership — this includes a deviated route's
+  ordinary timed stops, which participate in rules without having windowed records
+  themselves.
 - **Route entries** gain the same when any trip of the route is flex-involved.
 
 The field is **omitted when empty**: non-flex feeds produce byte-identical `/where`
@@ -374,6 +435,14 @@ spec, to be proposed upstream together with the namespace once proven.
 - Flex-only (windowed) stop_times records are **excluded** from
   arrivals-and-departures, schedule-for-stop/route, and trip-details stop-time lists
   — no phantom arrival times. This follows the spec's own consumer routing rule.
+- **Flex-only trips** (every record windowed — e.g. both Alexandria trips) have no
+  timed stop_times at all, so each trip-serving `/where` endpoint gets an explicit
+  disposition: excluded from `trips-for-route`, `trips-for-location`, and
+  `block/{id}` (their NULL min/max arrival caches drop them from time-window
+  queries naturally — see §1.2); `trip/{id}` and `trip-details/{id}` return the
+  trip entity with an empty schedule and no status rather than 404, since the ID
+  is real and referenceable. Deviated trips (mixed records) appear everywhere,
+  showing only their timed records.
 - Zones are not stops: `stops-for-location` and stop-ID surfaces never contain
   locations or location groups.
 
@@ -393,17 +462,26 @@ API**. The mapping:
 | GOFS file | Lands as |
 |---|---|
 | `zones.json` | `serviceAreas` (accept `zone_id` Feature placement; Polygon-only is a subset of what we store) |
-| `operating_rules.json` | `availabilityRules` — the reason rules are shaped as (from, to, window, calendar) |
-| `calendars.json` | `calendars` — deliberately identical shape |
-| `booking_rules.json` | `bookingRules` — near-verbatim shared vocabulary; `prior_notice_calendar_id` already our exposed field name |
+| `operating_rules.json` | `availabilityRules` — the reason rules are shaped as (from, to, pickup window + `endDropOffTime`, calendar array); GOFS's `end_dropoff_window` and windowless all-hours rules map directly |
+| `calendars.json` | `calendars` — same structure; dates normalized from GOFS's `YYYYMMDD` on ingest |
+| `booking_rules.json` | `bookingRules` — the *field vocabulary* is shared near-verbatim (`prior_notice_calendar_id` is already our exposed name), but the *linkage* is not: GOFS entries have no ID and anchor to zones via `from_zone_ids`/`to_zone_ids`. The importer synthesizes one `bookingRule` (with a generated ID) per GOFS entry and attaches it to every availabilityRule whose from/to zones match. |
 | `system_information.json` + `service_brands.json` | `onDemandService` entries with `routeId: null` |
 
-All three endpoints serve GOFS-sourced services with zero contract changes.
+**Identity for GOFS feeds:** GOFS has no agency concept and its IDs are not globally
+unique. Each GOFS feed gets a synthesized agency built from
+`system_information.json` (name, timezone, url, configured feed ID), registered in
+`references.agencies`; that feed ID becomes the combined-ID prefix for its services,
+zones, booking rules, and calendars, and is what `services-for-agency/{id}`
+addresses. With that in place, all three endpoints serve GOFS-sourced services with
+zero contract changes.
 
 **Reserved extension points** — documented here, absent from v1 responses, never to
 be occupied with different semantics:
 
-- `brand` (object on `onDemandService`): GOFS service brands (id, name, colors).
+- `brand` (object on `onDemandService`) **and `brandId` (string on
+  `availabilityRule`)**: GOFS attaches `brand_id` per operating rule (absent = all
+  brands), so the rule-level slot must be reserved too or a GOFS importer would be
+  forced into service-per-brand duplication.
 - `vehicleTypes` (array on `onDemandService` or rules): capacity, wheelchair enum.
 - `waitTime` / `fares`: GOFS dynamic and metered-fare data.
 - `deepLinks` (object on `bookingRules`): `iosUri` / `androidUri` / `webUri` /
@@ -413,28 +491,49 @@ be occupied with different semantics:
 
 ## 5. Testing
 
+The primary integration fixture is a **real feed**: `testdata/alexandria-flex.zip`,
+the City of Alexandria VA DOT Paratransit flex-v2 feed published by Trillium
+(https://data.trilliumtransit.com/gtfs/cityofalexandria-va-us/cityofalexandria-va-us--flex-v2.zip,
+snapshot committed to the repo). It is tiny (one route, two trips, four stop_times
+rows, one zone) yet exercises exactly the quirks synthetic fixtures wouldn't:
+draft-era `mean_duration_*` columns, `safe_duration_*` on stop_times instead of
+trips, >24h windows, asymmetric pickup/drop-off ends (24:50 vs 25:00), header-only
+empty `location_groups.txt`/`location_group_stops.txt`, a 4,239-point polygon, and
+a mismatched agency-vs-stop timezone.
+
 - **Parser tests** live upstream in go-gtfs, using fixtures built from the gtfs.org
-  flex examples (all four patterns: Heartland, MRVT, RufBus, Hermann).
+  flex examples (all four patterns: Heartland, MRVT, RufBus, Hermann) plus
+  Alexandria excerpts for draft-column tolerance and empty flex files.
 - **Rule compilation**: unit tests mapping each pattern's stop_times to expected
-  rules, including the degenerate no-pickup case and the dedup step.
+  rules, including the degenerate no-pickup case and the dedup/merge steps.
+  Alexandria end-to-end: exactly two rules (zone→same zone; 07:00–24:50 pickup /
+  25:00 drop-off on the no-Sunday calendar, 05:00 start on the Sunday-only one),
+  `safeDurationFactor` 1.0 / offset 0.0 via the stop_times fallback, and the
+  `booking_type=2` rule (start day 14, last day 1 at 17:00) attached to both.
 - **Geometry**: point-in-polygon with holes, MultiPolygon, viewport-intersection
   mode, points on boundaries.
-- **Integration**: new `testdata/raba-flex.zip` — RABA augmented with a dial-a-ride
-  zone, a location group, and one deviated trip — so `createTestApi`-style helpers
-  work unchanged. Endpoint tests via `serveApiAndRetrieveEndpoint` for all three
-  endpoints, plus pointer-field assertions on stop and route responses.
+- **Integration**: endpoint tests via `serveApiAndRetrieveEndpoint` against the
+  Alexandria fixture for all three endpoints — point containment inside/outside the
+  zone, bbox-only vs `includeGeometry=true` list behavior, and route pointer
+  fields. Location-group and deviated-route *endpoint* coverage (stop pointer
+  fields, stop-radius matching) uses one minimal synthetic fixture derived from the
+  gtfs.org RufBus/Hermann examples, since Alexandria exercises neither pattern.
 - **Additive-guarantee regression**: importing plain `raba.zip` must produce `/where`
-  responses containing no flex fields anywhere.
+  responses containing no flex fields and no new references keys anywhere.
 - **Import invariants**: fixtures with each violation class (two location refs, a
   window plus arrival_time, dangling booking rule) assert log-and-skip behavior.
 
 ## 6. Implementation Sequencing (for the plan)
 
-1. go-gtfs: parse the four files + new fields (upstream PR; prerequisite).
-2. Maglev schema + import + rule compilation (no API changes; testable via DB).
-3. `/api/ondemand` endpoints + reference types.
+1. go-gtfs: parse the four files + new fields, tolerating draft-era columns
+   (upstream PR; prerequisite).
+2. Maglev schema (including the `stop_times` arrival/departure nullability
+   migration and its query fallout) + import + rule compilation (no API changes;
+   testable via DB).
+3. `/api/ondemand` endpoints + extended references model.
 4. `/where` pointer fields + legacy-surface exclusions + additive regression test.
-5. Test fixtures (`raba-flex.zip`) threaded through 2–4.
+5. Test fixtures (`alexandria-flex.zip` + the minimal synthetic
+   group/deviated fixture) threaded through 2–4.
 
 ## Appendix: Source Material
 
@@ -443,6 +542,9 @@ be occupied with different semantics:
 - Original merge PR: https://github.com/google/transit/pull/433
 - GOFS spec: https://github.com/MobilityData/GOFS (v1.0 `reference.md`)
 - GOFS positioning: https://mobilitydata.org/gofs-a-new-chapter-for-on-demand-transportation-data/
+- Real test feed: City of Alexandria VA flex v2 (Trillium),
+  https://data.trilliumtransit.com/gtfs/cityofalexandria-va-us/cityofalexandria-va-us--flex-v2.zip
+  — snapshot at `testdata/alexandria-flex.zip`
 - Notable spec facts relied on above: shared ID namespace across stops/locations/groups;
   windows forbid `arrival_time`/`departure_time` and `pickup_type` ∈ {0,3}
   (`drop_off_type` 3 allowed); `prior_notice_*` durations are minutes;
