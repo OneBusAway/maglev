@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -382,4 +383,45 @@ func TestDisambiguateGroupNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDisambiguateGroupNamesCollidesWithUniqueName covers the case where suffixing
+// a duplicated name produces a string that already exists as another group's
+// unique name ("A", "A", "A - 0"): the generated "A - 0" must be pushed further
+// so every final name stays unique. It also asserts the outcome is independent of
+// input order, which is what makes the later name-based sort stable.
+func TestDisambiguateGroupNamesCollidesWithUniqueName(t *testing.T) {
+	newGroups := func() []models.StopGroup {
+		mk := func(id, name string) models.StopGroup {
+			return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+		}
+		return []models.StopGroup{mk("0", "A"), mk("1", "A"), mk("2", "A - 0")}
+	}
+
+	// Final name per direction id, regardless of the order groups arrive in.
+	wantByID := map[string]string{
+		"0": "A - 0 - 0",
+		"1": "A - 1",
+		"2": "A - 0 - 2",
+	}
+
+	assertResolved := func(t *testing.T, groups []models.StopGroup) {
+		seen := make(map[string]bool)
+		for _, g := range groups {
+			assert.Equal(t, wantByID[g.ID], g.Name.Name, "group %s", g.ID)
+			assert.Equal(t, []string{wantByID[g.ID]}, g.Name.Names, "group %s names", g.ID)
+			assert.False(t, seen[g.Name.Name], "duplicate final name %q", g.Name.Name)
+			seen[g.Name.Name] = true
+		}
+	}
+
+	ordered := newGroups()
+	disambiguateGroupNames(ordered)
+	assertResolved(t, ordered)
+
+	// Reversed input must yield the same per-group names (order independence).
+	reversed := newGroups()
+	slices.Reverse(reversed)
+	disambiguateGroupNames(reversed)
+	assertResolved(t, reversed)
 }

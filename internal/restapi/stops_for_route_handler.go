@@ -347,26 +347,38 @@ func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, g
 		})
 }
 
-// disambiguateGroupNames keeps direction groups distinguishable: when two or
-// more groups resolve to the same destination name, only those colliding groups
-// get their direction id appended ("Shasta Lake" -> "Shasta Lake - 0"); a name
-// that is already unique is left untouched. Suffixing collisions also makes the
-// later name-based group sort deterministic. (The Java reference suffixes every
-// group whenever any collision exists; leaving unique names alone is a
-// deliberate, less noisy divergence.)
+// disambiguateGroupNames keeps direction groups distinguishable: any group whose
+// name is shared with another group has its direction id appended
+// ("Shasta Lake" -> "Shasta Lake - 0"), while a name that is already unique is
+// left untouched. The check is repeated against the *resulting* names, so a
+// suffixed name that happens to equal an originally-unique name (e.g. a literal
+// "A - 0" headsign) is disambiguated further rather than left duplicated.
+// Direction ids are unique, so two colliding groups always separate on the next
+// pass and the loop is bounded by the group count; the final names are a
+// function of the groups alone, independent of input order, which also makes the
+// later name-based sort deterministic. (The Java reference suffixes every group
+// whenever any collision exists; leaving unique names alone is a deliberate,
+// less noisy divergence.)
 func disambiguateGroupNames(groups []models.StopGroup) {
-	nameCounts := make(map[string]int, len(groups))
-	for _, group := range groups {
-		nameCounts[group.Name.Name]++
-	}
-
-	for i := range groups {
-		if nameCounts[groups[i].Name.Name] <= 1 {
-			continue
+	for range groups {
+		nameCounts := make(map[string]int, len(groups))
+		for _, group := range groups {
+			nameCounts[group.Name.Name]++
 		}
-		disambiguated := groups[i].Name.Name + " - " + groups[i].ID
-		groups[i].Name.Name = disambiguated
-		groups[i].Name.Names = []string{disambiguated}
+
+		collision := false
+		for i := range groups {
+			if nameCounts[groups[i].Name.Name] <= 1 {
+				continue
+			}
+			collision = true
+			disambiguated := groups[i].Name.Name + " - " + groups[i].ID
+			groups[i].Name.Name = disambiguated
+			groups[i].Name.Names = []string{disambiguated}
+		}
+		if !collision {
+			return
+		}
 	}
 }
 
