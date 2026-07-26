@@ -91,14 +91,37 @@ Maglev consumes the new structs through its existing `ParseStatic` → bulk-inse
 Reviewing the go-gtfs source (`static.go`, `interpolate.go`) pins down what the
 upstream change actually is — it is more than adding optional columns:
 
-- **Flex rows are dropped entirely today.** `stop_id` is a required column and any
-  row whose stop doesn't resolve is silently skipped (`parseScheduledStopTimes`:
-  `if stopTime.Stop == nil { continue }`). The Alexandria feed currently imports as
-  a route with two trips and zero stop times. `stop_id` must become optional at
-  both column level (a pure zone-based feed may omit the column entirely) and row
-  level, with rows kept when exactly one of stop/location/location-group resolves
-  and skipped — via the existing `Static.Warnings` mechanism, not `log.Print` —
-  when none does.
+- **Flex rows are dropped entirely today — and flex-only feeds fail import.**
+  `stop_id` is a required column, so an empty-`stop_id` row dies at the
+  `MissingRowKeys` check (`static.go:838-841`, with a `log.Printf`); the separate
+  `Stop == nil` skip only catches non-empty IDs that don't resolve. Downstream,
+  Maglev's `ValidateAndFilterGTFSData` (`gtfsdb/helpers.go:1448`) then drops every
+  trip left with zero stop_times and **hard-fails the whole import when all trips
+  are filtered** — so the Alexandria feed doesn't import degraded today, it
+  doesn't import at all. Upstream fix: `stop_id` becomes an optional column (a
+  pure zone-based feed may omit it entirely), and because the `csv` package has no
+  conditionally-required concept, the exactly-one-of stop/location/location-group
+  validation is hand-rolled in `parseScheduledStopTimes`, emitting
+  `Static.Warnings` for rows that resolve to none.
+- **`stops.txt` is a hard-required *file* in `ParseStatic`** (`static.go:213-218`,
+  no `Optional` flag), but flex makes it conditionally required — optional when
+  `locations.geojson` defines zones. The dispatch entry becomes optional in that
+  case, and Maglev must tolerate a feed with zero stops.
+- **The pickup/drop-off enum default is wrong for flex compilation.**
+  `parsePickupDropOffPolicy` (`enums.go:130-141`) maps empty/absent values to
+  `No` (1); per GTFS, an empty `pickup_type` means 0 (regularly scheduled). The
+  default is correct for `continuous_pickup` (empty = 1) but wrong for
+  `pickup_type`/`drop_off_type` — and since most real feeds omit those columns on
+  ordinary timed stops, §2.3's timed-stop capability test would see 1 and compile
+  deviated routes to zero rules. The upstream PR gives the parser per-field
+  defaults.
+- **Two pre-existing upstream bugs sit in the rewritten code path; fix both in
+  the same PR.** (a) The arrival/departure fallback assignments are swapped
+  (`static.go:802-807`: `if !departureOk { arrival = departure }` zeroes both
+  times when exactly one is present, then interpolation fabricates replacements).
+  (b) A stop_times row referencing an unknown `trip_id` panics on
+  `cap(thisTrip.StopTimes)` with a nil trip (`static.go:830-834`), reachable with
+  real malformed feeds because trips are droppable upstream.
 - **Struct surface:** `Static` gains `Locations`, `LocationGroups`, and
   `BookingRules` slices; `ScheduledStopTime` gains `Location`/`LocationGroup`
   pointers (alongside the existing `Stop`), the two window durations, and
@@ -106,16 +129,22 @@ upstream change actually is — it is more than adding optional columns:
   safe-duration fields.
 - **`locations.geojson` is not CSV.** `ParseStatic`'s dispatch is a table of
   CSV-file handlers; the GeoJSON file needs its own parse path outside that loop.
-- **Time interpolation must exempt windowed records.** go-gtfs interpolates
-  missing arrival/departure times across each trip (`interpolateStopTimes`,
-  by-shape-dist variant included). On a deviated trip this would fabricate times
-  for the zone records sitting between timed stops — records the GTFS spec forbids
-  times on. Windowed records are excluded from interpolation.
+- **Time interpolation must exempt windowed records — by removing them from the
+  interpolation input, not by skipping writes.** go-gtfs interpolates missing
+  arrival/departure times across each trip (`interpolateStopTimes`, by-shape-dist
+  variant included). On a deviated trip this would fabricate times for the zone
+  records sitting between timed stops. Worse, the shape-dist variant dereferences
+  `ShapeDistanceTraveled` without a nil check (`interpolate.go:87`) and its
+  trigger flag is file-global, so a kept windowed record (zero time, nil distance)
+  between two distance-bearing stops is a nil-pointer panic. Interpolate over the
+  timed records only, then reassemble.
 - **Missing vs. midnight:** `ScheduledStopTime.ArrivalTime` is a non-pointer
   `time.Duration`, so a zero value is ambiguous between "absent" and "00:00:00".
   No breaking pointer change is needed: window presence is the discriminator
   (the spec forbids times when windows are set), and Maglev's importer writes NULL
-  arrival/departure exactly when a record carries windows.
+  arrival/departure exactly when a record carries windows. The **new** window
+  fields themselves must not inherit the same ambiguity — a `00:00:00` window
+  start is legal — so they are pointer-typed (`*time.Duration`) from the start.
 
 Real-world feeds still carry draft-era GTFS-Flex columns. The Alexandria test feed
 puts `mean_duration_factor`/`mean_duration_offset` (dropped from the adopted spec)
@@ -179,8 +208,12 @@ Additive columns:
   are present. Downstream effects to handle explicitly: the cached
   `trips.min_arrival_time`/`max_departure_time` columns stay NULL for flex-only
   trips (which correctly drops them from time-window queries like
-  trips-for-location), and every query ordering or filtering on `arrival_time`
-  must exclude NULL rows rather than sort phantom zeros.
+  trips-for-location), every query ordering or filtering on `arrival_time`
+  must exclude NULL rows rather than sort phantom zeros, the sqlc-generated Go
+  types for the two columns change to nullable (touching consumers like
+  `internal/restapi/trips_helper.go`), and `timepoint` is written NULL on
+  windowed rows — GTFS requires times when `timepoint=1`, and go-gtfs's
+  `ExactTimes` default would otherwise mark timeless flex rows as exact.
 - `trips`: `safe_duration_factor REAL`, `safe_duration_offset REAL`.
 
 Plus the compiled-rule table produced at import (§2.3):
@@ -194,9 +227,9 @@ ondemand_rules (
     from_kind                 INTEGER NOT NULL,  -- 0 stop, 1 location, 2 location group
     to_id                     TEXT NOT NULL,
     to_kind                   INTEGER NOT NULL,
-    start_pickup_time         INTEGER,           -- ns since midnight; may exceed 24h.
-    end_pickup_time           INTEGER,           -- NULL window = available all service-day
-    end_drop_off_time         INTEGER,           -- hours (the GOFS windowless-rule case)
+    start_pickup_time         INTEGER,           -- all three: ns since midnight, may
+    end_pickup_time           INTEGER,           -- exceed 24h; all NULL = service runs
+    end_drop_off_time         INTEGER,           -- all hours (GOFS windowless rules)
     gtfs_service_id           TEXT NOT NULL,     -- calendar reference; one row per calendar
     pickup_type               INTEGER NOT NULL,
     drop_off_type             INTEGER NOT NULL,
@@ -239,6 +272,11 @@ handling):
 5. Dangling booking-rule / location / group references: row skipped, logged.
 6. Feeds violating the spec's same-trip overlap prohibition are imported anyway
    (log-only) — consumers, not validators.
+
+Skips surface through go-gtfs's `Static.Warnings`, which `ParseStatic` does return
+to callers — but Maglev currently logs only the warning *count*
+(`gtfsdb/helpers.go:234`); the import work includes iterating them so individual
+skipped rows are visible in logs.
 
 ## 2. The On-Demand Service Model
 
@@ -534,9 +572,13 @@ a mismatched agency-vs-stop timezone.
   flex examples (all four patterns: Heartland, MRVT, RufBus, Hermann) plus
   Alexandria excerpts for draft-column tolerance and empty flex files.
 - **Rule compilation**: unit tests mapping each pattern's stop_times to expected
-  rules, including the degenerate no-pickup case and the dedup/merge steps.
+  rules, including the degenerate no-pickup case, the dedup/merge steps, and a
+  deviated-route fixture with `pickup_type`/`drop_off_type` columns omitted
+  entirely — guarding the enum-default fix (§1.1) that the always-explicit
+  Alexandria feed cannot catch.
   Alexandria end-to-end: exactly two rules (zone→same zone; 07:00–24:50 pickup /
-  25:00 drop-off on the no-Sunday calendar, 05:00 start on the Sunday-only one),
+  25:00 drop-off on the Sunday-only calendar, 05:00 start on the no-Sunday one —
+  note the counterintuitive pairing; it is what the feed says),
   `safeDurationFactor` 1.0 / offset 0.0 via the stop_times fallback, and the
   `booking_type=2` rule (start day 14, last day 1 at 17:00) attached to both.
 - **Geometry**: point-in-polygon with holes, MultiPolygon, viewport-intersection
@@ -558,11 +600,17 @@ a mismatched agency-vs-stop timezone.
    (upstream PR; prerequisite).
 2. Maglev schema (including the `stop_times` arrival/departure nullability
    migration and its query fallout) + import + rule compilation (no API changes;
-   testable via DB). Includes an audit of every `st.Stop` dereference in Maglev —
-   e.g. `gtfsdb/helpers.go:419` (`st.Stop.Id` at insert), `:1284` (first-stop
-   lookup), `:1414`/`:1422` (block layover pairing) — which will panic on
-   stop-less records the moment the upgraded go-gtfs stops dropping them; the
-   go-gtfs version bump and these guards must land in the same change.
+   testable via DB). The gatekeeper to change **first** is
+   `ValidateAndFilterGTFSData` (`gtfsdb/helpers.go:1448`): today it drops any
+   trip with zero stop_times or any nil/empty-stop record and hard-fails when
+   all trips are filtered — it must accept exactly-one-of stop/location/group
+   records and not treat a flex-only feed as fatally empty. Only once it admits
+   stop-less records does the second-order audit matter: every `st.Stop`
+   dereference and timed-first-record assumption — `gtfsdb/helpers.go:419`
+   (`st.Stop.Id` at insert), `:1284` (first-stop lookup), `:1404` (block sort by
+   `StopTimes[0].DepartureTime`, which would sort zeroed times), `:1414`/`:1422`
+   (block layover pairing). The go-gtfs version bump, the validator change, and
+   these guards must land in the same change.
 3. `/api/ondemand` endpoints + extended references model.
 4. `/where` pointer fields + legacy-surface exclusions + additive regression test.
 5. Test fixtures (`alexandria-flex.zip` + the minimal synthetic
