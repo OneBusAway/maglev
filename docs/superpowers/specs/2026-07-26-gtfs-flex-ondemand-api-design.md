@@ -199,7 +199,10 @@ handling):
 ### 2.1 `onDemandService` (the entry)
 
 The rider-facing unit: "a bookable service that covers these areas, during these
-windows, booked this way." Provider-agnostic by construction.
+windows, booked this way." Provider-agnostic by construction. For flex data, one
+service exists per route that has at least one flex stop_time record (a windowed
+record, or any record referencing a location or location group) — even when rule
+compilation yields nothing (§2.3).
 
 ```jsonc
 {
@@ -241,14 +244,20 @@ possible from any pickup-capable record to any *later* drop-off-capable record o
 same trip:
 
 1. For each trip with at least one flex record, order records by `stop_sequence`.
-2. For each record with `pickup_type` ∈ {2, 3} (or a timed stop permitting pickup),
-   pair it with each subsequent record whose `drop_off_type` ∈ {2, 3}.
+2. A record is **pickup-capable** when it permits boarding: `pickup_type` = 2 for
+   windowed records (1 means no pickup; 0 and 3 are forbidden with windows), or
+   `pickup_type` ∈ {0, 2, 3} for timed-stop records. Symmetrically, a record is
+   **drop-off-capable** when `drop_off_type` ∈ {2, 3} for windowed records or
+   ∈ {0, 2, 3} for timed-stop records. Pair each pickup-capable record with each
+   subsequent drop-off-capable record. Pairs where both records are timed fixed
+   stops are skipped — that is ordinary fixed-route travel, not an on-demand rule.
 3. Each pair emits one rule: `fromIds` from the pickup record, `toIds` from the
    drop-off record, window from the windowed side(s) (intersection when both are
    windowed), calendar = the trip's `service_id`, booking-rule IDs and
    safe-duration values carried through.
 4. Rules identical except for `trip_id` collapse to one row per distinct
-   (from, to, window, calendar, types, booking) tuple.
+   (from, to, window, calendar, types, booking) tuple; the stored `trip_id` is a
+   representative retained for traceability only and is not exposed in the API.
 
 Pattern projections:
 
@@ -323,7 +332,8 @@ already the shared Flex/GOFS dialect:
 
 Removed-service exceptions (`calendar_dates` type 2) become `exceptedDates`;
 added-service exceptions (type 1) become standalone single-range calendars referenced
-by additional rules — the GOFS idiom.
+by additional rules — the GOFS idiom. All API dates are `YYYY-MM-DD` strings in the
+agency's timezone; all times of day are `"HH:MM:SS"` strings that may exceed 24:00:00.
 
 Stops referenced by rules or group memberships appear in `references.stops` in the
 standard shape; routes and agencies likewise.
