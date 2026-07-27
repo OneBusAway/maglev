@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
@@ -93,11 +94,14 @@ func TestAgenciesWithCoverageHandlerZeroStopTimes(t *testing.T) {
 
 	// Insert a mock agency with exactly zero stop-times to the test data.
 	_, err := api.GtfsManager.GtfsDB.DB.Exec("INSERT INTO agencies (id, name, url, timezone) VALUES ('MOCK_ZERO', 'Mock Agency', 'http://mock.agency', 'America/Los_Angeles')")
-	assert.NoError(t, err)
+
+	require.NoError(t, err)
 
 	// Clean up after test
 	t.Cleanup(func() {
-		_, _ = api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM agencies WHERE id = 'MOCK_ZERO'")
+		if _, err := api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM agencies WHERE id = 'MOCK_ZERO'"); err != nil {
+			t.Errorf("failed to clean up MOCK_ZERO agency: %v", err)
+		}
 	})
 
 	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST")
@@ -114,7 +118,7 @@ func TestAgenciesWithCoverageHandlerZeroStopTimes(t *testing.T) {
 		}
 	}
 
-	assert.NotNil(t, mockAgency, "mock agency should be in the returned list")
+	require.NotNil(t, mockAgency, "mock agency should be in the returned list")
 
 	// The spec mandates that latSpan and lonSpan must evaluate exactly to 0
 	// if an agency contains no stop records.
