@@ -86,3 +86,40 @@ func TestAgenciesWithCoverageHandlerIncludeReferencesFalse(t *testing.T) {
 	assert.Empty(t, model.Data.References.Stops)
 	assert.Empty(t, model.Data.References.Trips)
 }
+
+func TestAgenciesWithCoverageHandlerZeroStopTimes(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Insert a mock agency with exactly zero stop-times to the test data.
+	_, err := api.GtfsManager.GtfsDB.DB.Exec("INSERT INTO agencies (id, name, url, timezone) VALUES ('MOCK_ZERO', 'Mock Agency', 'http://mock.agency', 'America/Los_Angeles')")
+	assert.NoError(t, err)
+
+	// Clean up after test
+	t.Cleanup(func() {
+		_, _ = api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM agencies WHERE id = 'MOCK_ZERO'")
+	})
+
+	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	var mockAgency *models.AgencyCoverage
+	for i, agency := range model.Data.List {
+		if agency.AgencyID == "MOCK_ZERO" {
+			mockAgency = &model.Data.List[i]
+			break
+		}
+	}
+
+	assert.NotNil(t, mockAgency, "mock agency should be in the returned list")
+
+	// The spec mandates that latSpan and lonSpan must evaluate exactly to 0
+	// if an agency contains no stop records.
+	assert.Equal(t, 0.0, mockAgency.Lat)
+	assert.Equal(t, 0.0, mockAgency.Lon)
+	assert.Equal(t, 0.0, mockAgency.LatSpan)
+	assert.Equal(t, 0.0, mockAgency.LonSpan)
+}
