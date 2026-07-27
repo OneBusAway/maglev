@@ -1,9 +1,5 @@
 # GTFS-Flex Support & the `/api/ondemand` Namespace
 
-**Date:** 2026-07-26
-**Status:** Approved design, pre-implementation
-**Branch:** `flex-spec`
-
 ## Summary
 
 Maglev will ingest GTFS-Flex data (merged into the GTFS Schedule spec in March 2024)
@@ -163,6 +159,8 @@ locations (
     name          TEXT,               -- properties.stop_name
     description   TEXT,               -- properties.stop_desc
     geometry      TEXT NOT NULL,      -- GeoJSON geometry object, verbatim
+    geometry_simplified TEXT,         -- display-detail geometry computed at import (§1.3);
+                                      -- NULL when the original already meets the target
     min_lat REAL NOT NULL, max_lat REAL NOT NULL,
     min_lon REAL NOT NULL, max_lon REAL NOT NULL   -- computed bounding box
 )
@@ -240,6 +238,17 @@ ondemand_rules (
 )
 ```
 
+And one materialized row per on-demand service (one per flex-involved route),
+giving import-derived facts a home that rule rows cannot provide — a zero-rule
+degenerate service (§2.3) still has a kind:
+
+```sql
+ondemand_services (
+    id            TEXT PRIMARY KEY,   -- route id for flex; feed-prefixed id for GOFS
+    service_kind  TEXT NOT NULL       -- zone | zoneToZone | stopGroup | deviatedRoute | unknown (§2.3)
+)
+```
+
 **ID namespace.** The GTFS spec requires location IDs, location-group IDs, and stop
 IDs to share one uniqueness namespace. The existing `{agencyId}_{id}` combined-ID
 convention therefore extends without disambiguation: zone and group IDs are
@@ -252,8 +261,27 @@ No SpatiaLite, no new R-tree. Flex feeds contain dozens of zones, not thousands.
 runs an exact test in Go against the stored GeoJSON:
 
 - **Point mode**: ray-casting point-in-polygon, honoring holes (right-hand-rule
-  interior rings) and MultiPolygon members.
+  interior rings) and MultiPolygon members, plus a nearest-boundary search:
+  haversine point-to-segment distance over every ring segment, yielding both
+  the distance and the closest boundary point.
 - **Region mode**: polygon–rectangle intersection against the viewport.
+
+The pass's results are response data, not just filter predicates: the
+containment/intersection outcome is surfaced as `matchReason`, and the
+nearest-boundary search as `distanceToArea` / `nearestPointOnBoundary`
+(§3.4). Computing these and discarding them would force every client to
+re-download full geometry and reimplement the identical tests — the iOS bbox
+containment fallback is actively wrong (Alexandria's bbox is ~55 km × 49 km,
+mostly Maryland and DC that the polygon does not cover).
+
+**Display geometry** is simplified once at import into
+`locations.geometry_simplified` (§1.2): Douglas–Peucker per ring, tolerance
+chosen so simplified vertices stay within ~10 m of the original, target ≤256
+points per ring. Interior rings simplify independently; ring winding and hole
+structure are preserved (a hole that degenerates below four points is
+dropped), or the map fill renders inverted. `bbox` is always computed from
+the full geometry. Simplified geometry is for display only — containment and
+distance always run against the full stored geometry.
 
 Revisit with an R-tree only if profiling demands it.
 
@@ -294,6 +322,7 @@ compilation yields nothing (§2.3).
   "agencyId": "25",
   "routeId": "25_dial-a-ride",   // null for future GOFS services — they have no routes
   "name": "Brown County Dial-a-Ride",
+  "serviceKind": "zone",         // §2.3: zone | zoneToZone | stopGroup | deviatedRoute | unknown
   "description": null,
   "url": null,
   "rules": [ /* availabilityRule, below */ ]
@@ -363,12 +392,12 @@ same trip:
 
 Pattern projections:
 
-| Flex pattern | Compiles to |
-|---|---|
-| Dial-a-ride, single zone (Heartland Express) | zone→same zone, one rule per trip/window variant |
-| Zone-to-zone (Minnesota River Valley) | zone A→zone B |
-| Location group (RufBus) | group→same group; members via references |
-| Deviated fixed route (Hermann Express) | fixed stop ↔ deviation zone pairs per segment |
+| Flex pattern | Compiles to | `serviceKind` |
+|---|---|---|
+| Dial-a-ride, single zone (Heartland Express) | zone→same zone, one rule per trip/window variant | `zone` |
+| Zone-to-zone (Minnesota River Valley) | zone A→zone B | `zoneToZone` |
+| Location group (RufBus) | group→same group; members via references | `stopGroup` |
+| Deviated fixed route (Hermann Express) | fixed stop ↔ deviation zone pairs per segment | `deviatedRoute` |
 
 A degenerate feed (e.g. the published Hermann example, which technically permits no
 pickups anywhere) compiles to a service with areas and booking info but few or no
@@ -377,6 +406,26 @@ the GTFS reachability rule requires — a deviated route's zones pair with every
 capable record, not just adjacent ones), but counts stay small in practice because
 flex trips have few records (pure-zone trips have two; deviated trips a couple dozen),
 and compilation happens once at import, so queries stay cheap.
+
+**`serviceKind` classification (import time, normative).** Clients must not
+infer the service's shape from `rules[]` — three clients would produce three
+divergent heuristics, and the zero-rule degenerate case defeats all of them.
+The importer classifies each service from its flex stop_time **records**
+(which exist even when compilation yields no rules), first match wins:
+
+1. any flex-involved trip mixes timed-stop records with location or
+   location-group records → `deviatedRoute`;
+2. any record references a location group → `stopGroup`;
+3. records reference two or more distinct locations → `zoneToZone`;
+4. records reference exactly one location → `zone`;
+5. otherwise → `unknown` (unreachable for well-formed flex feeds; reserved
+   for future providers).
+
+Because classification reads records rather than compiled rules, the
+degenerate Hermann example reports `deviatedRoute`, not `unknown` — its
+records still carry the signal even though no rule survives compilation. The
+value is stored in `ondemand_services.service_kind` (§1.2) and exposed on
+`onDemandService` (§3.4).
 
 ### 2.4 New reference types
 
@@ -399,9 +448,14 @@ guarantee, and §5's regression test asserts it.
 ```
 
 Real zone geometries are large — Alexandria's single polygon is a 4,239-point ring,
-~340 KB of JSON — so `geometry` inclusion is endpoint policy (§3): full geometry on
-`service/{id}` by default; list endpoints send `bbox` only unless the caller passes
-`includeGeometry=true`. Gzip (already in the middleware chain) does the rest.
+~340 KB of JSON — so `geometry` content is endpoint policy (§3), selected by
+`geometryDetail=none|simplified|full`: `full` embeds the verbatim feed geometry,
+`simplified` embeds the import-time display geometry (§1.3; ~15 KB for the
+Alexandria ring, drawable straight onto a map), `none` omits the key entirely.
+Simplified geometry is for **display only and must not be used for containment
+or distance tests** — that is what `matchReason` and `distanceToArea` (§3.4)
+exist for. `bbox` is always present and always derives from the full geometry.
+Gzip (already in the middleware chain) does the rest.
 
 **`locationGroups`**:
 
@@ -463,6 +517,94 @@ future GOFS services the synthesized agency (§4) carries
 Stops referenced by rules or group memberships appear in `references.stops` in the
 standard shape; routes and agencies likewise.
 
+### 2.5 Booking deadline evaluation (normative)
+
+The rider-facing line every client renders — "Book by 5:00 PM tomorrow, for a
+ride on Wed, Jul 29" — is computed **client-side, never server-side**. All
+three endpoints sit on the long-cache/static-ETag tier (§3) precisely because
+they are static-data surfaces; a server-computed cutoff changes value at the
+deadline itself, so caches would quietly serve stale deadlines — the single
+worst failure mode this feature has, since a wrong deadline means a missed
+ride. The computation is therefore specified here normatively, with shared
+test vectors in §5, so iOS, Android, and Wayfinder implement one algorithm
+instead of three silently-divergent ones.
+
+All arithmetic is in **service days in the agency timezone** (§2.4) — never
+the device wall clock, never a stop timezone (the Alexandria feed's LA-agency
+/ NY-stop split exercises this deliberately). The service-day anchor is
+GTFS's DST-safe convention:
+
+```
+anchor(date, tz)       = local noon of date in tz, minus 12 hours
+instant(date, hms, tz) = anchor(date, tz) + hms      // hms may exceed 24:00:00
+```
+
+Evaluation is per **(availabilityRule, travel date D)**, where D is an active
+service day of one of the rule's `calendarIds`. The **pickup side governs
+booking**: use the rule's `pickupBookingRuleId`; the drop-off booking rule is
+informational. A rule with no pickup booking rule requires no notice:
+`state = open`, `cutoffInstant = null`.
+
+```
+evaluate(rule, bookingRule, D, now, tz, calendars)
+    → (state ∈ {notYetOpen, open, closedForDate}, cutoffInstant, openInstant)
+
+latestPickup = instant(D, rule.endPickupTime ?? "24:00:00", tz)
+
+switch bookingRule.bookingType:
+  case 0:  // real-time: booked at ride time
+    cutoffInstant = latestPickup
+    openInstant   = null
+  case 1:  // same-day, minutes-based
+    cutoffInstant = latestPickup − priorNoticeDurationMin minutes
+    openInstant   =                          // GTFS forbids both bounds at once
+      priorNoticeDurationMax != null:
+        instant(D, rule.startPickupTime ?? "00:00:00", tz)
+          − priorNoticeDurationMax minutes
+      priorNoticeStartDay != null:
+        instant(D − priorNoticeStartDay calendar days, priorNoticeStartTime, tz)
+      else: null
+    // refinement for a chosen pickup instant P:
+    //   bookable iff  P − durationMax ≤ now ≤ P − durationMin
+  case 2:  // prior day(s)
+    lastDayDate   = countBack(D, priorNoticeLastDay, priorNoticeCalendarId)
+    cutoffInstant = instant(lastDayDate, priorNoticeLastTime, tz)
+    openInstant   = priorNoticeStartDay == null ? null :
+      instant(D − priorNoticeStartDay calendar days, priorNoticeStartTime, tz)
+
+state = now < openInstant   → notYetOpen
+        now > cutoffInstant → closedForDate
+        otherwise           → open
+
+countBack(D, n, calendarId):
+    calendarId == null → D − n calendar days
+    otherwise: step back from D one calendar day at a time, counting only
+    days on which calendarId is active (its §2.4 calendar, including
+    exceptedDates), until n such days are consumed; return the n-th.
+    countBack(D, 0, _) = D.
+```
+
+Normative notes:
+
+- **`closingSoon` is a client presentation state, not part of `state`**:
+  `open` with `cutoffInstant − now` under a client-chosen threshold (iOS
+  plans ~2 h). Deliberately left to the client so products can tune urgency
+  copy without a spec change — this is a decision, not an omission.
+- **`notYetOpen` is a distinct state**, not a flavor of `closedForDate`:
+  Alexandria's `priorNoticeStartDay` of 14 makes it reachable for any travel
+  date more than two weeks out, and it needs different copy ("Booking opens
+  …") than a missed deadline.
+- **`priorNoticeCalendarId` counts service days for `priorNoticeLastDay`
+  only**; `priorNoticeStartDay` always counts calendar days (per GTFS). A
+  holiday on the referenced calendar shifts the deadline earlier.
+- **`nextBookableServiceDate`** = the earliest active service day D′ of the
+  rule's `calendarIds` (searching from the agency-local today forward,
+  bounded by the calendar's `endDate`) with `evaluate(D′).state = open`.
+- **Multi-rule resolution:** evaluate only rules whose calendars are active
+  on D. When summarizing at service level for a date, display the earliest
+  `cutoffInstant` among those rules — conservative: never later than any
+  real deadline the rider might hit.
+
 ## 3. Endpoints & Contracts
 
 All endpoints: HTTP GET, `.json`, API-key validation, rate limiting, gzip, standard
@@ -470,23 +612,33 @@ OBA envelope. Registered in `internal/restapi/routes.go` next to the `/where` ro
 
 | Endpoint | Contract |
 |---|---|
-| `/api/ondemand/services-for-location.json` | `lat` + `lon` (required floats) → services whose areas contain the point **or** whose rule-referenced stops fall within `radius` meters (optional; same default as `stops-for-location`) — without the radius, stop-based services (location groups, windowed stops) would be unreachable from a point query. Optional `latSpan` + `lonSpan` switch to viewport-intersection mode, mirroring `stops-for-location` conventions. List response. |
+| `/api/ondemand/services-for-location.json` | `lat` + `lon` (required floats); two **peer** matching modes. **Point mode** (default): services whose areas contain the point, whose area boundaries lie within `radius` meters of it (near-miss), **or** whose rule-referenced stops fall within `radius` meters (`radius` optional; same default as `stops-for-location`) — without the radius, stop-based services (location groups, windowed stops) would be unreachable from a point query, and near-miss matching is what lets a client explain "you're just outside the zone" instead of showing nothing. **Viewport mode** (`latSpan` + `lonSpan`): area-intersects-viewport and stop-within-viewport, mirroring `stops-for-location` conventions; the expected default for map-driven clients — both OBA mobile apps fetch per map region on every pan, not per radius. Each list element carries `matchReason` (§3.4); a service matching on several grounds reports the strongest (`areaContainsPoint` > `stopWithinRadius` > `areaNearby`; `areaIntersectsViewport` > `stopWithinViewport`). List response. |
 | `/api/ondemand/services-for-agency/{id}.json` | All on-demand services for the agency. List response. |
 | `/api/ondemand/service/{id}.json` | Single service, full rules + references. Entry response. |
 
-Geometry policy (§2.4): `service/{id}` embeds full `serviceAreas` geometry by
-default; the two list endpoints return `bbox`-only Features unless
-`includeGeometry=true`. The parameter is honored symmetrically: `service/{id}`
-accepts `includeGeometry=false` to get bbox-only. List responses use the standard
+Geometry policy (§2.4): all three endpoints accept
+`geometryDetail=none|simplified|full`. Defaults: `full` on `service/{id}` (the
+rider has expressed intent; a one-time large payload is fine), `simplified` on
+the two list endpoints (~15 KB per Alexandria-sized zone — drawable straight
+onto the map with no second request). `bbox` is always present at every detail
+level. There is no boolean `includeGeometry` — the tri-state replaces it
+before anything ships. List responses use the standard
 list envelope with `limitExceeded: false` and no `maxCount` in v1 — on-demand
 service counts are small (most feeds have a handful; Alexandria has one).
 
-Parameter precedence and matching modes follow the existing
-`BoundsFromParams` conventions: when both `radius` and `latSpan`/`lonSpan` are
-supplied, radius wins; in viewport mode the stop-based test becomes
-stops-within-viewport in place of stops-within-radius. All three endpoints are
-static-data surfaces and get the same middleware tier as `/where` static routes:
-`CacheControlMiddleware(CacheDurationLong)` plus the static ETag.
+Point mode and viewport mode are **peers** — neither is a fallback. Radius is
+the right primary for a "near me" button; viewport is the right primary for a
+map-first client, which is what both mobile apps are. Parameter precedence
+follows the existing `BoundsFromParams` conventions as a tiebreak only: when
+both `radius` and `latSpan`/`lonSpan` are supplied, radius wins. In viewport
+mode the stop-based test becomes stops-within-viewport, area matching becomes
+area-intersects-viewport, and near-miss (`areaNearby`) matching does not
+apply. All three endpoints are static-data surfaces and get the same
+middleware tier as `/where` static routes:
+`CacheControlMiddleware(CacheDurationLong)` plus the static ETag — responses
+vary only by URL and dataset version, which is why per-query values like
+`matchReason` and `distanceToArea` are cache-safe while a server-computed
+booking deadline would not be (§2.5).
 
 That is the entire v1 surface. `services-for-stop` / `services-for-route` lookups are
 deliberately omitted — pointer fields make them redundant (YAGNI).
@@ -532,9 +684,17 @@ Standard OBA semantics: `404` entry-not-found for unknown service IDs **and for
 unknown agency IDs on `services-for-agency`** (matching `routes-for-agency`; a
 known agency with zero on-demand services returns an empty list); `400` with
 `fieldErrors` for missing/invalid coordinates (existing `utils.ParseFloatParam`
-path); an empty `list` (not an error) when nothing covers a location. The namespace
-is always mounted — a feed with zero flex data yields empty lists, never 404s, so
-clients can probe cheaply.
+path); an empty `list` (not an error) when nothing matches a location. "Matches"
+includes the near-miss ground (§3): a rider just outside a zone still receives
+the service with `matchReason: "areaNearby"` plus `distanceToArea` /
+`nearestPointOnBoundary` (§3.4) — the difference between "not available here"
+and "the zone starts 1.2 mi north." A point inside no area still returns a
+non-empty `list` whenever stop-radius or near-miss matching found services. A
+client wanting a richer negative state after a genuinely empty response may
+re-query with a larger explicit `radius` — one extra round-trip in the
+negative case only, rather than `services-for-agency` plus client-side
+geometry. The namespace is always mounted — a feed with zero flex data yields
+empty lists, never 404s, so clients can probe cheaply.
 
 ### 3.4 Response schemas
 
@@ -558,7 +718,9 @@ additionally carries `"outOfRange"`. **`outOfRange` cannot simply reuse the
 from stops only, and a flex agency like Alexandria has one stop inside a ~50 km
 zone — a point inside the zone would match services yet read as out of range.
 For `/ondemand`, `outOfRange` is computed against the union of the agency stop
-bounds and all `serviceAreas` bboxes; `agencies-with-coverage` (which uses the
+bounds and all `serviceAreas` bboxes — in point **and** viewport mode alike;
+the motivating Alexandria case (one stop inside a ~50 km zone) breaks
+identically in both. `agencies-with-coverage` (which uses the
 same stop-derived bounds) is deliberately left untouched in v1 per the additive
 rule, noted as a future improvement for flex-heavy agencies.
 
@@ -582,9 +744,11 @@ order — Go struct serialization fixes key order anyway.
 | `agencyId` | string | no | For GOFS: the synthesized agency (§4) |
 | `routeId` | string | yes | `null` for GOFS-sourced services |
 | `name` | string | no | Route short/long name; GOFS: brand/system name |
+| `serviceKind` | string enum | no | `zone` \| `zoneToZone` \| `stopGroup` \| `deviatedRoute` \| `unknown`; derived at import (§2.3), independent of provider |
 | `description` | string | yes | |
 | `url` | string | yes | |
 | `rules` | array of `availabilityRule` | no | May be empty (degenerate feeds, §2.3) |
+| `matchReason` | string enum | — | **`services-for-location` list elements only; key omitted everywhere else.** Point mode: `areaContainsPoint` \| `stopWithinRadius` \| `areaNearby`; viewport mode: `areaIntersectsViewport` \| `stopWithinViewport`. Strongest ground wins (§3) |
 
 **`availabilityRule`**:
 
@@ -610,8 +774,10 @@ order — Go struct serialization fixes key order anyway.
 | `id` | string | no | Combined ID |
 | `name` | string | yes | `properties.stop_name` |
 | `description` | string | yes | `properties.stop_desc` |
-| `bbox` | `[number, number, number, number]` | no | `[minLon, minLat, maxLon, maxLat]` (RFC 7946 order) |
-| `geometry` | GeoJSON geometry object | — | `Polygon` or `MultiPolygon`; **key omitted** (not null) when the endpoint's geometry policy (§3) excludes it |
+| `bbox` | `[number, number, number, number]` | no | `[minLon, minLat, maxLon, maxLat]` (RFC 7946 order); always derived from the full geometry |
+| `geometry` | GeoJSON geometry object | — | `Polygon` or `MultiPolygon`; **key omitted** (not null) at `geometryDetail=none`; simplified display geometry (§1.3, never for containment tests) at `simplified`; verbatim feed geometry at `full` |
+| `distanceToArea` | number | yes | Meters from the query point to this area's nearest boundary; `0` when the point is inside. Non-null only in `services-for-location` point mode; `null` in viewport mode and on the other two endpoints |
+| `nearestPointOnBoundary` | `[number, number]` | yes | `[lon, lat]` of the closest boundary point; same presence rules as `distanceToArea`, and additionally `null` when the point is inside. Gives clients a bearing ("1.2 mi **north**"), which a scalar distance cannot |
 
 **`locationGroup`** (reference): `id` string, `name` string nullable,
 `stopIds` array of string (members also appear in `references.stops`).
@@ -645,9 +811,12 @@ unchanged from `/where`) plus `serviceAreas`, `locationGroups`, `bookingRules`,
 
 **Pointer field**: `"onDemandServiceIds"`, array of string, on **any
 serialization of the Route and Stop models** — entries and references, in both
-namespaces (references reuse `models.Route`/`models.Stop`, so this falls out of
-the type system). It is the one omitted-when-empty exception, preserving
-byte-identical output for non-flex feeds.
+namespaces, explicitly including `references.stops` and `references.routes`
+inside `/ondemand` responses. (References reuse `models.Route`/`models.Stop`,
+so this falls out of the type system — but clients may rely on it as contract:
+a location-group member row can know whether a stop page will carry a flex
+overlay before fetching it.) Like `matchReason`, it is omitted-when-empty
+rather than null, preserving byte-identical output for non-flex feeds.
 
 #### Worked example: `GET /api/ondemand/service/5088_77652.json` (Alexandria)
 
@@ -661,6 +830,7 @@ byte-identical output for non-flex feeds.
       "agencyId": "5088",
       "routeId": "5088_77652",
       "name": "DOT Paratransit",
+      "serviceKind": "zone",
       "description": null,
       "url": null,
       "rules": [                    // sorted per §3.4: startPickupTime ascending
@@ -754,8 +924,9 @@ byte-identical output for non-flex feeds.
 
 The list endpoints return the same `onDemandService` objects (full `rules`
 included — rule counts are small, §3) inside the list payload; their
-`serviceAreas` references carry `bbox` but omit `geometry` unless
-`includeGeometry=true`. This worked example doubles as the golden-file shape for
+`serviceAreas` references carry `bbox` plus simplified `geometry` by default
+(`geometryDetail`, §3), and `services-for-location` elements additionally
+carry `matchReason`. This worked example doubles as the golden-file shape for
 the §5 Alexandria endpoint tests.
 
 ## 4. GOFS Forward Compatibility
@@ -777,7 +948,9 @@ unique. Each GOFS feed gets a synthesized agency built from
 `references.agencies`; that feed ID becomes the combined-ID prefix for its services,
 zones, booking rules, and calendars, and is what `services-for-agency/{id}`
 addresses. With that in place, all three endpoints serve GOFS-sourced services with
-zero contract changes.
+zero contract changes. GOFS services classify into the same `serviceKind` enum
+from their operating rules (`zone` / `zoneToZone`); the enum needs no
+GOFS-specific member.
 
 **Reserved extension points** — documented here, absent from v1 responses, never to
 be occupied with different semantics:
@@ -786,6 +959,15 @@ be occupied with different semantics:
   `availabilityRule`)**: GOFS attaches `brand_id` per operating rule (absent = all
   brands), so the rule-level slot must be reserved too or a GOFS importer would be
   forced into service-per-brand duplication.
+- `eligibility` (object on `onDemandService`):
+  `{ "requirement": "open" | "certificationRequired" | "unknown", "infoUrl": string|null }`.
+  Neither GTFS-Flex nor GOFS models rider eligibility, yet ADA paratransit is a
+  large fraction of real-world flex service — today the only signal is prose
+  inside `bookingRules[].message`, which no client can safely pattern-match
+  (and which fails entirely for non-English feeds). Absent from v1 responses;
+  **normative client rule: a missing `eligibility` means "no eligibility
+  information published," never "open to all."** The real fix is proposing the
+  field upstream alongside the namespace (§Decisions of Record).
 - `vehicleTypes` (array on `onDemandService` or rules): capacity, wheelchair enum.
 - `waitTime` / `fares`: GOFS dynamic and metered-fare data.
 - `deepLinks` (object on `bookingRules`): `iosUri` / `androidUri` / `webUri` /
@@ -819,13 +1001,28 @@ a mismatched agency-vs-stop timezone.
   `safeDurationFactor` 1.0 / offset 0.0 via the stop_times fallback, and the
   `booking_type=2` rule (start day 14, last day 1 at 17:00) attached to both.
 - **Geometry**: point-in-polygon with holes, MultiPolygon, viewport-intersection
-  mode, points on boundaries.
+  mode, points on boundaries; nearest-boundary distance and point (inside → 0,
+  known outside fixtures); import-time simplification (≤256 points per ring,
+  ≤10 m vertex deviation, hole structure and winding preserved).
 - **Integration**: endpoint tests via `serveApiAndRetrieveEndpoint` against the
   Alexandria fixture for all three endpoints — point containment inside/outside the
-  zone, bbox-only vs `includeGeometry=true` list behavior, and route pointer
+  zone, the three `geometryDetail` levels, `matchReason` values (inside →
+  `areaContainsPoint`, just outside → `areaNearby` with `distanceToArea` /
+  `nearestPointOnBoundary`, viewport values), `serviceKind`, and route pointer
   fields. Location-group and deviated-route *endpoint* coverage (stop pointer
   fields, stop-radius matching) uses one minimal synthetic fixture derived from the
   gtfs.org RufBus/Hermann examples, since Alexandria exercises neither pattern.
+- **Booking evaluation vectors**: `testdata/flex-booking-vectors.json` — a
+  table of (`bookingRule`, rule window, calendars, travel date, reference
+  instant) → expected (`state`, `cutoffInstant`, `nextBookableServiceDate`)
+  per §2.5, committed next to `alexandria-flex.zip` and mirrored into the
+  iOS/Android/Wayfinder test suites so all three clients verify against the
+  same vectors instead of against each other. Minimum cases: Alexandria's
+  `booking_type=2` evaluated just before and just after 17:00; a
+  post-midnight service day (the 24:50/25:00 windows); a `bookingType=1`
+  same-day rule; a `priorNoticeCalendarId` that excludes the intervening day;
+  and a `priorNoticeStartDay=14` travel date far enough out to yield
+  `notYetOpen`.
 - **Additive-guarantee regression**: importing plain `raba.zip` must produce `/where`
   responses containing no flex fields and no new references keys anywhere.
 - **Import invariants**: fixtures with each violation class (two location refs, a
@@ -836,7 +1033,8 @@ a mismatched agency-vs-stop timezone.
 1. go-gtfs: parse the four files + new fields, tolerating draft-era columns
    (upstream PR; prerequisite).
 2. Maglev schema (including the `stop_times` arrival/departure nullability
-   migration and its query fallout) + import + rule compilation (no API changes;
+   migration and its query fallout) + import + rule compilation, geometry
+   simplification, and `service_kind` classification (no API changes;
    testable via DB). The gatekeeper to change **first** is
    `ValidateAndFilterGTFSData` (`gtfsdb/helpers.go:1448`): today it drops any
    trip with zero stop_times or any nil/empty-stop record and hard-fails when
@@ -850,8 +1048,8 @@ a mismatched agency-vs-stop timezone.
    these guards must land in the same change.
 3. `/api/ondemand` endpoints + extended references model.
 4. `/where` pointer fields + legacy-surface exclusions + additive regression test.
-5. Test fixtures (`alexandria-flex.zip` + the minimal synthetic
-   group/deviated fixture) threaded through 2–4.
+5. Test fixtures (`alexandria-flex.zip`, the minimal synthetic group/deviated
+   fixture, and `flex-booking-vectors.json`) threaded through 2–4.
 
 ## Appendix: Source Material
 
@@ -868,4 +1066,8 @@ a mismatched agency-vs-stop timezone.
   (`drop_off_type` 3 allowed); `prior_notice_*` durations are minutes;
   `location_group_name` optional; `safe_duration_*` live on trips.txt (the draft-era
   `mean_duration_*` fields were dropped); consumers ignore windowed records when
-  computing fixed-route timing.
+  computing fixed-route timing; `prior_notice_service_id` counts service days for
+  `prior_notice_last_day` only (start day counts calendar days).
+- Gap flagged for the upstream proposal: neither GTFS-Flex nor GOFS models rider
+  eligibility (ADA certification), despite paratransit being a large fraction of
+  real-world flex data — see the reserved `eligibility` extension point (§4).
