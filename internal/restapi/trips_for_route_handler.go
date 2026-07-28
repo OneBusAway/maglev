@@ -314,6 +314,36 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]bool)
 
+	// Map block ID → queried-route trip for interlined blocks.
+	blockTripForRoute := make(map[string]string)
+	var interlinedBlockIDs []sql.NullString
+	for _, t := range fetchedTrips {
+		if t.RouteID != routeID && t.BlockID.Valid {
+			interlinedBlockIDs = append(interlinedBlockIDs, t.BlockID)
+		}
+	}
+	if len(interlinedBlockIDs) > 0 {
+		allServiceIDs := serviceIDs
+		if len(prevServiceIDs) > 0 {
+			allServiceIDs = append(allServiceIDs, prevServiceIDs...)
+		}
+		blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+			BlockIds:   interlinedBlockIDs,
+			ServiceIds: allServiceIDs,
+		})
+		if err != nil {
+			api.Logger.Warn("trips-for-route: failed to fetch block trips for interlining", "error", err)
+		} else {
+			for _, bt := range blockTrips {
+				if bt.RouteID == routeID && bt.BlockID.Valid {
+					if _, exists := blockTripForRoute[bt.BlockID.String]; !exists {
+						blockTripForRoute[bt.BlockID.String] = bt.ID
+					}
+				}
+			}
+		}
+	}
+
 	var result []models.TripsForRouteListEntry
 	for _, fetchedTrip := range fetchedTrips {
 		if ctx.Err() != nil {
@@ -323,7 +353,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		tripID := fetchedTrip.ID
 
-		agencyID, ok := tripAgencyMap[tripID]
+		activeAgencyID, ok := tripAgencyMap[tripID]
 		if !ok {
 			continue
 		}
@@ -333,7 +363,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		if includeSchedule {
 			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation)
+			schedule, schedErr = api.buildScheduleForTrip(ctx, tripID, activeAgencyID, currentTime, currentLocation)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
@@ -342,13 +372,22 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
-		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			status, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, todayMidnight, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
+			}
+		}
+
+		// Override tripId to queried-route trip for interlined blocks.
+		entryTripID := tripID
+		entryAgencyID := activeAgencyID
+		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
+			if rt, ok := blockTripForRoute[fetchedTrip.BlockID.String]; ok {
+				entryTripID = rt
+				entryAgencyID = agencyID
 			}
 		}
 
@@ -358,7 +397,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(r.Context(), tripID),
-			TripId:       utils.FormCombinedID(agencyID, tripID),
+			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
 		result = append(result, entry)
 	}

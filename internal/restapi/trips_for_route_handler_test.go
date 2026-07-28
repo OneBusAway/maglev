@@ -439,3 +439,86 @@ func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 
 	assert.Empty(t, stopIDsMap)
 }
+
+func createTestApiWithInterlineFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-a,Headsign A,0,tfr-interline\n" +
+			"tfr-route-otr,tfr-svc,tfr-trip-b,Headsign B,0,tfr-interline\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-trip-a,11:20:00,11:20:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-a,11:50:00,11:50:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-b,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-b,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
+	}
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	zipPath := filepath.Join(t.TempDir(), "trips-for-route-interline.zip")
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+
+	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(gtfsManager.Shutdown)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(api.Shutdown)
+	return api
+}
+
+func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
+	api := createTestApiWithInterlineFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := tripsForRouteTestClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-a")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
