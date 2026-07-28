@@ -67,7 +67,7 @@ func TestInterpolateBlockDistance_NonMonotonicUsesLinearScan(t *testing.T) {
 	// Out-of-order stops: middle entry has an earlier time than its neighbors.
 	stops := []blockStopMetric{
 		{EffectiveStopSeconds: 100, DistanceAlongBlock: 0},
-		{EffectiveStopSeconds: 50, DistanceAlongBlock: 250},  // out of order
+		{EffectiveStopSeconds: 50, DistanceAlongBlock: 250}, // out of order
 		{EffectiveStopSeconds: 300, DistanceAlongBlock: 1000},
 	}
 	// Linear-scan fallback should still resolve currentSeconds=200 between

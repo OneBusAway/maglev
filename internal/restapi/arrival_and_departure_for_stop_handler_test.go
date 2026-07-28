@@ -641,34 +641,34 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 	}
 
 	cases := []struct {
-		name             string
-		tripID           string
-		lookupStopID     string
-		lookupStopSeq    int64
-		delay            time.Duration
-		stopTimeUpdates  []gtfs.StopTimeUpdate
-		tripLevelDelay   *time.Duration
-		expectPredicted  bool
+		name               string
+		tripID             string
+		lookupStopID       string
+		lookupStopSeq      int64
+		delay              time.Duration
+		stopTimeUpdates    []gtfs.StopTimeUpdate
+		tripLevelDelay     *time.Duration
+		expectPredicted    bool
 		expectDelayApplied bool // when true, predicted times == scheduled + delay; when false, zero times
 	}{
 		{
-			name:             "delay-only STU (no absolute time) is accepted",
-			tripID:           "delay_only_stus_trip",
-			lookupStopID:     stopIDStr,
-			lookupStopSeq:    stopSeqInt,
-			delay:            120 * time.Second,
-			stopTimeUpdates:  stuDelay(120 * time.Second),
-			expectPredicted:  true,
+			name:               "delay-only STU (no absolute time) is accepted",
+			tripID:             "delay_only_stus_trip",
+			lookupStopID:       stopIDStr,
+			lookupStopSeq:      stopSeqInt,
+			delay:              120 * time.Second,
+			stopTimeUpdates:    stuDelay(120 * time.Second),
+			expectPredicted:    true,
 			expectDelayApplied: true,
 		},
 		{
-			name:            "trip-level Delay with no STUs is accepted",
-			tripID:          "trip_level_delay_no_stus",
-			lookupStopID:    "any_stop",
-			lookupStopSeq:   5,
-			delay:           240 * time.Second,
-			tripLevelDelay:  ptrDuration(240 * time.Second),
-			expectPredicted: true,
+			name:               "trip-level Delay with no STUs is accepted",
+			tripID:             "trip_level_delay_no_stus",
+			lookupStopID:       "any_stop",
+			lookupStopSeq:      5,
+			delay:              240 * time.Second,
+			tripLevelDelay:     ptrDuration(240 * time.Second),
+			expectPredicted:    true,
 			expectDelayApplied: true,
 		},
 		{
@@ -690,23 +690,23 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 			expectPredicted: false,
 		},
 		{
-			name:            "exactly +1h delay still emits (strict >)",
-			tripID:          "boundary_positive_1h",
-			lookupStopID:    "any_stop",
-			lookupStopSeq:   5,
-			delay:           60 * time.Minute,
-			tripLevelDelay:  ptrDuration(60 * time.Minute),
-			expectPredicted: true,
+			name:               "exactly +1h delay still emits (strict >)",
+			tripID:             "boundary_positive_1h",
+			lookupStopID:       "any_stop",
+			lookupStopSeq:      5,
+			delay:              60 * time.Minute,
+			tripLevelDelay:     ptrDuration(60 * time.Minute),
+			expectPredicted:    true,
 			expectDelayApplied: true,
 		},
 		{
-			name:            "exactly -1h delay still emits (strict >)",
-			tripID:          "boundary_negative_1h",
-			lookupStopID:    "any_stop",
-			lookupStopSeq:   5,
-			delay:           -60 * time.Minute,
-			tripLevelDelay:  ptrDuration(-60 * time.Minute),
-			expectPredicted: true,
+			name:               "exactly -1h delay still emits (strict >)",
+			tripID:             "boundary_negative_1h",
+			lookupStopID:       "any_stop",
+			lookupStopSeq:      5,
+			delay:              -60 * time.Minute,
+			tripLevelDelay:     ptrDuration(-60 * time.Minute),
+			expectPredicted:    true,
 			expectDelayApplied: true,
 		},
 	}
