@@ -93,7 +93,12 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 	stopID := utils.FormCombinedID(stopAgencyID, stopCode)
 
-	ctx := r.Context()
+	// Install a request-scoped snapshot cache so BuildTripStatus, called
+	// per-arrival, shares block snapshots across every row whose trip is
+	// in the same shift. Without this each row pays for the full compute
+	// chain (blockTripIDsForServiceDate + loadBlockTripData + emitBlock
+	// Stops), amplifying to thousands of round-trips on wide time windows.
+	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
 
 	// Capture parsing errors
 	params, fieldErrors := api.parseArrivalsAndDeparturesParams(r)
@@ -424,7 +429,13 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		totalStopsInTrip := tripStopCountMap[st.TripID]
 
-		blockTripSequence := api.calculateBlockTripSequence(ctx, st.TripID, serviceMidnight)
+		// BuildTripStatus (via calculateBlockTripSequence) already computed
+		// this and set it on the status; reuse rather than redoing the block
+		// lookup for every arrival row.
+		blockTripSequence := 0
+		if tripStatus != nil {
+			blockTripSequence = tripStatus.BlockTripSequence
+		}
 
 		lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 

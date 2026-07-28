@@ -82,21 +82,78 @@ type blockTripData struct {
 	lastSeconds  int64
 }
 
+// snapshotCache memoizes computeScheduledBlockSnapshot results for the
+// lifetime of a request. The plural arrivals handler processes many stop
+// times whose trips often share a block; without this every row would pay
+// for a fresh block snapshot (4 queries after emitBlockStops was batched)
+// even though every trip in the same block produces the same snapshot.
+//
+// Keyed by (currentTime, serviceDate, tripID). currentTime and serviceDate
+// are part of the key because the snapshot's interpolation depends on both;
+// tripID is the resolvable identity of the shift. After a snapshot is built,
+// every trip in the returned snapshot's Stops (block-mates that survived
+// shift filtering) inherits the same cache entry so sibling lookups hit.
+type snapshotCache struct {
+	m map[snapshotCacheEntryKey]*scheduledBlockSnapshot
+}
+
+type snapshotCacheEntryKey struct {
+	tripID          string
+	currentTimeUnix int64
+	serviceDateUnix int64
+}
+
+func newSnapshotCache() *snapshotCache {
+	return &snapshotCache{m: make(map[snapshotCacheEntryKey]*scheduledBlockSnapshot)}
+}
+
+func makeSnapshotCacheKey(tripID string, currentTime, serviceDate time.Time) snapshotCacheEntryKey {
+	return snapshotCacheEntryKey{
+		tripID:          tripID,
+		currentTimeUnix: currentTime.UnixNano(),
+		serviceDateUnix: serviceDate.UnixNano(),
+	}
+}
+
+type snapshotCacheKey struct{}
+
+// WithSnapshotCache attaches cache to ctx so computeScheduledBlockSnapshot
+// can memoize across BuildTripStatus calls without a signature change.
+func WithSnapshotCache(ctx context.Context, cache *snapshotCache) context.Context {
+	if cache == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, snapshotCacheKey{}, cache)
+}
+
+func snapshotCacheFrom(ctx context.Context) *snapshotCache {
+	c, _ := ctx.Value(snapshotCacheKey{}).(*snapshotCache)
+	return c
+}
+
 // computeScheduledBlockSnapshot builds a snapshot for the block that contains
 // targetTripID. Trips with no block are treated as a one-trip block. Returns
 // nil when no stop times can be loaded.
 //
-// Cost is ~3 DB round-trips per call after loadBlockTripData was batched
-// (see GetStopTimesForTripIDs + GetShapePointsByTripIDs). BuildTripStatus
-// returns the built snapshot to callers so per-row consumers (notably the
-// plural arrivals handler) don't recompute it — remaining amplification is
-// the per-arrival-row call itself.
+// Cost is 4 DB round-trips per uncached call: blockTripIDsForServiceDate (1),
+// loadBlockTripData → GetStopTimesForTripIDs (1) + GetShapePointsByTripIDs (1),
+// and emitBlockStops → GetStopsByIDs (1, batched across every block-trip).
+// When ctx carries a snapshotCache (see WithSnapshotCache), block-mates of
+// a previously-computed snapshot hit at zero DB cost; the plural arrivals
+// handler installs one such cache per request.
 func (api *RestAPI) computeScheduledBlockSnapshot(
 	ctx context.Context,
 	targetTripID string,
 	currentTime time.Time,
 	serviceDate time.Time,
 ) *scheduledBlockSnapshot {
+	cache := snapshotCacheFrom(ctx)
+	if cache != nil {
+		if snap, ok := cache.m[makeSnapshotCacheKey(targetTripID, currentTime, serviceDate)]; ok {
+			return snap
+		}
+	}
+
 	tripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
 	if len(tripIDs) == 0 {
 		return nil
@@ -177,6 +234,14 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		snap.ActiveTripTotalDistance = active.totalDist
 		snap.ActiveTripScheduledDistance = math.Max(0, snap.DistanceAlongBlock-tripOffsets[activeIdx])
 	}
+
+	// Populate the cache under every trip in this shift so later BuildTrip
+	// Status calls for block-mates skip the whole compute path.
+	if cache != nil {
+		for _, t := range trips {
+			cache.m[makeSnapshotCacheKey(t.id, currentTime, serviceDate)] = snap
+		}
+	}
 	return snap
 }
 
@@ -187,14 +252,26 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 // active trip by comparing DistanceAlongBlock to those offsets — Java's
 // ScheduledBlockLocationServiceImpl.getScheduledBlockLocationBetweenStop
 // Times:337-352 picks by distance-along-block, not clock time.
+//
+// Stop coords for every block-trip are batched into a single GetStopsByIDs
+// call. Block routes almost always revisit shared terminal / transfer stops,
+// so deduplicating across trips before the DB round-trip both saves N-1
+// queries per snapshot and shrinks the working set.
 func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) ([]blockStopMetric, []float64) {
 	stops := make([]blockStopMetric, 0, len(trips)*40)
 	tripOffsets := make([]float64, len(trips))
+
+	// One DB call for the union of every block-trip's stops.
+	unionStopTimes := make([]gtfsdb.StopTime, 0, len(trips)*40)
+	for _, t := range trips {
+		unionStopTimes = append(unionStopTimes, t.stopTimes...)
+	}
+	stopByID := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes)
+
 	var cumulativeBlockDist float64
 	var blockSeq int
 	for i, t := range trips {
 		tripOffsets[i] = cumulativeBlockDist
-		stopByID := api.fetchStopCoordsForStopTimes(ctx, t.stopTimes)
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
