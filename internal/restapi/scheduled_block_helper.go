@@ -131,15 +131,15 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		stopIndex[scheduledStopKey{TripID: s.TripID, StopSequenceInTrip: s.StopSequenceInTrip}] = i
 	}
 
-	// stops are sorted by EffectiveStopSeconds so we can binary-search the
-	// first index whose stop time is >= currentSeconds.
-	idx, _ := slices.BinarySearchFunc(stops, currentSeconds, func(s blockStopMetric, target int64) int {
-		return cmp.Compare(s.EffectiveStopSeconds, target)
-	})
-	nextStopIdx := -1
-	if idx < len(stops) {
-		nextStopIdx = idx
-	}
+	// keepShiftContainingTrip should have removed cross-shift overlaps that
+	// produce non-monotonic EffectiveStopSeconds, but a feed could still emit
+	// out-of-order stop times WITHIN a single trip. Never reorder — slice
+	// positions define BlockSequence — but switch NextStopIndex selection and
+	// interpolateBlockDistance to linear-scan fallbacks when monotonicity is
+	// broken so both agree on the same bracketing stops.
+	monotonic := stopsAreMonotonic(stops)
+
+	nextStopIdx := findNextStopIndex(stops, currentSeconds, monotonic)
 
 	firstStopSec := stops[0].EffectiveStopSeconds
 	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
@@ -151,7 +151,7 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 		Stops:              stops,
 		StopIndex:          stopIndex,
 		NextStopIndex:      nextStopIdx,
-		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds),
+		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds, monotonic),
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
@@ -602,13 +602,52 @@ func projectStopGeometric(stop gtfsdb.Stop, shapePoints []gtfs.ShapePoint, cumul
 	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio), cursor
 }
 
+// stopsAreMonotonic reports whether every stop's EffectiveStopSeconds is
+// non-decreasing along the slice. Cross-shift overlaps or malformed stop-time
+// pairs can break the invariant, in which case binary search yields wrong
+// bracketing pairs; callers must fall back to a linear scan.
+func stopsAreMonotonic(stops []blockStopMetric) bool {
+	for i := 1; i < len(stops); i++ {
+		if stops[i].EffectiveStopSeconds < stops[i-1].EffectiveStopSeconds {
+			return false
+		}
+	}
+	return true
+}
+
+// findNextStopIndex returns the index of the first stop whose EffectiveStop
+// Seconds is >= currentSeconds, or -1 when currentSeconds is past every stop.
+// Uses binary search when stops are monotonic; falls back to a linear scan
+// otherwise so the answer stays correct even on malformed inputs.
+func findNextStopIndex(stops []blockStopMetric, currentSeconds int64, monotonic bool) int {
+	if len(stops) == 0 {
+		return -1
+	}
+	if monotonic {
+		idx, _ := slices.BinarySearchFunc(stops, currentSeconds, func(s blockStopMetric, target int64) int {
+			return cmp.Compare(s.EffectiveStopSeconds, target)
+		})
+		if idx < len(stops) {
+			return idx
+		}
+		return -1
+	}
+	for i, s := range stops {
+		if s.EffectiveStopSeconds >= currentSeconds {
+			return i
+		}
+	}
+	return -1
+}
+
 // interpolateBlockDistance linearly interpolates the block's distance-along-block
 // at currentSeconds between the two surrounding stops. Clamped to the first /
 // last stop when currentSeconds is outside the block's scheduled span.
 //
-// stops are sorted by EffectiveStopSeconds so we binary-search the bracketing
-// pair in O(log N).
-func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64) float64 {
+// When monotonic is true, stops are sorted by EffectiveStopSeconds and we
+// binary-search the bracketing pair in O(log N). Otherwise we linear-scan so
+// the bracketing pair is still correct on out-of-order stop times.
+func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64, monotonic bool) float64 {
 	if len(stops) == 0 {
 		return 0
 	}
@@ -619,21 +658,33 @@ func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64) flo
 	if currentSeconds >= last.EffectiveStopSeconds {
 		return last.DistanceAlongBlock
 	}
-	// Find the first stop whose time is > currentSeconds; `to` is that stop,
-	// `from` is the one before it. Guaranteed to be in [1, len(stops)-1]
-	// because we already clamped both endpoints above.
-	idx, _ := slices.BinarySearchFunc(stops, currentSeconds, func(s blockStopMetric, target int64) int {
-		return cmp.Compare(s.EffectiveStopSeconds, target)
-	})
-	// BinarySearchFunc returns the position of the first element >= target.
-	// currentSeconds < last.EffectiveStopSeconds, so idx >= 1 (would be 0
-	// only if currentSeconds <= stops[0].EffectiveStopSeconds, ruled out
-	// above). Ensure idx points to the trailing bound.
-	if idx == 0 {
-		idx = 1
+	var from, to blockStopMetric
+	if monotonic {
+		// Find the first stop whose time is > currentSeconds; `to` is that
+		// stop, `from` is the one before it. Guaranteed to be in
+		// [1, len(stops)-1] because we already clamped both endpoints above.
+		idx, _ := slices.BinarySearchFunc(stops, currentSeconds, func(s blockStopMetric, target int64) int {
+			return cmp.Compare(s.EffectiveStopSeconds, target)
+		})
+		if idx == 0 {
+			idx = 1
+		}
+		from = stops[idx-1]
+		to = stops[idx]
+	} else {
+		// Linear-scan fallback: pick the last stop whose time is <=
+		// currentSeconds as `from`, and the next stop as `to`.
+		idx := 1
+		for i := 1; i < len(stops); i++ {
+			if stops[i].EffectiveStopSeconds > currentSeconds {
+				idx = i
+				break
+			}
+			idx = i
+		}
+		from = stops[idx-1]
+		to = stops[idx]
 	}
-	from := stops[idx-1]
-	to := stops[idx]
 	span := to.EffectiveStopSeconds - from.EffectiveStopSeconds
 	if span == 0 {
 		return from.DistanceAlongBlock

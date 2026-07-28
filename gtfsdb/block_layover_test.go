@@ -172,6 +172,63 @@ func TestBuildBlockLayoverIndex_BoundsMatchJava(t *testing.T) {
 		"layover_end must be next trip's first-stop ARRIVAL (10:35), not departure (10:40)")
 }
 
+// TestBuildBlockLayoverIndex_SkipsOverlappingTrips exercises the guard at
+// helpers.go where next-trip first-stop ARRIVAL precedes prev-trip last-stop
+// DEPARTURE (a schedule anomaly). buildBlockLayoverIndex must silently skip
+// the pair so the CHECK (layover_start <= layover_end) constraint never fires.
+func TestBuildBlockLayoverIndex_SkipsOverlappingTrips(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	route := &gtfs.Route{Id: "R1"}
+	svc := &gtfs.Service{Id: "SVC-WEEKDAY"}
+	terminalStop := &gtfs.Stop{Id: "TERMINAL"}
+	otherStop := &gtfs.Stop{Id: "OTHER"}
+
+	// Trip A departs TERMINAL at 10:20; Trip B arrives at 10:10 (before A departs).
+	// Overlap → layoverStart(10:20) > layoverEnd(10:10) → row must be skipped.
+	trips := []gtfs.ScheduledTrip{
+		{
+			ID: "trip-A", Route: route, Service: svc, BlockID: "BLOCK-OVERLAP",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: otherStop, StopSequence: 1, ArrivalTime: 9 * time.Hour, DepartureTime: 9 * time.Hour},
+				{Stop: terminalStop, StopSequence: 2,
+					ArrivalTime:   10*time.Hour + 0*time.Minute,
+					DepartureTime: 10*time.Hour + 20*time.Minute},
+			},
+		},
+		{
+			ID: "trip-B", Route: route, Service: svc, BlockID: "BLOCK-OVERLAP",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: terminalStop, StopSequence: 1,
+					ArrivalTime:   10*time.Hour + 10*time.Minute,
+					DepartureTime: 10*time.Hour + 15*time.Minute},
+				{Stop: otherStop, StopSequence: 2, ArrivalTime: 11 * time.Hour, DepartureTime: 11 * time.Hour},
+			},
+		},
+	}
+	staticData := &gtfs.Static{Trips: trips}
+
+	_, err = client.DB.Exec(`PRAGMA foreign_keys = OFF`)
+	require.NoError(t, err)
+	_, err = client.DB.Exec(`INSERT INTO trips (id, route_id, service_id, block_id) VALUES
+		('trip-A', 'R1', 'SVC-WEEKDAY', 'BLOCK-OVERLAP'),
+		('trip-B', 'R1', 'SVC-WEEKDAY', 'BLOCK-OVERLAP')`)
+	require.NoError(t, err)
+	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
+
+	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), staticData, nil))
+
+	var count int
+	err = client.DB.QueryRow(
+		`SELECT COUNT(*) FROM block_layover WHERE block_id = 'BLOCK-OVERLAP'`,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "overlapping trip pair must produce no block_layover row")
+}
+
 func TestGetActiveLayoverBlockIDsForRoute_MatchesWindow(t *testing.T) {
 	client := newTestClientWithRABA(t)
 	ctx := context.Background()

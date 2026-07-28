@@ -15,7 +15,7 @@ import (
 
 // Pure-function tests — no DB or test API needed.
 func TestInterpolateBlockDistance_EmptyStops(t *testing.T) {
-	assert.Equal(t, 0.0, interpolateBlockDistance(nil, 1000))
+	assert.Equal(t, 0.0, interpolateBlockDistance(nil, 1000, true))
 }
 
 func TestInterpolateBlockDistance_BeforeFirstStop(t *testing.T) {
@@ -24,7 +24,7 @@ func TestInterpolateBlockDistance_BeforeFirstStop(t *testing.T) {
 		{EffectiveStopSeconds: 200, DistanceAlongBlock: 500},
 	}
 	// currentSeconds = 50 < first.EffectiveStopSeconds → clamped to first.distance
-	assert.Equal(t, 0.0, interpolateBlockDistance(stops, 50))
+	assert.Equal(t, 0.0, interpolateBlockDistance(stops, 50, true))
 }
 
 func TestInterpolateBlockDistance_AfterLastStop(t *testing.T) {
@@ -33,7 +33,7 @@ func TestInterpolateBlockDistance_AfterLastStop(t *testing.T) {
 		{EffectiveStopSeconds: 200, DistanceAlongBlock: 500},
 	}
 	// currentSeconds = 300 > last → clamped to last.distance
-	assert.Equal(t, 500.0, interpolateBlockDistance(stops, 300))
+	assert.Equal(t, 500.0, interpolateBlockDistance(stops, 300, true))
 }
 
 func TestInterpolateBlockDistance_ExactStopTimes(t *testing.T) {
@@ -43,9 +43,9 @@ func TestInterpolateBlockDistance_ExactStopTimes(t *testing.T) {
 		{EffectiveStopSeconds: 300, DistanceAlongBlock: 1500},
 	}
 	// Exact-match boundaries — the loop's first hit returns from-stop's distance
-	assert.Equal(t, 0.0, interpolateBlockDistance(stops, 100))
-	assert.Equal(t, 500.0, interpolateBlockDistance(stops, 200))
-	assert.Equal(t, 1500.0, interpolateBlockDistance(stops, 300))
+	assert.Equal(t, 0.0, interpolateBlockDistance(stops, 100, true))
+	assert.Equal(t, 500.0, interpolateBlockDistance(stops, 200, true))
+	assert.Equal(t, 1500.0, interpolateBlockDistance(stops, 300, true))
 }
 
 func TestInterpolateBlockDistance_LinearMidpoint(t *testing.T) {
@@ -54,9 +54,58 @@ func TestInterpolateBlockDistance_LinearMidpoint(t *testing.T) {
 		{EffectiveStopSeconds: 200, DistanceAlongBlock: 1000},
 	}
 	// Halfway in time → halfway in distance
-	assert.Equal(t, 500.0, interpolateBlockDistance(stops, 150))
+	assert.Equal(t, 500.0, interpolateBlockDistance(stops, 150, true))
 	// Quarter-way
-	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 125))
+	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 125, true))
+}
+
+// TestInterpolateBlockDistance_NonMonotonicUsesLinearScan pins the fallback
+// path: with monotonic=false, the function must find the correct bracketing
+// pair via linear scan even when EffectiveStopSeconds are out of order.
+// Binary search on the same input would return a wrong bracket.
+func TestInterpolateBlockDistance_NonMonotonicUsesLinearScan(t *testing.T) {
+	// Out-of-order stops: middle entry has an earlier time than its neighbors.
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 100, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 50, DistanceAlongBlock: 250},  // out of order
+		{EffectiveStopSeconds: 300, DistanceAlongBlock: 1000},
+	}
+	// Linear-scan fallback should still resolve currentSeconds=200 between
+	// index 1 (t=50) and index 2 (t=300) — bracketing along slice order.
+	got := interpolateBlockDistance(stops, 200, false)
+	// ratio = (200-50)/(300-50) = 0.6 → 250 + 0.6*(1000-250) = 700
+	assert.InDelta(t, 700.0, got, 0.001)
+}
+
+// TestFindNextStopIndex_NonMonotonicUsesLinearScan pins the same fallback
+// on the NextStopIndex selection so it stays consistent with the
+// interpolation path.
+func TestFindNextStopIndex_NonMonotonicUsesLinearScan(t *testing.T) {
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 100},
+		{EffectiveStopSeconds: 50}, // out of order
+		{EffectiveStopSeconds: 300},
+	}
+	// currentSeconds=60 — linear scan finds the first stop with time >= 60,
+	// which is index 0 (t=100). Binary search on unsorted input would return
+	// a different index.
+	assert.Equal(t, 0, findNextStopIndex(stops, 60, false))
+	assert.Equal(t, 2, findNextStopIndex(stops, 200, false))
+	assert.Equal(t, -1, findNextStopIndex(stops, 400, false))
+}
+
+func TestStopsAreMonotonic(t *testing.T) {
+	assert.True(t, stopsAreMonotonic(nil))
+	assert.True(t, stopsAreMonotonic([]blockStopMetric{{EffectiveStopSeconds: 100}}))
+	assert.True(t, stopsAreMonotonic([]blockStopMetric{
+		{EffectiveStopSeconds: 100},
+		{EffectiveStopSeconds: 100}, // ties are OK (non-decreasing)
+		{EffectiveStopSeconds: 200},
+	}))
+	assert.False(t, stopsAreMonotonic([]blockStopMetric{
+		{EffectiveStopSeconds: 100},
+		{EffectiveStopSeconds: 50},
+	}))
 }
 
 func TestInterpolateBlockDistance_ZeroSpan(t *testing.T) {
@@ -68,7 +117,7 @@ func TestInterpolateBlockDistance_ZeroSpan(t *testing.T) {
 	}
 	// currentSeconds = 100 falls in the first interval [100, 100] (span 0).
 	// Must not panic; returns the from-stop's distance.
-	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 100))
+	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 100, true))
 }
 
 // TestHaversineStopDistances_MonotonicAndNonZero pins the shapeless-trip
@@ -611,11 +660,11 @@ func TestProjectStopsInSequence_MonotonicAlongShape(t *testing.T) {
 }
 
 func TestProjectStopsInSequence_GracefulOnEmptyShape(t *testing.T) {
-	// Unusable shape inputs must return a zeroed slice of the right length,
-	// not panic. (The "unknown stop" case is no longer a useful test because
-	// the function now prefers shape_dist_traveled — when the publisher
-	// provides it the function returns scaled distances regardless of
-	// whether the stop coords were resolved.)
+	// With nil shape and nil cumulative distances, projectStopsInSequence must
+	// return a zeroed slice of the same length as the stop-times input rather
+	// than panicking on nil dereference. Callers rely on the returned slice
+	// being addressable at every index regardless of how degenerate the inputs
+	// were.
 	stopTimes := []gtfsdb.StopTime{{StopID: "x"}, {StopID: "y"}}
 	distances := projectStopsInSequence(stopTimes, nil, nil, nil)
 	require.Len(t, distances, 2)
@@ -800,110 +849,138 @@ func shiftIDs(trips []blockTripData) []string {
 	return ids
 }
 
-func TestKeepShiftContainingTrip_EmptyInputReturnsNil(t *testing.T) {
-	assert.Nil(t, keepShiftContainingTrip(nil, "target"))
-	assert.Nil(t, keepShiftContainingTrip([]blockTripData{}, "target"))
-}
-
-func TestKeepShiftContainingTrip_TargetNotInBlockReturnsNil(t *testing.T) {
-	trips := []blockTripData{
-		shiftTrip("A", 100, 200),
-		shiftTrip("B", 300, 400),
+func TestKeepShiftContainingTrip(t *testing.T) {
+	cases := []struct {
+		name     string
+		trips    []blockTripData
+		target   string
+		expected []string // nil means expect nil result
+		reason   string
+	}{
+		{
+			name:     "nil trips returns nil",
+			trips:    nil,
+			target:   "target",
+			expected: nil,
+		},
+		{
+			name:     "empty trips returns nil",
+			trips:    []blockTripData{},
+			target:   "target",
+			expected: nil,
+		},
+		{
+			name: "target not in block returns nil",
+			trips: []blockTripData{
+				shiftTrip("A", 100, 200),
+				shiftTrip("B", 300, 400),
+			},
+			target:   "C",
+			expected: nil,
+			reason:   "target not in block must return nil so callers fall back gracefully",
+		},
+		{
+			name: "no overlaps keeps entire block",
+			trips: []blockTripData{
+				shiftTrip("morning", 100, 200),
+				shiftTrip("midday", 300, 400),
+				shiftTrip("evening", 500, 600),
+			},
+			target:   "midday",
+			expected: []string{"morning", "midday", "evening"},
+			reason:   "no overlaps anywhere → no split; whole block is one shift",
+		},
+		{
+			// "earlier" ends at 250; "target" starts at 200 — overlap. That means
+			// a different physical bus is running "target" and earlier trips
+			// belong to a different shift. Cut start at "target".
+			name: "overlap before target cuts start",
+			trips: []blockTripData{
+				shiftTrip("earlier", 100, 250),
+				shiftTrip("target", 200, 300),
+				shiftTrip("later", 350, 450),
+			},
+			target:   "target",
+			expected: []string{"target", "later"},
+			reason:   "overlap before target must cut start; 'earlier' belongs to another shift",
+		},
+		{
+			name: "overlap after target cuts end",
+			trips: []blockTripData{
+				shiftTrip("earlier", 100, 150),
+				shiftTrip("target", 200, 350),
+				shiftTrip("overlapping_next", 300, 400), // starts before target ends
+			},
+			target:   "target",
+			expected: []string{"earlier", "target"},
+			reason:   "overlap after target must cut end; 'overlapping_next' belongs to another shift",
+		},
+		{
+			// Three distinct shifts. Target is in the middle one (B-shift).
+			//   shift A: A1 → A2  (overlap with B1 starts here)
+			//   shift B: B1 → B2  ← target=B1
+			//   shift C: C1 → C2
+			name: "three-shift block target in middle",
+			trips: []blockTripData{
+				shiftTrip("A1", 100, 250),
+				shiftTrip("A2", 200, 300),
+				shiftTrip("B1", 280, 380), // target — starts before A2 ends → overlap → cut
+				shiftTrip("B2", 400, 500),
+				shiftTrip("C1", 480, 580), // starts before B2 ends → overlap → cut
+				shiftTrip("C2", 600, 700),
+			},
+			target:   "B1",
+			expected: []string{"B1", "B2"},
+			reason:   "three-shift block must isolate the B-shift; A and C belong to other physical buses",
+		},
+		{
+			name: "target is first trip with overlapping next",
+			trips: []blockTripData{
+				shiftTrip("target", 100, 200),
+				shiftTrip("overlapping_next", 150, 300),
+				shiftTrip("after", 350, 450),
+			},
+			target:   "target",
+			expected: []string{"target"},
+			reason:   "target at start with overlapping next → just the target",
+		},
+		{
+			// "first" and "second" overlap → shift boundary between them.
+			// "target" doesn't overlap with "second" → stays in the same shift.
+			name: "target is last trip after mid-block cut",
+			trips: []blockTripData{
+				shiftTrip("first", 100, 200),
+				shiftTrip("second", 150, 300), // overlaps with "first"
+				shiftTrip("target", 400, 500),
+			},
+			target:   "target",
+			expected: []string{"second", "target"},
+			reason:   "shift cut happens at overlap between 'first' and 'second'; the rest is target's shift",
+		},
+		{
+			// trips[i].firstSeconds == trips[i-1].lastSeconds is NOT an overlap
+			// (one bus arrives just as another departs). The function's test is
+			// strict less-than: `trips[i].firstSeconds < trips[i-1].lastSeconds`.
+			name: "back-to-back touching is not an overlap",
+			trips: []blockTripData{
+				shiftTrip("A", 100, 200),
+				shiftTrip("B", 200, 300), // exactly back-to-back
+				shiftTrip("C", 300, 400),
+			},
+			target:   "B",
+			expected: []string{"A", "B", "C"},
+			reason:   "touching boundaries (firstSeconds == prev lastSeconds) are not overlaps",
+		},
 	}
-	assert.Nil(t, keepShiftContainingTrip(trips, "C"),
-		"target not in block must return nil so callers fall back gracefully")
-}
 
-func TestKeepShiftContainingTrip_NoOverlapsKeepsEntireBlock(t *testing.T) {
-	// Three sequential, non-overlapping trips. Target is the middle one.
-	trips := []blockTripData{
-		shiftTrip("morning", 100, 200),
-		shiftTrip("midday", 300, 400),
-		shiftTrip("evening", 500, 600),
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := keepShiftContainingTrip(tc.trips, tc.target)
+			if tc.expected == nil {
+				assert.Nil(t, got, tc.reason)
+				return
+			}
+			assert.Equal(t, tc.expected, shiftIDs(got), tc.reason)
+		})
 	}
-	got := keepShiftContainingTrip(trips, "midday")
-	assert.Equal(t, []string{"morning", "midday", "evening"}, shiftIDs(got),
-		"no overlaps anywhere → no split; whole block is one shift")
-}
-
-func TestKeepShiftContainingTrip_OverlapBeforeTargetCutsStart(t *testing.T) {
-	// "earlier" ends at 250; "target" starts at 200 — overlap! That means a
-	// different physical bus is running "target" and earlier trips belong
-	// to a different shift. Cut start at "target".
-	trips := []blockTripData{
-		shiftTrip("earlier", 100, 250),
-		shiftTrip("target", 200, 300),
-		shiftTrip("later", 350, 450),
-	}
-	got := keepShiftContainingTrip(trips, "target")
-	assert.Equal(t, []string{"target", "later"}, shiftIDs(got),
-		"overlap before target must cut start; 'earlier' belongs to another shift")
-}
-
-func TestKeepShiftContainingTrip_OverlapAfterTargetCutsEnd(t *testing.T) {
-	trips := []blockTripData{
-		shiftTrip("earlier", 100, 150),
-		shiftTrip("target", 200, 350),
-		shiftTrip("overlapping_next", 300, 400), // starts before target ends
-	}
-	got := keepShiftContainingTrip(trips, "target")
-	assert.Equal(t, []string{"earlier", "target"}, shiftIDs(got),
-		"overlap after target must cut end; 'overlapping_next' belongs to another shift")
-}
-
-func TestKeepShiftContainingTrip_ThreeShiftBlockTargetInMiddle(t *testing.T) {
-	// Three distinct shifts. Target is in the middle one (B-shift).
-	//   shift A: A1 → A2  (overlap with B1 starts here)
-	//   shift B: B1 → B2  ← target=B1
-	//   shift C: C1 → C2
-	trips := []blockTripData{
-		shiftTrip("A1", 100, 250),
-		shiftTrip("A2", 200, 300),
-		shiftTrip("B1", 280, 380), // target — starts before A2 ends → overlap → cut
-		shiftTrip("B2", 400, 500),
-		shiftTrip("C1", 480, 580), // starts before B2 ends → overlap → cut
-		shiftTrip("C2", 600, 700),
-	}
-	got := keepShiftContainingTrip(trips, "B1")
-	assert.Equal(t, []string{"B1", "B2"}, shiftIDs(got),
-		"three-shift block must isolate the B-shift; A and C belong to other physical buses")
-}
-
-func TestKeepShiftContainingTrip_TargetIsFirstTrip(t *testing.T) {
-	trips := []blockTripData{
-		shiftTrip("target", 100, 200),
-		shiftTrip("overlapping_next", 150, 300),
-		shiftTrip("after", 350, 450),
-	}
-	got := keepShiftContainingTrip(trips, "target")
-	assert.Equal(t, []string{"target"}, shiftIDs(got),
-		"target at start with overlapping next → just the target")
-}
-
-func TestKeepShiftContainingTrip_TargetIsLastTrip(t *testing.T) {
-	// "first" and "second" overlap → shift boundary between them.
-	// "target" doesn't overlap with "second" → stays in the same shift.
-	trips := []blockTripData{
-		shiftTrip("first", 100, 200),
-		shiftTrip("second", 150, 300), // overlaps with "first"
-		shiftTrip("target", 400, 500),
-	}
-	got := keepShiftContainingTrip(trips, "target")
-	assert.Equal(t, []string{"second", "target"}, shiftIDs(got),
-		"shift cut happens at the overlap between 'first' and 'second'; "+
-			"the rest of the chain (second, target) is target's shift")
-}
-
-func TestKeepShiftContainingTrip_BackToBackTouchingNoOverlap(t *testing.T) {
-	// trips[i].firstSeconds == trips[i-1].lastSeconds is NOT an overlap
-	// (one bus arrives just as another departs is fine). The function's
-	// test is strict less-than: `trips[i].firstSeconds < trips[i-1].lastSeconds`.
-	trips := []blockTripData{
-		shiftTrip("A", 100, 200),
-		shiftTrip("B", 200, 300), // exactly back-to-back
-		shiftTrip("C", 300, 400),
-	}
-	got := keepShiftContainingTrip(trips, "B")
-	assert.Equal(t, []string{"A", "B", "C"}, shiftIDs(got),
-		"touching boundaries (firstSeconds == prev lastSeconds) are not overlaps")
 }

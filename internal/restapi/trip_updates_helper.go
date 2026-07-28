@@ -12,6 +12,11 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// StopDelayInfo represents the arrival and departure delays (in seconds,
+// positive = late) reported by a GTFS-RT TripUpdate for a single stop-time.
+// A value of 0 means the schedule is being met exactly; nothing here
+// distinguishes "no update" from "on-time" — callers gate on presence of the
+// enclosing map entry.
 type StopDelayInfo struct {
 	ArrivalDelay   int64
 	DepartureDelay int64
@@ -197,21 +202,25 @@ func matchScheduleEntry(entries []schedEntry, stuSeq *uint32, stuRefSeconds int6
 // since service-date midnight, used to disambiguate loop-trip stop_id
 // matches when no stop_sequence is provided. Mirrors Java's
 // getTimeForStopTimeUpdate (GtfsRealtimeTripLibrary.java:1197-1224).
+//
+// All arms use utils.CalculateSecondsSinceServiceDate so wall-clock semantics
+// (not raw Unix-epoch subtraction) drive the result, keeping post-midnight
+// stop times and cross-DST spans consistent.
 func stuReferenceTime(stu gtfs.StopTimeUpdate, serviceDate, currentTime time.Time) int64 {
 	if stu.Arrival != nil {
 		if stu.Arrival.Time != nil {
-			return stu.Arrival.Time.Unix() - serviceDate.Unix()
+			return utils.CalculateSecondsSinceServiceDate(*stu.Arrival.Time, serviceDate)
 		}
 		if stu.Arrival.Delay != nil {
-			return int64(currentTime.Sub(serviceDate).Seconds()) - int64(stu.Arrival.Delay.Seconds())
+			return utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate) - int64(stu.Arrival.Delay.Seconds())
 		}
 	}
 	if stu.Departure != nil {
 		if stu.Departure.Time != nil {
-			return stu.Departure.Time.Unix() - serviceDate.Unix()
+			return utils.CalculateSecondsSinceServiceDate(*stu.Departure.Time, serviceDate)
 		}
 		if stu.Departure.Delay != nil {
-			return int64(currentTime.Sub(serviceDate).Seconds()) - int64(stu.Departure.Delay.Seconds())
+			return utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate) - int64(stu.Departure.Delay.Seconds())
 		}
 	}
 	return -1
@@ -231,17 +240,16 @@ func minAbs(a, b int64) int64 {
 }
 
 // stuPredictedFromArrival computes the predicted arrival-seconds-since-midnight
-// for an STU. Returns 0 when nothing useful is set.
-//
-// TODO(dst): Time path uses UTC epoch math, which can be off by 1h for
-// trips that span the DST transition. Rare in practice.
+// for an STU. Returns 0 when nothing useful is set. Uses utils.CalculateSeconds
+// SinceServiceDate for the Time path so wall-clock semantics stay correct
+// across DST transitions and post-midnight stop times.
 func stuPredictedFromArrival(stu gtfs.StopTimeUpdate, schedArr int64, serviceDate time.Time) int64 {
 	if stu.Arrival == nil || schedArr <= 0 {
 		return 0
 	}
 	switch {
 	case stu.Arrival.Time != nil:
-		return stu.Arrival.Time.Unix() - serviceDate.Unix()
+		return utils.CalculateSecondsSinceServiceDate(*stu.Arrival.Time, serviceDate)
 	case stu.Arrival.Delay != nil:
 		return schedArr + int64(stu.Arrival.Delay.Seconds())
 	}
@@ -255,7 +263,7 @@ func stuPredictedFromDeparture(stu gtfs.StopTimeUpdate, schedDep int64, serviceD
 	}
 	switch {
 	case stu.Departure.Time != nil:
-		return stu.Departure.Time.Unix() - serviceDate.Unix()
+		return utils.CalculateSecondsSinceServiceDate(*stu.Departure.Time, serviceDate)
 	case stu.Departure.Delay != nil:
 		return schedDep + int64(stu.Departure.Delay.Seconds())
 	}
@@ -327,8 +335,17 @@ func (p *stuDeviationPicker) consider(scheduledSec, predictedSec int64) {
 	}
 }
 
+// shouldReplace decides whether a candidate STU displaces the incumbent.
+// A strictly-closer candidate always wins. When deltas are equal, a future
+// candidate is preferred over a past incumbent — Java's tiebreak favors
+// upcoming stops. Future candidates whose delta exceeds the incumbent's
+// must NOT bypass the delta comparison, so future-preference is gated on
+// `delta <= p.bestDelta`.
 func (p *stuDeviationPicker) shouldReplace(delta int64, isInPast bool) bool {
-	return delta < p.bestDelta || (!isInPast && p.bestIsInPast)
+	if delta < p.bestDelta {
+		return true
+	}
+	return !isInPast && p.bestIsInPast && delta <= p.bestDelta
 }
 
 func absInt64(v int64) int64 {

@@ -469,23 +469,22 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 
 	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "expected at least one arrival")
 	scheduledDepartureMs := scheduledArrivalMs + 300000
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
 
-	// The queried stop is at seq=3 (0-based stopSequence=2). Prior tests may have inserted
-	// a stop at seq=2 into the shared DB, so we locate the right arrival explicitly.
-	var found bool
+	var arrival models.ArrivalAndDeparture
 	for _, a := range model.Data.Entry.ArrivalsAndDepartures {
-		if a.StopSequence != 2 {
-			continue
+		if a.TripID == expectedTripID {
+			arrival = a
+			break
 		}
-		found = true
-		assert.True(t, a.Predicted, "should be predicted via prior stop propagation")
-		assert.Equal(t, scheduledArrivalMs+90000, a.PredictedArrivalTime.UnixMilli(),
-			"predicted arrival should be scheduled + propagated 90s delay")
-		assert.Equal(t, scheduledDepartureMs+90000, a.PredictedDepartureTime.UnixMilli(),
-			"predicted departure should be scheduled + propagated 90s delay")
-		break
 	}
-	assert.True(t, found, "expected to find the propagated arrival for seq=3")
+	require.Equal(t, expectedTripID, arrival.TripID, "expected to find arrival for trip %s", expectedTripID)
+
+	assert.True(t, arrival.Predicted, "should be predicted via prior stop propagation")
+	assert.Equal(t, scheduledArrivalMs+90000, arrival.PredictedArrivalTime.UnixMilli(),
+		"predicted arrival should be scheduled + propagated 90s delay")
+	assert.Equal(t, scheduledDepartureMs+90000, arrival.PredictedDepartureTime.UnixMilli(),
+		"predicted departure should be scheduled + propagated 90s delay")
 }
 
 // TestPluralArrivals_TripLevelDelayFallback verifies that when a TripUpdate has a

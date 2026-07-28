@@ -5269,42 +5269,87 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 }
 
 const routeHasFutureService = `-- name: RouteHasFutureService :one
+WITH RECURSIVE
+    -- Upper bound: the max end_date across every calendar row this route's
+    -- services touch, or the max calendar_dates.date (in case the feed adds
+    -- service days past the calendar's end_date). Recursion terminates when
+    -- the enumerated date reaches this bound, so ref_date far in the past
+    -- still discovers today's feed span.
+    bounds(hi) AS (
+        SELECT MAX(dt) FROM (
+            SELECT MAX(cal.end_date) AS dt
+            FROM trips t
+            JOIN calendar cal ON cal.id = t.service_id
+            WHERE t.route_id = ?1
+            UNION ALL
+            SELECT MAX(cd.date) AS dt
+            FROM trips t
+            JOIN calendar_dates cd ON cd.service_id = t.service_id
+            WHERE t.route_id = ?1
+        )
+    ),
+    candidate_date(d) AS (
+        SELECT strftime('%Y%m%d', date(substr(?2, 1, 4) || '-' || substr(?2, 5, 2) || '-' || substr(?2, 7, 2), '+1 day'))
+        WHERE (SELECT hi FROM bounds) IS NOT NULL
+        UNION ALL
+        SELECT strftime('%Y%m%d', date(substr(d, 1, 4) || '-' || substr(d, 5, 2) || '-' || substr(d, 7, 2), '+1 day'))
+        FROM candidate_date
+        WHERE d < (SELECT hi FROM bounds)
+    )
 SELECT EXISTS (
     SELECT 1
-    FROM trips t
-    JOIN calendar c ON c.id = t.service_id
-    WHERE t.route_id = ?
-      AND c.end_date > ?
-      AND (c.monday = 1 OR c.tuesday = 1 OR c.wednesday = 1 OR c.thursday = 1
-           OR c.friday = 1 OR c.saturday = 1 OR c.sunday = 1)
-    UNION ALL
-    SELECT 1
-    FROM trips t
-    JOIN calendar_dates cd ON cd.service_id = t.service_id
-    WHERE t.route_id = ?
-      AND cd.exception_type = 1
-      AND cd.date > ?
+    FROM candidate_date cdate
+    WHERE
+        EXISTS (
+            SELECT 1
+            FROM trips t
+            JOIN calendar cal ON cal.id = t.service_id
+            WHERE t.route_id = ?1
+              AND cdate.d BETWEEN cal.start_date AND cal.end_date
+              AND CASE strftime('%w', substr(cdate.d, 1, 4) || '-' || substr(cdate.d, 5, 2) || '-' || substr(cdate.d, 7, 2))
+                    WHEN '0' THEN cal.sunday
+                    WHEN '1' THEN cal.monday
+                    WHEN '2' THEN cal.tuesday
+                    WHEN '3' THEN cal.wednesday
+                    WHEN '4' THEN cal.thursday
+                    WHEN '5' THEN cal.friday
+                    WHEN '6' THEN cal.saturday
+                  END = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM calendar_dates cd
+                  WHERE cd.service_id = t.service_id
+                    AND cd.date = cdate.d
+                    AND cd.exception_type = 2
+              )
+        )
+        OR EXISTS (
+            SELECT 1
+            FROM trips t
+            JOIN calendar_dates cd ON cd.service_id = t.service_id
+            WHERE t.route_id = ?1
+              AND cd.date = cdate.d
+              AND cd.exception_type = 1
+        )
 ) AS has_future_service
 `
 
 type RouteHasFutureServiceParams struct {
-	RouteID   string
-	EndDate   string
-	RouteID_2 string
-	Date      string
+	RouteID string
+	RefDate interface{}
 }
 
-// Returns 1 if the given route has at least one trip whose calendar covers a date
-// strictly after the given date (YYYYMMDD), 0 otherwise. Used to distinguish
-// ServiceDateOutOfRange (no future service for this route) from NoServiceThatDay
-// (the route still has service on a later date).
+// Returns 1 if the given route has at least one EFFECTIVE service date strictly
+// after the given date (YYYYMMDD), 0 otherwise. "Effective" means: the date
+// falls within a calendar row's [start_date, end_date] on an enabled weekday
+// and is not removed by a calendar_dates exception (type=2), OR the date has
+// a calendar_dates addition (type=1) for one of this route's services.
+//
+// Used to distinguish ServiceDateOutOfRange from NoServiceThatDay in the
+// schedule-for-route error path. Search is bounded to 2 years ahead of the
+// input date to keep the recursive date-enumeration cheap; feeds that
+// schedule further out than that are rare and would be caught on later polls.
 func (q *Queries) RouteHasFutureService(ctx context.Context, arg RouteHasFutureServiceParams) (int64, error) {
-	row := q.queryRow(ctx, q.routeHasFutureServiceStmt, routeHasFutureService,
-		arg.RouteID,
-		arg.EndDate,
-		arg.RouteID_2,
-		arg.Date,
-	)
+	row := q.queryRow(ctx, q.routeHasFutureServiceStmt, routeHasFutureService, arg.RouteID, arg.RefDate)
 	var has_future_service int64
 	err := row.Scan(&has_future_service)
 	return has_future_service, err
