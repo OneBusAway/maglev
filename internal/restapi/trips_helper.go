@@ -258,6 +258,15 @@ func (api *RestAPI) BuildTripStatus(
 			// active trip, not the target trip. Java: TripStatusBeanServiceImpl
 			// setScheduledDistanceAlongTrip(blockScheduledDist − activeBlockTrip.distanceAlongBlock).
 			//
+			// Apply the same schedule-deviation shift the live-vehicle branch
+			// uses. Trip updates without vehicle positions are common; without
+			// this shift the response would self-contradict — publishing
+			// scheduleDeviation while placing the bus at its on-schedule
+			// position (so distanceFromStop / numberOfStopsAway derived from
+			// the same snapshot report the bus is far ahead of where the
+			// deviation says it is). When hasRealtimeTripUpdate is false,
+			// scheduleDeviation is 0 and the shift is a no-op.
+			//
 			// Snapshot.InRange guard: matches Java's null-BlockLocation semantics
 			// (ScheduledBlockLocationServiceImpl.java:241-244). When currentTime
 			// falls outside the shift's [firstStop, lastStop] range, Java returns
@@ -265,7 +274,8 @@ func (api *RestAPI) BuildTripStatus(
 			// their defaults. Without this guard, our interpolation clamps to a
 			// block boundary and emits misleading trip-length distances for
 			// scheduled-only arrivals of past or future trips.
-			snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, currentTime, serviceDate)
+			effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
+			snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
 			if snap != nil && snap.ActiveTripID != "" && snap.InRange {
 				status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
 				status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
