@@ -2,9 +2,11 @@ package restapi
 
 import (
 	"net/http"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
@@ -176,4 +178,54 @@ func TestRouteDetailsHandler_SetsCacheHeaders(t *testing.T) {
 	})
 
 	assert.Equal(t, http.StatusNotModified, resp2.StatusCode)
+}
+
+func TestRouteDetailsHandler_IncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[routeDetailsResponse](t, api,
+		routeDetailsURL(testdata.Route1.ID)+"&includeReferences=false")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Situations)
+
+	// list data should still be fully populated even without references
+	assert.Len(t, model.Data.List, 1)
+	assert.NotEmpty(t, model.Data.List[0].StopGroupings)
+}
+
+func TestRouteDetailsHandler_ReferencesOrderIsDeterministic(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, model1 := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURL(testdata.Route1.ID))
+	_, model2 := callAPIHandler[routeDetailsResponse](t, api, routeDetailsURL(testdata.Route1.ID))
+
+	require.NotEmpty(t, model1.Data.References.Routes)
+	require.NotEmpty(t, model1.Data.References.Stops)
+
+	var routeIDs1, routeIDs2 []string
+	for _, r := range model1.Data.References.Routes {
+		routeIDs1 = append(routeIDs1, r.ID)
+	}
+	for _, r := range model2.Data.References.Routes {
+		routeIDs2 = append(routeIDs2, r.ID)
+	}
+	assert.Equal(t, routeIDs1, routeIDs2, "route reference order should be stable across requests")
+	assert.True(t, sort.StringsAreSorted(routeIDs1), "route references should be sorted by ID")
+
+	var stopIDs1, stopIDs2 []string
+	for _, s := range model1.Data.References.Stops {
+		stopIDs1 = append(stopIDs1, s.ID)
+	}
+	for _, s := range model2.Data.References.Stops {
+		stopIDs2 = append(stopIDs2, s.ID)
+	}
+	assert.Equal(t, stopIDs1, stopIDs2, "stop reference order should be stable across requests")
+	assert.True(t, sort.StringsAreSorted(stopIDs1), "stop references should be sorted by ID")
 }

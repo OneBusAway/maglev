@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -73,10 +74,14 @@ func (api *RestAPI) routeDetailsHandler(w http.ResponseWriter, r *http.Request) 
 		finalGroupings,
 	)
 
-	references, err := api.assembleRouteDetailsReferences(ctx, agencyID, currentAgency, route, stopsList)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+	references := models.NewEmptyReferences()
+
+	if ShouldIncludeReferences(r) {
+		references, err = api.assembleRouteDetailsReferences(ctx, agencyID, currentAgency, route, stopsList)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	response := models.NewListResponse([]models.RouteDetailsEntry{result}, *references, false, api.Clock)
@@ -145,6 +150,9 @@ func (api *RestAPI) assembleRouteDetailsReferences(ctx context.Context, agencyID
 	if !routeInRefs {
 		routes = append(routes, routeData)
 	}
+
+	sort.Slice(routes, func(i, j int) bool { return routes[i].ID < routes[j].ID })
+	sort.Slice(stopsList, func(i, j int) bool { return stopsList[i].ID < stopsList[j].ID })
 
 	references := models.NewEmptyReferences()
 	references.Agencies = []models.AgencyReference{agencyRef}
