@@ -696,15 +696,16 @@ func (api *RestAPI) getPredictedTimes(
 		departureOffset = &propagatedDelay
 	}
 
-	// Java's blockNotActive filter applies here too: if the resolved offset
-	// exceeds ±1h, the entire RT record would be discarded upstream in Java.
-	// Without this guard, BuildTripStatus (via GetScheduleDeviationForBlock)
-	// reports "no RT" while we would emit a predictedArrivalTime derived from
-	// the same delay, producing self-contradictory responses.
-	if exceedsBlockNotActiveThreshold(int(arrivalOffset.Seconds())) ||
-		exceedsBlockNotActiveThreshold(int(departureOffset.Seconds())) {
-		return time.Time{}, time.Time{}, false
-	}
+	// Java's ±1h blockNotActive filter (GtfsRealtimeSource.java:711-752)
+	// lives at RT ingestion — it stops the VehicleLocationRecord from
+	// becoming a BlockLocation. Once a BlockLocation exists, Java's
+	// setPredictedTimesFromScheduleDeviation (ArrivalAndDepartureService
+	// Impl.java:772-805) applies the deviation unconditionally, no cap.
+	// Applying the guard HERE silently drops predictions for genuinely
+	// severely-late buses (which is exactly when riders most need to see
+	// the delay), so we skip the cap on this path and let the offset flow
+	// through. Block-level scheduleDeviation may still be gated upstream
+	// by GetScheduleDeviationForBlock — that's the appropriate location.
 
 	// Rule 1: arrival == departure (Simplified Logic)
 	if scheduledArrivalTime.Equal(scheduledDepartureTime) {

@@ -672,22 +672,28 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 			expectDelayApplied: true,
 		},
 		{
-			name:            "trip-level Delay > +1h is discarded (blockNotActive)",
-			tripID:          "block_not_active_trip_level",
-			lookupStopID:    "any_stop",
-			lookupStopSeq:   5,
-			delay:           70 * time.Minute,
-			tripLevelDelay:  ptrDuration(70 * time.Minute),
-			expectPredicted: false,
+			// Java applies the deviation unconditionally in
+			// setPredictedTimesFromScheduleDeviation; the ±1h filter lives
+			// at RT ingestion, not at prediction emission. A rider must see
+			// a genuinely-late bus as late.
+			name:               "trip-level Delay > +1h still emits (no prediction-time cap)",
+			tripID:             "very_late_trip_level",
+			lookupStopID:       "any_stop",
+			lookupStopSeq:      5,
+			delay:              70 * time.Minute,
+			tripLevelDelay:     ptrDuration(70 * time.Minute),
+			expectPredicted:    true,
+			expectDelayApplied: true,
 		},
 		{
-			name:            "per-STU Delay > +1h is discarded (blockNotActive)",
-			tripID:          "block_not_active_stu_delay",
-			lookupStopID:    stopIDStr,
-			lookupStopSeq:   stopSeqInt,
-			delay:           90 * time.Minute,
-			stopTimeUpdates: stuDelay(90 * time.Minute),
-			expectPredicted: false,
+			name:               "per-STU Delay > +1h still emits (no prediction-time cap)",
+			tripID:             "very_late_stu_delay",
+			lookupStopID:       stopIDStr,
+			lookupStopSeq:      stopSeqInt,
+			delay:              90 * time.Minute,
+			stopTimeUpdates:    stuDelay(90 * time.Minute),
+			expectPredicted:    true,
+			expectDelayApplied: true,
 		},
 		{
 			name:               "exactly +1h delay still emits (strict >)",
