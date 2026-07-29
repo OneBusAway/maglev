@@ -36,10 +36,13 @@ That said, nothing here is specific to that project. Point `oba-api-review` at a
 
 ## How cross-repo resolution works
 
-`oba-api-client-impact` and `oba-api-spec-check` need source from `wayfinder`, `js-sdk`, `onebusaway-ios`, `onebusaway-android`, and `maglev.wiki` — none of which need to be checked out ahead of time. `.claude/skills/lib/resolve-oba-repo.sh <repo-name>` finds each one automatically:
+`oba-api-client-impact` and `oba-api-spec-check` need source from `wayfinder`, `js-sdk`, `onebusaway-ios`, `onebusaway-android`, and `maglev.wiki` — none of which need to be checked out ahead of time. They resolve each one through the `oba-workspace` skill, which in turn calls `.claude/skills/lib/resolve-oba-repo.sh <repo-name>`:
 
-1. `$OBA_WORKSPACE/<repo>`, if you've set that env var to point at a directory containing your own checkout.
-2. A sibling directory of your `maglev` checkout (i.e. `../<repo>`), if you happen to have the other repos checked out that way already.
-3. Otherwise, it's cloned into a local cache (`~/.cache/oba-api-review` by default, override with `OBA_SKILL_CACHE`) the first time it's needed, and kept up to date automatically on later runs.
+1. `$OBA_WORKSPACE/<repo>`, if you've set that env var to point at a directory containing your own checkout — cloned in if not already there.
+2. `/workspace/<repo>`, if `$OBA_WORKSPACE` isn't set and `/workspace` exists — the conventional bind-mount point in sandboxed VMs, so a checkout here can be mounted back to the host. Same clone-if-missing behavior as (1).
+3. A sibling directory of your `maglev` checkout (i.e. `../<repo>`), if you happen to have the other repos checked out that way already. Only used if it already exists — never cloned.
+4. Otherwise, it's cloned into a local cache (`~/.cache/oba-api-review` by default, override with `OBA_SKILL_CACHE`) the first time it's needed, and kept up to date automatically on later runs.
 
-Repos found via (1) or (2) aren't managed by this script, so they're never modified — instead, each is checked (read-only) against its upstream, and a skill's output will flag it if the checkout looks stale enough that the analysis might be based on outdated code.
+Repos found via (1), (2) or (3) are places you might be editing directly (e.g. to push changes to `maglev.wiki` from the host), so this script never modifies an existing checkout there — each is only checked (read-only) against its upstream. Repos in (4) are fully owned by this script and kept fresh automatically instead.
+
+`oba-workspace` sits in front of the script for all of this: it resolves repos on behalf of the other skills, and if any resolved checkout is stale or in an odd state (not on `main`/`master`, staged changes, uncommitted or untracked files), it stops and asks you how to proceed before the calling skill continues. You can also invoke `oba-workspace status` directly at any time to see where all five repos currently resolve to and whether any look off.
