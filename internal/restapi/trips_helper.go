@@ -185,14 +185,69 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", shapeErr.Error()))
 	}
-	// snap survives to the return so callers (notably the plural arrivals
-	// handler) can reuse it for per-stop metrics without paying for
-	// computeScheduledBlockSnapshot a second time.
+	// Snap is built from BLOCK trip data (loadBlockTripData + emitBlockStops
+	// with per-block-trip haversine fallback), so it does not require the
+	// target trip's own shape. Computing it outside the target-shape gate
+	// means shapeless feeds still get ActiveTripID, ScheduledDistanceAlong
+	// Trip, and — most importantly — the snap that callers reuse for
+	// metricsForStop, which drives numberOfStopsAway / distanceFromStop.
+	//
+	// Apply the same schedule-deviation shift the live-vehicle branch
+	// below uses. Trip updates without vehicle positions are common;
+	// without this shift the response would self-contradict — publishing
+	// scheduleDeviation while placing the bus at its on-schedule position.
+	// When hasRealtimeTripUpdate is false, scheduleDeviation is 0 and the
+	// shift is a no-op.
 	var snap *scheduledBlockSnapshot
+	if len(stopTimes) > 0 {
+		effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
+		snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
+	}
+
+	// Snap-derived status fields — independent of target's shape.
+	//
+	// Snapshot.InRange guard mirrors Java's null-BlockLocation semantics
+	// (ScheduledBlockLocationServiceImpl.java:241-244). When currentTime
+	// falls outside the shift's [firstStop, lastStop] range, Java returns
+	// null and the arrivals bean leaves tripStatus position fields at
+	// their defaults.
+	if snap != nil && snap.ActiveTripID != "" && snap.InRange {
+		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
+		status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
+		if snap.ActiveTripTotalDistance > 0 {
+			status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
+		}
+		// Java's TripStatusBeanServiceImpl:283-292 sets distanceAlongTrip
+		// from blockLocation.getDistanceAlongBlock() minus activeBlockTrip.
+		// getDistanceAlongBlock(). Java leaves it NaN (→ serialized 0)
+		// unless a live vehicle is actually operating this arrival's block
+		// instance (AbstractBlockLocationServiceImpl:150). We approximate
+		// BlockInstance with keepShiftContainingTrip's shift: attach
+		// distanceAlongTrip whenever the live vehicle's own RT-declared
+		// trip is in the same shift as this arrival's trip. Filtering to
+		// the shift (not the whole shared block_id) avoids the over-attach
+		// on blocks that Java's bundle would have split.
+		if vehicle != nil && vehicle.Trip != nil && snap.ShiftTripIDs != nil {
+			_, sameShift := snap.ShiftTripIDs[vehicle.Trip.ID.ID]
+			_, arrivalInShift := snap.ShiftTripIDs[tripID]
+			if sameShift && arrivalInShift {
+				status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
+			}
+		}
+	}
+
+	// Target-shape-dependent work: TotalDistanceAlongTrip default,
+	// live-vehicle position projection onto target's shape, orientation
+	// inference, and within-target interpolation fallback.
 	if shapeErr == nil && len(shapeRows) > 1 {
 		shapePoints := shapeRowsToPoints(shapeRows)
 		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
+		// Snap's ActiveTripTotalDistance (set above when available) takes
+		// precedence; only fall back to target's shape total when snap
+		// didn't provide one.
+		if status.TotalDistanceAlongTrip == 0 {
+			status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
+		}
 
 		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
 			if status.LastKnownLocation != nil {
@@ -211,96 +266,27 @@ func (api *RestAPI) BuildTripStatus(
 					}
 				}
 			}
-
-			// Java's TripStatusBeanServiceImpl:283-292 sets scheduledDistanceAlongTrip
-			// from the schedule-interpolated block position; distanceAlongTrip
-			// comes from blockLocation.getDistanceAlongBlock(), which Java
-			// leaves as NaN unless a live vehicle is ACTUALLY operating this
-			// arrival's block instance (AbstractBlockLocationServiceImpl:150).
-			// A vehicle found via block fallback (running some other trip in
-			// the same block_id but a different Java bundle shift) does not
-			// count — Java returns vehicleId="" and distanceAlongTrip=0 for
-			// those. Only mirror scheduled → actual when the vehicle's own
-			// declared trip is the trip we're building status for.
-			effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
-			snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
-			if snap != nil && snap.ActiveTripID != "" && snap.InRange {
-				status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
-				status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
-				// Java's BlockLocation flows down to every arrival in the same
-				// BlockInstance (TripStatusBeanServiceImpl.java:283-292 →
-				// blockLocation.getDistanceAlongBlock() - activeBlockTrip.
-				// getDistanceAlongBlock()). We approximate BlockInstance with
-				// keepShiftContainingTrip's shift: attach distanceAlongTrip
-				// whenever the live vehicle's own RT-declared trip is in the
-				// same shift as this arrival's trip. Filtering to the shift
-				// (not the whole shared block_id) avoids the over-attach on
-				// blocks that Java's bundle would have split — a vehicle
-				// running a different shift of a shared block_id is on a
-				// different BlockInstance and doesn't count.
-				//
-				// Also require the arrival's trip to be in the shift: snap is
-				// built from tripID's shift, so this is normally true, but
-				// guards against edge cases where the mapping went sideways.
-				if vehicle.Trip != nil && snap.ShiftTripIDs != nil {
-					_, sameShift := snap.ShiftTripIDs[vehicle.Trip.ID.ID]
-					_, arrivalInShift := snap.ShiftTripIDs[tripID]
-					if sameShift && arrivalInShift {
-						status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
-					}
-				}
-				if snap.ActiveTripTotalDistance > 0 {
-					status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
+		} else if snap != nil && snap.ActiveTripID != "" && snap.InRange {
+			// No live vehicle: place the bus at the interpolated position
+			// on the block's currently-active trip.
+			if pos, orient := positionAndOrientationAtDistance(
+				snap.ActiveTripShape,
+				snap.ActiveTripCumulativeDistances,
+				snap.ActiveTripScheduledDistance,
+			); pos != nil {
+				status.Position = *pos
+				if orient >= 0 {
+					status.Orientation = orient
 				}
 			}
 		} else if len(stopTimes) > 0 {
-			// No real-time vehicle: position fields refer to the block's currently-
-			// active trip, not the target trip. Java: TripStatusBeanServiceImpl
-			// setScheduledDistanceAlongTrip(blockScheduledDist − activeBlockTrip.distanceAlongBlock).
-			//
-			// Apply the same schedule-deviation shift the live-vehicle branch
-			// uses. Trip updates without vehicle positions are common; without
-			// this shift the response would self-contradict — publishing
-			// scheduleDeviation while placing the bus at its on-schedule
-			// position (so distanceFromStop / numberOfStopsAway derived from
-			// the same snapshot report the bus is far ahead of where the
-			// deviation says it is). When hasRealtimeTripUpdate is false,
-			// scheduleDeviation is 0 and the shift is a no-op.
-			//
-			// Snapshot.InRange guard: matches Java's null-BlockLocation semantics
-			// (ScheduledBlockLocationServiceImpl.java:241-244). When currentTime
-			// falls outside the shift's [firstStop, lastStop] range, Java returns
-			// null and the arrivals bean leaves tripStatus position fields at
-			// their defaults. Without this guard, our interpolation clamps to a
-			// block boundary and emits misleading trip-length distances for
-			// scheduled-only arrivals of past or future trips.
-			effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
-			snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
-			if snap != nil && snap.ActiveTripID != "" && snap.InRange {
-				status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
-				status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
-				if snap.ActiveTripTotalDistance > 0 {
-					status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
-				}
-				if pos, orient := positionAndOrientationAtDistance(
-					snap.ActiveTripShape,
-					snap.ActiveTripCumulativeDistances,
-					snap.ActiveTripScheduledDistance,
-				); pos != nil {
-					status.Position = *pos
-					if orient >= 0 {
-						status.Orientation = orient
-					}
-				}
-			} else {
-				// currentTime is outside the shift's schedule — fall back to
-				// within-target interpolation so position / orientation are not
-				// (0, 0). scheduledDistanceAlongTrip stays at its default; Java
-				// leaves it unset in this case too.
-				api.applyScheduledTripPositionToStatus(
-					ctx, status, stopTimes, shapePoints, cumulativeDistances, currentTime, serviceDate,
-				)
-			}
+			// currentTime is outside the shift's schedule — fall back to
+			// within-target interpolation so position / orientation are not
+			// (0, 0). scheduledDistanceAlongTrip stays at its default; Java
+			// leaves it unset in this case too.
+			api.applyScheduledTripPositionToStatus(
+				ctx, status, stopTimes, shapePoints, cumulativeDistances, currentTime, serviceDate,
+			)
 		}
 	}
 
