@@ -10,16 +10,29 @@
 #
 # Resolution order:
 #   1. $OBA_WORKSPACE/<repo>        - explicit override, if set
-#   2. <maglev-root>/../<repo>      - sibling checkout, if this maglev
+#   2. /workspace/<repo>            - deterministic default, if $OBA_WORKSPACE
+#                                      is unset and /workspace exists (the
+#                                      conventional bind-mount point in
+#                                      sandboxed VMs, so checkouts land
+#                                      somewhere that can be mounted back to
+#                                      the host)
+#   3. <maglev-root>/../<repo>      - sibling checkout, if this maglev
 #                                      checkout lives in a multi-repo workspace
-#   3. cache dir, cloning if absent - fallback for a maglev-only checkout
+#   4. cache dir, cloning if absent - final fallback for a maglev-only
+#                                      checkout with no /workspace available
 #
-# Repos found via (1) or (2) were checked out independently of this script,
-# so it never mutates them - it only does a read-only freshness check
-# (fetch + compare, no reset/pull) and prints a warning to stderr if the
-# checkout looks behind its own upstream. Repos in the cache dir (3) *are*
-# managed by this script, so those are kept up to date automatically
-# instead of just flagged.
+# Tiers 1-3 are places a human might be editing directly (that's the whole
+# point of $OBA_WORKSPACE and /workspace - e.g. to push changes to
+# maglev.wiki from the host), so this script only ever clones into them if
+# the repo isn't there yet; once a checkout exists there, it's never
+# mutated - no fetch+reset, no pull. The only thing done to an existing
+# checkout in tiers 1-3 is a read-only freshness check (fetch + compare)
+# that prints a warning to stderr if it looks behind its own upstream.
+#
+# Tier 4 (the cache dir) is fully owned by this script - nothing else is
+# expected to edit it - so it's kept up to date automatically: cloned on
+# first use, then fetched and hard-reset to match its upstream branch on
+# every later run.
 #
 # Only the resolved path is printed to stdout; all progress/diagnostic
 # output goes to stderr, so this is safe to use as:
@@ -51,9 +64,9 @@ case "$REPO" in
     ;;
 esac
 
-# Read-only staleness check for a checkout this script does not manage
-# (found via OBA_WORKSPACE or as a sibling). Fetches the current branch's
-# upstream and compares - never resets/pulls/mutates the working tree.
+# Read-only staleness check for an existing checkout. Fetches the current
+# branch's upstream and compares - never resets/pulls/mutates the working
+# tree or local branch.
 warn_if_stale() {
   local path="$1"
   local branch upstream_ref local_rev remote_rev behind last_date
@@ -80,22 +93,45 @@ warn_if_stale() {
     behind="$(git -C "$path" rev-list --count "HEAD..$upstream_ref" 2>/dev/null || echo "?")"
     if [[ "$behind" != "0" ]]; then
       last_date="$(git -C "$path" log -1 --format=%ad --date=short)"
-      echo "Warning: $REPO at $path (branch $branch) is $behind commit(s) behind origin/$branch (last local commit: $last_date). This checkout was found independently, not cloned by this script, so it was not updated automatically - results below may reflect stale code. Run 'git -C $path pull' to update it, or unset OBA_WORKSPACE / move it aside to let this script manage a fresh copy in its cache instead." >&2
+      echo "Warning: $REPO at $path (branch $branch) is $behind commit(s) behind origin/$branch (last local commit: $last_date). This script never mutates an existing checkout, so it was not updated automatically - results below may reflect stale code. Run 'git -C $path pull' to update it yourself." >&2
     fi
   fi
 }
 
+# Clones $URL into $1 if it isn't already a git checkout there; otherwise
+# just runs the read-only staleness check. Never mutates an existing
+# checkout.
+resolve_target() {
+  local target="$1"
+  if [[ -d "$target/.git" ]]; then
+    warn_if_stale "$target"
+  else
+    echo "Cloning $REPO into $target (first use)..." >&2
+    mkdir -p "$(dirname "$target")"
+    git clone --depth 1 "$URL" "$target" >&2
+  fi
+  echo "$target"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 1. Explicit workspace override
-if [[ -n "${OBA_WORKSPACE:-}" && -d "$OBA_WORKSPACE/$REPO" ]]; then
-  warn_if_stale "$OBA_WORKSPACE/$REPO"
-  echo "$OBA_WORKSPACE/$REPO"
+# 1. Explicit workspace override - clone into it if the repo isn't there yet,
+#    otherwise read-only.
+if [[ -n "${OBA_WORKSPACE:-}" ]]; then
+  resolve_target "$OBA_WORKSPACE/$REPO"
   exit 0
 fi
 
-# 2. Sibling of the maglev checkout this script lives in (script is at
-#    <maglev-root>/.claude/skills/lib/resolve-oba-repo.sh)
+# 2. Deterministic default: /workspace, if present. Same clone-if-absent /
+#    read-only-otherwise handling as (1).
+if [[ -d /workspace ]]; then
+  resolve_target "/workspace/$REPO"
+  exit 0
+fi
+
+# 3. Sibling of the maglev checkout this script lives in (script is at
+#    <maglev-root>/.claude/skills/lib/resolve-oba-repo.sh). Read-only only -
+#    a sibling that doesn't exist isn't a sibling, so this tier never clones.
 MAGLEV_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SIBLING="$(dirname "$MAGLEV_ROOT")/$REPO"
 if [[ -d "$SIBLING/.git" ]]; then
@@ -104,7 +140,9 @@ if [[ -d "$SIBLING/.git" ]]; then
   exit 0
 fi
 
-# 3. Cache dir - clone on first use, best-effort refresh on later runs
+# 4. Cache dir - final fallback, fully managed by this script: cloned on
+#    first use, then kept up to date automatically (fetch + reset --hard)
+#    on every later run, since nothing else is expected to edit it.
 CACHE_ROOT="${OBA_SKILL_CACHE:-$HOME/.cache/oba-api-review}/repos"
 TARGET="$CACHE_ROOT/$REPO"
 
