@@ -4438,22 +4438,25 @@ func (q *Queries) GetTrip(ctx context.Context, id string) (Trip, error) {
 	return i, err
 }
 
-const getTripStartTimesByIDs = `-- name: GetTripStartTimesByIDs :many
-SELECT id, min_arrival_time
+const getTripTimeBoundsByIDs = `-- name: GetTripTimeBoundsByIDs :many
+SELECT id, min_arrival_time, max_departure_time
 FROM trips
 WHERE id IN (/*SLICE:trip_ids*/?)
 `
 
-type GetTripStartTimesByIDsRow struct {
-	ID             string
-	MinArrivalTime sql.NullInt64
+type GetTripTimeBoundsByIDsRow struct {
+	ID               string
+	MinArrivalTime   sql.NullInt64
+	MaxDepartureTime sql.NullInt64
 }
 
-// Returns cached min_arrival_time (nanoseconds since midnight) for each
-// trip_id. Callers use this to sort a block's trips by start time without
-// pulling every stop_times row per trip.
-func (q *Queries) GetTripStartTimesByIDs(ctx context.Context, tripIds []string) ([]GetTripStartTimesByIDsRow, error) {
-	query := getTripStartTimesByIDs
+// Returns cached min_arrival_time and max_departure_time (nanoseconds since
+// midnight) for each trip_id. Callers use these to sort a block's trips by
+// start time and to detect temporal overlaps between consecutive trips (the
+// "shift split" logic in keepShiftContainingTrip) without pulling every
+// stop_times row per trip.
+func (q *Queries) GetTripTimeBoundsByIDs(ctx context.Context, tripIds []string) ([]GetTripTimeBoundsByIDsRow, error) {
+	query := getTripTimeBoundsByIDs
 	var queryParams []interface{}
 	if len(tripIds) > 0 {
 		for _, v := range tripIds {
@@ -4468,10 +4471,10 @@ func (q *Queries) GetTripStartTimesByIDs(ctx context.Context, tripIds []string) 
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetTripStartTimesByIDsRow
+	var items []GetTripTimeBoundsByIDsRow
 	for rows.Next() {
-		var i GetTripStartTimesByIDsRow
-		if err := rows.Scan(&i.ID, &i.MinArrivalTime); err != nil {
+		var i GetTripTimeBoundsByIDsRow
+		if err := rows.Scan(&i.ID, &i.MinArrivalTime, &i.MaxDepartureTime); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

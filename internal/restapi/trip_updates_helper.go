@@ -394,12 +394,12 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 	if len(tripIDs) <= 1 {
 		return tripIDs
 	}
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetTripStartTimesByIDs(ctx, tripIDs)
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetTripTimeBoundsByIDs(ctx, tripIDs)
 	if err != nil {
 		// A real DB error on a partial sort would silently scramble
 		// block-trip order — pickTripLevelDeviation depends on that order
 		// ("last delay wins"). Warn and bail to input order.
-		warnIfRealDBError(err, "blockTripIDsSortedByStartTime: GetTripStartTimesByIDs failed, returning input order",
+		warnIfRealDBError(err, "blockTripIDsSortedByStartTime: GetTripTimeBoundsByIDs failed, returning input order",
 			slog.Int("trip_count", len(tripIDs)))
 		return tripIDs
 	}
@@ -418,6 +418,67 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 	out := make([]string, len(tripIDs))
 	copy(out, tripIDs)
 	slices.SortFunc(out, func(a, b string) int { return cmp.Compare(startByID[a], startByID[b]) })
+	return out
+}
+
+// blockShiftTripIDsSortedByStartTime resolves targetTripID's block trips for
+// serviceDate, applies the same keepShiftContainingTrip split that
+// computeScheduledBlockSnapshot uses, and returns the shift's trip IDs in
+// start-time order. Callers that pass the raw block-trip list to
+// GetScheduleDeviationForBlock end up with an evening-bus delay landing on
+// a morning arrival when a feed reuses one block_id across an entire day.
+// The shift filter matches the snapshot's own filtering so the deviation
+// picker sees the same trips the block snapshot does.
+//
+// Uses the cached trips.min_arrival_time / max_departure_time columns via a
+// single batched query — no per-trip stop_times fetch.
+func (api *RestAPI) blockShiftTripIDsSortedByStartTime(ctx context.Context, targetTripID string, serviceDate time.Time) []string {
+	rawTripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
+	if len(rawTripIDs) <= 1 {
+		return rawTripIDs
+	}
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetTripTimeBoundsByIDs(ctx, rawTripIDs)
+	if err != nil {
+		warnIfRealDBError(err, "blockShiftTripIDsSortedByStartTime: GetTripTimeBoundsByIDs failed, falling back to unfiltered sort",
+			slog.Int("trip_count", len(rawTripIDs)))
+		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+	}
+	// Build minimal blockTripData rows — keepShiftContainingTrip needs only
+	// id, firstSeconds, lastSeconds. Any trip missing a cached bound is
+	// skipped from the shift resolution but retained in the output so the
+	// deviation picker still considers it (matches
+	// blockTripIDsSortedByStartTime's degraded-mode behaviour).
+	minimal := make([]blockTripData, 0, len(rows))
+	for _, r := range rows {
+		if !r.MinArrivalTime.Valid || !r.MaxDepartureTime.Valid {
+			continue
+		}
+		minimal = append(minimal, blockTripData{
+			id:           r.ID,
+			firstSeconds: r.MinArrivalTime.Int64 / int64(time.Second),
+			lastSeconds:  r.MaxDepartureTime.Int64 / int64(time.Second),
+		})
+	}
+	if len(minimal) < len(rawTripIDs) {
+		// Missing a bound anywhere → the shift split would exclude those
+		// trips silently. Fall back to the unfiltered sort so nothing is
+		// dropped, matching blockTripIDsSortedByStartTime's own fallback.
+		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+	}
+	slices.SortFunc(minimal, func(a, b blockTripData) int {
+		return cmp.Compare(a.firstSeconds, b.firstSeconds)
+	})
+	shift := keepShiftContainingTrip(minimal, targetTripID)
+	if len(shift) == 0 {
+		// Target isn't in the block-trip list (shouldn't happen — target's
+		// own trip drives the lookup — but keepShiftContainingTrip returns
+		// nil rather than panic if it slips). Preserve current behaviour.
+		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+	}
+	out := make([]string, len(shift))
+	for i, t := range shift {
+		out[i] = t.id
+	}
 	return out
 }
 

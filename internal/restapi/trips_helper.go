@@ -110,8 +110,14 @@ func (api *RestAPI) BuildTripStatus(
 	// start-time order; last trip-level delay wins (Java overwrites
 	// best.scheduleDeviation unconditionally each time a trip-level delay is
 	// seen). This is what makes the published `scheduleDeviation` match Java's.
-	blockTripIDs := api.blockTripIDsSortedByStartTime(ctx,
-		api.blockTripIDsForServiceDate(ctx, dbTripID, serviceDate))
+	//
+	// blockShiftTripIDsSortedByStartTime applies the same
+	// keepShiftContainingTrip split that the snapshot path uses. Without it,
+	// feeds that reuse one block_id across an entire day (many physical
+	// buses under one block) leak the last shift's delay into the first
+	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
+	// into effectiveTime / stop-offset math for every arrival on this trip.
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, dbTripID, serviceDate)
 	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, currentTime)
 
 	if hasRealtimeTripUpdate {

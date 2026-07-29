@@ -1184,11 +1184,13 @@ JOIN trips t ON t.shape_id = s.shape_id
 WHERE t.id IN (sqlc.slice('trip_ids'))
 ORDER BY t.id ASC, s.shape_pt_sequence ASC;
 
--- name: GetTripStartTimesByIDs :many
--- Returns cached min_arrival_time (nanoseconds since midnight) for each
--- trip_id. Callers use this to sort a block's trips by start time without
--- pulling every stop_times row per trip.
-SELECT id, min_arrival_time
+-- name: GetTripTimeBoundsByIDs :many
+-- Returns cached min_arrival_time and max_departure_time (nanoseconds since
+-- midnight) for each trip_id. Callers use these to sort a block's trips by
+-- start time and to detect temporal overlaps between consecutive trips (the
+-- "shift split" logic in keepShiftContainingTrip) without pulling every
+-- stop_times row per trip.
+SELECT id, min_arrival_time, max_departure_time
 FROM trips
 WHERE id IN (sqlc.slice('trip_ids'));
 

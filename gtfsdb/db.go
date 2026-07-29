@@ -336,8 +336,8 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getTripStmt, err = db.PrepareContext(ctx, getTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTrip: %w", err)
 	}
-	if q.getTripStartTimesByIDsStmt, err = db.PrepareContext(ctx, getTripStartTimesByIDs); err != nil {
-		return nil, fmt.Errorf("error preparing query GetTripStartTimesByIDs: %w", err)
+	if q.getTripTimeBoundsByIDsStmt, err = db.PrepareContext(ctx, getTripTimeBoundsByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTripTimeBoundsByIDs: %w", err)
 	}
 	if q.getTripsByBlockIDStmt, err = db.PrepareContext(ctx, getTripsByBlockID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsByBlockID: %w", err)
@@ -921,9 +921,9 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getTripStmt: %w", cerr)
 		}
 	}
-	if q.getTripStartTimesByIDsStmt != nil {
-		if cerr := q.getTripStartTimesByIDsStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getTripStartTimesByIDsStmt: %w", cerr)
+	if q.getTripTimeBoundsByIDsStmt != nil {
+		if cerr := q.getTripTimeBoundsByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTripTimeBoundsByIDsStmt: %w", cerr)
 		}
 	}
 	if q.getTripsByBlockIDStmt != nil {
@@ -1164,7 +1164,7 @@ type Queries struct {
 	getTargetStopTimeWithTotalStopsStmt           *sql.Stmt
 	getTargetStopTimeWithTotalStopsBySequenceStmt *sql.Stmt
 	getTripStmt                                   *sql.Stmt
-	getTripStartTimesByIDsStmt                    *sql.Stmt
+	getTripTimeBoundsByIDsStmt                    *sql.Stmt
 	getTripsByBlockIDStmt                         *sql.Stmt
 	getTripsByBlockIDOrderedStmt                  *sql.Stmt
 	getTripsByBlockIDsStmt                        *sql.Stmt
@@ -1294,7 +1294,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTargetStopTimeWithTotalStopsStmt:           q.getTargetStopTimeWithTotalStopsStmt,
 		getTargetStopTimeWithTotalStopsBySequenceStmt: q.getTargetStopTimeWithTotalStopsBySequenceStmt,
 		getTripStmt:                                   q.getTripStmt,
-		getTripStartTimesByIDsStmt:                    q.getTripStartTimesByIDsStmt,
+		getTripTimeBoundsByIDsStmt:                    q.getTripTimeBoundsByIDsStmt,
 		getTripsByBlockIDStmt:                         q.getTripsByBlockIDStmt,
 		getTripsByBlockIDOrderedStmt:                  q.getTripsByBlockIDOrderedStmt,
 		getTripsByBlockIDsStmt:                        q.getTripsByBlockIDsStmt,
