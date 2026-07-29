@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -28,6 +29,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
 	includeStatus := r.URL.Query().Get("includeStatus") != "false"
+	includeReferences := ShouldIncludeReferences(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -181,7 +183,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
-		references := buildTripReferences(api, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+		var references models.ReferencesModel
+		if includeReferences {
+			references = buildTripReferences(api, ctx, includeSchedule, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+		} else {
+			references = *models.NewEmptyReferences()
+		}
 		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
@@ -209,7 +216,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		blockIDNullStr := sql.NullString{String: blockID, Valid: true}
+		blockIDNullStr := nulls.String(blockID)
 
 		for _, sd := range serviceDays {
 			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
@@ -432,21 +439,26 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		result = []models.TripsForRouteListEntry{}
 	}
 
-	var stops []gtfsdb.Stop
-	if len(stopIDsMap) > 0 {
-		stopIDs := make([]string, 0, len(stopIDsMap))
-		for stopID := range stopIDsMap {
-			stopIDs = append(stopIDs, stopID)
+	var references models.ReferencesModel
+	if includeReferences {
+		var stops []gtfsdb.Stop
+		if len(stopIDsMap) > 0 {
+			stopIDs := make([]string, 0, len(stopIDsMap))
+			for stopID := range stopIDsMap {
+				stopIDs = append(stopIDs, stopID)
+			}
+			var err error
+			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+			if err != nil {
+				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+				stops = []gtfsdb.Stop{}
+			}
 		}
-		var err error
-		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-		if err != nil {
-			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
-			stops = []gtfsdb.Stop{}
-		}
-	}
 
-	references := buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
+		references = buildTripReferences(api, ctx, includeSchedule, result, stops, fetchedTrips)
+	} else {
+		references = *models.NewEmptyReferences()
+	}
 	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
@@ -620,17 +632,17 @@ func buildTripReferences(
 		}
 
 		stopList = append(stopList, models.Stop{
-			Code:               utils.NullStringOrEmpty(stop.Code),
+			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
 			ID:                 stop.ID,
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       0,
-			Name:               utils.NullStringOrEmpty(stop.Name),
+			Name:               nulls.StringOrEmpty(stop.Name),
 			Parent:             "",
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		})
 	}
 

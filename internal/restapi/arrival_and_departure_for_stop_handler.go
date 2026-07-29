@@ -11,6 +11,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -402,35 +403,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	references := models.NewEmptyReferences()
 
 	// Add Stop Agency Reference
-	references.Agencies = append(references.Agencies, models.NewAgencyReference(
-		stopAgency.ID,
-		stopAgency.Name,
-		stopAgency.Url,
-		stopAgency.Timezone,
-		stopAgency.Lang.String,
-		stopAgency.Phone.String,
-		stopAgency.Email.String,
-		stopAgency.FareUrl.String,
-		"",
-		false,
-	))
+	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&stopAgency))
 
 	// Add Route Agency Reference if different from Stop Agency
 	if route.AgencyID != stopAgency.ID {
 		routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 		if err == nil {
-			references.Agencies = append(references.Agencies, models.NewAgencyReference(
-				routeAgency.ID,
-				routeAgency.Name,
-				routeAgency.Url,
-				routeAgency.Timezone,
-				routeAgency.Lang.String,
-				routeAgency.Phone.String,
-				routeAgency.Email.String,
-				routeAgency.FareUrl.String,
-				"",
-				false,
-			))
+			references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&routeAgency))
 		} else {
 			api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
 		}
@@ -562,7 +541,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Code:               stopData.Code.String,
 			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(utils.NullWheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
 		}

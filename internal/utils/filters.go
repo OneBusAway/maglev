@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -12,11 +13,7 @@ func FilterAgencies(all []gtfsdb.Agency, present map[string]bool) []models.Agenc
 	var refs []models.AgencyReference
 	for _, a := range all {
 		if present[a.ID] {
-			refs = append(refs, models.NewAgencyReference(
-				a.ID, a.Name, a.Url, a.Timezone,
-				a.Lang.String, a.Phone.String, a.Email.String, a.FareUrl.String,
-				"", false,
-			))
+			refs = append(refs, models.AgencyReferenceFromDatabase(&a))
 		}
 	}
 	return refs

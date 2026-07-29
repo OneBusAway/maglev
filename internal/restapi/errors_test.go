@@ -12,6 +12,7 @@ import (
 
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func TestServerErrorResponse(t *testing.T) {
@@ -74,9 +75,9 @@ func TestServerErrorResponse(t *testing.T) {
 			response.Text, "internal server error")
 	}
 
-	if response.Version != 1 {
+	if response.Version != models.APIVersion {
 		t.Errorf("unexpected version in response: got %d want %d",
-			response.Version, 1)
+			response.Version, models.APIVersion)
 	}
 
 	// Check that the timestamp is reasonable

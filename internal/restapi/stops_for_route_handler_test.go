@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"maglev.onebusaway.org/internal/logging"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,166 +17,195 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
 func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
-	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25_151.json?key=TEST")
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
-	assert.Equal(t, 2, model.Version)
-	assert.Greater(t, model.CurrentTime, int64(0))
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
+	entry := model.Data.Entry
+	assert.Equal(t, testdata.Route1.ID, entry.RouteID)
 
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "25_151", entry["routeId"])
+	// Entry-level polylines are an independent merge over both direction shapes
+	// (shared undirected edge set), so opposite directions that retrace the same
+	// track de-overlap into multiple segments.
+	assert.Len(t, entry.Polylines, 21)
+	assert.Equal(t, 47, entry.Polylines[0].Length)
+	assert.Equal(t, "", entry.Polylines[0].Levels)
+	assert.Contains(t, entry.Polylines[0].Points, "_luvFxw_jV")
 
-	polylines, ok := entry["polylines"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 2, len(polylines))
+	assert.Len(t, entry.StopIds, 39)
 
-	firstPolyline, ok := polylines[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, 250, int(firstPolyline["length"].(float64)))
-	assert.Equal(t, "", firstPolyline["levels"])
-	assert.Contains(t, firstPolyline["points"], "exhwFlt|")
+	require.Len(t, entry.StopGroupings, 1)
+	grouping := entry.StopGroupings[0]
+	assert.True(t, grouping.Ordered)
+	assert.Equal(t, "direction", grouping.Type)
 
-	secondPolyline, ok := polylines[1].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, 250, int(secondPolyline["length"].(float64)))
-	assert.Equal(t, "", secondPolyline["levels"])
-	assert.Contains(t, secondPolyline["points"], "exhwFlt|")
+	require.Len(t, grouping.StopGroups, 2)
 
-	stopIds, ok := entry["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 39, len(stopIds))
-	// Verify stopGroupings
-	stopGroupings, ok := entry["stopGroupings"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(stopGroupings))
+	outbound := grouping.StopGroups[0]
+	assert.Equal(t, "0", outbound.ID)
+	assert.Equal(t, "Shasta Lake", outbound.Name.Name)
+	assert.Equal(t, "destination", outbound.Name.Type)
+	assert.Equal(t, []string{"Shasta Lake"}, outbound.Name.Names)
+	assert.Len(t, outbound.StopIds, 21)
+	// Direction-0 shape retraces two of its own edges, splitting into 3 polylines.
+	require.Len(t, outbound.Polylines, 3)
+	assert.Equal(t, 47, outbound.Polylines[0].Length)
+	assert.Equal(t, 31, outbound.Polylines[1].Length)
+	assert.Equal(t, 162, outbound.Polylines[2].Length)
+	assert.Contains(t, outbound.Polylines[0].Points, "_luvFxw_jV")
 
-	grouping, ok := stopGroupings[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, true, grouping["ordered"])
-	assert.Equal(t, "direction", grouping["type"])
+	inbound := grouping.StopGroups[1]
+	assert.Equal(t, "1", inbound.ID)
+	assert.Equal(t, "Shasta Lake", inbound.Name.Name)
+	assert.Equal(t, "destination", inbound.Name.Type)
+	assert.Len(t, inbound.StopIds, 22)
+	// Direction-1 shape retraces one of its own edges, splitting into 2 polylines.
+	require.Len(t, inbound.Polylines, 2)
+	assert.Equal(t, 23, inbound.Polylines[0].Length)
+	assert.Equal(t, 208, inbound.Polylines[1].Length)
 
-	stopGroups, ok := grouping["stopGroups"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 2, len(stopGroups))
+	refs := model.Data.References
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, refs.Agencies)
 
-	outboundGroup, ok := stopGroups[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "0", outboundGroup["id"])
+	assert.Len(t, refs.Routes, len(testdata.RabaRoutes))
+	assert.Len(t, refs.Stops, 39)
+	assert.Empty(t, refs.Situations)
+	assert.Empty(t, refs.StopTimes)
+	assert.Empty(t, refs.Trips)
+}
 
-	outboundName, ok := outboundGroup["name"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "Shasta Lake", outboundName["name"])
-	assert.Equal(t, "destination", outboundName["type"])
+// TestStopsForRouteIncludeReferencesFalse verifies that includeReferences=false
+// returns a references block that is present but empty.
+func TestStopsForRouteIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	outboundNames, ok := outboundName["names"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(outboundNames))
-	assert.Equal(t, "Shasta Lake", outboundNames[0])
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&includeReferences=false")
 
-	outboundStopIds, ok := outboundGroup["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 21, len(outboundStopIds))
+	refs := model.Data.References
+	assert.Empty(t, refs.Agencies)
+	assert.Empty(t, refs.Routes)
+	assert.Empty(t, refs.Stops)
+	assert.Empty(t, refs.Trips)
+	assert.Empty(t, refs.Situations)
+	assert.Empty(t, refs.StopTimes)
 
-	outboundPolylines, ok := outboundGroup["polylines"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(outboundPolylines))
+	// The entry payload is still populated.
+	assert.Equal(t, testdata.Route1.ID, model.Data.Entry.RouteID)
+	assert.NotEmpty(t, model.Data.Entry.StopIds)
+}
 
-	inboundGroup, ok := stopGroups[1].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "1", inboundGroup["id"])
+// TestStopsForRouteIncludeReferencesDefault verifies that references are populated
+// when includeReferences is omitted (defaults to true).
+func TestStopsForRouteIncludeReferencesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	inboundName, ok := inboundGroup["name"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "Shasta Lake", inboundName["name"])
-	assert.Equal(t, "destination", inboundName["type"])
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
 
-	inboundStopIds, ok := inboundGroup["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 22, len(inboundStopIds))
+	refs := model.Data.References
+	assert.NotEmpty(t, refs.Agencies)
+	assert.NotEmpty(t, refs.Routes)
+	assert.NotEmpty(t, refs.Stops)
+}
 
-	// Verify references
-	refs, ok := data["references"].(map[string]any)
-	require.True(t, ok)
+// TestStopsForRouteIncludePolylinesDefault verifies that with includePolylines
+// omitted (default true) the entry and every direction group carry polylines.
+func TestStopsForRouteIncludePolylinesDefault(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	// Verify agencies
-	agencies, ok := refs["agencies"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 1, len(agencies))
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
 
-	agency, ok := agencies[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "25", agency["id"])
-	assert.Equal(t, "Redding Area Bus Authority", agency["name"])
-	assert.Equal(t, "http://www.rabaride.com/", agency["url"])
-	assert.Equal(t, "America/Los_Angeles", agency["timezone"])
-	assert.Equal(t, "en", agency["lang"])
-	assert.Equal(t, "530-241-2877", agency["phone"])
-	assert.Equal(t, false, agency["privateService"])
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.Polylines, "default should return entry-level polylines")
 
-	routes, ok := refs["routes"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 13, len(routes))
+	require.Len(t, entry.StopGroupings, 1)
+	for _, g := range entry.StopGroupings[0].StopGroups {
+		assert.NotEmpty(t, g.Polylines, "group %s should carry polylines by default", g.ID)
+	}
+}
 
-	// Verify stops
-	stops, ok := refs["stops"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 39, len(stops))
-	require.True(t, ok)
+// TestStopsForRouteIncludePolylinesFalse verifies that includePolylines=false
+// empties both the entry-level and every group-level polylines, and that they
+// serialize as [] (not null).
+func TestStopsForRouteIncludePolylinesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	// Verify empty arrays
-	situations, ok := refs["situations"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 0, len(situations))
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&includePolylines=false")
 
-	stopTimes, ok := refs["stopTimes"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 0, len(stopTimes))
+	entry := model.Data.Entry
+	assert.NotNil(t, entry.Polylines, "entry polylines should be [] not null")
+	assert.Empty(t, entry.Polylines, "entry polylines should be empty when includePolylines=false")
 
-	trips, ok := refs["trips"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, 0, len(trips))
+	require.Len(t, entry.StopGroupings, 1)
+	for _, g := range entry.StopGroupings[0].StopGroups {
+		assert.NotNil(t, g.Polylines, "group %s polylines should be [] not null", g.ID)
+		assert.Empty(t, g.Polylines, "group %s polylines should be empty when includePolylines=false", g.ID)
+	}
+}
+
+// TestStopsForRouteTimeFilter_ActiveDate verifies that supplying a time parameter
+// restricts results to trips active on that service date.
+func TestStopsForRouteTimeFilter_ActiveDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// 2025-01-06 is a Monday; RABA route 151 runs Mon–Fri (service c_1658_b_18260_d_31).
+	_, model := callAPIHandler[StopsForRouteResponse](t, api,
+		"/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&time=2025-01-06")
+
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.StopIds, "weekday date should return stops")
+	require.Len(t, entry.StopGroupings, 1)
+	assert.NotEmpty(t, entry.StopGroupings[0].StopGroups, "weekday date should produce direction groups")
+}
+
+// TestStopsForRouteTimeFilter_NoServiceDate verifies that when the requested date
+// has no active service the stop list and direction groups are empty, but the
+// direction grouping element is still present.
+func TestStopsForRouteTimeFilter_NoServiceDate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// 2025-01-05 is a Sunday; RABA route 151 has no Sunday service.
+	_, model := callAPIHandler[StopsForRouteResponse](t, api,
+		"/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&time=2025-01-05")
+
+	entry := model.Data.Entry
+	assert.Empty(t, entry.StopIds, "no-service date should return empty stop list")
+	require.Len(t, entry.StopGroupings, 1, "direction grouping element must still be present")
+	assert.Empty(t, entry.StopGroupings[0].StopGroups, "no-service date should return empty direction groups")
 }
 
 // TestStopsForRouteNoDuplicateStopGroups guards against the regression where
 // trips with different headsigns in the same direction produced duplicate group
 // IDs (e.g. "0", "0", "1" instead of "0", "1").
 func TestStopsForRouteNoDuplicateStopGroups(t *testing.T) {
-	_, _, model := serveAndRetrieveEndpoint(t, "/api/where/stops-for-route/25_151.json?key=TEST")
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
+	_, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST")
 
-	stopGroupings, ok := entry["stopGroupings"].([]any)
-	require.True(t, ok)
-	require.Equal(t, 1, len(stopGroupings), "expected exactly one stopGrouping")
+	require.Len(t, model.Data.Entry.StopGroupings, 1)
+	stopGroups := model.Data.Entry.StopGroupings[0].StopGroups
+	require.Len(t, stopGroups, 2, "expected exactly 2 stop groups (one per direction)")
 
-	grouping, ok := stopGroupings[0].(map[string]any)
-	require.True(t, ok)
-
-	stopGroups, ok := grouping["stopGroups"].([]any)
-	require.True(t, ok)
-	require.Equal(t, 2, len(stopGroups), "expected exactly 2 stop groups (one per direction)")
-
-	// Verify IDs are unique and normalized to "0" and "1"
 	ids := make(map[string]bool)
 	for _, g := range stopGroups {
-		group, ok := g.(map[string]any)
-		require.True(t, ok)
-		id, ok := group["id"].(string)
-		require.True(t, ok)
-		assert.False(t, ids[id], "duplicate stop group ID: %s", id)
-		ids[id] = true
+		assert.False(t, ids[g.ID], "duplicate stop group ID: %s", g.ID)
+		ids[g.ID] = true
 	}
 	assert.True(t, ids["0"], "expected stop group with id '0'")
 	assert.True(t, ids["1"], "expected stop group with id '1'")
@@ -217,12 +247,10 @@ func TestStopsForRouteHandlerWithMalformedID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	malformedID := "1110"
-	endpoint := "/api/where/stops-for-route/" + malformedID + ".json?key=TEST"
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/1110.json?key=TEST")
 
-	resp, _ := serveApiAndRetrieveEndpoint(t, api, endpoint)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Status code should be 400 Bad Request")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
 // createTestApiWithNullDirectionID creates a RestAPI backed by a minimal in-memory
@@ -289,7 +317,7 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 	}
 
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	api.Logger = logging.NewStructuredLogger(os.Stdout, slog.LevelDebug)
 	t.Cleanup(api.Shutdown)
 
 	return api
@@ -302,35 +330,15 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 func TestStopsForRouteNullDirectionID(t *testing.T) {
 	api := createTestApiWithNullDirectionID(t)
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-route/agencyA_routeA.json?key=TEST")
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/agencyA_routeA.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data, ok := model.Data.(map[string]any)
-	require.True(t, ok)
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.StopIds, "stops-for-route must return stops even when direction_id is NULL")
 
-	entry, ok := data["entry"].(map[string]any)
-	require.True(t, ok)
-
-	stopIds, ok := entry["stopIds"].([]any)
-	require.True(t, ok)
-	assert.NotEmpty(t, stopIds, "stops-for-route must return stops even when direction_id is NULL")
-
-	stopGroupings, ok := entry["stopGroupings"].([]any)
-	require.True(t, ok)
-	require.Len(t, stopGroupings, 1)
-
-	grouping, ok := stopGroupings[0].(map[string]any)
-	require.True(t, ok)
-
-	stopGroups, ok := grouping["stopGroups"].([]any)
-	require.True(t, ok)
+	require.Len(t, entry.StopGroupings, 1)
+	stopGroups := entry.StopGroupings[0].StopGroups
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
-
-	group, ok := stopGroups[0].(map[string]any)
-	require.True(t, ok)
-
-	groupStopIds, ok := group["stopIds"].([]any)
-	require.True(t, ok)
-	assert.Len(t, groupStopIds, 2, "expected both stops to appear in the stop group")
+	assert.Len(t, stopGroups[0].StopIds, 2, "expected both stops to appear in the stop group")
 }

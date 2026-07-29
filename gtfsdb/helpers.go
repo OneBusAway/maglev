@@ -19,6 +19,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 //go:embed schema.sql
@@ -267,10 +268,10 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 			Name:     a.Name,
 			Url:      a.Url,
 			Timezone: a.Timezone,
-			Lang:     toNullString(a.Language),
-			Phone:    toNullString(a.Phone),
-			FareUrl:  toNullString(a.FareUrl),
-			Email:    toNullString(a.Email),
+			Lang:     nulls.String(a.Language),
+			Phone:    nulls.String(a.Phone),
+			FareUrl:  nulls.String(a.FareUrl),
+			Email:    nulls.String(a.Email),
 		}
 
 		_, err := qtx.CreateAgency(ctx, params)
@@ -288,13 +289,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		route := CreateRouteParams{
 			ID:                r.Id,
 			AgencyID:          pickFirstAvailable(r.Agency.Id, singleAgencyID),
-			ShortName:         toNullString(r.ShortName),
-			LongName:          toNullString(r.LongName),
-			Desc:              toNullString(r.Description),
+			ShortName:         nulls.String(r.ShortName),
+			LongName:          nulls.String(r.LongName),
+			Desc:              nulls.String(r.Description),
 			Type:              int64(r.Type),
-			Url:               toNullString(r.Url),
-			Color:             toNullString(r.Color),
-			TextColor:         toNullString(r.TextColor),
+			Url:               nulls.String(r.Url),
+			Color:             nulls.NonEmptyString(r.Color),
+			TextColor:         nulls.NonEmptyString(r.TextColor),
 			ContinuousPickup:  toNullInt64(int64(r.ContinuousPickup)),
 			ContinuousDropOff: toNullInt64(int64(r.ContinuousDropOff)),
 		}
@@ -327,19 +328,19 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 		params := CreateStopParams{
 			ID:                 s.Id,
-			Code:               toNullString(s.Code),
-			Name:               toNullString(s.Name),
-			Desc:               toNullString(s.Description),
+			Code:               nulls.String(s.Code),
+			Name:               nulls.String(s.Name),
+			Desc:               nulls.String(s.Description),
 			Lat:                *s.Latitude,
 			Lon:                *s.Longitude,
-			ZoneID:             toNullString(s.ZoneId),
-			Url:                toNullString(s.Url),
+			ZoneID:             nulls.String(s.ZoneId),
+			Url:                nulls.String(s.Url),
 			LocationType:       toNullInt64(int64(s.Type)),
-			Timezone:           toNullString(s.Timezone),
+			Timezone:           nulls.String(s.Timezone),
 			WheelchairBoarding: toNullInt64(int64(s.WheelchairBoarding)),
-			PlatformCode:       toNullString(s.PlatformCode),
+			PlatformCode:       nulls.String(s.PlatformCode),
 			Direction:          sql.NullString{}, // Will be computed later
-			ParentStation:      toNullString(parentStation),
+			ParentStation:      nulls.NonEmptyString(parentStation),
 		}
 
 		allStopParams = append(allStopParams, params)
@@ -389,11 +390,11 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 			ID:                   t.ID,
 			RouteID:              t.Route.Id,
 			ServiceID:            t.Service.Id,
-			TripHeadsign:         toNullString(t.Headsign),
-			TripShortName:        toNullString(t.ShortName),
+			TripHeadsign:         nulls.String(t.Headsign),
+			TripShortName:        nulls.String(t.ShortName),
 			DirectionID:          gtfsDirectionIDToDB(t.DirectionId),
-			BlockID:              toNullString(t.BlockID),
-			ShapeID:              toNullString(shapeID),
+			BlockID:              nulls.String(t.BlockID),
+			ShapeID:              nulls.NonEmptyString(shapeID),
 			WheelchairAccessible: toNullInt64(int64(t.WheelchairAccessible)),
 			BikesAllowed:         toNullInt64(int64(t.BikesAllowed)),
 		}
@@ -417,7 +418,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 				DepartureTime:     int64(st.DepartureTime),
 				StopID:            st.Stop.Id,
 				StopSequence:      int64(st.StopSequence),
-				StopHeadsign:      toNullString(st.Headsign),
+				StopHeadsign:      nulls.String(st.Headsign),
 				PickupType:        toNullInt64(int64(st.PickupType)),
 				DropOffType:       toNullInt64(int64(st.DropOffType)),
 				ShapeDistTraveled: toNullFloat64(shapeDistTraveled),
@@ -698,19 +699,6 @@ func toNullFloat64(f float64) sql.NullFloat64 {
 		}
 	}
 	return sql.NullFloat64{}
-}
-
-// toNullString converts a string to sql.NullString (unexported, for internal use)
-func toNullString(s string) sql.NullString {
-	return sql.NullString{
-		String: s,
-		Valid:  s != "",
-	}
-}
-
-// ToNullString converts a string to sql.NullString, with empty strings becoming NULL (exported).
-func ToNullString(s string) sql.NullString {
-	return toNullString(s)
 }
 
 // ParseNullFloat parses a string to sql.NullFloat64, with empty or invalid values becoming NULL.
@@ -1352,7 +1340,7 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 				err = qtx.CreateBlockTripEntry(ctx, CreateBlockTripEntryParams{
 					BlockTripIndexID:  indexID,
 					TripID:            trip.tripID,
-					BlockID:           toNullString(trip.blockID),
+					BlockID:           nulls.String(trip.blockID),
 					ServiceID:         trip.serviceID,
 					BlockTripSequence: int64(sequence),
 				})

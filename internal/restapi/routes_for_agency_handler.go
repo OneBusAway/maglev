@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -31,29 +32,30 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
-	routesForAgency, limitExceeded := utils.PaginateSlice(routesForAgency, offset, limit)
 	routesList := make([]models.Route, 0, len(routesForAgency))
 
 	for _, route := range routesForAgency {
 		routesList = append(routesList, models.NewRoute(
 			utils.FormCombinedID(agency.ID, route.ID),
 			agency.ID,
-			utils.NullStringOrEmpty(route.ShortName),
-			utils.NullStringOrEmpty(route.LongName),
-			utils.NullStringOrEmpty(route.Desc),
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			utils.NullStringOrEmpty(route.Url),
-			utils.NullStringOrEmpty(route.Color),
-			utils.NullStringOrEmpty(route.TextColor)))
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor)))
 	}
 
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{
-		models.AgencyReferenceFromDatabase(agency),
+	// When includeReferences=false the references block is present but empty.
+	if ShouldIncludeReferences(r) {
+		references.Agencies = []models.AgencyReference{
+			models.AgencyReferenceFromDatabase(agency),
+		}
 	}
 
-	response := models.NewListResponse(routesList, *references, limitExceeded, api.Clock)
+	// Spec: this endpoint returns all matching routes, so limitExceeded is always false.
+	response := models.NewListResponse(routesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

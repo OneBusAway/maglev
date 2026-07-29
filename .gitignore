@@ -8,7 +8,7 @@ __debug_bin*
 *.db-wal
 /cmd/api/api
 gtfsdb/tmp/main
-.claude
+.claude/settings.local.json
 .idea
 config.json
 configs/*.json

@@ -372,6 +372,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listTripsWithLimitStmt, err = db.PrepareContext(ctx, listTripsWithLimit); err != nil {
 		return nil, fmt.Errorf("error preparing query ListTripsWithLimit: %w", err)
 	}
+	if q.routeHasFutureServiceStmt, err = db.PrepareContext(ctx, routeHasFutureService); err != nil {
+		return nil, fmt.Errorf("error preparing query RouteHasFutureService: %w", err)
+	}
 	if q.updateFeedExpiresAtStmt, err = db.PrepareContext(ctx, updateFeedExpiresAt); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateFeedExpiresAt: %w", err)
 	}
@@ -969,6 +972,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listTripsWithLimitStmt: %w", cerr)
 		}
 	}
+	if q.routeHasFutureServiceStmt != nil {
+		if cerr := q.routeHasFutureServiceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing routeHasFutureServiceStmt: %w", cerr)
+		}
+	}
 	if q.updateFeedExpiresAtStmt != nil {
 		if cerr := q.updateFeedExpiresAtStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateFeedExpiresAtStmt: %w", cerr)
@@ -1144,6 +1152,7 @@ type Queries struct {
 	listStopsStmt                                 *sql.Stmt
 	listTripsStmt                                 *sql.Stmt
 	listTripsWithLimitStmt                        *sql.Stmt
+	routeHasFutureServiceStmt                     *sql.Stmt
 	updateFeedExpiresAtStmt                       *sql.Stmt
 	updateImportTimeStmt                          *sql.Stmt
 	updateStopDirectionStmt                       *sql.Stmt
@@ -1270,6 +1279,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listStopsStmt:                                 q.listStopsStmt,
 		listTripsStmt:                                 q.listTripsStmt,
 		listTripsWithLimitStmt:                        q.listTripsWithLimitStmt,
+		routeHasFutureServiceStmt:                     q.routeHasFutureServiceStmt,
 		updateFeedExpiresAtStmt:                       q.updateFeedExpiresAtStmt,
 		updateImportTimeStmt:                          q.updateImportTimeStmt,
 		updateStopDirectionStmt:                       q.updateStopDirectionStmt,

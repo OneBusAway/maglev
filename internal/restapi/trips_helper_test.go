@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -186,141 +187,6 @@ func TestDistanceToLineSegment_GeographicCoordinates(t *testing.T) {
 			assert.GreaterOrEqual(t, distance, 0.0, "Distance should be non-negative")
 		})
 	}
-}
-
-// TestCalculatePreciseDistanceAlongTrip tests the main distance calculation function
-func TestCalculatePreciseDistanceAlongTrip(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	ctx := context.Background()
-
-	// Get a test trip with shape data
-	trips, err := api.GtfsManager.GetTrips(ctx, 100)
-	require.NoError(t, err)
-	require.NotEmpty(t, trips, "Should have test trips")
-
-	var testTripID string
-	for _, trip := range trips {
-		if trip.ShapeID.Valid && trip.ShapeID.String != "" {
-			testTripID = trip.ID
-			break
-		}
-	}
-	require.NotEmpty(t, testTripID, "Should find a trip with shape data")
-
-	// Get shape points for this trip
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, testTripID)
-	require.NoError(t, err)
-	require.NotEmpty(t, shapeRows, "Should have shape points")
-
-	shapePoints := make([]gtfs.ShapePoint, len(shapeRows))
-	for i, sp := range shapeRows {
-		shapePoints[i] = gtfs.ShapePoint{
-			Latitude:  sp.Lat,
-			Longitude: sp.Lon,
-		}
-	}
-
-	// Get stop times for this trip
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, testTripID)
-	require.NoError(t, err)
-	require.NotEmpty(t, stopTimes, "Should have stop times")
-
-	// Test that we can calculate distance for each stop
-	var previousDistance float64
-	for i, st := range stopTimes {
-		distance := api.calculatePreciseDistanceAlongTrip(ctx, st.StopID, shapePoints)
-
-		// Distance should be non-negative
-		assert.GreaterOrEqual(t, distance, 0.0, "Distance should be non-negative for stop %d", i)
-
-		// Distance should generally increase along the trip (with some tolerance for slight variations)
-		// Note: In some cases, stops might not be in perfect sequential order along the shape,
-		// so we allow for some flexibility
-		if i > 0 {
-			// Allow distance to be slightly less (within 100m) to account for stops not perfectly on the route
-			assert.GreaterOrEqual(t, distance, previousDistance-100.0,
-				"Distance should generally increase or stay similar along trip (stop %d)", i)
-		}
-
-		previousDistance = distance
-	}
-}
-
-// TestCalculatePreciseDistanceAlongTrip_EdgeCases tests edge cases
-func TestCalculatePreciseDistanceAlongTrip_EdgeCases(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	ctx := context.Background()
-
-	t.Run("Empty shape points", func(t *testing.T) {
-		emptyShape := []gtfs.ShapePoint{}
-		distance := api.calculatePreciseDistanceAlongTrip(ctx, "any-stop-id", emptyShape)
-		assert.Equal(t, 0.0, distance, "Should return 0 for empty shape")
-	})
-
-	t.Run("Invalid stop ID", func(t *testing.T) {
-		shapePoints := []gtfs.ShapePoint{
-			{Latitude: 40.5890, Longitude: -122.3890},
-			{Latitude: 40.5900, Longitude: -122.3900},
-		}
-		distance := api.calculatePreciseDistanceAlongTrip(ctx, "invalid-stop-id", shapePoints)
-		assert.Equal(t, 0.0, distance, "Should return 0 for invalid stop ID")
-	})
-
-	t.Run("Single shape point", func(t *testing.T) {
-		// Get a valid stop
-		trips, err := api.GtfsManager.GetTrips(ctx, 100)
-		require.NoError(t, err)
-		require.NotEmpty(t, trips)
-
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trips[0].ID)
-		require.NoError(t, err)
-		require.NotEmpty(t, stopTimes)
-
-		singlePointShape := []gtfs.ShapePoint{
-			{Latitude: 40.5890, Longitude: -122.3890},
-		}
-		distance := api.calculatePreciseDistanceAlongTrip(ctx, stopTimes[0].StopID, singlePointShape)
-		assert.Equal(t, 0.0, distance, "Should return 0 for single shape point")
-	})
-}
-
-// TestCalculatePreciseDistanceAlongTrip_Correctness validates the algorithm correctness
-func TestCalculatePreciseDistanceAlongTrip_Correctness(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	ctx := context.Background()
-
-	// Create a simple linear shape: three points in a line
-	// Point 1: (40.0, -122.0)
-	// Point 2: (40.1, -122.0) - 100km north
-	// Point 3: (40.2, -122.0) - 200km north of start
-	shapePoints := []gtfs.ShapePoint{
-		{Latitude: 40.0, Longitude: -122.0},
-		{Latitude: 40.1, Longitude: -122.0},
-		{Latitude: 40.2, Longitude: -122.0},
-	}
-
-	// Get a real stop to test with (we'll use its ID but override the coordinates conceptually)
-	trip := mustGetTrip(t, api)
-
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
-	require.NoError(t, err)
-	require.NotEmpty(t, stopTimes)
-
-	// Note: We can't actually modify the stop coordinates in the DB for this test,
-	// so we're just testing that the function runs and returns reasonable values
-	distance := api.calculatePreciseDistanceAlongTrip(ctx, stopTimes[0].StopID, shapePoints)
-
-	// The distance should be reasonable (between 0 and the total trip length)
-	// The exact value depends on where the actual stop is located
-	assert.GreaterOrEqual(t, distance, 0.0, "Distance should be non-negative")
-
-	// Maximum possible distance would be close to the distance from first to last point
-	// which is approximately 200km (in the simple case above, though the real stop might be elsewhere)
-	maxPossibleDistance := 1000000.0 // 1000km is a safe upper bound
-	assert.LessOrEqual(t, distance, maxPossibleDistance, "Distance should be reasonable")
 }
 
 // TestCalculateBatchStopDistances verifies the new Monotonic Search logic
@@ -537,17 +403,19 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 	routeID := trips[0].RouteID
 	vehicleID := "VEHICLE_POS_TEST"
 
+	// Set currentTime during the trip using the first stop's arrival time
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, routeID, internalgtfs.MockVehicleOptions{
+		Timestamp: &currentTime,
 		Position: &gtfs.Position{
 			Latitude:  &lat,
 			Longitude: &lon,
 		},
 	})
-
-	// Set currentTime during the trip using the first stop's arrival time
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
-	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
@@ -670,16 +538,18 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	lon := float32(stops[0].Lon)
 	vehicleID := "VEHICLE_SHAPE_TEST"
 
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, routeID, internalgtfs.MockVehicleOptions{
+		Timestamp: &currentTime,
 		Position: &gtfs.Position{
 			Latitude:  &lat,
 			Longitude: &lon,
 		},
 	})
-
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
-	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
@@ -1063,9 +933,15 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 	routeID := trips[0].RouteID
 	vehicleID := "VEHICLE_STOPID_TEST"
 
-	// Mark the vehicle as STOPPED_AT to exercise the StopID + isStoppedAt branch
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	// Mark the vehicle as STOPPED_AT to exercise the StopID + isStoppedAt branch.
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	stoppedAt := gtfs.CurrentStatus(1)
 	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, routeID, internalgtfs.MockVehicleOptions{
+		Timestamp: &currentTime,
 		Position: &gtfs.Position{
 			Latitude:  &lat,
 			Longitude: &lon,
@@ -1073,10 +949,6 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 		StopID:        &midStopID,
 		CurrentStatus: &stoppedAt,
 	})
-
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
-	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 	require.NoError(t, err)
@@ -1172,11 +1044,14 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 	trip := mustGetTrip(t, api)
 	tripID := trip.ID
 
-	now := time.Now()
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
 	canceledRelationship := gtfsrt.TripDescriptor_CANCELED
 	vehicle := &gtfs.Vehicle{
 		ID:        &gtfs.VehicleID{ID: "canceled-vehicle"},
-		Timestamp: &now,
+		Timestamp: &currentTime,
 		Trip: &gtfs.Trip{
 			ID: gtfs.TripID{
 				ID:                   tripID,
@@ -1184,9 +1059,6 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 			},
 		},
 	}
-
-	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	currentTime := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
 
 	status, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
 	require.NoError(t, err)
@@ -1209,61 +1081,6 @@ func BenchmarkDistanceToLineSegment(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = distanceToLineSegment(px, py, x1, y1, x2, y2)
-	}
-}
-
-// BenchmarkCalculatePreciseDistanceAlongTrip benchmarks the full distance calculation
-func BenchmarkCalculatePreciseDistanceAlongTrip(b *testing.B) {
-	t := &testing.T{}
-	api := createTestApi(t)
-	defer api.Shutdown()
-	ctx := context.Background()
-
-	// Find a trip with shape data
-	trips, err := api.GtfsManager.GetTrips(ctx, 100)
-	if err != nil {
-		b.Fatal(err)
-	}
-	if len(trips) == 0 {
-		b.Skip("No trips available for benchmark")
-	}
-
-	var testTripID string
-	for _, trip := range trips {
-		if trip.ShapeID.Valid && trip.ShapeID.String != "" {
-			testTripID = trip.ID
-			break
-		}
-	}
-
-	if testTripID == "" {
-		b.Skip("No trips with shape data available")
-	}
-
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, testTripID)
-	if err != nil || len(shapeRows) == 0 {
-		b.Skip("No shape points available")
-	}
-
-	shapePoints := make([]gtfs.ShapePoint, len(shapeRows))
-	for i, sp := range shapeRows {
-		shapePoints[i] = gtfs.ShapePoint{
-			Latitude:  sp.Lat,
-			Longitude: sp.Lon,
-		}
-	}
-
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, testTripID)
-	if err != nil || len(stopTimes) == 0 {
-		b.Skip("No stop times available")
-	}
-
-	stopID := stopTimes[0].StopID
-
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = api.calculatePreciseDistanceAlongTrip(ctx, stopID, shapePoints)
 	}
 }
 
@@ -2069,7 +1886,7 @@ func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 		ID:        tripID,
 		RouteID:   "1",
 		ServiceID: "1",
-		BlockID:   sql.NullString{String: "single_trip_block", Valid: true},
+		BlockID:   nulls.String("single_trip_block"),
 	})
 	require.NoError(t, err)
 
@@ -2087,7 +1904,7 @@ func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 	err = queries.CreateBlockTripEntry(ctx, gtfsdb.CreateBlockTripEntryParams{
 		BlockTripIndexID:  indexID,
 		TripID:            tripID,
-		BlockID:           sql.NullString{String: "single_trip_block", Valid: true},
+		BlockID:           nulls.String("single_trip_block"),
 		ServiceID:         "1",
 		BlockTripSequence: 0,
 	})
@@ -2117,7 +1934,7 @@ func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
 		ID:        tripID,
 		RouteID:   "1",
 		ServiceID: "1",
-		BlockID:   sql.NullString{String: "missing_block", Valid: true},
+		BlockID:   nulls.String("missing_block"),
 	})
 	require.NoError(t, err)
 

@@ -14,17 +14,41 @@ type LocationParams struct {
 }
 
 // BoundsFromParams converts LocationParams into a CoordinateBounds bounding box.
-// If LatSpan and LonSpan are both positive, they define the box; otherwise the
-// box is computed from Radius (defaulting to DefaultSearchRadiusInMeters).
-func BoundsFromParams(loc *LocationParams) utils.CoordinateBounds {
-	if loc.LatSpan > 0 && loc.LonSpan > 0 {
-		return utils.CalculateBoundsFromSpan(loc.Lat, loc.Lon, loc.LatSpan/2, loc.LonSpan/2)
+// If Radius is positive (or when neither Radius nor valid Spans are provided),
+// the box is computed from Radius (defaulting to DefaultSearchRadiusInMeters).
+// If both Radius and LatSpan/LonSpan are provided, Radius takes precedence.
+// If clamp is true, dimensions exceeding the maximum allowed search radius (20km)
+// are clamped to the maximum circle bounds.
+func BoundsFromParams(loc *LocationParams, clamp ...bool) utils.CoordinateBounds {
+	shouldClamp := len(clamp) > 0 && clamp[0]
+
+	// If Radius is specified (>0) OR neither Radius nor both Spans are provided (>0), use radius calculation.
+	// This ensures radius takes precedence when both radius and span are supplied per OBA spec.
+	if loc.Radius > 0 || !(loc.LatSpan > 0 && loc.LonSpan > 0) {
+		radius := loc.Radius
+		if radius <= 0 {
+			radius = models.DefaultSearchRadiusInMeters
+		}
+		if shouldClamp && radius > models.MaxSearchRadiusInMeters {
+			radius = models.MaxSearchRadiusInMeters
+		}
+		return utils.CalculateBounds(loc.Lat, loc.Lon, radius)
 	}
-	radius := loc.Radius
-	if radius == 0 {
-		radius = models.DefaultSearchRadiusInMeters
+
+	latSpan := loc.LatSpan
+	lonSpan := loc.LonSpan
+	if shouldClamp {
+		maxBounds := utils.CalculateBounds(loc.Lat, loc.Lon, models.MaxSearchRadiusInMeters)
+		maxLatSpan := maxBounds.MaxLat - maxBounds.MinLat
+		maxLonSpan := maxBounds.MaxLon - maxBounds.MinLon
+		if latSpan > maxLatSpan {
+			latSpan = maxLatSpan
+		}
+		if lonSpan > maxLonSpan {
+			lonSpan = maxLonSpan
+		}
 	}
-	return utils.CalculateBounds(loc.Lat, loc.Lon, radius)
+	return utils.CalculateBoundsFromSpan(loc.Lat, loc.Lon, latSpan/2, lonSpan/2)
 }
 
 // CheckIfOutOfBounds returns true if the user's search area is completely

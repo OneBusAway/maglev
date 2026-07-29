@@ -2,11 +2,13 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"math"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -34,7 +36,8 @@ func (d *StaleDetector) Check(vehicle *gtfs.Vehicle, currentTime time.Time) bool
 	if vehicle.Timestamp == nil {
 		return vehicle.Position == nil
 	}
-	return currentTime.Sub(*vehicle.Timestamp) > d.threshold
+	// Absolute gap: currentTime may precede vehicle.Timestamp when a `time` query param is set.
+	return (currentTime.Sub(*vehicle.Timestamp)).Abs() > d.threshold
 }
 
 var defaultStaleDetector = NewStaleDetector()
@@ -156,6 +159,71 @@ func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
 	}
 
 	return vehicle.Trip.ID.ID
+}
+
+// wallClockSinceMidnightNs returns nanoseconds from local midnight to t using its
+// wall-clock fields, so the value is unaffected by DST offset changes.
+func wallClockSinceMidnightNs(t time.Time) int64 {
+	d := time.Duration(t.Hour())*time.Hour +
+		time.Duration(t.Minute())*time.Minute +
+		time.Duration(t.Second())*time.Second +
+		time.Duration(t.Nanosecond())
+	return int64(d)
+}
+
+// resolveActiveTripID returns the trip actually being executed at referenceTime
+// within nominalTripID's block (interlining, spec Extension 5b). It falls back to
+// nominalTripID when there is no block or no better match.
+func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID string, referenceTime time.Time) string {
+	nominalTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalTripID)
+	if err != nil || !nominalTrip.BlockID.Valid || nominalTrip.BlockID.String == "" {
+		return nominalTripID
+	}
+
+	// Wall-clock time since midnight, matching GTFS times which are wall-clock
+	// durations (not elapsed physical time, which shifts by an hour across DST).
+	sinceMidnightNs := wallClockSinceMidnightNs(referenceTime)
+
+	// Check the current service day, then the previous day for trips whose windows
+	// run past 24:00 (GTFS allows e.g. 25:30:00). A trip belonging to the previous
+	// service day is matched against referenceTime offset by +24h.
+	if tripID, ok := api.activeTripInBlockAt(ctx, nominalTrip.BlockID, referenceTime, sinceMidnightNs); ok {
+		return tripID
+	}
+	prevDay := referenceTime.AddDate(0, 0, -1)
+	if tripID, ok := api.activeTripInBlockAt(ctx, nominalTrip.BlockID, prevDay, sinceMidnightNs+int64(24*time.Hour)); ok {
+		return tripID
+	}
+
+	return nominalTripID
+}
+
+// activeTripInBlockAt returns the block trip whose scheduled window contains
+// sinceMidnightNs on serviceDay's active services, if any.
+func (api *RestAPI) activeTripInBlockAt(ctx context.Context, blockID sql.NullString, serviceDay time.Time, sinceMidnightNs int64) (string, bool) {
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDay.Format("20060102"))
+	if err != nil || len(serviceIDs) == 0 {
+		return "", false
+	}
+
+	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+		BlockID:    blockID,
+		ServiceIds: serviceIDs,
+	})
+	if err != nil {
+		return "", false
+	}
+
+	for _, bt := range blockTrips {
+		if !bt.EarliestTime.Valid || !bt.LatestTime.Valid {
+			continue
+		}
+		if sinceMidnightNs >= bt.EarliestTime.Int64 && sinceMidnightNs <= bt.LatestTime.Int64 {
+			return bt.ID, true
+		}
+	}
+
+	return "", false
 }
 
 // projectPositionWithShapePoints projects actualPos onto the nearest segment

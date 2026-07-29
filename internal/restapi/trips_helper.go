@@ -14,6 +14,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -557,31 +558,44 @@ func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, min
 
 // calculateBlockTripSequence calculates the index of a trip within its block's ordered trip sequence
 // for trips that are active on the given service date.
-// Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
+// Returns 0 when the sequence is unavailable, for callers that treat 0 as "no data".
 func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
+	seq, ok := api.blockTripSequence(ctx, tripID, serviceDate)
+	if !ok {
+		return 0
+	}
+	return seq
+}
+
+// blockTripSequence returns the zero-based index of a trip within its block's
+// ordered sequence for the given service date, and whether it was resolved.
+// Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
+func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) (int, bool) {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get trip",
-			slog.String("trip_id", tripID),
-			slog.String("error", err.Error()))
-		return 0
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("blockTripSequence: failed to get trip",
+				slog.String("trip_id", tripID),
+				slog.String("error", err.Error()))
+		}
+		return 0, false
 	}
 
 	if !trip.BlockID.Valid {
-		return 0
+		return 0, false
 	}
 
 	formattedDate := serviceDate.Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
-		slog.Warn("calculateBlockTripSequence: failed to get active service IDs",
+		slog.Warn("blockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),
 			slog.String("date", formattedDate),
 			slog.String("error", err.Error()))
-		return 0
+		return 0, false
 	}
 	if len(activeServiceIDs) == 0 {
-		return 0
+		return 0, false
 	}
 
 	// Use optimized query with ROW_NUMBER() window function
@@ -592,15 +606,15 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	})
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Warn("calculateBlockTripSequence: failed to get block trip sequence",
+			slog.Warn("blockTripSequence: failed to get block trip sequence",
 				slog.String("trip_id", tripID),
 				slog.String("block_id", trip.BlockID.String),
 				slog.String("error", err.Error()))
 		}
-		return 0
+		return 0, false
 	}
 
-	return int(seq)
+	return int(seq), true
 }
 
 // calculatePreciseDistanceAlongTripWithCoords calculates the distance along a trip's shape to a stop
@@ -648,25 +662,6 @@ func (api *RestAPI) calculatePreciseDistanceAlongTripWithCoords(
 		)
 	}
 	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
-}
-
-// calculatePreciseDistanceAlongTrip is the legacy version that fetches stop coordinates from the database
-// Deprecated: Use calculatePreciseDistanceAlongTripWithCoords with batch-fetched coordinates instead
-func (api *RestAPI) calculatePreciseDistanceAlongTrip(ctx context.Context, stopID string, shapePoints []gtfs.ShapePoint) float64 {
-	if len(shapePoints) == 0 {
-		return 0.0
-	}
-
-	// Get stop coordinates
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil {
-		return 0.0
-	}
-
-	// Pre-calculate cumulative distances (this is inefficient for multiple stops)
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-
-	return api.calculatePreciseDistanceAlongTripWithCoords(stop.Lat, stop.Lon, shapePoints, cumulativeDistances)
 }
 
 // preCalculateCumulativeDistances pre-calculates cumulative distances along shape points
@@ -831,7 +826,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
 				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
-				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
+				StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
 			})
@@ -847,7 +842,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 				StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 				ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
 				DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
-				StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
+				StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
 				DistanceAlongTrip:   0.0,
 				HistoricalOccupancy: "",
 			})
@@ -917,7 +912,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
 			ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
 			DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
-			StopHeadsign:        utils.NullStringOrEmpty(stopTime.StopHeadsign),
+			StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
 			DistanceAlongTrip:   distanceAlongTrip,
 			HistoricalOccupancy: "",
 		})

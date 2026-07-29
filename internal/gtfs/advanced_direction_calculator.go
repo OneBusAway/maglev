@@ -19,7 +19,6 @@ import (
 
 const (
 	defaultStandardDeviationThreshold = 0.7
-	shapePointWindow                  = 5
 )
 
 // AdvancedDirectionCalculator implements the OneBusAway Java algorithm for stop direction calculation
@@ -355,29 +354,65 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 		closestIdx = 0
 	}
 
-	// Define window around stop
-	indexFrom := closestIdx - shapePointWindow
-	if indexFrom < 0 {
-		indexFrom = 0
+	// Match the Java reference: the orientation is the bearing of the single shape
+	// segment the stop lies on. Java's DistanceTraveledShapePointIndex computes
+	// computeOrientation(index-1, index) over the segment bracketing the stop — NOT
+	// a wide multi-point chord. A wide chord rotates the bearing on curves and
+	// produces adjacent-bucket (±45°) divergences from the reference.
+	n := len(shapePoints)
+	var fromIdx, toIdx int
+	switch {
+	case closestIdx <= 0:
+		fromIdx, toIdx = 0, 1
+	case closestIdx >= n-1:
+		fromIdx, toIdx = n-2, n-1
+	default:
+		// Pick whichever adjacent segment (prev→closest or closest→next) the stop
+		// lies nearest to — i.e. the segment the stop is actually on.
+		prevD := distanceToSegment(stopLat, stopLon,
+			shapePoints[closestIdx-1].Lat, shapePoints[closestIdx-1].Lon,
+			shapePoints[closestIdx].Lat, shapePoints[closestIdx].Lon)
+		nextD := distanceToSegment(stopLat, stopLon,
+			shapePoints[closestIdx].Lat, shapePoints[closestIdx].Lon,
+			shapePoints[closestIdx+1].Lat, shapePoints[closestIdx+1].Lon)
+		if prevD <= nextD {
+			fromIdx, toIdx = closestIdx-1, closestIdx
+		} else {
+			fromIdx, toIdx = closestIdx, closestIdx+1
+		}
 	}
-	indexTo := closestIdx + shapePointWindow
-	if indexTo >= len(shapePoints) {
-		indexTo = len(shapePoints) - 1
+
+	fromPoint := shapePoints[fromIdx]
+	toPoint := shapePoints[toIdx]
+
+	// Use raw lon/lat deltas with NO cos(latitude) scaling, matching the Java
+	// reference (SphericalGeometryLibrary.getOrientation). A cos-lat correction
+	// would be more geographically accurate but diverges from the reference values
+	// clients expect, so we intentionally omit it.
+	dx := toPoint.Lon - fromPoint.Lon
+	dy := toPoint.Lat - fromPoint.Lat
+
+	return math.Atan2(dy, dx), nil
+}
+
+// distanceToSegment returns the (planar) distance from point (plat, plon) to the
+// segment (alat, alon)–(blat, blon). Used only to decide which adjacent shape
+// segment a stop lies on, so a flat lat/lon approximation is sufficient.
+func distanceToSegment(plat, plon, alat, alon, blat, blon float64) float64 {
+	dx := blon - alon
+	dy := blat - alat
+	if dx == 0 && dy == 0 {
+		return math.Hypot(plon-alon, plat-alat)
 	}
-
-	// Calculate orientation from the window using flat-earth approximation
-	if indexTo > indexFrom {
-		fromPoint := shapePoints[indexFrom]
-		toPoint := shapePoints[indexTo]
-
-		dx := (toPoint.Lon - fromPoint.Lon) * math.Cos(fromPoint.Lat*math.Pi/180.0)
-		dy := toPoint.Lat - fromPoint.Lat
-
-		orientation := math.Atan2(dy, dx)
-		return orientation, nil
+	t := ((plon-alon)*dx + (plat-alat)*dy) / (dx*dx + dy*dy)
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
 	}
-
-	return 0, sql.ErrNoRows
+	projLon := alon + t*dx
+	projLat := alat + t*dy
+	return math.Hypot(plon-projLon, plat-projLat)
 }
 
 // getAngleAsDirection converts a radian angle to compass direction

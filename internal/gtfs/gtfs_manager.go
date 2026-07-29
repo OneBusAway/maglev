@@ -15,13 +15,12 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/metrics"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/logging"
 )
-
-const NoRadiusLimit = -1
 
 // RegionBounds represents the geographic boundaries of the GTFS region
 type RegionBounds struct {
@@ -337,7 +336,7 @@ func (manager *Manager) GetStopsForLocation(
 
 	if stopCodeQuery != "" {
 		idx := slices.IndexFunc(stops, func(stop gtfsdb.Stop) bool {
-			return utils.NullStringOrEmpty(stop.Code) == stopCodeQuery
+			return nulls.StringOrEmpty(stop.Code) == stopCodeQuery
 		})
 		if idx >= 0 {
 			return []gtfsdb.Stop{stops[idx]}, false
@@ -399,8 +398,9 @@ func (manager *Manager) GetStopsInBounds(
 	ctx context.Context,
 	loc *LocationParams,
 	maxCount int,
+	clamp ...bool,
 ) []gtfsdb.Stop {
-	bounds := BoundsFromParams(loc)
+	bounds := BoundsFromParams(loc, clamp...)
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))

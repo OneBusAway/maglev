@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -59,13 +60,13 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		results = append(results, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
 			route.AgencyID,
-			utils.NullStringOrEmpty(route.ShortName),
-			utils.NullStringOrEmpty(route.LongName),
-			utils.NullStringOrEmpty(route.Desc),
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			utils.NullStringOrEmpty(route.Url),
-			utils.NullStringOrEmpty(route.Color),
-			utils.NullStringOrEmpty(route.TextColor)))
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor)))
 	}
 
 	references := models.NewEmptyReferences()

@@ -291,22 +291,28 @@ func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 func TestStopsForLocationMissingLat(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lon=-122.426966")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.True(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestStopsForLocationMissingLon(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.True(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestStopsForLocationMissingBothLatAndLon(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.True(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestStopsForLocationHandlerWithSituations(t *testing.T) {

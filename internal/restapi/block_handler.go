@@ -3,7 +3,6 @@ package restapi
 import (
 	"cmp"
 	"context"
-	"database/sql"
 	"net/http"
 	"slices"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -35,7 +35,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, sql.NullString{String: blockID, Valid: true})
+	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
 	if err != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
@@ -124,12 +124,14 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 				blockStopTime := models.BlockStopTime{
 					BlockSequence:      int(stop.StopSequence - 1),
 					DistanceAlongBlock: blockDistance,
-					StopTime: models.StopTime{
-						ArrivalTime:   models.NewModelDuration(time.Duration(stop.ArrivalTime)),
-						DepartureTime: models.NewModelDuration(time.Duration(stop.DepartureTime)),
-						DropOffType:   int(stop.DropOffType.Int64),
-						PickupType:    int(stop.PickupType.Int64),
-						StopID:        utils.FormCombinedID(agencyID, stop.StopID),
+					StopTime: models.BlockStopTimeData{
+						StopTime: models.StopTime{
+							ArrivalTime:   models.NewModelDuration(time.Duration(stop.ArrivalTime)),
+							DepartureTime: models.NewModelDuration(time.Duration(stop.DepartureTime)),
+							StopID:        utils.FormCombinedID(agencyID, stop.StopID),
+						},
+						DropOffType: int(stop.DropOffType.Int64),
+						PickupType:  int(stop.PickupType.Int64),
 					},
 				}
 				blockStopTimes = append(blockStopTimes, blockStopTime)

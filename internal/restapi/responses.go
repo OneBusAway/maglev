@@ -33,7 +33,7 @@ func (api *RestAPI) sendNotFound(w http.ResponseWriter, r *http.Request) {
 		Code:        http.StatusNotFound,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "resource not found",
-		Version:     2,
+		Version:     models.APIVersion,
 	}
 
 	err := json.NewEncoder(w).Encode(response)
@@ -51,7 +51,7 @@ func (api *RestAPI) sendUnauthorized(w http.ResponseWriter, r *http.Request) { /
 		Code:        http.StatusUnauthorized,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        "permission denied",
-		Version:     1,
+		Version:     models.APIVersion,
 	}
 
 	err := json.NewEncoder(w).Encode(response)
@@ -73,7 +73,7 @@ func (api *RestAPI) sendError(w http.ResponseWriter, r *http.Request, code int, 
 		Code:        code,
 		CurrentTime: models.ResponseCurrentTime(api.Clock),
 		Text:        message,
-		Version:     2,
+		Version:     models.APIVersion,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

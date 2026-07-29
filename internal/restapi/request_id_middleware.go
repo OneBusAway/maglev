@@ -29,11 +29,3 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
-
-// GetRequestID allows other packages to retrieve the ID without importing restapi.
-func GetRequestID(ctx context.Context) string {
-	if id, ok := ctx.Value(RequestIDKey).(string); ok {
-		return id
-	}
-	return ""
-}

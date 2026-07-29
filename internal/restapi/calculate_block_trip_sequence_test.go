@@ -3,7 +3,6 @@ package restapi
 import (
 	"cmp"
 	"context"
-	"database/sql"
 	"math"
 	"slices"
 	"testing"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestCalculateBlockTripSequence(t *testing.T) {
@@ -42,7 +42,7 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 		}
 		seenBlocks[bid] = true
 
-		blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, sql.NullString{String: bid, Valid: true})
+		blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, nulls.String(bid))
 		if err != nil {
 			continue
 		}

@@ -24,7 +24,7 @@ func TestNewResponse(t *testing.T) {
 	assert.Equal(t, testCode, response.Code, "Response code should match input")
 	assert.Equal(t, testData, response.Data, "Response data should match input")
 	assert.Equal(t, testText, response.Text, "Response text should match input")
-	assert.Equal(t, 2, response.Version, "Response version should be 2")
+	assert.Equal(t, APIVersion, response.Version, "Response version should be APIVersion")
 	assert.GreaterOrEqual(t, response.CurrentTime, currentTimeBeforeCall, "Response current time should be after or equal to time before call")
 	assert.LessOrEqual(t, response.CurrentTime, currentTimeAfterCall, "Response current time should be before or equal to time after call")
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100, "Response current time should be recent")
@@ -40,7 +40,7 @@ func TestNewEntryResponse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
-	assert.Equal(t, 2, response.Version)
+	assert.Equal(t, APIVersion, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
 	responseData, ok := response.Data.(map[string]any)
@@ -60,7 +60,7 @@ func TestNewOKResponse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code, "Response code should be StatusOK")
 	assert.Equal(t, "OK", response.Text, "Response text should be 'OK'")
 	assert.Equal(t, testData, response.Data, "Response data should match input")
-	assert.Equal(t, 2, response.Version, "Response version should be 2")
+	assert.Equal(t, APIVersion, response.Version, "Response version should be APIVersion")
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100, "Response current time should be recent")
 }
 
@@ -74,7 +74,7 @@ func TestNewListResponse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
-	assert.Equal(t, 2, response.Version)
+	assert.Equal(t, APIVersion, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
 	responseData, ok := response.Data.(map[string]any)
@@ -96,7 +96,7 @@ func TestNewListResponseWithRange(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
-	assert.Equal(t, 2, response.Version)
+	assert.Equal(t, APIVersion, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
 	responseData, ok := response.Data.(map[string]any)
@@ -145,7 +145,7 @@ func TestNewArrivalsAndDepartureResponse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "OK", response.Text)
-	assert.Equal(t, 2, response.Version)
+	assert.Equal(t, APIVersion, response.Version)
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100)
 
 	responseData, ok := response.Data.(map[string]any)
@@ -189,7 +189,7 @@ func TestResponseModelJSON(t *testing.T) {
 		CurrentTime: 1746324484528,
 		Data:        map[string]string{"test": "data"},
 		Text:        "Test Message",
-		Version:     2,
+		Version:     APIVersion,
 	}
 
 	// Marshal to JSON
