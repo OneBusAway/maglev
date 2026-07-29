@@ -277,6 +277,7 @@ func TestMetricsForStop_SingleTripBlock(t *testing.T) {
 		StopIndex:          buildStopIndex(stops),
 		DistanceAlongBlock: 250, // halfway between stop 1 and stop 2
 		NextStopIndex:      1,   // stop 2 (BlockSequence=1) is next
+		InRange:            true,
 	}
 
 	// Target = stop 1 (BlockSeq 0, dist 0): bus has just passed it.
@@ -312,6 +313,7 @@ func TestMetricsForStop_MultiTripBlock_NumberOfStopsAwayCanExceedTripLength(t *t
 		StopIndex:          buildStopIndex(stops),
 		DistanceAlongBlock: 200, // bus is early in trip A
 		NextStopIndex:      1,   // next stop is A's stop 2 (BlockSeq 1)
+		InRange:            true,
 	}
 
 	// Target = B's stop 2 (BlockSeq 3). Bus is 2 block-stops away from next stop.
@@ -319,6 +321,35 @@ func TestMetricsForStop_MultiTripBlock_NumberOfStopsAwayCanExceedTripLength(t *t
 	require.True(t, ok)
 	assert.Equal(t, 2800.0, d)
 	assert.Equal(t, 2, n) // 3 − 1
+}
+
+// TestMetricsForStop_NotInRangeRefusesClampedResults pins the InRange gate:
+// when currentTime is BEFORE the block's first stop, interpolateBlockDistance
+// clamps DistanceAlongBlock to stops[0]=0 and findNextStopIndex returns 0 (not
+// -1), so the earlier guards don't catch this case. Without the InRange gate,
+// an 08:00 request for a trip departing 23:00 would be reported as "14 stops
+// away / 6 km" — a bus that hasn't left the depot rendered as imminent.
+func TestMetricsForStop_NotInRangeRefusesClampedResults(t *testing.T) {
+	stops := []blockStopMetric{
+		{TripID: "A", StopSequenceInTrip: 1, BlockSequence: 0, DistanceAlongBlock: 0, EffectiveStopSeconds: 82800},   // 23:00
+		{TripID: "A", StopSequenceInTrip: 2, BlockSequence: 1, DistanceAlongBlock: 3000, EffectiveStopSeconds: 84600}, // 23:30
+		{TripID: "A", StopSequenceInTrip: 14, BlockSequence: 13, DistanceAlongBlock: 6000, EffectiveStopSeconds: 86000},
+	}
+	// currentTime=08:00 (28800s) is BEFORE the block starts.
+	// interpolateBlockDistance clamps to 0; findNextStopIndex returns 0.
+	snap := &scheduledBlockSnapshot{
+		Stops:              stops,
+		StopIndex:          buildStopIndex(stops),
+		DistanceAlongBlock: 0,
+		NextStopIndex:      0,
+		InRange:            false,
+	}
+
+	// Without the InRange gate this would report d=6000, n=13 — completely wrong.
+	d, n, ok := snap.metricsForStop("A", 14)
+	assert.False(t, ok, "!InRange must refuse the clamped snapshot")
+	assert.Equal(t, 0.0, d)
+	assert.Equal(t, 0, n)
 }
 
 func TestMetricsForStop_NextStopUnset(t *testing.T) {

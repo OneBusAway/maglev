@@ -310,12 +310,20 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 //	distanceFromStop  = targetStopDistanceAlongBlock − snapshotDistanceAlongBlock
 //	numberOfStopsAway = targetStopBlockSequence − nextStopBlockSequence
 //
-// Returns ok=false (callers leave both at zero) when target stop isn't on the
-// block, or when NextStopIndex<0 — Java's
-// getScheduledBlockLocationFromScheduledTime returns null past the block's
-// last stop, which short-circuits applyBlockLocationToBean. Without this
-// guard our snapshot clamps to the last stop's distance, producing
-// "bus is 7 km past your stop" for trips that ended hours ago.
+// Returns ok=false (callers leave both at zero) when:
+//   - target stop isn't on the block, or
+//   - NextStopIndex<0 (currentTime is past the block's last stop — Java's
+//     getScheduledBlockLocationFromScheduledTime returns null, which
+//     short-circuits applyBlockLocationToBean; without this guard our
+//     snapshot clamps to the last stop's distance, producing "bus is 7 km
+//     past your stop" for trips that ended hours ago), or
+//   - !InRange (currentTime is before or after the block's schedule
+//     window). BuildTripStatus deliberately leaves the tripStatus distance
+//     fields at their defaults when InRange is false; callers of this
+//     method must apply the same gate or the arrival's distanceFromStop /
+//     numberOfStopsAway will report a clamped-to-block-start position for
+//     a bus that hasn't left the depot yet — e.g. "14 stops away" on an
+//     08:00 request for a trip departing 23:00 the same service day.
 func (s *scheduledBlockSnapshot) metricsForStop(
 	tripID string,
 	stopSequenceInTrip int,
@@ -325,6 +333,9 @@ func (s *scheduledBlockSnapshot) metricsForStop(
 		return 0, 0, false
 	}
 	if s.NextStopIndex < 0 {
+		return 0, 0, false
+	}
+	if !s.InRange {
 		return 0, 0, false
 	}
 	target := s.Stops[idx]
