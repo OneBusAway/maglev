@@ -27,6 +27,11 @@ import (
 // 12:00 falls inside the handler's (-30min/+10min) active window.
 var tripsForRouteTestClock = time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC)
 
+// afterMidnightClock is 00:30 UTC on 2025-06-13 — after midnight.
+// Used by the overnight interline fixture where the previous day's trips
+// (23:30–24:30) are active but today's (23:00–23:30) are not.
+var afterMidnightClock = time.Date(2025, 6, 13, 0, 30, 0, 0, time.UTC)
+
 const (
 	tripsForRouteAgencyID = "tfr-agency"
 	tripsForRouteRouteID  = "tfr-route"
@@ -520,5 +525,121 @@ func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
 	assert.Equal(t, expectedTripID, entry.TripId)
 	require.NotNil(t, entry.Status)
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// createTestApiWithOvernightInterlineFixture builds a RestAPI where the same
+// block ID is reused across two service days (yesterday and today) with
+// different queried-route trips. At afterMidnightClock (00:30), only
+// yesterday's trips are in the active window. This tests that the composite
+// key (BlockID+ServiceID) resolves to yesterday's queried-route trip, not
+// today's.
+//
+// Yesterday (2025-06-12, service tfr-svc-yest):
+//
+//	tfr-yest-a on tfr-route      23:00–24:10  block=tfr-overnight
+//	tfr-yest-b on tfr-route-otr  23:55–24:45  block=tfr-overnight
+//
+// At 00:30 (prevDaySinceMidnight = 24h30m), tfr-yest-a ends at 24:10 < 24:30
+// so it is NOT the active trip; tfr-yest-b (24:45) is. But tfr-yest-a IS
+// within the block-finding window (from=24:00, to=24:40), so the block is
+// found via yesterday's queried-route trip.
+//
+// Today (2025-06-13, service tfr-svc-today):
+//
+//	tfr-today-a on tfr-route      23:00–23:30  block=tfr-overnight
+//	tfr-today-b on tfr-route-otr  23:00–23:30  block=tfr-overnight
+func createTestApiWithOvernightInterlineFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			// Thursday 2025-06-12
+			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
+			// Friday 2025-06-13
+			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-yest-a,Headsign A,0,tfr-overnight\n" +
+			"tfr-route-otr,tfr-svc-yest,tfr-yest-b,Headsign B,0,tfr-overnight\n" +
+			tripsForRouteRouteID + ",tfr-svc-today,tfr-today-a,Headsign A,0,tfr-overnight\n" +
+			"tfr-route-otr,tfr-svc-today,tfr-today-b,Headsign B,0,tfr-overnight\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-yest-a,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-a,24:10:00,24:10:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-yest-b,23:55:00,23:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-b,24:45:00,24:45:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-today-a,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-a,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-today-b,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-b,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n",
+	}
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	zipPath := filepath.Join(t.TempDir(), "trips-for-route-overnight.zip")
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+
+	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(gtfsManager.Shutdown)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(api.Shutdown)
+	return api
+}
+
+func TestTripsForRouteHandler_OvernightInterlinedBlock(t *testing.T) {
+	api := createTestApiWithOvernightInterlineFixture(t, clock.NewMockClock(afterMidnightClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := afterMidnightClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	// Must resolve to yesterday's queried-route trip, not today's.
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-a")
+	assert.Equal(t, expectedTripID, entry.TripId,
+		"tripId must be yesterday's queried-route trip, not today's")
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
 }

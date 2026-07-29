@@ -314,8 +314,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]bool)
 
-	// Map block ID → queried-route trip for interlined blocks.
-	blockTripForRoute := make(map[string]string)
+	// Map block+service → queried-route trip for interlined blocks.
+	// ServiceID is the GTFS calendar service ID from trips.txt. Using it as part
+	// of the key guarantees the queried-route trip matches the active trip's
+	// service day, even when a block ID is reused across days.
+	type blockServiceKey struct {
+		BlockID   string
+		ServiceID string
+	}
+	blockTripForRoute := make(map[blockServiceKey]string)
 	var interlinedBlockIDs []sql.NullString
 	for _, t := range fetchedTrips {
 		if t.RouteID != routeID && t.BlockID.Valid {
@@ -336,8 +343,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			for _, bt := range blockTrips {
 				if bt.RouteID == routeID && bt.BlockID.Valid {
-					if _, exists := blockTripForRoute[bt.BlockID.String]; !exists {
-						blockTripForRoute[bt.BlockID.String] = bt.ID
+					key := blockServiceKey{BlockID: bt.BlockID.String, ServiceID: bt.ServiceID}
+					if _, exists := blockTripForRoute[key]; !exists {
+						blockTripForRoute[key] = bt.ID
 					}
 				}
 			}
@@ -385,7 +393,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		entryTripID := tripID
 		entryAgencyID := activeAgencyID
 		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
-			if rt, ok := blockTripForRoute[fetchedTrip.BlockID.String]; ok {
+			key := blockServiceKey{BlockID: fetchedTrip.BlockID.String, ServiceID: fetchedTrip.ServiceID}
+			if rt, ok := blockTripForRoute[key]; ok {
 				entryTripID = rt
 				entryAgencyID = agencyID
 			}
