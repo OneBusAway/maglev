@@ -340,13 +340,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		})
 		if err != nil {
 			api.Logger.Warn("trips-for-route: failed to fetch block trips for interlining", "error", err)
-		} else {
-			for _, bt := range blockTrips {
-				if bt.RouteID == routeID && bt.BlockID.Valid {
-					key := blockServiceKey{BlockID: bt.BlockID.String, ServiceID: bt.ServiceID}
-					if _, exists := blockTripForRoute[key]; !exists {
-						blockTripForRoute[key] = bt.ID
-					}
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		for _, bt := range blockTrips {
+			if bt.RouteID == routeID && bt.BlockID.Valid {
+				key := blockServiceKey{BlockID: bt.BlockID.String, ServiceID: bt.ServiceID}
+				if _, exists := blockTripForRoute[key]; !exists {
+					blockTripForRoute[key] = bt.ID
 				}
 			}
 		}
