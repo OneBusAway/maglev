@@ -120,7 +120,21 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			expectStatus: http.StatusOK,
 		},
 		{
-			name:         "Non-existent Route",
+			name:         "Unknown Route in Known Agency",
+			routeID:      utils.FormCombinedID(tripsForRouteAgencyID, "NONEXISTENT_ROUTE"),
+			minExpected:  0,
+			maxExpected:  0,
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "Unknown Agency",
+			routeID:      utils.FormCombinedID("UNKNOWN_AGENCY", "NONEXISTENT"),
+			minExpected:  0,
+			maxExpected:  0,
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "Malformed ID — No Underscore",
 			routeID:      "NONEXISTENT",
 			minExpected:  0,
 			maxExpected:  0,
@@ -161,6 +175,10 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 
 			assert.GreaterOrEqual(t, len(model.Data.List), tt.minExpected)
 			assert.LessOrEqual(t, len(model.Data.List), tt.maxExpected)
+
+			if len(model.Data.List) == 0 {
+				return
+			}
 
 			expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
 			for i, entry := range model.Data.List {
