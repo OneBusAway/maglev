@@ -331,11 +331,15 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			numberOfStopsAway      = 0
 		)
 
-		// Get vehicle if available
+		// Get vehicle if available. The response's top-level `vehicleId`
+		// is the combined {agencyId}_{vehicleId} form per spec, matching
+		// tripStatus.vehicleId (set by BuildTripStatus below). Internal
+		// lookups (GetVehicleForTrip / GetVehicleByID) use the raw RT id
+		// unchanged; the combined form is an output-only concern.
 		vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
 		if vehicle != nil && vehicle.Trip != nil {
 			if vehicle.ID != nil {
-				vehicleID = vehicle.ID.ID
+				vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
 			} else {
 				api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", st.TripID)
 			}

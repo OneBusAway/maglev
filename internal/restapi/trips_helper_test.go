@@ -502,10 +502,16 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	require.NotNil(t, status)
 
 	require.NotZero(t, status.TotalDistanceAlongTrip)
-	require.NotZero(t, status.DistanceAlongTrip)
 	assert.Greater(t, status.TotalDistanceAlongTrip, float64(0), "TotalDistanceAlongTrip should be > 0 with shape data")
-	assert.Greater(t, status.DistanceAlongTrip, float64(0), "DistanceAlongTrip should be > 0 for a vehicle mid-route")
-	assert.Less(t, status.DistanceAlongTrip, status.TotalDistanceAlongTrip, "DistanceAlongTrip should be less than total for a mid-route vehicle")
+	assert.Greater(t, status.ScheduledDistanceAlongTrip, float64(0),
+		"ScheduledDistanceAlongTrip should be > 0 for a vehicle mid-route")
+	assert.Less(t, status.ScheduledDistanceAlongTrip, status.TotalDistanceAlongTrip,
+		"ScheduledDistanceAlongTrip should be less than total for a mid-route vehicle")
+	// distanceAlongTrip is intentionally NOT asserted non-zero: per the OBA
+	// spec it's the LIVE (GPS-derived) position, distinct from
+	// scheduledDistanceAlongTrip. Until block-cumulative GPS projection lands
+	// (see summary/distance-along-shape-library-port.md) it stays at 0 rather
+	// than being incorrectly mirrored from the schedule value.
 }
 
 func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
@@ -532,7 +538,10 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, model)
-	assert.Equal(t, vehicleID, model.VehicleID)
+	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), model.VehicleID,
+		"tripStatus.vehicleId must be the combined {agencyId}_{vehicleId} form "+
+			"required by the OBA spec (arrivals-and-departures-for-stop / "+
+			"arrival-and-departure-for-stop / trip-details).")
 }
 
 func makeStopTimePtrs(stops []gtfsdb.StopTime) []*gtfsdb.StopTime {
@@ -968,8 +977,10 @@ func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
-	assert.Equal(t, vehicleID, status.VehicleID,
-		"VehicleID should be the raw GTFS-RT id (no agency prefix), matching Java")
+	assert.Equal(t, utils.FormCombinedID(agencyID, vehicleID), status.VehicleID,
+		"tripStatus.vehicleId must be the combined {agencyId}_{vehicleId} "+
+			"form required by the OBA spec; downstream handlers parse it back "+
+			"with utils.ExtractAgencyIDAndCodeID.")
 
 	require.NotNil(t, status.LastKnownLocation)
 	assert.InDelta(t, float64(lat), status.LastKnownLocation.Lat, 0.001)

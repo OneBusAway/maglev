@@ -66,10 +66,13 @@ func (api *RestAPI) BuildTripStatus(
 
 	if vehicle != nil {
 		if vehicle.ID != nil {
-			// Emit the GTFS-RT vehicle id verbatim — Java keeps it un-prefixed
-			// here and the top-level ArrivalAndDeparture.VehicleID already does
-			// the same, so wrapping it with the agency was a double-prefix bug.
-			status.VehicleID = vehicle.ID.ID
+			// The OBA spec requires the combined {agencyId}_{vehicleId} form
+			// here — see the vehicleId field on
+			// arrival-and-departure-for-stop, arrivals-and-departures-for-stop,
+			// and trip-details. Downstream consumers (trip_details_handler,
+			// trip_for_vehicle_handler) parse it back with
+			// utils.ExtractAgencyIDAndCodeID and 404 on the un-prefixed form.
+			status.VehicleID = utils.FormCombinedID(agencyID, vehicle.ID.ID)
 		}
 		if vehicle.OccupancyStatus != nil {
 			status.OccupancyStatus = vehicle.OccupancyStatus.String()
@@ -231,21 +234,60 @@ func (api *RestAPI) BuildTripStatus(
 		if snap.ActiveTripTotalDistance > 0 {
 			status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
 		}
-		// Java's TripStatusBeanServiceImpl:283-292 sets distanceAlongTrip
-		// from blockLocation.getDistanceAlongBlock() minus activeBlockTrip.
-		// getDistanceAlongBlock(). Java leaves it NaN (→ serialized 0)
-		// unless a live vehicle is actually operating this arrival's block
-		// instance (AbstractBlockLocationServiceImpl:150). We approximate
-		// BlockInstance with keepShiftContainingTrip's shift: attach
-		// distanceAlongTrip whenever the live vehicle's own RT-declared
-		// trip is in the same shift as this arrival's trip. Filtering to
-		// the shift (not the whole shared block_id) avoids the over-attach
-		// on blocks that Java's bundle would have split.
+		// Per the OBA spec, distanceAlongTrip is a distinct field from
+		// scheduledDistanceAlongTrip: the former is where the vehicle
+		// ACTUALLY is (from live GPS), the latter is where the schedule
+		// expects it to be. Java derives it from blockLocation.
+		// getDistanceAlongBlock() minus activeBlockTrip.getDistanceAlong
+		// Block() -- a live-position value pulled from the RT record.
+		//
+		// The correct implementation requires block-cumulative shape
+		// projection (concat every block-trip's polyline; project vehicle
+		// GPS onto the full assembly; subtract active-trip block offset).
+		// See summary/distance-along-shape-library-port.md -- that's the
+		// tracked followup.
+		//
+		// Until then, we produce a best-effort value in two tiers:
+		//
+		// 1) When snap's distance-picked active trip matches the vehicle's
+		//    RT-declared trip, snap.ActiveTripShape IS the vehicle's shape
+		//    -- projecting the vehicle's GPS onto it gives the true live
+		//    position within that trip. This is the correct GPS-derived
+		//    value that distinguishes distanceAlongTrip from scheduled
+		//    DistanceAlongTrip.
+		//
+		// 2) When they don't match, projecting onto ActiveTripShape can
+		//    produce catastrophic errors (a loop-route vehicle 21km along
+		//    the block matches near a trip-start segment on a different
+		//    trip's shape, yielding ~11m). Fall back to the schedule
+		//    value -- collapses the two fields into one number but is
+		//    never wildly wrong. Both are gated on the shift check to
+		//    match Java's per-BlockInstance semantics.
 		if vehicle != nil && vehicle.Trip != nil && snap.ShiftTripIDs != nil {
 			_, sameShift := snap.ShiftTripIDs[vehicle.Trip.ID.ID]
 			_, arrivalInShift := snap.ShiftTripIDs[tripID]
 			if sameShift && arrivalInShift {
-				status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
+				gpsAssigned := false
+				if vehicle.Position != nil &&
+					vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil &&
+					snap.ActiveTripID == vehicle.Trip.ID.ID {
+					gpsPos := models.Location{
+						Lat: float64(*vehicle.Position.Latitude),
+						Lon: float64(*vehicle.Position.Longitude),
+					}
+					if dist, ok := projectVehicleDistanceOnShape(
+						snap.ActiveTripShape,
+						snap.ActiveTripCumulativeDistances,
+						gpsPos,
+					); ok {
+						status.DistanceAlongTrip = dist
+						status.LastKnownDistanceAlongTrip = dist
+						gpsAssigned = true
+					}
+				}
+				if !gpsAssigned {
+					status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
+				}
 			}
 		}
 	}

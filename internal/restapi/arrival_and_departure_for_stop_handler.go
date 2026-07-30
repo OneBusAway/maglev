@@ -302,13 +302,21 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	scheduledArrivalTime := serviceMidnight.Add(arrivalOffset)
 	scheduledDepartureTime := serviceMidnight.Add(departureOffset)
 
-	// Get real-time data for this trip if available
+	// Get real-time data for this trip if available.
+	//
+	// numberOfStopsAway is initialized to 0, matching the plural handler and
+	// the spec's "no block location available → distanceFromStop,
+	// numberOfStopsAway, vehicleId, predicted, lastUpdateTime, and tripStatus
+	// are absent or zero" (arrivals-and-departures-for-stop §11a). A real
+	// negative value (vehicle already past this stop) comes back from
+	// snapshot.metricsForStop and overrides the zero init — the sentinel
+	// -1 collided with that legitimate signal.
 	var (
-		predicted         bool
-		vehicleID         string
-		tripStatus        *models.TripStatus
-		distanceFromStop  float64
-		numberOfStopsAway = -1
+		predicted        bool
+		vehicleID        string
+		tripStatus       *models.TripStatus
+		distanceFromStop float64
+		numberOfStopsAway int
 	)
 
 	// If vehicleId is provided, validate it matches the trip
@@ -333,7 +341,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	if vehicle != nil && vehicle.Trip != nil {
 		if vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
+			// Combined {agencyId}_{vehicleId} form per spec; matches
+			// tripStatus.vehicleId (set by BuildTripStatus below) and lets
+			// clients round-trip this value into /trip-for-vehicle/{id} and
+			// /trip-details/{id}?vehicleId=... which both extract the agency
+			// prefix before doing GetVehicleByID on the raw id.
+			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
 		} else {
 			api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		}
