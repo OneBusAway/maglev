@@ -32,6 +32,10 @@ var tripsForRouteTestClock = time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC)
 // (23:30–24:30) are active but today's (23:00–23:30) are not.
 var afterMidnightClock = time.Date(2025, 6, 13, 0, 30, 0, 0, time.UTC)
 
+// loopRouteClock is 10:15 UTC on 2025-06-12 — used by the looping-route
+// fixture where a block visits the queried route, leaves, then returns.
+var loopRouteClock = time.Date(2025, 6, 12, 10, 15, 0, 0, time.UTC)
+
 const (
 	tripsForRouteAgencyID = "tfr-agency"
 	tripsForRouteRouteID  = "tfr-route"
@@ -620,6 +624,9 @@ func createTestApiWithOvernightInterlineFixture(t *testing.T, c clock.Clock) *Re
 	return api
 }
 
+// TestTripsForRouteHandler_OvernightInterlinedBlock verifies that when a block
+// ID is reused across two service days, the composite block+service key resolves
+// to the correct queried-route trip from the exact same service day.
 func TestTripsForRouteHandler_OvernightInterlinedBlock(t *testing.T) {
 	api := createTestApiWithOvernightInterlineFixture(t, clock.NewMockClock(afterMidnightClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
@@ -641,5 +648,107 @@ func TestTripsForRouteHandler_OvernightInterlinedBlock(t *testing.T) {
 		"tripId must be yesterday's queried-route trip, not today's")
 	require.NotNil(t, entry.Status)
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// createTestApiWithLoopingRouteFixture builds a RestAPI with a block that
+// visits the queried route twice with an off-route trip in between:
+//
+//	tfr-loop-a on tfr-route      09:00–09:45   block=tfr-loop-block
+//	tfr-loop-b on tfr-route-otr  10:00–10:30   block=tfr-loop-block
+//	tfr-loop-c on tfr-route      10:30–11:15   block=tfr-loop-block
+//
+// At loopRouteClock (10:15), tfr-loop-b is the active trip (on the other
+// route). The outer tripId must resolve to tfr-loop-c (the queried-route trip
+// whose time window overlaps with the active trip), not tfr-loop-a (the first
+// queried-route trip encountered).
+func createTestApiWithLoopingRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-loop-a,Headsign A,0,tfr-loop-block\n" +
+			"tfr-route-otr,tfr-svc,tfr-loop-b,Headsign B,0,tfr-loop-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-loop-c,Headsign C,0,tfr-loop-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-loop-a,09:00:00,09:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-a,09:45:00,09:45:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-loop-b,10:00:00,10:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-b,10:30:00,10:30:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-loop-c,10:30:00,10:30:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-c,11:15:00,11:15:00," + tripsForRouteStop2ID + ",2\n",
+	}
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	zipPath := filepath.Join(t.TempDir(), "trips-for-route-loop.zip")
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+
+	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(gtfsManager.Shutdown)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(api.Shutdown)
+	return api
+}
+
+// TestTripsForRouteHandler_LoopingRouteBlock verifies that when a block visits
+// the queried route, leaves, and returns (route A → B → A), the outer tripId
+// resolves to the correct queried-route trip that overlaps with the active trip.
+func TestTripsForRouteHandler_LoopingRouteBlock(t *testing.T) {
+	api := createTestApiWithLoopingRouteFixture(t, clock.NewMockClock(loopRouteClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := loopRouteClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	// Must resolve to tfr-loop-c (the queried-route trip that overlaps with
+	// the active trip tfr-loop-b), not tfr-loop-a (the first match).
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-loop-c")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-loop-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
 }

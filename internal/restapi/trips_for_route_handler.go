@@ -314,15 +314,18 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]bool)
 
-	// Map block+service → queried-route trip for interlined blocks.
-	// ServiceID is the GTFS calendar service ID from trips.txt. Using it as part
-	// of the key guarantees the queried-route trip matches the active trip's
-	// service day, even when a block ID is reused across days.
+	// When a block has multiple queried-route trips (e.g. route A → B → A),
+	// we need the specific trip whose time window overlaps with the active trip.
+	type blockTripEntry struct {
+		ID              string
+		MinArrivalTime  int64
+		MaxDepartureTime int64
+	}
 	type blockServiceKey struct {
 		BlockID   string
 		ServiceID string
 	}
-	blockTripForRoute := make(map[blockServiceKey]string)
+	blockTripForRoute := make(map[blockServiceKey][]blockTripEntry)
 	var interlinedBlockIDs []sql.NullString
 	for _, t := range fetchedTrips {
 		if t.RouteID != routeID && t.BlockID.Valid {
@@ -347,9 +350,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		for _, bt := range blockTrips {
 			if bt.RouteID == routeID && bt.BlockID.Valid {
 				key := blockServiceKey{BlockID: bt.BlockID.String, ServiceID: bt.ServiceID}
-				if _, exists := blockTripForRoute[key]; !exists {
-					blockTripForRoute[key] = bt.ID
-				}
+				blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
+					ID:               bt.ID,
+					MinArrivalTime:   bt.MinArrivalTime.Int64,
+					MaxDepartureTime: bt.MaxDepartureTime.Int64,
+				})
 			}
 		}
 	}
@@ -396,8 +401,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		entryAgencyID := activeAgencyID
 		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
 			key := blockServiceKey{BlockID: fetchedTrip.BlockID.String, ServiceID: fetchedTrip.ServiceID}
-			if rt, ok := blockTripForRoute[key]; ok {
-				entryTripID = rt
+			if entries, ok := blockTripForRoute[key]; ok && len(entries) > 0 {
+				bestIdx := 0
+				activeMin := fetchedTrip.MinArrivalTime.Int64
+				activeMax := fetchedTrip.MaxDepartureTime.Int64
+				// Among queried-route trips in the same block+service, find the one
+				// whose time window overlaps with the active trip. This handles blocks
+				// that visit the queried route multiple times (e.g. route A → B → A).
+				for i, e := range entries {
+					if e.MinArrivalTime <= activeMax && e.MaxDepartureTime >= activeMin {
+						bestIdx = i
+						break
+					}
+				}
+				entryTripID = entries[bestIdx].ID
 				entryAgencyID = agencyID
 			}
 		}
