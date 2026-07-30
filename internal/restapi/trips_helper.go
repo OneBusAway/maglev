@@ -56,6 +56,14 @@ func (api *RestAPI) BuildTripStatus(
 	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
 	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
+	// Computed up front (independent of vehicle/stop-time/shape data below) so
+	// it is still set even when the CANCELED early-return below skips the rest
+	// of this function.
+	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	if blockTripSequence > 0 {
+		status.BlockTripSequence = blockTripSequence
+	}
+
 	if vehicle != nil {
 		if vehicle.ID != nil {
 			// Emit the GTFS-RT vehicle id verbatim — Java keeps it un-prefixed
@@ -294,11 +302,6 @@ func (api *RestAPI) BuildTripStatus(
 				ctx, status, stopTimes, shapePoints, cumulativeDistances, currentTime, serviceDate,
 			)
 		}
-	}
-
-	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
-	if blockTripSequence > 0 {
-		status.BlockTripSequence = blockTripSequence
 	}
 
 	return status, snap, nil

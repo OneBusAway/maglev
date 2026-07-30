@@ -1018,6 +1018,89 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 	assert.Zero(t, status.TotalDistanceAlongTrip, "CANCELED trips must not have total distance calculations")
 }
 
+// TestBuildTripStatus_CanceledTrip_BlockTripSequence guards against a regression where
+// BuildTripStatus's CANCELED early-return skipped the BlockTripSequence assignment,
+// silently reporting 0 instead of the trip's real position in its block.
+func TestBuildTripStatus_CanceledTrip_BlockTripSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].ID
+
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
+
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips)
+
+	// Find a trip that is NOT first in its block's active sequence, so a
+	// silently-zeroed BlockTripSequence is distinguishable from a correct one.
+	var tripID string
+	seenBlocks := make(map[string]bool)
+	for _, trip := range trips {
+		tripRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, trip.ID)
+		if err != nil || !tripRow.BlockID.Valid || tripRow.BlockID.String == "" {
+			continue
+		}
+		bid := tripRow.BlockID.String
+		if seenBlocks[bid] {
+			continue
+		}
+		seenBlocks[bid] = true
+
+		blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, nulls.String(bid))
+		if err != nil {
+			continue
+		}
+
+		var activeTripIDs []string
+		for _, bt := range blockTrips {
+			isActive, err := api.GtfsManager.IsServiceActiveOnDate(ctx, bt.ServiceID, serviceDate)
+			if err != nil || isActive == 0 {
+				continue
+			}
+			activeTripIDs = append(activeTripIDs, bt.ID)
+		}
+
+		for _, candidate := range activeTripIDs {
+			if api.calculateBlockTripSequence(ctx, candidate, serviceDate) > 0 {
+				tripID = candidate
+				break
+			}
+		}
+		if tripID != "" {
+			break
+		}
+	}
+	require.NotEmpty(t, tripID, "Need a trip with a non-zero block trip sequence in test data")
+
+	expectedSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	require.Greater(t, expectedSequence, 0)
+
+	currentTime := time.Date(2024, 11, 4, 9, 0, 0, 0, time.UTC)
+	vehicle := &gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: "canceled-vehicle"},
+		Timestamp: &currentTime,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:                   tripID,
+				ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+			},
+		},
+	}
+
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	require.Equal(t, "CANCELED", status.Status)
+
+	assert.Equal(t, expectedSequence, status.BlockTripSequence,
+		"CANCELED trips must still report their real block trip sequence, not the zero value")
+}
+
 // BenchmarkDistanceToLineSegment benchmarks the line segment distance calculation
 func BenchmarkDistanceToLineSegment(b *testing.B) {
 	px, py := 0.5, 1.0
