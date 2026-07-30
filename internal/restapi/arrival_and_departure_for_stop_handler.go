@@ -308,7 +308,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		vehicleID         string
 		tripStatus        *models.TripStatus
 		distanceFromStop  float64
-		numberOfStopsAway int
+		numberOfStopsAway = -1
 	)
 
 	// If vehicleId is provided, validate it matches the trip

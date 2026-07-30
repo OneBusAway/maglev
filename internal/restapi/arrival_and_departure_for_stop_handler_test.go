@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -950,4 +951,40 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "", model.Data.Entry.VehicleID, "vehicleId should be empty for vehicle with nil ID")
+}
+
+// TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway guards against a
+// regression where numberOfStopsAway silently defaulted to Go's zero value (0)
+// instead of the -1 "unknown" sentinel whenever BuildTripStatus could not produce
+// a schedule snapshot for the trip — which is always true for CANCELED trips.
+func TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	tripID := "36957461-b451-4390-af3a-bc42c51fd473"
+	stopID := "5007"
+	stopSequence := 6
+	combinedStopID := utils.FormCombinedID("25", stopID)
+	combinedTripID := utils.FormCombinedID("25", tripID)
+	serviceDateMs := time.Now().UnixMilli()
+
+	api.GtfsManager.MockAddVehicleWithOptions("canceled-vehicle", tripID, "", internalgtfs.MockVehicleOptions{
+		ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+	})
+
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d",
+		combinedStopID,
+		combinedTripID,
+		serviceDateMs,
+		stopSequence,
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+	assert.Equal(t, -1, model.Data.Entry.NumberOfStopsAway,
+		"CANCELED trips must report numberOfStopsAway as unknown (-1), not 0")
 }
