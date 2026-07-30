@@ -27,6 +27,7 @@ capturing stdout (the resolved path) and stderr separately.
 ### 2. Check each resolved path for anomalies
 
 - **Staleness**: a `Warning: ... commit(s) behind ...` line on the stderr captured above. Only tiers 1-3 (explicit `OBA_WORKSPACE`, `/workspace`, sibling checkout) can produce this — the cache-dir tier is fetched and hard-reset on every run, so it's never stale.
+- **Unknown freshness**: a `Note: could not fetch ...` line on the stderr captured above — the staleness check itself failed (offline, or no matching branch upstream), so freshness could not be confirmed either way. Treat this as an anomaly too rather than assuming the checkout is current.
 - **Odd repo state**: run `git -C <path> rev-parse --abbrev-ref HEAD` and `git -C <path> status --porcelain` on the resolved path and flag any of:
   - Current branch is not `main` or `master` (or `HEAD`, i.e. detached)
   - Staged changes not yet committed
