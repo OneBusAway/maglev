@@ -312,10 +312,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// snapshot.metricsForStop and overrides the zero init — the sentinel
 	// -1 collided with that legitimate signal.
 	var (
-		predicted        bool
-		vehicleID        string
-		tripStatus       *models.TripStatus
-		distanceFromStop float64
+		predicted         bool
+		vehicleID         string
+		tripStatus        *models.TripStatus
+		distanceFromStop  float64
 		numberOfStopsAway int
 	)
 
