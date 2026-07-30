@@ -985,6 +985,12 @@ func TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway(t *testing.T)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
-	assert.Equal(t, -1, model.Data.Entry.NumberOfStopsAway,
-		"CANCELED trips must report numberOfStopsAway as unknown (-1), not 0")
+	// Per the OBA spec (arrivals-and-departures-for-stop §11a), when no
+	// block location is available -- as with a CANCELED trip -- the
+	// unknown-data value for numberOfStopsAway is 0 (absent/zero), not -1.
+	// -1 is a legitimate real value meaning "one stop behind" and must not
+	// double as a sentinel. Both handlers agree on 0 for the no-data case.
+	assert.Equal(t, 0, model.Data.Entry.NumberOfStopsAway,
+		"CANCELED trips report numberOfStopsAway=0 (no block location); "+
+			"-1 is reserved for the real 'one stop behind' signal")
 }
