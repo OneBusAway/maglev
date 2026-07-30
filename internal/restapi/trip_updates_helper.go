@@ -227,12 +227,7 @@ func stuReferenceTime(stu gtfs.StopTimeUpdate, serviceDate, currentTime time.Tim
 }
 
 func minAbs(a, b int64) int64 {
-	if a < 0 {
-		a = -a
-	}
-	if b < 0 {
-		b = -b
-	}
+	a, b = absInt64(a), absInt64(b)
 	if a < b {
 		return a
 	}
