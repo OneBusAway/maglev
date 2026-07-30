@@ -21,7 +21,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	var fieldErrors map[string][]string
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
-	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForStops, fieldErrors)
+	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
 
 	var routeTypes []int
