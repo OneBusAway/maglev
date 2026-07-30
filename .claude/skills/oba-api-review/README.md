@@ -36,7 +36,7 @@ That said, nothing here is specific to that project. Point `oba-api-review` at a
 
 ## How cross-repo resolution works
 
-`oba-api-client-impact` and `oba-api-spec-check` need source from `wayfinder`, `js-sdk`, `onebusaway-ios`, `onebusaway-android`, and `maglev.wiki` — none of which need to be checked out ahead of time. They resolve each one through the `oba-workspace` skill, which in turn calls `.claude/skills/lib/resolve-oba-repo.sh <repo-name>`:
+`oba-api-client-impact` needs source from `wayfinder`, `js-sdk`, `onebusaway-ios`, and `onebusaway-android`; `oba-api-spec-check` and `oba-api-verify` need `maglev.wiki` — none of which need to be checked out ahead of time. They resolve each one through the `oba-workspace` skill, which in turn calls `.claude/skills/lib/resolve-oba-repo.sh <repo-name>`:
 
 1. `$OBA_WORKSPACE/<repo>`, if you've set that env var to point at a directory containing your own checkout — cloned in if not already there.
 2. `/workspace/<repo>`, if `$OBA_WORKSPACE` isn't set and `/workspace` exists — the conventional bind-mount point in sandboxed VMs, so a checkout here can be mounted back to the host. Same clone-if-missing behavior as (1).

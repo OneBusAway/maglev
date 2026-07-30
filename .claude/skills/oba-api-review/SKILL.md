@@ -2,7 +2,7 @@
 
 Entry point for reviewing a change to the OBA API. Determines which analyses are relevant and runs them.
 
-Lives inside the `maglev` repo and is meant to be usable with only `maglev` checked out. `oba-api-client-impact` and `oba-api-spec-check` need source from `wayfinder`, `js-sdk`, `onebusaway-ios`, `onebusaway-android`, and `maglev.wiki` — they resolve those automatically via the `oba-workspace` skill, which needs `git` and (on first use) network access. See `oba-workspace` for how repos are located and how it handles stale or locally-modified checkouts.
+Lives inside the `maglev` repo and is meant to be usable with only `maglev` checked out. `oba-api-client-impact` needs source from `wayfinder`, `js-sdk`, `onebusaway-ios`, and `onebusaway-android`; `oba-api-spec-check` and `oba-api-verify` need `maglev.wiki` — they resolve those automatically via the `oba-workspace` skill, which needs `git` and (on first use) network access. See `oba-workspace` for how repos are located and how it handles stale or locally-modified checkouts.
 
 Run this skill with the current working directory set to the root of your `maglev` checkout.
 
