@@ -1313,20 +1313,32 @@ WITH RECURSIVE
     -- enumeration across decades. Recursion terminates when the enumerated
     -- date reaches this bound, so ref_date far in the past still discovers
     -- today's feed span (as long as it's within the horizon).
-    bounds(hi) AS (
-        SELECT MIN(
-            (SELECT MAX(dt) FROM (
-                SELECT MAX(cal.end_date) AS dt
-                FROM trips t
-                JOIN calendar cal ON cal.id = t.service_id
-                WHERE t.route_id = sqlc.arg(route_id)
-                UNION ALL
-                SELECT MAX(cd.date) AS dt
-                FROM trips t
-                JOIN calendar_dates cd ON cd.service_id = t.service_id
-                WHERE t.route_id = sqlc.arg(route_id)
-            )),
-            (SELECT cap FROM horizon)
+    -- hi_ymd is the raw YYYYMMDD upper bound; hi_jd is the same value
+    -- pre-converted to a julian day number so the recursion's termination
+    -- check below can compare jd < hi_jd (single subquery, evaluated once)
+    -- instead of re-formatting jd on every iteration.
+    bounds(hi_ymd, hi_jd) AS (
+        SELECT hi_ymd,
+            julianday(
+                substr(hi_ymd, 1, 4) || '-' ||
+                substr(hi_ymd, 5, 2) || '-' ||
+                substr(hi_ymd, 7, 2)
+            )
+        FROM (
+            SELECT MIN(
+                (SELECT MAX(dt) FROM (
+                    SELECT MAX(cal.end_date) AS dt
+                    FROM trips t
+                    JOIN calendar cal ON cal.id = t.service_id
+                    WHERE t.route_id = sqlc.arg(route_id)
+                    UNION ALL
+                    SELECT MAX(cd.date) AS dt
+                    FROM trips t
+                    JOIN calendar_dates cd ON cd.service_id = t.service_id
+                    WHERE t.route_id = sqlc.arg(route_id)
+                )),
+                (SELECT cap FROM horizon)
+            ) AS hi_ymd
         )
     ),
     -- Enumerate every candidate date strictly after ref_date, up to the
@@ -1336,11 +1348,11 @@ WITH RECURSIVE
     candidate_jd(jd) AS (
         SELECT jd0 + 1
         FROM ref
-        WHERE (SELECT hi FROM bounds) IS NOT NULL
+        WHERE (SELECT hi_jd FROM bounds) IS NOT NULL
         UNION ALL
         SELECT jd + 1
         FROM candidate_jd
-        WHERE strftime('%Y%m%d', jd) < (SELECT hi FROM bounds)
+        WHERE jd < (SELECT hi_jd FROM bounds)
     ),
     -- Materialize both ISO (for %w weekday lookup) and YYYYMMDD (for feed
     -- date-column joins) once per candidate row, so the outer SELECT below

@@ -5274,15 +5274,18 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 const routeHasFutureService = `-- name: RouteHasFutureService :one
 WITH RECURSIVE
     -- Parse ref_date once. Downstream CTEs read ` + "`" + `ref.iso` + "`" + ` (YYYY-MM-DD, feeds
-    -- date() arithmetic) and ` + "`" + `ref.ymd` + "`" + ` (YYYYMMDD, compares against feed
-    -- date columns). Extracting this eliminates the substring-dance that
-    -- otherwise repeats at every ref_date use site.
-    ref(iso, ymd) AS (
+    -- date() arithmetic) and ` + "`" + `ref.jd0` + "`" + ` (julian day, feeds arithmetic that
+    -- avoids repeated '+1 day' string modifiers in the recursion below).
+    ref(iso, jd0) AS (
         SELECT
             substr(?2, 1, 4) || '-' ||
             substr(?2, 5, 2) || '-' ||
             substr(?2, 7, 2),
-            ?2
+            julianday(
+                substr(?2, 1, 4) || '-' ||
+                substr(?2, 5, 2) || '-' ||
+                substr(?2, 7, 2)
+            )
     ),
     -- Horizon: 2 years past the LATER of ref_date and today. Anchoring to
     -- today (not ref_date alone) matters for historical ref_date queries --
@@ -5305,34 +5308,53 @@ WITH RECURSIVE
     -- enumeration across decades. Recursion terminates when the enumerated
     -- date reaches this bound, so ref_date far in the past still discovers
     -- today's feed span (as long as it's within the horizon).
-    bounds(hi) AS (
-        SELECT MIN(
-            (SELECT MAX(dt) FROM (
-                SELECT MAX(cal.end_date) AS dt
-                FROM trips t
-                JOIN calendar cal ON cal.id = t.service_id
-                WHERE t.route_id = ?1
-                UNION ALL
-                SELECT MAX(cd.date) AS dt
-                FROM trips t
-                JOIN calendar_dates cd ON cd.service_id = t.service_id
-                WHERE t.route_id = ?1
-            )),
-            (SELECT cap FROM horizon)
+    -- hi_ymd is the raw YYYYMMDD upper bound; hi_jd is the same value
+    -- pre-converted to a julian day number so the recursion's termination
+    -- check below can compare jd < hi_jd (single subquery, evaluated once)
+    -- instead of re-formatting jd on every iteration.
+    bounds(hi_ymd, hi_jd) AS (
+        SELECT hi_ymd,
+            julianday(
+                substr(hi_ymd, 1, 4) || '-' ||
+                substr(hi_ymd, 5, 2) || '-' ||
+                substr(hi_ymd, 7, 2)
+            )
+        FROM (
+            SELECT MIN(
+                (SELECT MAX(dt) FROM (
+                    SELECT MAX(cal.end_date) AS dt
+                    FROM trips t
+                    JOIN calendar cal ON cal.id = t.service_id
+                    WHERE t.route_id = ?1
+                    UNION ALL
+                    SELECT MAX(cd.date) AS dt
+                    FROM trips t
+                    JOIN calendar_dates cd ON cd.service_id = t.service_id
+                    WHERE t.route_id = ?1
+                )),
+                (SELECT cap FROM horizon)
+            ) AS hi_ymd
         )
     ),
     -- Enumerate every candidate date strictly after ref_date, up to the
-    -- upper bound. Carry BOTH iso and ymd forms through the recursion so
-    -- downstream predicates never repeat the format conversion --
-    -- strftime is measurable at 730-iteration scale.
-    candidate_date(d_iso, d_ymd) AS (
-        SELECT date(iso, '+1 day'), strftime('%Y%m%d', date(iso, '+1 day'))
+    -- upper bound. Recursion uses julian day arithmetic (jd + 1) instead of
+    -- date-string modifiers -- avoids re-parsing the ISO string every
+    -- iteration and eliminates the '+1 day' literal from every reference.
+    candidate_jd(jd) AS (
+        SELECT jd0 + 1
         FROM ref
-        WHERE (SELECT hi FROM bounds) IS NOT NULL
+        WHERE (SELECT hi_jd FROM bounds) IS NOT NULL
         UNION ALL
-        SELECT date(d_iso, '+1 day'), strftime('%Y%m%d', date(d_iso, '+1 day'))
-        FROM candidate_date
-        WHERE d_ymd < (SELECT hi FROM bounds)
+        SELECT jd + 1
+        FROM candidate_jd
+        WHERE jd < (SELECT hi_jd FROM bounds)
+    ),
+    -- Materialize both ISO (for %w weekday lookup) and YYYYMMDD (for feed
+    -- date-column joins) once per candidate row, so the outer SELECT below
+    -- doesn't need any format calls.
+    candidate_date(d_iso, d_ymd, d_wday) AS (
+        SELECT date(jd), strftime('%Y%m%d', jd), strftime('%w', jd)
+        FROM candidate_jd
     )
 SELECT EXISTS (
     SELECT 1
@@ -5344,7 +5366,7 @@ SELECT EXISTS (
             JOIN calendar cal ON cal.id = t.service_id
             WHERE t.route_id = ?1
               AND cdate.d_ymd BETWEEN cal.start_date AND cal.end_date
-              AND CASE strftime('%w', cdate.d_iso)
+              AND CASE cdate.d_wday
                     WHEN '0' THEN cal.sunday
                     WHEN '1' THEN cal.monday
                     WHEN '2' THEN cal.tuesday
