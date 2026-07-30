@@ -5,37 +5,12 @@ import (
 	"context"
 	"net/http"
 	"slices"
-	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
-
-type stopsForRouteParams struct {
-	IncludePolylines bool
-	Time             *time.Time
-}
-
-func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParams {
-	now := api.Clock.Now()
-	params := stopsForRouteParams{
-		IncludePolylines: true,
-		Time:             &now,
-	}
-
-	if r.URL.Query().Get("includePolylines") == "false" {
-		params.IncludePolylines = false
-	}
-
-	if timeParam := r.URL.Query().Get("time"); timeParam != "" {
-		if t, err := time.Parse(time.RFC3339, timeParam); err == nil {
-			params.Time = &t
-		}
-	}
-	return params
-}
 
 // stopsForRouteHandler returns all stops served by a route, grouped by direction
 // with optional encoded polyline shapes.
@@ -52,8 +27,6 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-
-	params := api.parseStopsForRouteParams(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -93,7 +66,10 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, params.IncludePolylines)
+	// includePolylines defaults to true; only an explicit "false" disables it.
+	includePolylines := r.URL.Query().Get("includePolylines") != "false"
+
+	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, includePolylines)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
