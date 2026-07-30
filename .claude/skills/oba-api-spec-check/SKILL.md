@@ -13,14 +13,14 @@ Typically invoked by `oba-api-review`. Can be called directly when you want to i
 
 ## Workspace layout
 
-- **Spec**: `<endpoint>.md` in the `maglev.wiki` repo — resolve the repo's local path with `.claude/skills/lib/resolve-oba-repo.sh maglev.wiki` (clones it to a local cache on first use if it isn't already checked out as a sibling of `maglev`).
+- **Spec**: `<endpoint>.md` in the `maglev.wiki` repo — resolve the repo's local path via the `oba-workspace` skill (argument: `maglev.wiki`).
 - **Maglev handler**: `internal/restapi/<endpoint>_handler.go` (relative to the `maglev` repo root) — handler filenames use underscores throughout, e.g. `stops-for-route` → `stops_for_route_handler.go`, so convert every hyphen in the endpoint name to an underscore before looking for the file.
 
 ## Steps
 
 ### 1. Read the spec in full
 
-Run `.claude/skills/lib/resolve-oba-repo.sh maglev.wiki` to get the wiki repo's local path. If it was found as a sibling checkout or via `OBA_WORKSPACE` rather than cloned into the cache, the resolver doesn't update it automatically and will print a `Warning: ... commit(s) behind ...` to stderr if it's stale — if that happens, note it as a caveat in the final report, since the spec being read may be out of date. Then read `<path>/<endpoint>.md` entirely. Note:
+Get the wiki repo's local path from `oba-workspace` (see Workspace layout above); include any caveats it reports in the final report, since the spec being read may be out of date. Then read `<path>/<endpoint>.md` entirely. Note:
 - The specified behaviour for each request parameter, response field, and error case.
 - The **Suspected Defects** section — known divergences from ideal behaviour in the legacy implementation.
 - The **Implementation Decisions** section — deliberate deviations Maglev has chosen to make, with rationale.
