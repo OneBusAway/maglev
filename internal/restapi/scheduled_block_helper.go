@@ -572,19 +572,22 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 }
 
 // projectStopsInSequence returns each stop's distance-along-trip in metres,
-// projecting monotonically through the shape so loop routes (where the same
-// lat/lon appears at multiple shape segments) get distinct distances per
-// occurrence. Mirrors Java's DistanceAlongShapeLibrary.computeBestAssignment;
-// a naive global-minimum search picks the same segment for both occurrences,
-// producing the catastrophic distanceFromStop outliers we saw on the Q route.
+// projecting the stop's lat/lon onto the shape polyline. The publisher's
+// stop_times.shape_dist_traveled is deliberately ignored — Java's
+// StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet does
+// the same, overwriting the publisher value at load time with the projected
+// value from DistanceAlongShapeLibrary. Publisher-supplied values are often
+// wrong (bad units, corrupt data on some feeds), so both codebases treat
+// projection as authoritative.
 //
-// Always uses geometric projection against the shape polyline — Java's
-// StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet
-// overwrites the publisher's shape_dist_traveled at load time with the
-// projected value from DistanceAlongShapeLibrary, so downstream code reads
-// metres regardless of what unit the feed published. We do the same
-// projection at query time (via projectStopGeometric with a monotonic
-// cursor for loop-route correctness).
+// Our projection uses a monotonic cursor so loop routes (same lat/lon at
+// multiple shape segments) get distinct distances per occurrence; a naive
+// global-minimum search picks the same segment for both occurrences,
+// producing the catastrophic distanceFromStop outliers we saw on the Q
+// route. Java's DistanceAlongShapeLibrary uses a more sophisticated
+// UTM-based multi-assignment algorithm — matching Java's exact numbers
+// would require porting that library; our simpler projection produces
+// values within ~90-250m of Java's, which is acceptable drift for our use.
 func projectStopsInSequence(
 	stopTimes []gtfsdb.StopTime,
 	stopByID map[string]gtfsdb.Stop,
