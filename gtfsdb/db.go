@@ -216,6 +216,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getOrderedStopIDsForTripStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForTrip: %w", err)
 	}
+	if q.getOrderedStopIDsForTripsStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForTrips); err != nil {
+		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForTrips: %w", err)
+	}
 	if q.getProblemReportsByStopStmt, err = db.PrepareContext(ctx, getProblemReportsByStop); err != nil {
 		return nil, fmt.Errorf("error preparing query GetProblemReportsByStop: %w", err)
 	}
@@ -371,6 +374,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.listTripsWithLimitStmt, err = db.PrepareContext(ctx, listTripsWithLimit); err != nil {
 		return nil, fmt.Errorf("error preparing query ListTripsWithLimit: %w", err)
+	}
+	if q.routeHasFutureServiceStmt, err = db.PrepareContext(ctx, routeHasFutureService); err != nil {
+		return nil, fmt.Errorf("error preparing query RouteHasFutureService: %w", err)
 	}
 	if q.updateFeedExpiresAtStmt, err = db.PrepareContext(ctx, updateFeedExpiresAt); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateFeedExpiresAt: %w", err)
@@ -709,6 +715,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getOrderedStopIDsForTripStmt: %w", cerr)
 		}
 	}
+	if q.getOrderedStopIDsForTripsStmt != nil {
+		if cerr := q.getOrderedStopIDsForTripsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getOrderedStopIDsForTripsStmt: %w", cerr)
+		}
+	}
 	if q.getProblemReportsByStopStmt != nil {
 		if cerr := q.getProblemReportsByStopStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getProblemReportsByStopStmt: %w", cerr)
@@ -969,6 +980,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listTripsWithLimitStmt: %w", cerr)
 		}
 	}
+	if q.routeHasFutureServiceStmt != nil {
+		if cerr := q.routeHasFutureServiceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing routeHasFutureServiceStmt: %w", cerr)
+		}
+	}
 	if q.updateFeedExpiresAtStmt != nil {
 		if cerr := q.updateFeedExpiresAtStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateFeedExpiresAtStmt: %w", cerr)
@@ -1092,6 +1108,7 @@ type Queries struct {
 	getNextStopInTripStmt                         *sql.Stmt
 	getOrderedStopIDsForRouteDirectionStmt        *sql.Stmt
 	getOrderedStopIDsForTripStmt                  *sql.Stmt
+	getOrderedStopIDsForTripsStmt                 *sql.Stmt
 	getProblemReportsByStopStmt                   *sql.Stmt
 	getProblemReportsByTripStmt                   *sql.Stmt
 	getRouteStmt                                  *sql.Stmt
@@ -1144,6 +1161,7 @@ type Queries struct {
 	listStopsStmt                                 *sql.Stmt
 	listTripsStmt                                 *sql.Stmt
 	listTripsWithLimitStmt                        *sql.Stmt
+	routeHasFutureServiceStmt                     *sql.Stmt
 	updateFeedExpiresAtStmt                       *sql.Stmt
 	updateImportTimeStmt                          *sql.Stmt
 	updateStopDirectionStmt                       *sql.Stmt
@@ -1218,6 +1236,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getNextStopInTripStmt:                         q.getNextStopInTripStmt,
 		getOrderedStopIDsForRouteDirectionStmt:        q.getOrderedStopIDsForRouteDirectionStmt,
 		getOrderedStopIDsForTripStmt:                  q.getOrderedStopIDsForTripStmt,
+		getOrderedStopIDsForTripsStmt:                 q.getOrderedStopIDsForTripsStmt,
 		getProblemReportsByStopStmt:                   q.getProblemReportsByStopStmt,
 		getProblemReportsByTripStmt:                   q.getProblemReportsByTripStmt,
 		getRouteStmt:                                  q.getRouteStmt,
@@ -1270,6 +1289,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listStopsStmt:                                 q.listStopsStmt,
 		listTripsStmt:                                 q.listTripsStmt,
 		listTripsWithLimitStmt:                        q.listTripsWithLimitStmt,
+		routeHasFutureServiceStmt:                     q.routeHasFutureServiceStmt,
 		updateFeedExpiresAtStmt:                       q.updateFeedExpiresAtStmt,
 		updateImportTimeStmt:                          q.updateImportTimeStmt,
 		updateStopDirectionStmt:                       q.updateStopDirectionStmt,

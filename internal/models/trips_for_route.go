@@ -1,7 +1,7 @@
 package models
 
 type TripsForRouteListEntry struct {
-	Frequency    *int64         `json:"frequency"`
+	Frequency    *Frequency     `json:"frequency"`
 	Schedule     *TripsSchedule `json:"schedule,omitempty"`
 	Status       *TripStatus    `json:"status,omitempty"`
 	ServiceDate  int64          `json:"serviceDate"`

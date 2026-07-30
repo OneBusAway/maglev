@@ -4,7 +4,7 @@ import "time"
 
 type TripDetails struct {
 	Frequency    *Frequency  `json:"frequency,omitempty"` // omitempty intentional: trip-details callers expect the field absent when the trip is not frequency-based
-	Schedule     *Schedule   `json:"schedule"`
+	Schedule     *Schedule   `json:"schedule,omitempty"`
 	ServiceDate  ModelTime   `json:"serviceDate"`
 	SituationIDs []string    `json:"situationIds"`
 	Status       *TripStatus `json:"status,omitempty"`
@@ -64,6 +64,15 @@ type TripStatus struct {
 	VehicleFeatures            []string   `json:"vehicleFeatures"`
 	VehicleID                  string     `json:"vehicleId"`
 	Scheduled                  bool       `json:"scheduled"` // (Scheduled = !Predicted) ,this field is not part of the OpenAPI TripStatus schema but is retained for compatibility with existing API consumers. Tracked as a known spec deviation.
+}
+
+const DefaultTripStatusValue = "default"
+
+// IsUntracked reports whether this TripStatus is merely the default placeholder
+// returned by BuildTripStatus when no real-time tracking record exists.
+// Extension 4e requires the status key to be omitted in this case.
+func (ts *TripStatus) IsUntracked() bool {
+	return ts.Status == DefaultTripStatusValue && !ts.Predicted
 }
 
 func (ts *TripStatus) SetPredicted(predicted bool) {

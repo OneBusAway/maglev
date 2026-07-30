@@ -47,7 +47,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -o maglev ./cmd/api
 
 # Runtime stage
-FROM alpine:3.23
+FROM alpine:3.24
 
 LABEL org.opencontainers.image.source="https://github.com/OneBusAway/maglev"
 LABEL org.opencontainers.image.description="REST API server for OneBusAway transit data"

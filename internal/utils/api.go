@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -184,9 +185,16 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
-		// Assume YYYY-MM-DD format
-		parsedTime, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
+		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
+		parsed, err := time.ParseInLocation("2006-01-02_15-04-05", timeParam, currentLocation)
+		if err != nil {
+			// If it fails, fall back to yyyy-MM-dd (e.g. "2024-03-15")
+			parsed, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
+		}
+
+		// If either parsing attempt succeeded, apply the result
 		if err == nil {
+			parsedTime = parsed
 			validFormat = true
 		}
 	}
@@ -203,10 +211,28 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 	return parsedTime.Format("20060102"), parsedTime, nil, true
 }
 
+// maxCountOverflow selects how values above models.MaxAllowedCount are handled.
+type maxCountOverflow int
+
+const (
+	rejectAboveMax maxCountOverflow = iota
+	clampAboveMax
+)
+
 // ParseMaxCount parses the maxCount query parameter with validation.
-// It accepts a default value and enforces a maximum of 250 (matching Java's MaxCountSupport).
-// Returns an error in fieldErrors if the value is <= 0 or > 250.
+// It accepts a default value and enforces models.MaxAllowedCount as the ceiling.
+// Returns an error in fieldErrors if the value is <= 0 or above the ceiling.
 func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
+	return parseMaxCount(queryParams, defaultCount, rejectAboveMax, fieldErrors)
+}
+
+// ParseMaxCountClamped silently clamps values above models.MaxAllowedCount
+// instead of rejecting them. Values <= 0 are still field errors.
+func ParseMaxCountClamped(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
+	return parseMaxCount(queryParams, defaultCount, clampAboveMax, fieldErrors)
+}
+
+func parseMaxCount(queryParams url.Values, defaultCount int, overflow maxCountOverflow, fieldErrors map[string][]string) (int, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
 	}
@@ -220,8 +246,12 @@ func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[str
 				fieldErrors["maxCount"] = []string{"must be greater than zero"}
 				maxCount = defaultCount
 			} else if maxCount > models.MaxAllowedCount {
-				fieldErrors["maxCount"] = []string{"must not exceed 250"}
-				maxCount = defaultCount
+				if overflow == clampAboveMax {
+					maxCount = models.MaxAllowedCount
+				} else {
+					fieldErrors["maxCount"] = []string{fmt.Sprintf("must not exceed %d", models.MaxAllowedCount)}
+					maxCount = defaultCount
+				}
 			}
 		} else {
 			fieldErrors["maxCount"] = []string{"Invalid field value for field \"maxCount\"."}
@@ -310,4 +340,57 @@ func ValidateNumericParam(s string) string {
 		return ""
 	}
 	return s
+}
+
+const (
+	minUnixMillis = int64(0)
+	maxUnixMillis = int64(32503680000000) // year 3000
+)
+
+// ParseDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
+// It returns a time.Time set to midnight (start of day) in the provided location.
+func ParseDate(date string, loc *time.Location) (time.Time, error) {
+	if date == "" {
+		return time.Time{}, errors.New("date cannot be empty")
+	}
+
+	// Parsing as an integer (Unix milliseconds)
+	if v, err := strconv.ParseInt(date, 10, 64); err == nil {
+		if v < minUnixMillis || v > maxUnixMillis {
+			return time.Time{}, errors.New("unix millisecond timestamp out of reasonable bounds")
+		}
+		// Convert to the provided timezone and explicitly set to midnight
+		t := time.UnixMilli(v).In(loc)
+		y, m, d := t.Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, loc), nil
+	}
+
+	// Parsing in YYYY-MM-DD format
+	if parsedDate, err := time.ParseInLocation("2006-01-02", date, loc); err == nil {
+		return parsedDate, nil
+	}
+
+	return time.Time{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
+}
+
+// ParseRequiredStringParam retrieves a required string parameter.
+// Returns the value and a populated error map if missing.
+func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[string][]string) (string, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
+	}
+	return val, fieldErrors
+}
+
+// ClampRadius restricts a radius value to MaxSearchRadiusInMeters
+func ClampRadius(radius float64) float64 {
+	if radius > models.MaxSearchRadiusInMeters {
+		return models.MaxSearchRadiusInMeters
+	}
+	return radius
 }

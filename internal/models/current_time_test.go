@@ -35,7 +35,7 @@ func TestCurrentTimeModel(t *testing.T) {
 			timeModel.ReadableTime, unmarshaledModel.ReadableTime)
 	}
 
-	if !unmarshaledModel.Time.Time.Equal(timeModel.Time.Time) {
+	if !unmarshaledModel.Time.Equal(timeModel.Time.Time) {
 		t.Errorf("Expected Time %v, got %v",
 			timeModel.Time, unmarshaledModel.Time)
 	}
@@ -74,7 +74,7 @@ func TestCurrentTimeData(t *testing.T) {
 			timeData.Entry.ReadableTime, unmarshaledData.Entry.ReadableTime)
 	}
 
-	if !unmarshaledData.Entry.Time.Time.Equal(timeData.Entry.Time.Time) {
+	if !unmarshaledData.Entry.Time.Equal(timeData.Entry.Time.Time) {
 		t.Errorf("Expected Entry.Time %v, got %v",
 			timeData.Entry.Time, unmarshaledData.Entry.Time)
 	}

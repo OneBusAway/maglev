@@ -31,7 +31,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if agency == nil {
-		api.sendNull(w, r)
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -61,8 +61,44 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefs
 
+	// Resolve parent stations referenced by any stop into references.stops.
+	parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	references.Stops = parentRefs
+
 	response := models.NewListResponse(stopsList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// buildParentStationReferences resolves the unique parent stations referenced by
+// stopsList into full Stop records for the references block.
+func (api *RestAPI) buildParentStationReferences(ctx context.Context, agencyID string, stopsList []models.Stop) ([]models.Stop, error) {
+	seen := make(map[string]struct{})
+	var parentRawIDs []string
+	for _, s := range stopsList {
+		if s.Parent == "" {
+			continue
+		}
+		rawID, err := utils.ExtractCodeID(s.Parent)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[rawID]; ok {
+			continue
+		}
+		seen[rawID] = struct{}{}
+		parentRawIDs = append(parentRawIDs, rawID)
+	}
+
+	parentRefs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, parentRawIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	return parentRefs, nil
 }
 
 func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, error) {
@@ -103,14 +139,20 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			routeIdsString = []string{}
 		}
 
+		parentID := ""
+		if nulls.StringOrEmpty(stop.ParentStation) != "" {
+			parentID = utils.FormCombinedID(agencyID, stop.ParentStation.String)
+		}
+
 		stopsList = append(stopsList, models.Stop{
-			Code:               stop.Code.String,
+			Code:               nulls.StringOrDefault(stop.Code, stop.ID),
 			Direction:          nulls.StringOrEmpty(stop.Direction),
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
 			Name:               stop.Name.String,
+			Parent:             parentID,
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),

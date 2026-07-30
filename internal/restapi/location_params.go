@@ -10,8 +10,8 @@ import (
 func (api *RestAPI) parseLocationParams(r *http.Request, fieldErrors map[string][]string) (*gtfs.LocationParams, map[string][]string) {
 	queryParams := r.URL.Query()
 
-	lat, fieldErrors := utils.ParseRequiredFloatParam(queryParams, "lat", fieldErrors)
-	lon, fieldErrors := utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
+	lat, fieldErrors := utils.ParseFloatParam(queryParams, "lat", fieldErrors)
+	lon, fieldErrors := utils.ParseFloatParam(queryParams, "lon", fieldErrors)
 	radius, fieldErrors := utils.ParseFloatParam(queryParams, "radius", fieldErrors)
 	latSpan, fieldErrors := utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
 	lonSpan, fieldErrors := utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)

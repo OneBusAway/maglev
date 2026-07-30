@@ -22,7 +22,7 @@ All commands are managed through the Makefile:
 - `make build` - Build the application binary to `bin/maglev`
 - `make test` - Run all tests
 - `make load-test` - Run smoketest and stresstest (k6)
-- `make lint` - Run golangci-lint (requires: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
+- `make lint` - Run `go vet`
 - `make coverage` - Generate test coverage report with HTML output
 - `make coverage-report` - Output per-package test coverage as JSON for CI parsing (requires jq)
 - `make models` - Regenerate sqlc models from SQL queries
@@ -91,13 +91,9 @@ dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./b
 
 Then connect from GoLand IDE or other Delve-compatible debugger.
 
-## Important: Requirements to make a commit
+## Contributing
 
-Before committing any code, you must always run all of these steps, and have them all succeed:
-
-1. Run `make lint` and fix any linting issues that are identified
-2. Run `make test` and fix any failing tests
-3. Run `go fmt ./...` and commit all of the formatting changes
+Read [CONTRIBUTING.md](CONTRIBUTING.md) in full before making or even proposing any code changes in this repo — its guidelines on size, scope, commit hygiene, testing, code reuse, and complexity should shape the code as it's written, not just get checked afterward.
 
 ## Architecture Overview
 

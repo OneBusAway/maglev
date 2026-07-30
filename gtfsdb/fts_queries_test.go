@@ -246,16 +246,18 @@ func TestSearchStopsByName(t *testing.T) {
 		assert.Len(t, results, 3)
 	})
 
-	t.Run("results ordered alphabetically", func(t *testing.T) {
+	t.Run("results follow lexicographic ordering by stop ID", func(t *testing.T) {
 		results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
 			SearchQuery: "Main",
 			Limit:       10,
 		})
 		require.NoError(t, err)
 		require.Len(t, results, 3)
+
+		// Assert that the result set is ordered ascending by s.id (hub1 < s1 < s3).
 		assert.Equal(t, "Main Street Hub", results[0].Name.String)
-		assert.Equal(t, "Main Street Mall", results[1].Name.String)
-		assert.Equal(t, "Main Street Station", results[2].Name.String)
+		assert.Equal(t, "Main Street Station", results[1].Name.String)
+		assert.Equal(t, "Main Street Mall", results[2].Name.String)
 	})
 
 	t.Run("respects limit", func(t *testing.T) {
