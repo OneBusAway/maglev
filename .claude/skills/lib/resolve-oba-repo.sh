@@ -69,7 +69,7 @@ esac
 # tree or local branch.
 warn_if_stale() {
   local path="$1"
-  local branch upstream_ref local_rev remote_rev behind last_date
+  local branch upstream_ref local_rev remote_rev behind last_date quoted_path
 
   branch="$(git -C "$path" symbolic-ref --short HEAD 2>/dev/null || echo "")"
   if [[ -z "$branch" ]]; then
@@ -93,7 +93,8 @@ warn_if_stale() {
     behind="$(git -C "$path" rev-list --count "HEAD..$upstream_ref" 2>/dev/null || echo "?")"
     if [[ "$behind" != "0" ]]; then
       last_date="$(git -C "$path" log -1 --format=%ad --date=short)"
-      echo "Warning: $REPO at $path (branch $branch) is $behind commit(s) behind origin/$branch (last local commit: $last_date). This script never mutates an existing checkout, so it was not updated automatically - results below may reflect stale code. Run 'git -C $path pull' to update it yourself." >&2
+      quoted_path="$(printf '%q' "$path")"
+      echo "Warning: $REPO at $path (branch $branch) is $behind commit(s) behind origin/$branch (last local commit: $last_date). This script never mutates an existing checkout, so it was not updated automatically - results below may reflect stale code. Run 'git -C $quoted_path pull' to update it yourself." >&2
     fi
   fi
 }
