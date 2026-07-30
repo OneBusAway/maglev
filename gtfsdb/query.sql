@@ -1278,22 +1278,38 @@ FROM (
 -- input date to keep the recursive date-enumeration cheap; feeds that
 -- schedule further out than that are rare and would be caught on later polls.
 WITH RECURSIVE
+    -- Horizon: 2 years past the LATER of ref_date and today. Anchoring to
+    -- today (not ref_date alone) matters for historical ref_date queries --
+    -- e.g. ref_date=1970 against a feed whose real service starts in 2024 --
+    -- so the search still reaches "today's" feed span instead of clamping to
+    -- 1972. The recursive search below never enumerates past this horizon,
+    -- regardless of how far out calendar/calendar_dates rows extend.
+    horizon(cap) AS (
+        SELECT strftime('%Y%m%d', date(substr(anchor, 1, 4) || '-' || substr(anchor, 5, 2) || '-' || substr(anchor, 7, 2), '+2 years'))
+        FROM (SELECT MAX(sqlc.arg(ref_date), strftime('%Y%m%d', 'now')) AS anchor)
+    ),
     -- Upper bound: the max end_date across every calendar row this route's
     -- services touch, or the max calendar_dates.date (in case the feed adds
-    -- service days past the calendar's end_date). Recursion terminates when
-    -- the enumerated date reaches this bound, so ref_date far in the past
-    -- still discovers today's feed span.
+    -- service days past the calendar's end_date) -- clamped to the horizon
+    -- above so a feed using a far-future/indefinite end_date sentinel (e.g.
+    -- 20991231, meaning "runs indefinitely") doesn't force day-by-day
+    -- enumeration across decades. Recursion terminates when the enumerated
+    -- date reaches this bound, so ref_date far in the past still discovers
+    -- today's feed span (as long as it's within the horizon).
     bounds(hi) AS (
-        SELECT MAX(dt) FROM (
-            SELECT MAX(cal.end_date) AS dt
-            FROM trips t
-            JOIN calendar cal ON cal.id = t.service_id
-            WHERE t.route_id = sqlc.arg(route_id)
-            UNION ALL
-            SELECT MAX(cd.date) AS dt
-            FROM trips t
-            JOIN calendar_dates cd ON cd.service_id = t.service_id
-            WHERE t.route_id = sqlc.arg(route_id)
+        SELECT MIN(
+            (SELECT MAX(dt) FROM (
+                SELECT MAX(cal.end_date) AS dt
+                FROM trips t
+                JOIN calendar cal ON cal.id = t.service_id
+                WHERE t.route_id = sqlc.arg(route_id)
+                UNION ALL
+                SELECT MAX(cd.date) AS dt
+                FROM trips t
+                JOIN calendar_dates cd ON cd.service_id = t.service_id
+                WHERE t.route_id = sqlc.arg(route_id)
+            )),
+            (SELECT cap FROM horizon)
         )
     ),
     candidate_date(d) AS (
