@@ -99,12 +99,25 @@ warn_if_stale() {
   fi
 }
 
+# True if $1 is a checkout (regular or worktree - a worktree's top-level
+# .git is a file, not a directory) whose origin matches $URL.
+is_expected_checkout() {
+  local target="$1" actual_url
+  git -C "$target" rev-parse --show-toplevel >/dev/null 2>&1 || return 1
+  actual_url="$(git -C "$target" config --get remote.origin.url 2>/dev/null || echo "")"
+  [[ "$actual_url" == "$URL" ]]
+}
+
 # Clones $URL into $1 if it isn't already a git checkout there; otherwise
-# just runs the read-only staleness check. Never mutates an existing
-# checkout.
+# verifies it's actually a checkout of $URL and runs the read-only staleness
+# check. Never mutates an existing checkout.
 resolve_target() {
   local target="$1"
-  if [[ -d "$target/.git" ]]; then
+  if [[ -e "$target/.git" ]]; then
+    if ! is_expected_checkout "$target"; then
+      echo "Error: $target exists but is not a git checkout of $URL. Refusing to use it - move it aside, or point OBA_WORKSPACE/your workspace layout elsewhere." >&2
+      exit 1
+    fi
     warn_if_stale "$target"
   else
     echo "Cloning $REPO into $target (first use)..." >&2
