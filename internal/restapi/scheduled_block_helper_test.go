@@ -331,7 +331,7 @@ func TestMetricsForStop_MultiTripBlock_NumberOfStopsAwayCanExceedTripLength(t *t
 // away / 6 km" — a bus that hasn't left the depot rendered as imminent.
 func TestMetricsForStop_NotInRangeRefusesClampedResults(t *testing.T) {
 	stops := []blockStopMetric{
-		{TripID: "A", StopSequenceInTrip: 1, BlockSequence: 0, DistanceAlongBlock: 0, EffectiveStopSeconds: 82800},   // 23:00
+		{TripID: "A", StopSequenceInTrip: 1, BlockSequence: 0, DistanceAlongBlock: 0, EffectiveStopSeconds: 82800},    // 23:00
 		{TripID: "A", StopSequenceInTrip: 2, BlockSequence: 1, DistanceAlongBlock: 3000, EffectiveStopSeconds: 84600}, // 23:30
 		{TripID: "A", StopSequenceInTrip: 14, BlockSequence: 13, DistanceAlongBlock: 6000, EffectiveStopSeconds: 86000},
 	}
