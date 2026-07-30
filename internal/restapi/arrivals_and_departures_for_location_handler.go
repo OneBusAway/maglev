@@ -142,11 +142,21 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 		fieldErrors[field] = append(fieldErrors[field], msg)
 	}
 
-	// Spatial params (required) — reuse the shared location parser.
+	// Spatial params (required for this endpoint) — lat and lon are mandatory.
+	// The shared parseLocationParams treats them as optional (OBA behaviour for
+	// stops/routes/trips-for-location), so we enforce presence here explicitly.
+	q := r.URL.Query()
+	if q.Get("lat") == "" {
+		addError("lat", "lat is required")
+	}
+	if q.Get("lon") == "" {
+		addError("lon", "lon is required")
+	}
+
 	loc, locErrors := api.parseLocationParams(r, nil)
 	if len(locErrors) > 0 {
-		mergeFieldErrors(&fieldErrors, locErrors)
-	} else {
+		fieldErrors = utils.MergeFieldErrors(fieldErrors, locErrors)
+	} else if q.Get("lat") != "" && q.Get("lon") != "" {
 		if loc.Radius == 0 && loc.LatSpan == 0 && loc.LonSpan == 0 {
 			loc.Radius = models.QuerySearchRadiusInMeters
 		}
@@ -157,7 +167,6 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 		params.LonSpan = loc.LonSpan
 	}
 
-	q := r.URL.Query()
 	params.Time = parseTimeParam(q, params.Time, addError)
 	parseMinutesCappedParam(q, "minutesBefore", maxMinutesBefore, &params.MinutesBefore, addError)
 	parseMinutesCappedParam(q, "minutesAfter", maxMinutesAfter, &params.MinutesAfter, addError)
@@ -179,7 +188,7 @@ func (api *RestAPI) parseArrivalsAndDeparturesForLocationParams(r *http.Request)
 
 	var maxCountErrors map[string][]string
 	params.MaxCount, maxCountErrors = utils.ParseMaxCount(q, defaultMaxCount, nil)
-	mergeFieldErrors(&fieldErrors, maxCountErrors)
+	fieldErrors = utils.MergeFieldErrors(fieldErrors, maxCountErrors)
 
 	return params, fieldErrors
 }
@@ -279,19 +288,6 @@ func parseRouteTypesParam(q url.Values, addError func(string, string)) []int {
 		routeTypes = append(routeTypes, rt)
 	}
 	return routeTypes
-}
-
-// mergeFieldErrors merges src into *dst, initialising *dst lazily if nil.
-func mergeFieldErrors(dst *map[string][]string, src map[string][]string) {
-	if len(src) == 0 {
-		return
-	}
-	if *dst == nil {
-		*dst = make(map[string][]string)
-	}
-	for k, v := range src {
-		(*dst)[k] = append((*dst)[k], v...)
-	}
 }
 
 // arrivalStatusFromDeviation derives a human-readable status string from a

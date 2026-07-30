@@ -159,3 +159,17 @@ func ValidateAndSanitizeQuery(query string) (string, error) {
 
 	return SanitizeInput(query), nil
 }
+
+// mergeFieldErrors appends src's entries onto dst, allocating dst if necessary.
+func MergeFieldErrors(dst, src map[string][]string) map[string][]string {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string][]string)
+	}
+	for k, v := range src {
+		dst[k] = append(dst[k], v...)
+	}
+	return dst
+}

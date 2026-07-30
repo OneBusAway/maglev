@@ -165,7 +165,7 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 	}
 
 	currentTime, timeFieldErrors := api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
-	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
+	fieldErrors = utils.MergeFieldErrors(fieldErrors, timeFieldErrors)
 
 	serviceDate, todayMidnight := utils.ServiceDateMidnight(nil, currentTime)
 
@@ -204,20 +204,6 @@ func (api *RestAPI) resolveCurrentTime(timeParam string, currentLocation *time.L
 	}
 	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation)
 	return currentTime, timeFieldErrors
-}
-
-// mergeFieldErrors appends src's entries onto dst, allocating dst if necessary.
-func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
-	if len(src) == 0 {
-		return dst
-	}
-	if dst == nil {
-		dst = make(map[string][]string)
-	}
-	for k, v := range src {
-		dst[k] = append(dst[k], v...)
-	}
-	return dst
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
