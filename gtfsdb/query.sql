@@ -1279,15 +1279,18 @@ FROM (
 -- schedule further out than that are rare and would be caught on later polls.
 WITH RECURSIVE
     -- Parse ref_date once. Downstream CTEs read `ref.iso` (YYYY-MM-DD, feeds
-    -- date() arithmetic) and `ref.ymd` (YYYYMMDD, compares against feed
-    -- date columns). Extracting this eliminates the substring-dance that
-    -- otherwise repeats at every ref_date use site.
-    ref(iso, ymd) AS (
+    -- date() arithmetic) and `ref.jd0` (julian day, feeds arithmetic that
+    -- avoids repeated '+1 day' string modifiers in the recursion below).
+    ref(iso, jd0) AS (
         SELECT
             substr(sqlc.arg(ref_date), 1, 4) || '-' ||
             substr(sqlc.arg(ref_date), 5, 2) || '-' ||
             substr(sqlc.arg(ref_date), 7, 2),
-            sqlc.arg(ref_date)
+            julianday(
+                substr(sqlc.arg(ref_date), 1, 4) || '-' ||
+                substr(sqlc.arg(ref_date), 5, 2) || '-' ||
+                substr(sqlc.arg(ref_date), 7, 2)
+            )
     ),
     -- Horizon: 2 years past the LATER of ref_date and today. Anchoring to
     -- today (not ref_date alone) matters for historical ref_date queries --
@@ -1327,17 +1330,24 @@ WITH RECURSIVE
         )
     ),
     -- Enumerate every candidate date strictly after ref_date, up to the
-    -- upper bound. Carry BOTH iso and ymd forms through the recursion so
-    -- downstream predicates never repeat the format conversion --
-    -- strftime is measurable at 730-iteration scale.
-    candidate_date(d_iso, d_ymd) AS (
-        SELECT date(iso, '+1 day'), strftime('%Y%m%d', date(iso, '+1 day'))
+    -- upper bound. Recursion uses julian day arithmetic (jd + 1) instead of
+    -- date-string modifiers -- avoids re-parsing the ISO string every
+    -- iteration and eliminates the '+1 day' literal from every reference.
+    candidate_jd(jd) AS (
+        SELECT jd0 + 1
         FROM ref
         WHERE (SELECT hi FROM bounds) IS NOT NULL
         UNION ALL
-        SELECT date(d_iso, '+1 day'), strftime('%Y%m%d', date(d_iso, '+1 day'))
-        FROM candidate_date
-        WHERE d_ymd < (SELECT hi FROM bounds)
+        SELECT jd + 1
+        FROM candidate_jd
+        WHERE strftime('%Y%m%d', jd) < (SELECT hi FROM bounds)
+    ),
+    -- Materialize both ISO (for %w weekday lookup) and YYYYMMDD (for feed
+    -- date-column joins) once per candidate row, so the outer SELECT below
+    -- doesn't need any format calls.
+    candidate_date(d_iso, d_ymd, d_wday) AS (
+        SELECT date(jd), strftime('%Y%m%d', jd), strftime('%w', jd)
+        FROM candidate_jd
     )
 SELECT EXISTS (
     SELECT 1
@@ -1349,7 +1359,7 @@ SELECT EXISTS (
             JOIN calendar cal ON cal.id = t.service_id
             WHERE t.route_id = sqlc.arg(route_id)
               AND cdate.d_ymd BETWEEN cal.start_date AND cal.end_date
-              AND CASE strftime('%w', cdate.d_iso)
+              AND CASE cdate.d_wday
                     WHEN '0' THEN cal.sunday
                     WHEN '1' THEN cal.monday
                     WHEN '2' THEN cal.tuesday
