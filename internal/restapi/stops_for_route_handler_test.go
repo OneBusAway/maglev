@@ -273,13 +273,19 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
 		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
 			"stopA1,Stop One,37.7749,-122.4194\n" +
-			"stopA2,Stop Two,37.7849,-122.4094\n",
+			"stopA2,Stop Two,37.7849,-122.4094\n" +
+			"stopA3,Stop Three,37.7949,-122.3994\n",
 		// No direction_id column — all trips will have NULL direction_id in the DB.
+		// tripB shares stopA1 but adds stopA3, which tripA never visits: the union
+		// of both trips' stops must be returned, not just the first trip's.
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign\n" +
-			"routeA,svc1,tripA,Downtown\n",
+			"routeA,svc1,tripA,Downtown\n" +
+			"routeA,svc1,tripB,Downtown\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"tripA,08:00:00,08:00:00,stopA1,1\n" +
-			"tripA,08:10:00,08:10:00,stopA2,2\n",
+			"tripA,08:10:00,08:10:00,stopA2,2\n" +
+			"tripB,09:00:00,09:00:00,stopA1,1\n" +
+			"tripB,09:10:00,09:10:00,stopA3,2\n",
 	}
 
 	for name, content := range files {
@@ -324,9 +330,11 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 }
 
 // TestStopsForRouteNullDirectionID guards against the regression where agencies
-// that omit direction_id in their GTFS feed receive an empty stop list. When
-// direction_id is NULL, the SQL condition `t.direction_id = NULL` evaluates to
-// UNKNOWN (not TRUE), so we fall back to single-trip ordering instead.
+// that omit direction_id in their GTFS feed receive an empty or incomplete stop
+// list. When direction_id is NULL, the SQL condition `t.direction_id = NULL`
+// evaluates to UNKNOWN (not TRUE), so we fall back to ordering by the group's
+// trips directly — collecting the union of stops across every trip, not just the
+// first. The fixture's tripB adds stopA3, which tripA never visits.
 func TestStopsForRouteNullDirectionID(t *testing.T) {
 	api := createTestApiWithNullDirectionID(t)
 
@@ -335,10 +343,13 @@ func TestStopsForRouteNullDirectionID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	entry := model.Data.Entry
-	assert.NotEmpty(t, entry.StopIds, "stops-for-route must return stops even when direction_id is NULL")
+	wantStops := []string{"agencyA_stopA1", "agencyA_stopA2", "agencyA_stopA3"}
+	assert.ElementsMatch(t, wantStops, entry.StopIds,
+		"flat stopIds must be the union of stops across all trips, not just the first")
 
 	require.Len(t, entry.StopGroupings, 1)
 	stopGroups := entry.StopGroupings[0].StopGroups
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
-	assert.Len(t, stopGroups[0].StopIds, 2, "expected both stops to appear in the stop group")
+	assert.ElementsMatch(t, wantStops, stopGroups[0].StopIds,
+		"the group must contain every stop served across all trips")
 }
