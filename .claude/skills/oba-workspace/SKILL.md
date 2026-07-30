@@ -17,9 +17,11 @@ One of:
 ### 1. Resolve each requested repo
 
 For each repo name given, run:
+
 ```bash
 .claude/skills/lib/resolve-oba-repo.sh <repo>
 ```
+
 capturing stdout (the resolved path) and stderr separately.
 
 ### 2. Check each resolved path for anomalies
