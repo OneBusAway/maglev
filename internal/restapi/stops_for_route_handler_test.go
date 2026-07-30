@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -51,11 +52,13 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 
 	require.Len(t, grouping.StopGroups, 2)
 
+	// Both RABA directions share the headsign "Shasta Lake", so each group's
+	// name is disambiguated with its direction id (and the sort is deterministic).
 	outbound := grouping.StopGroups[0]
 	assert.Equal(t, "0", outbound.ID)
-	assert.Equal(t, "Shasta Lake", outbound.Name.Name)
+	assert.Equal(t, "Shasta Lake - 0", outbound.Name.Name)
 	assert.Equal(t, "destination", outbound.Name.Type)
-	assert.Equal(t, []string{"Shasta Lake"}, outbound.Name.Names)
+	assert.Equal(t, []string{"Shasta Lake - 0"}, outbound.Name.Names)
 	assert.Len(t, outbound.StopIds, 21)
 	// Direction-0 shape retraces two of its own edges, splitting into 3 polylines.
 	require.Len(t, outbound.Polylines, 3)
@@ -66,8 +69,9 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 
 	inbound := grouping.StopGroups[1]
 	assert.Equal(t, "1", inbound.ID)
-	assert.Equal(t, "Shasta Lake", inbound.Name.Name)
+	assert.Equal(t, "Shasta Lake - 1", inbound.Name.Name)
 	assert.Equal(t, "destination", inbound.Name.Type)
+	assert.Equal(t, []string{"Shasta Lake - 1"}, inbound.Name.Names)
 	assert.Len(t, inbound.StopIds, 22)
 	// Direction-1 shape retraces one of its own edges, splitting into 2 polylines.
 	require.Len(t, inbound.Polylines, 2)
@@ -352,4 +356,83 @@ func TestStopsForRouteNullDirectionID(t *testing.T) {
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
 	assert.ElementsMatch(t, wantStops, stopGroups[0].StopIds,
 		"the group must contain every stop served across all trips")
+}
+
+func TestDisambiguateGroupNames(t *testing.T) {
+	group := func(id, name string) models.StopGroup {
+		return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+	}
+
+	tests := []struct {
+		name      string
+		groups    []models.StopGroup
+		wantNames []string
+	}{
+		{
+			name:      "distinct names are left untouched",
+			groups:    []models.StopGroup{group("0", "Downtown"), group("1", "Airport")},
+			wantNames: []string{"Downtown", "Airport"},
+		},
+		{
+			name:      "shared name is disambiguated with the direction id",
+			groups:    []models.StopGroup{group("0", "Shasta Lake"), group("1", "Shasta Lake")},
+			wantNames: []string{"Shasta Lake - 0", "Shasta Lake - 1"},
+		},
+		{
+			name:      "only colliding groups are suffixed, unique name is left alone",
+			groups:    []models.StopGroup{group("0", "Loop"), group("1", "Loop"), group("2", "Express")},
+			wantNames: []string{"Loop - 0", "Loop - 1", "Express"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			disambiguateGroupNames(tt.groups)
+			for i, want := range tt.wantNames {
+				assert.Equal(t, want, tt.groups[i].Name.Name)
+				assert.Equal(t, []string{want}, tt.groups[i].Name.Names)
+			}
+		})
+	}
+}
+
+// TestDisambiguateGroupNamesCollidesWithUniqueName covers the case where suffixing
+// a duplicated name produces a string that already exists as another group's
+// unique name ("A", "A", "A - 0"): the generated "A - 0" must be pushed further
+// so every final name stays unique. It also asserts the outcome is independent of
+// input order, which is what makes the later name-based sort stable.
+func TestDisambiguateGroupNamesCollidesWithUniqueName(t *testing.T) {
+	newGroups := func() []models.StopGroup {
+		mk := func(id, name string) models.StopGroup {
+			return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+		}
+		return []models.StopGroup{mk("0", "A"), mk("1", "A"), mk("2", "A - 0")}
+	}
+
+	// Final name per direction id, regardless of the order groups arrive in.
+	wantByID := map[string]string{
+		"0": "A - 0 - 0",
+		"1": "A - 1",
+		"2": "A - 0 - 2",
+	}
+
+	assertResolved := func(t *testing.T, groups []models.StopGroup) {
+		seen := make(map[string]bool)
+		for _, g := range groups {
+			assert.Equal(t, wantByID[g.ID], g.Name.Name, "group %s", g.ID)
+			assert.Equal(t, []string{wantByID[g.ID]}, g.Name.Names, "group %s names", g.ID)
+			assert.False(t, seen[g.Name.Name], "duplicate final name %q", g.Name.Name)
+			seen[g.Name.Name] = true
+		}
+	}
+
+	ordered := newGroups()
+	disambiguateGroupNames(ordered)
+	assertResolved(t, ordered)
+
+	// Reversed input must yield the same per-group names (order independence).
+	reversed := newGroups()
+	slices.Reverse(reversed)
+	disambiguateGroupNames(reversed)
+	assertResolved(t, reversed)
 }
