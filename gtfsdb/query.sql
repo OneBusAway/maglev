@@ -1278,15 +1278,29 @@ FROM (
 -- input date to keep the recursive date-enumeration cheap; feeds that
 -- schedule further out than that are rare and would be caught on later polls.
 WITH RECURSIVE
+    -- Parse ref_date once. Downstream CTEs read `ref.iso` (YYYY-MM-DD, feeds
+    -- date() arithmetic) and `ref.ymd` (YYYYMMDD, compares against feed
+    -- date columns). Extracting this eliminates the substring-dance that
+    -- otherwise repeats at every ref_date use site.
+    ref(iso, ymd) AS (
+        SELECT
+            substr(sqlc.arg(ref_date), 1, 4) || '-' ||
+            substr(sqlc.arg(ref_date), 5, 2) || '-' ||
+            substr(sqlc.arg(ref_date), 7, 2),
+            sqlc.arg(ref_date)
+    ),
     -- Horizon: 2 years past the LATER of ref_date and today. Anchoring to
     -- today (not ref_date alone) matters for historical ref_date queries --
     -- e.g. ref_date=1970 against a feed whose real service starts in 2024 --
     -- so the search still reaches "today's" feed span instead of clamping to
     -- 1972. The recursive search below never enumerates past this horizon,
     -- regardless of how far out calendar/calendar_dates rows extend.
+    --
+    -- ISO date strings sort lexicographically, so MAX(iso, date('now'))
+    -- picks the later without a format round-trip.
     horizon(cap) AS (
-        SELECT strftime('%Y%m%d', date(substr(anchor, 1, 4) || '-' || substr(anchor, 5, 2) || '-' || substr(anchor, 7, 2), '+2 years'))
-        FROM (SELECT MAX(sqlc.arg(ref_date), strftime('%Y%m%d', 'now')) AS anchor)
+        SELECT strftime('%Y%m%d', date(MAX(iso, date('now')), '+2 years'))
+        FROM ref
     ),
     -- Upper bound: the max end_date across every calendar row this route's
     -- services touch, or the max calendar_dates.date (in case the feed adds
@@ -1312,13 +1326,18 @@ WITH RECURSIVE
             (SELECT cap FROM horizon)
         )
     ),
-    candidate_date(d) AS (
-        SELECT strftime('%Y%m%d', date(substr(sqlc.arg(ref_date), 1, 4) || '-' || substr(sqlc.arg(ref_date), 5, 2) || '-' || substr(sqlc.arg(ref_date), 7, 2), '+1 day'))
+    -- Enumerate every candidate date strictly after ref_date, up to the
+    -- upper bound. Carry BOTH iso and ymd forms through the recursion so
+    -- downstream predicates never repeat the format conversion --
+    -- strftime is measurable at 730-iteration scale.
+    candidate_date(d_iso, d_ymd) AS (
+        SELECT date(iso, '+1 day'), strftime('%Y%m%d', date(iso, '+1 day'))
+        FROM ref
         WHERE (SELECT hi FROM bounds) IS NOT NULL
         UNION ALL
-        SELECT strftime('%Y%m%d', date(substr(d, 1, 4) || '-' || substr(d, 5, 2) || '-' || substr(d, 7, 2), '+1 day'))
+        SELECT date(d_iso, '+1 day'), strftime('%Y%m%d', date(d_iso, '+1 day'))
         FROM candidate_date
-        WHERE d < (SELECT hi FROM bounds)
+        WHERE d_ymd < (SELECT hi FROM bounds)
     )
 SELECT EXISTS (
     SELECT 1
@@ -1329,8 +1348,8 @@ SELECT EXISTS (
             FROM trips t
             JOIN calendar cal ON cal.id = t.service_id
             WHERE t.route_id = sqlc.arg(route_id)
-              AND cdate.d BETWEEN cal.start_date AND cal.end_date
-              AND CASE strftime('%w', substr(cdate.d, 1, 4) || '-' || substr(cdate.d, 5, 2) || '-' || substr(cdate.d, 7, 2))
+              AND cdate.d_ymd BETWEEN cal.start_date AND cal.end_date
+              AND CASE strftime('%w', cdate.d_iso)
                     WHEN '0' THEN cal.sunday
                     WHEN '1' THEN cal.monday
                     WHEN '2' THEN cal.tuesday
@@ -1342,7 +1361,7 @@ SELECT EXISTS (
               AND NOT EXISTS (
                   SELECT 1 FROM calendar_dates cd
                   WHERE cd.service_id = t.service_id
-                    AND cd.date = cdate.d
+                    AND cd.date = cdate.d_ymd
                     AND cd.exception_type = 2
               )
         )
@@ -1351,7 +1370,7 @@ SELECT EXISTS (
             FROM trips t
             JOIN calendar_dates cd ON cd.service_id = t.service_id
             WHERE t.route_id = sqlc.arg(route_id)
-              AND cd.date = cdate.d
+              AND cd.date = cdate.d_ymd
               AND cd.exception_type = 1
         )
 ) AS has_future_service;
