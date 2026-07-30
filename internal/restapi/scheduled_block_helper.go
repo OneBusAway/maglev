@@ -148,17 +148,53 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 	serviceDate time.Time,
 ) *scheduledBlockSnapshot {
 	cache := snapshotCacheFrom(ctx)
-	if cache != nil {
-		if snap, ok := cache.m[makeSnapshotCacheKey(targetTripID, currentTime, serviceDate)]; ok {
-			return snap
-		}
+	if hit, ok := lookupCachedSnapshot(cache, targetTripID, currentTime, serviceDate); ok {
+		return hit
 	}
 
+	trips := api.loadShiftTrips(ctx, targetTripID, serviceDate)
+	if len(trips) == 0 {
+		return nil
+	}
+
+	stops, tripOffsets := api.emitBlockStops(ctx, trips)
+	if len(stops) == 0 {
+		return nil
+	}
+
+	snap := buildSnapshotFromStops(stops, trips, currentTime, serviceDate)
+	assignActiveTrip(snap, trips, tripOffsets)
+	populateSnapshotCache(cache, snap, trips, currentTime, serviceDate)
+	return snap
+}
+
+// lookupCachedSnapshot returns (snap, true) when the request-scoped cache
+// (see WithSnapshotCache) has a snapshot for this exact (tripID, currentTime,
+// serviceDate) combo. Extracted from computeScheduledBlockSnapshot to keep
+// that function's cognitive complexity under SonarCloud's threshold.
+func lookupCachedSnapshot(
+	cache *snapshotCache,
+	targetTripID string,
+	currentTime, serviceDate time.Time,
+) (*scheduledBlockSnapshot, bool) {
+	if cache == nil {
+		return nil, false
+	}
+	snap, ok := cache.m[makeSnapshotCacheKey(targetTripID, currentTime, serviceDate)]
+	return snap, ok
+}
+
+// loadShiftTrips resolves targetTripID's block, loads every trip's stop
+// times / shape / bounds, sorts by first-stop time, and narrows to the
+// shift (contiguous run of non-overlapping trips) that contains
+// targetTripID. Returns nil when any stage produces no usable trips —
+// mirrors Java's per-shift BlockConfigurationEntry split for feeds that
+// reuse one block_id across every bus in a day.
+func (api *RestAPI) loadShiftTrips(ctx context.Context, targetTripID string, serviceDate time.Time) []blockTripData {
 	tripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
 	if len(tripIDs) == 0 {
 		return nil
 	}
-
 	trips := api.loadBlockTripData(ctx, tripIDs)
 	if len(trips) == 0 {
 		return nil
@@ -166,83 +202,88 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 	slices.SortFunc(trips, func(a, b blockTripData) int {
 		return cmp.Compare(a.firstSeconds, b.firstSeconds)
 	})
-	// Some feeds reuse one block_id across every bus in a day. Java's
-	// bundle build splits these into per-shift BlockConfigurationEntries;
-	// we replicate at query time.
-	trips = keepShiftContainingTrip(trips, targetTripID)
-	if len(trips) == 0 {
-		return nil
-	}
+	return keepShiftContainingTrip(trips, targetTripID)
+}
 
+// buildSnapshotFromStops assembles the block-level snapshot fields around a
+// stops slice + trips list. keepShiftContainingTrip should have removed
+// cross-shift overlaps that produce non-monotonic EffectiveStopSeconds, but
+// a feed could still emit out-of-order stop times WITHIN a single trip.
+// Never reorder — slice positions define BlockSequence — but switch
+// NextStopIndex selection and interpolateBlockDistance to linear-scan
+// fallbacks when monotonicity is broken so both agree on the same
+// bracketing stops.
+func buildSnapshotFromStops(
+	stops []blockStopMetric,
+	trips []blockTripData,
+	currentTime, serviceDate time.Time,
+) *scheduledBlockSnapshot {
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-
-	// Emit stops first so we have DistanceAlongBlock ready before picking
-	// the active trip — Java picks by distance-along-block, not clock time.
-	stops, tripOffsets := api.emitBlockStops(ctx, trips)
-	if len(stops) == 0 {
-		return nil
-	}
 
 	stopIndex := make(map[scheduledStopKey]int, len(stops))
 	for i, s := range stops {
 		stopIndex[scheduledStopKey{TripID: s.TripID, StopSequenceInTrip: s.StopSequenceInTrip}] = i
 	}
 
-	// keepShiftContainingTrip should have removed cross-shift overlaps that
-	// produce non-monotonic EffectiveStopSeconds, but a feed could still emit
-	// out-of-order stop times WITHIN a single trip. Never reorder — slice
-	// positions define BlockSequence — but switch NextStopIndex selection and
-	// interpolateBlockDistance to linear-scan fallbacks when monotonicity is
-	// broken so both agree on the same bracketing stops.
 	monotonic := stopsAreMonotonic(stops)
-
-	nextStopIdx := findNextStopIndex(stops, currentSeconds, monotonic)
-
-	firstStopSec := stops[0].EffectiveStopSeconds
-	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	shiftTripIDs := make(map[string]struct{}, len(trips))
 	for _, t := range trips {
 		shiftTripIDs[t.id] = struct{}{}
 	}
-	snap := &scheduledBlockSnapshot{
+
+	firstStopSec := stops[0].EffectiveStopSeconds
+	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
+	return &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
-		NextStopIndex:      nextStopIdx,
+		NextStopIndex:      findNextStopIndex(stops, currentSeconds, monotonic),
 		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds, monotonic),
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
+}
 
-	// Java's getScheduledBlockLocationBetweenStopTimes:337-352 picks the
-	// active trip by comparing DistanceAlongBlock to each trip's block
-	// offset — once the interpolated block-position crosses a later trip's
-	// start offset, that trip becomes active. Time-based selection drifts
-	// from Java at trip transitions when the vehicle is running late or
-	// early (the deviation shift moves DistanceAlongBlock across the
-	// boundary before clock time crosses the next trip's firstSeconds).
+// assignActiveTrip fills snap.ActiveTrip* fields by picking the latest trip
+// whose block-start offset is ≤ snap.DistanceAlongBlock. Mirrors Java's
+// getScheduledBlockLocationBetweenStopTimes:337-352 — once the interpolated
+// block-position crosses a later trip's start offset, that trip becomes
+// active. Time-based selection drifts from Java at trip transitions when
+// the vehicle is running late or early (the deviation shift moves
+// DistanceAlongBlock across the boundary before clock time crosses the next
+// trip's firstSeconds).
+func assignActiveTrip(snap *scheduledBlockSnapshot, trips []blockTripData, tripOffsets []float64) {
 	activeIdx := -1
 	for i, offset := range tripOffsets {
 		if snap.DistanceAlongBlock >= offset {
 			activeIdx = i
 		}
 	}
-	if activeIdx >= 0 {
-		active := trips[activeIdx]
-		snap.ActiveTripID = active.id
-		snap.ActiveTripShape = active.shapePoints
-		snap.ActiveTripCumulativeDistances = active.cumDistances
-		snap.ActiveTripTotalDistance = active.totalDist
-		snap.ActiveTripScheduledDistance = math.Max(0, snap.DistanceAlongBlock-tripOffsets[activeIdx])
+	if activeIdx < 0 {
+		return
 	}
+	active := trips[activeIdx]
+	snap.ActiveTripID = active.id
+	snap.ActiveTripShape = active.shapePoints
+	snap.ActiveTripCumulativeDistances = active.cumDistances
+	snap.ActiveTripTotalDistance = active.totalDist
+	snap.ActiveTripScheduledDistance = math.Max(0, snap.DistanceAlongBlock-tripOffsets[activeIdx])
+}
 
-	// Populate the cache under every trip in this shift so later BuildTrip
-	// Status calls for block-mates skip the whole compute path.
-	if cache != nil {
-		for _, t := range trips {
-			cache.m[makeSnapshotCacheKey(t.id, currentTime, serviceDate)] = snap
-		}
+// populateSnapshotCache indexes snap under every trip in the shift so later
+// BuildTripStatus calls for block-mates within the same request skip the
+// whole compute path. No-op when the request didn't install a cache.
+func populateSnapshotCache(
+	cache *snapshotCache,
+	snap *scheduledBlockSnapshot,
+	trips []blockTripData,
+	currentTime, serviceDate time.Time,
+) {
+	if cache == nil {
+		return
 	}
-	return snap
+	for _, t := range trips {
+		cache.m[makeSnapshotCacheKey(t.id, currentTime, serviceDate)] = snap
+	}
 }
 
 // emitBlockStops walks the block trips in order, projecting each trip's
