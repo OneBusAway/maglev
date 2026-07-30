@@ -317,8 +317,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	// When a block has multiple queried-route trips (e.g. route A → B → A),
 	// we need the specific trip whose time window overlaps with the active trip.
 	type blockTripEntry struct {
-		ID              string
-		MinArrivalTime  int64
+		ID               string
+		MinArrivalTime   int64
 		MaxDepartureTime int64
 	}
 	type blockServiceKey struct {
