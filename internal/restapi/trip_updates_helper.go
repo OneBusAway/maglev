@@ -234,33 +234,20 @@ func minAbs(a, b int64) int64 {
 	return b
 }
 
-// stuPredictedFromArrival computes the predicted arrival-seconds-since-midnight
-// for an STU. Returns 0 when nothing useful is set. Uses utils.CalculateSeconds
+// stuPredictedFromEvent computes the predicted seconds-since-midnight for a
+// single GTFS-RT StopTimeEvent (arrival or departure -- they share the same
+// struct shape). Returns 0 when nothing useful is set. Uses utils.CalculateSeconds
 // SinceServiceDate for the Time path so wall-clock semantics stay correct
 // across DST transitions and post-midnight stop times.
-func stuPredictedFromArrival(stu gtfs.StopTimeUpdate, schedArr int64, serviceDate time.Time) int64 {
-	if stu.Arrival == nil || schedArr <= 0 {
+func stuPredictedFromEvent(event *gtfs.StopTimeEvent, sched int64, serviceDate time.Time) int64 {
+	if event == nil || sched <= 0 {
 		return 0
 	}
 	switch {
-	case stu.Arrival.Time != nil:
-		return utils.CalculateSecondsSinceServiceDate(*stu.Arrival.Time, serviceDate)
-	case stu.Arrival.Delay != nil:
-		return schedArr + int64(stu.Arrival.Delay.Seconds())
-	}
-	return 0
-}
-
-// stuPredictedFromDeparture mirrors stuPredictedFromArrival for departure events.
-func stuPredictedFromDeparture(stu gtfs.StopTimeUpdate, schedDep int64, serviceDate time.Time) int64 {
-	if stu.Departure == nil || schedDep <= 0 {
-		return 0
-	}
-	switch {
-	case stu.Departure.Time != nil:
-		return utils.CalculateSecondsSinceServiceDate(*stu.Departure.Time, serviceDate)
-	case stu.Departure.Delay != nil:
-		return schedDep + int64(stu.Departure.Delay.Seconds())
+	case event.Time != nil:
+		return utils.CalculateSecondsSinceServiceDate(*event.Time, serviceDate)
+	case event.Delay != nil:
+		return sched + int64(event.Delay.Seconds())
 	}
 	return 0
 }
@@ -290,8 +277,8 @@ func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []t
 				refTime := stuReferenceTime(stu, serviceDate, currentTime)
 				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence, refTime)
 			}
-			picker.consider(schedArr, stuPredictedFromArrival(stu, schedArr, serviceDate))
-			picker.consider(schedDep, stuPredictedFromDeparture(stu, schedDep, serviceDate))
+			picker.consider(schedArr, stuPredictedFromEvent(stu.Arrival, schedArr, serviceDate))
+			picker.consider(schedDep, stuPredictedFromEvent(stu.Departure, schedDep, serviceDate))
 		}
 	}
 	if !picker.found {
