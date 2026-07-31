@@ -34,6 +34,9 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort by name before truncating to maxCount so the page boundary reflects
+	// natural order rather than the FTS5 relevance ranking SearchRoutes returned.
+	utils.SortRoutesByName(routes)
 	routes, isLimitExceeded := utils.PaginateSlice(routes, 0, maxCount)
 
 	results := make([]models.Route, 0, len(routes))
@@ -92,6 +95,8 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
+		utils.SortAgencyReferencesByID(agencies)
+
 		// Populate situation references for alerts affecting the returned routes
 		resultRawRouteIDs := make([]string, 0, len(routes))
 		for _, routeRow := range routes {
