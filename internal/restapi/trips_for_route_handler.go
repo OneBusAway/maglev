@@ -284,6 +284,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	tripAgencyMap := make(map[string]string)
+	routeAgencyMap := make(map[string]string)
 	if len(fetchedTrips) > 0 {
 		routeIDSet := make(map[string]struct{})
 		for _, trip := range fetchedTrips {
@@ -300,13 +301,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		routeAgencyMap := make(map[string]string, len(routes))
 		for _, route := range routes {
 			routeAgencyMap[route.ID] = route.AgencyID
 		}
 		for _, trip := range fetchedTrips {
-			if agencyID, ok := routeAgencyMap[trip.RouteID]; ok {
-				tripAgencyMap[trip.ID] = agencyID
+			if aID, ok := routeAgencyMap[trip.RouteID]; ok {
+				tripAgencyMap[trip.ID] = aID
 			}
 		}
 	}
@@ -315,7 +315,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	stopIDsMap := make(map[string]bool)
 
 	// When a block has multiple queried-route trips (e.g. route A → B → A),
-	// we need the specific trip whose time window overlaps with the active trip.
+	// we need the specific trip whose time window is nearest to the active trip.
 	type blockTripEntry struct {
 		ID               string
 		MinArrivalTime   int64
@@ -333,7 +333,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if len(interlinedBlockIDs) > 0 {
-		allServiceIDs := serviceIDs
+		// Explicit copy: append(serviceIDs, ...) could alias serviceIDs' backing
+		// array if it has spare capacity, which would mutate serviceIDs.
+		allServiceIDs := make([]string, len(serviceIDs))
+		copy(allServiceIDs, serviceIDs)
 		if len(prevServiceIDs) > 0 {
 			allServiceIDs = append(allServiceIDs, prevServiceIDs...)
 		}
@@ -342,9 +345,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			ServiceIds: allServiceIDs,
 		})
 		if err != nil {
+			// Degrade gracefully: skip interlining resolution for these blocks.
+			// Other DB lookups in this handler (layoverBlocks, prevServiceIDs,
+			// nullBlockTrips, GetTripsInBlock) all degrade the same way.
 			api.Logger.Warn("trips-for-route: failed to fetch block trips for interlining", "error", err)
-			api.serverErrorResponse(w, r, err)
-			return
 		}
 
 		for _, bt := range blockTrips {
@@ -373,12 +377,57 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
-		var schedule *models.TripsSchedule
-		var status *models.TripStatus
+		// Determine the entry's trip identity. For interlined blocks where the
+		// active trip is on another route, entryTripID is the queried-route trip
+		// in this block whose time window is nearest to the active trip — i.e.
+		// "the trip on the queried route that caused this block to be selected."
+		// status.activeTripId will still reflect the vehicle's current trip.
+		entryTripID := tripID
+		entryAgencyID := activeAgencyID
+		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
+			key := blockServiceKey{BlockID: fetchedTrip.BlockID.String, ServiceID: fetchedTrip.ServiceID}
+			if entries, ok := blockTripForRoute[key]; ok && len(entries) > 0 {
+				// Among queried-route trips in the same block+service, find the one
+				// whose midpoint is closest to the active trip's midpoint. Block trips
+				// are sequential (one vehicle), so they never overlap in time — a
+				// standard overlap test would fail across any layover gap.
+				activeMid := (fetchedTrip.MinArrivalTime.Int64 + fetchedTrip.MaxDepartureTime.Int64) / 2
+				bestIdx := 0
+				bestDist := int64(-1)
+				for i, e := range entries {
+					eMid := (e.MinArrivalTime + e.MaxDepartureTime) / 2
+					dist := eMid - activeMid
+					if dist < 0 {
+						dist = -dist
+					}
+					if bestDist == -1 || dist < bestDist {
+						bestDist = dist
+						bestIdx = i
+					}
+				}
+				entryTripID = entries[bestIdx].ID
+				if queriedAgency, ok := routeAgencyMap[routeID]; ok {
+					entryAgencyID = queriedAgency
+				} else {
+					entryAgencyID = agencyID
+				}
+			} else {
+				api.Logger.Warn("trips-for-route: no candidate queried-route trip in interlined block",
+					"block_id", fetchedTrip.BlockID.String,
+					"service_id", fetchedTrip.ServiceID,
+					"active_trip_id", fetchedTrip.ID,
+					"route_id", routeID)
+			}
+		}
 
+		// Build schedule from entryTripID (the entry's own trip), not the active
+		// trip. Per spec, schedule.stopTimes is "scheduled stop times for this
+		// trip" and schedule.previousTripId is "the preceding trip in this
+		// vehicle's block" — both relative to the entry's trip identity.
+		var schedule *models.TripsSchedule
 		if includeSchedule {
 			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, tripID, activeAgencyID, currentTime, currentLocation)
+			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, currentTime, currentLocation)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
@@ -387,6 +436,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
+		// Build status from the active trip (tripID). Per spec,
+		// status.activeTripId is "the trip the vehicle is currently executing."
+		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
 			status, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, todayMidnight, currentTime)
@@ -396,35 +448,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// Override tripId to queried-route trip for interlined blocks.
-		entryTripID := tripID
-		entryAgencyID := activeAgencyID
-		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
-			key := blockServiceKey{BlockID: fetchedTrip.BlockID.String, ServiceID: fetchedTrip.ServiceID}
-			if entries, ok := blockTripForRoute[key]; ok && len(entries) > 0 {
-				bestIdx := 0
-				activeMin := fetchedTrip.MinArrivalTime.Int64
-				activeMax := fetchedTrip.MaxDepartureTime.Int64
-				// Among queried-route trips in the same block+service, find the one
-				// whose time window overlaps with the active trip. This handles blocks
-				// that visit the queried route multiple times (e.g. route A → B → A).
-				for i, e := range entries {
-					if e.MinArrivalTime <= activeMax && e.MaxDepartureTime >= activeMin {
-						bestIdx = i
-						break
-					}
-				}
-				entryTripID = entries[bestIdx].ID
-				entryAgencyID = agencyID
-			}
-		}
-
 		entry := models.TripsForRouteListEntry{
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(r.Context(), tripID),
+			SituationIds: api.GetSituationIDsForTrip(r.Context(), entryTripID),
 			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
 		result = append(result, entry)

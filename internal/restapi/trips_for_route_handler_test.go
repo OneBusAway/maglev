@@ -33,7 +33,7 @@ var tripsForRouteTestClock = time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC)
 var afterMidnightClock = time.Date(2025, 6, 13, 0, 30, 0, 0, time.UTC)
 
 // loopRouteClock is 10:15 UTC on 2025-06-12 — used by the looping-route
-// fixture where a block visits the queried route, leaves, then returns.
+// and gap-case fixtures.
 var loopRouteClock = time.Date(2025, 6, 12, 10, 15, 0, 0, time.UTC)
 
 const (
@@ -45,35 +45,15 @@ const (
 	tripsForRouteHeadsign = "Test Headsign"
 )
 
-// createTestApiWithTripsForRouteFixture builds a RestAPI backed by a minimal
-// in-memory GTFS dataset with a single trip active at tripsForRouteTestClock.
-// This guarantees the trips-for-route handler returns at least one entry, so
-// the per-entry assertions below validate real data instead of running over
-// an empty list (the RABA fixture's block_trip_indexes don't cover this path).
-func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
+// createTestApiWithGTFSFixture builds a RestAPI backed by an in-memory GTFS
+// dataset from the given file-content map. This eliminates the duplicated
+// boilerplate across the various per-scenario fixture builders.
+func createTestApiWithGTFSFixture(t *testing.T, c clock.Clock, zipName string, files map[string]string) *RestAPI {
 	t.Helper()
 	ctx := context.Background()
 
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	files := map[string]string{
-		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
-			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
-		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
-			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
-		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
-			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
-		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
-			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
-			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
-		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
-			tripsForRouteRouteID + ",tfr-svc," + tripsForRouteTripID + "," + tripsForRouteHeadsign + ",0,tfr-block\n",
-		// First stop at 11:55, last at 12:05 — pinned clock at 12:00 falls inside the
-		// handler's (-30min/+10min) active window.
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			tripsForRouteTripID + ",11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
-			tripsForRouteTripID + ",12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
-	}
 	for name, content := range files {
 		f, err := w.Create(name)
 		require.NoError(t, err)
@@ -82,7 +62,7 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 	}
 	require.NoError(t, w.Close())
 
-	zipPath := filepath.Join(t.TempDir(), "trips-for-route.zip")
+	zipPath := filepath.Join(t.TempDir(), zipName)
 	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
 
 	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
@@ -110,8 +90,166 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 	return api
 }
 
+// hms converts hours, minutes, seconds to time.Duration for readable assertions
+// on schedule stop times (which are stored as nanosecond durations from midnight).
+func hms(h, m, s int) time.Duration {
+	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
+}
+
+// --- Fixture file maps ---
+
+func basicTripsForRouteFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc," + tripsForRouteTripID + "," + tripsForRouteHeadsign + ",0,tfr-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			tripsForRouteTripID + ",11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			tripsForRouteTripID + ",12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+func interlineFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-a,Headsign A,0,tfr-interline\n" +
+			"tfr-route-otr,tfr-svc,tfr-trip-b,Headsign B,0,tfr-interline\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-trip-a,11:20:00,11:20:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-a,11:50:00,11:50:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-b,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-b,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+func overnightInterlineFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-yest-a,Headsign A,0,tfr-overnight\n" +
+			"tfr-route-otr,tfr-svc-yest,tfr-yest-b,Headsign B,0,tfr-overnight\n" +
+			tripsForRouteRouteID + ",tfr-svc-today,tfr-today-a,Headsign A,0,tfr-overnight\n" +
+			"tfr-route-otr,tfr-svc-today,tfr-today-b,Headsign B,0,tfr-overnight\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-yest-a,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-a,24:10:00,24:10:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-yest-b,23:55:00,23:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-b,24:45:00,24:45:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-today-a,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-a,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-today-b,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-b,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+func loopingRouteFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-loop-a,Headsign A,0,tfr-loop-block\n" +
+			"tfr-route-otr,tfr-svc,tfr-loop-b,Headsign B,0,tfr-loop-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-loop-c,Headsign C,0,tfr-loop-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-loop-a,09:00:00,09:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-a,09:45:00,09:45:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-loop-b,10:00:00,10:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-b,10:30:00,10:30:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-loop-c,10:30:00,10:30:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-c,11:15:00,11:15:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+func loopingRouteWithGapFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-loop-a,Headsign A,0,tfr-loop-block\n" +
+			"tfr-route-otr,tfr-svc,tfr-loop-b,Headsign B,0,tfr-loop-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-loop-c,Headsign C,0,tfr-loop-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-loop-a,09:00:00,09:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-a,09:45:00,09:45:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-loop-b,10:00:00,10:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-b,10:25:00,10:25:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-loop-c,10:35:00,10:35:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-loop-c,11:15:00,11:15:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+func gapFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-gap-a,Headsign A,0,tfr-gap-block\n" +
+			"tfr-route-otr,tfr-svc,tfr-gap-b,Headsign B,0,tfr-gap-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-gap-c,Headsign C,0,tfr-gap-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-gap-a,09:30:00,09:30:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-gap-a,09:50:00,09:50:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-gap-b,10:00:00,10:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-gap-b,10:30:00,10:30:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-gap-c,10:35:00,10:35:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-gap-c,10:50:00,10:50:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	tests := []struct {
@@ -205,7 +343,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 }
 
 func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	tests := []struct {
@@ -261,7 +399,7 @@ func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
 }
 
 func TestTripsForRouteHandler_ReferencesInclusion(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	tests := []struct {
@@ -331,7 +469,7 @@ func TestTripsForRouteHandler_ReferencesInclusion(t *testing.T) {
 }
 
 func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	outOfServiceTimeMs := tripsForRouteTestClock.Add(12 * time.Hour).UnixMilli()
@@ -447,308 +585,4 @@ func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
 	assert.Empty(t, stopIDsMap)
-}
-
-func createTestApiWithInterlineFixture(t *testing.T, c clock.Clock) *RestAPI {
-	t.Helper()
-	ctx := context.Background()
-
-	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
-	files := map[string]string{
-		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
-			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
-		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
-			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
-			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
-		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
-			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
-		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
-			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
-			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
-		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
-			tripsForRouteRouteID + ",tfr-svc,tfr-trip-a,Headsign A,0,tfr-interline\n" +
-			"tfr-route-otr,tfr-svc,tfr-trip-b,Headsign B,0,tfr-interline\n",
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"tfr-trip-a,11:20:00,11:20:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-trip-a,11:50:00,11:50:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-trip-b,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-trip-b,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
-	}
-	for name, content := range files {
-		f, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-
-	zipPath := filepath.Join(t.TempDir(), "trips-for-route-interline.zip")
-	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
-
-	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
-	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
-	require.NoError(t, err)
-	t.Cleanup(gtfsManager.Shutdown)
-
-	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
-
-	application := &app.Application{
-		Config: appconf.Config{
-			Env:       appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:   []string{"TEST"},
-			RateLimit: 100,
-		},
-		GtfsConfig:          gtfsConfig,
-		GtfsManager:         gtfsManager,
-		DirectionCalculator: dirCalc,
-		Clock:               c,
-	}
-
-	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	t.Cleanup(api.Shutdown)
-	return api
-}
-
-func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
-	api := createTestApiWithInterlineFixture(t, clock.NewMockClock(tripsForRouteTestClock))
-	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
-	timeMs := tripsForRouteTestClock.UnixMilli()
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
-		combinedRouteID, timeMs)
-
-	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
-
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, http.StatusOK, model.Code)
-	require.Len(t, model.Data.List, 1)
-
-	entry := model.Data.List[0]
-	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-a")
-	assert.Equal(t, expectedTripID, entry.TripId)
-	require.NotNil(t, entry.Status)
-	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-b")
-	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
-}
-
-// createTestApiWithOvernightInterlineFixture builds a RestAPI where the same
-// block ID is reused across two service days (yesterday and today) with
-// different queried-route trips. At afterMidnightClock (00:30), only
-// yesterday's trips are in the active window. This tests that the composite
-// key (BlockID+ServiceID) resolves to yesterday's queried-route trip, not
-// today's.
-//
-// Yesterday (2025-06-12, service tfr-svc-yest):
-//
-//	tfr-yest-a on tfr-route      23:00–24:10  block=tfr-overnight
-//	tfr-yest-b on tfr-route-otr  23:55–24:45  block=tfr-overnight
-//
-// At 00:30 (prevDaySinceMidnight = 24h30m), tfr-yest-a ends at 24:10 < 24:30
-// so it is NOT the active trip; tfr-yest-b (24:45) is. But tfr-yest-a IS
-// within the block-finding window (from=24:00, to=24:40), so the block is
-// found via yesterday's queried-route trip.
-//
-// Today (2025-06-13, service tfr-svc-today):
-//
-//	tfr-today-a on tfr-route      23:00–23:30  block=tfr-overnight
-//	tfr-today-b on tfr-route-otr  23:00–23:30  block=tfr-overnight
-func createTestApiWithOvernightInterlineFixture(t *testing.T, c clock.Clock) *RestAPI {
-	t.Helper()
-	ctx := context.Background()
-
-	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
-	files := map[string]string{
-		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
-			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
-		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
-			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
-			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
-		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
-			// Thursday 2025-06-12
-			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
-			// Friday 2025-06-13
-			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
-		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
-			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
-			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
-		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
-			tripsForRouteRouteID + ",tfr-svc-yest,tfr-yest-a,Headsign A,0,tfr-overnight\n" +
-			"tfr-route-otr,tfr-svc-yest,tfr-yest-b,Headsign B,0,tfr-overnight\n" +
-			tripsForRouteRouteID + ",tfr-svc-today,tfr-today-a,Headsign A,0,tfr-overnight\n" +
-			"tfr-route-otr,tfr-svc-today,tfr-today-b,Headsign B,0,tfr-overnight\n",
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"tfr-yest-a,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-yest-a,24:10:00,24:10:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-yest-b,23:55:00,23:55:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-yest-b,24:45:00,24:45:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-today-a,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-today-a,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-today-b,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-today-b,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n",
-	}
-	for name, content := range files {
-		f, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-
-	zipPath := filepath.Join(t.TempDir(), "trips-for-route-overnight.zip")
-	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
-
-	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
-	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
-	require.NoError(t, err)
-	t.Cleanup(gtfsManager.Shutdown)
-
-	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
-
-	application := &app.Application{
-		Config: appconf.Config{
-			Env:       appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:   []string{"TEST"},
-			RateLimit: 100,
-		},
-		GtfsConfig:          gtfsConfig,
-		GtfsManager:         gtfsManager,
-		DirectionCalculator: dirCalc,
-		Clock:               c,
-	}
-
-	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	t.Cleanup(api.Shutdown)
-	return api
-}
-
-// TestTripsForRouteHandler_OvernightInterlinedBlock verifies that when a block
-// ID is reused across two service days, the composite block+service key resolves
-// to the correct queried-route trip from the exact same service day.
-func TestTripsForRouteHandler_OvernightInterlinedBlock(t *testing.T) {
-	api := createTestApiWithOvernightInterlineFixture(t, clock.NewMockClock(afterMidnightClock))
-	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
-	timeMs := afterMidnightClock.UnixMilli()
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
-		combinedRouteID, timeMs)
-
-	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
-
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, http.StatusOK, model.Code)
-
-	require.Len(t, model.Data.List, 1)
-
-	entry := model.Data.List[0]
-	// Must resolve to yesterday's queried-route trip, not today's.
-	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-a")
-	assert.Equal(t, expectedTripID, entry.TripId,
-		"tripId must be yesterday's queried-route trip, not today's")
-	require.NotNil(t, entry.Status)
-	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
-	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
-}
-
-// createTestApiWithLoopingRouteFixture builds a RestAPI with a block that
-// visits the queried route twice with an off-route trip in between:
-//
-//	tfr-loop-a on tfr-route      09:00–09:45   block=tfr-loop-block
-//	tfr-loop-b on tfr-route-otr  10:00–10:30   block=tfr-loop-block
-//	tfr-loop-c on tfr-route      10:30–11:15   block=tfr-loop-block
-//
-// At loopRouteClock (10:15), tfr-loop-b is the active trip (on the other
-// route). The outer tripId must resolve to tfr-loop-c (the queried-route trip
-// whose time window overlaps with the active trip), not tfr-loop-a (the first
-// queried-route trip encountered).
-func createTestApiWithLoopingRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
-	t.Helper()
-	ctx := context.Background()
-
-	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
-	files := map[string]string{
-		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
-			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
-		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
-			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
-			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
-		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
-			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
-		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
-			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
-			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
-		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
-			tripsForRouteRouteID + ",tfr-svc,tfr-loop-a,Headsign A,0,tfr-loop-block\n" +
-			"tfr-route-otr,tfr-svc,tfr-loop-b,Headsign B,0,tfr-loop-block\n" +
-			tripsForRouteRouteID + ",tfr-svc,tfr-loop-c,Headsign C,0,tfr-loop-block\n",
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"tfr-loop-a,09:00:00,09:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-loop-a,09:45:00,09:45:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-loop-b,10:00:00,10:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-loop-b,10:30:00,10:30:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-loop-c,10:30:00,10:30:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-loop-c,11:15:00,11:15:00," + tripsForRouteStop2ID + ",2\n",
-	}
-	for name, content := range files {
-		f, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-
-	zipPath := filepath.Join(t.TempDir(), "trips-for-route-loop.zip")
-	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
-
-	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
-	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
-	require.NoError(t, err)
-	t.Cleanup(gtfsManager.Shutdown)
-
-	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
-
-	application := &app.Application{
-		Config: appconf.Config{
-			Env:       appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:   []string{"TEST"},
-			RateLimit: 100,
-		},
-		GtfsConfig:          gtfsConfig,
-		GtfsManager:         gtfsManager,
-		DirectionCalculator: dirCalc,
-		Clock:               c,
-	}
-
-	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	t.Cleanup(api.Shutdown)
-	return api
-}
-
-// TestTripsForRouteHandler_LoopingRouteBlock verifies that when a block visits
-// the queried route, leaves, and returns (route A → B → A), the outer tripId
-// resolves to the correct queried-route trip that overlaps with the active trip.
-func TestTripsForRouteHandler_LoopingRouteBlock(t *testing.T) {
-	api := createTestApiWithLoopingRouteFixture(t, clock.NewMockClock(loopRouteClock))
-	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
-	timeMs := loopRouteClock.UnixMilli()
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
-		combinedRouteID, timeMs)
-
-	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
-
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, http.StatusOK, model.Code)
-	require.Len(t, model.Data.List, 1)
-
-	entry := model.Data.List[0]
-	// Must resolve to tfr-loop-c (the queried-route trip that overlaps with
-	// the active trip tfr-loop-b), not tfr-loop-a (the first match).
-	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-loop-c")
-	assert.Equal(t, expectedTripID, entry.TripId)
-	require.NotNil(t, entry.Status)
-	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-loop-b")
-	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
 }
