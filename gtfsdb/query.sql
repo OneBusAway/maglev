@@ -484,6 +484,13 @@ WHERE t.route_id = @route_id
 GROUP BY st.stop_id
 ORDER BY MAX(st.stop_sequence);
 
+-- name: GetOrderedStopIDsForTrips :many
+SELECT st.stop_id
+FROM stop_times st
+WHERE st.trip_id IN (sqlc.slice('trip_ids'))
+GROUP BY st.stop_id
+ORDER BY MAX(st.stop_sequence) ASC;
+
 -- name: GetScheduleForStop :many
 SELECT
     st.trip_id,

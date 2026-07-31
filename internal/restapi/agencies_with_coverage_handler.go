@@ -39,7 +39,13 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	references := models.NewEmptyReferences()
-	references.Agencies = buildAgencyReferences(agencies)
+
+	includeReferences := ShouldIncludeReferences(r)
+
+	if includeReferences {
+		references.Agencies = buildAgencyReferences(agencies)
+	}
+
 	response := models.NewListResponse(agenciesWithCoverage, *references, limitExceeded, api.Clock)
 	api.sendResponse(w, r, response)
 }

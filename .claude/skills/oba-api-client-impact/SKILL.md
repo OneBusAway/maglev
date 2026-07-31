@@ -11,7 +11,7 @@ Typically invoked by `oba-api-review`. Can be called directly when you want to i
 
 ## Workspace layout
 
-Each client repo is resolved on demand with `.claude/skills/lib/resolve-oba-repo.sh <repo-name>`, which prints the repo's local path — cloning it to a local cache on first use if it isn't already checked out as a sibling of `maglev`. Paths below are relative to that resolved root:
+Each client repo is resolved via the `oba-workspace` skill, which prints each repo's local path. Paths below are relative to that resolved root:
 
 - **JS SDK resource** (repo: `js-sdk`): `src/resources/<endpoint>.ts`, `src/resources/shared.ts`
 - **Wayfinder API route** (repo: `wayfinder`): `src/routes/api/oba/<endpoint>/+server.js` (if it exists) — note `.js`, not `.ts`. If the endpoint takes a path parameter, the file lives one level deeper under a bracketed folder named for that parameter, e.g. `src/routes/api/oba/stops-for-route/[routeId]/+server.js` — the bracket name varies per endpoint (`[id]`, `[stopId]`, `[tripId]`, …), so list the endpoint's directory rather than guessing the exact folder name.
@@ -21,9 +21,7 @@ Each client repo is resolved on demand with `.claude/skills/lib/resolve-oba-repo
 - **Android response models** (repo: `onebusaway-android`): `onebusaway-android/src/main/java/org/onebusaway/android/api/contract/ObaApiModels.kt` — a single file with one `kotlinx.serialization` `data class` per response shape, named to match (e.g. `StopsForRoute`).
 - **Android data/adapter layer** (repo: `onebusaway-android`, secondary): `onebusaway-android/src/main/java/org/onebusaway/android/api/data/` (per-feature `*DataSource.kt`, e.g. `RouteStopsDataSource.kt`) and `.../api/adapters/` (per-domain `*Adapters.kt`, e.g. `RouteAdapters.kt`) hold business logic and DTO-to-app-model mapping. These aren't named 1:1 per endpoint — grep for the endpoint's Retrofit method name or response model class name to find the consuming files.
 
-This skill always needs all four client repos, so resolve `js-sdk`, `wayfinder`, `onebusaway-ios`, and `onebusaway-android` up front, before starting step 2. First use may take a minute to clone; later runs just refresh the cache.
-
-If a repo was found as a sibling checkout or via `OBA_WORKSPACE` rather than cloned into the cache, the resolver does not update it automatically and instead prints a `Warning: ... commit(s) behind ...` to stderr if it's stale. Watch for these — if one appears, note it as a caveat in the final report (the analysis for that client may be based on out-of-date source) rather than silently proceeding as if the checkout were current.
+This skill always needs all four client repos, so invoke `oba-workspace` once up front with all four repo names (`js-sdk wayfinder onebusaway-ios onebusaway-android`), before starting step 2, rather than resolving them one at a time. First use may take a minute to clone. Include any caveats `oba-workspace` reports in the final report (the analysis for that client may be based on out-of-date or locally-modified source) rather than silently proceeding as if the checkouts were unremarkable.
 
 ## Steps
 
