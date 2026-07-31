@@ -383,6 +383,62 @@ func TestStopsForLocationQueryFallsBackToClosestMatch(t *testing.T) {
 	assert.Equal(t, "2042", model.Data.List[0].Code)
 }
 
+// Merged feeds can repeat a stop code, so in-bounds matches can exceed maxCount.
+func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	lat, lon := 40.583321, -122.426966
+	const sharedCode = "DUPCODE"
+
+	for i, agencyID := range []string{"DupA", "DupB"} {
+		_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+			ID: agencyID, Name: agencyID, Url: "http://example.com", Timezone: "America/Los_Angeles",
+		})
+		require.NoError(t, err)
+
+		routeID, svcID, tripID, stopID := agencyID+"R", agencyID+"Svc", agencyID+"T", agencyID+"S"
+
+		_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+			ID: routeID, AgencyID: agencyID, ShortName: nulls.String("D"), Type: 3,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: stopID, Code: nulls.String(sharedCode), Name: nulls.String("Dup Stop"),
+			Lat: lat + float64(i)*0.001, Lon: lon,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+			ID: svcID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+			StartDate: "20240101", EndDate: "20241231",
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: tripID, RouteID: routeID, ServiceID: svcID})
+		require.NoError(t, err)
+
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: stopID, StopSequence: 1,
+			ArrivalTime: 12 * 3600 * int64(time.Second), DepartureTime: 12 * 3600 * int64(time.Second),
+		})
+		require.NoError(t, err)
+	}
+
+	endpoint := fmt.Sprintf(
+		"/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=2000&query=%s&maxCount=1",
+		lat, lon, sharedCode)
+	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Len(t, model.Data.List, 1, "in-bounds matches should be truncated to maxCount")
+	assert.True(t, model.Data.LimitExceeded)
+}
+
 func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 	clock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, clock)

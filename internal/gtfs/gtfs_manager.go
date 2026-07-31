@@ -422,6 +422,12 @@ func (manager *Manager) stopsMatchingCode(
 	}
 
 	if len(within) > maxCount {
+		slices.SortFunc(within, func(a, b gtfsdb.Stop) int {
+			return cmp.Compare(
+				utils.Distance(loc.Lat, loc.Lon, a.Lat, a.Lon),
+				utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon),
+			)
+		})
 		return within[:maxCount], true
 	}
 	return within, false

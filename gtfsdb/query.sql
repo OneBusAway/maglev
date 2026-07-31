@@ -332,6 +332,8 @@ FROM
     stops
 WHERE
     code = ?
+ORDER BY
+    id
 LIMIT
     10;
 
