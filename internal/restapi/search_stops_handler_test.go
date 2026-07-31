@@ -368,7 +368,8 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Limit Test"}, "maxCount": {"2"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, stopsResp.Data.LimitExceeded, "Expected LimitExceeded to be true because FTS query matched 3 limits")
-	// The final list will have length <= 2. Because FTS limits to 2+1=3, PaginateSlice truncates to 2.
-	// Out of the 2, at least one (limit_ghost_1 or limit_ghost_2) will be filtered out.
-	assert.LessOrEqual(t, len(stopsResp.Data.List), 1, "Expected at most 1 item after filtering truncated results")
+	// SearchStopsByName orders by stop ID, so the 3 matches are fetched as limit_ghost_1,
+	// limit_ghost_2, limit_valid_3; truncating to maxCount=2 leaves the two zero-route
+	// ghosts, both of which the filter drops.
+	assert.Empty(t, stopsResp.Data.List, "Expected no items after filtering truncated results")
 }
