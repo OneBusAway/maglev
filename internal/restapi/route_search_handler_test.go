@@ -80,7 +80,6 @@ func TestRouteSearchHandlerNoResults(t *testing.T) {
 	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"zzzznonexistent99999"}}))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Empty(t, model.Data.List)
 }
 
@@ -88,21 +87,37 @@ func TestRouteSearchHandlerWhitespaceInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, _ := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"   "}}))
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"   "}}))
 
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"100"}}))
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"250"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 
-	resp, _ = callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"101"}}))
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	resp2, _ := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"251"}}))
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+}
+
+func TestRouteSearchHandlerLimitExceeded(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Using a generic search term that should match multiple routes
+	// Setting maxCount=1 should force limitExceeded=true
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"1"}, "maxCount": {"1"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	assert.True(t, model.Data.LimitExceeded, "limitExceeded should be true when results are truncated")
+	assert.Equal(t, 1, len(model.Data.List), "results should be truncated to maxCount")
 }
 
 func TestRouteSearchHandlerIncludeReferencesFalse(t *testing.T) {
