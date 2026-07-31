@@ -34,11 +34,6 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(routes) == 0 {
-		api.sendNotFound(w, r)
-		return
-	}
-
 	routes, isLimitExceeded := utils.PaginateSlice(routes, 0, maxCount)
 
 	results := make([]models.Route, 0, len(routes))

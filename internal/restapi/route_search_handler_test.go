@@ -77,22 +77,20 @@ func TestRouteSearchHandlerNoResults(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"zzzznonexistent99999"}}))
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"zzzznonexistent99999"}}))
 
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "resource not found", model.Text)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestRouteSearchHandlerWhitespaceInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"   "}}))
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"   "}}))
 
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "resource not found", model.Text)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.List)
 }
 
 func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
