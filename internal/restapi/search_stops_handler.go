@@ -185,11 +185,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		routeTypes[combinedRouteID] = row.Type
 	}
 
-	uniqueAgencies := make(map[string]bool)
-	for _, row := range agencyRows {
-		uniqueAgencies[row.ID] = true
-	}
-
 	// 6. Construct Stop Models
 	stopModels := make([]models.Stop, 0, len(stops))
 	keptStopIDs := make([]string, 0, len(stops))
@@ -201,35 +196,21 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var agencyID string
-
-		if rts, ok := routesByStopID[s.ID]; ok && len(rts) > 0 {
-			agencyID, _, _ = utils.ExtractAgencyIDAndCodeID(rts[0])
-		} else if len(uniqueAgencies) == 1 {
-			for id := range uniqueAgencies {
-				agencyID = id
-				break
-			}
-		}
-
-		var combinedStopID string
-		if agencyID != "" {
-			combinedStopID = utils.FormCombinedID(agencyID, s.ID)
-		} else {
-			combinedStopID = s.ID
-		}
-
 		routeIDs := routesByStopID[s.ID]
 		if len(routeIDs) == 0 {
 			continue
 		}
 
-		if len(routeIDs) == 1 {
-			if t, ok := routeTypes[routeIDs[0]]; ok {
-				if t == 711 || t == 712 || t == 713 || t == 714 {
-					continue // Legacy behaviour: only filter stops with exactly one route
-				}
-			}
+		// Legacy behaviour: only stops with exactly one route are type-filtered
+		if len(routeIDs) == 1 && isSpecialVehicleRouteType(routeTypes[routeIDs[0]]) {
+			continue
+		}
+
+		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDs[0])
+
+		combinedStopID := s.ID
+		if agencyID != "" {
+			combinedStopID = utils.FormCombinedID(agencyID, s.ID)
 		}
 
 		name := ""
