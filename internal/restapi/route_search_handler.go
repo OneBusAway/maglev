@@ -34,6 +34,9 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort by name before truncating to maxCount so the page boundary reflects
+	// natural order rather than the FTS5 relevance ranking SearchRoutes returned.
+	utils.SortRoutesByName(routes)
 	routes, isLimitExceeded := utils.PaginateSlice(routes, 0, maxCount)
 
 	results := make([]models.Route, 0, len(routes))
@@ -106,7 +109,6 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		references.Situations = situations
 	}
 
-	utils.SortModelRoutesByName(results)
 	response := models.NewListResponseWithRange(results, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

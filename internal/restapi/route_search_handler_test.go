@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,4 +179,40 @@ func TestRouteSearchHandlerSorting(t *testing.T) {
 		}
 	}
 	assert.True(t, isSortedAgencies, "Agencies should be sorted by ID")
+}
+
+// TestRouteSearchHandlerPaginationBoundary guards against sorting being applied
+// after pagination truncates the FTS5 relevance-ordered results, which would let
+// a route that belongs on the first sorted page get dropped in favor of one that
+// doesn't.
+func TestRouteSearchHandlerPaginationBoundary(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, fullModel := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"1"}, "maxCount": {"250"}}))
+	require.GreaterOrEqual(t, len(fullModel.Data.List), 3, "need multiple matches to exercise the pagination boundary")
+
+	tests := []struct {
+		name     string
+		maxCount int
+	}{
+		{"first page of four", 4},
+		{"first page of five", 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[RoutesResponse](t, api,
+				routeSearchURL(url.Values{"input": {"1"}, "maxCount": {strconv.Itoa(tt.maxCount)}}))
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Len(t, model.Data.List, tt.maxCount)
+			assert.True(t, model.Data.LimitExceeded)
+
+			for i, route := range model.Data.List {
+				assert.Equal(t, fullModel.Data.List[i].ID, route.ID,
+					"page should match the natural-sort prefix of the full result set")
+			}
+		})
+	}
 }
