@@ -308,12 +308,18 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 
 	ctx := context.Background()
 
-	// routes.agency_id is a foreign key, so the agencies the fixture routes belong to
-	// must exist before those routes are inserted.
+	// routes.agency_id and trips.service_id are foreign keys, so the agencies and the
+	// calendar entry the fixture rows point at must exist before those rows are inserted.
 	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
 		INSERT INTO agencies (id, name, url, timezone)
 		VALUES ('999', 'Parent Test Agency One', 'http://one.example.test', 'America/Los_Angeles'),
 		       ('888', 'Parent Test Agency Two', 'http://two.example.test', 'America/Los_Angeles')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20240101', '20251231')
 	`)
 	require.NoError(t, err)
 
@@ -418,6 +424,7 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN ('999', '888')`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM calendar WHERE id = 'service_1'`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_unmapped', 'parent_stat_3', 'child_stop_orphan')`)
 	})
 
