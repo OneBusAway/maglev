@@ -632,6 +632,41 @@ func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
 	assert.Equal(t, loc.String(), parsedTime.Location().String())
 }
 
+func TestParseMaxCountClamped(t *testing.T) {
+	tests := []struct {
+		name             string
+		maxCount         string
+		expectedMaxCount int
+		expectError      bool
+	}{
+		{"omitted uses default", "", 100, false},
+		{"within cap unchanged", "10", 10, false},
+		{"at cap unchanged", "250", 250, false},
+		{"above cap clamps", "251", 250, false},
+		{"far above cap clamps", "10000", 250, false},
+		{"zero is an error", "0", 100, true},
+		{"negative is an error", "-1", 100, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := url.Values{}
+			if tt.maxCount != "" {
+				params.Set("maxCount", tt.maxCount)
+			}
+
+			maxCount, fieldErrors := ParseMaxCountClamped(params, 100, nil)
+
+			assert.Equal(t, tt.expectedMaxCount, maxCount)
+			if tt.expectError {
+				assert.Contains(t, fieldErrors, "maxCount")
+			} else {
+				assert.NotContains(t, fieldErrors, "maxCount")
+			}
+		})
+	}
+}
+
 func TestParseMaxCount(t *testing.T) {
 	tests := []struct {
 		name             string
