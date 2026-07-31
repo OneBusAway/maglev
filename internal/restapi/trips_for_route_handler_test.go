@@ -551,6 +551,7 @@ func TestTripsForRouteHandler_MaxCountDoesNotTruncate(t *testing.T) {
 
 	assert.Equal(t, initialCount, maxCountOneCount, "result count with maxCount=1 must be identical to result count without maxCount")
 }
+
 func TestStripNumericSuffix(t *testing.T) {
 	tests := []struct {
 		input    string
