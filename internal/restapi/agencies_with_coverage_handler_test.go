@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
 func TestAgenciesWithCoverageHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=invalid")
 
@@ -21,6 +23,7 @@ func TestAgenciesWithCoverageHandlerRequiresValidApiKey(t *testing.T) {
 
 func TestAgenciesWithCoverageHandlerEndToEnd(t *testing.T) {
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST")
 
@@ -47,6 +50,7 @@ func TestAgenciesWithCoverageHandlerEndToEnd(t *testing.T) {
 func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
 	// Test data (raba.zip) has 1 agency
 	api := createTestApi(t)
+	defer api.Shutdown()
 
 	_, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&limit=1")
 	assert.Len(t, model.Data.List, 1)
@@ -59,4 +63,67 @@ func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
 	_, model = callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
 	assert.Len(t, model.Data.List, 0)
 	assert.False(t, model.Data.LimitExceeded)
+}
+
+func TestAgenciesWithCoverageHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&includeReferences=false")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	// List should still be present and correct
+	assert.Len(t, model.Data.List, 1)
+
+	// But References.Agencies should be explicitly empty, not containing Raba
+	assert.NotNil(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Situations)
+	assert.Empty(t, model.Data.References.StopTimes)
+	assert.Empty(t, model.Data.References.Stops)
+	assert.Empty(t, model.Data.References.Trips)
+}
+
+func TestAgenciesWithCoverageHandlerZeroStopTimes(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Insert a mock agency with exactly zero stop-times to the test data.
+	_, err := api.GtfsManager.GtfsDB.DB.Exec("INSERT INTO agencies (id, name, url, timezone) VALUES ('MOCK_ZERO', 'Mock Agency', 'http://mock.agency', 'America/Los_Angeles')")
+
+	require.NoError(t, err)
+
+	// Clean up after test
+	t.Cleanup(func() {
+		if _, err := api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM agencies WHERE id = 'MOCK_ZERO'"); err != nil {
+			t.Errorf("failed to clean up MOCK_ZERO agency: %v", err)
+		}
+	})
+
+	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	var mockAgency *models.AgencyCoverage
+	for i, agency := range model.Data.List {
+		if agency.AgencyID == "MOCK_ZERO" {
+			mockAgency = &model.Data.List[i]
+			break
+		}
+	}
+
+	require.NotNil(t, mockAgency, "mock agency should be in the returned list")
+
+	// The spec mandates that latSpan and lonSpan must evaluate exactly to 0
+	// if an agency contains no stop records.
+	assert.Equal(t, 0.0, mockAgency.Lat)
+	assert.Equal(t, 0.0, mockAgency.Lon)
+	assert.Equal(t, 0.0, mockAgency.LatSpan)
+	assert.Equal(t, 0.0, mockAgency.LonSpan)
 }

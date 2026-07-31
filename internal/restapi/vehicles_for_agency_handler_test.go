@@ -23,6 +23,7 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
@@ -667,8 +668,13 @@ func TestVehiclesForAgencyHandler_TimeParameterEpochMs(t *testing.T) {
 	vehicle := findVehicleInList(model.Data.List, vehicleID)
 	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
 	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
-	assert.Equal(t, refTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
-		"tripStatus.serviceDate must reflect the supplied time parameter")
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	ref := refTime.In(loc)
+	expectedMidnight := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, loc)
+	assert.Equal(t, expectedMidnight.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must be midnight of the supplied time in the agency timezone")
 }
 
 // TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock verifies that when no
@@ -688,8 +694,13 @@ func TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock(t *testing.T) {
 	vehicle := findVehicleInList(model.Data.List, vehicleID)
 	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
 	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
-	assert.Equal(t, mockTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
-		"tripStatus.serviceDate must fall back to the server clock when time is absent")
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	ref := mockTime.In(loc)
+	expectedMidnight := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, loc)
+	assert.Equal(t, expectedMidnight.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"tripStatus.serviceDate must be midnight of the server clock in the agency timezone when time is absent")
 }
 
 // TestVehiclesForAgencyHandler_TimeParameterInvalid verifies that an unparseable
@@ -703,6 +714,36 @@ func TestVehiclesForAgencyHandler_TimeParameterInvalid(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)
+}
+
+// TestVehiclesForAgencyHandler_ServiceDateIsMidnight verifies tripStatus.serviceDate
+// is midnight of the reference date in the agency timezone, not the reference time.
+func TestVehiclesForAgencyHandler_ServiceDateIsMidnight(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	const vehicleID = "v_service_date_midnight"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	refTime := time.Date(2024, 3, 15, 14, 37, 42, 0, time.UTC)
+	params := url.Values{"time": {strconv.FormatInt(refTime.UnixMilli(), 10)}}
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	vehicle := findVehicleInList(model.Data.List, vehicleID)
+	require.NotNil(t, vehicle, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, vehicle.TripStatus, "tripStatus must be present when vehicle has a trip")
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	ref := refTime.In(loc)
+	expectedMidnight := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, loc)
+
+	assert.Equal(t, expectedMidnight.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"serviceDate must be midnight in the agency timezone")
+	assert.NotEqual(t, refTime.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
+		"serviceDate must not be the raw reference timestamp")
 }
 
 // TestVehiclesForAgencyHandler_IncludeReferencesFalse verifies that
@@ -863,4 +904,163 @@ func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func(
 		gtfsManager.Shutdown()
 	}
 	return api, cleanup
+}
+
+// TestVehiclesForAgencyHandler_InterliningActiveTrip verifies that when a vehicle's
+// nominal trip differs from the trip executing at the reference time (interlining),
+// tripStatus.activeTripId reflects the executing trip and both trips appear in
+// references.trips.
+func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
+	ctx := context.Background()
+
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// The handler resolves reference time in the agency's timezone, so the test
+	// must build reference times in the same location for the windows to line up.
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+
+	formattedDate := serviceDate.Format("20060102")
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	require.NoError(t, err)
+	trips, err := api.GtfsManager.GetTrips(ctx, 200)
+	require.NoError(t, err)
+
+	// Find a (nominal trip, reference time) pair where the trip executing at that
+	// time differs from the nominal trip — i.e. interlining is actually exercised.
+	// Prefer a cross-route scenario (active trip on a different route) so the
+	// active-route reference is meaningfully tested; fall back to any interlining.
+	var nominalID, resolvedActiveID string
+	var refTime time.Time
+	var crossRoute bool
+	seen := make(map[string]bool)
+	for _, tr := range trips {
+		row, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tr.ID)
+		if err != nil || !row.BlockID.Valid || row.BlockID.String == "" || seen[row.BlockID.String] {
+			continue
+		}
+		seen[row.BlockID.String] = true
+		ordered, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+			BlockID:    row.BlockID,
+			ServiceIds: serviceIDs,
+		})
+		if err != nil || len(ordered) < 2 {
+			continue
+		}
+		nominal := ordered[0]
+		for _, candidate := range ordered[1:] {
+			if !candidate.EarliestTime.Valid || !candidate.LatestTime.Valid {
+				continue
+			}
+			midNs := (candidate.EarliestTime.Int64 + candidate.LatestTime.Int64) / 2
+			rt := serviceDate.Add(time.Duration(midNs))
+			got := api.resolveActiveTripID(ctx, nominal.ID, rt)
+			if got == nominal.ID {
+				continue
+			}
+			// Record the first interlining scenario; upgrade to a cross-route one if found.
+			gotRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, got)
+			if err != nil {
+				continue
+			}
+			isCrossRoute := row.RouteID != gotRow.RouteID
+			if resolvedActiveID == "" || (isCrossRoute && !crossRoute) {
+				nominalID, resolvedActiveID, refTime, crossRoute = nominal.ID, got, rt, isCrossRoute
+			}
+			if crossRoute {
+				break
+			}
+		}
+		if crossRoute {
+			break
+		}
+	}
+	require.NotEmpty(t, resolvedActiveID, "need an interlining scenario in test data")
+
+	api.Clock = clock.NewMockClock(refTime)
+
+	nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalID)
+	require.NoError(t, err)
+
+	// Vehicle's GTFS-RT trip is the nominal trip.
+	const vehicleID = "v_interlining"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, nominalID, nominalRow.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+
+	expectedActive := testdata.Raba.ID + "_" + resolvedActiveID
+	expectedNominal := testdata.Raba.ID + "_" + nominalID
+	assert.Equal(t, expectedActive, entry.TripStatus.ActiveTripID,
+		"activeTripId must reflect the executing (interlined) trip")
+	assert.Equal(t, expectedNominal, entry.TripID,
+		"outer tripId must remain the nominal trip")
+	assert.NotEqual(t, entry.TripID, entry.TripStatus.ActiveTripID,
+		"interlining: activeTripId must differ from the outer tripId")
+
+	// blockTripSequence must reflect the active (interlined) trip's position in the
+	// block, not the nominal trip's — the two necessarily differ since they are
+	// distinct trips in the same ordered block.
+	expectedSeq, ok := api.blockTripSequence(ctx, resolvedActiveID, refTime)
+	require.True(t, ok, "expected the active trip to have a resolvable block sequence")
+	assert.Equal(t, expectedSeq, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must reflect the active trip's position in the block, not the nominal trip's")
+
+	nominalSeq, nominalOk := api.blockTripSequence(ctx, nominalID, refTime)
+	require.True(t, nominalOk, "expected the nominal trip to have a resolvable block sequence")
+	assert.NotEqual(t, nominalSeq, entry.TripStatus.BlockTripSequence,
+		"blockTripSequence must differ from the nominal trip's own position when interlining is in play")
+
+	activeRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, resolvedActiveID)
+	require.NoError(t, err)
+	expectedNominalRoute := testdata.Raba.ID + "_" + nominalRow.RouteID
+	expectedActiveRoute := testdata.Raba.ID + "_" + activeRow.RouteID
+
+	// Both trips must appear in references.trips with the correct routeId.
+	refTrips := make(map[string]string) // trip id -> route id
+	for _, tr := range model.Data.References.Trips {
+		refTrips[tr.ID] = tr.RouteID
+	}
+	require.Contains(t, refTrips, expectedNominal, "nominal trip must be in references.trips")
+	require.Contains(t, refTrips, expectedActive, "active trip must be in references.trips")
+	assert.Equal(t, expectedNominalRoute, refTrips[expectedNominal],
+		"nominal trip reference must carry its routeId")
+	assert.Equal(t, expectedActiveRoute, refTrips[expectedActive],
+		"active trip reference must carry its routeId")
+
+	// Both referenced routes must appear in references.routes.
+	refRouteIDs := make(map[string]bool)
+	for _, rt := range model.Data.References.Routes {
+		refRouteIDs[rt.ID] = true
+	}
+	assert.True(t, refRouteIDs[expectedNominalRoute], "nominal route must be in references.routes")
+	assert.True(t, refRouteIDs[expectedActiveRoute], "active route must be in references.routes")
+}
+
+// TestAddRouteReference verifies a gtfsdb.Route is keyed by its combined
+// agencyID_routeID and its nullable fields are mapped through.
+func TestAddRouteReference(t *testing.T) {
+	routeRefs := make(map[string]models.Route)
+	addRouteReference(routeRefs, gtfsdb.Route{
+		ID:        "R1",
+		AgencyID:  "40",
+		ShortName: nulls.String("10"),
+		LongName:  nulls.String("Downtown"),
+		Type:      3,
+		Color:     nulls.String("FF0000"),
+	})
+
+	ref, ok := routeRefs["40_R1"]
+	require.True(t, ok, "route must be keyed by combined agencyID_routeID")
+	assert.Equal(t, "40_R1", ref.ID)
+	assert.Equal(t, "40", ref.AgencyID)
+	assert.Equal(t, "10", ref.ShortName)
+	assert.Equal(t, "Downtown", ref.LongName)
+	assert.Equal(t, "FF0000", ref.Color)
+	assert.Equal(t, "", ref.TextColor, "unset nullable fields map to empty string")
 }

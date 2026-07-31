@@ -30,10 +30,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
 	includeStatus := r.URL.Query().Get("includeStatus") != "false"
 	includeTrip := parseIncludeTrip(r.URL.Query())
+	includeReferences := ShouldIncludeReferences(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			references := models.NewEmptyReferences()
+			response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, *references, false, api.Clock, false)
+			api.sendResponse(w, r, response)
+			return
+		}
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 
@@ -183,7 +190,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
-		references := buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+		var references models.ReferencesModel
+		if includeReferences {
+			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+		} else {
+			references = *models.NewEmptyReferences()
+		}
 		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
@@ -434,21 +446,26 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		result = []models.TripsForRouteListEntry{}
 	}
 
-	var stops []gtfsdb.Stop
-	if len(stopIDsMap) > 0 {
-		stopIDs := make([]string, 0, len(stopIDsMap))
-		for stopID := range stopIDsMap {
-			stopIDs = append(stopIDs, stopID)
+	var references models.ReferencesModel
+	if includeReferences {
+		var stops []gtfsdb.Stop
+		if len(stopIDsMap) > 0 {
+			stopIDs := make([]string, 0, len(stopIDsMap))
+			for stopID := range stopIDsMap {
+				stopIDs = append(stopIDs, stopID)
+			}
+			var err error
+			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+			if err != nil {
+				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+				stops = []gtfsdb.Stop{}
+			}
 		}
-		var err error
-		stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-		if err != nil {
-			api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
-			stops = []gtfsdb.Stop{}
-		}
-	}
 
-	references := buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+	} else {
+		references = *models.NewEmptyReferences()
+	}
 	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
 }

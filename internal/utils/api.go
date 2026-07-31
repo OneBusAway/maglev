@@ -211,10 +211,28 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location) (strin
 	return parsedTime.Format("20060102"), parsedTime, nil, true
 }
 
+// maxCountOverflow selects how values above models.MaxAllowedCount are handled.
+type maxCountOverflow int
+
+const (
+	rejectAboveMax maxCountOverflow = iota
+	clampAboveMax
+)
+
 // ParseMaxCount parses the maxCount query parameter with validation.
-// It accepts a default value and enforces a maximum of 250 (matching Java's MaxCountSupport).
-// Returns an error in fieldErrors if the value is <= 0 or > 250.
+// It accepts a default value and enforces models.MaxAllowedCount as the ceiling.
+// Returns an error in fieldErrors if the value is <= 0 or above the ceiling.
 func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
+	return parseMaxCount(queryParams, defaultCount, rejectAboveMax, fieldErrors)
+}
+
+// ParseMaxCountClamped silently clamps values above models.MaxAllowedCount
+// instead of rejecting them. Values <= 0 are still field errors.
+func ParseMaxCountClamped(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
+	return parseMaxCount(queryParams, defaultCount, clampAboveMax, fieldErrors)
+}
+
+func parseMaxCount(queryParams url.Values, defaultCount int, overflow maxCountOverflow, fieldErrors map[string][]string) (int, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
 	}
@@ -228,8 +246,12 @@ func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[str
 				fieldErrors["maxCount"] = []string{"must be greater than zero"}
 				maxCount = defaultCount
 			} else if maxCount > models.MaxAllowedCount {
-				fieldErrors["maxCount"] = []string{"must not exceed 250"}
-				maxCount = defaultCount
+				if overflow == clampAboveMax {
+					maxCount = models.MaxAllowedCount
+				} else {
+					fieldErrors["maxCount"] = []string{fmt.Sprintf("must not exceed %d", models.MaxAllowedCount)}
+					maxCount = defaultCount
+				}
 			}
 		} else {
 			fieldErrors["maxCount"] = []string{"Invalid field value for field \"maxCount\"."}
