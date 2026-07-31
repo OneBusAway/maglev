@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"net/http"
-	"strings"
 
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -12,41 +11,12 @@ import (
 // with optional geographic bounds filtering via lat, lon, and radius parameters.
 func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
+	includeReferences := ShouldIncludeReferences(r)
+	fieldErrors := make(map[string][]string)
 
-	input := queryParams.Get("input")
-	sanitizedInput, err := utils.ValidateAndSanitizeQuery(input)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"input": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	if strings.TrimSpace(sanitizedInput) == "" {
-		fieldErrors := map[string][]string{
-			"input": {"input is required"},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-
-	// maxCount defaults to 20
-	maxCount := 20
-	var fieldErrors map[string][]string
-	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
-		parsedMaxCount, fe := utils.ParseFloatParam(queryParams, "maxCount", fieldErrors)
-		fieldErrors = fe
-		if parsedMaxCount <= 0 {
-			fieldErrors["maxCount"] = append(fieldErrors["maxCount"], "must be greater than zero")
-		} else {
-			maxCount = int(parsedMaxCount)
-			if maxCount > 100 {
-				fieldErrors["maxCount"] = append(fieldErrors["maxCount"], "must not exceed 100")
-			}
-		}
-	}
-
+	// Standardized parameter parsing
+	query, fieldErrors := utils.ParseRequiredStringParam(queryParams, "input", fieldErrors)
+	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, 20, fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -58,11 +28,13 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	routes, err := api.GtfsManager.SearchRoutes(ctx, sanitizedInput, maxCount)
+	routes, err := api.GtfsManager.SearchRoutes(ctx, query, maxCount+1)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	routes, isLimitExceeded := utils.PaginateSlice(routes, 0, maxCount)
 
 	results := make([]models.Route, 0, len(routes))
 	agencyIDs := make(map[string]bool)
@@ -111,26 +83,30 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 			textColor))
 	}
 
-	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
-	// Populate situation references for alerts affecting the returned routes
-	resultRawRouteIDs := make([]string, 0, len(routes))
-	for _, routeRow := range routes {
-		resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
-	}
-	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
-	situations := api.BuildSituationReferences(alerts)
-
 	references := models.NewEmptyReferences()
-	utils.SortAgencyReferencesByID(agencies)
-	references.Agencies = agencies
-	references.Situations = situations
+
+	if includeReferences {
+		allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
+		utils.SortAgencyReferencesByID(agencies)
+
+		// Populate situation references for alerts affecting the returned routes
+		resultRawRouteIDs := make([]string, 0, len(routes))
+		for _, routeRow := range routes {
+			resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
+		}
+		alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
+		situations := api.BuildSituationReferences(alerts)
+
+		references.Agencies = agencies
+		references.Situations = situations
+	}
 
 	utils.SortModelRoutesByName(results)
-	response := models.NewListResponseWithRange(results, *references, false, api.Clock, false)
+	response := models.NewListResponseWithRange(results, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

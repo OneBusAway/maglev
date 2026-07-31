@@ -149,7 +149,12 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 	includeStatus, _ := strconv.ParseBool(queryParams.Get("includeStatus"))
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
-	if agenciesErr != nil || len(agencies) == 0 {
+
+	if agenciesErr != nil {
+		return nil, nil, agenciesErr
+	}
+
+	if len(agencies) == 0 {
 		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 

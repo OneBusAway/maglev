@@ -5,37 +5,12 @@ import (
 	"context"
 	"net/http"
 	"slices"
-	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
-
-type stopsForRouteParams struct {
-	IncludePolylines bool
-	Time             *time.Time
-}
-
-func (api *RestAPI) parseStopsForRouteParams(r *http.Request) stopsForRouteParams {
-	now := api.Clock.Now()
-	params := stopsForRouteParams{
-		IncludePolylines: true,
-		Time:             &now,
-	}
-
-	if r.URL.Query().Get("includePolylines") == "false" {
-		params.IncludePolylines = false
-	}
-
-	if timeParam := r.URL.Query().Get("time"); timeParam != "" {
-		if t, err := time.Parse(time.RFC3339, timeParam); err == nil {
-			params.Time = &t
-		}
-	}
-	return params
-}
 
 // stopsForRouteHandler returns all stops served by a route, grouped by direction
 // with optional encoded polyline shapes.
@@ -52,8 +27,6 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-
-	params := api.parseStopsForRouteParams(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -93,7 +66,10 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, params.IncludePolylines)
+	// includePolylines defaults to true; only an explicit "false" disables it.
+	includePolylines := r.URL.Query().Get("includePolylines") != "false"
+
+	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, includePolylines)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -255,6 +231,8 @@ func processTripGroups(
 		allStopGroups = append(allStopGroups, stopGroup)
 	}
 
+	disambiguateGroupNames(allStopGroups)
+
 	slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
 		return cmp.Compare(a.Name.Name, b.Name.Name)
 	})
@@ -333,9 +311,16 @@ func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, g
 		/*
 			direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
 			UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
-			zero rows. Fall back to single-trip ordering instead.
+			zero rows. Fall back to ordering by the group's trips directly, still
+			collecting the union of stops across all of them — otherwise stops
+			served only by trips after the first would be dropped from both the
+			flat stop list and this group.
 		*/
-		return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, group.Trips[0].ID)
+		tripIDs := make([]string, len(group.Trips))
+		for i, trip := range group.Trips {
+			tripIDs[i] = trip.ID
+		}
+		return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrips(ctx, tripIDs)
 	}
 	return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
 		gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
@@ -343,6 +328,41 @@ func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, g
 			DirectionID: group.DirectionID,
 			ServiceIds:  dirServiceIDs,
 		})
+}
+
+// disambiguateGroupNames keeps direction groups distinguishable: any group whose
+// name is shared with another group has its direction id appended
+// ("Shasta Lake" -> "Shasta Lake - 0"), while a name that is already unique is
+// left untouched. The check is repeated against the *resulting* names, so a
+// suffixed name that happens to equal an originally-unique name (e.g. a literal
+// "A - 0" headsign) is disambiguated further rather than left duplicated.
+// Direction ids are unique, so two colliding groups always separate on the next
+// pass and the loop is bounded by the group count; the final names are a
+// function of the groups alone, independent of input order, which also makes the
+// later name-based sort deterministic. (The Java reference suffixes every group
+// whenever any collision exists; leaving unique names alone is a deliberate,
+// less noisy divergence.)
+func disambiguateGroupNames(groups []models.StopGroup) {
+	for range groups {
+		nameCounts := make(map[string]int, len(groups))
+		for _, group := range groups {
+			nameCounts[group.Name.Name]++
+		}
+
+		collision := false
+		for i := range groups {
+			if nameCounts[groups[i].Name.Name] <= 1 {
+				continue
+			}
+			collision = true
+			disambiguated := groups[i].Name.Name + " - " + groups[i].ID
+			groups[i].Name.Name = disambiguated
+			groups[i].Name.Names = []string{disambiguated}
+		}
+		if !collision {
+			return
+		}
+	}
 }
 
 // mostCommonHeadsign returns the headsign with the highest count, breaking ties by
