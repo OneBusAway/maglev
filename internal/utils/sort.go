@@ -72,6 +72,13 @@ func SortAgencyReferencesByID(agencies []models.AgencyReference) {
 	})
 }
 
+// SortModelStopsByID sorts models.Stop values alphabetically by ID.
+func SortModelStopsByID(stops []models.Stop) {
+	slices.SortFunc(stops, func(a, b models.Stop) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+}
+
 func routesForStopRowSortKey(r gtfsdb.GetRoutesForStopRow) RouteSortKey {
 	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
 }

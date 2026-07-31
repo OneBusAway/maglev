@@ -1,15 +1,16 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 	"unicode"
 
-	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -170,9 +171,10 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. Construct Stop Models
+	agencyByStopID := resolveSearchStopAgencies(stops, routesByStopID, uniqueAgencies)
+
 	stopModels := make([]models.Stop, 0, len(stops))
-	var parentRawIDs []string
-	parentAgencyMap := make(map[string]string)
+	parentIDsByAgency := make(map[string][]string)
 
 	for _, s := range stops {
 		if ctx.Err() != nil {
@@ -180,28 +182,12 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		sStop := gtfsdb.Stop{
-			ID:                 s.ID,
-			Code:               s.Code,
-			Name:               s.Name,
-			Lat:                s.Lat,
-			Lon:                s.Lon,
-			LocationType:       s.LocationType,
-			WheelchairBoarding: s.WheelchairBoarding,
-			Direction:          s.Direction,
-			ParentStation:      s.ParentStation,
+		agencyID := agencyByStopID[s.ID]
+		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routesByStopID[s.ID]))
+
+		if parentID := nulls.StringOrEmpty(s.ParentStation); parentID != "" {
+			parentIDsByAgency[agencyID] = append(parentIDsByAgency[agencyID], parentID)
 		}
-
-		stopModel, agencyID := buildStopModel(sStop, routesByStopID, uniqueAgencies, "")
-
-		if s.ParentStation.Valid && s.ParentStation.String != "" {
-			parentRawIDs = append(parentRawIDs, s.ParentStation.String)
-			if agencyID != "" {
-				parentAgencyMap[s.ParentStation.String] = agencyID
-			}
-		}
-
-		stopModels = append(stopModels, stopModel)
 	}
 
 	// 7. Build References
@@ -218,90 +204,115 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		situations := api.BuildSituationReferences(alerts)
 		references.Situations = append(references.Situations, situations...)
 
-		if len(parentRawIDs) > 0 {
-			uniqueParentIDs := dedupeStrings(parentRawIDs)
-			parentStopsDB, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueParentIDs)
-			if err != nil {
-				api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch parent stops: %w", err))
-				return
-			}
-
-			for _, ps := range parentStopsDB {
-				parentStopModel, _ := buildStopModel(ps, nil, nil, parentAgencyMap[ps.ID])
-				references.Stops = append(references.Stops, parentStopModel)
-			}
+		references.Stops, err = api.buildSearchParentStationReferences(ctx, parentIDsByAgency)
+		if err != nil {
+			api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch parent stops: %w", err))
+			return
 		}
+		utils.SortModelStopsByID(references.Stops)
 	}
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
 
-func resolveAgencyID(stopID string, routesByStop map[string][]string, uniqueAgencies map[string]bool, agencyOverride string) string {
-	if agencyOverride != "" {
-		return agencyOverride
-	}
-	if rts, ok := routesByStop[stopID]; ok && len(rts) > 0 {
-		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(rts[0])
-		return agencyID
-	}
-	if len(uniqueAgencies) == 1 {
-		for id := range uniqueAgencies {
-			return id
+// resolveSearchStopAgencies determines the agency prefix for each searched stop. A stop
+// with no routes of its own inherits the agency resolved for a sibling stop under the
+// same parent station, so that its combined IDs still resolve for the client.
+func resolveSearchStopAgencies(stops []gtfsdb.SearchStopsByNameRow, routesByStopID map[string][]string, uniqueAgencies map[string]bool) map[string]string {
+	agencyByStopID := make(map[string]string, len(stops))
+	agencyByParentID := make(map[string]string)
+
+	for _, s := range stops {
+		agencyID := resolveAgencyID(s.ID, routesByStopID, uniqueAgencies)
+		agencyByStopID[s.ID] = agencyID
+
+		parentID := nulls.StringOrEmpty(s.ParentStation)
+		if agencyID != "" && parentID != "" && agencyByParentID[parentID] == "" {
+			agencyByParentID[parentID] = agencyID
 		}
 	}
-	return ""
+
+	for _, s := range stops {
+		if agencyByStopID[s.ID] == "" {
+			agencyByStopID[s.ID] = agencyByParentID[nulls.StringOrEmpty(s.ParentStation)]
+		}
+	}
+
+	return agencyByStopID
 }
 
-func formatStopID(agencyID, rawID string) string {
-	if agencyID != "" {
-		return utils.FormCombinedID(agencyID, rawID)
+// stopFromSearchRow converts a full-text search result row into the stop record the
+// shared reference builders operate on.
+func stopFromSearchRow(row gtfsdb.SearchStopsByNameRow) gtfsdb.Stop {
+	return gtfsdb.Stop{
+		ID:                 row.ID,
+		Code:               row.Code,
+		Name:               row.Name,
+		Lat:                row.Lat,
+		Lon:                row.Lon,
+		LocationType:       row.LocationType,
+		WheelchairBoarding: row.WheelchairBoarding,
+		Direction:          row.Direction,
+		ParentStation:      row.ParentStation,
 	}
-	return rawID
 }
 
-func buildStopModel(s gtfsdb.Stop, routesByStop map[string][]string, uniqueAgencies map[string]bool, agencyOverride string) (models.Stop, string) {
-	agencyID := resolveAgencyID(s.ID, routesByStop, uniqueAgencies, agencyOverride)
-	combinedStopID := formatStopID(agencyID, s.ID)
-
-	parentStation := ""
-	if s.ParentStation.Valid && s.ParentStation.String != "" {
-		parentStation = formatStopID(agencyID, s.ParentStation.String)
+// buildSearchStopModel builds a stop model for a search result. Search spans agencies, so
+// the agency is resolved per stop rather than being fixed for the request, and combined
+// IDs fall back to raw IDs when it cannot be determined.
+func (api *RestAPI) buildSearchStopModel(ctx context.Context, agencyID string, stop gtfsdb.Stop, combinedRouteIDs []string) models.Stop {
+	if combinedRouteIDs == nil {
+		combinedRouteIDs = []string{}
 	}
 
-	routeIDs := routesByStop[s.ID]
-	if routeIDs == nil {
-		routeIDs = []string{}
+	stopModel := api.buildStopModel(ctx, agencyID, stop, combinedRouteIDs)
+	stopModel.ID = formatStopID(agencyID, stop.ID)
+	stopModel.Parent = formatStopID(agencyID, nulls.StringOrEmpty(stop.ParentStation))
+
+	return stopModel
+}
+
+// buildSearchParentStationReferences resolves parent stations into references, emitting one
+// entry per (parent station, agency) pair referenced by the result set so that every
+// non-empty parent value in the returned list has a matching reference.
+func (api *RestAPI) buildSearchParentStationReferences(ctx context.Context, parentIDsByAgency map[string][]string) ([]models.Stop, error) {
+	parentRefs := make([]models.Stop, 0, len(parentIDsByAgency))
+
+	for agencyID, parentIDs := range parentIDsByAgency {
+		// The shared builder always prefixes IDs with the agency, so stops whose agency
+		// could never be determined need their raw IDs preserved instead.
+		if agencyID == "" {
+			refs, err := api.buildUnprefixedParentReferences(ctx, parentIDs)
+			if err != nil {
+				return nil, err
+			}
+			parentRefs = append(parentRefs, refs...)
+			continue
+		}
+
+		refs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, parentIDs)
+		if err != nil {
+			return nil, err
+		}
+		parentRefs = append(parentRefs, refs...)
 	}
 
-	name := ""
-	if s.Name.Valid {
-		name = s.Name.String
+	return parentRefs, nil
+}
+
+// buildUnprefixedParentReferences builds parent station references keyed by their raw,
+// unprefixed IDs, matching the parent values emitted for stops with no resolvable agency.
+func (api *RestAPI) buildUnprefixedParentReferences(ctx context.Context, parentIDs []string) ([]models.Stop, error) {
+	parentStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, dedupeStrings(parentIDs))
+	if err != nil {
+		return nil, err
 	}
 
-	code := ""
-	if s.Code.Valid {
-		code = s.Code.String
+	refs := make([]models.Stop, 0, len(parentStops))
+	for _, parentStop := range parentStops {
+		refs = append(refs, api.buildSearchStopModel(ctx, "", parentStop, nil))
 	}
 
-	direction := ""
-	if s.Direction.Valid {
-		direction = s.Direction.String
-	}
-
-	stopModel := models.Stop{
-		ID:                 combinedStopID,
-		Name:               name,
-		Lat:                s.Lat,
-		Lon:                s.Lon,
-		Code:               code,
-		Direction:          direction,
-		LocationType:       int(s.LocationType.Int64),
-		WheelchairBoarding: utils.MapWheelchairBoarding(gtfs.WheelchairBoarding(s.WheelchairBoarding.Int64)),
-		RouteIDs:           routeIDs,
-		StaticRouteIDs:     routeIDs,
-		Parent:             parentStation,
-	}
-
-	return stopModel, agencyID
+	return refs, nil
 }

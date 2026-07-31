@@ -377,9 +377,39 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	// A second agency serving parent_stat_1, so that one parent station is referenced
+	// under two different agency prefixes.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_shared', 'C4', 'Child Stop Shared', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test_2', 'child_stop_shared', 2, 29400, 29400)
+	`)
+	require.NoError(t, err)
+
+	// A stop with no routes of its own, which must inherit the agency of its sibling
+	// under parent_stat_1 rather than emitting an unresolvable raw parent ID.
 	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
 		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
 		VALUES ('child_stop_unmapped', 'C3', 'Child Stop Unmapped', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
+	// A stop whose agency cannot be determined at all: no routes of its own, and no
+	// sibling under parent_stat_3 to inherit from.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding)
+		VALUES ('parent_stat_3', 'P3', 'Parent Station Three', 40.0, -120.0, 1, 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_orphan', 'C5', 'Child Stop Orphan', 40.0, -120.0, 0, 'parent_stat_3', 1)
 	`)
 	require.NoError(t, err)
 
@@ -388,49 +418,73 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN ('999', '888')`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_unmapped')`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_unmapped', 'parent_stat_3', 'child_stop_orphan')`)
 	})
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
 
-	require.Len(t, stopsResp.Data.List, 3)
+	require.Len(t, stopsResp.Data.List, 5)
 
-	var child1, child2, childUnmapped *models.Stop
-	for i := range stopsResp.Data.List {
-		if strings.Contains(stopsResp.Data.List[i].Name, "One") {
-			child1 = &stopsResp.Data.List[i]
-		} else if strings.Contains(stopsResp.Data.List[i].Name, "Two") {
-			child2 = &stopsResp.Data.List[i]
-		} else if strings.Contains(stopsResp.Data.List[i].Name, "Unmapped") {
-			childUnmapped = &stopsResp.Data.List[i]
-		}
+	stopsByName := make(map[string]models.Stop, len(stopsResp.Data.List))
+	for _, stop := range stopsResp.Data.List {
+		stopsByName[stop.Name] = stop
 	}
-	require.NotNil(t, child1)
-	require.NotNil(t, child2)
-	require.NotNil(t, childUnmapped)
 
+	child1, ok := stopsByName["Child Stop One"]
+	require.True(t, ok)
 	assert.Equal(t, "999_child_stop_1", child1.ID)
 	assert.Equal(t, "999_parent_stat_1", child1.Parent)
 
+	child2, ok := stopsByName["Child Stop Two"]
+	require.True(t, ok)
 	assert.Equal(t, "888_child_stop_2", child2.ID)
 	assert.Equal(t, "888_parent_stat_2", child2.Parent)
 
-	assert.Equal(t, "child_stop_unmapped", childUnmapped.ID)
-	assert.Equal(t, "parent_stat_1", childUnmapped.Parent)
+	// The same parent station reached through a second agency keeps that agency's prefix.
+	childShared, ok := stopsByName["Child Stop Shared"]
+	require.True(t, ok)
+	assert.Equal(t, "888_child_stop_shared", childShared.ID)
+	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
 
-	require.Len(t, stopsResp.Data.References.Stops, 2, "Expected 2 parent stations in references.stops")
-	var p1, p2 *models.Stop
-	for i := range stopsResp.Data.References.Stops {
-		if stopsResp.Data.References.Stops[i].ID == "999_parent_stat_1" {
-			p1 = &stopsResp.Data.References.Stops[i]
-		} else if stopsResp.Data.References.Stops[i].ID == "888_parent_stat_2" {
-			p2 = &stopsResp.Data.References.Stops[i]
-		}
+	// A stop with no routes of its own inherits the agency of its sibling under the
+	// same parent station rather than emitting raw, unresolvable IDs.
+	childUnmapped, ok := stopsByName["Child Stop Unmapped"]
+	require.True(t, ok)
+	assert.Equal(t, "999_child_stop_unmapped", childUnmapped.ID)
+	assert.Equal(t, "999_parent_stat_1", childUnmapped.Parent)
+
+	// With no agency resolvable anywhere, IDs stay raw — and the parent reference is
+	// keyed by the raw ID too, so the pairing still resolves.
+	childOrphan, ok := stopsByName["Child Stop Orphan"]
+	require.True(t, ok)
+	assert.Equal(t, "child_stop_orphan", childOrphan.ID)
+	assert.Equal(t, "parent_stat_3", childOrphan.Parent)
+
+	parentRefsByID := make(map[string]models.Stop, len(stopsResp.Data.References.Stops))
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		parentRefsByID[parentRef.ID] = parentRef
 	}
-	require.NotNil(t, p1)
-	require.NotNil(t, p2)
-	assert.Equal(t, "Parent Station One", p1.Name)
-	assert.Equal(t, "Parent Station Two", p2.Name)
+
+	// The contract that matters: every parent a returned stop points at must resolve.
+	for _, stop := range stopsResp.Data.List {
+		if stop.Parent == "" {
+			continue
+		}
+		assert.Contains(t, parentRefsByID, stop.Parent,
+			"parent %q of stop %q has no entry in references.stops", stop.Parent, stop.ID)
+	}
+
+	require.Len(t, stopsResp.Data.References.Stops, 4, "Expected one reference per (parent station, agency) pair")
+	assert.Equal(t, "Parent Station One", parentRefsByID["999_parent_stat_1"].Name)
+	assert.Equal(t, "Parent Station One", parentRefsByID["888_parent_stat_1"].Name)
+	assert.Equal(t, "Parent Station Two", parentRefsByID["888_parent_stat_2"].Name)
+	assert.Equal(t, "Parent Station Three", parentRefsByID["parent_stat_3"].Name)
+
+	// Parent references carry route arrays like every other stop-emitting endpoint.
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		assert.NotNil(t, parentRef.RouteIDs, "parent %q is missing routeIds", parentRef.ID)
+		assert.NotNil(t, parentRef.StaticRouteIDs, "parent %q is missing staticRouteIds", parentRef.ID)
+	}
 }
