@@ -357,6 +357,19 @@ func TestStopsForLocationHandlerRouteTypeValidMultiple(t *testing.T) {
 	assert.NotEmpty(t, model.Data.References.Routes)
 }
 
+// Stop 2042 runs Thu/Fri/Sat only, so a Monday leaves it with no active service.
+func TestStopsForLocationQueryIgnoresActiveService(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 16, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1, "stop-code lookup should not depend on the queried date")
+	assert.Equal(t, "2042", model.Data.List[0].Code)
+}
+
 func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 	clock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, clock)
