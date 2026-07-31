@@ -11,6 +11,7 @@ import (
 // with optional geographic bounds filtering via lat, lon, and radius parameters.
 func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
+	includeReferences := ShouldIncludeReferences(r)
 	fieldErrors := make(map[string][]string)
 
 	// Standardized parameter parsing
@@ -87,23 +88,26 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 			textColor))
 	}
 
-	allAgencies, err := api.GtfsManager.GetAgencies(ctx)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
-	// Populate situation references for alerts affecting the returned routes
-	resultRawRouteIDs := make([]string, 0, len(routes))
-	for _, routeRow := range routes {
-		resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
-	}
-	alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
-	situations := api.BuildSituationReferences(alerts)
-
 	references := models.NewEmptyReferences()
-	references.Agencies = agencies
-	references.Situations = situations
+
+	if includeReferences {
+		allAgencies, err := api.GtfsManager.GetAgencies(ctx)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
+		// Populate situation references for alerts affecting the returned routes
+		resultRawRouteIDs := make([]string, 0, len(routes))
+		for _, routeRow := range routes {
+			resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
+		}
+		alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
+		situations := api.BuildSituationReferences(alerts)
+
+		references.Agencies = agencies
+		references.Situations = situations
+	}
 
 	response := models.NewListResponseWithRange(results, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)

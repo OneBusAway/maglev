@@ -121,3 +121,19 @@ func TestRouteSearchHandlerLimitExceeded(t *testing.T) {
 	assert.True(t, model.Data.LimitExceeded, "limitExceeded should be true when results are truncated")
 	assert.Equal(t, 1, len(model.Data.List), "results should be truncated to maxCount")
 }
+
+func TestRouteSearchHandlerIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "includeReferences": {"false"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.List)
+
+	// When includeReferences is false, the references block should be completely empty
+	assert.Empty(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.Empty(t, model.Data.References.Situations)
+}

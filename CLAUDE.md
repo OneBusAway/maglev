@@ -93,7 +93,9 @@ Then connect from GoLand IDE or other Delve-compatible debugger.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) in full before making or even proposing any code changes in this repo — its guidelines on size, scope, commit hygiene, testing, code reuse, and complexity should shape the code as it's written, not just get checked afterward.
+@CONTRIBUTING.md
+
+Follow these guidelines in full before making or even proposing any code changes in this repo — its guidelines on size, scope, commit hygiene, testing, code reuse, and complexity should shape the code as it's written, not just get checked afterward.
 
 ## Architecture Overview
 
