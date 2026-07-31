@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -10,8 +12,10 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestStopsForLocationHandlerRequiresValidApiKey(t *testing.T) {
@@ -182,6 +186,73 @@ func TestStopsForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.NotEmpty(t, model.Data.List, "clamped request should still return stops")
 	assert.LessOrEqual(t, len(model.Data.List), 250, "results must not exceed the 250 cap")
+}
+
+// Raw stop IDs "2" and "9" sort opposite to their combined IDs "SortB_2" and
+// "SortA_9", so this distinguishes combined-ID ordering from raw-ID ordering.
+func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	lat, lon := 41.5, -123.5 // away from the RABA fixture stops
+
+	for i, tc := range []struct {
+		agencyID string
+		stopID   string
+	}{
+		{"SortB", "2"},
+		{"SortA", "9"},
+	} {
+		_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+			ID: tc.agencyID, Name: tc.agencyID, Url: "http://example.com", Timezone: "America/Los_Angeles",
+		})
+		require.NoError(t, err)
+
+		routeID, svcID, tripID := tc.agencyID+"R", tc.agencyID+"Svc", tc.agencyID+"T"
+
+		_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+			ID: routeID, AgencyID: tc.agencyID, ShortName: nulls.String("S"), Type: 3,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: tc.stopID, Name: nulls.String("Sort Stop"), Lat: lat + float64(i)*0.001, Lon: lon,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+			ID: svcID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+			StartDate: "20240101", EndDate: "20241231",
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: tripID, RouteID: routeID, ServiceID: svcID})
+		require.NoError(t, err)
+
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: tc.stopID, StopSequence: 1,
+			ArrivalTime: 12 * 3600 * int64(time.Second), DepartureTime: 12 * 3600 * int64(time.Second),
+		})
+		require.NoError(t, err)
+	}
+
+	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=2000", lat, lon)
+	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	ids := make([]string, 0, len(model.Data.List))
+	for _, stop := range model.Data.List {
+		ids = append(ids, stop.ID)
+	}
+
+	// Assert relative order only, so unrelated stops seeded nearby don't break this.
+	idxA, idxB := slices.Index(ids, "SortA_9"), slices.Index(ids, "SortB_2")
+	require.NotEqual(t, -1, idxA, "SortA_9 should be returned")
+	require.NotEqual(t, -1, idxB, "SortB_2 should be returned")
+	assert.Less(t, idxA, idxB, "combined ID order puts SortA_9 before SortB_2")
 }
 
 func TestStopsForLocationHandlerValidatesMaxCount(t *testing.T) {
