@@ -455,12 +455,13 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	assert.Equal(t, "888_child_stop_shared", childShared.ID)
 	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
 
-	// A stop with no routes of its own inherits the agency of its sibling under the
-	// same parent station rather than emitting raw, unresolvable IDs.
+	// A stop with no routes of its own inherits the agency of a sibling under the same
+	// parent station rather than emitting raw, unresolvable IDs. parent_stat_1 is served
+	// by both 999 and 888, so the lowest agency ID wins regardless of result ordering.
 	childUnmapped, ok := stopsByName["Child Stop Unmapped"]
 	require.True(t, ok)
-	assert.Equal(t, "999_child_stop_unmapped", childUnmapped.ID)
-	assert.Equal(t, "999_parent_stat_1", childUnmapped.Parent)
+	assert.Equal(t, "888_child_stop_unmapped", childUnmapped.ID)
+	assert.Equal(t, "888_parent_stat_1", childUnmapped.Parent)
 
 	// With no agency resolvable anywhere, IDs stay raw — and the parent reference is
 	// keyed by the raw ID too, so the pairing still resolves.

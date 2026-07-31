@@ -218,7 +218,9 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 // resolveSearchStopAgencies determines the agency prefix for each searched stop. A stop
 // with no routes of its own inherits the agency resolved for a sibling stop under the
-// same parent station, so that its combined IDs still resolve for the client.
+// same parent station, so that its combined IDs still resolve for the client. Where
+// siblings span several agencies the lowest agency ID wins, so the inherited prefix does
+// not depend on how the result set happens to be ordered or truncated.
 func resolveSearchStopAgencies(stops []gtfsdb.SearchStopsByNameRow, routesByStopID map[string][]string, uniqueAgencies map[string]bool) map[string]string {
 	agencyByStopID := make(map[string]string, len(stops))
 	agencyByParentID := make(map[string]string)
@@ -228,7 +230,10 @@ func resolveSearchStopAgencies(stops []gtfsdb.SearchStopsByNameRow, routesByStop
 		agencyByStopID[s.ID] = agencyID
 
 		parentID := nulls.StringOrEmpty(s.ParentStation)
-		if agencyID != "" && parentID != "" && agencyByParentID[parentID] == "" {
+		if agencyID == "" || parentID == "" {
+			continue
+		}
+		if lowest, seen := agencyByParentID[parentID]; !seen || agencyID < lowest {
 			agencyByParentID[parentID] = agencyID
 		}
 	}
