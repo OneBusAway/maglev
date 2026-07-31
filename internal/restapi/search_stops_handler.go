@@ -19,6 +19,25 @@ var (
 	fts5OperatorsRegex    = regexp.MustCompile(`(?i)\b(AND|OR|NOT|NEAR)\b`)
 )
 
+// GTFS extended special-vehicle route types. A stop served by exactly one route of
+// one of these types is excluded from stop search results.
+const (
+	routeTypeShuttleBus                int64 = 711
+	routeTypeSchoolBus                 int64 = 712
+	routeTypeSchoolAndPublicServiceBus int64 = 713
+	routeTypeRailReplacementBus        int64 = 714
+)
+
+// isSpecialVehicleRouteType reports whether a GTFS route type denotes a special
+// vehicle service that does not qualify a stop for stop search results on its own.
+func isSpecialVehicleRouteType(routeType int64) bool {
+	switch routeType {
+	case routeTypeShuttleBus, routeTypeSchoolBus, routeTypeSchoolAndPublicServiceBus, routeTypeRailReplacementBus:
+		return true
+	}
+	return false
+}
+
 // sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
 // to prevent query syntax errors. Does not preserve the original characters.
 func sanitizeFTS5Query(input string) string {
