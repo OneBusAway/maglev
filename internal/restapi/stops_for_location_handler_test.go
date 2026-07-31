@@ -197,7 +197,7 @@ func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 
 	ctx := context.Background()
 	q := api.GtfsManager.GtfsDB.Queries
-	lat, lon := 41.5, -123.5 // away from the RABA fixture stops
+	lat, lon := 40.583321, -122.426966 // inside the RABA coverage area
 
 	for i, tc := range []struct {
 		agencyID string
@@ -367,6 +367,19 @@ func TestStopsForLocationQueryIgnoresActiveService(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Len(t, model.Data.List, 1, "stop-code lookup should not depend on the queried date")
+	assert.Equal(t, "2042", model.Data.List[0].Code)
+}
+
+// A radius that excludes the match still returns it as the closest candidate.
+func TestStopsForLocationQueryFallsBackToClosestMatch(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.62&lon=-122.39&radius=1&query=2042")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1, "closest code match should be returned when none are in bounds")
 	assert.Equal(t, "2042", model.Data.List[0].Code)
 }
 

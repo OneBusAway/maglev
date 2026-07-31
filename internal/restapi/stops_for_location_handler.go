@@ -93,7 +93,15 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+	// Bounds that miss every agency's coverage area yield an empty list, so no search
+	// runs — otherwise a stop-code query would fall back to its closest match worldwide.
+	outOfRange := api.GtfsManager.CheckIfOutOfBounds(loc)
+
+	var stops []gtfsdb.Stop
+	var limitExceeded bool
+	if !outOfRange {
+		stops, limitExceeded = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+	}
 
 	results := []models.Stop{}
 	routeIDs := map[string]bool{}
