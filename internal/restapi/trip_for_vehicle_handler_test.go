@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -224,6 +225,37 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 		assert.Empty(t, model.Data.References.Trips)
 		assert.NotEmpty(t, model.Data.References.Agencies)
 	})
+}
+
+// TestTripForVehicleHandler_MissingRoute verifies that a trip pointing at a
+// route which is not in the database yields a 404 rather than a 500.
+func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
+	api, _ := setupTestApiWithMockVehicle(t)
+
+	const (
+		orphanTripID    = "TRIP_WITH_MISSING_ROUTE"
+		orphanVehicleID = "ORPHAN_ROUTE_VEHICLE"
+		missingRouteID  = "ROUTE_THAT_DOES_NOT_EXIST"
+	)
+
+	api.GtfsManager.MockAddTrip(orphanTripID, testdata.Raba.ID, missingRouteID)
+	api.GtfsManager.MockAddVehicle(orphanVehicleID, orphanTripID, missingRouteID)
+
+	// The trip row lands in the package-shared fixture database, so take it back
+	// out rather than leaving a routeless trip behind for later tests.
+	t.Cleanup(func() {
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(),
+			`DELETE FROM trips WHERE id = ?`, orphanTripID)
+	})
+
+	// includeTrip=true so the route lookup is reached even though the orphaned
+	// trip has no real-time status to build.
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		tripForVehicleURL(utils.FormCombinedID(testdata.Raba.ID, orphanVehicleID),
+			url.Values{"includeTrip": {"true"}}))
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
 }
 
 // TestTripForVehicleHandler_TripReferences covers where the active trip's

@@ -132,6 +132,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if ShouldIncludeReferences(r) {
 		references, err = api.buildTripForVehicleReferences(ctx, agencyID, agency, trip, status, schedule, params.IncludeTrip)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				api.sendNotFound(w, r)
+				return
+			}
 			api.serverErrorResponse(w, r, err)
 			return
 		}
@@ -174,9 +178,9 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 	}
 	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
-	// The active trip reaches references via the status path, so it is present
-	// whenever the status block is. includeTrip only adds it a second time, and
-	// so matters solely when includeStatus=false.
+	// The active trip belongs in references whenever the status block is present,
+	// so includeTrip is only the fallback: it decides the matter solely when no
+	// status block was built.
 	if includeTrip || status != nil {
 		tripRef := models.NewTripReference(
 			utils.FormCombinedID(agencyID, trip.ID),
@@ -192,6 +196,10 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 
 		routeRef, err := api.routeReferenceByID(ctx, agencyID, trip.RouteID)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				api.Logger.Warn("trip references non-existent route",
+					"tripID", trip.ID, "routeID", trip.RouteID, "agencyID", agencyID)
+			}
 			return nil, err
 		}
 		routeRefs[utils.FormCombinedID(agencyID, trip.RouteID)] = routeRef
