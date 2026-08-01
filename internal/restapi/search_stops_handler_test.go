@@ -324,11 +324,11 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	ctx := context.Background()
 
 	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
-		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2')`,
-		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`,
-		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`,
+		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
+		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
+		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2', 'route_parent_only')`,
 		`DELETE FROM agencies WHERE id IN ('999', '888')`,
-		`DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared')`,
+		`DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency')`,
 	)
 
 	// routes.agency_id and trips.service_id are foreign keys, so the agencies and the
@@ -420,11 +420,51 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	// parent_stat_1 is served directly by its own route, with no child stop on that
+	// route, so references.routes must be populated from the parent lookup alone.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO routes (id, agency_id, short_name, type)
+		VALUES ('route_parent_only', '999', 'RT-PARENT-ONLY', 3)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO trips (id, route_id, service_id)
+		VALUES ('trip_parent_only', 'route_parent_only', 'service_1')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_only', 'parent_stat_1', 1, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	// A stop served by routes from both agencies, to verify agency selection is
+	// deterministic (lowest agency ID) rather than dependent on query row order.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_multi_agency', 'C5', 'Child Stop Multi Agency', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test', 'child_stop_multi_agency', 2, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test_2', 'child_stop_multi_agency', 3, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
 
-	require.Len(t, stopsResp.Data.List, 3)
+	require.Len(t, stopsResp.Data.List, 4)
 
 	stopsByName := make(map[string]models.Stop, len(stopsResp.Data.List))
 	for _, stop := range stopsResp.Data.List {
@@ -446,6 +486,15 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "888_child_stop_shared", childShared.ID)
 	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
+
+	// A stop served by two agencies picks the lowest agency ID deterministically,
+	// rather than whichever route GetRoutesForStops happens to return first.
+	childMultiAgency, ok := stopsByName["Child Stop Multi Agency"]
+	require.True(t, ok)
+	assert.Equal(t, "888_child_stop_multi_agency", childMultiAgency.ID)
+	assert.Equal(t, "888_parent_stat_1", childMultiAgency.Parent)
+	assert.Equal(t, []string{"888_route_parent_test_2", "999_route_parent_test"}, childMultiAgency.RouteIDs,
+		"routeIds must be in a stable, deterministic order")
 
 	referenceIDs := make([]string, 0, len(stopsResp.Data.References.Stops))
 	for _, parentRef := range stopsResp.Data.References.Stops {
@@ -476,6 +525,23 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	for _, parentRef := range stopsResp.Data.References.Stops {
 		assert.NotNil(t, parentRef.RouteIDs, "parent %q is missing routeIds", parentRef.ID)
 		assert.NotNil(t, parentRef.StaticRouteIDs, "parent %q is missing staticRouteIds", parentRef.ID)
+	}
+
+	// route_parent_only serves parent_stat_1 directly and is not on any returned child
+	// stop, so it must still be merged into references.routes rather than dropped.
+	routeIDsInReferences := make(map[string]bool, len(stopsResp.Data.References.Routes))
+	for _, route := range stopsResp.Data.References.Routes {
+		routeIDsInReferences[route.ID] = true
+	}
+	assert.True(t, routeIDsInReferences["999_route_parent_only"],
+		"references.routes must include parent-only routes so parent routeIds always resolve")
+
+	// Every routeId referenced by any parent stop must resolve in references.routes.
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		for _, routeID := range parentRef.RouteIDs {
+			assert.Contains(t, routeIDsInReferences, routeID,
+				"parent %q references route %q which is missing from references.routes", parentRef.ID, routeID)
+		}
 	}
 }
 

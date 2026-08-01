@@ -109,6 +109,34 @@ func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.
 	return utils.MapValues(routesMap)
 }
 
+// mergeParentRouteReferences appends any parent-station routes not already present in
+// routes, so parent stop references never point at an absent route.
+func mergeParentRouteReferences(routes []models.Route, parentRoutes map[string]gtfsdb.GetRoutesForStopsRow) []models.Route {
+	seen := make(map[string]bool, len(routes))
+	for _, route := range routes {
+		seen[route.ID] = true
+	}
+
+	for combinedRouteID, row := range parentRoutes {
+		if seen[combinedRouteID] {
+			continue
+		}
+		routes = append(routes, models.NewRoute(
+			combinedRouteID,
+			row.AgencyID,
+			nulls.StringOrEmpty(row.ShortName),
+			nulls.StringOrEmpty(row.LongName),
+			nulls.StringOrEmpty(row.Desc),
+			models.RouteType(row.Type),
+			nulls.StringOrEmpty(row.Url),
+			nulls.StringOrEmpty(row.Color),
+			nulls.StringOrEmpty(row.TextColor)))
+		seen[combinedRouteID] = true
+	}
+
+	return routes
+}
+
 // agencyReferencesForStops deduplicates the rows returned by GetAgenciesForStops into
 // AgencyReference objects, reusing AgencyReferenceFromDatabase for the field mapping.
 func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []models.AgencyReference {
