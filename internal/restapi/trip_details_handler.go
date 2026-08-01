@@ -32,99 +32,116 @@ type TripParamDefaults struct {
 	IncludeSchedule bool
 }
 
+// Layouts accepted by the serviceDate and time params, alongside Unix millis.
+const (
+	serviceDateLayout = "2006-01-02"          // e.g. "2024-06-15"
+	tripTimeLayout    = "2006-01-02_15-04-05" // e.g. "2024-06-15_14-30-00"
+)
+
+// parseEpochOrLayoutTime parses a param accepting either a Unix timestamp in
+// milliseconds or a timestamp in the given layout. A missing param yields a nil
+// time and no error; ok is false only when a supplied value matches neither form.
+func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *time.Time, ok bool) {
+	if value == "" {
+		return nil, true
+	}
+
+	if epochMillis, err := strconv.ParseInt(value, 10, 64); err == nil {
+		fromEpoch := time.Unix(epochMillis/1000, 0)
+		return &fromEpoch, true
+	}
+
+	fromLayout, err := time.ParseInLocation(layout, value, loc)
+	if err != nil {
+		return nil, false
+	}
+
+	return &fromLayout, true
+}
+
+// parseIncludeParam reads a boolean include* param, falling back to fallback when
+// the request omits it. ok is false when a supplied value is not a boolean.
+func parseIncludeParam(value string, fallback bool) (parsed bool, ok bool) {
+	if value == "" {
+		return fallback, true
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback, false
+	}
+
+	return parsed, true
+}
+
+// localizeTripTimes re-expresses the parsed times in loc, so that downstream
+// Year()/Month()/Day()/Format() calls extract the agency's calendar date rather
+// than UTC's — time.Unix() alone would land those endpoints a day out for
+// agencies at a positive UTC offset.
+func localizeTripTimes(params *TripParams, loc *time.Location) {
+	if params.ServiceDate != nil {
+		localized := params.ServiceDate.In(loc)
+		params.ServiceDate = &localized
+	}
+	if params.Time != nil {
+		localized := params.Time.In(loc)
+		params.Time = &localized
+	}
+}
+
 // parseTripParams parses and validates the common trip query params, applying
 // the caller's per-endpoint defaults to any include* param the request omits.
 func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults, loc ...*time.Location) (TripParams, map[string][]string) {
+	query := r.URL.Query()
+
+	// Timestamps without an explicit offset are read in the agency's timezone when
+	// the caller supplies one, and in UTC otherwise.
+	parseLoc := time.UTC
+	if len(loc) > 0 && loc[0] != nil {
+		parseLoc = loc[0]
+	}
+
 	params := TripParams{
 		IncludeTrip:     defaults.IncludeTrip,
 		IncludeSchedule: defaults.IncludeSchedule,
 		IncludeStatus:   true,
+		VehicleID:       query.Get("vehicleId"),
 	}
 
 	fieldErrors := make(map[string][]string)
 
-	// Validate serviceDate — accepts either a Unix timestamp in milliseconds
-	// (e.g. "1718409600000") or a calendar date in yyyy-MM-dd format (e.g. "2024-06-15").
-	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
-		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
-			serviceDate := time.Unix(serviceDateMs/1000, 0)
-			params.ServiceDate = &serviceDate
-		} else {
-			dateLoc := time.UTC
-			if len(loc) > 0 && loc[0] != nil {
-				dateLoc = loc[0]
-			}
-			if serviceDate, err := time.ParseInLocation("2006-01-02", serviceDateStr, dateLoc); err == nil {
-				params.ServiceDate = &serviceDate
-			} else {
-				fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"}
-			}
-		}
+	if serviceDate, ok := parseEpochOrLayoutTime(query.Get("serviceDate"), serviceDateLayout, parseLoc); ok {
+		params.ServiceDate = serviceDate
+	} else {
+		fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"}
 	}
 
-	if includeTripStr := r.URL.Query().Get("includeTrip"); includeTripStr != "" {
-		if val, err := strconv.ParseBool(includeTripStr); err == nil {
-			params.IncludeTrip = val
-		} else {
-			fieldErrors["includeTrip"] = []string{"must be a boolean value (true/false)"}
-		}
+	if timeParam, ok := parseEpochOrLayoutTime(query.Get("time"), tripTimeLayout, parseLoc); ok {
+		params.Time = timeParam
+	} else {
+		fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
 	}
 
-	if includeScheduleStr := r.URL.Query().Get("includeSchedule"); includeScheduleStr != "" {
-		if val, err := strconv.ParseBool(includeScheduleStr); err == nil {
-			params.IncludeSchedule = val
-		} else {
-			fieldErrors["includeSchedule"] = []string{"must be a boolean value (true/false)"}
-		}
+	includeParams := map[string]*bool{
+		"includeTrip":     &params.IncludeTrip,
+		"includeSchedule": &params.IncludeSchedule,
+		"includeStatus":   &params.IncludeStatus,
 	}
-
-	if includeStatusStr := r.URL.Query().Get("includeStatus"); includeStatusStr != "" {
-		if val, err := strconv.ParseBool(includeStatusStr); err == nil {
-			params.IncludeStatus = val
-		} else {
-			fieldErrors["includeStatus"] = []string{"must be a boolean value (true/false)"}
+	for name, target := range includeParams {
+		value, ok := parseIncludeParam(query.Get(name), *target)
+		if !ok {
+			fieldErrors[name] = []string{"must be a boolean value (true/false)"}
+			continue
 		}
+		*target = value
 	}
-
-	// Validate time — accepts either a Unix timestamp in milliseconds
-	// (e.g. "1718459400000") or a datetime in yyyy-MM-dd_HH-mm-ss format (e.g. "2024-06-15_14-30-00").
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
-			timeParam := time.Unix(timeMs/1000, 0)
-			params.Time = &timeParam
-		} else {
-			timeLoc := time.UTC
-			if len(loc) > 0 && loc[0] != nil {
-				timeLoc = loc[0]
-			}
-			if timeParam, err := time.ParseInLocation("2006-01-02_15-04-05", timeStr, timeLoc); err == nil {
-				params.Time = &timeParam
-			} else {
-				fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
-			}
-		}
-	}
-
-	params.VehicleID = r.URL.Query().Get("vehicleId")
 
 	if len(fieldErrors) > 0 {
 		return params, fieldErrors
 	}
 
-	// If a timezone location was provided, localize serviceDate and time so that
-	// callers receive times in the agency's timezone by default. This prevents the
-	// bug where time.Unix(ms/1000, 0) creates a UTC time and downstream
-	// Year()/Month()/Day()/Format() calls extract the wrong calendar date for
-	// agencies in positive UTC offsets.
 	if len(loc) > 0 && loc[0] != nil {
-		if params.ServiceDate != nil {
-			localized := params.ServiceDate.In(loc[0])
-			params.ServiceDate = &localized
-		}
-		if params.Time != nil {
-			localized := params.Time.In(loc[0])
-			params.Time = &localized
-		}
+		localizeTripTimes(&params, loc[0])
 	}
 
 	return params, nil
