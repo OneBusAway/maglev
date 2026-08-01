@@ -174,6 +174,19 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.NotEmpty(t, model.Data.Entry.TripID)
+
+		schedule := model.Data.Entry.Schedule
+		require.NotNil(t, schedule, "schedule should be present when includeSchedule=true")
+		require.NotEmpty(t, schedule.StopTimes, "the fixture trip should have stop times")
+
+		referencedStops := make(map[string]struct{}, len(model.Data.References.Stops))
+		for _, stop := range model.Data.References.Stops {
+			referencedStops[stop.ID] = struct{}{}
+		}
+		for _, stopTime := range schedule.StopTimes {
+			assert.Contains(t, referencedStops, stopTime.StopID,
+				"every schedule stop must be dereferenceable in references.stops")
+		}
 	})
 
 	t.Run("all-false strips schedule/status/trip refs", func(t *testing.T) {
