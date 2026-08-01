@@ -90,6 +90,33 @@ func TestAgenciesWithCoverageHandlerEmptyReferencesNotNull(t *testing.T) {
 	assert.NotContains(t, string(body), `"agencies":null`)
 }
 
+func TestAgenciesWithCoverageHandlerMaxCount(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&maxCount=1")
+	assert.Len(t, model.Data.List, 1)
+	assert.False(t, model.Data.LimitExceeded)
+}
+
+func TestAgenciesWithCoverageHandlerLimitExceeded(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, err := api.GtfsManager.GtfsDB.DB.Exec("INSERT INTO agencies (id, name, url, timezone) VALUES ('MOCK_SECOND', 'Mock Second Agency', 'http://mock.agency', 'America/Los_Angeles')")
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		if _, err := api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM agencies WHERE id = 'MOCK_SECOND'"); err != nil {
+			t.Errorf("failed to clean up MOCK_SECOND agency: %v", err)
+		}
+	})
+
+	_, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&maxCount=1")
+	assert.Len(t, model.Data.List, 1)
+	assert.True(t, model.Data.LimitExceeded)
+}
+
 func TestAgenciesWithCoverageHandlerIncludeReferencesFalse(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
