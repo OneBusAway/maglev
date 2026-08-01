@@ -153,10 +153,14 @@ func TestStopsForLocationRouteTypeCapsAfterServiceFilter(t *testing.T) {
 	tests := []struct {
 		name        string
 		maxCount    string
-		expectedLen int
+		expectedIDs []string
 	}{
-		{name: "caps at two", maxCount: "2", expectedLen: 2},
-		{name: "caps at five", maxCount: "5", expectedLen: 5},
+		{name: "caps at two", maxCount: "2", expectedIDs: []string{"25_2047", "25_3049"}},
+		{
+			name:        "caps at five",
+			maxCount:    "5",
+			expectedIDs: []string{"25_2033", "25_2047", "25_2048", "25_3048", "25_3049"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,8 +172,21 @@ func TestStopsForLocationRouteTypeCapsAfterServiceFilter(t *testing.T) {
 				"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=5000&routeType=3&maxCount="+tt.maxCount)
 
 			require.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.Len(t, model.Data.List, tt.expectedLen)
+			ids := make([]string, 0, len(model.Data.List))
+			for _, stop := range model.Data.List {
+				ids = append(ids, stop.ID)
+			}
+			assert.Equal(t, tt.expectedIDs, ids, "the nearest route-type matches should survive the cap")
 			assert.True(t, model.Data.LimitExceeded)
+
+			usedRouteIDs := map[string]bool{}
+			for _, stop := range model.Data.List {
+				for _, routeID := range stop.RouteIDs {
+					usedRouteIDs[routeID] = true
+				}
+			}
+			assert.Len(t, model.Data.References.Routes, len(usedRouteIDs),
+				"references should cover the returned stops only")
 		})
 	}
 }

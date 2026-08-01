@@ -168,13 +168,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		agencyId, _, err := utils.ExtractAgencyIDAndCodeID(routeIDStr)
-		if err != nil {
+		if _, _, err := utils.ExtractAgencyIDAndCodeID(routeIDStr); err != nil {
 			continue // Skip malformed route IDs
 		}
 		stopRouteIDs[stopID] = append(stopRouteIDs[stopID], routeIDStr)
-		agencyIDs[agencyId] = true
-		routeIDs[routeIDStr] = true
 	}
 
 	// Group agencies by stop (take the first agency for each stop)
@@ -233,6 +230,18 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		results = results[:maxCount]
 		resultRawStopIDs = resultRawStopIDs[:maxCount]
 		isLimitExceeded = true
+	}
+
+	// References describe the returned stops, so they are collected after capping.
+	for _, stopID := range resultRawStopIDs {
+		for _, routeID := range stopRouteIDs[stopID] {
+			agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
+			if err != nil {
+				continue
+			}
+			agencyIDs[agencyID] = true
+			routeIDs[routeID] = true
+		}
 	}
 
 	// Spec: results are ordered lexicographically by combined stop ID.
