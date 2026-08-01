@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"maps"
 	"net/http"
 	"net/url"
@@ -19,6 +20,20 @@ func searchStopsURL(params url.Values) string {
 	q := url.Values{"key": {"TEST"}}
 	maps.Copy(q, params)
 	return "/api/where/search/stop.json?" + q.Encode()
+}
+
+// registerFixtureCleanup schedules fixture deletions before the inserts run, so the rows
+// are still removed when an insert fails and aborts the test. The test database is shared
+// by every test in the package run, so leftover rows leak into other tests' results.
+func registerFixtureCleanup(t *testing.T, db *sql.DB, statements ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, statement := range statements {
+			if _, err := db.ExecContext(context.Background(), statement); err != nil {
+				t.Errorf("fixture cleanup failed for %q: %v", statement, err)
+			}
+		}
+	})
 }
 
 func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
@@ -308,6 +323,14 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 
 	ctx := context.Background()
 
+	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
+		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2')`,
+		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`,
+		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`,
+		`DELETE FROM agencies WHERE id IN ('999', '888')`,
+		`DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared')`,
+	)
+
 	// routes.agency_id and trips.service_id are foreign keys, so the agencies and the
 	// calendar entry the fixture rows point at must exist before those rows are inserted.
 	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
@@ -397,14 +420,6 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	t.Cleanup(func() {
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2')`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN ('999', '888')`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared')`)
-	})
-
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
@@ -432,6 +447,13 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	assert.Equal(t, "888_child_stop_shared", childShared.ID)
 	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
 
+	referenceIDs := make([]string, 0, len(stopsResp.Data.References.Stops))
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		referenceIDs = append(referenceIDs, parentRef.ID)
+	}
+	require.Equal(t, []string{"888_parent_stat_1", "888_parent_stat_2", "999_parent_stat_1"}, referenceIDs,
+		"references.stops must hold one entry per (parent station, agency) pair, sorted by ID")
+
 	parentRefsByID := make(map[string]models.Stop, len(stopsResp.Data.References.Stops))
 	for _, parentRef := range stopsResp.Data.References.Stops {
 		parentRefsByID[parentRef.ID] = parentRef
@@ -446,7 +468,6 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 			"parent %q of stop %q has no entry in references.stops", stop.Parent, stop.ID)
 	}
 
-	require.Len(t, stopsResp.Data.References.Stops, 3, "Expected one reference per (parent station, agency) pair")
 	assert.Equal(t, "Parent Station One", parentRefsByID["999_parent_stat_1"].Name)
 	assert.Equal(t, "Parent Station One", parentRefsByID["888_parent_stat_1"].Name)
 	assert.Equal(t, "Parent Station Two", parentRefsByID["888_parent_stat_2"].Name)
@@ -463,6 +484,14 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	defer api.Shutdown()
 
 	db := api.GtfsManager.GtfsDB.DB
+
+	// The RABA agency and the service_1 calendar are shared records and are left in place.
+	registerFixtureCleanup(t, db,
+		`DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
+		`DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
+		`DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`,
+		`DELETE FROM stops WHERE id IN ('zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3')`,
+	)
 
 	// Insert mock data for exclusion testing
 	_, err := db.Exec(`
@@ -497,17 +526,6 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'limit_valid_3', 2, 28800, 28800);
 	`)
 	require.NoError(t, err)
-
-	// The test database is shared across the package and persists between runs, so the
-	// fixture rows have to be removed or a rerun fails on duplicate IDs. The RABA agency
-	// and the service_1 calendar are shared records and are left in place.
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`)
-		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`)
-		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`)
-		_, _ = db.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3')`)
-	})
 
 	// Test 0 routes exclusion
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ghost"}}))
