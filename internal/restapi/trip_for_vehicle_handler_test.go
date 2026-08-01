@@ -43,7 +43,9 @@ func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID 
 
 	api.GtfsManager.MockAddAgency(testdata.Raba.ID, "unitrans")
 	api.GtfsManager.MockAddRoute(combinedRouteID, testdata.Raba.ID, combinedRouteID)
-	api.GtfsManager.MockAddTrip(trip.ID, testdata.Raba.ID, combinedRouteID)
+	// Deliberately no MockAddTrip: the trip already exists in the fixture DB, and
+	// MockAddTrip is an INSERT OR REPLACE that would wipe its block and shape IDs
+	// in the package-shared test database for every test that runs afterwards.
 	api.GtfsManager.MockAddVehicle(mockVehicleID, trip.ID, combinedRouteID)
 
 	return api, utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)
@@ -93,9 +95,7 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	require.NotEmpty(t, refs.Routes)
 	require.NotEmpty(t, refs.Trips)
 
-	// Trip ref must have a non-empty id/routeId. ServiceID is intentionally not
-	// asserted: the mock trip injected by setupTestApiWithMockVehicle has no
-	// ServiceID, and asserting on it would be asserting on the mock helper.
+	// Trip ref must have a non-empty id/routeId.
 	trip := refs.Trips[0]
 	assert.NotEmpty(t, trip.ID)
 	assert.NotEmpty(t, trip.RouteID)
