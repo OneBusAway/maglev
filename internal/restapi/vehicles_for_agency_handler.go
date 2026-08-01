@@ -48,6 +48,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		referenceTime = parsedTime
 	}
 
+	// Service date is midnight of the reference date in the agency timezone.
+	serviceDate := models.NewModelTime(utils.CalculateServiceDate(referenceTime))
+
 	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -112,7 +115,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Update times default to 0 when no real update exists.
-		currentTime := models.NewModelTime(referenceTime)
 		if vehicle.Timestamp != nil {
 			ts := models.NewModelTime(*vehicle.Timestamp)
 			vehicleStatus.LastLocationUpdateTime = ts
@@ -174,8 +176,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				tripStatus.LastLocationUpdateTime = ts
 			}
 
-			// Set service date (use current date for now)
-			tripStatus.ServiceDate = currentTime
+			tripStatus.ServiceDate = serviceDate
 
 			// Propagate occupancy status from GTFS-RT to both TripStatus and VehicleStatus.
 			// There is no source for occupancyCapacity or occupancyCount anywhere in maglev — not in the SQLite DB,

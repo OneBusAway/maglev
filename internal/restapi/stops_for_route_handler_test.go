@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -51,11 +52,13 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 
 	require.Len(t, grouping.StopGroups, 2)
 
+	// Both RABA directions share the headsign "Shasta Lake", so each group's
+	// name is disambiguated with its direction id (and the sort is deterministic).
 	outbound := grouping.StopGroups[0]
 	assert.Equal(t, "0", outbound.ID)
-	assert.Equal(t, "Shasta Lake", outbound.Name.Name)
+	assert.Equal(t, "Shasta Lake - 0", outbound.Name.Name)
 	assert.Equal(t, "destination", outbound.Name.Type)
-	assert.Equal(t, []string{"Shasta Lake"}, outbound.Name.Names)
+	assert.Equal(t, []string{"Shasta Lake - 0"}, outbound.Name.Names)
 	assert.Len(t, outbound.StopIds, 21)
 	// Direction-0 shape retraces two of its own edges, splitting into 3 polylines.
 	require.Len(t, outbound.Polylines, 3)
@@ -66,8 +69,9 @@ func TestStopsForRouteHandlerEndToEnd(t *testing.T) {
 
 	inbound := grouping.StopGroups[1]
 	assert.Equal(t, "1", inbound.ID)
-	assert.Equal(t, "Shasta Lake", inbound.Name.Name)
+	assert.Equal(t, "Shasta Lake - 1", inbound.Name.Name)
 	assert.Equal(t, "destination", inbound.Name.Type)
+	assert.Equal(t, []string{"Shasta Lake - 1"}, inbound.Name.Names)
 	assert.Len(t, inbound.StopIds, 22)
 	// Direction-1 shape retraces one of its own edges, splitting into 2 polylines.
 	require.Len(t, inbound.Polylines, 2)
@@ -273,13 +277,19 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
 		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
 			"stopA1,Stop One,37.7749,-122.4194\n" +
-			"stopA2,Stop Two,37.7849,-122.4094\n",
+			"stopA2,Stop Two,37.7849,-122.4094\n" +
+			"stopA3,Stop Three,37.7949,-122.3994\n",
 		// No direction_id column — all trips will have NULL direction_id in the DB.
+		// tripB shares stopA1 but adds stopA3, which tripA never visits: the union
+		// of both trips' stops must be returned, not just the first trip's.
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign\n" +
-			"routeA,svc1,tripA,Downtown\n",
+			"routeA,svc1,tripA,Downtown\n" +
+			"routeA,svc1,tripB,Downtown\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"tripA,08:00:00,08:00:00,stopA1,1\n" +
-			"tripA,08:10:00,08:10:00,stopA2,2\n",
+			"tripA,08:10:00,08:10:00,stopA2,2\n" +
+			"tripB,09:00:00,09:00:00,stopA1,1\n" +
+			"tripB,09:10:00,09:10:00,stopA3,2\n",
 	}
 
 	for name, content := range files {
@@ -324,9 +334,11 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 }
 
 // TestStopsForRouteNullDirectionID guards against the regression where agencies
-// that omit direction_id in their GTFS feed receive an empty stop list. When
-// direction_id is NULL, the SQL condition `t.direction_id = NULL` evaluates to
-// UNKNOWN (not TRUE), so we fall back to single-trip ordering instead.
+// that omit direction_id in their GTFS feed receive an empty or incomplete stop
+// list. When direction_id is NULL, the SQL condition `t.direction_id = NULL`
+// evaluates to UNKNOWN (not TRUE), so we fall back to ordering by the group's
+// trips directly — collecting the union of stops across every trip, not just the
+// first. The fixture's tripB adds stopA3, which tripA never visits.
 func TestStopsForRouteNullDirectionID(t *testing.T) {
 	api := createTestApiWithNullDirectionID(t)
 
@@ -335,10 +347,92 @@ func TestStopsForRouteNullDirectionID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	entry := model.Data.Entry
-	assert.NotEmpty(t, entry.StopIds, "stops-for-route must return stops even when direction_id is NULL")
+	wantStops := []string{"agencyA_stopA1", "agencyA_stopA2", "agencyA_stopA3"}
+	assert.ElementsMatch(t, wantStops, entry.StopIds,
+		"flat stopIds must be the union of stops across all trips, not just the first")
 
 	require.Len(t, entry.StopGroupings, 1)
 	stopGroups := entry.StopGroupings[0].StopGroups
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
-	assert.Len(t, stopGroups[0].StopIds, 2, "expected both stops to appear in the stop group")
+	assert.ElementsMatch(t, wantStops, stopGroups[0].StopIds,
+		"the group must contain every stop served across all trips")
+}
+
+func TestDisambiguateGroupNames(t *testing.T) {
+	group := func(id, name string) models.StopGroup {
+		return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+	}
+
+	tests := []struct {
+		name      string
+		groups    []models.StopGroup
+		wantNames []string
+	}{
+		{
+			name:      "distinct names are left untouched",
+			groups:    []models.StopGroup{group("0", "Downtown"), group("1", "Airport")},
+			wantNames: []string{"Downtown", "Airport"},
+		},
+		{
+			name:      "shared name is disambiguated with the direction id",
+			groups:    []models.StopGroup{group("0", "Shasta Lake"), group("1", "Shasta Lake")},
+			wantNames: []string{"Shasta Lake - 0", "Shasta Lake - 1"},
+		},
+		{
+			name:      "only colliding groups are suffixed, unique name is left alone",
+			groups:    []models.StopGroup{group("0", "Loop"), group("1", "Loop"), group("2", "Express")},
+			wantNames: []string{"Loop - 0", "Loop - 1", "Express"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			disambiguateGroupNames(tt.groups)
+			for i, want := range tt.wantNames {
+				assert.Equal(t, want, tt.groups[i].Name.Name)
+				assert.Equal(t, []string{want}, tt.groups[i].Name.Names)
+			}
+		})
+	}
+}
+
+// TestDisambiguateGroupNamesCollidesWithUniqueName covers the case where suffixing
+// a duplicated name produces a string that already exists as another group's
+// unique name ("A", "A", "A - 0"): the generated "A - 0" must be pushed further
+// so every final name stays unique. It also asserts the outcome is independent of
+// input order, which is what makes the later name-based sort stable.
+func TestDisambiguateGroupNamesCollidesWithUniqueName(t *testing.T) {
+	newGroups := func() []models.StopGroup {
+		mk := func(id, name string) models.StopGroup {
+			return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+		}
+		return []models.StopGroup{mk("0", "A"), mk("1", "A"), mk("2", "A - 0")}
+	}
+
+	// Final name per direction id, regardless of the order groups arrive in.
+	wantByID := map[string]string{
+		"0": "A - 0 - 0",
+		"1": "A - 1",
+		"2": "A - 0 - 2",
+	}
+
+	assertResolved := func(t *testing.T, groups []models.StopGroup) {
+		seen := make(map[string]bool)
+		for _, g := range groups {
+			assert.Equal(t, wantByID[g.ID], g.Name.Name, "group %s", g.ID)
+			assert.Equal(t, []string{wantByID[g.ID]}, g.Name.Names, "group %s names", g.ID)
+			assert.False(t, seen[g.Name.Name], "duplicate final name %q", g.Name.Name)
+			seen[g.Name.Name] = true
+		}
+	}
+
+	ordered := newGroups()
+	disambiguateGroupNames(ordered)
+	assertResolved(t, ordered)
+
+	// Reversed input must yield the same per-group names (order independence).
+	reversed := newGroups()
+	slices.Reverse(reversed)
+	disambiguateGroupNames(reversed)
+	assertResolved(t, reversed)
 }
