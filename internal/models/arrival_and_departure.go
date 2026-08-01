@@ -12,7 +12,7 @@ type ArrivalAndDeparture struct {
 	DistanceFromStop           float64     `json:"distanceFromStop"`
 	Frequency                  *Frequency  `json:"frequency"`
 	HistoricalOccupancy        string      `json:"historicalOccupancy"`
-	LastUpdateTime             ModelTime   `json:"lastUpdateTime,omitzero"`
+	LastUpdateTime             ModelTime   `json:"lastUpdateTime"`
 	NumberOfStopsAway          int         `json:"numberOfStopsAway"`
 	OccupancyStatus            string      `json:"occupancyStatus"`
 	Predicted                  bool        `json:"predicted"`

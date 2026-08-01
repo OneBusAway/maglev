@@ -12,7 +12,11 @@ import (
 )
 
 func TestBuildSituationReferencesCoverage(t *testing.T) {
-	api := &RestAPI{}
+	api := &RestAPI{
+		Application: &app.Application{
+			Clock: clock.NewMockClock(time.Now()),
+		},
+	}
 
 	alerts := []gtfs.Alert{
 		{
