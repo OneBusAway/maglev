@@ -227,6 +227,14 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Bounds searches are capped upstream; route-type searches cap here instead,
+	// after inactive stops are dropped.
+	if len(routeTypes) > 0 && len(results) > maxCount {
+		results = results[:maxCount]
+		resultRawStopIDs = resultRawStopIDs[:maxCount]
+		isLimitExceeded = true
+	}
+
 	// Spec: results are ordered lexicographically by combined stop ID.
 	slices.SortStableFunc(results, func(a, b models.Stop) int {
 		return cmp.Compare(a.ID, b.ID)
