@@ -318,7 +318,7 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
-		INSERT INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
 		VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20240101', '20251231')
 	`)
 	require.NoError(t, err)
@@ -402,7 +402,6 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN ('999', '888')`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM calendar WHERE id = 'service_1'`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared')`)
 	})
 
@@ -498,6 +497,17 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'limit_valid_3', 2, 28800, 28800);
 	`)
 	require.NoError(t, err)
+
+	// The test database is shared across the package and persists between runs, so the
+	// fixture rows have to be removed or a rerun fails on duplicate IDs. The RABA agency
+	// and the service_1 calendar are shared records and are left in place.
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3')`)
+	})
 
 	// Test 0 routes exclusion
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ghost"}}))
