@@ -1,9 +1,7 @@
 package restapi
 
 import (
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,24 +68,17 @@ func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
 }
 
 // TestAgenciesWithCoverageHandlerEmptyReferencesNotNull pins the wire format:
-// json.Decode cannot distinguish a decoded `null` from `[]`, so this asserts
-// on the raw response body instead.
+// references.agencies must decode as an empty slice, never nil, so it
+// serializes as `[]` rather than `null`.
 func TestAgenciesWithCoverageHandlerEmptyReferencesNotNull(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	server := httptest.NewServer(api.SetupAPIRoutes())
-	defer server.Close()
+	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
 
-	resp, err := http.Get(server.URL + "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-
-	assert.Contains(t, string(body), `"agencies":[]`)
-	assert.NotContains(t, string(body), `"agencies":null`)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotNil(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Agencies)
 }
 
 func TestAgenciesWithCoverageHandlerMaxCount(t *testing.T) {
