@@ -101,6 +101,69 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 	return api
 }
 
+// createTestApiWithMultipleActiveTripsFixture builds a RestAPI backed by a GTFS
+// dataset with two concurrently active trips in different blocks for the same route.
+func createTestApiWithMultipleActiveTripsFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-1," + tripsForRouteHeadsign + ",0,tfr-block-1\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-2," + tripsForRouteHeadsign + ",0,tfr-block-2\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-trip-1,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-1,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-2,11:50:00,11:50:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-2,12:10:00,12:10:00," + tripsForRouteStop2ID + ",2\n",
+	}
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	zipPath := filepath.Join(t.TempDir(), "trips-for-route-multi.zip")
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+
+	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(gtfsManager.Shutdown)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(api.Shutdown)
+	return api
+}
+
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
@@ -532,7 +595,7 @@ func TestTripsForRouteHandler_MaxCountValidation(t *testing.T) {
 }
 
 func TestTripsForRouteHandler_MaxCountDoesNotTruncate(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithMultipleActiveTripsFixture(t, clock.NewMockClock(tripsForRouteTestClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 	timeMs := tripsForRouteTestClock.UnixMilli()
 
@@ -543,13 +606,14 @@ func TestTripsForRouteHandler_MaxCountDoesNotTruncate(t *testing.T) {
 	resp1, model1 := callAPIHandler[TripsForRouteResponse](t, api, baseURL)
 	require.Equal(t, http.StatusOK, resp1.StatusCode)
 	initialCount := len(model1.Data.List)
+	require.GreaterOrEqual(t, initialCount, 2, "baseline count must be at least 2 active trips to test non-truncation")
 
 	// Second request with maxCount=1
 	resp2, model2 := callAPIHandler[TripsForRouteResponse](t, api, baseURL+"&maxCount=1")
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
 	maxCountOneCount := len(model2.Data.List)
 
-	assert.Equal(t, initialCount, maxCountOneCount, "result count with maxCount=1 must be identical to result count without maxCount")
+	assert.Equal(t, initialCount, maxCountOneCount, "result count with maxCount=1 must be identical to full baseline count (not truncated)")
 }
 
 func TestStripNumericSuffix(t *testing.T) {
