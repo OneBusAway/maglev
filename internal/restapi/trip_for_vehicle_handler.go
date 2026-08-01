@@ -54,7 +54,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	// Parse query params with the agency's timezone so that serviceDate and time
 	// are localized at parse time, preventing UTC date-extraction bugs.
-	params, fieldErrors := api.parseTripParams(r, false, loc)
+	params, fieldErrors := api.parseTripParams(r, TripParamDefaults{}, loc)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -143,7 +143,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 // buildTripForVehicleReferences dereferences the IDs the entry exposes: the
 // agency, the stops named by the status and schedule blocks, the routes serving
-// those stops, and — when includeTrip is set — the scheduled trip record.
+// those stops, and — when includeTrip is set or a status block was built — the
+// scheduled trip record.
 func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID string, agency gtfsdb.Agency, trip gtfsdb.Trip, status *models.TripStatus, schedule *models.Schedule, includeTrip bool) (*models.ReferencesModel, error) {
 	references := models.NewEmptyReferences()
 
@@ -171,11 +172,12 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			route.Color.String,
 			route.TextColor.String)
 	}
-	references.Routes = utils.MapValues(routeRefs)
-
 	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
-	if includeTrip {
+	// The active trip reaches references via the status path, so it is present
+	// whenever the status block is. includeTrip only adds it a second time, and
+	// so matters solely when includeStatus=false.
+	if includeTrip || status != nil {
 		tripRef := models.NewTripReference(
 			utils.FormCombinedID(agencyID, trip.ID),
 			utils.FormCombinedID(agencyID, trip.RouteID),
@@ -187,7 +189,15 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			utils.FormCombinedID(agencyID, trip.ShapeID.String),
 		)
 		references.Trips = append(references.Trips, *tripRef)
+
+		routeRef, err := api.routeReferenceByID(ctx, agencyID, trip.RouteID)
+		if err != nil {
+			return nil, err
+		}
+		routeRefs[utils.FormCombinedID(agencyID, trip.RouteID)] = routeRef
 	}
+
+	references.Routes = utils.MapValues(routeRefs)
 
 	return references, nil
 }

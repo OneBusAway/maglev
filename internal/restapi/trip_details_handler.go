@@ -24,13 +24,20 @@ type TripParams struct {
 	VehicleID       string
 }
 
-// parseTripParams parses and validates the common trip query params
-// includeScheduleDefault controls the default value of IncludeSchedule when the
-// parameter is not present in the request (true for trip-details, false for trip-for-vehicle).
-func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool, loc ...*time.Location) (TripParams, map[string][]string) {
+// TripParamDefaults holds the values the include* params take when the request
+// omits them. They differ per endpoint: trip-details defaults includeTrip and
+// includeSchedule to true, trip-for-vehicle defaults both to false.
+type TripParamDefaults struct {
+	IncludeTrip     bool
+	IncludeSchedule bool
+}
+
+// parseTripParams parses and validates the common trip query params, applying
+// the caller's per-endpoint defaults to any include* param the request omits.
+func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults, loc ...*time.Location) (TripParams, map[string][]string) {
 	params := TripParams{
-		IncludeTrip:     true,
-		IncludeSchedule: includeScheduleDefault,
+		IncludeTrip:     defaults.IncludeTrip,
+		IncludeSchedule: defaults.IncludeSchedule,
 		IncludeStatus:   true,
 	}
 
@@ -159,7 +166,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query params with the agency's timezone so that serviceDate and time
 	// are localized at parse time, preventing UTC date-extraction bugs.
-	params, fieldErrors := api.parseTripParams(r, true, loc)
+	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
+	params, fieldErrors := api.parseTripParams(r, defaults, loc)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

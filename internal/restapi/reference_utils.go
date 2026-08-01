@@ -83,6 +83,22 @@ func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Rout
 	return modelRoutes, nil
 }
 
+// routeReferenceByID builds the Route reference for a single route, looked up by
+// its bare (agency-less) route ID.
+func (api *RestAPI) routeReferenceByID(ctx context.Context, agencyID string, routeID string) (models.Route, error) {
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+	if err != nil {
+		return models.Route{}, err
+	}
+
+	routeModels, err := buildRouteModels(ctx, agencyID, []gtfsdb.Route{route})
+	if err != nil {
+		return models.Route{}, err
+	}
+
+	return routeModels[0], nil
+}
+
 // routeReferencesForStops deduplicates the rows returned by GetRoutesForStops into Route
 // reference objects, keyed by each row's own agency ID so results spanning multiple
 // agencies are handled correctly.
