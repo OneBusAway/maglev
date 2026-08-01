@@ -2793,6 +2793,9 @@ FROM
     JOIN routes ON trips.route_id = routes.id
 WHERE
     stop_times.stop_id IN (/*SLICE:stop_ids*/?)
+ORDER BY
+    routes.agency_id,
+    routes.id
 `
 
 type GetRoutesForStopsRow struct {

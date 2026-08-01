@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"strings"
@@ -208,7 +209,8 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Every kept stop has at least one route, so this always resolves.
+		// GetRoutesForStops orders by (agency_id, route_id), so the first route yields the
+		// lowest agency ID serving this stop - a stable choice for multi-agency stops.
 		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDs[0])
 
 		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routeIDs))
@@ -229,9 +231,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 				keptRoutesRows = append(keptRoutesRows, row)
 			}
 		}
-		references.Routes = routeReferencesForStops(keptRoutesRows)
-		utils.SortModelRoutesByName(references.Routes)
-
 		keptAgencyRows := make([]gtfsdb.GetAgenciesForStopsRow, 0, len(agencyRows))
 		for _, row := range agencyRows {
 			if keptStopsSet[row.StopID] {
@@ -246,12 +245,16 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		situations := api.BuildSituationReferences(alerts)
 		references.Situations = append(references.Situations, situations...)
 
-		references.Stops, err = api.buildSearchParentStationReferences(ctx, parentIDsByAgency)
+		var parentRoutes map[string]gtfsdb.GetRoutesForStopsRow
+		references.Stops, parentRoutes, err = api.buildSearchParentStationReferences(ctx, parentIDsByAgency)
 		if err != nil {
 			api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch parent stops: %w", err))
 			return
 		}
 		utils.SortModelStopsByID(references.Stops)
+
+		references.Routes = mergeParentRouteReferences(routeReferencesForStops(keptRoutesRows), parentRoutes)
+		utils.SortModelRoutesByName(references.Routes)
 	}
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
@@ -284,17 +287,21 @@ func (api *RestAPI) buildSearchStopModel(ctx context.Context, agencyID string, s
 
 // buildSearchParentStationReferences resolves parent stations into references, emitting one
 // entry per (parent station, agency) pair referenced by the result set so that every
-// non-empty parent value in the returned list has a matching reference.
-func (api *RestAPI) buildSearchParentStationReferences(ctx context.Context, parentIDsByAgency map[string][]string) ([]models.Stop, error) {
+// non-empty parent value in the returned list has a matching reference. It also returns
+// the unique routes serving those parent stations, keyed the same way their routeIds are,
+// so callers can merge them into references.routes.
+func (api *RestAPI) buildSearchParentStationReferences(ctx context.Context, parentIDsByAgency map[string][]string) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
 	parentRefs := make([]models.Stop, 0, len(parentIDsByAgency))
+	parentRoutes := make(map[string]gtfsdb.GetRoutesForStopsRow)
 
 	for agencyID, parentIDs := range parentIDsByAgency {
-		refs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, parentIDs)
+		refs, routes, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, parentIDs)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		parentRefs = append(parentRefs, refs...)
+		maps.Copy(parentRoutes, routes)
 	}
 
-	return parentRefs, nil
+	return parentRefs, parentRoutes, nil
 }
