@@ -397,42 +397,20 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	// A stop with no routes of its own, which must inherit the agency of its sibling
-	// under parent_stat_1 rather than emitting an unresolvable raw parent ID.
-	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
-		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
-		VALUES ('child_stop_unmapped', 'C3', 'Child Stop Unmapped', 40.0, -120.0, 0, 'parent_stat_1', 1)
-	`)
-	require.NoError(t, err)
-
-	// A stop whose agency cannot be determined at all: no routes of its own, and no
-	// sibling under parent_stat_3 to inherit from.
-	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
-		INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding)
-		VALUES ('parent_stat_3', 'P3', 'Parent Station Three', 40.0, -120.0, 1, 1)
-	`)
-	require.NoError(t, err)
-
-	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
-		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
-		VALUES ('child_stop_orphan', 'C5', 'Child Stop Orphan', 40.0, -120.0, 0, 'parent_stat_3', 1)
-	`)
-	require.NoError(t, err)
-
 	t.Cleanup(func() {
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN ('999', '888')`)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM calendar WHERE id = 'service_1'`)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_unmapped', 'parent_stat_3', 'child_stop_orphan')`)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared')`)
 	})
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
 
-	require.Len(t, stopsResp.Data.List, 5)
+	require.Len(t, stopsResp.Data.List, 3)
 
 	stopsByName := make(map[string]models.Stop, len(stopsResp.Data.List))
 	for _, stop := range stopsResp.Data.List {
@@ -455,21 +433,6 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	assert.Equal(t, "888_child_stop_shared", childShared.ID)
 	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
 
-	// A stop with no routes of its own inherits the agency of a sibling under the same
-	// parent station rather than emitting raw, unresolvable IDs. parent_stat_1 is served
-	// by both 999 and 888, so the lowest agency ID wins regardless of result ordering.
-	childUnmapped, ok := stopsByName["Child Stop Unmapped"]
-	require.True(t, ok)
-	assert.Equal(t, "888_child_stop_unmapped", childUnmapped.ID)
-	assert.Equal(t, "888_parent_stat_1", childUnmapped.Parent)
-
-	// With no agency resolvable anywhere, IDs stay raw — and the parent reference is
-	// keyed by the raw ID too, so the pairing still resolves.
-	childOrphan, ok := stopsByName["Child Stop Orphan"]
-	require.True(t, ok)
-	assert.Equal(t, "child_stop_orphan", childOrphan.ID)
-	assert.Equal(t, "parent_stat_3", childOrphan.Parent)
-
 	parentRefsByID := make(map[string]models.Stop, len(stopsResp.Data.References.Stops))
 	for _, parentRef := range stopsResp.Data.References.Stops {
 		parentRefsByID[parentRef.ID] = parentRef
@@ -484,15 +447,88 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 			"parent %q of stop %q has no entry in references.stops", stop.Parent, stop.ID)
 	}
 
-	require.Len(t, stopsResp.Data.References.Stops, 4, "Expected one reference per (parent station, agency) pair")
+	require.Len(t, stopsResp.Data.References.Stops, 3, "Expected one reference per (parent station, agency) pair")
 	assert.Equal(t, "Parent Station One", parentRefsByID["999_parent_stat_1"].Name)
 	assert.Equal(t, "Parent Station One", parentRefsByID["888_parent_stat_1"].Name)
 	assert.Equal(t, "Parent Station Two", parentRefsByID["888_parent_stat_2"].Name)
-	assert.Equal(t, "Parent Station Three", parentRefsByID["parent_stat_3"].Name)
 
 	// Parent references carry route arrays like every other stop-emitting endpoint.
 	for _, parentRef := range stopsResp.Data.References.Stops {
 		assert.NotNil(t, parentRef.RouteIDs, "parent %q is missing routeIds", parentRef.ID)
 		assert.NotNil(t, parentRef.StaticRouteIDs, "parent %q is missing staticRouteIds", parentRef.ID)
 	}
+}
+
+func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	db := api.GtfsManager.GtfsDB.DB
+
+	// Insert mock data for exclusion testing
+	_, err := db.Exec(`
+		-- Stop with 0 routes
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('zero_route_stop', 'Ghost Stop', 40.0, -120.0, 0);
+
+		-- Stop with 1 school bus route (type 712)
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('school_bus_stop', 'Single Special Stop', 40.0, -120.0, 0);
+		INSERT OR IGNORE INTO agencies (id, name, url, timezone) VALUES ('RABA', 'RABA', 'http://raba.com', 'America/Los_Angeles');
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('school_route_1', 'RABA', 'School Route', 712);
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20230101', '20251231');
+		INSERT INTO trips (id, route_id, service_id) VALUES ('school_trip_1', 'school_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'school_bus_stop', 1, 28800, 28800);
+
+		-- Stop with 1 valid route (type 3 - Bus)
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('valid_bus_stop', 'Valid Bus Stop', 40.0, -120.0, 0);
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('valid_route_1', 'RABA', 'Valid Route', 3);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('valid_trip_1', 'valid_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'valid_bus_stop', 1, 28800, 28800);
+
+		-- Stop with 2 school bus routes (type 712) to test allSpecial logic
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('two_school_routes_stop', 'Double School Bus Stop', 40.0, -120.0, 0);
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('school_route_2', 'RABA', 'School Route 2', 712);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('school_trip_2', 'school_route_2', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'two_school_routes_stop', 2, 28800, 28800);
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_2', 'two_school_routes_stop', 1, 28800, 28800);
+
+		-- Stops for maxCount filtering test
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_ghost_1', 'Limit Test Ghost 1', 40.0, -120.0, 0);
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_ghost_2', 'Limit Test Ghost 2', 40.0, -120.0, 0);
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_valid_3', 'Limit Test Valid 3', 40.0, -120.0, 0);
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'limit_valid_3', 2, 28800, 28800);
+	`)
+	require.NoError(t, err)
+
+	// Test 0 routes exclusion
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ghost"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, stopsResp.Data.List, "Expected Ghost Stop to be excluded (0 routes)")
+
+	// Test School bus exclusion
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Single Special"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, stopsResp.Data.List, "Expected Single Special Stop to be excluded (single route type 712)")
+	assert.Empty(t, stopsResp.Data.References.Routes, "Expected excluded stop's routes to not leak into references")
+	assert.Empty(t, stopsResp.Data.References.Agencies, "Expected excluded stop's agencies to not leak into references")
+
+	// Test valid bus inclusion
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Valid Bus"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, stopsResp.Data.List, 1, "Expected Valid Bus Stop to be included")
+	assert.True(t, strings.HasSuffix(stopsResp.Data.List[0].ID, "valid_bus_stop"))
+
+	// Test inclusion of stop with multiple special routes (matching legacy defect #3)
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Double School"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, stopsResp.Data.List, 1, "Expected Double School Bus Stop to be included despite all routes being special")
+	assert.True(t, strings.HasSuffix(stopsResp.Data.List[0].ID, "two_school_routes_stop"))
+
+	// Test maxCount filtering scenario
+	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Limit Test"}, "maxCount": {"2"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.True(t, stopsResp.Data.LimitExceeded, "Expected LimitExceeded to be true because FTS query matched 3 limits")
+	// SearchStopsByName orders by stop ID, so the 3 matches are fetched as limit_ghost_1,
+	// limit_ghost_2, limit_valid_3; truncating to maxCount=2 leaves the two zero-route
+	// ghosts, both of which the filter drops.
+	assert.Empty(t, stopsResp.Data.List, "Expected no items after filtering truncated results")
 }

@@ -35,32 +35,3 @@ func (api *RestAPI) extractAndValidateAgencyCodeID(w http.ResponseWriter, r *htt
 
 	return agencyID, codeID, true
 }
-
-// resolveAgencyID determines which agency a stop belongs to. Stops carry no agency of
-// their own, so the agency is taken from the first route serving the stop, falling back
-// to the only agency present when the surrounding result set spans just one. Returns an
-// empty string when the agency cannot be determined.
-func resolveAgencyID(stopID string, routesByStop map[string][]string, uniqueAgencies map[string]bool) string {
-	if routes, ok := routesByStop[stopID]; ok && len(routes) > 0 {
-		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routes[0])
-		return agencyID
-	}
-	if len(uniqueAgencies) == 1 {
-		for id := range uniqueAgencies {
-			return id
-		}
-	}
-	return ""
-}
-
-// formatStopID combines a raw stop ID with its agency, returning the raw ID unchanged
-// when the agency is unknown and an empty string when there is no ID to format.
-func formatStopID(agencyID, rawID string) string {
-	if rawID == "" {
-		return ""
-	}
-	if agencyID == "" {
-		return rawID
-	}
-	return utils.FormCombinedID(agencyID, rawID)
-}

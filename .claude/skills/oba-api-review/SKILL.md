@@ -8,7 +8,7 @@ Run this skill with the current working directory set to the root of your `magle
 
 ## Argument
 
-One of four forms:
+The source is one of four forms, optionally followed by a `--output [path]` flag:
 
 | Form | Detection | Example |
 |------|-----------|---------|
@@ -16,6 +16,8 @@ One of four forms:
 | Branch name | Single token, no spaces, not numeric | `fix/route-ids-paging` |
 | Description | Contains spaces | `remove the situationIds field from stops-for-route` |
 | *(empty)* | No argument | *(none)* → current working tree |
+
+Strip a trailing `--output` or `--output <path>` token from the argument before applying the detection rules above — it's a modifier, not part of the source. Its presence means: also save the final report to a file (step 7). Its absence means the report is only printed inline, as before. If `--output` is given without a path, use the default path described in step 7.
 
 ## Steps
 
@@ -116,3 +118,27 @@ Combine the sub-skill outputs into a single report:
 A short plain-English summary of what the analysis found. Note anything that is incomplete, incorrect, or that the change touches beyond its stated scope. Do not prescribe what should happen — that is the reader's decision.
 
 ---
+
+### 7. Save the report to a file (only if `--output` was given)
+
+Skip this step entirely if the `--output` flag wasn't present in the argument — the report printed in step 6 is the only output.
+
+If `--output <path>` was given, write the exact report content from step 6 to `<path>` verbatim (no truncation or reformatting), creating parent directories if needed.
+
+If `--output` was given with no path, write it to `tmp/oba-api-review/<slug>-<timestamp>.md` instead (this directory is already covered by the repo's `.gitignore`, so nothing here gets committed by accident):
+
+```bash
+mkdir -p tmp/oba-api-review
+```
+
+- `<timestamp>` is `date +%Y%m%d-%H%M%S`
+- `<slug>` depends on the resolved source:
+
+| Source | Slug |
+|--------|------|
+| PR | `pr-<NNN>` |
+| Branch | the branch name with `/` replaced by `-` |
+| Working tree | `working-tree-<current-branch-name-with-/-replaced-by-->` |
+| Description | a short kebab-case slug derived from the description (e.g. `remove-situationids-from-stops-for-route`) |
+
+After writing, tell the user the file path so they can open, share, or diff it against a previous run.

@@ -20,6 +20,25 @@ var (
 	fts5OperatorsRegex    = regexp.MustCompile(`(?i)\b(AND|OR|NOT|NEAR)\b`)
 )
 
+// GTFS extended special-vehicle route types. A stop served by exactly one route of
+// one of these types is excluded from stop search results.
+const (
+	routeTypeShuttleBus                int64 = 711
+	routeTypeSchoolBus                 int64 = 712
+	routeTypeSchoolAndPublicServiceBus int64 = 713
+	routeTypeRailReplacementBus        int64 = 714
+)
+
+// isSpecialVehicleRouteType reports whether a GTFS route type denotes a special
+// vehicle service that does not qualify a stop for stop search results on its own.
+func isSpecialVehicleRouteType(routeType int64) bool {
+	switch routeType {
+	case routeTypeShuttleBus, routeTypeSchoolBus, routeTypeSchoolAndPublicServiceBus, routeTypeRailReplacementBus:
+		return true
+	}
+	return false
+}
+
 // sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
 // to prevent query syntax errors. Does not preserve the original characters.
 func sanitizeFTS5Query(input string) string {
@@ -154,6 +173,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Organize Data
 	routesByStopID := make(map[string][]string)
+	routeTypes := make(map[string]int64)
 
 	for _, row := range routesRows {
 		if ctx.Err() != nil {
@@ -163,18 +183,14 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
-	}
-
-	uniqueAgencies := make(map[string]bool)
-	for _, row := range agencyRows {
-		uniqueAgencies[row.ID] = true
+		routeTypes[combinedRouteID] = row.Type
 	}
 
 	// 6. Construct Stop Models
-	agencyByStopID := resolveSearchStopAgencies(stops, routesByStopID, uniqueAgencies)
-
 	stopModels := make([]models.Stop, 0, len(stops))
 	parentIDsByAgency := make(map[string][]string)
+	keptStopIDs := make([]string, 0, len(stops))
+	keptStopsSet := make(map[string]bool)
 
 	for _, s := range stops {
 		if ctx.Err() != nil {
@@ -182,8 +198,22 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		agencyID := agencyByStopID[s.ID]
-		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routesByStopID[s.ID]))
+		routeIDs := routesByStopID[s.ID]
+		if len(routeIDs) == 0 {
+			continue
+		}
+
+		// Legacy behaviour: only stops with exactly one route are type-filtered
+		if len(routeIDs) == 1 && isSpecialVehicleRouteType(routeTypes[routeIDs[0]]) {
+			continue
+		}
+
+		// Every kept stop has at least one route, so this always resolves.
+		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDs[0])
+
+		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routeIDs))
+		keptStopIDs = append(keptStopIDs, s.ID)
+		keptStopsSet[s.ID] = true
 
 		if parentID := nulls.StringOrEmpty(s.ParentStation); parentID != "" {
 			parentIDsByAgency[agencyID] = append(parentIDsByAgency[agencyID], parentID)
@@ -193,14 +223,26 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	// 7. Build References
 	references := models.NewEmptyReferences()
 	if includeReferences {
-		references.Routes = routeReferencesForStops(routesRows)
+		keptRoutesRows := make([]gtfsdb.GetRoutesForStopsRow, 0, len(routesRows))
+		for _, row := range routesRows {
+			if keptStopsSet[row.StopID] {
+				keptRoutesRows = append(keptRoutesRows, row)
+			}
+		}
+		references.Routes = routeReferencesForStops(keptRoutesRows)
 		utils.SortModelRoutesByName(references.Routes)
 
-		references.Agencies = agencyReferencesForStops(agencyRows)
+		keptAgencyRows := make([]gtfsdb.GetAgenciesForStopsRow, 0, len(agencyRows))
+		for _, row := range agencyRows {
+			if keptStopsSet[row.StopID] {
+				keptAgencyRows = append(keptAgencyRows, row)
+			}
+		}
+		references.Agencies = agencyReferencesForStops(keptAgencyRows)
 		utils.SortAgencyReferencesByID(references.Agencies)
 
 		// Populate situation references for alerts affecting the returned stops
-		alerts := api.collectAlertsForStops(stopIDs)
+		alerts := api.collectAlertsForStops(keptStopIDs)
 		situations := api.BuildSituationReferences(alerts)
 		references.Situations = append(references.Situations, situations...)
 
@@ -214,37 +256,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
-}
-
-// resolveSearchStopAgencies determines the agency prefix for each searched stop. A stop
-// with no routes of its own inherits the agency resolved for a sibling stop under the
-// same parent station, so that its combined IDs still resolve for the client. Where
-// siblings span several agencies the lowest agency ID wins, so the inherited prefix does
-// not depend on how the result set happens to be ordered or truncated.
-func resolveSearchStopAgencies(stops []gtfsdb.SearchStopsByNameRow, routesByStopID map[string][]string, uniqueAgencies map[string]bool) map[string]string {
-	agencyByStopID := make(map[string]string, len(stops))
-	agencyByParentID := make(map[string]string)
-
-	for _, s := range stops {
-		agencyID := resolveAgencyID(s.ID, routesByStopID, uniqueAgencies)
-		agencyByStopID[s.ID] = agencyID
-
-		parentID := nulls.StringOrEmpty(s.ParentStation)
-		if agencyID == "" || parentID == "" {
-			continue
-		}
-		if lowest, seen := agencyByParentID[parentID]; !seen || agencyID < lowest {
-			agencyByParentID[parentID] = agencyID
-		}
-	}
-
-	for _, s := range stops {
-		if agencyByStopID[s.ID] == "" {
-			agencyByStopID[s.ID] = agencyByParentID[nulls.StringOrEmpty(s.ParentStation)]
-		}
-	}
-
-	return agencyByStopID
 }
 
 // stopFromSearchRow converts a full-text search result row into the stop record the
@@ -263,18 +274,11 @@ func stopFromSearchRow(row gtfsdb.SearchStopsByNameRow) gtfsdb.Stop {
 	}
 }
 
-// buildSearchStopModel builds a stop model for a search result. Search spans agencies, so
-// the agency is resolved per stop rather than being fixed for the request, and combined
-// IDs fall back to raw IDs when it cannot be determined.
+// buildSearchStopModel builds a stop model for a search result, adding the parent
+// station field that the shared buildStopModel does not set.
 func (api *RestAPI) buildSearchStopModel(ctx context.Context, agencyID string, stop gtfsdb.Stop, combinedRouteIDs []string) models.Stop {
-	if combinedRouteIDs == nil {
-		combinedRouteIDs = []string{}
-	}
-
 	stopModel := api.buildStopModel(ctx, agencyID, stop, combinedRouteIDs)
-	stopModel.ID = formatStopID(agencyID, stop.ID)
-	stopModel.Parent = formatStopID(agencyID, nulls.StringOrEmpty(stop.ParentStation))
-
+	stopModel.Parent = utils.FormCombinedID(agencyID, nulls.StringOrEmpty(stop.ParentStation))
 	return stopModel
 }
 
@@ -285,17 +289,6 @@ func (api *RestAPI) buildSearchParentStationReferences(ctx context.Context, pare
 	parentRefs := make([]models.Stop, 0, len(parentIDsByAgency))
 
 	for agencyID, parentIDs := range parentIDsByAgency {
-		// The shared builder always prefixes IDs with the agency, so stops whose agency
-		// could never be determined need their raw IDs preserved instead.
-		if agencyID == "" {
-			refs, err := api.buildUnprefixedParentReferences(ctx, parentIDs)
-			if err != nil {
-				return nil, err
-			}
-			parentRefs = append(parentRefs, refs...)
-			continue
-		}
-
 		refs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, parentIDs)
 		if err != nil {
 			return nil, err
@@ -304,20 +297,4 @@ func (api *RestAPI) buildSearchParentStationReferences(ctx context.Context, pare
 	}
 
 	return parentRefs, nil
-}
-
-// buildUnprefixedParentReferences builds parent station references keyed by their raw,
-// unprefixed IDs, matching the parent values emitted for stops with no resolvable agency.
-func (api *RestAPI) buildUnprefixedParentReferences(ctx context.Context, parentIDs []string) ([]models.Stop, error) {
-	parentStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, dedupeStrings(parentIDs))
-	if err != nil {
-		return nil, err
-	}
-
-	refs := make([]models.Stop, 0, len(parentStops))
-	for _, parentStop := range parentStops {
-		refs = append(refs, api.buildSearchStopModel(ctx, "", parentStop, nil))
-	}
-
-	return refs, nil
 }
