@@ -204,4 +204,3 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 
 	return references, nil
 }
-r
