@@ -189,6 +189,19 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 		}
 	})
 
+	t.Run("includeReferences=false empties the references block", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{"includeReferences": {"false"}}))
+
+		require.NotEmpty(t, model.Data.Entry.TripID, "the entry must still be populated")
+
+		refs := model.Data.References
+		assert.Empty(t, refs.Agencies, "agencies should be empty when includeReferences=false")
+		assert.Empty(t, refs.Routes, "routes should be empty when includeReferences=false")
+		assert.Empty(t, refs.Trips, "trips should be empty when includeReferences=false")
+		assert.Empty(t, refs.Stops, "stops should be empty when includeReferences=false")
+	})
+
 	t.Run("all-false strips schedule/status/trip refs", func(t *testing.T) {
 		_, model := callAPIHandler[TripDetailsResponse](t, api,
 			tripForVehicleURL(vehicleID, url.Values{
