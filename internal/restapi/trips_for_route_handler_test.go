@@ -405,7 +405,7 @@ func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
 }
 
 func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	tests := []struct {
