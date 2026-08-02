@@ -405,8 +405,7 @@ func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
 }
 
 func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 
 	endpoint := "/api/where/trips-for-route/1110.json?key=TEST"
 
