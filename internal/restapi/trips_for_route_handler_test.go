@@ -604,3 +604,109 @@ func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 
 	assert.Empty(t, stopIDsMap)
 }
+
+// TestTripsForRouteHandler_InterlinedBlock verifies that when a block spans
+// two routes (the queried route and another route), the entry's outer tripId
+// resolves to the queried-route trip in the block while status.activeTripId
+// reflects the vehicle's currently-running trip on the other route.
+func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock),
+		"trips-for-route-interline.zip", interlineFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := tripsForRouteTestClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-a")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestTripsForRouteHandler_OvernightInterlinedBlock verifies that a block
+// whose trips straddle midnight is resolved against the previous service day:
+// at 00:30 the active trip is yesterday's tfr-yest-b (23:55–24:45), so the
+// entry's tripId must resolve to yesterday's queried-route trip tfr-yest-a,
+// not today's trip sharing the same block ID.
+func TestTripsForRouteHandler_OvernightInterlinedBlock(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-overnight.zip", overnightInterlineFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := afterMidnightClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-a")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestTripsForRouteHandler_LoopingRouteBlock verifies that when a block visits
+// the queried route, leaves, and returns (route A → B → A), the entry's
+// tripId resolves to the queried-route trip nearest to the active trip
+// (tfr-loop-c), not the first match (tfr-loop-a).
+func TestTripsForRouteHandler_LoopingRouteBlock(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(loopRouteClock),
+		"trips-for-route-loop.zip", loopingRouteFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := loopRouteClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-loop-c")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-loop-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestTripsForRouteHandler_GapCase verifies the nearest-midpoint resolution
+// across a layover gap: with the active trip tfr-gap-b running 10:00–10:30,
+// the queried-route trips tfr-gap-a (09:30–09:50) and tfr-gap-c (10:35–10:50)
+// both fall outside the active window, and the entry must resolve to
+// tfr-gap-c, whose midpoint is closest to the active trip's midpoint.
+func TestTripsForRouteHandler_GapCase(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(loopRouteClock),
+		"trips-for-route-gap.zip", gapFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := loopRouteClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-gap-c")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-gap-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
