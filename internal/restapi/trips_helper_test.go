@@ -560,6 +560,13 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	assert.Greater(t, status.TotalDistanceAlongTrip, float64(0), "TotalDistanceAlongTrip should be > 0 with shape data")
 	assert.Greater(t, status.DistanceAlongTrip, float64(0), "DistanceAlongTrip should be > 0 for a vehicle mid-route")
 	assert.Less(t, status.DistanceAlongTrip, status.TotalDistanceAlongTrip, "DistanceAlongTrip should be less than total for a mid-route vehicle")
+
+	// No trip update is mocked, so the vehicle is on time. There is no deviation
+	// to project away from, which makes the scheduled distance the actual one —
+	// not zero, which is what a guard on a non-zero deviation used to produce.
+	require.Zero(t, status.ScheduleDeviation, "an unmocked trip update leaves the vehicle on time")
+	assert.Equal(t, status.DistanceAlongTrip, status.ScheduledDistanceAlongTrip,
+		"an on-time vehicle's scheduled distance is its actual distance")
 }
 
 func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
