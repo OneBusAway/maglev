@@ -327,6 +327,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		ID               string
 		MinArrivalTime   int64
 		MaxDepartureTime int64
+		Trip             gtfsdb.Trip
 	}
 	type blockServiceKey struct {
 		BlockID   string
@@ -352,20 +353,26 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			ServiceIds: allServiceIDs,
 		})
 		if err != nil {
-			// Degrade gracefully: skip interlining resolution for these blocks.
-			// Other DB lookups in this handler (layoverBlocks, prevServiceIDs,
-			// nullBlockTrips, GetTripsInBlock) all degrade the same way.
-			api.Logger.Warn("trips-for-route: failed to fetch block trips for interlining", "error", err)
+			if errors.Is(err, sql.ErrNoRows) {
+				// No trips found for the interlined blocks: the queried-route
+				// trip cannot be resolved. Surface a 404 rather than emitting
+				// entries with the wrong outer trip ID.
+				api.sendNotFound(w, r)
+				return
+			}
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 
 		for _, bt := range blockTrips {
 			if bt.RouteID == routeID && bt.BlockID.Valid {
 				key := blockServiceKey{BlockID: bt.BlockID.String, ServiceID: bt.ServiceID}
-				blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
-					ID:               bt.ID,
-					MinArrivalTime:   bt.MinArrivalTime.Int64,
-					MaxDepartureTime: bt.MaxDepartureTime.Int64,
-				})
+			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
+				ID:               bt.ID,
+				MinArrivalTime:   bt.MinArrivalTime.Int64,
+				MaxDepartureTime: bt.MaxDepartureTime.Int64,
+				Trip:             tripsByBlockIDsRowToTrip(bt),
+			})
 			}
 		}
 	}
@@ -413,17 +420,22 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 					}
 				}
 				entryTripID = entries[bestIdx].ID
+				// Keep the selected queried-route trip available when building
+				// references so the entry's trip reference (route, headsign,
+				// ...) reflects the entry's tripId rather than the active trip's.
+				fetchedTrips = append(fetchedTrips, entries[bestIdx].Trip)
 				if queriedAgency, ok := routeAgencyMap[routeID]; ok {
 					entryAgencyID = queriedAgency
 				} else {
 					entryAgencyID = agencyID
 				}
 			} else {
-				api.Logger.Warn("trips-for-route: no candidate queried-route trip in interlined block",
-					"block_id", fetchedTrip.BlockID.String,
-					"service_id", fetchedTrip.ServiceID,
-					"active_trip_id", fetchedTrip.ID,
-					"route_id", routeID)
+				// The active trip is on another route but no queried-route trip
+				// exists for this block+service: the entry's outer trip ID
+				// cannot be resolved. Surface a 404 instead of emitting an
+				// entry whose tripId points at the other route's trip.
+				api.sendNotFound(w, r)
+				return
 			}
 		}
 
@@ -564,6 +576,21 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
 	api.sendResponse(w, r, response)
+}
+
+func tripsByBlockIDsRowToTrip(row gtfsdb.GetTripsByBlockIDsRow) gtfsdb.Trip {
+	return gtfsdb.Trip{
+		ID:               row.ID,
+		RouteID:          row.RouteID,
+		ServiceID:        row.ServiceID,
+		TripHeadsign:     row.TripHeadsign,
+		TripShortName:    row.TripShortName,
+		DirectionID:      row.DirectionID,
+		BlockID:          row.BlockID,
+		ShapeID:          row.ShapeID,
+		MinArrivalTime:   row.MinArrivalTime,
+		MaxDepartureTime: row.MaxDepartureTime,
+	}
 }
 
 func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]bool) {

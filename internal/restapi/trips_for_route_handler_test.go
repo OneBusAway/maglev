@@ -704,6 +704,39 @@ func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
 }
 
+// TestTripsForRouteHandler_InterlinedBlock_TripReference verifies that with
+// includeTrip=true, the references include the queried-route trip selected as
+// the entry's tripId (tfr-trip-a), carrying the queried route — not just the
+// active trip on the other route.
+func TestTripsForRouteHandler_InterlinedBlock_TripReference(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock),
+		"trips-for-route-interline.zip", interlineFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := tripsForRouteTestClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeTrip=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-a")
+	expectedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	var refTrip *models.Trip
+	for i := range model.Data.References.Trips {
+		if model.Data.References.Trips[i].ID == expectedTripID {
+			refTrip = &model.Data.References.Trips[i]
+			break
+		}
+	}
+	require.NotNil(t, refTrip, "references must include the queried-route trip tfr-trip-a")
+	assert.Equal(t, expectedRouteID, refTrip.RouteID,
+		"the reference must carry the queried route, not the active trip's route")
+}
+
 // TestTripsForRouteHandler_OvernightInterlinedBlock verifies that a block
 // whose trips straddle midnight is resolved against the previous service day:
 // at 00:30 the active trip is yesterday's tfr-yest-b (23:55–24:45), so the
