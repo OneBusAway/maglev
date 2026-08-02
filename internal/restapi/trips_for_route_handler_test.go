@@ -422,17 +422,14 @@ func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
 	tests := []struct {
 		name              string
 		includeReferences string
-		wantRefsPopulated bool
 	}{
 		{
 			name:              "Empty List - Include References Explicit",
 			includeReferences: "true",
-			wantRefsPopulated: true,
 		},
 		{
 			name:              "Empty List - Exclude References",
 			includeReferences: "false",
-			wantRefsPopulated: false,
 		},
 	}
 
