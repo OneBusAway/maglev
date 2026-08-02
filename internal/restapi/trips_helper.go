@@ -194,13 +194,14 @@ func (api *RestAPI) BuildTripStatus(
 				}
 			}
 
-			if scheduleDeviation != 0 && len(stopTimes) > 0 {
-				scheduledDistance := api.calculateEffectiveDistanceAlongTrip(
-					ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
-					stopTimes, shapePoints, cumulativeDistances,
-				)
-				status.ScheduledDistanceAlongTrip = scheduledDistance
-			}
+			// Called unconditionally: an on-time vehicle's scheduled distance is its
+			// actual distance, not zero, and calculateEffectiveDistanceAlongTrip
+			// already falls back to actualDistance when there is no deviation to
+			// project away from and when the trip has no stop times.
+			status.ScheduledDistanceAlongTrip = api.calculateEffectiveDistanceAlongTrip(
+				ctx, actualDistance, scheduleDeviation, currentTime, serviceDate,
+				stopTimes, shapePoints, cumulativeDistances,
+			)
 		}
 	}
 
