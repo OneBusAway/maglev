@@ -367,12 +367,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		for _, bt := range blockTrips {
 			if bt.RouteID == routeID && bt.BlockID.Valid {
 				key := blockServiceKey{BlockID: bt.BlockID.String, ServiceID: bt.ServiceID}
-			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
-				ID:               bt.ID,
-				MinArrivalTime:   bt.MinArrivalTime.Int64,
-				MaxDepartureTime: bt.MaxDepartureTime.Int64,
-				Trip:             tripsByBlockIDsRowToTrip(bt),
-			})
+				blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
+					ID:               bt.ID,
+					MinArrivalTime:   bt.MinArrivalTime.Int64,
+					MaxDepartureTime: bt.MaxDepartureTime.Int64,
+					Trip:             tripsByBlockIDsRowToTrip(bt),
+				})
 			}
 		}
 	}
