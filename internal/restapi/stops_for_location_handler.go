@@ -75,16 +75,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate and sanitize query
-	sanitizedQuery, err := utils.ValidateAndSanitizeQuery(query)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"query": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
-	query = sanitizedQuery
+	// Sanitize query
+	query = utils.SanitizeInput(query)
 
 	ctx := r.Context()
 
@@ -101,11 +93,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
-
-	// Referenced Java code: "here we sort by distance for possible truncation, but later it will be re-sorted by stopId"
-	slices.SortStableFunc(stops, func(a, b gtfsdb.Stop) int {
-		return cmp.Compare(a.ID, b.ID)
-	})
 
 	results := []models.Stop{}
 	routeIDs := map[string]bool{}
@@ -239,6 +226,11 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		api.clientCanceledResponse(w, r, ctx.Err())
 		return
 	}
+
+	// Spec: results are ordered lexicographically by combined stop ID.
+	slices.SortStableFunc(results, func(a, b models.Stop) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 
 	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)

@@ -34,6 +34,15 @@ That said, nothing here is specific to that project. Point `oba-api-review` at a
 /oba-api-review "remove situationIds from stops-for-route"   # a proposed change, described in English
 ```
 
+Add `--output` to also save the report as markdown, in addition to printing it inline:
+
+```
+/oba-api-review 123 --output                          # saves to tmp/oba-api-review/pr-123-<timestamp>.md
+/oba-api-review fix/route-ids-paging --output notes/review.md   # saves to a specific path
+```
+
+Without `--output`, the report is only printed inline, as before.
+
 ## How cross-repo resolution works
 
 `oba-api-client-impact` needs source from `wayfinder`, `js-sdk`, `onebusaway-ios`, and `onebusaway-android`; `oba-api-spec-check` and `oba-api-verify` need `maglev.wiki` — none of which need to be checked out ahead of time. They resolve each one through the `oba-workspace` skill, which in turn calls `.claude/skills/lib/resolve-oba-repo.sh <repo-name>`:
