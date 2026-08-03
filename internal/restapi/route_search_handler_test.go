@@ -1,12 +1,15 @@
 package restapi
 
 import (
+	"context"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -242,4 +245,24 @@ func TestRouteSearchHandlerPaginationBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRouteSearchHandlerContextCancellation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req, err := http.NewRequest("GET", routeSearchURL(url.Values{"input": {"shasta"}}), nil)
+	require.NoError(t, err)
+	// Use a deadline in the past — context.Err() is DeadlineExceeded immediately,
+	// no timer resolution dependency (avoids Windows ~15ms minimum sleep issue).
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
 }
