@@ -4,11 +4,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -652,10 +655,8 @@ func TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences(t *testing.T)
 }
 
 // TestBuildTripReferences_FetchesUnprefetchedTrips verifies that trips
-// referenced only by an entry's TripId or Status.ActiveTripID — which are not
-// part of preFetchedTrips — are fetched and fully populated in
-// references.trips (routeId, headsign, blockId, serviceId), not emitted as
-// empty objects.
+// referenced by entry TripId or Status.ActiveTripID are fetched and fully
+// populated in references.trips when not pre-fetched.
 func TestBuildTripReferences_FetchesUnprefetchedTrips(t *testing.T) {
 	api := createTestApiWithBlockSequenceFixture(t, clock.NewMockClock(blockSequenceClock))
 	ctx := context.Background()
@@ -699,4 +700,74 @@ func TestBuildTripReferences_FetchesUnprefetchedTrips(t *testing.T) {
 		assert.Equalf(t, expectedBlockID, ref.BlockID, "trip referenced by %s must carry its blockId", tc.name)
 		assert.Equalf(t, expectedServiceID, ref.ServiceID, "trip referenced by %s must carry its serviceId", tc.name)
 	}
+}
+
+// tripFetchFailureDB wraps the GTFS DB and fails GetTripsByIDs lookups that
+// query any trip ID in failWhenArgsContain. The handler's active-trip fetch
+// never queries those IDs, so only the buildTripReferences lookup fails.
+type tripFetchFailureDB struct {
+	gtfsdb.DBTX
+	failWith            error
+	failWhenArgsContain []string
+}
+
+func (f *tripFetchFailureDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "-- name: GetTripsByIDs") {
+		for _, arg := range args {
+			tripID, ok := arg.(string)
+			if !ok {
+				continue
+			}
+			for _, failID := range f.failWhenArgsContain {
+				if tripID == failID {
+					return nil, f.failWith
+				}
+			}
+		}
+	}
+	return f.DBTX.QueryContext(ctx, query, args...)
+}
+
+// TestTripsForRouteHandler_ReferenceLookupNotFound verifies that a
+// sql.ErrNoRows failure in the referenced-trip lookup yields a 404.
+func TestTripsForRouteHandler_ReferenceLookupNotFound(t *testing.T) {
+	api := createTestApiWithBlockSequenceFixture(t, clock.NewMockClock(blockSequenceClock))
+
+	// Block-adjacent trips are referenced by tfr-trip-2's schedule but are
+	// not part of the handler's fetched trips.
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&tripFetchFailureDB{
+		DBTX:                api.GtfsManager.GtfsDB.DB,
+		failWith:            sql.ErrNoRows,
+		failWhenArgsContain: []string{"tfr-trip-1", "tfr-trip-3"},
+	})
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeTrip=true&time=%d",
+		combinedRouteID, blockSequenceClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+}
+
+// TestTripsForRouteHandler_ReferenceLookupServerError verifies that a
+// non-ErrNoRows failure in the referenced-trip lookup yields a 500.
+func TestTripsForRouteHandler_ReferenceLookupServerError(t *testing.T) {
+	api := createTestApiWithBlockSequenceFixture(t, clock.NewMockClock(blockSequenceClock))
+
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&tripFetchFailureDB{
+		DBTX:                api.GtfsManager.GtfsDB.DB,
+		failWith:            errors.New("simulated database failure"),
+		failWhenArgsContain: []string{"tfr-trip-1", "tfr-trip-3"},
+	})
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeTrip=true&time=%d",
+		combinedRouteID, blockSequenceClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
 }
