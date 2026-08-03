@@ -48,6 +48,7 @@ func TestRouteSearchHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, models.APIVersion, model.Version)
 	assert.NotZero(t, model.CurrentTime)
 	assert.Empty(t, model.Data.References.Routes)
+	assert.False(t, model.Data.OutOfRange, "search-route performs no geographic bounding; outOfRange is always false")
 
 	require.NotEmpty(t, model.Data.List)
 
