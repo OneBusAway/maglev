@@ -46,6 +46,11 @@ func TestContextCancellationHandling(t *testing.T) {
 			endpoint: "/api/where/stops-for-route/1?key=test",
 			timeout:  1 * time.Nanosecond,
 		},
+		{
+			name:     "search route should handle context cancellation",
+			endpoint: "/api/where/search/route.json?input=shasta&key=test",
+			timeout:  1 * time.Nanosecond,
+		},
 	}
 
 	for _, tt := range tests {
@@ -76,15 +81,18 @@ func TestContextCancellationHandling(t *testing.T) {
 			// If cancelled, we expect a timeout or cancellation error response
 			statusCode := w.Code
 
-			// Valid responses: 200 (completed), 401 (API validation), 500 (error), or timeout-related
+			// Valid responses: 200 (completed), 401 (API validation), 500 (error), or timeout-related.
+			// 429 is also valid here: the shared test API's rate limiter (see RateLimit in
+			// createTestApiWithClock) has a small global burst budget spent across all subtests.
 			assert.True(t, statusCode == http.StatusOK ||
 				statusCode == http.StatusUnauthorized || // API key validation happens first
 				statusCode == http.StatusBadRequest ||
 				statusCode == http.StatusInternalServerError ||
 				statusCode == http.StatusRequestTimeout ||
 				statusCode == http.StatusGatewayTimeout ||
-				statusCode == http.StatusNotFound,
-				"Expected status 200, 401, 404, 500, 408, or 504, got %d", statusCode)
+				statusCode == http.StatusNotFound ||
+				statusCode == http.StatusTooManyRequests,
+				"Expected status 200, 400, 401, 404, 429, 500, 408, or 504, got %d", statusCode)
 		})
 	}
 }
