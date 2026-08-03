@@ -170,6 +170,74 @@ func createTestApiWithOvernightFixture(t *testing.T, c clock.Clock) *RestAPI {
 	return api
 }
 
+// createTestApiWithOvernightBlockFixture builds a RestAPI with two trips in
+// block tfr-overnight on service tfr-svc-yest (Thursday 2025-06-12 only):
+// tfr-yest-a (23:00–24:10) links the block via the previous-day window, while
+// tfr-yest-b (23:55–24:45) is the active trip at afterMidnightClock. Both
+// trips run past midnight into Friday, so the block-selected entry belongs to
+// Thursday's service day.
+func createTestApiWithOvernightBlockFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-yest-a,Headsign A,0,tfr-overnight\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-yest-b,Headsign B,0,tfr-overnight\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-yest-a,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-a,24:10:00,24:10:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-yest-b,23:55:00,23:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-b,24:45:00,24:45:00," + tripsForRouteStop2ID + ",2\n",
+	}
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	zipPath := filepath.Join(t.TempDir(), "trips-for-route-overnight-block.zip")
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+
+	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(gtfsManager.Shutdown)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(api.Shutdown)
+	return api
+}
+
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
@@ -625,6 +693,33 @@ func TestTripsForRouteHandler_PastMidnightServiceDate(t *testing.T) {
 
 	// The trip departed 23:00 on 2025-06-12 (Thursday) and is still running at
 	// 00:30 on 2025-06-13, so its service day starts at Thursday's midnight.
+	expectedServiceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
+	assert.Equal(t, expectedServiceDate, entry.ServiceDate)
+}
+
+// TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip verifies that a
+// past-midnight trip selected through the block path (block linked via the
+// previous service day) also reports yesterday's midnight as its serviceDate.
+func TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip(t *testing.T) {
+	api := createTestApiWithOvernightBlockFixture(t, clock.NewMockClock(afterMidnightClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := afterMidnightClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	// The block is linked via tfr-yest-a (23:00–24:10, overlaps the previous
+	// day's 24:00–24:40 window), but the active trip at 00:30 is tfr-yest-b
+	// (23:55–24:45), selected via the block path.
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
+	assert.Equal(t, expectedTripID, entry.TripId)
+
 	expectedServiceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	assert.Equal(t, expectedServiceDate, entry.ServiceDate)
 }
