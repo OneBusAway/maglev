@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
@@ -647,5 +648,55 @@ func TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences(t *testing.T)
 		assert.Equalf(t, expectedServiceID, ref.ServiceID, "adjacent trip %s must carry its serviceId", tripID)
 		assert.Truef(t, i == 0 || ref.TripHeadsign != refTrips[utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1")].TripHeadsign,
 			"adjacent trips must not both be the same record")
+	}
+}
+
+// TestBuildTripReferences_FetchesUnprefetchedTrips verifies that trips
+// referenced only by an entry's TripId or Status.ActiveTripID — which are not
+// part of preFetchedTrips — are fetched and fully populated in
+// references.trips (routeId, headsign, blockId, serviceId), not emitted as
+// empty objects.
+func TestBuildTripReferences_FetchesUnprefetchedTrips(t *testing.T) {
+	api := createTestApiWithBlockSequenceFixture(t, clock.NewMockClock(blockSequenceClock))
+	ctx := context.Background()
+
+	// Only tfr-trip-2 is pre-fetched; tfr-trip-1 (referenced by an entry
+	// TripId) and tfr-trip-3 (referenced by Status.ActiveTripID) are not.
+	preFetchedTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, "tfr-trip-2")
+	require.NoError(t, err)
+
+	entries := []models.TripsForRouteListEntry{
+		{TripId: utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1")},
+		{
+			TripId: utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-2"),
+			Status: &models.TripStatus{ActiveTripID: utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-3")},
+		},
+	}
+
+	references, err := buildTripReferences(api, ctx, true, entries, nil, []gtfsdb.Trip{preFetchedTrip})
+	require.NoError(t, err)
+
+	refTrips := make(map[string]models.Trip)
+	for _, ref := range references.Trips {
+		refTrips[ref.ID] = ref
+	}
+
+	expectedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	expectedBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-seq-block")
+	expectedServiceID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-svc")
+
+	for _, tc := range []struct {
+		name   string
+		tripID string
+	}{
+		{name: "entry TripId", tripID: "tfr-trip-1"},
+		{name: "status ActiveTripID", tripID: "tfr-trip-3"},
+	} {
+		ref, ok := refTrips[utils.FormCombinedID(tripsForRouteAgencyID, tc.tripID)]
+		require.Truef(t, ok, "references must include the unprefetched trip referenced by %s", tc.name)
+		assert.Equalf(t, expectedRouteID, ref.RouteID, "trip referenced by %s must carry a routeId", tc.name)
+		assert.NotEmptyf(t, ref.TripHeadsign, "trip referenced by %s must carry a headsign", tc.name)
+		assert.Equalf(t, expectedBlockID, ref.BlockID, "trip referenced by %s must carry its blockId", tc.name)
+		assert.Equalf(t, expectedServiceID, ref.ServiceID, "trip referenced by %s must carry its serviceId", tc.name)
 	}
 }

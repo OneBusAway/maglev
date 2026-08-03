@@ -192,7 +192,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
 		var references models.ReferencesModel
 		if includeReferences {
-			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+			var err error
+			references, err = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					api.sendNotFound(w, r)
+				} else {
+					api.serverErrorResponse(w, r, err)
+				}
+				return
+			}
 		} else {
 			references = *models.NewEmptyReferences()
 		}
@@ -462,7 +471,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+		var err error
+		references, err = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				api.sendNotFound(w, r)
+			} else {
+				api.serverErrorResponse(w, r, err)
+			}
+			return
+		}
 	} else {
 		references = *models.NewEmptyReferences()
 	}
@@ -489,7 +507,7 @@ func buildTripReferences(
 	trips []models.TripsForRouteListEntry,
 	stops []gtfsdb.Stop,
 	preFetchedTrips []gtfsdb.Trip,
-) models.ReferencesModel {
+) (models.ReferencesModel, error) {
 
 	presentTrips := make(map[string]models.Trip)
 	presentRoutes := make(map[string]models.Route)
@@ -564,7 +582,7 @@ func buildTripReferences(
 	if len(tripIDsToFetch) > 0 {
 		extraTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
 		if err != nil {
-			logging.LogError(api.Logger, "failed to fetch trips for references", err)
+			return models.ReferencesModel{}, err
 		}
 
 		for _, trip := range extraTrips {
@@ -699,7 +717,7 @@ func buildTripReferences(
 	references.Routes = routes
 	references.Stops = stopList
 	references.Trips = tripsRefList
-	return *references
+	return *references, nil
 }
 
 // stripNumericSuffix removes a trailing ".<digits>" from a trip ID.
