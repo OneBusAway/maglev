@@ -192,7 +192,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
 		var references models.ReferencesModel
 		if includeReferences {
-			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+			var err error
+			references, err = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					api.sendNotFound(w, r)
+				} else {
+					api.serverErrorResponse(w, r, err)
+				}
+				return
+			}
 		} else {
 			references = *models.NewEmptyReferences()
 		}
@@ -462,7 +471,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+		var err error
+		references, err = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				api.sendNotFound(w, r)
+			} else {
+				api.serverErrorResponse(w, r, err)
+			}
+			return
+		}
 	} else {
 		references = *models.NewEmptyReferences()
 	}
@@ -489,10 +507,17 @@ func buildTripReferences(
 	trips []models.TripsForRouteListEntry,
 	stops []gtfsdb.Stop,
 	preFetchedTrips []gtfsdb.Trip,
-) models.ReferencesModel {
+) (models.ReferencesModel, error) {
 
 	presentTrips := make(map[string]models.Trip)
 	presentRoutes := make(map[string]models.Route)
+
+	// referencedTripIDs tracks trips referenced by the response (entry tripIds,
+	// schedule.nextTripId / previousTripId, status.activeTripId) that were not
+	// part of preFetchedTrips. They are fetched below so their full records are
+	// present in references.trips, per the API spec, instead of relying on the
+	// zero-value ID to detect placeholders.
+	referencedTripIDs := make(map[string]bool)
 
 	for _, trip := range preFetchedTrips {
 		presentTrips[trip.ID] = models.Trip{
@@ -512,6 +537,7 @@ func buildTripReferences(
 		_, tripID, _ := utils.ExtractAgencyIDAndCodeID(trip.GetTripId())
 		if _, exists := presentTrips[tripID]; !exists {
 			presentTrips[tripID] = models.Trip{}
+			referencedTripIDs[tripID] = true
 		}
 	}
 
@@ -522,6 +548,7 @@ func buildTripReferences(
 				if err == nil {
 					if _, exists := presentTrips[nextTripID]; !exists {
 						presentTrips[nextTripID] = models.Trip{}
+						referencedTripIDs[nextTripID] = true
 					}
 				}
 			}
@@ -530,6 +557,7 @@ func buildTripReferences(
 				if err == nil {
 					if _, exists := presentTrips[prevTripID]; !exists {
 						presentTrips[prevTripID] = models.Trip{}
+						referencedTripIDs[prevTripID] = true
 					}
 				}
 			}
@@ -540,22 +568,21 @@ func buildTripReferences(
 			if err == nil {
 				if _, exists := presentTrips[activeTripID]; !exists {
 					presentTrips[activeTripID] = models.Trip{}
+					referencedTripIDs[activeTripID] = true
 				}
 			}
 		}
 	}
 
 	var tripIDsToFetch []string
-	for id, t := range presentTrips {
-		if t.ID == "" {
-			tripIDsToFetch = append(tripIDsToFetch, id)
-		}
+	for id := range referencedTripIDs {
+		tripIDsToFetch = append(tripIDsToFetch, id)
 	}
 
 	if len(tripIDsToFetch) > 0 {
 		extraTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
 		if err != nil {
-			logging.LogError(api.Logger, "failed to fetch trips for references", err)
+			return models.ReferencesModel{}, err
 		}
 
 		for _, trip := range extraTrips {
@@ -690,7 +717,7 @@ func buildTripReferences(
 	references.Routes = routes
 	references.Stops = stopList
 	references.Trips = tripsRefList
-	return *references
+	return *references, nil
 }
 
 // stripNumericSuffix removes a trailing ".<digits>" from a trip ID.
