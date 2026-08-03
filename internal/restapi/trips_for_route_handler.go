@@ -57,6 +57,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Midnight at the start of the current service day (in the agency's timezone).
+	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
+	// Midnight at the start of the previous service day. Trips that run past
+	// midnight belong to yesterday's service day, so their entries must report
+	// yesterday's midnight as serviceDate, not today's.
+	prevDayMidnight := todayMidnight.AddDate(0, 0, -1)
+
+	// tripServiceDay records the service-day midnight for each active trip as
+	// it is resolved below, so past-midnight trips carry their own service day.
+	tripServiceDay := make(map[string]time.Time)
+
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -174,6 +185,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		api.Logger.Warn("trips-for-route: failed to fetch null-block trips", "route_id", routeID, "error", err)
 		nullBlockTrips = nil
 	}
+	for _, id := range nullBlockTrips {
+		tripServiceDay[id] = todayMidnight
+	}
 
 	if len(prevServiceIDs) > 0 {
 		prevNullBlockTrips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForRoute(ctx, gtfsdb.GetActiveTripsWithNullBlockForRouteParams{
@@ -186,6 +200,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			api.Logger.Warn("trips-for-route: failed to fetch previous-day null-block trips", "error", err)
 		} else {
 			nullBlockTrips = append(nullBlockTrips, prevNullBlockTrips...)
+			for _, id := range prevNullBlockTrips {
+				tripServiceDay[id] = prevDayMidnight
+			}
 		}
 	}
 
@@ -206,14 +223,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	type serviceDayEntry struct {
 		serviceIDs    []string
 		sinceMidnight time.Duration
+		midnight      time.Time
 	}
 	serviceDays := []serviceDayEntry{
-		{serviceIDs: serviceIDs, sinceMidnight: currentSinceMidnight},
+		{serviceIDs: serviceIDs, sinceMidnight: currentSinceMidnight, midnight: todayMidnight},
 	}
 	if len(prevServiceIDs) > 0 {
 		serviceDays = append(serviceDays, serviceDayEntry{
 			serviceIDs:    prevServiceIDs,
 			sinceMidnight: prevDaySinceMidnight,
+			midnight:      prevDayMidnight,
 		})
 	}
 
@@ -256,6 +275,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			activeTrips = append(activeTrips, activeTrip)
+			tripServiceDay[activeTrip] = sd.midnight
 			break
 		}
 	}
@@ -318,7 +338,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]bool)
 
 	var result []models.TripsForRouteListEntry
@@ -359,11 +378,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
+		// Per spec, serviceDate is "Unix millisecond timestamp of midnight at
+		// the start of the service day for this trip." A trip running past
+		// midnight was matched via the previous service day, so its service day
+		// starts at yesterday's midnight, not today's.
+		serviceDate := todayMidnight
+		if midnight, ok := tripServiceDay[tripID]; ok {
+			serviceDate = midnight
+		}
+
 		entry := models.TripsForRouteListEntry{
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  serviceDate.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(r.Context(), tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
