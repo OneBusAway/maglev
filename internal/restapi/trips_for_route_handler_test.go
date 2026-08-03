@@ -101,6 +101,79 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 	return api
 }
 
+// blockSequenceClock is 09:50 UTC on 2025-06-12, when the middle trip of the
+// block-sequence fixture (tfr-trip-2, 09:35–10:05) is active.
+var blockSequenceClock = time.Date(2025, 6, 12, 9, 50, 0, 0, time.UTC)
+
+// createTestApiWithBlockSequenceFixture builds a RestAPI with three trips in
+// one block: tfr-trip-1 (09:00–09:30), tfr-trip-2 (09:35–10:05), and
+// tfr-trip-3 (10:10–10:40). At blockSequenceClock only tfr-trip-2 is active;
+// its schedule references the adjacent block trips, which are not part of the
+// handler's fetched trips.
+func createTestApiWithBlockSequenceFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-1,Headsign 1,0,tfr-seq-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-2,Headsign 2,0,tfr-seq-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-3,Headsign 3,0,tfr-seq-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-trip-1,09:00:00,09:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-1,09:30:00,09:30:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-2,09:35:00,09:35:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-2,10:05:00,10:05:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-3,10:10:00,10:10:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-3,10:40:00,10:40:00," + tripsForRouteStop2ID + ",2\n",
+	}
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	zipPath := filepath.Join(t.TempDir(), "trips-for-route-block-seq.zip")
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+
+	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(gtfsManager.Shutdown)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(api.Shutdown)
+	return api
+}
+
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
@@ -530,4 +603,49 @@ func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
 	assert.Empty(t, stopIDsMap)
+}
+
+// TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences verifies that
+// schedule.previousTripId and schedule.nextTripId trips — which are not part
+// of the handler's fetched trips — are fully populated in references.trips
+// (routeId, headsign, blockId, serviceId), not emitted as empty objects.
+func TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences(t *testing.T) {
+	api := createTestApiWithBlockSequenceFixture(t, clock.NewMockClock(blockSequenceClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := blockSequenceClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeTrip=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-2"), entry.TripId)
+	require.NotNil(t, entry.Schedule)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1"), entry.Schedule.PreviousTripId)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-3"), entry.Schedule.NextTripId)
+
+	refTrips := make(map[string]models.Trip)
+	for _, ref := range model.Data.References.Trips {
+		refTrips[ref.ID] = ref
+	}
+
+	// The adjacent block trips are not part of the handler's fetched trips, but
+	// their full records must still be present in the references.
+	expectedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	expectedBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-seq-block")
+	expectedServiceID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-svc")
+	for i, tripID := range []string{"tfr-trip-1", "tfr-trip-3"} {
+		ref, ok := refTrips[utils.FormCombinedID(tripsForRouteAgencyID, tripID)]
+		require.Truef(t, ok, "references must include adjacent trip %s", tripID)
+		assert.Equalf(t, expectedRouteID, ref.RouteID, "adjacent trip %s must carry a routeId", tripID)
+		assert.NotEmptyf(t, ref.TripHeadsign, "adjacent trip %s must carry a headsign", tripID)
+		assert.Equalf(t, expectedBlockID, ref.BlockID, "adjacent trip %s must carry its blockId", tripID)
+		assert.Equalf(t, expectedServiceID, ref.ServiceID, "adjacent trip %s must carry its serviceId", tripID)
+		assert.Truef(t, i == 0 || ref.TripHeadsign != refTrips[utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1")].TripHeadsign,
+			"adjacent trips must not both be the same record")
+	}
 }

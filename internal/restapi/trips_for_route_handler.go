@@ -494,6 +494,13 @@ func buildTripReferences(
 	presentTrips := make(map[string]models.Trip)
 	presentRoutes := make(map[string]models.Route)
 
+	// referencedTripIDs tracks trips referenced by the response (entry tripIds,
+	// schedule.nextTripId / previousTripId, status.activeTripId) that were not
+	// part of preFetchedTrips. They are fetched below so their full records are
+	// present in references.trips, per the API spec, instead of relying on the
+	// zero-value ID to detect placeholders.
+	referencedTripIDs := make(map[string]bool)
+
 	for _, trip := range preFetchedTrips {
 		presentTrips[trip.ID] = models.Trip{
 			ID:            trip.ID,
@@ -512,6 +519,7 @@ func buildTripReferences(
 		_, tripID, _ := utils.ExtractAgencyIDAndCodeID(trip.GetTripId())
 		if _, exists := presentTrips[tripID]; !exists {
 			presentTrips[tripID] = models.Trip{}
+			referencedTripIDs[tripID] = true
 		}
 	}
 
@@ -522,6 +530,7 @@ func buildTripReferences(
 				if err == nil {
 					if _, exists := presentTrips[nextTripID]; !exists {
 						presentTrips[nextTripID] = models.Trip{}
+						referencedTripIDs[nextTripID] = true
 					}
 				}
 			}
@@ -530,6 +539,7 @@ func buildTripReferences(
 				if err == nil {
 					if _, exists := presentTrips[prevTripID]; !exists {
 						presentTrips[prevTripID] = models.Trip{}
+						referencedTripIDs[prevTripID] = true
 					}
 				}
 			}
@@ -540,16 +550,15 @@ func buildTripReferences(
 			if err == nil {
 				if _, exists := presentTrips[activeTripID]; !exists {
 					presentTrips[activeTripID] = models.Trip{}
+					referencedTripIDs[activeTripID] = true
 				}
 			}
 		}
 	}
 
 	var tripIDsToFetch []string
-	for id, t := range presentTrips {
-		if t.ID == "" {
-			tripIDsToFetch = append(tripIDsToFetch, id)
-		}
+	for id := range referencedTripIDs {
+		tripIDsToFetch = append(tripIDsToFetch, id)
 	}
 
 	if len(tripIDsToFetch) > 0 {
