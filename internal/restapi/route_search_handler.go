@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -49,41 +50,16 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 
 		agencyIDs[routeRow.AgencyID] = true
 
-		shortName := ""
-		if routeRow.ShortName.Valid {
-			shortName = routeRow.ShortName.String
-		}
-		longName := ""
-		if routeRow.LongName.Valid {
-			longName = routeRow.LongName.String
-		}
-		desc := ""
-		if routeRow.Desc.Valid {
-			desc = routeRow.Desc.String
-		}
-		url := ""
-		if routeRow.Url.Valid {
-			url = routeRow.Url.String
-		}
-		color := ""
-		if routeRow.Color.Valid {
-			color = routeRow.Color.String
-		}
-		textColor := ""
-		if routeRow.TextColor.Valid {
-			textColor = routeRow.TextColor.String
-		}
-
 		results = append(results, models.NewRoute(
 			utils.FormCombinedID(routeRow.AgencyID, routeRow.ID),
 			routeRow.AgencyID,
-			shortName,
-			longName,
-			desc,
+			nulls.StringOrEmpty(routeRow.ShortName),
+			nulls.StringOrEmpty(routeRow.LongName),
+			nulls.StringOrEmpty(routeRow.Desc),
 			models.RouteType(routeRow.Type),
-			url,
-			color,
-			textColor))
+			nulls.StringOrEmpty(routeRow.Url),
+			nulls.StringOrEmpty(routeRow.Color),
+			nulls.StringOrEmpty(routeRow.TextColor)))
 	}
 
 	references := models.NewEmptyReferences()
