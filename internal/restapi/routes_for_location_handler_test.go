@@ -163,17 +163,36 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
+// RABA (the test fixture) has only 13 routes total, so no maxCount value can
+// make the response list actually exceed 50 - these cases can't distinguish
+// "clamped to 50" from "clamped to 250" by list length alone. What they do
+// verify is that every value above the endpoint's 50 cap, including values
+// between 51 and the global 250 ceiling, succeeds with HTTP 200 and no
+// fieldErrors rather than being rejected.
 func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
-	api := createTestApi(t)
+	tests := []struct {
+		name     string
+		maxCount string
+	}{
+		{"just above endpoint cap", "51"},
+		{"at global ceiling", "250"},
+		{"above global ceiling", "300"},
+	}
 
-	resp, model := callAPIHandler[RoutesResponse](t, api,
-		"/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&radius=5000&maxCount=300")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.NotEmpty(t, model.Data.List, "clamped request should still return routes")
-	assert.LessOrEqual(t, len(model.Data.List), models.MaxCountForRoutesForLocation)
-	assert.False(t, model.Data.LimitExceeded)
+			resp, model := callAPIHandler[RoutesResponse](t, api,
+				"/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&radius=5000&maxCount="+tt.maxCount)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.NotEmpty(t, model.Data.List, "clamped request should still return routes")
+			assert.LessOrEqual(t, len(model.Data.List), models.MaxCountForRoutesForLocation)
+			assert.False(t, model.Data.LimitExceeded)
+		})
+	}
 }
 
 func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
