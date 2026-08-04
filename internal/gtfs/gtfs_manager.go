@@ -455,18 +455,38 @@ func (manager *Manager) queryStopsInBounds(ctx context.Context, bounds utils.Coo
 }
 
 // GetRoutesForLocation retrieves routes serving stops near a given location using the spatial index.
-// It supports filtering by route types and querying for specific route shortNames.
+// When query is non-empty, it is matched against a text index of route short and long names
+// (at most maxCount+1 candidates by relevance), and only candidates with a stop in bounds are kept.
 func (manager *Manager) GetRoutesForLocation(
 	ctx context.Context,
 	loc *LocationParams,
-	routeShortName string,
+	query string,
 	maxCount int,
-	queryTime time.Time,
 ) ([]gtfsdb.Route, bool) {
+	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+
+	var candidateRouteIDs []string
+	if query != "" {
+		// Spec: at most maxCount+1 text-index candidates are considered, then filtered by location.
+		candidates, err := manager.SearchRoutes(ctx, query, maxCount+1)
+		if err != nil {
+			logging.LogError(logger, "route text search failed", err)
+			return []gtfsdb.Route{}, false
+		}
+		// An empty candidate set must short-circuit here: an empty RouteIDs slice means
+		// "no filter" in queryRoutesInBounds, which would wrongly return every in-bounds route.
+		if len(candidates) == 0 {
+			return []gtfsdb.Route{}, false
+		}
+		candidateRouteIDs = make([]string, len(candidates))
+		for i, candidate := range candidates {
+			candidateRouteIDs[i] = candidate.ID
+		}
+	}
+
 	bounds := BoundsFromParams(loc)
-	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, loc.Lat, loc.Lon, maxCount, routeShortName)
+	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, loc.Lat, loc.Lon, maxCount, candidateRouteIDs)
 	if err != nil {
-		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogError(logger, "could not query routes within bounds", err)
 		return []gtfsdb.Route{}, false
 	}
@@ -475,14 +495,15 @@ func (manager *Manager) GetRoutesForLocation(
 }
 
 // queryRoutesInBounds retrieves all routes serving stops within the given geographic bounds
-// from the database's stops_rtree spatial index.
+// from the database's stops_rtree spatial index. When routeIDs is non-empty, results are
+// further restricted to those route IDs.
 // Despite the query's name, this doesn't actually check "Active" stops beyond
 // checking that the stop has at least one stop_time. The corresponding GetStopsForLocation
 // checks active service dates as well.
 func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.CoordinateBounds,
 	lat, lon float64,
 	maxCount int,
-	shortNameQuery string,
+	routeIDs []string,
 ) ([]gtfsdb.Route, bool, error) {
 	if bounds.MinLat > bounds.MaxLat {
 		return nil, false, fmt.Errorf("query min lat %f exceeds max lat %f", bounds.MinLat, bounds.MaxLat)
@@ -498,8 +519,8 @@ func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.Co
 		Lat:    lat,
 		Lon:    lon,
 		// Ask for an extra element so that we can determine if we hit the max count.
-		MaxCount:  maxCount + 1,
-		ShortName: shortNameQuery,
+		MaxCount: maxCount + 1,
+		RouteIDs: routeIDs,
 	})
 	if err != nil {
 		return nil, false, err
