@@ -5277,15 +5277,18 @@ WITH RECURSIVE
     -- date() arithmetic) and ` + "`" + `ref.jd0` + "`" + ` (julian day, feeds arithmetic that
     -- avoids repeated '+1 day' string modifiers in the recursion below).
     ref(iso, jd0) AS (
-        SELECT
-            substr(?2, 1, 4) || '-' ||
-            substr(?2, 5, 2) || '-' ||
-            substr(?2, 7, 2),
-            julianday(
-                substr(?2, 1, 4) || '-' ||
-                substr(?2, 5, 2) || '-' ||
-                substr(?2, 7, 2)
-            )
+        -- Cast sqlc.arg(ref_date) to TEXT once so sqlc infers a string type
+        -- for RouteHasFutureServiceParams.RefDate (instead of interface{}),
+        -- and compute the YYYY-MM-DD form once so downstream expressions
+        -- reference ` + "`" + `iso` + "`" + ` rather than repeating the substring dance.
+        SELECT iso, julianday(iso)
+        FROM (
+            SELECT
+                substr(ymd, 1, 4) || '-' ||
+                substr(ymd, 5, 2) || '-' ||
+                substr(ymd, 7, 2) AS iso
+            FROM (SELECT CAST(?2 AS TEXT) AS ymd)
+        )
     ),
     -- Horizon: 2 years past the LATER of ref_date and today. Anchoring to
     -- today (not ref_date alone) matters for historical ref_date queries --
@@ -5395,7 +5398,7 @@ SELECT EXISTS (
 
 type RouteHasFutureServiceParams struct {
 	RouteID string
-	RefDate interface{}
+	RefDate string
 }
 
 // Returns 1 if the given route has at least one EFFECTIVE service date strictly

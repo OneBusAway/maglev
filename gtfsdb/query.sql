@@ -1282,15 +1282,18 @@ WITH RECURSIVE
     -- date() arithmetic) and `ref.jd0` (julian day, feeds arithmetic that
     -- avoids repeated '+1 day' string modifiers in the recursion below).
     ref(iso, jd0) AS (
-        SELECT
-            substr(sqlc.arg(ref_date), 1, 4) || '-' ||
-            substr(sqlc.arg(ref_date), 5, 2) || '-' ||
-            substr(sqlc.arg(ref_date), 7, 2),
-            julianday(
-                substr(sqlc.arg(ref_date), 1, 4) || '-' ||
-                substr(sqlc.arg(ref_date), 5, 2) || '-' ||
-                substr(sqlc.arg(ref_date), 7, 2)
-            )
+        -- Cast sqlc.arg(ref_date) to TEXT once so sqlc infers a string type
+        -- for RouteHasFutureServiceParams.RefDate (instead of interface{}),
+        -- and compute the YYYY-MM-DD form once so downstream expressions
+        -- reference `iso` rather than repeating the substring dance.
+        SELECT iso, julianday(iso)
+        FROM (
+            SELECT
+                substr(ymd, 1, 4) || '-' ||
+                substr(ymd, 5, 2) || '-' ||
+                substr(ymd, 7, 2) AS iso
+            FROM (SELECT CAST(sqlc.arg(ref_date) AS TEXT) AS ymd)
+        )
     ),
     -- Horizon: 2 years past the LATER of ref_date and today. Anchoring to
     -- today (not ref_date alone) matters for historical ref_date queries --
