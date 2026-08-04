@@ -165,6 +165,8 @@ ORDER BY min_distance ASC
 LIMIT ?%[2]d
 `
 
+// GetActiveRoutesWithinBoundsParams holds the bind parameters for GetActiveRoutesWithinBounds.
+// RouteIDs is optional: when empty, no route-ID filter is applied.
 type GetActiveRoutesWithinBoundsParams struct {
 	Lat      float64
 	Lon      float64
@@ -176,6 +178,8 @@ type GetActiveRoutesWithinBoundsParams struct {
 	MaxCount int
 }
 
+// GetActiveRoutesWithinBounds returns routes serving stops within the given bounding box,
+// ordered by ascending distance from (Lat, Lon), optionally restricted to RouteIDs.
 func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActiveRoutesWithinBoundsParams) ([]Route, error) {
 	args := []any{arg.Lat, arg.Lon, arg.MinLat, arg.MaxLat, arg.MinLon, arg.MaxLon}
 
