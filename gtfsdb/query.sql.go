@@ -891,6 +891,67 @@ func (q *Queries) GetActiveLayoverBlockIDsForRoute(ctx context.Context, arg GetA
 	return items, nil
 }
 
+const getActiveLayoverBlockIDsForStops = `-- name: GetActiveLayoverBlockIDsForStops :many
+SELECT DISTINCT block_id
+FROM block_layover
+WHERE layover_start < ?1
+  AND layover_end > ?2
+  AND layover_stop_id IN (/*SLICE:stop_ids*/?)
+  AND service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetActiveLayoverBlockIDsForStopsParams struct {
+	TimeRangeEnd   int64
+	TimeRangeStart int64
+	StopIds        []string
+	ServiceIds     []string
+}
+
+// Stop-scoped mirror of GetActiveLayoverBlockIDsForRoute, matched on the
+// layover stop rather than the departing trip's route.
+func (q *Queries) GetActiveLayoverBlockIDsForStops(ctx context.Context, arg GetActiveLayoverBlockIDsForStopsParams) ([]string, error) {
+	query := getActiveLayoverBlockIDsForStops
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.TimeRangeEnd)
+	queryParams = append(queryParams, arg.TimeRangeStart)
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var block_id string
+		if err := rows.Scan(&block_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getActiveRouteIDsForStopsOnDate = `-- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
     routes.agency_id || '_' || routes.id AS route_id,
@@ -1205,6 +1266,69 @@ func (q *Queries) GetActiveTripsWithNullBlockForRoute(ctx context.Context, arg G
 	queryParams = append(queryParams, arg.RouteID)
 	queryParams = append(queryParams, arg.TimeRangeEnd)
 	queryParams = append(queryParams, arg.TimeRangeStart)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getActiveTripsWithNullBlockForStops = `-- name: GetActiveTripsWithNullBlockForStops :many
+SELECT DISTINCT t.id
+FROM trips t
+JOIN stop_times st ON st.trip_id = t.id
+WHERE t.block_id IS NULL
+  AND t.min_arrival_time <= ?1
+  AND t.max_departure_time >= ?2
+  AND st.stop_id IN (/*SLICE:stop_ids*/?)
+  AND t.service_id IN (/*SLICE:service_ids*/?)
+ORDER BY t.min_arrival_time ASC
+`
+
+type GetActiveTripsWithNullBlockForStopsParams struct {
+	TimeRangeEnd   sql.NullInt64
+	TimeRangeStart sql.NullInt64
+	StopIds        []string
+	ServiceIds     []string
+}
+
+// Stop-scoped mirror of GetActiveTripsWithNullBlockForRoute.
+func (q *Queries) GetActiveTripsWithNullBlockForStops(ctx context.Context, arg GetActiveTripsWithNullBlockForStopsParams) ([]string, error) {
+	query := getActiveTripsWithNullBlockForStops
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.TimeRangeEnd)
+	queryParams = append(queryParams, arg.TimeRangeStart)
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
 	if len(arg.ServiceIds) > 0 {
 		for _, v := range arg.ServiceIds {
 			queryParams = append(queryParams, v)
@@ -1780,6 +1904,64 @@ func (q *Queries) GetBlockTripIndexIDsForRoute(ctx context.Context, arg GetBlock
 	query := getBlockTripIndexIDsForRoute
 	var queryParams []interface{}
 	queryParams = append(queryParams, arg.RouteID)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getBlockTripIndexIDsForStops = `-- name: GetBlockTripIndexIDsForStops :many
+SELECT DISTINCT bti.id
+FROM block_trip_index bti
+JOIN block_trip_entry bte ON bti.id = bte.block_trip_index_id
+JOIN stop_times st ON st.trip_id = bte.trip_id
+WHERE st.stop_id IN (/*SLICE:stop_ids*/?)
+  AND bte.service_id IN (/*SLICE:service_ids*/?)
+ORDER BY bti.id
+`
+
+type GetBlockTripIndexIDsForStopsParams struct {
+	StopIds    []string
+	ServiceIds []string
+}
+
+// Stop-scoped mirror of GetBlockTripIndexIDsForRoute: block_trip_index IDs
+// containing trips that serve any of the given stops.
+func (q *Queries) GetBlockTripIndexIDsForStops(ctx context.Context, arg GetBlockTripIndexIDsForStopsParams) ([]int64, error) {
+	query := getBlockTripIndexIDsForStops
+	var queryParams []interface{}
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
 	if len(arg.ServiceIds) > 0 {
 		for _, v := range arg.ServiceIds {
 			queryParams = append(queryParams, v)

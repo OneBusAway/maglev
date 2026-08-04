@@ -1161,6 +1161,39 @@ JOIN block_trip_entry bte ON t.id = bte.trip_id
 WHERE bte.block_trip_index_id IN (sqlc.slice('index_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'));
 
+-- name: GetBlockTripIndexIDsForStops :many
+-- Stop-scoped mirror of GetBlockTripIndexIDsForRoute: block_trip_index IDs
+-- containing trips that serve any of the given stops.
+SELECT DISTINCT bti.id
+FROM block_trip_index bti
+JOIN block_trip_entry bte ON bti.id = bte.block_trip_index_id
+JOIN stop_times st ON st.trip_id = bte.trip_id
+WHERE st.stop_id IN (sqlc.slice('stop_ids'))
+  AND bte.service_id IN (sqlc.slice('service_ids'))
+ORDER BY bti.id;
+
+-- name: GetActiveLayoverBlockIDsForStops :many
+-- Stop-scoped mirror of GetActiveLayoverBlockIDsForRoute, matched on the
+-- layover stop rather than the departing trip's route.
+SELECT DISTINCT block_id
+FROM block_layover
+WHERE layover_start < sqlc.arg('time_range_end')
+  AND layover_end > sqlc.arg('time_range_start')
+  AND layover_stop_id IN (sqlc.slice('stop_ids'))
+  AND service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetActiveTripsWithNullBlockForStops :many
+-- Stop-scoped mirror of GetActiveTripsWithNullBlockForRoute.
+SELECT DISTINCT t.id
+FROM trips t
+JOIN stop_times st ON st.trip_id = t.id
+WHERE t.block_id IS NULL
+  AND t.min_arrival_time <= sqlc.arg('time_range_end')
+  AND t.max_departure_time >= sqlc.arg('time_range_start')
+  AND st.stop_id IN (sqlc.slice('stop_ids'))
+  AND t.service_id IN (sqlc.slice('service_ids'))
+ORDER BY t.min_arrival_time ASC;
+
 
 -- name: GetShapePointsByIDs :many
 SELECT shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
