@@ -2,7 +2,9 @@ package restapi
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -158,9 +160,34 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 	assert.Equal(t, "OK", model.Text)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.True(t, model.Data.LimitExceeded)
-	// Ordering matters! Routes should be sorted by ID
-	assert.EqualValues(t, model.Data.List, []models.Route{testdata.Route15, testdata.Route14})
+	assert.Len(t, model.Data.List, 2)
+	// Truncation is randomized (per spec), so only check the returned routes
+	// are drawn from the full in-bounds match set (confirmed by
+	// TestRoutesForLocationLatAndLon: Route15, Route11, Route14).
+	assert.Subset(t, []models.Route{testdata.Route15, testdata.Route11, testdata.Route14}, model.Data.List)
+	// Ordering matters! Routes should still be sorted by ID after truncation.
+	assert.True(t, model.Data.List[0].ID < model.Data.List[1].ID)
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
+}
+
+// routesForLocationShuffleIterations bounds the flake probability of
+// TestRoutesForLocationHandlerLimitExceededIsRandomized: with 3 candidate
+// routes and maxCount=2, the odds of missing any one route across all
+// iterations is (2/3)^routesForLocationShuffleIterations.
+const routesForLocationShuffleIterations = 50
+
+func TestRoutesForLocationHandlerLimitExceededIsRandomized(t *testing.T) {
+	api := createTestApi(t)
+
+	seen := map[string]bool{}
+	for range routesForLocationShuffleIterations {
+		_, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&maxCount=2")
+		for _, route := range model.Data.List {
+			seen[route.ID] = true
+		}
+	}
+
+	assert.ElementsMatch(t, []string{testdata.Route15.ID, testdata.Route11.ID, testdata.Route14.ID}, slices.Collect(maps.Keys(seen)))
 }
 
 func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
