@@ -474,9 +474,13 @@ func (manager *Manager) GetRoutesForLocation(
 	return routes, limitExceeded
 }
 
-// noRowLimit tells the manually-maintained GetActiveRoutesWithinBounds query
-// to return every match; SQLite treats a negative LIMIT as unbounded.
-const noRowLimit = -1
+// maxRoutesFetchedForShuffle bounds how many in-bounds route matches are pulled
+// into memory before shuffling. BoundsFromParams is called without clamping for
+// this query, so a caller-supplied radius/span can be arbitrarily large; this
+// ceiling is a defensive backstop against that, not a functional limit — real
+// GTFS feeds have nowhere near this many routes, so it never affects the
+// uniform-random selection required by the spec.
+const maxRoutesFetchedForShuffle = 5000
 
 // queryRoutesInBounds retrieves all routes serving stops within the given geographic bounds
 // from the database's stops_rtree spatial index. When the match count exceeds maxCount,
@@ -503,7 +507,7 @@ func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.Co
 		MaxLon:    bounds.MaxLon,
 		Lat:       lat,
 		Lon:       lon,
-		MaxCount:  noRowLimit,
+		MaxCount:  maxRoutesFetchedForShuffle,
 		ShortName: shortNameQuery,
 	})
 	if err != nil {

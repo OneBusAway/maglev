@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
@@ -160,7 +161,7 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 	assert.Equal(t, "OK", model.Text)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.True(t, model.Data.LimitExceeded)
-	assert.Len(t, model.Data.List, 2)
+	require.Len(t, model.Data.List, 2)
 	// Truncation is randomized (per spec), so only check the returned routes
 	// are drawn from the full in-bounds match set (confirmed by
 	// TestRoutesForLocationLatAndLon: Route15, Route11, Route14).
@@ -172,16 +173,27 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 
 // routesForLocationShuffleIterations bounds the flake probability of
 // TestRoutesForLocationHandlerLimitExceededIsRandomized: with 3 candidate
-// routes and maxCount=2, the odds of missing any one route across all
-// iterations is (2/3)^routesForLocationShuffleIterations.
+// routes and maxCount=2, a specific route is dropped with probability 1/3 per
+// call, so the odds of it never appearing across all iterations is
+// (1/3)^routesForLocationShuffleIterations.
 const routesForLocationShuffleIterations = 50
 
 func TestRoutesForLocationHandlerLimitExceededIsRandomized(t *testing.T) {
 	api := createTestApi(t)
+	candidates := []models.Route{testdata.Route15, testdata.Route11, testdata.Route14}
 
 	seen := map[string]bool{}
 	for range routesForLocationShuffleIterations {
-		_, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&maxCount=2")
+		// org.onebusaway.iphone is exempt from rate limiting; the "TEST" key's
+		// low test rate limit can't sustain this many rapid-fire requests.
+		resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=org.onebusaway.iphone&lat=40.583321&lon=-122.362535&maxCount=2")
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.True(t, model.Data.LimitExceeded)
+		require.Len(t, model.Data.List, 2)
+		assert.Subset(t, candidates, model.Data.List)
+		assert.True(t, model.Data.List[0].ID < model.Data.List[1].ID)
+
 		for _, route := range model.Data.List {
 			seen[route.ID] = true
 		}
