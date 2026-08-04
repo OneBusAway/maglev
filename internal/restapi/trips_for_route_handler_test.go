@@ -343,6 +343,50 @@ func TestTripsForRouteHandlerWithMalformedID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, model.Code)
 }
 
+func TestTripsForRouteHandler_StatusInclusion(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	tests := []struct {
+		name          string
+		includeStatus string
+		wantStatus    bool
+	}{
+		{name: "Include Status (default)", includeStatus: "", wantStatus: true},
+		{name: "Include Status Explicit", includeStatus: "true", wantStatus: true},
+		{name: "Exclude Status", includeStatus: "false", wantStatus: false},
+	}
+
+	timeMs := tripsForRouteTestClock.UnixMilli()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+				combinedRouteID, timeMs)
+			if tt.includeStatus != "" {
+				url += "&includeStatus=" + tt.includeStatus
+			}
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.List,
+				"fixture guarantees a trip at the pinned clock")
+			for i, entry := range model.Data.List {
+				if tt.wantStatus {
+					require.NotNil(t, entry.Status, "list[%d].status should be present when includeStatus=true", i)
+					assert.NotEmpty(t, entry.Status.ActiveTripID, "list[%d].status.activeTripId should be set", i)
+					assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase,
+						"list[%d].status.phase should be a known value", i)
+				} else {
+					assert.Nil(t, entry.Status,
+						"list[%d].status should be omitted when includeStatus=false", i)
+				}
+			}
+		})
+	}
+}
+
 func TestTripsForRouteHandler_ReferencesInclusion(t *testing.T) {
 	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
