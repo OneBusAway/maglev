@@ -163,6 +163,19 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
+func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		"/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&radius=5000&maxCount=300")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.List, "clamped request should still return routes")
+	assert.LessOrEqual(t, len(model.Data.List), models.MaxCountForRoutesForLocation)
+	assert.False(t, model.Data.LimitExceeded)
+}
+
 func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=invalid")
