@@ -44,6 +44,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	candidateStopIDs := extractStopIDs(allStops)
 
 	var trips []gtfsdb.Trip
+	var serviceDateByTrip map[string]time.Time
 	if len(candidateStopIDs) > 0 {
 		windows, err := api.serviceDayWindows(ctx, parsedReq.CurrentTime)
 		if err != nil {
@@ -57,7 +58,8 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		candidateTripIDs, serviceDateByTrip := api.resolveActiveTrips(ctx, blockIDs, nullBlockTripIDs, windows)
+		var candidateTripIDs []string
+		candidateTripIDs, serviceDateByTrip = api.resolveActiveTrips(ctx, blockIDs, nullBlockTripIDs, windows)
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
@@ -111,7 +113,16 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
+	result := api.buildTripsForLocationEntries(ctx, tripsForLocationEntryParams{
+		Trips:              trips,
+		TripAgencyMap:      tripAgencyMap,
+		ServiceDateByTrip:  serviceDateByTrip,
+		DefaultServiceDate: parsedReq.TodayMidnight,
+		IncludeSchedule:    parsedReq.IncludeSchedule,
+		IncludeStatus:      parsedReq.IncludeStatus,
+		CurrentLocation:    parsedReq.CurrentLocation,
+		CurrentTime:        parsedReq.CurrentTime,
+	}, w, r)
 	if result == nil {
 		return
 	}
@@ -146,8 +157,9 @@ type tripsForLocationRequest struct {
 	IncludeStatus   bool
 	CurrentLocation *time.Location
 	CurrentTime     time.Time
-	TodayMidnight   time.Time
-	ServiceDate     time.Time
+	// TodayMidnight is midnight of the query date, used as the service day
+	// for trips that don't carry a resolved one of their own.
+	TodayMidnight time.Time
 }
 
 func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
@@ -180,7 +192,7 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 	currentTime, timeFieldErrors := api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
 	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
 
-	serviceDate, todayMidnight := utils.ServiceDateMidnight(nil, currentTime)
+	_, todayMidnight := utils.ServiceDateMidnight(nil, currentTime)
 
 	if len(fieldErrors) > 0 {
 		return nil, fieldErrors, nil
@@ -194,7 +206,6 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		CurrentLocation: currentLocation,
 		CurrentTime:     currentTime,
 		TodayMidnight:   todayMidnight,
-		ServiceDate:     serviceDate,
 	}
 	return parsedReq, nil, nil
 }
@@ -335,20 +346,44 @@ func (api *RestAPI) tripPositionAtTime(ctx context.Context, tripID string, servi
 	return scheduledPositionAtTime(stopTimes, stopCoords, queryTime, serviceDate)
 }
 
+// tripsForLocationEntryParams carries the per-request values needed to build
+// the response entries.
+type tripsForLocationEntryParams struct {
+	Trips         []gtfsdb.Trip
+	TripAgencyMap map[string]string
+	// ServiceDateByTrip is the service day each trip actually matched (see
+	// resolveActiveTrips). A trip found via the past-midnight lookback
+	// belongs to the previous calendar day, and both its reported
+	// serviceDate and its schedule math must use that day, not the query
+	// date. Trips absent from the map fall back to DefaultServiceDate.
+	ServiceDateByTrip  map[string]time.Time
+	DefaultServiceDate time.Time
+	IncludeSchedule    bool
+	IncludeStatus      bool
+	CurrentLocation    *time.Location
+	CurrentTime        time.Time
+}
+
+// serviceDateFor returns the service day trip belongs to.
+func (p tripsForLocationEntryParams) serviceDateFor(tripID string) time.Time {
+	if serviceDate, ok := p.ServiceDateByTrip[tripID]; ok && !serviceDate.IsZero() {
+		return serviceDate
+	}
+	return p.DefaultServiceDate
+}
+
 // buildTripsForLocationEntries builds trip entries from pre-fetched batch data.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
-	trips []gtfsdb.Trip,
-	tripAgencyMap map[string]string,
-	includeSchedule bool,
-	includeStatus bool,
-	currentLocation *time.Location,
-	currentTime time.Time,
-	todayMidnight time.Time,
-	serviceDate time.Time,
+	params tripsForLocationEntryParams,
 	w http.ResponseWriter,
 	r *http.Request,
 ) []models.TripsForLocationListEntry {
+	trips := params.Trips
+	tripAgencyMap := params.TripAgencyMap
+	includeSchedule := params.IncludeSchedule
+	includeStatus := params.IncludeStatus
+
 	if len(trips) == 0 {
 		return []models.TripsForLocationListEntry{}
 	}
@@ -410,12 +445,11 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				blockIDs = append(blockIDs, bid)
 			}
 
-			dateStr := serviceDate.Format("20060102")
-			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
-			if err != nil {
-				activeServiceIDs = []string{}
-				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
-			}
+			// Cover every service day represented in this result set, not just
+			// the query date: a past-midnight trip's block siblings belong to
+			// the previous service day and would otherwise be missed, leaving
+			// its next/previous trip IDs empty.
+			activeServiceIDs := api.activeServiceIDsForTrips(ctx, validVehicleTrips, params)
 
 			blockIDsNull := make([]sql.NullString, len(blockIDs))
 			for i, id := range blockIDs {
@@ -466,6 +500,8 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			continue
 		}
 
+		tripServiceDate := params.serviceDateFor(tripID)
+
 		var schedule *models.TripsSchedule
 		var status *models.TripStatus
 
@@ -483,7 +519,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			schedule = api.buildScheduleFromMemory(
 				tripData,
 				agencyID,
-				currentLocation,
+				params.CurrentLocation,
 				stopTimesMap[tripID],
 				shapePoints,
 				stopCoords,
@@ -493,7 +529,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, tripServiceDate, params.CurrentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
@@ -504,13 +540,41 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  tripServiceDate.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(ctx, tripID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
 	}
 	return result
+}
+
+// activeServiceIDsForTrips returns the union of the active service IDs for
+// every distinct service day represented by tripIDs. Trips resolved through
+// the past-midnight lookback sit on the previous service day, so a single
+// date's service IDs would not cover them.
+func (api *RestAPI) activeServiceIDsForTrips(ctx context.Context, tripIDs []string, params tripsForLocationEntryParams) []string {
+	dates := make(map[string]struct{})
+	for _, tripID := range tripIDs {
+		dates[params.serviceDateFor(tripID).Format("20060102")] = struct{}{}
+	}
+
+	seen := make(map[string]bool)
+	var activeServiceIDs []string
+	for dateStr := range dates {
+		ids, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
+		if err != nil {
+			api.Logger.Warn("failed to fetch active service IDs for block logic", "date", dateStr, "error", err)
+			continue
+		}
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				activeServiceIDs = append(activeServiceIDs, id)
+			}
+		}
+	}
+	return activeServiceIDs
 }
 
 func (api *RestAPI) buildScheduleForTrip(

@@ -99,7 +99,13 @@ type blockCandidateQueries struct {
 // blockCandidates returns the candidate block IDs, and the null-block trip
 // IDs mapped to the index (into windows) of the service day whose query
 // found them, whose schedule overlaps the query windows, as scoped by q.
+// windows must be non-empty; serviceDayWindows always returns at least the
+// current service day.
 func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) (map[string]bool, map[string]int, error) {
+	if len(windows) == 0 {
+		return map[string]bool{}, map[string]int{}, nil
+	}
+
 	allLinkedBlocks, err := api.resolveLinkedBlocks(ctx, q, windows)
 	if err != nil {
 		return nil, nil, err
@@ -179,6 +185,11 @@ func (api *RestAPI) addLayoverBlocks(ctx context.Context, q blockCandidateQuerie
 // resolveNullBlockTripWindows finds null-block trips active within each
 // window, mapped to the index of the window that found them. A failure on
 // any window is logged and skipped, not fatal.
+//
+// Windows are searched in order and the first match wins, matching
+// resolveActiveTripForBlock: a trip whose span is long enough to overlap
+// both today's and yesterday's window is reported against today, not
+// yesterday.
 func (api *RestAPI) resolveNullBlockTripWindows(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) map[string]int {
 	nullBlockTripWindows := make(map[string]int)
 
@@ -193,7 +204,9 @@ func (api *RestAPI) resolveNullBlockTripWindows(ctx context.Context, q blockCand
 			continue
 		}
 		for _, tripID := range trips {
-			nullBlockTripWindows[tripID] = i
+			if _, alreadyMatched := nullBlockTripWindows[tripID]; !alreadyMatched {
+				nullBlockTripWindows[tripID] = i
+			}
 		}
 	}
 
@@ -231,36 +244,73 @@ func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string,
 	}, windows)
 }
 
+// maxStopIDsPerQuery bounds how many stop IDs are bound into a single
+// statement. SQLite rejects a statement with more than 32766 bound
+// variables ("too many SQL variables"); these queries also bind the service
+// IDs, so leave generous headroom rather than filling the limit exactly.
+const maxStopIDsPerQuery = 8000
+
 // blockCandidatesForStops is the stop-scoped mirror of blockCandidatesForRoute:
 // it returns the candidate block IDs and null-block trip IDs (see
 // blockCandidates) whose schedule overlaps the query windows, scoped to
 // trips serving any of the given stops.
+//
+// The stop IDs are deliberately not capped upstream — truncating them would
+// silently drop candidate trips — so each query is run over chunks of at
+// most maxStopIDsPerQuery IDs and the results unioned.
 func (api *RestAPI) blockCandidatesForStops(ctx context.Context, stopIDs []string, windows []serviceDayWindow) (map[string]bool, map[string]int, error) {
 	return api.blockCandidates(ctx, blockCandidateQueries{
 		logScope: "trips-for-location",
 		indexIDs: func(ctx context.Context, serviceIDs []string) ([]int64, error) {
-			return api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForStops(ctx, gtfsdb.GetBlockTripIndexIDsForStopsParams{
-				StopIds:    stopIDs,
-				ServiceIds: serviceIDs,
+			return chunkedQuery(ctx, stopIDs, func(ctx context.Context, chunk []string) ([]int64, error) {
+				return api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForStops(ctx, gtfsdb.GetBlockTripIndexIDsForStopsParams{
+					StopIds:    chunk,
+					ServiceIds: serviceIDs,
+				})
 			})
 		},
 		layover: func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error) {
-			return api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForStops(ctx, gtfsdb.GetActiveLayoverBlockIDsForStopsParams{
-				StopIds:        stopIDs,
-				ServiceIds:     serviceIDs,
-				TimeRangeStart: rangeStart,
-				TimeRangeEnd:   rangeEnd,
+			return chunkedQuery(ctx, stopIDs, func(ctx context.Context, chunk []string) ([]string, error) {
+				return api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForStops(ctx, gtfsdb.GetActiveLayoverBlockIDsForStopsParams{
+					StopIds:        chunk,
+					ServiceIds:     serviceIDs,
+					TimeRangeStart: rangeStart,
+					TimeRangeEnd:   rangeEnd,
+				})
 			})
 		},
 		nullBlocks: func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error) {
-			return api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForStops(ctx, gtfsdb.GetActiveTripsWithNullBlockForStopsParams{
-				StopIds:        stopIDs,
-				ServiceIds:     serviceIDs,
-				TimeRangeStart: sql.NullInt64{Int64: rangeStart, Valid: true},
-				TimeRangeEnd:   sql.NullInt64{Int64: rangeEnd, Valid: true},
+			return chunkedQuery(ctx, stopIDs, func(ctx context.Context, chunk []string) ([]string, error) {
+				return api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForStops(ctx, gtfsdb.GetActiveTripsWithNullBlockForStopsParams{
+					StopIds:        chunk,
+					ServiceIds:     serviceIDs,
+					TimeRangeStart: sql.NullInt64{Int64: rangeStart, Valid: true},
+					TimeRangeEnd:   sql.NullInt64{Int64: rangeEnd, Valid: true},
+				})
 			})
 		},
 	}, windows)
+}
+
+// chunkedQuery runs query over ids in batches of at most maxStopIDsPerQuery
+// and returns the concatenated results, so a large bounding box can't blow
+// SQLite's bound-variable limit. Callers treat the result as a set, so
+// duplicates across chunks are harmless.
+func chunkedQuery[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	if len(ids) <= maxStopIDsPerQuery {
+		return query(ctx, ids)
+	}
+
+	var combined []T
+	for start := 0; start < len(ids); start += maxStopIDsPerQuery {
+		end := min(start+maxStopIDsPerQuery, len(ids))
+		results, err := query(ctx, ids[start:end])
+		if err != nil {
+			return nil, err
+		}
+		combined = append(combined, results...)
+	}
+	return combined, nil
 }
 
 // resolveActiveTrips returns the trip IDs actually running at each window's
