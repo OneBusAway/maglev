@@ -306,9 +306,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStopIDsForTripStmt, err = db.PrepareContext(ctx, getStopIDsForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopIDsForTrip: %w", err)
 	}
-	if q.getStopTimesByStopIDsStmt, err = db.PrepareContext(ctx, getStopTimesByStopIDs); err != nil {
-		return nil, fmt.Errorf("error preparing query GetStopTimesByStopIDs: %w", err)
-	}
 	if q.getStopTimesForStopInWindowStmt, err = db.PrepareContext(ctx, getStopTimesForStopInWindow); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopTimesForStopInWindow: %w", err)
 	}
@@ -874,11 +871,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStopIDsForTripStmt: %w", cerr)
 		}
 	}
-	if q.getStopTimesByStopIDsStmt != nil {
-		if cerr := q.getStopTimesByStopIDsStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getStopTimesByStopIDsStmt: %w", cerr)
-		}
-	}
 	if q.getStopTimesForStopInWindowStmt != nil {
 		if cerr := q.getStopTimesForStopInWindowStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopTimesForStopInWindowStmt: %w", cerr)
@@ -1162,7 +1154,6 @@ type Queries struct {
 	getStopIDsForAgencyStmt                       *sql.Stmt
 	getStopIDsForRouteStmt                        *sql.Stmt
 	getStopIDsForTripStmt                         *sql.Stmt
-	getStopTimesByStopIDsStmt                     *sql.Stmt
 	getStopTimesForStopInWindowStmt               *sql.Stmt
 	getStopTimesForTripStmt                       *sql.Stmt
 	getStopTimesForTripIDsStmt                    *sql.Stmt
@@ -1293,7 +1284,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getStopIDsForAgencyStmt:                       q.getStopIDsForAgencyStmt,
 		getStopIDsForRouteStmt:                        q.getStopIDsForRouteStmt,
 		getStopIDsForTripStmt:                         q.getStopIDsForTripStmt,
-		getStopTimesByStopIDsStmt:                     q.getStopTimesByStopIDsStmt,
 		getStopTimesForStopInWindowStmt:               q.getStopTimesForStopInWindowStmt,
 		getStopTimesForTripStmt:                       q.getStopTimesForTripStmt,
 		getStopTimesForTripIDsStmt:                    q.getStopTimesForTripIDsStmt,

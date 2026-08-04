@@ -153,6 +153,85 @@ func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string,
 	return allLinkedBlocks, nullBlockTrips, nil
 }
 
+// blockCandidatesForStops is the stop-scoped mirror of blockCandidatesForRoute:
+// it returns the candidate block IDs and null-block trip IDs whose schedule
+// overlaps the query windows, scoped to trips serving any of the given stops.
+// Error-handling semantics match blockCandidatesForRoute exactly.
+func (api *RestAPI) blockCandidatesForStops(ctx context.Context, stopIDs []string, windows []serviceDayWindow) (map[string]bool, []string, error) {
+	allLinkedBlocks := make(map[string]bool)
+
+	for i, w := range windows {
+		indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForStops(ctx, gtfsdb.GetBlockTripIndexIDsForStopsParams{
+			StopIds:    stopIDs,
+			ServiceIds: w.serviceIDs,
+		})
+		if err != nil {
+			if i == 0 {
+				return nil, nil, err
+			}
+			api.Logger.Warn("trips-for-location: failed to fetch previous-day block index IDs", "error", err)
+			continue
+		}
+		if len(indexIDs) == 0 {
+			continue
+		}
+
+		blocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
+			FromTime:   sql.NullInt64{Int64: w.rangeStart.Nanoseconds(), Valid: true},
+			ToTime:     sql.NullInt64{Int64: w.rangeEnd.Nanoseconds(), Valid: true},
+			IndexIds:   indexIDs,
+			ServiceIds: w.serviceIDs,
+		})
+		if err != nil {
+			if i == 0 {
+				return nil, nil, err
+			}
+			api.Logger.Warn("trips-for-location: failed to fetch previous-day blocks", "error", err)
+			continue
+		}
+		for _, b := range blocks {
+			if b.Valid {
+				allLinkedBlocks[b.String] = true
+			}
+		}
+	}
+
+	layoverBlocks, err := api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForStops(ctx, gtfsdb.GetActiveLayoverBlockIDsForStopsParams{
+		StopIds:        stopIDs,
+		ServiceIds:     windows[0].serviceIDs,
+		TimeRangeStart: windows[0].rangeStart.Nanoseconds(),
+		TimeRangeEnd:   windows[0].rangeEnd.Nanoseconds(),
+	})
+	if err != nil {
+		api.Logger.Warn("trips-for-location: failed to fetch layover blocks", "error", err)
+	} else {
+		for _, blockID := range layoverBlocks {
+			allLinkedBlocks[blockID] = true
+		}
+	}
+
+	var nullBlockTrips []string
+	for i, w := range windows {
+		trips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForStops(ctx, gtfsdb.GetActiveTripsWithNullBlockForStopsParams{
+			StopIds:        stopIDs,
+			ServiceIds:     w.serviceIDs,
+			TimeRangeStart: sql.NullInt64{Int64: w.rangeStart.Nanoseconds(), Valid: true},
+			TimeRangeEnd:   sql.NullInt64{Int64: w.rangeEnd.Nanoseconds(), Valid: true},
+		})
+		if err != nil {
+			if i == 0 {
+				api.Logger.Warn("trips-for-location: failed to fetch null-block trips", "error", err)
+			} else {
+				api.Logger.Warn("trips-for-location: failed to fetch previous-day null-block trips", "error", err)
+			}
+			continue
+		}
+		nullBlockTrips = append(nullBlockTrips, trips...)
+	}
+
+	return allLinkedBlocks, nullBlockTrips, nil
+}
+
 // resolveActiveTrips returns the trip IDs actually running at each window's
 // query time: one active trip per candidate block (the earliest trip in the
 // block whose stop times contain that window's query time), plus the given

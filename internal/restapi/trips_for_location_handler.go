@@ -33,39 +33,52 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
-	stopIDs := extractStopIDs(stops)
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+	// Candidate stop IDs must not be capped: silently truncating the bbox stop list
+	// would drop candidate trips in a wide search area. The references stop list is
+	// still capped, but from this same uncapped result rather than a second query.
+	allStops := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, 0, true)
+	stops := allStops
+	if len(stops) > models.DefaultMaxCountForStops {
+		stops = stops[:models.DefaultMaxCountForStops]
 	}
+	candidateStopIDs := extractStopIDs(allStops)
 
-	activeTrips := api.getActiveTrips(stopTimes, api.GtfsManager.GetRealTimeVehicles())
+	var trips []gtfsdb.Trip
+	if len(candidateStopIDs) > 0 {
+		windows, err := api.serviceDayWindows(ctx, parsedReq.CurrentTime)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
-	bounds := internalgtfs.BoundsFromParams(parsedReq.LocationParams, true)
-	visibleTripIDs := make([]string, 0, len(activeTrips))
-	for _, vehicle := range activeTrips {
+		blockIDs, nullBlockTripIDs, err := api.blockCandidatesForStops(ctx, candidateStopIDs, windows)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		candidateTripIDs := api.resolveActiveTrips(ctx, blockIDs, nullBlockTripIDs, windows)
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
-		if vehicle.Position == nil || vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
-			continue
-		}
-		vLat, vLon := float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude)
-		if vLat >= bounds.MinLat && vLat <= bounds.MaxLat && vLon >= bounds.MinLon && vLon <= bounds.MaxLon {
-			visibleTripIDs = append(visibleTripIDs, vehicle.Trip.ID.ID)
-		}
-	}
-
-	var trips []gtfsdb.Trip
-	if len(visibleTripIDs) > 0 {
-		trips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, visibleTripIDs)
+		visibleTripIDs, err := api.visibleTripIDs(ctx, candidateTripIDs, parsedReq.LocationParams, parsedReq.CurrentTime)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
+		}
+		if ctx.Err() != nil {
+			api.clientCanceledResponse(w, r, ctx.Err())
+			return
+		}
+
+		if len(visibleTripIDs) > 0 {
+			trips, err = api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, visibleTripIDs)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
 		}
 	}
 
@@ -228,18 +241,80 @@ func extractStopIDs(stops []gtfsdb.Stop) []string {
 	return stopIDs
 }
 
-func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles []gtfs.Vehicle) map[string]gtfs.Vehicle {
-	trips := make(map[string]bool)
-	for _, stopTime := range stopTimes {
-		trips[stopTime.TripID] = true
+// visibleTripIDs computes each candidate trip's position at queryTime — real-time
+// GPS when a non-stale vehicle is assigned to the trip, otherwise extrapolated
+// from the static schedule — and returns the subset whose computed position
+// falls inside loc's bounding box (spec steps 5 and 6).
+func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []string, loc *internalgtfs.LocationParams, queryTime time.Time) ([]string, error) {
+	if len(candidateTripIDs) == 0 {
+		return nil, nil
 	}
-	activeTrips := make(map[string]gtfs.Vehicle)
-	for _, vehicle := range realTimeVehicles {
-		if vehicle.Trip != nil && trips[vehicle.Trip.ID.ID] {
-			activeTrips[vehicle.Trip.ID.ID] = vehicle
+
+	dedupedIDs := make([]string, 0, len(candidateTripIDs))
+	seen := make(map[string]bool, len(candidateTripIDs))
+	for _, tripID := range candidateTripIDs {
+		if !seen[tripID] {
+			seen[tripID] = true
+			dedupedIDs = append(dedupedIDs, tripID)
 		}
 	}
-	return activeTrips
+
+	stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, dedupedIDs)
+	if err != nil {
+		return nil, err
+	}
+	stopTimesByTrip := make(map[string][]gtfsdb.StopTime)
+	var allStopIDs []string
+	for _, st := range stopTimesRaw {
+		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+		allStopIDs = append(allStopIDs, st.StopID)
+	}
+
+	var stopCoords map[string]struct{ lat, lon float64 }
+	if len(allStopIDs) > 0 {
+		stopsRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, allStopIDs)
+		if err != nil {
+			return nil, err
+		}
+		stopCoords = make(map[string]struct{ lat, lon float64 }, len(stopsRaw))
+		for _, s := range stopsRaw {
+			stopCoords[s.ID] = struct{ lat, lon float64 }{lat: s.Lat, lon: s.Lon}
+		}
+	}
+
+	bounds := internalgtfs.BoundsFromParams(loc, true)
+	visible := make([]string, 0, len(dedupedIDs))
+	for _, tripID := range dedupedIDs {
+		if ctx.Err() != nil {
+			return visible, nil
+		}
+
+		pos, ok := api.tripPositionAtTime(ctx, tripID, queryTime, stopTimesByTrip[tripID], stopCoords)
+		if !ok {
+			continue
+		}
+		if pos.Lat >= bounds.MinLat && pos.Lat <= bounds.MaxLat && pos.Lon >= bounds.MinLon && pos.Lon <= bounds.MaxLon {
+			visible = append(visible, tripID)
+		}
+	}
+	return visible, nil
+}
+
+// tripPositionAtTime returns the trip's position at queryTime: the real-time
+// GPS position when a non-stale vehicle is assigned to the trip, otherwise
+// the position extrapolated from the static schedule.
+func (api *RestAPI) tripPositionAtTime(ctx context.Context, tripID string, queryTime time.Time, stopTimes []gtfsdb.StopTime, stopCoords map[string]struct{ lat, lon float64 }) (models.Location, bool) {
+	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil &&
+		vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil &&
+		!defaultStaleDetector.Check(vehicle, queryTime) {
+		return models.Location{Lat: float64(*vehicle.Position.Latitude), Lon: float64(*vehicle.Position.Longitude)}, true
+	}
+
+	if len(stopTimes) == 0 {
+		return models.Location{}, false
+	}
+	serviceDate := time.Date(queryTime.Year(), queryTime.Month(), queryTime.Day(), 0, 0, 0, 0, queryTime.Location())
+	return scheduledPositionAtTime(stopTimes, stopCoords, queryTime, serviceDate)
 }
 
 // buildTripsForLocationEntries builds trip entries from pre-fetched batch data.

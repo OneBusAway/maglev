@@ -19,6 +19,21 @@ const (
 	tripsForLocationLon = -122.3917
 )
 
+// tripsForLocationTestTime is pinned to the moment RABA trip 28c61524 is
+// scheduled to be at stop 2000 (40.58317, -122.392586), a stop inside the
+// default trips-for-location test bounding box. Schedule-derived candidate
+// selection is time-aware, so tests that need a deterministic non-empty
+// result use this instant (or the equivalent epoch/date-string form) rather
+// than the real wall clock, which falls outside the RABA fixture's
+// 2024-2025 service calendar.
+var tripsForLocationTestTime = func() time.Time {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+	return time.Date(2025, 6, 15, 13, 50, 0, 0, loc)
+}()
+
 // tripsForLocationURL builds the query URL using the RABA-area lat/lon constants,
 // the given spans, and any extra "key=value" query params.
 func tripsForLocationURL(latSpan, lonSpan float64, extras ...string) string {
@@ -76,7 +91,7 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 // per-aspect reference tests (stops/routes/agencies cross-references, combined IDs,
 // orphaned stops, direction populated) into one fetch + structured assertions.
 func TestTripsForLocationHandler_ReferencesAreConsistent(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(tripsForLocationTestTime))
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -159,7 +174,7 @@ func TestTripsForLocationHandler_ScheduleInclusion(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(tripsForLocationTestTime))
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -273,7 +288,7 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(tripsForLocationTestTime))
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -309,7 +324,7 @@ func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_BoundsClamping(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(tripsForLocationTestTime))
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -336,7 +351,7 @@ func TestTripsForLocationHandler_BoundsClamping(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_IncludeReferences(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(tripsForLocationTestTime))
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -375,11 +390,8 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	t.Run("Valid Time Parameter", func(t *testing.T) {
-		loc, err := time.LoadLocation("America/Los_Angeles")
-		require.NoError(t, err)
-
-		targetTime := time.Date(2025, 6, 15, 14, 30, 0, 0, loc)
-		targetMidnight := time.Date(targetTime.Year(), targetTime.Month(), targetTime.Day(), 0, 0, 0, 0, loc)
+		targetTime := tripsForLocationTestTime
+		targetMidnight := time.Date(targetTime.Year(), targetTime.Month(), targetTime.Day(), 0, 0, 0, 0, targetTime.Location())
 		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("includeStatus=true&time=%d", targetTime.UnixMilli()))
 
 		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
@@ -481,29 +493,25 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	t.Run("Date String YYYY-MM-DD", func(t *testing.T) {
-		loc, err := time.LoadLocation("America/Los_Angeles")
-		require.NoError(t, err)
-
+		// A bare date resolves to midnight of that day. RABA has no scheduled
+		// service at midnight, so schedule-derived candidate selection
+		// correctly finds nothing — this exercises the date-string parsing
+		// path succeeding (200, not a validation error) rather than any
+		// particular trip being found.
 		dateStr := "2025-06-15"
-		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
-		require.NoError(t, err)
-		targetMidnight := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, loc)
-
 		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("includeStatus=true&time=%s", dateStr))
 		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		require.NotEmpty(t, model.Data.List, "expected at least one trip entry to verify ServiceDate")
-		for _, entry := range model.Data.List {
-			assert.Equal(t, targetMidnight.UnixMilli(), entry.ServiceDate, "entry.ServiceDate should match midnight of the requested date string")
-			if entry.Status != nil {
-				assert.Equal(t, targetMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli())
-			}
-		}
+		assert.False(t, model.Data.OutOfRange)
+		assert.Empty(t, model.Data.List, "no service is scheduled at midnight")
 	})
 
 	t.Run("Query Time Far Outside Service Window", func(t *testing.T) {
-		// Querying at epoch millis for Jan 1, 2010. ServiceDate on all returned active trips must reflect this historical timestamp.
+		// Querying at epoch millis for Jan 1, 2010, well before the RABA
+		// fixture's calendar coverage begins. No service is scheduled that
+		// day, so schedule-derived candidate selection correctly finds
+		// nothing.
 		const historicalMillis = int64(1262332800000)
 		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("time=%d", historicalMillis))
 		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
@@ -511,25 +519,32 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.False(t, model.Data.OutOfRange)
-		require.NotEmpty(t, model.Data.List, "expected at least one entry to verify ServiceDate equality")
-		for _, entry := range model.Data.List {
-			assert.Equal(t, historicalMillis, entry.ServiceDate, "entry.ServiceDate should match the historical timestamp parameter")
-		}
+		assert.Empty(t, model.Data.List, "no service is scheduled that far outside the fixture's calendar coverage")
 	})
 }
 
+// TestTripsForLocationHandler_ZeroVehiclesOrStaticOnly verifies the spec-required
+// schedule fallback (Main Success Scenario step 5): with no real-time vehicle
+// positions at all, candidate trips are still found from the static schedule,
+// with a schedule-extrapolated position and predicted=false.
 func TestTripsForLocationHandler_ZeroVehiclesOrStaticOnly(t *testing.T) {
 	// Create API with only static GTFS data (no real-time vehicles injected)
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	url := tripsForLocationURL(1.0, 1.0, "includeSchedule=true")
+	url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("includeSchedule=true&includeStatus=true&time=%d", tripsForLocationTestTime.UnixMilli()))
 	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.False(t, model.Data.OutOfRange)
-	assert.Empty(t, model.Data.List, "without real-time vehicle positions, active trips list should be empty per OBA real-time behavior")
+	require.NotEmpty(t, model.Data.List, "schedule-derived candidates should be found even without real-time vehicle positions")
+	for _, entry := range model.Data.List {
+		if assert.NotNil(t, entry.Status, "status should be present when includeStatus=true") {
+			assert.False(t, entry.Status.Predicted, "position is schedule-derived, not real-time, without a vehicle")
+			assert.NotZero(t, entry.Status.Position, "schedule-derived position should not be the zero value")
+		}
+	}
 	assert.NotNil(t, model.Data.References.Stops, "references slice should not be nil even when empty")
 	assert.NotNil(t, model.Data.References.Routes, "references slice should not be nil even when empty")
 	assert.NotNil(t, model.Data.References.Agencies, "references slice should not be nil even when empty")
@@ -537,7 +552,7 @@ func TestTripsForLocationHandler_ZeroVehiclesOrStaticOnly(t *testing.T) {
 }
 
 func TestTripsForLocationHandler_IncludeTripFalseWithReferencesTrue(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(tripsForLocationTestTime))
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
@@ -554,7 +569,7 @@ func TestTripsForLocationHandler_IncludeTripFalseWithReferencesTrue(t *testing.T
 }
 
 func TestTripsForLocationHandler_ScheduleDetailsAndDistances(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(tripsForLocationTestTime))
 	defer cleanup()
 
 	time.Sleep(500 * time.Millisecond)
