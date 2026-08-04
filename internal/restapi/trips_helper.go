@@ -160,6 +160,20 @@ func (api *RestAPI) BuildTripStatus(
 		api.fillStopsFromSchedule(ctx, status, dbTripID, currentTime, serviceDate, agencyID, stopTimes)
 	}
 
+	// No GPS to work with: extrapolate the vehicle's position from the static
+	// schedule so status.Position isn't left at its zero value. Predicted is
+	// already false here (set above), matching the spec's predicted=false for
+	// schedule-derived positions.
+	if (vehicle == nil || vehicle.Position == nil) && len(stopTimes) > 0 {
+		if stopCoords, coordsErr := api.stopCoordsForStopTimes(ctx, stopTimes); coordsErr != nil {
+			slog.Warn("BuildTripStatus: failed to fetch stop coordinates for schedule-derived position",
+				slog.String("trip_id", dbTripID),
+				slog.String("error", coordsErr.Error()))
+		} else if pos, ok := scheduledPositionAtTime(stopTimes, stopCoords, currentTime, serviceDate); ok {
+			status.Position = pos
+		}
+	}
+
 	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
 	if shapeErr != nil {
 		slog.Warn("buildTripStatusCore: failed to get shape points",
@@ -1151,6 +1165,83 @@ func interpolateDistance(cumulativeDistances []float64, segmentLength float64, i
 		cumulativeDistance += segmentLength * projectionRatio
 	}
 	return cumulativeDistance
+}
+
+// stopCoordsForStopTimes batch-fetches the stop coordinates referenced by stopTimes.
+func (api *RestAPI) stopCoordsForStopTimes(ctx context.Context, stopTimes []gtfsdb.StopTime) (map[string]struct{ lat, lon float64 }, error) {
+	stopIDs := make([]string, len(stopTimes))
+	for i, st := range stopTimes {
+		stopIDs[i] = st.StopID
+	}
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return nil, err
+	}
+	stopCoords := make(map[string]struct{ lat, lon float64 }, len(stops))
+	for _, s := range stops {
+		stopCoords[s.ID] = struct{ lat, lon float64 }{lat: s.Lat, lon: s.Lon}
+	}
+	return stopCoords, nil
+}
+
+// scheduledPositionAtTime returns the position a vehicle running exactly on
+// schedule would occupy at queryTime, linearly interpolated between the two
+// surrounding stops' coordinates. Returns false when stopTimes is empty or
+// none of its stops have known coordinates.
+//
+// Deliberately interpolates straight-line between stop coordinates rather
+// than projecting along the trip's shape: the corner-cutting error is
+// negligible against a bounding box measured in kilometres, and it works on
+// trips or fixtures with no shape data at all. If more precision is ever
+// needed, reuse preCalculateCumulativeDistances +
+// interpolateDistanceAtScheduledTime to get a distance, then walk the shape
+// points to convert that distance back to a coordinate.
+func scheduledPositionAtTime(
+	stopTimes []gtfsdb.StopTime,
+	stopCoords map[string]struct{ lat, lon float64 },
+	queryTime, serviceDate time.Time,
+) (models.Location, bool) {
+	if len(stopTimes) == 0 {
+		return models.Location{}, false
+	}
+
+	querySeconds := utils.CalculateSecondsSinceServiceDate(queryTime, serviceDate)
+
+	firstCoord, ok := stopCoords[stopTimes[0].StopID]
+	if !ok {
+		return models.Location{}, false
+	}
+	if querySeconds <= utils.NanosToSeconds(stopTimes[0].ArrivalTime) {
+		return models.Location{Lat: firstCoord.lat, Lon: firstCoord.lon}, true
+	}
+
+	for i := 0; i < len(stopTimes)-1; i++ {
+		fromCoord, fromOK := stopCoords[stopTimes[i].StopID]
+		toCoord, toOK := stopCoords[stopTimes[i+1].StopID]
+		if !fromOK || !toOK {
+			continue
+		}
+
+		fromTime := utils.NanosToSeconds(stopTimes[i].DepartureTime)
+		toTime := utils.NanosToSeconds(stopTimes[i+1].ArrivalTime)
+
+		if querySeconds >= fromTime && querySeconds <= toTime {
+			if toTime == fromTime {
+				return models.Location{Lat: fromCoord.lat, Lon: fromCoord.lon}, true
+			}
+			ratio := float64(querySeconds-fromTime) / float64(toTime-fromTime)
+			return models.Location{
+				Lat: fromCoord.lat + ratio*(toCoord.lat-fromCoord.lat),
+				Lon: fromCoord.lon + ratio*(toCoord.lon-fromCoord.lon),
+			}, true
+		}
+	}
+
+	lastCoord, ok := stopCoords[stopTimes[len(stopTimes)-1].StopID]
+	if !ok {
+		return models.Location{}, false
+	}
+	return models.Location{Lat: lastCoord.lat, Lon: lastCoord.lon}, true
 }
 
 // inferOrientationFromShape computes the OBA orientation (degrees, 0=East, 90=North)
