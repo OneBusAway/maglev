@@ -90,20 +90,15 @@ func TestBuildBlockLayoverIndex_RebuildOnReimport(t *testing.T) {
 	assert.Equal(t, first, second, "reimport must not accumulate duplicate layover rows")
 }
 
-// TestBuildBlockLayoverIndex_BoundsMatchJava verifies the recorded window is
-// [prev-trip last-stop DEPARTURE, next-trip first-stop ARRIVAL] as defined by
-// Java's BlockTripLayoverTimeComparator. Using arrival/departure instead would
-// widen the window into in-service dwell time at both ends and cause
-// trips-for-route to falsely report the block as in layover while the vehicle
-// is still running its scheduled trip.
 // TestBuildBlockLayoverIndex_BoundsMatchJava drives the builder with two
 // hand-crafted trips in the same block that share a terminal stop with real
-// scheduled dwell time. It pins the recorded window to Java's
+// scheduled dwell time, and pins the recorded window to Java's
 // BlockTripLayoverTimeComparator definition: layover_start = prev trip's
 // last-stop DEPARTURE, layover_end = next trip's first-stop ARRIVAL. Under
 // the previous (wrong) code, layover_start used the last-stop ARRIVAL and
-// layover_end used the first-stop DEPARTURE, widening the window by the dwell
-// at both ends.
+// layover_end used the first-stop DEPARTURE, widening the window by the
+// dwell at both ends — which caused trips-for-route to falsely report the
+// block as in layover while the vehicle was still running its scheduled trip.
 func TestBuildBlockLayoverIndex_BoundsMatchJava(t *testing.T) {
 	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
 	require.NoError(t, err)
