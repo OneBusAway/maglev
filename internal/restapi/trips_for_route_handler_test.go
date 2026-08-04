@@ -213,8 +213,8 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	}
 }
 
-// TestTripsForRouteHandler_TimeOmitted verifies that the handler defaults to the
-// current time and returns a 200 OK response when the time parameter is omitted.
+// TestTripsForRouteHandler_TimeOmitted verifies that omitting the time parameter
+// correctly falls back to the injected api.Clock to resolve active trips.
 func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {
 	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
@@ -226,12 +226,16 @@ func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.Equal(t, 2, model.Version)
-	// currentTime comes from the API clock, unlike the request's time= param.
+	// currentTime comes from the API clock, as does the omitted time= lookup.
 	assert.Equal(t, tripsForRouteTestClock.UnixMilli(), model.CurrentTime)
 	assert.False(t, model.Data.LimitExceeded)
 	assert.False(t, model.Data.OutOfRange)
 	assert.Empty(t, model.Data.FieldErrors)
-	assert.NotNil(t, model.Data.List)
+
+	require.Len(t, model.Data.List, 1, "the fixture trip must be active at the pinned clock time")
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	assert.Equal(t, expectedTripID, model.Data.List[0].TripId)
+	assert.NotZero(t, model.Data.List[0].ServiceDate)
 }
 
 // TestTripsForRouteHandler_InvalidTimeParameter verifies that malformed time

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -169,10 +170,10 @@ func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[stri
 
 }
 
-func ParseTimeParameter(timeParam string, currentLocation *time.Location) (string, time.Time, map[string][]string, bool) {
+func ParseTimeParameter(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
 	if timeParam == "" {
-		// No time parameter, use current date
-		now := time.Now().In(currentLocation)
+		// No time parameter, use the provided clock's current time
+		now := c.Now().In(currentLocation)
 		return now.Format("20060102"), now, nil, true
 	}
 
