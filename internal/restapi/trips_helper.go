@@ -161,9 +161,10 @@ func (api *RestAPI) BuildTripStatus(
 	}
 
 	// No GPS to work with: extrapolate the vehicle's position from the static
-	// schedule so status.Position isn't left at its zero value. Predicted is
-	// already false here (set above), matching the spec's predicted=false for
-	// schedule-derived positions.
+	// schedule so status.Position isn't left at its zero value. Predicted may
+	// still be true here (set above) if a realtime trip update carries a
+	// schedule deviation with no vehicle position — this only fills in the
+	// position, it doesn't change predicted/scheduled.
 	if (vehicle == nil || vehicle.Position == nil) && len(stopTimes) > 0 {
 		if stopCoords, coordsErr := api.stopCoordsForStopTimes(ctx, stopTimes); coordsErr != nil {
 			slog.Warn("BuildTripStatus: failed to fetch stop coordinates for schedule-derived position",
@@ -1207,22 +1208,35 @@ func scheduledPositionAtTime(
 
 	querySeconds := utils.CalculateSecondsSinceServiceDate(queryTime, serviceDate)
 
-	firstCoord, ok := stopCoords[stopTimes[0].StopID]
-	if !ok {
-		return models.Location{}, false
-	}
 	if querySeconds <= utils.NanosToSeconds(stopTimes[0].ArrivalTime) {
+		firstCoord, ok := stopCoords[stopTimes[0].StopID]
+		if !ok {
+			return models.Location{}, false
+		}
 		return models.Location{Lat: firstCoord.lat, Lon: firstCoord.lon}, true
 	}
 
 	for i := 0; i < len(stopTimes)-1; i++ {
+		// Dwelling at stop i (between its arrival and departure): the vehicle
+		// is sitting at that stop, not travelling — return its coordinate
+		// directly rather than falling through to the next travel interval.
+		arrival := utils.NanosToSeconds(stopTimes[i].ArrivalTime)
+		departure := utils.NanosToSeconds(stopTimes[i].DepartureTime)
+		if querySeconds >= arrival && querySeconds <= departure {
+			coord, ok := stopCoords[stopTimes[i].StopID]
+			if !ok {
+				return models.Location{}, false
+			}
+			return models.Location{Lat: coord.lat, Lon: coord.lon}, true
+		}
+
 		fromCoord, fromOK := stopCoords[stopTimes[i].StopID]
 		toCoord, toOK := stopCoords[stopTimes[i+1].StopID]
 		if !fromOK || !toOK {
 			continue
 		}
 
-		fromTime := utils.NanosToSeconds(stopTimes[i].DepartureTime)
+		fromTime := departure
 		toTime := utils.NanosToSeconds(stopTimes[i+1].ArrivalTime)
 
 		if querySeconds >= fromTime && querySeconds <= toTime {

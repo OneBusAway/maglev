@@ -81,7 +81,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	activeTrips := api.resolveActiveTrips(ctx, allLinkedBlocks, nullBlockTrips, windows)
+	activeTrips, _ := api.resolveActiveTrips(ctx, allLinkedBlocks, nullBlockTrips, windows)
 	if ctx.Err() != nil {
 		api.clientCanceledResponse(w, r, ctx.Err())
 		return

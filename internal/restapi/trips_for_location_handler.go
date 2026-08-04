@@ -57,13 +57,13 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		candidateTripIDs := api.resolveActiveTrips(ctx, blockIDs, nullBlockTripIDs, windows)
+		candidateTripIDs, serviceDateByTrip := api.resolveActiveTrips(ctx, blockIDs, nullBlockTripIDs, windows)
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
 
-		visibleTripIDs, err := api.visibleTripIDs(ctx, candidateTripIDs, parsedReq.LocationParams, parsedReq.CurrentTime)
+		visibleTripIDs, err := api.visibleTripIDs(ctx, candidateTripIDs, serviceDateByTrip, parsedReq.LocationParams, parsedReq.CurrentTime)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -244,8 +244,11 @@ func extractStopIDs(stops []gtfsdb.Stop) []string {
 // visibleTripIDs computes each candidate trip's position at queryTime — real-time
 // GPS when a non-stale vehicle is assigned to the trip, otherwise extrapolated
 // from the static schedule — and returns the subset whose computed position
-// falls inside loc's bounding box (spec steps 5 and 6).
-func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []string, loc *internalgtfs.LocationParams, queryTime time.Time) ([]string, error) {
+// falls inside loc's bounding box (spec steps 5 and 6). serviceDateByTrip
+// supplies the service day each trip actually matched (see resolveActiveTrips),
+// since a trip found via the past-midnight lookback must extrapolate against
+// yesterday's schedule, not today's.
+func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []string, serviceDateByTrip map[string]time.Time, loc *internalgtfs.LocationParams, queryTime time.Time) ([]string, error) {
 	if len(candidateTripIDs) == 0 {
 		return nil, nil
 	}
@@ -264,10 +267,14 @@ func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []strin
 		return nil, err
 	}
 	stopTimesByTrip := make(map[string][]gtfsdb.StopTime)
+	seenStopIDs := make(map[string]bool)
 	var allStopIDs []string
 	for _, st := range stopTimesRaw {
 		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
-		allStopIDs = append(allStopIDs, st.StopID)
+		if !seenStopIDs[st.StopID] {
+			seenStopIDs[st.StopID] = true
+			allStopIDs = append(allStopIDs, st.StopID)
+		}
 	}
 
 	var stopCoords map[string]struct{ lat, lon float64 }
@@ -289,7 +296,7 @@ func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []strin
 			return visible, nil
 		}
 
-		pos, ok := api.tripPositionAtTime(ctx, tripID, queryTime, stopTimesByTrip[tripID], stopCoords)
+		pos, ok := api.tripPositionAtTime(ctx, tripID, serviceDateByTrip[tripID], queryTime, stopTimesByTrip[tripID], stopCoords)
 		if !ok {
 			continue
 		}
@@ -302,8 +309,10 @@ func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []strin
 
 // tripPositionAtTime returns the trip's position at queryTime: the real-time
 // GPS position when a non-stale vehicle is assigned to the trip, otherwise
-// the position extrapolated from the static schedule.
-func (api *RestAPI) tripPositionAtTime(ctx context.Context, tripID string, queryTime time.Time, stopTimes []gtfsdb.StopTime, stopCoords map[string]struct{ lat, lon float64 }) (models.Location, bool) {
+// the position extrapolated from the static schedule. serviceDate is the
+// service day the trip actually matched (from resolveActiveTrips); if the
+// caller doesn't have one, queryTime's own calendar day is used.
+func (api *RestAPI) tripPositionAtTime(ctx context.Context, tripID string, serviceDate time.Time, queryTime time.Time, stopTimes []gtfsdb.StopTime, stopCoords map[string]struct{ lat, lon float64 }) (models.Location, bool) {
 	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil &&
 		vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil &&
 		!defaultStaleDetector.Check(vehicle, queryTime) {
@@ -313,7 +322,9 @@ func (api *RestAPI) tripPositionAtTime(ctx context.Context, tripID string, query
 	if len(stopTimes) == 0 {
 		return models.Location{}, false
 	}
-	serviceDate := time.Date(queryTime.Year(), queryTime.Month(), queryTime.Day(), 0, 0, 0, 0, queryTime.Location())
+	if serviceDate.IsZero() {
+		serviceDate = time.Date(queryTime.Year(), queryTime.Month(), queryTime.Day(), 0, 0, 0, 0, queryTime.Location())
+	}
 	return scheduledPositionAtTime(stopTimes, stopCoords, queryTime, serviceDate)
 }
 

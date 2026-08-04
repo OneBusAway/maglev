@@ -2056,3 +2056,99 @@ func testTripIDs(trips []gtfsdb.Trip) []string {
 	}
 	return ids
 }
+
+func TestScheduledPositionAtTime(t *testing.T) {
+	serviceDate := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+
+	// s1: arrives/departs 08:00:00. s2: arrives 08:10:00, departs 08:12:00
+	// (a two-minute dwell). s3: arrives/departs 08:20:00.
+	stopTimes := []gtfsdb.StopTime{
+		{StopID: "s1", ArrivalTime: secondsToNanos(8 * 3600), DepartureTime: secondsToNanos(8 * 3600)},
+		{StopID: "s2", ArrivalTime: secondsToNanos(8*3600 + 600), DepartureTime: secondsToNanos(8*3600 + 720)},
+		{StopID: "s3", ArrivalTime: secondsToNanos(8*3600 + 1200), DepartureTime: secondsToNanos(8*3600 + 1200)},
+	}
+	coords := map[string]struct{ lat, lon float64 }{
+		"s1": {lat: 40.0, lon: -122.0},
+		"s2": {lat: 40.1, lon: -122.1},
+		"s3": {lat: 40.2, lon: -122.2},
+	}
+
+	tests := []struct {
+		name        string
+		queryTime   time.Time
+		stopCoords  map[string]struct{ lat, lon float64 }
+		wantOK      bool
+		wantLat     float64
+		wantLon     float64
+		description string
+	}{
+		{
+			name:        "before first arrival snaps to first stop",
+			queryTime:   serviceDate.Add(7*time.Hour + 55*time.Minute),
+			stopCoords:  coords,
+			wantOK:      true,
+			wantLat:     40.0,
+			wantLon:     -122.0,
+			description: "query before the trip starts should return the first stop's position",
+		},
+		{
+			name:        "interpolates midway through a travel interval",
+			queryTime:   serviceDate.Add(8*time.Hour + 5*time.Minute), // halfway between s1 departure (8:00) and s2 arrival (8:10)
+			stopCoords:  coords,
+			wantOK:      true,
+			wantLat:     40.05,
+			wantLon:     -122.05,
+			description: "query midway between two stops should linearly interpolate",
+		},
+		{
+			name:        "dwelling at an intermediate stop returns that stop's position",
+			queryTime:   serviceDate.Add(8*time.Hour + 11*time.Minute), // between s2 arrival (8:10) and departure (8:12)
+			stopCoords:  coords,
+			wantOK:      true,
+			wantLat:     40.1,
+			wantLon:     -122.1,
+			description: "a query during a stop's dwell time must not fall through to the terminus",
+		},
+		{
+			name:        "exactly at a stop whose arrival equals its departure",
+			queryTime:   serviceDate.Add(8 * time.Hour), // exactly at s1, whose arrival == departure
+			stopCoords:  coords,
+			wantOK:      true,
+			wantLat:     40.0,
+			wantLon:     -122.0,
+			description: "a zero-length dwell must not divide by zero or fall through to the wrong stop",
+		},
+		{
+			name:        "after the last stop snaps to the last stop",
+			queryTime:   serviceDate.Add(9 * time.Hour),
+			stopCoords:  coords,
+			wantOK:      true,
+			wantLat:     40.2,
+			wantLon:     -122.2,
+			description: "query after the trip ends should return the last stop's position",
+		},
+		{
+			name:      "missing first-stop coordinate does not block an interior query",
+			queryTime: serviceDate.Add(8*time.Hour + 16*time.Minute), // halfway between s2 departure (8:12) and s3 arrival (8:20)
+			stopCoords: map[string]struct{ lat, lon float64 }{
+				"s2": {lat: 40.1, lon: -122.1},
+				"s3": {lat: 40.2, lon: -122.2},
+			},
+			wantOK:      true,
+			wantLat:     40.15,
+			wantLon:     -122.15,
+			description: "s1's coordinate is unknown, but the query falls in the s2-s3 interval, which doesn't need it",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pos, ok := scheduledPositionAtTime(stopTimes, tt.stopCoords, tt.queryTime, serviceDate)
+			require.Equal(t, tt.wantOK, ok, tt.description)
+			if tt.wantOK {
+				assert.InDelta(t, tt.wantLat, pos.Lat, 1e-9, tt.description)
+				assert.InDelta(t, tt.wantLon, pos.Lon, 1e-9, tt.description)
+			}
+		})
+	}
+}

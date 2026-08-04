@@ -492,27 +492,34 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	t.Run("Date String YYYY-MM-DD", func(t *testing.T) {
-		// A bare date resolves to midnight of that day. RABA has no scheduled
-		// service at midnight, so schedule-derived candidate selection
-		// correctly finds nothing — this exercises the date-string parsing
-		// path succeeding (200, not a validation error) rather than any
-		// particular trip being found.
-		dateStr := "2025-06-15"
+	t.Run("Date String YYYY-MM-DD_HH-mm-ss", func(t *testing.T) {
+		// The bare "yyyy-MM-dd" form always resolves to midnight, and RABA has
+		// no scheduled service at midnight — that would make this subtest
+		// vacuous (empty list either way). Use the "yyyy-MM-dd_HH-mm-ss" date-
+		// string form instead, at an in-service instant, so the date-string
+		// parsing path is verified against real, non-empty results.
+		dateStr := tripsForLocationTestTime.Format("2006-01-02_15-04-05")
+		targetMidnight := time.Date(tripsForLocationTestTime.Year(), tripsForLocationTestTime.Month(), tripsForLocationTestTime.Day(), 0, 0, 0, 0, tripsForLocationTestTime.Location())
+
 		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("includeStatus=true&time=%s", dateStr))
 		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.False(t, model.Data.OutOfRange)
-		assert.Empty(t, model.Data.List, "no service is scheduled at midnight")
+		require.NotEmpty(t, model.Data.List, "expected at least one trip entry to verify ServiceDate")
+		for _, entry := range model.Data.List {
+			assert.Equal(t, targetMidnight.UnixMilli(), entry.ServiceDate, "entry.ServiceDate should match midnight of the parsed date string")
+			if entry.Status != nil {
+				assert.Equal(t, targetMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+			}
+		}
 	})
 
 	t.Run("Query Time Far Outside Service Window", func(t *testing.T) {
-		// Querying at epoch millis for Jan 1, 2010, well before the RABA
-		// fixture's calendar coverage begins. No service is scheduled that
-		// day, so schedule-derived candidate selection correctly finds
-		// nothing.
-		const historicalMillis = int64(1262332800000)
+		// Querying a non-midnight instant on Jan 1, 2010, well before the RABA
+		// fixture's calendar coverage begins (a non-midnight time rules out
+		// "no service at midnight" as the reason for an empty result — this is
+		// specifically about missing calendar coverage that far back).
+		const historicalMillis = int64(1262356200000) // 2010-01-01 14:30:00 UTC
 		url := tripsForLocationURL(1.0, 1.0, fmt.Sprintf("time=%d", historicalMillis))
 		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 

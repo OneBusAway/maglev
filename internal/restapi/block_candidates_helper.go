@@ -25,6 +25,8 @@ type serviceDayWindow struct {
 	sinceMidnight time.Duration
 	rangeStart    time.Duration
 	rangeEnd      time.Duration
+	// date is midnight of this service day, in the query's location.
+	date time.Time
 }
 
 // serviceDayWindows returns the query window for the current service day and,
@@ -47,6 +49,7 @@ func (api *RestAPI) serviceDayWindows(ctx context.Context, currentTime time.Time
 		sinceMidnight: currentSinceMidnight,
 		rangeStart:    currentSinceMidnight - runningLate,
 		rangeEnd:      currentSinceMidnight + runningEarly,
+		date:          serviceDayMidnight,
 	}}
 
 	prevDay := currentTime.AddDate(0, 0, -1)
@@ -60,13 +63,18 @@ func (api *RestAPI) serviceDayWindows(ctx context.Context, currentTime time.Time
 		return windows, nil
 	}
 
-	// I'm confused by adding 24 hours to get the previous day here, but that's the existing behavior.
+	// GTFS allows stop_times past 24:00:00 (e.g. 25:30:00 = 1:30 AM next day),
+	// so a trip belonging to yesterday's service can still be running now.
+	// Expressing "now" as yesterday's-midnight-plus-24h-and-change lets the
+	// same query-window math used for today apply unchanged to yesterday's
+	// service day.
 	prevDaySinceMidnight := currentSinceMidnight + 24*time.Hour
 	windows = append(windows, serviceDayWindow{
 		serviceIDs:    prevServiceIDs,
 		sinceMidnight: prevDaySinceMidnight,
 		rangeStart:    prevDaySinceMidnight - runningLate,
 		rangeEnd:      prevDaySinceMidnight + runningEarly,
+		date:          serviceDayMidnight.AddDate(0, 0, -1),
 	})
 
 	return windows, nil
@@ -85,13 +93,14 @@ type blockCandidateQueries struct {
 	nullBlocks func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error)
 }
 
-// blockCandidates returns the candidate block IDs and null-block trip IDs
-// whose schedule overlaps the query windows, as scoped by q. An error from
-// the current-day (windows[0]) index/block queries is returned to the
-// caller as fatal; all other failures (previous-day queries, layover
+// blockCandidates returns the candidate block IDs, and the null-block trip
+// IDs mapped to the index (into windows) of the service day whose query
+// found them, whose schedule overlaps the query windows, as scoped by q. An
+// error from the current-day (windows[0]) index/block queries is returned
+// to the caller as fatal; all other failures (previous-day queries, layover
 // blocks, null-block trips) are logged and skipped so partial data still
 // produces a result.
-func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) (map[string]bool, []string, error) {
+func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) (map[string]bool, map[string]int, error) {
 	allLinkedBlocks := make(map[string]bool)
 
 	for i, w := range windows {
@@ -136,7 +145,7 @@ func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries
 		}
 	}
 
-	var nullBlockTrips []string
+	nullBlockTripWindows := make(map[string]int)
 	for i, w := range windows {
 		trips, err := q.nullBlocks(ctx, w.serviceIDs, w.rangeStart.Nanoseconds(), w.rangeEnd.Nanoseconds())
 		if err != nil {
@@ -147,16 +156,18 @@ func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries
 			}
 			continue
 		}
-		nullBlockTrips = append(nullBlockTrips, trips...)
+		for _, tripID := range trips {
+			nullBlockTripWindows[tripID] = i
+		}
 	}
 
-	return allLinkedBlocks, nullBlockTrips, nil
+	return allLinkedBlocks, nullBlockTripWindows, nil
 }
 
 // blockCandidatesForRoute returns the candidate block IDs and null-block
-// trip IDs whose schedule overlaps the query windows, scoped to the given
-// route.
-func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string, windows []serviceDayWindow) (map[string]bool, []string, error) {
+// trip IDs (see blockCandidates) whose schedule overlaps the query windows,
+// scoped to the given route.
+func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string, windows []serviceDayWindow) (map[string]bool, map[string]int, error) {
 	return api.blockCandidates(ctx, blockCandidateQueries{
 		logScope: "trips-for-route",
 		indexIDs: func(ctx context.Context, serviceIDs []string) ([]int64, error) {
@@ -185,9 +196,10 @@ func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string,
 }
 
 // blockCandidatesForStops is the stop-scoped mirror of blockCandidatesForRoute:
-// it returns the candidate block IDs and null-block trip IDs whose schedule
-// overlaps the query windows, scoped to trips serving any of the given stops.
-func (api *RestAPI) blockCandidatesForStops(ctx context.Context, stopIDs []string, windows []serviceDayWindow) (map[string]bool, []string, error) {
+// it returns the candidate block IDs and null-block trip IDs (see
+// blockCandidates) whose schedule overlaps the query windows, scoped to
+// trips serving any of the given stops.
+func (api *RestAPI) blockCandidatesForStops(ctx context.Context, stopIDs []string, windows []serviceDayWindow) (map[string]bool, map[string]int, error) {
 	return api.blockCandidates(ctx, blockCandidateQueries{
 		logScope: "trips-for-location",
 		indexIDs: func(ctx context.Context, serviceIDs []string) ([]int64, error) {
@@ -218,31 +230,29 @@ func (api *RestAPI) blockCandidatesForStops(ctx context.Context, stopIDs []strin
 // resolveActiveTrips returns the trip IDs actually running at each window's
 // query time: one active trip per candidate block (the earliest trip in the
 // block whose stop times contain that window's query time), plus the given
-// null-block trip IDs. If ctx is canceled mid-loop, the trips accumulated so
-// far are returned; callers should check ctx.Err() afterward.
-func (api *RestAPI) resolveActiveTrips(ctx context.Context, blockIDs map[string]bool, nullBlockTripIDs []string, windows []serviceDayWindow) []string {
+// null-block trip IDs. It also returns, for every returned trip ID, the
+// calendar date (midnight) of the service day whose window produced it —
+// windows[0]'s date for an ordinary match, windows[1]'s (yesterday's) date
+// for a trip only found via the past-midnight lookback — so callers doing
+// their own schedule-time math (e.g. extrapolating a position) use the
+// correct service day rather than assuming "today". If ctx is canceled
+// mid-loop, the trips accumulated so far are returned; callers should check
+// ctx.Err() afterward.
+func (api *RestAPI) resolveActiveTrips(ctx context.Context, blockIDs map[string]bool, nullBlockTripWindows map[string]int, windows []serviceDayWindow) ([]string, map[string]time.Time) {
 	var activeTrips []string
+	serviceDateByTrip := make(map[string]time.Time, len(blockIDs)+len(nullBlockTripWindows))
 
 	for blockID := range blockIDs {
 		if ctx.Err() != nil {
-			return activeTrips
+			return activeTrips, serviceDateByTrip
 		}
 
 		blockIDNullStr := nulls.String(blockID)
 
 		for _, w := range windows {
-			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
-				BlockID:    blockIDNullStr,
-				ServiceIds: w.serviceIDs,
-			})
-			if err != nil {
-				api.Logger.Warn("failed to fetch trips in block", "block_id", blockID, "error", err)
-				continue
-			}
-			if len(tripsInBlock) == 0 {
-				continue
-			}
-
+			// GetActiveTripInBlockAtTime already returns sql.ErrNoRows when the
+			// block has no trip for this service day, so there's no need to
+			// pre-check with a separate "does this block have any trips" query.
 			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
 				BlockID:     blockIDNullStr,
 				ServiceIds:  w.serviceIDs,
@@ -262,10 +272,17 @@ func (api *RestAPI) resolveActiveTrips(ctx context.Context, blockIDs map[string]
 			}
 
 			activeTrips = append(activeTrips, activeTrip)
+			serviceDateByTrip[activeTrip] = w.date
 			break
 		}
 	}
 
-	activeTrips = append(activeTrips, nullBlockTripIDs...)
-	return activeTrips
+	for tripID, windowIdx := range nullBlockTripWindows {
+		activeTrips = append(activeTrips, tripID)
+		if windowIdx >= 0 && windowIdx < len(windows) {
+			serviceDateByTrip[tripID] = windows[windowIdx].date
+		}
+	}
+
+	return activeTrips, serviceDateByTrip
 }
