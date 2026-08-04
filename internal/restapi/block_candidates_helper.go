@@ -72,25 +72,35 @@ func (api *RestAPI) serviceDayWindows(ctx context.Context, currentTime time.Time
 	return windows, nil
 }
 
-// blockCandidatesForRoute returns the candidate block IDs and null-block trip
-// IDs whose schedule overlaps the query windows, scoped to the given route.
-// An error from the current-day (windows[0]) index/block queries is returned
-// to the caller as fatal; all other failures (previous-day queries, layover
+// blockCandidateQueries supplies the scope-specific (route or stop) lookups
+// that blockCandidates needs. Everything else about candidate selection —
+// the service-day window loop, the layover lookup, the null-block loop, and
+// the error-handling semantics — is scope-agnostic and lives in
+// blockCandidates itself.
+type blockCandidateQueries struct {
+	// logScope names the caller in warning logs, e.g. "trips-for-route".
+	logScope   string
+	indexIDs   func(ctx context.Context, serviceIDs []string) ([]int64, error)
+	layover    func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error)
+	nullBlocks func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error)
+}
+
+// blockCandidates returns the candidate block IDs and null-block trip IDs
+// whose schedule overlaps the query windows, as scoped by q. An error from
+// the current-day (windows[0]) index/block queries is returned to the
+// caller as fatal; all other failures (previous-day queries, layover
 // blocks, null-block trips) are logged and skipped so partial data still
-// produces a result, matching the pre-extraction handler's behavior.
-func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string, windows []serviceDayWindow) (map[string]bool, []string, error) {
+// produces a result.
+func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) (map[string]bool, []string, error) {
 	allLinkedBlocks := make(map[string]bool)
 
 	for i, w := range windows {
-		indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
-			RouteID:    routeID,
-			ServiceIds: w.serviceIDs,
-		})
+		indexIDs, err := q.indexIDs(ctx, w.serviceIDs)
 		if err != nil {
 			if i == 0 {
 				return nil, nil, err
 			}
-			api.Logger.Warn("trips-for-route: failed to fetch previous-day block index IDs", "error", err)
+			api.Logger.Warn(q.logScope+": failed to fetch previous-day block index IDs", "error", err)
 			continue
 		}
 		if len(indexIDs) == 0 {
@@ -107,7 +117,7 @@ func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string,
 			if i == 0 {
 				return nil, nil, err
 			}
-			api.Logger.Warn("trips-for-route: failed to fetch previous-day blocks", "error", err)
+			api.Logger.Warn(q.logScope+": failed to fetch previous-day blocks", "error", err)
 			continue
 		}
 		for _, b := range blocks {
@@ -117,14 +127,9 @@ func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string,
 		}
 	}
 
-	layoverBlocks, err := api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForRoute(ctx, gtfsdb.GetActiveLayoverBlockIDsForRouteParams{
-		RouteID:        routeID,
-		ServiceIds:     windows[0].serviceIDs,
-		TimeRangeStart: windows[0].rangeStart.Nanoseconds(),
-		TimeRangeEnd:   windows[0].rangeEnd.Nanoseconds(),
-	})
+	layoverBlocks, err := q.layover(ctx, windows[0].serviceIDs, windows[0].rangeStart.Nanoseconds(), windows[0].rangeEnd.Nanoseconds())
 	if err != nil {
-		api.Logger.Warn("trips-for-route: failed to fetch layover blocks", "route_id", routeID, "error", err)
+		api.Logger.Warn(q.logScope+": failed to fetch layover blocks", "error", err)
 	} else {
 		for _, blockID := range layoverBlocks {
 			allLinkedBlocks[blockID] = true
@@ -133,17 +138,12 @@ func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string,
 
 	var nullBlockTrips []string
 	for i, w := range windows {
-		trips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForRoute(ctx, gtfsdb.GetActiveTripsWithNullBlockForRouteParams{
-			RouteID:        routeID,
-			ServiceIds:     w.serviceIDs,
-			TimeRangeStart: sql.NullInt64{Int64: w.rangeStart.Nanoseconds(), Valid: true},
-			TimeRangeEnd:   sql.NullInt64{Int64: w.rangeEnd.Nanoseconds(), Valid: true},
-		})
+		trips, err := q.nullBlocks(ctx, w.serviceIDs, w.rangeStart.Nanoseconds(), w.rangeEnd.Nanoseconds())
 		if err != nil {
 			if i == 0 {
-				api.Logger.Warn("trips-for-route: failed to fetch null-block trips", "route_id", routeID, "error", err)
+				api.Logger.Warn(q.logScope+": failed to fetch null-block trips", "error", err)
 			} else {
-				api.Logger.Warn("trips-for-route: failed to fetch previous-day null-block trips", "error", err)
+				api.Logger.Warn(q.logScope+": failed to fetch previous-day null-block trips", "error", err)
 			}
 			continue
 		}
@@ -153,83 +153,66 @@ func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string,
 	return allLinkedBlocks, nullBlockTrips, nil
 }
 
+// blockCandidatesForRoute returns the candidate block IDs and null-block
+// trip IDs whose schedule overlaps the query windows, scoped to the given
+// route.
+func (api *RestAPI) blockCandidatesForRoute(ctx context.Context, routeID string, windows []serviceDayWindow) (map[string]bool, []string, error) {
+	return api.blockCandidates(ctx, blockCandidateQueries{
+		logScope: "trips-for-route",
+		indexIDs: func(ctx context.Context, serviceIDs []string) ([]int64, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{
+				RouteID:    routeID,
+				ServiceIds: serviceIDs,
+			})
+		},
+		layover: func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForRoute(ctx, gtfsdb.GetActiveLayoverBlockIDsForRouteParams{
+				RouteID:        routeID,
+				ServiceIds:     serviceIDs,
+				TimeRangeStart: rangeStart,
+				TimeRangeEnd:   rangeEnd,
+			})
+		},
+		nullBlocks: func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForRoute(ctx, gtfsdb.GetActiveTripsWithNullBlockForRouteParams{
+				RouteID:        routeID,
+				ServiceIds:     serviceIDs,
+				TimeRangeStart: sql.NullInt64{Int64: rangeStart, Valid: true},
+				TimeRangeEnd:   sql.NullInt64{Int64: rangeEnd, Valid: true},
+			})
+		},
+	}, windows)
+}
+
 // blockCandidatesForStops is the stop-scoped mirror of blockCandidatesForRoute:
 // it returns the candidate block IDs and null-block trip IDs whose schedule
 // overlaps the query windows, scoped to trips serving any of the given stops.
-// Error-handling semantics match blockCandidatesForRoute exactly.
 func (api *RestAPI) blockCandidatesForStops(ctx context.Context, stopIDs []string, windows []serviceDayWindow) (map[string]bool, []string, error) {
-	allLinkedBlocks := make(map[string]bool)
-
-	for i, w := range windows {
-		indexIDs, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForStops(ctx, gtfsdb.GetBlockTripIndexIDsForStopsParams{
-			StopIds:    stopIDs,
-			ServiceIds: w.serviceIDs,
-		})
-		if err != nil {
-			if i == 0 {
-				return nil, nil, err
-			}
-			api.Logger.Warn("trips-for-location: failed to fetch previous-day block index IDs", "error", err)
-			continue
-		}
-		if len(indexIDs) == 0 {
-			continue
-		}
-
-		blocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
-			FromTime:   sql.NullInt64{Int64: w.rangeStart.Nanoseconds(), Valid: true},
-			ToTime:     sql.NullInt64{Int64: w.rangeEnd.Nanoseconds(), Valid: true},
-			IndexIds:   indexIDs,
-			ServiceIds: w.serviceIDs,
-		})
-		if err != nil {
-			if i == 0 {
-				return nil, nil, err
-			}
-			api.Logger.Warn("trips-for-location: failed to fetch previous-day blocks", "error", err)
-			continue
-		}
-		for _, b := range blocks {
-			if b.Valid {
-				allLinkedBlocks[b.String] = true
-			}
-		}
-	}
-
-	layoverBlocks, err := api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForStops(ctx, gtfsdb.GetActiveLayoverBlockIDsForStopsParams{
-		StopIds:        stopIDs,
-		ServiceIds:     windows[0].serviceIDs,
-		TimeRangeStart: windows[0].rangeStart.Nanoseconds(),
-		TimeRangeEnd:   windows[0].rangeEnd.Nanoseconds(),
-	})
-	if err != nil {
-		api.Logger.Warn("trips-for-location: failed to fetch layover blocks", "error", err)
-	} else {
-		for _, blockID := range layoverBlocks {
-			allLinkedBlocks[blockID] = true
-		}
-	}
-
-	var nullBlockTrips []string
-	for i, w := range windows {
-		trips, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForStops(ctx, gtfsdb.GetActiveTripsWithNullBlockForStopsParams{
-			StopIds:        stopIDs,
-			ServiceIds:     w.serviceIDs,
-			TimeRangeStart: sql.NullInt64{Int64: w.rangeStart.Nanoseconds(), Valid: true},
-			TimeRangeEnd:   sql.NullInt64{Int64: w.rangeEnd.Nanoseconds(), Valid: true},
-		})
-		if err != nil {
-			if i == 0 {
-				api.Logger.Warn("trips-for-location: failed to fetch null-block trips", "error", err)
-			} else {
-				api.Logger.Warn("trips-for-location: failed to fetch previous-day null-block trips", "error", err)
-			}
-			continue
-		}
-		nullBlockTrips = append(nullBlockTrips, trips...)
-	}
-
-	return allLinkedBlocks, nullBlockTrips, nil
+	return api.blockCandidates(ctx, blockCandidateQueries{
+		logScope: "trips-for-location",
+		indexIDs: func(ctx context.Context, serviceIDs []string) ([]int64, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetBlockTripIndexIDsForStops(ctx, gtfsdb.GetBlockTripIndexIDsForStopsParams{
+				StopIds:    stopIDs,
+				ServiceIds: serviceIDs,
+			})
+		},
+		layover: func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetActiveLayoverBlockIDsForStops(ctx, gtfsdb.GetActiveLayoverBlockIDsForStopsParams{
+				StopIds:        stopIDs,
+				ServiceIds:     serviceIDs,
+				TimeRangeStart: rangeStart,
+				TimeRangeEnd:   rangeEnd,
+			})
+		},
+		nullBlocks: func(ctx context.Context, serviceIDs []string, rangeStart, rangeEnd int64) ([]string, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetActiveTripsWithNullBlockForStops(ctx, gtfsdb.GetActiveTripsWithNullBlockForStopsParams{
+				StopIds:        stopIDs,
+				ServiceIds:     serviceIDs,
+				TimeRangeStart: sql.NullInt64{Int64: rangeStart, Valid: true},
+				TimeRangeEnd:   sql.NullInt64{Int64: rangeEnd, Valid: true},
+			})
+		},
+	}, windows)
 }
 
 // resolveActiveTrips returns the trip IDs actually running at each window's
