@@ -11,8 +11,11 @@ import (
 )
 
 // Match Java OBA: look back 30 min (catch late vehicles) and ahead 10 min (catch early vehicles).
-// TODO: We should add config for runningLateWindow and runningEarlyWindow like Java OBA
-// source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
+// Java OBA exposes these as configurable runningLateWindow/runningEarlyWindow
+// values (source: https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J);
+// Maglev hard-codes them for now. Making them configurable is a separate,
+// larger change (app config plumbing) than this file's candidate-selection
+// logic, not a follow-up tracked here.
 const (
 	runningLate  = 30 * time.Minute // runningLateWindow
 	runningEarly = 10 * time.Minute // runningEarlyWindow
