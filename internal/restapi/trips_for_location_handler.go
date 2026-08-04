@@ -253,19 +253,36 @@ func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []strin
 		return nil, nil
 	}
 
-	dedupedIDs := make([]string, 0, len(candidateTripIDs))
-	seen := make(map[string]bool, len(candidateTripIDs))
-	for _, tripID := range candidateTripIDs {
-		if !seen[tripID] {
-			seen[tripID] = true
-			dedupedIDs = append(dedupedIDs, tripID)
-		}
-	}
+	dedupedIDs := dedupeStrings(candidateTripIDs)
 
-	stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, dedupedIDs)
+	stopTimesByTrip, stopCoords, err := api.stopTimesAndCoordsForTrips(ctx, dedupedIDs)
 	if err != nil {
 		return nil, err
 	}
+
+	bounds := internalgtfs.BoundsFromParams(loc, true)
+	visible := make([]string, 0, len(dedupedIDs))
+	for _, tripID := range dedupedIDs {
+		if ctx.Err() != nil {
+			return visible, nil
+		}
+
+		pos, ok := api.tripPositionAtTime(ctx, tripID, serviceDateByTrip[tripID], queryTime, stopTimesByTrip[tripID], stopCoords)
+		if ok && isWithinBounds(pos, bounds) {
+			visible = append(visible, tripID)
+		}
+	}
+	return visible, nil
+}
+
+// stopTimesAndCoordsForTrips batch-fetches stop times for tripIDs, grouped by
+// trip, and the coordinates of every stop they reference.
+func (api *RestAPI) stopTimesAndCoordsForTrips(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.StopTime, map[string]struct{ lat, lon float64 }, error) {
+	stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	stopTimesByTrip := make(map[string][]gtfsdb.StopTime)
 	seenStopIDs := make(map[string]bool)
 	var allStopIDs []string
@@ -277,34 +294,24 @@ func (api *RestAPI) visibleTripIDs(ctx context.Context, candidateTripIDs []strin
 		}
 	}
 
-	var stopCoords map[string]struct{ lat, lon float64 }
-	if len(allStopIDs) > 0 {
-		stopsRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, allStopIDs)
-		if err != nil {
-			return nil, err
-		}
-		stopCoords = make(map[string]struct{ lat, lon float64 }, len(stopsRaw))
-		for _, s := range stopsRaw {
-			stopCoords[s.ID] = struct{ lat, lon float64 }{lat: s.Lat, lon: s.Lon}
-		}
+	if len(allStopIDs) == 0 {
+		return stopTimesByTrip, nil, nil
 	}
 
-	bounds := internalgtfs.BoundsFromParams(loc, true)
-	visible := make([]string, 0, len(dedupedIDs))
-	for _, tripID := range dedupedIDs {
-		if ctx.Err() != nil {
-			return visible, nil
-		}
-
-		pos, ok := api.tripPositionAtTime(ctx, tripID, serviceDateByTrip[tripID], queryTime, stopTimesByTrip[tripID], stopCoords)
-		if !ok {
-			continue
-		}
-		if pos.Lat >= bounds.MinLat && pos.Lat <= bounds.MaxLat && pos.Lon >= bounds.MinLon && pos.Lon <= bounds.MaxLon {
-			visible = append(visible, tripID)
-		}
+	stopsRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, allStopIDs)
+	if err != nil {
+		return nil, nil, err
 	}
-	return visible, nil
+	stopCoords := make(map[string]struct{ lat, lon float64 }, len(stopsRaw))
+	for _, s := range stopsRaw {
+		stopCoords[s.ID] = struct{ lat, lon float64 }{lat: s.Lat, lon: s.Lon}
+	}
+	return stopTimesByTrip, stopCoords, nil
+}
+
+// isWithinBounds reports whether pos lies inside bounds (inclusive).
+func isWithinBounds(pos models.Location, bounds utils.CoordinateBounds) bool {
+	return pos.Lat >= bounds.MinLat && pos.Lat <= bounds.MaxLat && pos.Lon >= bounds.MinLon && pos.Lon <= bounds.MaxLon
 }
 
 // tripPositionAtTime returns the trip's position at queryTime: the real-time

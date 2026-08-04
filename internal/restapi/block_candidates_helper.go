@@ -95,19 +95,32 @@ type blockCandidateQueries struct {
 
 // blockCandidates returns the candidate block IDs, and the null-block trip
 // IDs mapped to the index (into windows) of the service day whose query
-// found them, whose schedule overlaps the query windows, as scoped by q. An
-// error from the current-day (windows[0]) index/block queries is returned
-// to the caller as fatal; all other failures (previous-day queries, layover
-// blocks, null-block trips) are logged and skipped so partial data still
-// produces a result.
+// found them, whose schedule overlaps the query windows, as scoped by q.
 func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) (map[string]bool, map[string]int, error) {
+	allLinkedBlocks, err := api.resolveLinkedBlocks(ctx, q, windows)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	api.addLayoverBlocks(ctx, q, windows[0], allLinkedBlocks)
+
+	nullBlockTripWindows := api.resolveNullBlockTripWindows(ctx, q, windows)
+
+	return allLinkedBlocks, nullBlockTripWindows, nil
+}
+
+// resolveLinkedBlocks finds the block IDs whose block_trip_index overlaps
+// the query windows. An error from the current-day (windows[0]) query is
+// returned to the caller as fatal; a previous-day failure is logged and
+// skipped so partial data still produces a result.
+func (api *RestAPI) resolveLinkedBlocks(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) (map[string]bool, error) {
 	allLinkedBlocks := make(map[string]bool)
 
 	for i, w := range windows {
 		indexIDs, err := q.indexIDs(ctx, w.serviceIDs)
 		if err != nil {
 			if i == 0 {
-				return nil, nil, err
+				return nil, err
 			}
 			api.Logger.Warn(q.logScope+": failed to fetch previous-day block index IDs", "error", err)
 			continue
@@ -116,44 +129,64 @@ func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries
 			continue
 		}
 
-		blocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
-			FromTime:   sql.NullInt64{Int64: w.rangeStart.Nanoseconds(), Valid: true},
-			ToTime:     sql.NullInt64{Int64: w.rangeEnd.Nanoseconds(), Valid: true},
-			IndexIds:   indexIDs,
-			ServiceIds: w.serviceIDs,
-		})
-		if err != nil {
+		if err := api.addBlocksForIndexIDs(ctx, indexIDs, w, allLinkedBlocks); err != nil {
 			if i == 0 {
-				return nil, nil, err
+				return nil, err
 			}
 			api.Logger.Warn(q.logScope+": failed to fetch previous-day blocks", "error", err)
-			continue
-		}
-		for _, b := range blocks {
-			if b.Valid {
-				allLinkedBlocks[b.String] = true
-			}
 		}
 	}
 
-	layoverBlocks, err := q.layover(ctx, windows[0].serviceIDs, windows[0].rangeStart.Nanoseconds(), windows[0].rangeEnd.Nanoseconds())
+	return allLinkedBlocks, nil
+}
+
+// addBlocksForIndexIDs fetches the blocks active within w for the given
+// block_trip_index IDs and adds them to allLinkedBlocks.
+func (api *RestAPI) addBlocksForIndexIDs(ctx context.Context, indexIDs []int64, w serviceDayWindow, allLinkedBlocks map[string]bool) error {
+	blocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
+		FromTime:   sql.NullInt64{Int64: w.rangeStart.Nanoseconds(), Valid: true},
+		ToTime:     sql.NullInt64{Int64: w.rangeEnd.Nanoseconds(), Valid: true},
+		IndexIds:   indexIDs,
+		ServiceIds: w.serviceIDs,
+	})
+	if err != nil {
+		return err
+	}
+	for _, b := range blocks {
+		if b.Valid {
+			allLinkedBlocks[b.String] = true
+		}
+	}
+	return nil
+}
+
+// addLayoverBlocks adds block IDs whose layover overlaps w to allLinkedBlocks.
+// A failure here is logged and skipped, not fatal.
+func (api *RestAPI) addLayoverBlocks(ctx context.Context, q blockCandidateQueries, w serviceDayWindow, allLinkedBlocks map[string]bool) {
+	layoverBlocks, err := q.layover(ctx, w.serviceIDs, w.rangeStart.Nanoseconds(), w.rangeEnd.Nanoseconds())
 	if err != nil {
 		api.Logger.Warn(q.logScope+": failed to fetch layover blocks", "error", err)
-	} else {
-		for _, blockID := range layoverBlocks {
-			allLinkedBlocks[blockID] = true
-		}
+		return
 	}
+	for _, blockID := range layoverBlocks {
+		allLinkedBlocks[blockID] = true
+	}
+}
 
+// resolveNullBlockTripWindows finds null-block trips active within each
+// window, mapped to the index of the window that found them. A failure on
+// any window is logged and skipped, not fatal.
+func (api *RestAPI) resolveNullBlockTripWindows(ctx context.Context, q blockCandidateQueries, windows []serviceDayWindow) map[string]int {
 	nullBlockTripWindows := make(map[string]int)
+
 	for i, w := range windows {
 		trips, err := q.nullBlocks(ctx, w.serviceIDs, w.rangeStart.Nanoseconds(), w.rangeEnd.Nanoseconds())
 		if err != nil {
-			if i == 0 {
-				api.Logger.Warn(q.logScope+": failed to fetch null-block trips", "error", err)
-			} else {
-				api.Logger.Warn(q.logScope+": failed to fetch previous-day null-block trips", "error", err)
+			label := q.logScope + ": failed to fetch null-block trips"
+			if i > 0 {
+				label = q.logScope + ": failed to fetch previous-day null-block trips"
 			}
+			api.Logger.Warn(label, "error", err)
 			continue
 		}
 		for _, tripID := range trips {
@@ -161,7 +194,7 @@ func (api *RestAPI) blockCandidates(ctx context.Context, q blockCandidateQueries
 		}
 	}
 
-	return allLinkedBlocks, nullBlockTripWindows, nil
+	return nullBlockTripWindows
 }
 
 // blockCandidatesForRoute returns the candidate block IDs and null-block
@@ -247,33 +280,9 @@ func (api *RestAPI) resolveActiveTrips(ctx context.Context, blockIDs map[string]
 			return activeTrips, serviceDateByTrip
 		}
 
-		blockIDNullStr := nulls.String(blockID)
-
-		for _, w := range windows {
-			// GetActiveTripInBlockAtTime already returns sql.ErrNoRows when the
-			// block has no trip for this service day, so there's no need to
-			// pre-check with a separate "does this block have any trips" query.
-			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
-				BlockID:     blockIDNullStr,
-				ServiceIds:  w.serviceIDs,
-				CurrentTime: sql.NullInt64{Int64: w.sinceMidnight.Nanoseconds(), Valid: true},
-			})
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				api.Logger.Warn("failed to get active trip in block", "block_id", blockID, "error", err)
-				continue
-			}
-			if errors.Is(err, sql.ErrNoRows) {
-				// No trip in this block is currently running at the requested time.
-				// Java OBA only returns blocks with a currently-running trip (see
-				// BlockStatusServiceImpl.computeLocations which adds scheduled locations
-				// only when isInService()). Skip rather than picking a "best candidate"
-				// upcoming/past trip that isn't actually running.
-				continue
-			}
-
-			activeTrips = append(activeTrips, activeTrip)
-			serviceDateByTrip[activeTrip] = w.date
-			break
+		if tripID, serviceDate, ok := api.resolveActiveTripForBlock(ctx, blockID, windows); ok {
+			activeTrips = append(activeTrips, tripID)
+			serviceDateByTrip[tripID] = serviceDate
 		}
 	}
 
@@ -285,4 +294,38 @@ func (api *RestAPI) resolveActiveTrips(ctx context.Context, blockIDs map[string]
 	}
 
 	return activeTrips, serviceDateByTrip
+}
+
+// resolveActiveTripForBlock returns the trip in blockID that is running at
+// the query time of the earliest window that has one, trying windows in
+// order (current day, then the past-midnight lookback).
+func (api *RestAPI) resolveActiveTripForBlock(ctx context.Context, blockID string, windows []serviceDayWindow) (tripID string, serviceDate time.Time, ok bool) {
+	blockIDNullStr := nulls.String(blockID)
+
+	for _, w := range windows {
+		// GetActiveTripInBlockAtTime already returns sql.ErrNoRows when the
+		// block has no trip for this service day, so there's no need to
+		// pre-check with a separate "does this block have any trips" query.
+		activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
+			BlockID:     blockIDNullStr,
+			ServiceIds:  w.serviceIDs,
+			CurrentTime: sql.NullInt64{Int64: w.sinceMidnight.Nanoseconds(), Valid: true},
+		})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			api.Logger.Warn("failed to get active trip in block", "block_id", blockID, "error", err)
+			continue
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			// No trip in this block is currently running at the requested time.
+			// Java OBA only returns blocks with a currently-running trip (see
+			// BlockStatusServiceImpl.computeLocations which adds scheduled locations
+			// only when isInService()). Skip rather than picking a "best candidate"
+			// upcoming/past trip that isn't actually running.
+			continue
+		}
+
+		return activeTrip, w.date, true
+	}
+
+	return "", time.Time{}, false
 }

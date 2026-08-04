@@ -1162,7 +1162,7 @@ JOIN block_trip_entry bte ON bti.id = bte.block_trip_index_id
 JOIN stop_times st ON st.trip_id = bte.trip_id
 WHERE st.stop_id IN (sqlc.slice('stop_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'))
-ORDER BY bti.id;
+ORDER BY bti.id ASC;
 
 -- name: GetActiveLayoverBlockIDsForStops :many
 -- Stop-scoped mirror of GetActiveLayoverBlockIDsForRoute, matched on the

@@ -1209,25 +1209,34 @@ func scheduledPositionAtTime(
 	querySeconds := utils.CalculateSecondsSinceServiceDate(queryTime, serviceDate)
 
 	if querySeconds <= utils.NanosToSeconds(stopTimes[0].ArrivalTime) {
-		firstCoord, ok := stopCoords[stopTimes[0].StopID]
-		if !ok {
-			return models.Location{}, false
-		}
-		return models.Location{Lat: firstCoord.lat, Lon: firstCoord.lon}, true
+		return stopLocation(stopCoords, stopTimes[0].StopID)
 	}
 
+	if pos, ok, found := positionWithinSchedule(stopTimes, stopCoords, querySeconds); found {
+		return pos, ok
+	}
+
+	return stopLocation(stopCoords, stopTimes[len(stopTimes)-1].StopID)
+}
+
+// positionWithinSchedule scans the stop-time pairs for the one containing
+// querySeconds: either dwelling at a stop, or travelling between two.
+//
+// found reports whether querySeconds fell inside an interior window at all:
+//   - dwelling at a stop, coordinate known: (pos, true, true)
+//   - dwelling at a stop, coordinate unknown: (zero, false, true) — the
+//     time is unambiguous, so there's nothing better to fall back to
+//   - travelling, both endpoint coordinates known: (pos, true, true)
+//   - travelling with a missing endpoint coordinate, or no interval
+//     matched at all: (zero, false, false) — the caller falls back to the
+//     trip's last stop
+func positionWithinSchedule(stopTimes []gtfsdb.StopTime, stopCoords map[string]struct{ lat, lon float64 }, querySeconds int64) (pos models.Location, ok bool, found bool) {
 	for i := 0; i < len(stopTimes)-1; i++ {
-		// Dwelling at stop i (between its arrival and departure): the vehicle
-		// is sitting at that stop, not travelling — return its coordinate
-		// directly rather than falling through to the next travel interval.
 		arrival := utils.NanosToSeconds(stopTimes[i].ArrivalTime)
 		departure := utils.NanosToSeconds(stopTimes[i].DepartureTime)
 		if querySeconds >= arrival && querySeconds <= departure {
-			coord, ok := stopCoords[stopTimes[i].StopID]
-			if !ok {
-				return models.Location{}, false
-			}
-			return models.Location{Lat: coord.lat, Lon: coord.lon}, true
+			pos, ok = stopLocation(stopCoords, stopTimes[i].StopID)
+			return pos, ok, true
 		}
 
 		fromCoord, fromOK := stopCoords[stopTimes[i].StopID]
@@ -1238,24 +1247,29 @@ func scheduledPositionAtTime(
 
 		fromTime := departure
 		toTime := utils.NanosToSeconds(stopTimes[i+1].ArrivalTime)
-
-		if querySeconds >= fromTime && querySeconds <= toTime {
-			if toTime == fromTime {
-				return models.Location{Lat: fromCoord.lat, Lon: fromCoord.lon}, true
-			}
-			ratio := float64(querySeconds-fromTime) / float64(toTime-fromTime)
-			return models.Location{
-				Lat: fromCoord.lat + ratio*(toCoord.lat-fromCoord.lat),
-				Lon: fromCoord.lon + ratio*(toCoord.lon-fromCoord.lon),
-			}, true
+		if querySeconds < fromTime || querySeconds > toTime {
+			continue
 		}
+		if toTime == fromTime {
+			return models.Location{Lat: fromCoord.lat, Lon: fromCoord.lon}, true, true
+		}
+		ratio := float64(querySeconds-fromTime) / float64(toTime-fromTime)
+		return models.Location{
+			Lat: fromCoord.lat + ratio*(toCoord.lat-fromCoord.lat),
+			Lon: fromCoord.lon + ratio*(toCoord.lon-fromCoord.lon),
+		}, true, true
 	}
 
-	lastCoord, ok := stopCoords[stopTimes[len(stopTimes)-1].StopID]
+	return models.Location{}, false, false
+}
+
+// stopLocation looks up a stop's coordinate, reporting false if unknown.
+func stopLocation(stopCoords map[string]struct{ lat, lon float64 }, stopID string) (models.Location, bool) {
+	coord, ok := stopCoords[stopID]
 	if !ok {
 		return models.Location{}, false
 	}
-	return models.Location{Lat: lastCoord.lat, Lon: lastCoord.lon}, true
+	return models.Location{Lat: coord.lat, Lon: coord.lon}, true
 }
 
 // inferOrientationFromShape computes the OBA orientation (degrees, 0=East, 90=North)
