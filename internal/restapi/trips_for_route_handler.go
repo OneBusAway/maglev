@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -27,16 +28,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
-	includeStatus := r.URL.Query().Get("includeStatus") != "false"
-	includeTrip := parseIncludeTrip(r.URL.Query())
+	query := r.URL.Query()
+	includeSchedule := parseBoolQueryParam(query, "includeSchedule")
+	includeStatus := parseBoolQueryParam(query, "includeStatus")
+	includeTrip := parseIncludeTrip(query)
 	includeReferences := ShouldIncludeReferences(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			references := models.NewEmptyReferences()
-			response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, *references, false, api.Clock, false)
+			response := models.NewListResponse([]models.TripsForRouteListEntry{}, *references, false, api.Clock)
 			api.sendResponse(w, r, response)
 			return
 		}
@@ -196,7 +198,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			references = *models.NewEmptyReferences()
 		}
-		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
+		response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -352,7 +354,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
@@ -416,7 +418,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
@@ -466,7 +468,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	} else {
 		references = *models.NewEmptyReferences()
 	}
-	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
+	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
@@ -713,4 +715,14 @@ func stripNumericSuffix(tripID string) string {
 		}
 	}
 	return tripID[:idx]
+}
+
+// parseBoolQueryParam parses a boolean query parameter, defaulting to true when
+// the parameter is omitted and to false when present but not a valid boolean.
+func parseBoolQueryParam(query url.Values, name string) bool {
+	if !query.Has(name) {
+		return true
+	}
+	val, err := strconv.ParseBool(query.Get(name))
+	return err == nil && val
 }

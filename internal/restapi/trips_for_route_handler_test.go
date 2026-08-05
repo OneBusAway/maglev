@@ -171,7 +171,6 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			assert.Equal(t, 2, model.Version)
 			assert.NotZero(t, model.CurrentTime)
 			assert.False(t, model.Data.LimitExceeded)
-			assert.False(t, model.Data.OutOfRange)
 
 			assert.GreaterOrEqual(t, len(model.Data.List), tt.minExpected)
 			assert.LessOrEqual(t, len(model.Data.List), tt.maxExpected)
@@ -438,17 +437,14 @@ func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
 	tests := []struct {
 		name              string
 		includeReferences string
-		wantRefsPopulated bool
 	}{
 		{
 			name:              "Empty List - Include References Explicit",
 			includeReferences: "true",
-			wantRefsPopulated: true,
 		},
 		{
 			name:              "Empty List - Exclude References",
 			includeReferences: "false",
-			wantRefsPopulated: false,
 		},
 	}
 
@@ -479,6 +475,104 @@ func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
 	}
 }
 
+func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := tripsForRouteTestClock.UnixMilli()
+
+	values := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{name: "omitted defaults to true", query: "", want: true},
+		{name: "explicit true", query: "=true", want: true},
+		{name: "explicit false", query: "=false", want: false},
+		{name: "empty value", query: "=", want: false},
+		{name: "junk value", query: "=abc", want: false},
+	}
+
+	assertFlag := func(t *testing.T, model *TripsForRouteResponse, flag string, want bool) {
+		t.Helper()
+		require.NotEmpty(t, model.Data.List, "fixture guarantees a trip at the pinned clock")
+		switch flag {
+		case "includeSchedule":
+			for i, entry := range model.Data.List {
+				if want {
+					require.NotNil(t, entry.Schedule, "list[%d].schedule should be present", i)
+				} else {
+					assert.Nil(t, entry.Schedule, "list[%d].schedule should be omitted", i)
+				}
+			}
+		case "includeStatus":
+			for i, entry := range model.Data.List {
+				if want {
+					require.NotNil(t, entry.Status, "list[%d].status should be present", i)
+				} else {
+					assert.Nil(t, entry.Status, "list[%d].status should be omitted", i)
+				}
+			}
+		case "includeTrip":
+			if want {
+				assert.NotEmpty(t, model.Data.References.Trips, "references.trips should contain the fixture trip")
+			} else {
+				assert.Empty(t, model.Data.References.Trips, "references.trips should be empty")
+			}
+		case "includeReferences":
+			if want {
+				assert.NotEmpty(t, model.Data.References.Agencies, "references.agencies should be populated")
+				assert.NotEmpty(t, model.Data.References.Routes, "references.routes should be populated")
+				assert.NotEmpty(t, model.Data.References.Trips, "references.trips should be populated")
+				assert.NotEmpty(t, model.Data.References.Stops, "references.stops should be populated")
+			} else {
+				assert.NotNil(t, model.Data.References.Agencies, "references.agencies should be non-nil")
+				assert.Empty(t, model.Data.References.Agencies, "references.agencies should be empty")
+				assert.NotNil(t, model.Data.References.Routes, "references.routes should be non-nil")
+				assert.Empty(t, model.Data.References.Routes, "references.routes should be empty")
+				assert.NotNil(t, model.Data.References.Trips, "references.trips should be non-nil")
+				assert.Empty(t, model.Data.References.Trips, "references.trips should be empty")
+				assert.NotNil(t, model.Data.References.Stops, "references.stops should be non-nil")
+				assert.Empty(t, model.Data.References.Stops, "references.stops should be empty")
+			}
+		}
+	}
+
+	for _, flag := range []string{"includeSchedule", "includeStatus", "includeTrip", "includeReferences"} {
+		for _, tt := range values {
+			want := tt.want
+			if flag == "includeReferences" && (tt.name == "empty value" || tt.name == "junk value") {
+				// includeReferences is parsed by the shared ShouldIncludeReferences
+				// helper (also used by every other endpoint), which treats an
+				// unparseable value as true rather than false.
+				want = true
+			}
+
+			t.Run(flag+"/"+tt.name, func(t *testing.T) {
+				url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+				if tt.query != "" {
+					url += "&" + flag + tt.query
+				}
+
+				resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				assertFlag(t, &model, flag, want)
+			})
+		}
+	}
+
+	t.Run("all omitted default to true", func(t *testing.T) {
+		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+
+		resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		for _, flag := range []string{"includeSchedule", "includeStatus", "includeTrip", "includeReferences"} {
+			assertFlag(t, &model, flag, true)
+		}
+	})
+}
+
 func TestStripNumericSuffix(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -494,6 +588,44 @@ func TestStripNumericSuffix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.expected, stripNumericSuffix(tt.input), "input: %q", tt.input)
+	}
+}
+
+func TestTripsForRouteHandler_OutOfRangeNotEmitted(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{
+			name: "populated success path",
+			url:  fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.UnixMilli()),
+		},
+		{
+			name: "empty-list path",
+			url:  fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.Add(12*time.Hour).UnixMilli()),
+		},
+		{
+			name: "unknown-agency path",
+			url:  fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", utils.FormCombinedID("UNKNOWN_AGENCY", "NONEXISTENT"), tripsForRouteTestClock.UnixMilli()),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := fetchRawData(t, api, tt.url)
+
+			_, ok := data["outOfRange"]
+			assert.False(t, ok, "outOfRange key must NOT be present in trips-for-route response (spec-compliant)")
+			_, ok = data["limitExceeded"]
+			assert.True(t, ok, "limitExceeded key must still be present")
+			_, ok = data["list"]
+			assert.True(t, ok, "list key must be present")
+			_, ok = data["references"]
+			assert.True(t, ok, "references key must be present")
+		})
 	}
 }
 
