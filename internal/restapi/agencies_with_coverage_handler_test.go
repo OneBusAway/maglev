@@ -63,8 +63,6 @@ func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
 	_, model = callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
 	assert.Len(t, model.Data.List, 0)
 	assert.False(t, model.Data.LimitExceeded)
-	assert.NotNil(t, model.Data.References.Agencies)
-	assert.Empty(t, model.Data.References.Agencies)
 }
 
 // TestAgenciesWithCoverageHandlerEmptyReferencesNotNull pins the wire format:
@@ -81,15 +79,6 @@ func TestAgenciesWithCoverageHandlerEmptyReferencesNotNull(t *testing.T) {
 	assert.Empty(t, model.Data.References.Agencies)
 }
 
-func TestAgenciesWithCoverageHandlerMaxCount(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	_, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&maxCount=1")
-	assert.Len(t, model.Data.List, 1)
-	assert.False(t, model.Data.LimitExceeded)
-}
-
 func TestAgenciesWithCoverageHandlerLimitExceeded(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -103,9 +92,25 @@ func TestAgenciesWithCoverageHandlerLimitExceeded(t *testing.T) {
 		}
 	})
 
-	_, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&maxCount=1")
-	assert.Len(t, model.Data.List, 1)
-	assert.True(t, model.Data.LimitExceeded)
+	tests := []struct {
+		name              string
+		query             string
+		wantLen           int
+		wantLimitExceeded bool
+	}{
+		{"maxCount below total caps the list", "&maxCount=1", 1, true},
+		{"maxCount equal to total returns all", "&maxCount=2", 2, false},
+		{"no maxCount returns all", "", 2, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, model := callAPIHandler[CoverageResponse](t, api,
+				"/api/where/agencies-with-coverage.json?key=TEST"+tt.query)
+			assert.Len(t, model.Data.List, tt.wantLen)
+			assert.Equal(t, tt.wantLimitExceeded, model.Data.LimitExceeded)
+		})
+	}
 }
 
 func TestAgenciesWithCoverageHandlerIncludeReferencesFalse(t *testing.T) {
