@@ -935,10 +935,13 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, "", model.Data.Entry.VehicleID, "vehicleId should be empty for vehicle with nil ID")
 }
 
-// TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway guards against a
-// regression where numberOfStopsAway silently defaulted to Go's zero value (0)
-// instead of the -1 "unknown" sentinel whenever BuildTripStatus could not produce
-// a schedule snapshot for the trip — which is always true for CANCELED trips.
+// TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway pins the
+// OBA-spec behavior for numberOfStopsAway when BuildTripStatus cannot produce
+// a schedule snapshot for the trip -- which is always the case for CANCELED
+// trips. Per arrivals-and-departures-for-stop §11a, 0 is the correct
+// unknown-data value in that situation; -1 is a legitimate real reading
+// meaning "one stop behind" and must not double as a sentinel. This test
+// guards the response emitting 0 for a CANCELED trip.
 func TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
