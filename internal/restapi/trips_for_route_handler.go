@@ -351,24 +351,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		entryTripID := tripID
 		entryAgencyID := activeAgencyID
 		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
-			resolution, resolved := resolveInterlinedEntryTripID(fetchedTrip, routeID, agencyID, blockTripForRoute, routeAgencyMap)
-			if !resolved {
-				// No queried-route trip exists anywhere in this block: the
-				// entry's outer trip ID cannot be resolved. Per spec this
-				// endpoint always returns 200 OK, so skip this entry rather
-				// than emitting one whose tripId points at the other route's
-				// trip, or failing the entire response over a single
-				// unresolvable block.
-				api.Logger.Warn("trips-for-route: no queried-route trip found for interlined block",
-					"block_id", fetchedTrip.BlockID.String, "service_id", fetchedTrip.ServiceID, "active_trip_id", tripID)
-				continue
+			if resolution, resolved := resolveInterlinedEntryTripID(fetchedTrip, routeID, agencyID, blockTripForRoute, routeAgencyMap); resolved {
+				entryTripID = resolution.EntryTripID
+				entryAgencyID = resolution.EntryAgencyID
+				// Keep the selected queried-route trip available when
+				// building references so the entry's trip reference (route,
+				// headsign, ...) reflects the entry's tripId rather than the
+				// active trip's.
+				fetchedTrips = append(fetchedTrips, resolution.SelectedTrip)
 			}
-			entryTripID = resolution.EntryTripID
-			entryAgencyID = resolution.EntryAgencyID
-			// Keep the selected queried-route trip available when building
-			// references so the entry's trip reference (route, headsign,
-			// ...) reflects the entry's tripId rather than the active trip's.
-			fetchedTrips = append(fetchedTrips, resolution.SelectedTrip)
+			// If unresolved (no queried-route trip exists anywhere in this
+			// block), entryTripID/entryAgencyID keep their active-trip
+			// defaults above. This matches legacy OBA, which always reports
+			// the active trip's own ID here, and preserves the one-entry-
+			// per-active-block guarantee rather than dropping the entry.
 		}
 
 		// Build schedule from entryTripID (the entry's own trip), not the active

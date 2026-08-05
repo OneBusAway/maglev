@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -1075,6 +1076,30 @@ func TestResolveInterlinedEntryTripID_FetchedTripMissingTimes(t *testing.T) {
 
 	_, resolved := resolveInterlinedEntryTripID(fetchedTrip, tripsForRouteRouteID, tripsForRouteAgencyID,
 		entries, map[string]string{})
+
+	assert.False(t, resolved)
+}
+
+// TestResolveInterlinedEntryTripID_NoCandidateInBlock verifies that
+// resolveInterlinedEntryTripID reports ok=false when the active trip's block
+// has no entries at all (no queried-route trip was found anywhere in it).
+// The handler falls back to the active trip's own ID in this case — matching
+// legacy OBA and preserving one entry per active block — rather than
+// dropping the entry, since the block's own discovery queries scope strictly
+// to the queried route, making this branch defensive rather than reachable
+// through normal per-route block discovery.
+func TestResolveInterlinedEntryTripID_NoCandidateInBlock(t *testing.T) {
+	fetchedTrip := gtfsdb.Trip{
+		ID:               "tfr-orphan-b",
+		RouteID:          "tfr-route-otr",
+		ServiceID:        "tfr-svc",
+		BlockID:          nulls.String("tfr-orphan-block"),
+		MinArrivalTime:   sql.NullInt64{Int64: int64(11*time.Hour + 55*time.Minute), Valid: true},
+		MaxDepartureTime: sql.NullInt64{Int64: int64(12*time.Hour + 5*time.Minute), Valid: true},
+	}
+
+	_, resolved := resolveInterlinedEntryTripID(fetchedTrip, tripsForRouteRouteID, tripsForRouteAgencyID,
+		map[string][]blockTripEntry{}, map[string]string{})
 
 	assert.False(t, resolved)
 }
