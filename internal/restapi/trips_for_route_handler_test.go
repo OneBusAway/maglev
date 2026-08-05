@@ -222,10 +222,15 @@ func TestTripsForRouteHandler_DuplicatedRealtimeTrip(t *testing.T) {
 			dupTripSeen = true
 			require.NotNil(t, entry.Schedule, "DUPLICATED entry should carry the base trip's schedule")
 			assert.Equal(t, "UTC", entry.Schedule.TimeZone)
-			require.Len(t, entry.Schedule.StopTimes, 2, "schedule should come from the base trip")
-			for _, st := range entry.Schedule.StopTimes {
-				assert.Contains(t, st.StopID, "_", "scheduled stop ID should be combined")
+			expectedStopIDs := []string{
+				utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID),
+				utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID),
 			}
+			gotStopIDs := make([]string, len(entry.Schedule.StopTimes))
+			for i, st := range entry.Schedule.StopTimes {
+				gotStopIDs[i] = st.StopID
+			}
+			assert.Equal(t, expectedStopIDs, gotStopIDs, "stop IDs should match the base trip's schedule in order")
 		}
 	}
 	assert.True(t, baseTripSeen, "the static scheduled trip should be in the response")
