@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -27,9 +28,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
-	includeStatus := r.URL.Query().Get("includeStatus") != "false"
-	includeTrip := parseIncludeTrip(r.URL.Query())
+	query := r.URL.Query()
+	includeSchedule := parseBoolQueryParam(query, "includeSchedule")
+	includeStatus := parseBoolQueryParam(query, "includeStatus")
+	includeTrip := parseIncludeTrip(query)
 	includeReferences := ShouldIncludeReferences(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
@@ -710,4 +712,14 @@ func stripNumericSuffix(tripID string) string {
 		}
 	}
 	return tripID[:idx]
+}
+
+// parseBoolQueryParam parses a boolean query parameter, defaulting to true when
+// the parameter is omitted and to false when present but not a valid boolean.
+func parseBoolQueryParam(query url.Values, name string) bool {
+	if !query.Has(name) {
+		return true
+	}
+	val, err := strconv.ParseBool(query.Get(name))
+	return err == nil && val
 }
