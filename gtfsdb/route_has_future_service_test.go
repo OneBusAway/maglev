@@ -10,11 +10,16 @@ import (
 )
 
 // TestRouteHasFutureService_BeyondTwoYearWindow guards the documented "bounded to
-// 2 years ahead" contract on RouteHasFutureService (query.sql): a route whose only
-// service starts well beyond that horizon should not be reported as having future
-// service, since the recursive date search is documented to give up at 2 years out
-// -- "feeds that schedule further out than that are rare and would be caught on
-// later polls."
+// 2 years past MAX(ref_date, today)" contract on RouteHasFutureService
+// (query.sql): a route whose only service starts well beyond that horizon
+// should not be reported as having future service. The fixture also plants a
+// calendar_dates addition past the horizon so the "feed's maximum date"
+// (max of cal.end_date and cd.date across the route) extends well beyond
+// where the horizon caps; the expected 0 result therefore proves the
+// horizon clamp is doing the work in both parts of the query -- Part 2
+// rejects the calendar row because cal.start_date > horizon, and Part 1
+// rejects the addition because cd.date > horizon -- rather than the query
+// happening to run out of feed data.
 func TestRouteHasFutureService_BeyondTwoYearWindow(t *testing.T) {
 	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
 	require.NoError(t, err)
@@ -60,6 +65,18 @@ func TestRouteHasFutureService_BeyondTwoYearWindow(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Addition also lives past the horizon. Without this, a query that used
+	// the feed's max date as an implicit upper bound could return 0 simply
+	// because there's no data past ref_date -- ambiguous. With the addition,
+	// the feed does extend past the horizon, so a 0 result specifically means
+	// the horizon clamp on cd.date (Part 1) and cal.start_date (Part 2) held.
+	_, err = client.Queries.CreateCalendarDate(ctx, CreateCalendarDateParams{
+		ServiceID:     "cal-far-future",
+		Date:          "20990601",
+		ExceptionType: 1,
+	})
+	require.NoError(t, err)
+
 	hasFuture, err := client.Queries.RouteHasFutureService(ctx, RouteHasFutureServiceParams{
 		RouteID: "route-1",
 		RefDate: "20240101",
@@ -67,8 +84,9 @@ func TestRouteHasFutureService_BeyondTwoYearWindow(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), hasFuture,
-		"service starting more than 2 years after ref_date must not be found -- "+
-			"the recursive search is documented as bounded to a 2-year horizon")
+		"service starting more than 2 years after ref_date must not be found; "+
+			"the horizon-clamp branches in both parts of the query must reject "+
+			"the calendar row and the past-horizon addition")
 }
 
 // TestRouteHasFutureService_WithinTwoYearWindow verifies the common case is
