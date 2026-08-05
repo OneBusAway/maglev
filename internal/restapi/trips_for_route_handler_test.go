@@ -90,12 +90,6 @@ func createTestApiWithGTFSFixture(t *testing.T, c clock.Clock, zipName string, f
 	return api
 }
 
-// hms converts hours, minutes, seconds to time.Duration for readable assertions
-// on schedule stop times (which are stored as nanosecond durations from midnight).
-func hms(h, m, s int) time.Duration {
-	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
-}
-
 // --- Fixture file maps ---
 
 func basicTripsForRouteFiles() map[string]string {
@@ -192,32 +186,6 @@ func loopingRouteFiles() map[string]string {
 			"tfr-loop-b,10:00:00,10:00:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-loop-b,10:30:00,10:30:00," + tripsForRouteStop2ID + ",2\n" +
 			"tfr-loop-c,10:30:00,10:30:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-loop-c,11:15:00,11:15:00," + tripsForRouteStop2ID + ",2\n",
-	}
-}
-
-func loopingRouteWithGapFiles() map[string]string {
-	return map[string]string{
-		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
-			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
-		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
-			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
-			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
-		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
-			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
-		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
-			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
-			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
-		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
-			tripsForRouteRouteID + ",tfr-svc,tfr-loop-a,Headsign A,0,tfr-loop-block\n" +
-			"tfr-route-otr,tfr-svc,tfr-loop-b,Headsign B,0,tfr-loop-block\n" +
-			tripsForRouteRouteID + ",tfr-svc,tfr-loop-c,Headsign C,0,tfr-loop-block\n",
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"tfr-loop-a,09:00:00,09:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-loop-a,09:45:00,09:45:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-loop-b,10:00:00,10:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-loop-b,10:25:00,10:25:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-loop-c,10:35:00,10:35:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-loop-c,11:15:00,11:15:00," + tripsForRouteStop2ID + ",2\n",
 	}
 }
