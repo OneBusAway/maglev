@@ -31,8 +31,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	query := r.URL.Query()
 	includeSchedule := parseBoolQueryParam(query, "includeSchedule")
 	includeStatus := parseBoolQueryParam(query, "includeStatus")
-	includeTrip := parseBoolQueryParam(query, "includeTrip")
-	includeReferences := parseBoolQueryParam(query, "includeReferences")
+	includeTrip := parseIncludeTrip(query)
+	includeReferences := ShouldIncludeReferences(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {

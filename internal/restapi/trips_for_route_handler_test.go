@@ -524,6 +524,14 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 
 	for _, flag := range []string{"includeSchedule", "includeStatus", "includeTrip", "includeReferences"} {
 		for _, tt := range values {
+			want := tt.want
+			if flag == "includeReferences" && (tt.name == "empty value" || tt.name == "junk value") {
+				// includeReferences is parsed by the shared ShouldIncludeReferences
+				// helper (also used by every other endpoint), which treats an
+				// unparseable value as true rather than false.
+				want = true
+			}
+
 			t.Run(flag+"/"+tt.name, func(t *testing.T) {
 				url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
 				if tt.query != "" {
@@ -533,7 +541,7 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 				resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
 
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
-				assertFlag(t, &model, flag, tt.want)
+				assertFlag(t, &model, flag, want)
 			})
 		}
 	}
