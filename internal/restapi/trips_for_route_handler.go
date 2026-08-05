@@ -36,7 +36,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			references := models.NewEmptyReferences()
-			response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, *references, false, api.Clock, false)
+			response := models.NewListResponse([]models.TripsForRouteListEntry{}, *references, false, api.Clock)
 			api.sendResponse(w, r, response)
 			return
 		}
@@ -196,7 +196,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			references = *models.NewEmptyReferences()
 		}
-		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
+		response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -466,7 +466,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	} else {
 		references = *models.NewEmptyReferences()
 	}
-	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
+	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
