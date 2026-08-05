@@ -2794,8 +2794,8 @@ FROM
 WHERE
     stop_times.stop_id IN (/*SLICE:stop_ids*/?)
 ORDER BY
-    routes.agency_id,
-    routes.id
+    routes.agency_id ASC,
+    routes.id ASC
 `
 
 type GetRoutesForStopsRow struct {

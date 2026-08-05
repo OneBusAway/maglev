@@ -647,8 +647,8 @@ FROM
 WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
-    routes.agency_id,
-    routes.id;
+    routes.agency_id ASC,
+    routes.id ASC;
 
 -- name: GetRouteIDsForStops :many
 SELECT DISTINCT
