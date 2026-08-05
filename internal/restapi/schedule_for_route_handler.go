@@ -91,10 +91,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	// (NoServiceThatDay). Both return body code 200 with an empty-schedule body.
 	noTripsResponse := func() (models.ResponseModel, error) {
 		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
-			RouteID:   routeID,
-			EndDate:   targetDate,
-			RouteID_2: routeID,
-			Date:      targetDate,
+			RouteID: routeID,
+			RefDate: targetDate,
 		})
 		if err != nil {
 			return models.ResponseModel{}, err

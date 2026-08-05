@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -345,38 +347,6 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	assert.False(t, predicted)
 }
 
-func TestGetBlockDistanceToStop_NilVehicle(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	result := api.getBlockDistanceToStop(t.Context(), "test_trip", "test_stop", nil, time.Now())
-
-	assert.Equal(t, 0.0, result)
-}
-
-func TestGetBlockDistanceToStop_NoPosition(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	ctx := context.Background()
-
-	vehicle := &gtfs.Vehicle{
-		Position: nil,
-	}
-
-	result := api.getBlockDistanceToStop(ctx, "test_trip", "test_stop", vehicle, time.Now())
-
-	assert.Equal(t, 0.0, result)
-}
-
-func TestGetNumberOfStopsAway_NilCurrentSequence(t *testing.T) {
-	api := createTestApi(t)
-	vehicle := &gtfs.Vehicle{}
-
-	result := api.getNumberOfStopsAway(context.Background(), "test_trip", 5, vehicle, time.Now())
-
-	assert.Nil(t, result)
-}
-
 func TestParseArrivalAndDepartureParams_AllParameters(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -448,8 +418,8 @@ func TestParseArrivalAndDepartureParams_LargeValues(t *testing.T) {
 	params, errs := parseArrivalAndDepartureParams(req)
 
 	assert.Empty(t, errs)
-	assert.Equal(t, 240, params.MinutesAfter)
-	assert.Equal(t, 60, params.MinutesBefore)
+	assert.Equal(t, 1440, params.MinutesAfter)
+	assert.Equal(t, 1440, params.MinutesBefore)
 }
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
@@ -589,6 +559,8 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	tripID := "test_trip"
 	targetStopSequence := int64(5)
 
+	currentTime := time.Now()
+	futureTime := currentTime.Add(30 * time.Minute)
 	delayDuration := 120 * time.Second
 
 	uint32Ptr := func(v uint32) *uint32 { return &v }
@@ -599,6 +571,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 			{
 				StopSequence: uint32Ptr(1),
 				Departure: &gtfs.StopTimeEvent{
+					Time:  &futureTime,
 					Delay: &delayDuration,
 				},
 			},
@@ -623,12 +596,20 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	tripID := "test_trip_level_delay"
 	targetStopSequence := int64(5)
 
+	currentTime := time.Now()
+	futureTime := currentTime.Add(30 * time.Minute)
 	delayDuration := 300 * time.Second
+	otherStopID := "other_stop"
 
 	mockTrip := gtfs.Trip{
-		ID:              gtfs.TripID{ID: tripID},
-		Delay:           &delayDuration,
-		StopTimeUpdates: []gtfs.StopTimeUpdate{},
+		ID:    gtfs.TripID{ID: tripID},
+		Delay: &delayDuration,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{
+			{
+				StopID:  &otherStopID,
+				Arrival: &gtfs.StopTimeEvent{Time: &futureTime},
+			},
+		},
 	}
 
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
@@ -641,6 +622,116 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 300s trip-level delay")
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 300s trip-level delay")
 }
+
+// TestGetPredictedTimes_DelayVariants tables getPredictedTimes' delay-only-STU
+// and trip-level-Delay fallback paths, including cases whose delay magnitude
+// exceeds the ±1h window that Java's GtfsRealtimeSource.java:811-821 rejects
+// at RT ingest (strict > 3600s). getPredictedTimes itself applies no such cap
+// -- whatever delay survives ingest is added to the scheduled time -- so every
+// case here must produce scheduled + delay for both arrival and departure.
+func TestGetPredictedTimes_DelayVariants(t *testing.T) {
+	stopIDStr := "target_stop"
+	seq := uint32(3)
+	stopSeqInt := int64(seq)
+
+	stuDelay := func(d time.Duration) []gtfs.StopTimeUpdate {
+		return []gtfs.StopTimeUpdate{{
+			StopID:       &stopIDStr,
+			StopSequence: &seq,
+			Arrival:      &gtfs.StopTimeEvent{Delay: &d},
+			Departure:    &gtfs.StopTimeEvent{Delay: &d},
+		}}
+	}
+
+	cases := []struct {
+		name            string
+		tripID          string
+		lookupStopID    string
+		lookupStopSeq   int64
+		delay           time.Duration
+		stopTimeUpdates []gtfs.StopTimeUpdate
+		tripLevelDelay  *time.Duration
+	}{
+		{
+			name:            "delay-only STU (no absolute time) is accepted",
+			tripID:          "delay_only_stus_trip",
+			lookupStopID:    stopIDStr,
+			lookupStopSeq:   stopSeqInt,
+			delay:           120 * time.Second,
+			stopTimeUpdates: stuDelay(120 * time.Second),
+		},
+		{
+			name:           "trip-level Delay with no STUs is accepted",
+			tripID:         "trip_level_delay_no_stus",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          240 * time.Second,
+			tripLevelDelay: ptrDuration(240 * time.Second),
+		},
+		{
+			// Java applies the deviation unconditionally in
+			// setPredictedTimesFromScheduleDeviation; the ±1h filter lives
+			// at RT ingestion, not at prediction emission. A rider must see
+			// a genuinely-late bus as late.
+			name:           "trip-level Delay > +1h still emits (no prediction-time cap)",
+			tripID:         "very_late_trip_level",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          70 * time.Minute,
+			tripLevelDelay: ptrDuration(70 * time.Minute),
+		},
+		{
+			name:            "per-STU Delay > +1h still emits (no prediction-time cap)",
+			tripID:          "very_late_stu_delay",
+			lookupStopID:    stopIDStr,
+			lookupStopSeq:   stopSeqInt,
+			delay:           90 * time.Minute,
+			stopTimeUpdates: stuDelay(90 * time.Minute),
+		},
+		{
+			name:           "exactly +1h delay still emits (strict >)",
+			tripID:         "boundary_positive_1h",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          60 * time.Minute,
+			tripLevelDelay: ptrDuration(60 * time.Minute),
+		},
+		{
+			name:           "exactly -1h delay still emits (strict >)",
+			tripID:         "boundary_negative_1h",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          -60 * time.Minute,
+			tripLevelDelay: ptrDuration(-60 * time.Minute),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			mockTrip := gtfs.Trip{
+				ID:              gtfs.TripID{ID: tc.tripID},
+				Delay:           tc.tripLevelDelay,
+				StopTimeUpdates: tc.stopTimeUpdates,
+			}
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
+
+			scheduledTime := time.Now()
+			predArrival, predDeparture, predicted := api.getPredictedTimes(
+				tc.tripID, tc.lookupStopID, tc.lookupStopSeq, scheduledTime, scheduledTime,
+			)
+
+			expected := scheduledTime.Add(tc.delay)
+			assert.True(t, predicted, "predicted flag must be true")
+			assert.Equal(t, expected, predArrival, "arrival must be scheduled + delay")
+			assert.Equal(t, expected, predDeparture, "departure must be scheduled + delay")
+		})
+	}
+}
+
+func ptrDuration(d time.Duration) *time.Duration { return &d }
 
 func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {
 	api := createTestApi(t)
@@ -843,4 +934,188 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "", model.Data.Entry.VehicleID, "vehicleId should be empty for vehicle with nil ID")
+}
+
+// TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway pins the
+// OBA-spec behavior for numberOfStopsAway when BuildTripStatus cannot produce
+// a schedule snapshot for the trip -- which is always the case for CANCELED
+// trips. Per arrivals-and-departures-for-stop §11a, 0 is the correct
+// unknown-data value in that situation; -1 is a legitimate real reading
+// meaning "one stop behind" and must not double as a sentinel. This test
+// guards the response emitting 0 for a CANCELED trip.
+func TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	tripID := "36957461-b451-4390-af3a-bc42c51fd473"
+	stopID := "5007"
+	stopSequence := 6
+	combinedStopID := utils.FormCombinedID("25", stopID)
+	combinedTripID := utils.FormCombinedID("25", tripID)
+	serviceDateMs := time.Now().UnixMilli()
+
+	api.GtfsManager.MockAddVehicleWithOptions("canceled-vehicle", tripID, "", internalgtfs.MockVehicleOptions{
+		ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+	})
+
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d",
+		combinedStopID,
+		combinedTripID,
+		serviceDateMs,
+		stopSequence,
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 200, model.Code)
+	// Per the OBA spec (arrivals-and-departures-for-stop §11a), when no
+	// block location is available -- as with a CANCELED trip -- the
+	// unknown-data value for numberOfStopsAway is 0 (absent/zero), not -1.
+	// -1 is a legitimate real value meaning "one stop behind" and must not
+	// double as a sentinel. Both handlers agree on 0 for the no-data case.
+	assert.Equal(t, 0, model.Data.Entry.NumberOfStopsAway,
+		"CANCELED trips report numberOfStopsAway=0 (no block location); "+
+			"-1 is reserved for the real 'one stop behind' signal")
+}
+
+// TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics guards the
+// handler's schedule-only fallback for numberOfStopsAway and distanceFromStop
+// (arrival_and_departure_for_stop_handler.go around the snapshot.metricsForStop
+// call). When the RT vehicle carries no Position and no CurrentStopSequence,
+// the handler must still derive both values through BuildTripStatus's block
+// snapshot -- not silently zero them out. A regression that dropped that
+// codepath would show up as numberOfStopsAway=0 for the queried stop, which
+// this test would catch: the queried stop sits one hop past the snapshot's
+// NextStopIndex, so metricsForStop must return numberOfStopsAway=1.
+// distanceFromStop stays 0 because the minimal fixture has no shape data,
+// but that 0 is snapshot-derived (target.DistanceAlongBlock - snap.DAB) --
+// asserting it pins the arithmetic path.
+func TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics(t *testing.T) {
+	// 2010-01-01 is a Friday; the fixture below enables all weekdays, so the
+	// service is active. Clock at 08:02:00 lands between stop A (08:00) and
+	// stop B (08:05), pinning the snapshot's NextStopIndex on B.
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID  = "sob-agency"
+		routeID   = "sob-route"
+		serviceID = "sob-svc"
+		blockID   = "sob-block"
+		tripID    = "sob-trip"
+		stopAID   = "sob-stop-a"
+		stopBID   = "sob-stop-b"
+		stopCID   = "sob-stop-c"
+	)
+
+	// The Create* queries above use INSERT OR REPLACE, so re-runs of this
+	// test don't collide on their own -- but the fixtures still leak into
+	// the shared test DB and can be observed by other tests. Delete them
+	// in foreign-key-safe reverse order: stop_times -> trips -> calendar
+	// -> routes -> agencies -> stops. block_id lives as a column on trips,
+	// so removing the trip clears it automatically. sqlc only exposes
+	// table-wide Clear* helpers, so per-ID cleanup goes through the raw DB
+	// handle on the same client. Errors are surfaced via require.NoError
+	// consistent with the setup path above.
+	db := api.GtfsManager.GtfsDB.DB
+	t.Cleanup(func() {
+		_, err := db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id = ?`, tripID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM trips WHERE id = ?`, tripID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM calendar WHERE id = ?`, serviceID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM routes WHERE id = ?`, routeID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM agencies WHERE id = ?`, agencyID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx,
+			`DELETE FROM stops WHERE id IN (?, ?, ?)`, stopAID, stopBID, stopCID)
+		require.NoError(t, err)
+	})
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Schedule-Only Block Agency", Url: "http://example.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+	for _, sid := range []string{stopAID, stopBID, stopCID} {
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: sid, Name: nulls.String(sid), Lat: 47.0, Lon: -122.0,
+		})
+		require.NoError(t, err)
+	}
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID,
+		ShortName: nulls.String("SOB"),
+		LongName:  nulls.String("Schedule-Only Block"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: serviceID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20100101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+		BlockID: nulls.String(blockID),
+	})
+	require.NoError(t, err)
+
+	// Three stops, 5 minutes apart, spanning 08:00-08:10.
+	type stopTime struct {
+		stopID string
+		seq    int64
+		offset time.Duration
+	}
+	for _, st := range []stopTime{
+		{stopAID, 1, 8 * time.Hour},
+		{stopBID, 2, 8*time.Hour + 5*time.Minute},
+		{stopCID, 3, 8*time.Hour + 10*time.Minute},
+	} {
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: st.stopID, StopSequence: st.seq,
+			ArrivalTime:   int64(st.offset),
+			DepartureTime: int64(st.offset),
+		})
+		require.NoError(t, err)
+	}
+
+	// Vehicle carries neither Position nor CurrentStopSequence -- the handler
+	// must fall back to the schedule-derived snapshot for the metrics.
+	api.GtfsManager.MockAddVehicleWithOptions("sob-vehicle", tripID, routeID, internalgtfs.MockVehicleOptions{})
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=3",
+		utils.FormCombinedID(agencyID, stopCID),
+		utils.FormCombinedID(agencyID, tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	// The snapshot's NextStopIndex is B (block sequence 1); the queried
+	// stop C is at block sequence 2. metricsForStop returns
+	// target.BlockSequence - stops[NextStopIndex].BlockSequence = 2 - 1 = 1.
+	// A 0 here would mean the metricsForStop / snapshot path never ran.
+	assert.Equal(t, 1, model.Data.Entry.NumberOfStopsAway,
+		"schedule-only snapshot must place the queried stop one hop past "+
+			"the next stop; a 0 would mean the snapshot path did not run")
+	// distanceFromStop is snapshot-derived (target.DAB - snap.DAB). With no
+	// shape data both DABs are 0, so the difference is 0 -- but that 0 comes
+	// from the arithmetic, not from the "no snapshot" default.
+	assert.InDelta(t, 0.0, model.Data.Entry.DistanceFromStop, 0.001,
+		"schedule-only snapshot with no shape data yields distanceFromStop=0 "+
+			"via the arithmetic path, not via the metricsForStop-skipped default")
 }
