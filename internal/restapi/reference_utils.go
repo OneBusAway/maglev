@@ -368,7 +368,7 @@ func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, a
 	if err != nil {
 		return nil, nil, err
 	}
-	routesByStop, uniqueRouteMap := groupRoutesByStop(agencyID, allRoutes)
+	routesByStop, uniqueRouteMap := groupRoutesByStop(allRoutes)
 
 	modelStops := make([]models.Stop, 0, len(uniqueStopIDs))
 	for _, stopID := range uniqueStopIDs {
@@ -376,7 +376,7 @@ func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, a
 		if !exists {
 			continue
 		}
-		combinedRouteIDs := api.combinedRouteIDsForStop(agencyID, routesByStop[stopID])
+		combinedRouteIDs := api.combinedRouteIDsForStop(routesByStop[stopID])
 		modelStops = append(modelStops, api.buildStopModel(ctx, agencyID, stop, combinedRouteIDs))
 	}
 
@@ -397,8 +397,8 @@ func dedupeStrings(values []string) []string {
 }
 
 // groupRoutesByStop groups the routes returned by GetRoutesForStops by their stop ID and
-// builds a map of unique routes keyed by their agency-combined ID.
-func groupRoutesByStop(agencyID string, allRoutes []gtfsdb.GetRoutesForStopsRow) (map[string][]gtfsdb.Route, map[string]gtfsdb.GetRoutesForStopsRow) {
+// builds a map of unique routes keyed by each route's own agency-combined ID.
+func groupRoutesByStop(allRoutes []gtfsdb.GetRoutesForStopsRow) (map[string][]gtfsdb.Route, map[string]gtfsdb.GetRoutesForStopsRow) {
 	routesByStop := make(map[string][]gtfsdb.Route)
 	uniqueRouteMap := make(map[string]gtfsdb.GetRoutesForStopsRow)
 	for _, routeRow := range allRoutes {
@@ -414,21 +414,21 @@ func groupRoutesByStop(agencyID string, allRoutes []gtfsdb.GetRoutesForStopsRow)
 			TextColor: routeRow.TextColor,
 		}
 		routesByStop[routeRow.StopID] = append(routesByStop[routeRow.StopID], route)
-		combinedID := utils.FormCombinedID(agencyID, routeRow.ID)
+		combinedID := utils.FormCombinedID(routeRow.AgencyID, routeRow.ID)
 		uniqueRouteMap[combinedID] = routeRow
 	}
 	return routesByStop, uniqueRouteMap
 }
 
 // combinedRouteIDsForStop sorts the routes serving a stop into a stable, human-friendly
-// order and returns their agency-combined IDs.
-func (api *RestAPI) combinedRouteIDsForStop(agencyID string, routesForStop []gtfsdb.Route) []string {
+// order and returns their agency-combined IDs, each keyed by its own agency.
+func (api *RestAPI) combinedRouteIDsForStop(routesForStop []gtfsdb.Route) []string {
 	// Sort naturally by ShortName (falling back to LongName, then AgencyID, then ID) so the
 	// route IDs are returned in a stable, human-friendly order.
 	utils.SortRoutesByName(routesForStop)
 	combinedRouteIDs := make([]string, len(routesForStop))
 	for i, rt := range routesForStop {
-		combinedRouteIDs[i] = utils.FormCombinedID(agencyID, rt.ID)
+		combinedRouteIDs[i] = utils.FormCombinedID(rt.AgencyID, rt.ID)
 	}
 	return combinedRouteIDs
 }

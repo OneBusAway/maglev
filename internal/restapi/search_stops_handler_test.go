@@ -529,17 +529,30 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 
 	// route_parent_only serves parent_stat_1 directly and is not on any returned child
 	// stop, so it must still be merged into references.routes rather than dropped.
-	routeIDsInReferences := make(map[string]bool, len(stopsResp.Data.References.Routes))
+	routesByID := make(map[string]models.Route, len(stopsResp.Data.References.Routes))
 	for _, route := range stopsResp.Data.References.Routes {
-		routeIDsInReferences[route.ID] = true
+		routesByID[route.ID] = route
 	}
-	assert.True(t, routeIDsInReferences["999_route_parent_only"],
+	_, hasParentOnlyRoute := routesByID["999_route_parent_only"]
+	assert.True(t, hasParentOnlyRoute,
 		"references.routes must include parent-only routes so parent routeIds always resolve")
+	assert.Equal(t, "999", routesByID["999_route_parent_only"].AgencyID,
+		"a route's agencyId must match its own ID prefix, not the child stop's agency that reached it")
+
+	// route_parent_only belongs to agency 999. parent_stat_1 is also reached through
+	// agency 888 (via child_stop_shared/child_stop_multi_agency), so a route must not be
+	// re-prefixed with the agency of whichever child stop happened to reach the parent.
+	_, hasMisprefixedRoute := routesByID["888_route_parent_only"]
+	assert.False(t, hasMisprefixedRoute,
+		"routes must not be re-prefixed with a child stop's agency")
+
+	// A parent reached through agency 888 still points at the route's real 999-prefixed ID.
+	assert.Contains(t, parentRefsByID["888_parent_stat_1"].RouteIDs, "999_route_parent_only")
 
 	// Every routeId referenced by any parent stop must resolve in references.routes.
 	for _, parentRef := range stopsResp.Data.References.Stops {
 		for _, routeID := range parentRef.RouteIDs {
-			assert.Contains(t, routeIDsInReferences, routeID,
+			assert.Contains(t, routesByID, routeID,
 				"parent %q references route %q which is missing from references.routes", parentRef.ID, routeID)
 		}
 	}
