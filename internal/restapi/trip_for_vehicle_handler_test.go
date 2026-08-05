@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -43,7 +44,9 @@ func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID 
 
 	api.GtfsManager.MockAddAgency(testdata.Raba.ID, "unitrans")
 	api.GtfsManager.MockAddRoute(combinedRouteID, testdata.Raba.ID, combinedRouteID)
-	api.GtfsManager.MockAddTrip(trip.ID, testdata.Raba.ID, combinedRouteID)
+	// Deliberately no MockAddTrip: the trip already exists in the fixture DB, and
+	// MockAddTrip is an INSERT OR REPLACE that would wipe its block and shape IDs
+	// in the package-shared test database for every test that runs afterwards.
 	api.GtfsManager.MockAddVehicle(mockVehicleID, trip.ID, combinedRouteID)
 
 	return api, utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)
@@ -93,9 +96,7 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	require.NotEmpty(t, refs.Routes)
 	require.NotEmpty(t, refs.Trips)
 
-	// Trip ref must have a non-empty id/routeId. ServiceID is intentionally not
-	// asserted: the mock trip injected by setupTestApiWithMockVehicle has no
-	// ServiceID, and asserting on it would be asserting on the mock helper.
+	// Trip ref must have a non-empty id/routeId.
 	trip := refs.Trips[0]
 	assert.NotEmpty(t, trip.ID)
 	assert.NotEmpty(t, trip.RouteID)
@@ -161,13 +162,6 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 		assert.Nil(t, model.Data.Entry.Status, "status should be omitted when includeStatus=false")
 	})
 
-	t.Run("includeTrip=false omits trip references", func(t *testing.T) {
-		_, model := callAPIHandler[TripDetailsResponse](t, api,
-			tripForVehicleURL(vehicleID, url.Values{"includeTrip": {"false"}}))
-
-		assert.Empty(t, model.Data.References.Trips, "trip refs should be empty when includeTrip=false")
-	})
-
 	t.Run("includeSchedule=true keeps response well-formed", func(t *testing.T) {
 		resp, model := callAPIHandler[TripDetailsResponse](t, api,
 			tripForVehicleURL(vehicleID, url.Values{"includeSchedule": {"true"}}))
@@ -177,12 +171,13 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 	})
 
 	t.Run("all-false strips schedule/status/trip refs", func(t *testing.T) {
-		_, model := callAPIHandler[TripDetailsResponse](t, api,
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
 			tripForVehicleURL(vehicleID, url.Values{
 				"includeTrip":     {"false"},
 				"includeSchedule": {"false"},
 				"includeStatus":   {"false"},
 			}))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
 
 		entry := model.Data.Entry
 		assert.NotEmpty(t, entry.TripID)
@@ -191,6 +186,77 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 		assert.Nil(t, entry.Status)
 		assert.Empty(t, model.Data.References.Trips)
 		assert.NotEmpty(t, model.Data.References.Agencies)
+	})
+}
+
+// TestTripForVehicleHandler_MissingRoute verifies that a trip pointing at a
+// route which is not in the database yields a 404 rather than a 500.
+func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
+	api, _ := setupTestApiWithMockVehicle(t)
+
+	const (
+		orphanTripID    = "TRIP_WITH_MISSING_ROUTE"
+		orphanVehicleID = "ORPHAN_ROUTE_VEHICLE"
+		missingRouteID  = "ROUTE_THAT_DOES_NOT_EXIST"
+	)
+
+	api.GtfsManager.MockAddTrip(orphanTripID, testdata.Raba.ID, missingRouteID)
+	api.GtfsManager.MockAddVehicle(orphanVehicleID, orphanTripID, missingRouteID)
+
+	// The trip row lands in the package-shared fixture database, so take it back
+	// out rather than leaving a routeless trip behind for later tests.
+	t.Cleanup(func() {
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(),
+			`DELETE FROM trips WHERE id = ?`, orphanTripID)
+	})
+
+	// includeTrip=true so the route lookup is reached even though the orphaned
+	// trip has no real-time status to build.
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		tripForVehicleURL(utils.FormCombinedID(testdata.Raba.ID, orphanVehicleID),
+			url.Values{"includeTrip": {"true"}}))
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+}
+
+// TestTripForVehicleHandler_TripReferences covers where the active trip's
+// reference comes from: the status path adds it whenever the status block is
+// present, and includeTrip only matters once includeStatus=false.
+func TestTripForVehicleHandler_TripReferences(t *testing.T) {
+	api, vehicleID := setupTestApiWithMockVehicle(t)
+
+	t.Run("includeTrip=false still yields trip refs via the status path", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{"includeTrip": {"false"}}))
+
+		require.NotNil(t, model.Data.Entry.Status, "status is present by default")
+		assert.NotEmpty(t, model.Data.References.Trips,
+			"the active trip reaches references via the status path regardless of includeTrip")
+		assert.NotEmpty(t, model.Data.References.Routes,
+			"the active trip's route accompanies it in references")
+	})
+
+	t.Run("includeStatus=false with includeTrip=false omits trip refs", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{
+				"includeStatus": {"false"},
+				"includeTrip":   {"false"},
+			}))
+
+		assert.Empty(t, model.Data.References.Trips,
+			"with no status block and includeTrip=false nothing adds the trip")
+	})
+
+	t.Run("includeTrip=true with includeStatus=false yields trip refs", func(t *testing.T) {
+		_, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{
+				"includeStatus": {"false"},
+				"includeTrip":   {"true"},
+			}))
+
+		assert.NotEmpty(t, model.Data.References.Trips,
+			"includeTrip is what adds the trip when there is no status block")
 	})
 }
 
@@ -263,7 +329,7 @@ func TestParseTripForVehicleParams_Unit(t *testing.T) {
 	t.Run("explicit params", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?includeStatus=false&time=1609459200000", nil)
 
-		params, errs := api.parseTripParams(req, false)
+		params, errs := api.parseTripParams(req, TripParamDefaults{})
 
 		assert.Nil(t, errs)
 		assert.False(t, params.IncludeStatus)
@@ -273,10 +339,10 @@ func TestParseTripForVehicleParams_Unit(t *testing.T) {
 	t.Run("defaults for trip-for-vehicle", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 
-		params, errs := api.parseTripParams(req, false)
+		params, errs := api.parseTripParams(req, TripParamDefaults{})
 
 		assert.Nil(t, errs)
-		assert.True(t, params.IncludeTrip)
+		assert.False(t, params.IncludeTrip)
 		assert.False(t, params.IncludeSchedule)
 		assert.True(t, params.IncludeStatus)
 	})
@@ -284,7 +350,7 @@ func TestParseTripForVehicleParams_Unit(t *testing.T) {
 	t.Run("invalid params return field errors", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?serviceDate=invalid&time=invalid", nil)
 
-		_, errs := api.parseTripParams(req, false)
+		_, errs := api.parseTripParams(req, TripParamDefaults{})
 
 		require.NotNil(t, errs)
 		assert.Contains(t, errs, "serviceDate")

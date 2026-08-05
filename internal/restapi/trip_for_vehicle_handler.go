@@ -52,7 +52,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	// Parse query params with the agency's timezone so that serviceDate and time
 	// are localized at parse time, preventing UTC date-extraction bugs.
-	params, fieldErrors := api.parseTripParams(r, false, loc)
+	params, fieldErrors := api.parseTripParams(r, TripParamDefaults{}, loc)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -171,11 +171,12 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 			route.Color.String,
 			route.TextColor.String)
 	}
-	references.Routes = utils.MapValues(routeRefs)
-
 	references.Agencies = append(references.Agencies, agencyModel)
 
-	if params.IncludeTrip {
+	// The active trip belongs in references whenever the status block is present,
+	// so includeTrip is only the fallback: it decides the matter solely when no
+	// status block was built.
+	if params.IncludeTrip || status != nil {
 		tripRef := models.NewTripReference(
 			utils.FormCombinedID(agencyID, trip.ID),
 			utils.FormCombinedID(agencyID, trip.RouteID),
@@ -187,7 +188,22 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 			utils.FormCombinedID(agencyID, trip.ShapeID.String),
 		)
 		references.Trips = append(references.Trips, *tripRef)
+
+		routeRef, err := api.routeReferenceByID(ctx, agencyID, trip.RouteID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				api.Logger.Warn("trip references non-existent route",
+					"tripID", tripID, "routeID", trip.RouteID, "agencyID", agencyID)
+				api.sendNotFound(w, r)
+				return
+			}
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		routeRefs[utils.FormCombinedID(agencyID, trip.RouteID)] = routeRef
 	}
+
+	references.Routes = utils.MapValues(routeRefs)
 
 	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
