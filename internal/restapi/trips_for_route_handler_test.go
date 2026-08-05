@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
@@ -36,14 +39,10 @@ const (
 	tripsForRouteHeadsign = "Test Headsign"
 )
 
-// createTestApiWithTripsForRouteFixture builds a RestAPI backed by a minimal
-// in-memory GTFS dataset with a single trip active at tripsForRouteTestClock.
-// This guarantees the trips-for-route handler returns at least one entry, so
-// the per-entry assertions below validate real data instead of running over
-// an empty list (the RABA fixture's block_trip_indexes don't cover this path).
-func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
+// buildTripsForRouteFixtureZip generates a temporary synthetic GTFS zip file
+// for the trips-for-route fixture tests.
+func buildTripsForRouteFixtureZip(t *testing.T) string {
 	t.Helper()
-	ctx := context.Background()
 
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
@@ -75,6 +74,19 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 
 	zipPath := filepath.Join(t.TempDir(), "trips-for-route.zip")
 	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+	return zipPath
+}
+
+// createTestApiWithTripsForRouteFixture builds a RestAPI backed by a minimal
+// in-memory GTFS dataset with a single trip active at tripsForRouteTestClock.
+// This guarantees the trips-for-route handler returns at least one entry, so
+// the per-entry assertions below validate real data instead of running over
+// an empty list (the RABA fixture's block_trip_indexes don't cover this path).
+func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	zipPath := buildTripsForRouteFixtureZip(t)
 
 	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
@@ -99,6 +111,139 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	t.Cleanup(api.Shutdown)
 	return api
+}
+
+// createTestApiWithTripsForRouteAndRealtime initializes a RestAPI with synthetic
+// static GTFS and a real-time feed containing a DUPLICATED vehicle.
+func createTestApiWithTripsForRouteAndRealtime(t *testing.T, c clock.Clock) (*RestAPI, func()) {
+	t.Helper()
+
+	dupID := gtfsrt.TripDescriptor_DUPLICATED
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(tripsForRouteTestClock.Unix())),
+		},
+		Entity: []*gtfsrt.FeedEntity{
+			{
+				Id: proto.String("dup-vehicle"),
+				Vehicle: &gtfsrt.VehiclePosition{
+					Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String("dup-veh-1")},
+					Trip: &gtfsrt.TripDescriptor{
+						TripId:               proto.String(tripsForRouteTripID + ".00060"),
+						RouteId:              proto.String(tripsForRouteRouteID),
+						ScheduleRelationship: &dupID,
+					},
+					Timestamp: proto.Uint64(uint64(tripsForRouteTestClock.Unix())),
+				},
+			},
+		},
+	}
+	feedPayload, err := proto.Marshal(feed)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(feedPayload)
+	})
+	server := httptest.NewServer(mux)
+
+	ctx := context.Background()
+	zipPath := buildTripsForRouteFixtureZip(t)
+
+	gtfsConfig := gtfs.Config{
+		GtfsURL:      zipPath,
+		GTFSDataPath: ":memory:",
+		RTFeeds: []gtfs.RTFeedConfig{
+			{
+				ID:                  "test-feed",
+				VehiclePositionsURL: server.URL + "/vehicle-positions",
+				RefreshInterval:     30,
+				Enabled:             true,
+			},
+		},
+	}
+
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cleanup := func() {
+		api.Shutdown()
+		server.Close()
+		gtfsManager.Shutdown()
+	}
+	return api, cleanup
+}
+
+// TestTripsForRouteHandler_DuplicatedRealtimeTrip verifies that DUPLICATED real-time
+// trips correctly resolve their base trip references using the stripped trip ID.
+func TestTripsForRouteHandler_DuplicatedRealtimeTrip(t *testing.T) {
+	api, cleanup := createTestApiWithTripsForRouteAndRealtime(t, clock.NewMockClock(tripsForRouteTestClock))
+	defer cleanup()
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+		combinedRouteID, tripsForRouteTestClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, 2, model.Version)
+
+	baseTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	dupTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID+".00060")
+
+	baseTripSeen := false
+	dupTripSeen := false
+	for _, entry := range model.Data.List {
+		switch entry.TripId {
+		case baseTripID:
+			baseTripSeen = true
+		case dupTripID:
+			dupTripSeen = true
+			require.NotNil(t, entry.Schedule, "DUPLICATED entry should carry the base trip's schedule")
+			assert.Equal(t, "UTC", entry.Schedule.TimeZone)
+			require.Len(t, entry.Schedule.StopTimes, 2, "schedule should come from the base trip")
+			for _, st := range entry.Schedule.StopTimes {
+				assert.Contains(t, st.StopID, "_", "scheduled stop ID should be combined")
+			}
+		}
+	}
+	assert.True(t, baseTripSeen, "the static scheduled trip should be in the response")
+	assert.True(t, dupTripSeen, "the DUPLICATED trip should appear with its suffixed trip ID")
+
+	// stripNumericSuffix resolved the base trip: references.trips must contain the
+	// scheduled trip populated with route, headsign, and block data from static GTFS.
+	var baseTripRef *models.Trip
+	for i := range model.Data.References.Trips {
+		if model.Data.References.Trips[i].ID == baseTripID {
+			baseTripRef = &model.Data.References.Trips[i]
+			break
+		}
+	}
+	require.NotNil(t, baseTripRef, "references.trips should contain the resolved base trip")
+	assert.Equal(t, combinedRouteID, baseTripRef.RouteID)
+	assert.Equal(t, tripsForRouteHeadsign, baseTripRef.TripHeadsign)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-block"), baseTripRef.BlockID)
 }
 
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
