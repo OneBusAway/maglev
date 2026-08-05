@@ -470,22 +470,34 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	}
 	require.NotEmpty(t, tripID, "Need a trip with shape data and stop times")
 
-	// Get a mid-route stop to position the vehicle
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	require.NoError(t, err)
 
-	midIdx := len(stopTimes) / 2
-	midStopID := stopTimes[midIdx].StopID
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, []string{midStopID})
+	// Load the shape and pin the vehicle to a specific shape vertex so the
+	// projection has a geometrically-defined expected value: at vertex i the
+	// perpendicular distance to segments [i-1,i] and [i,i+1] is zero, so
+	// projectVehicleDistanceOnShape must return exactly cumulativeDistances[i]
+	// (up to haversine rounding). This lets the assertion below check the
+	// value directly with InDelta instead of a fragile float NotEqual against
+	// the schedule.
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
 	require.NoError(t, err)
-	require.NotEmpty(t, stops)
+	require.Greater(t, len(shapeRows), 1, "shape must have at least two points")
+	shapePoints := shapeRowsToPoints(shapeRows)
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	shapeMidIdx := len(shapePoints) / 2
+	expectedProjection := cumulativeDistances[shapeMidIdx]
 
-	lat := float32(stops[0].Lat)
-	lon := float32(stops[0].Lon)
+	lat := float32(shapePoints[shapeMidIdx].Latitude)
+	lon := float32(shapePoints[shapeMidIdx].Longitude)
 	vehicleID := "VEHICLE_SHAPE_TEST"
 
+	// currentTime is anchored to a mid-route stop so the block snapshot is
+	// InRange and picks tripID as its ActiveTripID -- the tier-1 GPS branch
+	// only fires when snap.ActiveTripID == vehicle.Trip.ID.ID.
+	midStopIdx := len(stopTimes) / 2
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midStopIdx].ArrivalTime, stopTimes[midStopIdx].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
 	// Pin Timestamp to currentTime so the vehicle reads as fresh against the fixed serviceDate.
@@ -507,16 +519,17 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 		"ScheduledDistanceAlongTrip should be > 0 for a vehicle mid-route")
 	assert.Less(t, status.ScheduledDistanceAlongTrip, status.TotalDistanceAlongTrip,
 		"ScheduledDistanceAlongTrip should be less than total for a mid-route vehicle")
-	// distanceAlongTrip is the LIVE (GPS-derived) position, distinct from
-	// scheduledDistanceAlongTrip. The vehicle's GPS sits on the mid-route
-	// stop's coordinates, snap.ActiveTripID matches the vehicle's declared
-	// trip, and the vehicle is fresh -- projectVehicleDistanceOnShape must
-	// return a positive value that is not simply the schedule value copied
-	// across (see trips_helper.go tier-1 GPS-derived branch).
+	// distanceAlongTrip is the LIVE (GPS-derived) position. Vehicle GPS sits
+	// exactly on shape vertex shapeMidIdx, snap.ActiveTripID matches the
+	// vehicle's declared trip, and the vehicle is fresh -- the tier-1 GPS
+	// branch fires and projectVehicleDistanceOnShape must return
+	// cumulativeDistances[shapeMidIdx] (± ~1m for haversine rounding).
 	assert.Greater(t, status.DistanceAlongTrip, float64(0),
 		"distanceAlongTrip must be GPS-derived and > 0 when vehicle position projects onto the active trip's shape")
-	assert.NotEqual(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip,
-		"distanceAlongTrip must not be a copy of scheduledDistanceAlongTrip -- they are the OBA-spec-distinct live-vs-scheduled positions")
+	assert.InDelta(t, expectedProjection, status.DistanceAlongTrip, 1.0,
+		"distanceAlongTrip must equal the shape's cumulative distance at the vehicle's GPS point "+
+			"(expected=%.2f, got=%.2f); a schedule-value copy would land at %.2f",
+		expectedProjection, status.DistanceAlongTrip, status.ScheduledDistanceAlongTrip)
 }
 
 // TestBuildTripStatus_ShapeData_ProjectionFailureFallsBackToScheduled exercises

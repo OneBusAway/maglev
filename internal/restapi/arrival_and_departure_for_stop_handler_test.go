@@ -1016,6 +1016,32 @@ func TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics(t *testing
 		stopCID   = "sob-stop-c"
 	)
 
+	// The Create* queries above use INSERT OR REPLACE, so re-runs of this
+	// test don't collide on their own -- but the fixtures still leak into
+	// the shared test DB and can be observed by other tests. Delete them
+	// in foreign-key-safe reverse order: stop_times -> trips -> calendar
+	// -> routes -> agencies -> stops. block_id lives as a column on trips,
+	// so removing the trip clears it automatically. sqlc only exposes
+	// table-wide Clear* helpers, so per-ID cleanup goes through the raw DB
+	// handle on the same client. Errors are surfaced via require.NoError
+	// consistent with the setup path above.
+	db := api.GtfsManager.GtfsDB.DB
+	t.Cleanup(func() {
+		_, err := db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id = ?`, tripID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM trips WHERE id = ?`, tripID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM calendar WHERE id = ?`, serviceID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM routes WHERE id = ?`, routeID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `DELETE FROM agencies WHERE id = ?`, agencyID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx,
+			`DELETE FROM stops WHERE id IN (?, ?, ?)`, stopAID, stopBID, stopCID)
+		require.NoError(t, err)
+	})
+
 	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID: agencyID, Name: "Schedule-Only Block Agency", Url: "http://example.com", Timezone: "UTC",
 	})
