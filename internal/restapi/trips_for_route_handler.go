@@ -561,7 +561,10 @@ func (api *RestAPI) buildBlockTripForRoute(
 	}
 
 	for _, bt := range blockTrips {
-		if bt.RouteID == routeID && bt.BlockID.Valid {
+		// MinArrivalTime/MaxDepartureTime are NULL for a trip with no
+		// stop_times (see schema.sql); such a trip has no time window to
+		// compare against, so it can't be a nearest-midpoint candidate.
+		if bt.RouteID == routeID && bt.BlockID.Valid && bt.MinArrivalTime.Valid && bt.MaxDepartureTime.Valid {
 			key := bt.BlockID.String
 			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 				ID:               bt.ID,
@@ -595,6 +598,16 @@ type interlinedTripResolution struct {
 // calendar day, and nothing requires a block's trips to agree on which one
 // they're tagged with.
 //
+// A block ID can also be reused across otherwise-unrelated service_ids (e.g.
+// an agency reusing block "101" for both yesterday's and today's schedule),
+// which would let a same-block candidate from the wrong calendar day win a
+// nearest-midpoint search purely by time-of-day coincidence. Candidates that
+// share fetchedTrip's exact service_id are preferred first: trips under one
+// service_id recur together on every date that service_id is active, so
+// they can never be a cross-day collision. The broader nearest-midpoint
+// search across all candidates remains as a fallback for the legitimate
+// case of two distinct service_ids both active on the same calendar day.
+//
 // ok is false if no queried-route trip exists anywhere in the block.
 func resolveInterlinedEntryTripID(
 	fetchedTrip gtfsdb.Trip,
@@ -605,6 +618,13 @@ func resolveInterlinedEntryTripID(
 	entries := blockTripForRoute[fetchedTrip.BlockID.String]
 	if len(entries) == 0 {
 		return interlinedTripResolution{}, false
+	}
+	if !fetchedTrip.MinArrivalTime.Valid || !fetchedTrip.MaxDepartureTime.Valid {
+		return interlinedTripResolution{}, false
+	}
+
+	if sameService := entriesWithServiceID(entries, fetchedTrip.ServiceID); len(sameService) > 0 {
+		entries = sameService
 	}
 
 	activeMid := (fetchedTrip.MinArrivalTime.Int64 + fetchedTrip.MaxDepartureTime.Int64) / 2
@@ -632,6 +652,18 @@ func resolveInterlinedEntryTripID(
 		EntryAgencyID: entryAgencyID,
 		SelectedTrip:  entries[bestIdx].Trip,
 	}, true
+}
+
+// entriesWithServiceID returns the subset of entries whose trip runs under
+// serviceID.
+func entriesWithServiceID(entries []blockTripEntry, serviceID string) []blockTripEntry {
+	matches := make([]blockTripEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Trip.ServiceID == serviceID {
+			matches = append(matches, e)
+		}
+	}
+	return matches
 }
 
 func tripsByBlockIDsRowToTrip(row gtfsdb.GetTripsByBlockIDsRow) gtfsdb.Trip {

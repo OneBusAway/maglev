@@ -14,11 +14,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -243,6 +245,46 @@ func gapFiles() map[string]string {
 			"tfr-gap-b,10:30:00,10:30:00," + tripsForRouteStop2ID + ",2\n" +
 			"tfr-gap-c,10:35:00,10:35:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-gap-c,10:50:00,10:50:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+// crossDayBlockReuseFiles reuses block_id "tfr-overnight" for two otherwise
+// unrelated service_ids on consecutive calendar days, and deliberately gives
+// today's occurrence (tfr-today-a) a time-of-day closer to the active trip's
+// midpoint than yesterday's actual match (tfr-yest-a). This defeats a pure
+// nearest-midpoint search across all same-block candidates and requires
+// preferring same-service_id candidates first.
+func crossDayBlockReuseFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-yest-a,Headsign A,0,tfr-overnight\n" +
+			"tfr-route-otr,tfr-svc-yest,tfr-yest-b,Headsign B,0,tfr-overnight\n" +
+			tripsForRouteRouteID + ",tfr-svc-today,tfr-today-a,Headsign A,0,tfr-overnight\n" +
+			"tfr-route-otr,tfr-svc-today,tfr-today-b,Headsign B,0,tfr-overnight\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			// yest-a: mid 22:05 — the correct match, but farther from yest-b's mid.
+			"tfr-yest-a,22:00:00,22:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-a,22:10:00,22:10:00," + tripsForRouteStop2ID + ",2\n" +
+			// yest-b (active): mid 24:20.
+			"tfr-yest-b,23:55:00,23:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-b,24:45:00,24:45:00," + tripsForRouteStop2ID + ",2\n" +
+			// today-a: mid 24:20 — numerically identical to yest-b's mid, despite
+			// being an unrelated trip from a different calendar day's block.
+			"tfr-today-a,24:15:00,24:15:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-a,24:25:00,24:25:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-today-b,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-b,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n",
 	}
 }
 
@@ -987,4 +1029,52 @@ func TestTripsForRouteHandler_InterlinedBlockAcrossServiceIDs(t *testing.T) {
 	require.NotNil(t, entry.Status)
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestTripsForRouteHandler_ReusedBlockIDAcrossDays verifies that a block ID
+// reused across two unrelated service_ids on consecutive calendar days
+// resolves to the queried-route trip under the active trip's own service_id
+// (tfr-yest-a), not a same-block candidate from the other day that merely
+// happens to have a numerically closer time-of-day midpoint (tfr-today-a).
+func TestTripsForRouteHandler_ReusedBlockIDAcrossDays(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-crossday.zip", crossDayBlockReuseFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := afterMidnightClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-a")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestResolveInterlinedEntryTripID_FetchedTripMissingTimes verifies that a
+// fetchedTrip with a NULL cached time window (possible for a trip with no
+// stop_times rows) can't be used to compute a nearest-midpoint match, so
+// resolution reports ok=false rather than silently treating it as midnight.
+func TestResolveInterlinedEntryTripID_FetchedTripMissingTimes(t *testing.T) {
+	fetchedTrip := gtfsdb.Trip{
+		ID:        "tfr-no-times",
+		RouteID:   "tfr-route-otr",
+		ServiceID: "tfr-svc",
+		BlockID:   nulls.String("tfr-block"),
+		// MinArrivalTime/MaxDepartureTime left at their zero value: Valid=false.
+	}
+	entries := map[string][]blockTripEntry{
+		"tfr-block": {{ID: "tfr-candidate", MinArrivalTime: 0, MaxDepartureTime: 100}},
+	}
+
+	_, resolved := resolveInterlinedEntryTripID(fetchedTrip, tripsForRouteRouteID, tripsForRouteAgencyID,
+		entries, map[string]string{})
+
+	assert.False(t, resolved)
 }
