@@ -7,6 +7,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // devDate is a placeholder service date for tests that don't exercise the
@@ -338,7 +339,8 @@ func TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule(t *testin
 
 	trip := mustGetTrip(t, api)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
-	if err != nil || len(stopTimes) < 3 {
+	require.NoError(t, err, "GetStopTimesForTrip failed for %s: a real DB error must not be masked as a benign skip", trip.ID)
+	if len(stopTimes) < 3 {
 		t.Skip("need a real trip with >= 3 stop_times for this path")
 	}
 

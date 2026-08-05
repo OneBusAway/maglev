@@ -268,9 +268,17 @@ func (api *RestAPI) BuildTripStatus(
 			_, arrivalInShift := snap.ShiftTripIDs[tripID]
 			if sameShift && arrivalInShift {
 				gpsAssigned := false
+				// A stale vehicle's GPS position is stale by definition;
+				// treating it as live would mint a distanceAlongTrip from a
+				// position the vehicle occupied minutes/hours ago. Gate the
+				// GPS projection on freshness so stale (or unavailable) RT
+				// data falls through to snap.ActiveTripScheduledDistance --
+				// matches the freshness gate on status.Predicted (see the
+				// CANCELED branch above) and hasVehicleRealtimeData below.
 				if vehicle.Position != nil &&
 					vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil &&
-					snap.ActiveTripID == vehicle.Trip.ID.ID {
+					snap.ActiveTripID == vehicle.Trip.ID.ID &&
+					!defaultStaleDetector.Check(vehicle, currentTime) {
 					gpsPos := models.Location{
 						Lat: float64(*vehicle.Position.Latitude),
 						Lon: float64(*vehicle.Position.Longitude),

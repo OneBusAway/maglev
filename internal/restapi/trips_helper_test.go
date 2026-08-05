@@ -507,11 +507,94 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 		"ScheduledDistanceAlongTrip should be > 0 for a vehicle mid-route")
 	assert.Less(t, status.ScheduledDistanceAlongTrip, status.TotalDistanceAlongTrip,
 		"ScheduledDistanceAlongTrip should be less than total for a mid-route vehicle")
-	// distanceAlongTrip is intentionally NOT asserted non-zero: per the OBA
-	// spec it's the LIVE (GPS-derived) position, distinct from
-	// scheduledDistanceAlongTrip. Until block-cumulative GPS projection lands
-	// (see summary/distance-along-shape-library-port.md) it stays at 0 rather
-	// than being incorrectly mirrored from the schedule value.
+	// distanceAlongTrip is the LIVE (GPS-derived) position, distinct from
+	// scheduledDistanceAlongTrip. The vehicle's GPS sits on the mid-route
+	// stop's coordinates, snap.ActiveTripID matches the vehicle's declared
+	// trip, and the vehicle is fresh -- projectVehicleDistanceOnShape must
+	// return a positive value that is not simply the schedule value copied
+	// across (see trips_helper.go tier-1 GPS-derived branch).
+	assert.Greater(t, status.DistanceAlongTrip, float64(0),
+		"distanceAlongTrip must be GPS-derived and > 0 when vehicle position projects onto the active trip's shape")
+	assert.NotEqual(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip,
+		"distanceAlongTrip must not be a copy of scheduledDistanceAlongTrip -- they are the OBA-spec-distinct live-vs-scheduled positions")
+}
+
+// TestBuildTripStatus_ShapeData_ProjectionFailureFallsBackToScheduled exercises
+// the tier-2 fallback in trips_helper.go: when projectVehicleDistanceOnShape
+// cannot fit the vehicle onto the active-trip shape (here forced by placing
+// the GPS point well past the >200m off-route guard), gpsAssigned stays false
+// and status.DistanceAlongTrip is filled with snap.ActiveTripScheduledDistance
+// -- collapsing the two fields into one number rather than emitting a
+// catastrophically wrong live position.
+func TestBuildTripStatus_ShapeData_ProjectionFailureFallsBackToScheduled(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	agencyID := agencies[0].ID
+
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips)
+
+	var tripID, routeID string
+	for _, trip := range trips {
+		shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+		if err == nil && len(shapeRows) > 1 {
+			st, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+			if err == nil && len(st) >= 2 {
+				tripID = trip.ID
+				routeID = trip.RouteID
+				break
+			}
+		}
+	}
+	require.NotEmpty(t, tripID, "Need a trip with shape data and stop times")
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	require.NoError(t, err)
+
+	midIdx := len(stopTimes) / 2
+	midStopID := stopTimes[midIdx].StopID
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, []string{midStopID})
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	// Offset the vehicle far enough that no shape segment can plausibly be
+	// within projectVehicleDistanceOnShape's 200m guard even for a loopy
+	// route: +5 degrees of latitude is ~555 km, well outside any shape's
+	// reach. The projection returns ok=false and the code must fall back
+	// to snap.ActiveTripScheduledDistance.
+	offRouteLat := float32(stops[0].Lat + 5.0)
+	offRouteLon := float32(stops[0].Lon + 5.0)
+
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[midIdx].ArrivalTime, stopTimes[midIdx].DepartureTime)
+	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
+
+	api.GtfsManager.MockAddVehicleWithOptions("VEHICLE_OFF_ROUTE", tripID, routeID, internalgtfs.MockVehicleOptions{
+		Timestamp: &currentTime,
+		Position: &gtfs.Position{
+			Latitude:  &offRouteLat,
+			Longitude: &offRouteLon,
+		},
+	})
+
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+
+	require.Greater(t, status.ScheduledDistanceAlongTrip, float64(0),
+		"precondition: mid-route position must produce a positive scheduled distance")
+	// Projection fails → tier-2 fallback: distanceAlongTrip is filled from
+	// snap.ActiveTripScheduledDistance, which is the same value already
+	// assigned to scheduledDistanceAlongTrip.
+	assert.Equal(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip,
+		"projection failure must fall back to snap.ActiveTripScheduledDistance -- "+
+			"distanceAlongTrip should equal scheduledDistanceAlongTrip, not stay at 0")
 }
 
 func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {

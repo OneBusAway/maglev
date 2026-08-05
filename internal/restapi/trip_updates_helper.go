@@ -392,10 +392,16 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 		}
 		startByID[r.ID] = r.MinArrivalTime.Int64
 	}
-	if len(startByID) < len(tripIDs) {
-		// Any trip is missing a cached min_arrival_time — a partial sort
-		// would drop those IDs; keep input order to preserve them.
-		return tripIDs
+	// Any trip missing a cached min_arrival_time -- a partial sort would
+	// order the others but leave the missing IDs at their default 0 key,
+	// silently promoting them to "earliest" and scrambling the deviation
+	// picker's "last delay wins" contract. Per-ID membership check
+	// (instead of len(startByID) < len(tripIDs)) makes intent explicit and
+	// is robust to any future map-population change.
+	for _, id := range tripIDs {
+		if _, ok := startByID[id]; !ok {
+			return tripIDs
+		}
 	}
 	out := make([]string, len(tripIDs))
 	copy(out, tripIDs)
@@ -441,11 +447,18 @@ func (api *RestAPI) blockShiftTripIDsSortedByStartTime(ctx context.Context, targ
 			lastSeconds:  r.MaxDepartureTime.Int64 / int64(time.Second),
 		})
 	}
-	if len(minimal) < len(rawTripIDs) {
-		// Missing a bound anywhere → the shift split would exclude those
-		// trips silently. Fall back to the unfiltered sort so nothing is
-		// dropped, matching blockTripIDsSortedByStartTime's own fallback.
-		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+	// Missing a bound anywhere → the shift split would exclude those trips
+	// silently. Per-ID membership check (instead of len(minimal) <
+	// len(rawTripIDs)) makes intent explicit and stays correct if
+	// GetTripTimeBoundsByIDs ever returns extra or duplicate rows.
+	presentIDs := make(map[string]struct{}, len(minimal))
+	for _, m := range minimal {
+		presentIDs[m.id] = struct{}{}
+	}
+	for _, id := range rawTripIDs {
+		if _, ok := presentIDs[id]; !ok {
+			return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+		}
 	}
 	slices.SortFunc(minimal, func(a, b blockTripData) int {
 		return cmp.Compare(a.firstSeconds, b.firstSeconds)
