@@ -355,13 +355,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			ServiceIds: allServiceIDs,
 		})
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				// No trips found for the interlined blocks: the queried-route
-				// trip cannot be resolved. Surface a 404 rather than emitting
-				// entries with the wrong outer trip ID.
-				api.sendNotFound(w, r)
-				return
-			}
 			api.serverErrorResponse(w, r, err)
 			return
 		}
@@ -434,10 +427,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			} else {
 				// The active trip is on another route but no queried-route trip
 				// exists for this block+service: the entry's outer trip ID
-				// cannot be resolved. Surface a 404 instead of emitting an
-				// entry whose tripId points at the other route's trip.
-				api.sendNotFound(w, r)
-				return
+				// cannot be resolved. Per spec this endpoint always returns
+				// 200 OK, so skip this entry rather than emitting one whose
+				// tripId points at the other route's trip, or failing the
+				// entire response over a single unresolvable block.
+				api.Logger.Warn("trips-for-route: no queried-route trip found for interlined block",
+					"block_id", fetchedTrip.BlockID.String, "service_id", fetchedTrip.ServiceID, "active_trip_id", tripID)
+				continue
 			}
 		}
 
