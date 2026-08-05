@@ -1274,131 +1274,72 @@ FROM (
 -- a calendar_dates addition (type=1) for one of this route's services.
 --
 -- Used to distinguish ServiceDateOutOfRange from NoServiceThatDay in the
--- schedule-for-route error path. Search is bounded to 2 years ahead of the
--- input date to keep the recursive date-enumeration cheap; feeds that
--- schedule further out than that are rare and would be caught on later polls.
-WITH RECURSIVE
-    -- Parse ref_date once. Downstream CTEs read `ref.iso` (YYYY-MM-DD, feeds
-    -- date() arithmetic) and `ref.jd0` (julian day, feeds arithmetic that
-    -- avoids repeated '+1 day' string modifiers in the recursion below).
-    ref(iso, jd0) AS (
-        -- Cast sqlc.arg(ref_date) to TEXT once so sqlc infers a string type
-        -- for RouteHasFutureServiceParams.RefDate (instead of interface{}),
-        -- and compute the YYYY-MM-DD form once so downstream expressions
-        -- reference `iso` rather than repeating the substring dance.
-        SELECT iso, julianday(iso)
+-- schedule-for-route error path. Bounded to 2 years past the LATER of
+-- ref_date and today (anchoring to today matters for historical ref_date
+-- queries -- e.g. ref_date=1970 against a feed whose service starts in
+-- 2024 -- so the check still reaches "today's" feed span).
+--
+-- Implementation: two indexed range checks against calendar and
+-- calendar_dates -- no day-by-day enumeration. Part 1 asks "is there any
+-- exception_type=1 addition in the window?", Part 2 asks "does any
+-- calendar row overlap the window on an enabled weekday?".
+--
+-- Part 2 is a mild over-approximation: it does not verify that the
+-- calendar row's intersection with the window actually contains an
+-- enabled weekday, nor that every regular day in that intersection is
+-- cancelled by an exception_type=2 row. Given the 2-year horizon, the
+-- intersection is almost always >=7 days so every weekday appears; the
+-- rare edge cases where this over-reports would only flip the caller's
+-- error message from ServiceDateOutOfRange to NoServiceThatDay -- both
+-- surface an empty schedule, so the miscategorization is benign.
+WITH
+    -- Parse ref_date once; horizon = 2 years past MAX(ref_date, today).
+    -- CAST(... AS TEXT) once so sqlc infers RefDate as string, not
+    -- interface{}. YYYYMMDD strings sort lexicographically, so string
+    -- comparisons below are correct without any date() round-trip.
+    ref(ref_ymd, horizon_ymd) AS (
+        SELECT
+            ymd,
+            strftime('%Y%m%d', date(MAX(iso, date('now')), '+2 years'))
         FROM (
             SELECT
-                substr(ymd, 1, 4) || '-' ||
-                substr(ymd, 5, 2) || '-' ||
-                substr(ymd, 7, 2) AS iso
-            FROM (SELECT CAST(sqlc.arg(ref_date) AS TEXT) AS ymd)
+                CAST(sqlc.arg(ref_date) AS TEXT) AS ymd,
+                substr(CAST(sqlc.arg(ref_date) AS TEXT), 1, 4) || '-' ||
+                substr(CAST(sqlc.arg(ref_date) AS TEXT), 5, 2) || '-' ||
+                substr(CAST(sqlc.arg(ref_date) AS TEXT), 7, 2) AS iso
         )
-    ),
-    -- Horizon: 2 years past the LATER of ref_date and today. Anchoring to
-    -- today (not ref_date alone) matters for historical ref_date queries --
-    -- e.g. ref_date=1970 against a feed whose real service starts in 2024 --
-    -- so the search still reaches "today's" feed span instead of clamping to
-    -- 1972. The recursive search below never enumerates past this horizon,
-    -- regardless of how far out calendar/calendar_dates rows extend.
-    --
-    -- ISO date strings sort lexicographically, so MAX(iso, date('now'))
-    -- picks the later without a format round-trip.
-    horizon(cap) AS (
-        SELECT strftime('%Y%m%d', date(MAX(iso, date('now')), '+2 years'))
-        FROM ref
-    ),
-    -- Upper bound: the max end_date across every calendar row this route's
-    -- services touch, or the max calendar_dates.date (in case the feed adds
-    -- service days past the calendar's end_date) -- clamped to the horizon
-    -- above so a feed using a far-future/indefinite end_date sentinel (e.g.
-    -- 20991231, meaning "runs indefinitely") doesn't force day-by-day
-    -- enumeration across decades. Recursion terminates when the enumerated
-    -- date reaches this bound, so ref_date far in the past still discovers
-    -- today's feed span (as long as it's within the horizon).
-    -- hi_ymd is the raw YYYYMMDD upper bound; hi_jd is the same value
-    -- pre-converted to a julian day number so the recursion's termination
-    -- check below can compare jd < hi_jd (single subquery, evaluated once)
-    -- instead of re-formatting jd on every iteration.
-    bounds(hi_ymd, hi_jd) AS (
-        SELECT hi_ymd,
-            julianday(
-                substr(hi_ymd, 1, 4) || '-' ||
-                substr(hi_ymd, 5, 2) || '-' ||
-                substr(hi_ymd, 7, 2)
-            )
-        FROM (
-            SELECT MIN(
-                (SELECT MAX(dt) FROM (
-                    SELECT MAX(cal.end_date) AS dt
-                    FROM trips t
-                    JOIN calendar cal ON cal.id = t.service_id
-                    WHERE t.route_id = sqlc.arg(route_id)
-                    UNION ALL
-                    SELECT MAX(cd.date) AS dt
-                    FROM trips t
-                    JOIN calendar_dates cd ON cd.service_id = t.service_id
-                    WHERE t.route_id = sqlc.arg(route_id)
-                )),
-                (SELECT cap FROM horizon)
-            ) AS hi_ymd
-        )
-    ),
-    -- Enumerate every candidate date strictly after ref_date, up to the
-    -- upper bound. Recursion uses julian day arithmetic (jd + 1) instead of
-    -- date-string modifiers -- avoids re-parsing the ISO string every
-    -- iteration and eliminates the '+1 day' literal from every reference.
-    candidate_jd(jd) AS (
-        SELECT jd0 + 1
-        FROM ref
-        WHERE (SELECT hi_jd FROM bounds) IS NOT NULL
-        UNION ALL
-        SELECT jd + 1
-        FROM candidate_jd
-        WHERE jd < (SELECT hi_jd FROM bounds)
-    ),
-    -- Materialize both ISO (for %w weekday lookup) and YYYYMMDD (for feed
-    -- date-column joins) once per candidate row, so the outer SELECT below
-    -- doesn't need any format calls.
-    candidate_date(d_iso, d_ymd, d_wday) AS (
-        SELECT date(jd), strftime('%Y%m%d', jd), strftime('%w', jd)
-        FROM candidate_jd
     )
-SELECT EXISTS (
-    SELECT 1
-    FROM candidate_date cdate
-    WHERE
-        EXISTS (
-            SELECT 1
-            FROM trips t
-            JOIN calendar cal ON cal.id = t.service_id
-            WHERE t.route_id = sqlc.arg(route_id)
-              AND cdate.d_ymd BETWEEN cal.start_date AND cal.end_date
-              AND CASE cdate.d_wday
-                    WHEN '0' THEN cal.sunday
-                    WHEN '1' THEN cal.monday
-                    WHEN '2' THEN cal.tuesday
-                    WHEN '3' THEN cal.wednesday
-                    WHEN '4' THEN cal.thursday
-                    WHEN '5' THEN cal.friday
-                    WHEN '6' THEN cal.saturday
-                  END = 1
-              AND NOT EXISTS (
-                  SELECT 1 FROM calendar_dates cd
-                  WHERE cd.service_id = t.service_id
-                    AND cd.date = cdate.d_ymd
-                    AND cd.exception_type = 2
-              )
-        )
-        OR EXISTS (
-            SELECT 1
-            FROM trips t
-            JOIN calendar_dates cd ON cd.service_id = t.service_id
-            WHERE t.route_id = sqlc.arg(route_id)
-              AND cd.date = cdate.d_ymd
-              AND cd.exception_type = 1
-        )
-) AS has_future_service;
+-- CAST(... AS INTEGER) so sqlc infers int64 for has_future_service
+-- instead of interface{}; callers rely on `== 0` / `== 1` comparisons.
+SELECT CAST((
+    -- Part 1: an exception-added service day strictly after ref_date,
+    -- within the horizon. Indexed via idx_calendar_dates_service_id.
+    EXISTS (
+        SELECT 1
+        FROM trips t
+        JOIN calendar_dates cd ON cd.service_id = t.service_id
+        WHERE t.route_id = sqlc.arg(route_id)
+          AND cd.exception_type = 1
+          AND cd.date > (SELECT ref_ymd FROM ref)
+          AND cd.date <= (SELECT horizon_ymd FROM ref)
+    )
+    OR
+    -- Part 2: a calendar row for this route overlaps (ref_date, horizon]
+    -- with at least one enabled weekday. Indexed via
+    -- idx_trips_route_service; cal.end_date > ref_ymd preserves strict
+    -- ref_date exclusivity, cal.start_date <= horizon_ymd preserves the
+    -- upper bound.
+    EXISTS (
+        SELECT 1
+        FROM trips t
+        JOIN calendar cal ON cal.id = t.service_id
+        WHERE t.route_id = sqlc.arg(route_id)
+          AND cal.end_date > (SELECT ref_ymd FROM ref)
+          AND cal.start_date <= (SELECT horizon_ymd FROM ref)
+          AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
+             + cal.thursday + cal.friday + cal.saturday) > 0
+    )
+) AS INTEGER) AS has_future_service;
 
 -- Optimized queries using SQLite window functions
 
