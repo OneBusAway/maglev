@@ -64,15 +64,16 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 }
 
 type MockVehicleOptions struct {
-	Position            *gtfs.Position
-	CurrentStopSequence *uint32
-	StopID              *string
-	CurrentStatus       *gtfs.CurrentStatus
-	OccupancyStatus     *gtfs.OccupancyStatus
-	NoTrip              bool       // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle with no current trip assignment, which VehiclesForAgencyID filters out.
-	NoID                bool       // NoID creates a vehicle with ID == nil, simulating a GTFS-RT vehicle that omits the vehicle descriptor.
-	NoTimestamp         bool       // NoTimestamp creates a vehicle with Timestamp == nil, simulating a GTFS-RT vehicle with no update time.
-	Timestamp           *time.Time // Timestamp overrides the vehicle's last-update time; defaults to time.Now() when nil.
+	Position             *gtfs.Position
+	CurrentStopSequence  *uint32
+	StopID               *string
+	CurrentStatus        *gtfs.CurrentStatus
+	OccupancyStatus      *gtfs.OccupancyStatus
+	ScheduleRelationship gtfs.TripScheduleRelationship // ScheduleRelationship sets the vehicle's trip descriptor schedule relationship (e.g. CANCELED); defaults to SCHEDULED.
+	NoTrip               bool                          // NoTrip creates a vehicle with Trip == nil, simulating a GTFS-RT vehicle with no current trip assignment, which VehiclesForAgencyID filters out.
+	NoID                 bool                          // NoID creates a vehicle with ID == nil, simulating a GTFS-RT vehicle that omits the vehicle descriptor.
+	NoTimestamp          bool                          // NoTimestamp creates a vehicle with Timestamp == nil, simulating a GTFS-RT vehicle with no update time.
+	Timestamp            *time.Time                    // Timestamp overrides the vehicle's last-update time; defaults to time.Now() when nil.
 }
 
 func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
@@ -93,8 +94,9 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	if !opts.NoTrip {
 		trip = &gtfs.Trip{
 			ID: gtfs.TripID{
-				ID:      tripID,
-				RouteID: routeID,
+				ID:                   tripID,
+				RouteID:              routeID,
+				ScheduleRelationship: opts.ScheduleRelationship,
 			},
 		}
 	}

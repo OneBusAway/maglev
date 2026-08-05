@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -27,16 +28,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
-	includeStatus := r.URL.Query().Get("includeStatus") != "false"
-	includeTrip := parseIncludeTrip(r.URL.Query())
+	query := r.URL.Query()
+	includeSchedule := parseBoolQueryParam(query, "includeSchedule")
+	includeStatus := parseBoolQueryParam(query, "includeStatus")
+	includeTrip := parseIncludeTrip(query)
 	includeReferences := ShouldIncludeReferences(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			references := models.NewEmptyReferences()
-			response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, *references, false, api.Clock, false)
+			response := models.NewListResponse([]models.TripsForRouteListEntry{}, *references, false, api.Clock)
 			api.sendResponse(w, r, response)
 			return
 		}
@@ -192,11 +194,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
 		var references models.ReferencesModel
 		if includeReferences {
-			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil, nil)
 		} else {
 			references = *models.NewEmptyReferences()
 		}
-		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
+		response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -319,7 +321,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	stopIDsMap := make(map[string]bool)
+	stopIDsMap := make(map[string]string)
 
 	// When a block has multiple queried-route trips (e.g. route A → B → A),
 	// we need the specific trip whose time window is nearest to the active trip.
@@ -460,7 +462,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, todayMidnight, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
@@ -524,7 +526,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
@@ -558,23 +560,23 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if includeReferences {
 		var stops []gtfsdb.Stop
 		if len(stopIDsMap) > 0 {
-			stopIDs := make([]string, 0, len(stopIDsMap))
-			for stopID := range stopIDsMap {
-				stopIDs = append(stopIDs, stopID)
+			bareIDs := make([]string, 0, len(stopIDsMap))
+			for bareID := range stopIDsMap {
+				bareIDs = append(bareIDs, bareID)
 			}
 			var err error
-			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
 			if err != nil {
-				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
 				stops = []gtfsdb.Stop{}
 			}
 		}
 
-		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips, stopIDsMap)
 	} else {
 		references = *models.NewEmptyReferences()
 	}
-	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
+	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
@@ -593,14 +595,16 @@ func tripsByBlockIDsRowToTrip(row gtfsdb.GetTripsByBlockIDsRow) gtfsdb.Trip {
 	}
 }
 
-func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]bool) {
+func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]string) {
 	if schedule == nil {
 		return
 	}
 	for _, stopTime := range schedule.StopTimes {
-		_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
+		_, bareID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 		if err == nil {
-			stopIDsMap[stopID] = true
+			if _, exists := stopIDsMap[bareID]; !exists {
+				stopIDsMap[bareID] = stopTime.StopID
+			}
 		}
 	}
 }
@@ -612,6 +616,7 @@ func buildTripReferences(
 	trips []models.TripsForRouteListEntry,
 	stops []gtfsdb.Stop,
 	preFetchedTrips []gtfsdb.Trip,
+	stopIDMap map[string]string,
 ) models.ReferencesModel {
 
 	presentTrips := make(map[string]models.Trip)
@@ -764,7 +769,7 @@ func buildTripReferences(
 		stopList = append(stopList, models.Stop{
 			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
-			ID:                 stop.ID,
+			ID:                 stopIDMap[stop.ID],
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       0,
@@ -833,4 +838,14 @@ func stripNumericSuffix(tripID string) string {
 		}
 	}
 	return tripID[:idx]
+}
+
+// parseBoolQueryParam parses a boolean query parameter, defaulting to true when
+// the parameter is omitted and to false when present but not a valid boolean.
+func parseBoolQueryParam(query url.Values, name string) bool {
+	if !query.Has(name) {
+		return true
+	}
+	val, err := strconv.ParseBool(query.Get(name))
+	return err == nil && val
 }
