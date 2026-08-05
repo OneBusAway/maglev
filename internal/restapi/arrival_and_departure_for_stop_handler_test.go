@@ -622,11 +622,12 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	assert.Equal(t, expectedTime, predDeparture, "Departure time should include 300s trip-level delay")
 }
 
-// TestGetPredictedTimes_DelayVariants tables the delay-only-STU, trip-level-
-// delay, and ±1-hour blockNotActive boundary behaviors. Java's applyTripUpdates
-// ToRecord accepts delay-only STUs and trip-level delay records, and
-// GtfsRealtimeSource.java:811-821 discards records whose offset exceeds ±1h
-// (strict > 3600s); the ±1h boundary itself still emits.
+// TestGetPredictedTimes_DelayVariants tables getPredictedTimes' delay-only-STU
+// and trip-level-Delay fallback paths, including cases whose delay magnitude
+// exceeds the ±1h window that Java's GtfsRealtimeSource.java:811-821 rejects
+// at RT ingest (strict > 3600s). getPredictedTimes itself applies no such cap
+// -- whatever delay survives ingest is added to the scheduled time -- so every
+// case here must produce scheduled + delay for both arrival and departure.
 func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 	stopIDStr := "target_stop"
 	seq := uint32(3)
@@ -642,79 +643,65 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 	}
 
 	cases := []struct {
-		name               string
-		tripID             string
-		lookupStopID       string
-		lookupStopSeq      int64
-		delay              time.Duration
-		stopTimeUpdates    []gtfs.StopTimeUpdate
-		tripLevelDelay     *time.Duration
-		expectPredicted    bool
-		expectDelayApplied bool // when true, predicted times == scheduled + delay; when false, zero times
+		name            string
+		tripID          string
+		lookupStopID    string
+		lookupStopSeq   int64
+		delay           time.Duration
+		stopTimeUpdates []gtfs.StopTimeUpdate
+		tripLevelDelay  *time.Duration
 	}{
 		{
-			name:               "delay-only STU (no absolute time) is accepted",
-			tripID:             "delay_only_stus_trip",
-			lookupStopID:       stopIDStr,
-			lookupStopSeq:      stopSeqInt,
-			delay:              120 * time.Second,
-			stopTimeUpdates:    stuDelay(120 * time.Second),
-			expectPredicted:    true,
-			expectDelayApplied: true,
+			name:            "delay-only STU (no absolute time) is accepted",
+			tripID:          "delay_only_stus_trip",
+			lookupStopID:    stopIDStr,
+			lookupStopSeq:   stopSeqInt,
+			delay:           120 * time.Second,
+			stopTimeUpdates: stuDelay(120 * time.Second),
 		},
 		{
-			name:               "trip-level Delay with no STUs is accepted",
-			tripID:             "trip_level_delay_no_stus",
-			lookupStopID:       "any_stop",
-			lookupStopSeq:      5,
-			delay:              240 * time.Second,
-			tripLevelDelay:     ptrDuration(240 * time.Second),
-			expectPredicted:    true,
-			expectDelayApplied: true,
+			name:           "trip-level Delay with no STUs is accepted",
+			tripID:         "trip_level_delay_no_stus",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          240 * time.Second,
+			tripLevelDelay: ptrDuration(240 * time.Second),
 		},
 		{
 			// Java applies the deviation unconditionally in
 			// setPredictedTimesFromScheduleDeviation; the ±1h filter lives
 			// at RT ingestion, not at prediction emission. A rider must see
 			// a genuinely-late bus as late.
-			name:               "trip-level Delay > +1h still emits (no prediction-time cap)",
-			tripID:             "very_late_trip_level",
-			lookupStopID:       "any_stop",
-			lookupStopSeq:      5,
-			delay:              70 * time.Minute,
-			tripLevelDelay:     ptrDuration(70 * time.Minute),
-			expectPredicted:    true,
-			expectDelayApplied: true,
+			name:           "trip-level Delay > +1h still emits (no prediction-time cap)",
+			tripID:         "very_late_trip_level",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          70 * time.Minute,
+			tripLevelDelay: ptrDuration(70 * time.Minute),
 		},
 		{
-			name:               "per-STU Delay > +1h still emits (no prediction-time cap)",
-			tripID:             "very_late_stu_delay",
-			lookupStopID:       stopIDStr,
-			lookupStopSeq:      stopSeqInt,
-			delay:              90 * time.Minute,
-			stopTimeUpdates:    stuDelay(90 * time.Minute),
-			expectPredicted:    true,
-			expectDelayApplied: true,
+			name:            "per-STU Delay > +1h still emits (no prediction-time cap)",
+			tripID:          "very_late_stu_delay",
+			lookupStopID:    stopIDStr,
+			lookupStopSeq:   stopSeqInt,
+			delay:           90 * time.Minute,
+			stopTimeUpdates: stuDelay(90 * time.Minute),
 		},
 		{
-			name:               "exactly +1h delay still emits (strict >)",
-			tripID:             "boundary_positive_1h",
-			lookupStopID:       "any_stop",
-			lookupStopSeq:      5,
-			delay:              60 * time.Minute,
-			tripLevelDelay:     ptrDuration(60 * time.Minute),
-			expectPredicted:    true,
-			expectDelayApplied: true,
+			name:           "exactly +1h delay still emits (strict >)",
+			tripID:         "boundary_positive_1h",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          60 * time.Minute,
+			tripLevelDelay: ptrDuration(60 * time.Minute),
 		},
 		{
-			name:               "exactly -1h delay still emits (strict >)",
-			tripID:             "boundary_negative_1h",
-			lookupStopID:       "any_stop",
-			lookupStopSeq:      5,
-			delay:              -60 * time.Minute,
-			tripLevelDelay:     ptrDuration(-60 * time.Minute),
-			expectPredicted:    true,
-			expectDelayApplied: true,
+			name:           "exactly -1h delay still emits (strict >)",
+			tripID:         "boundary_negative_1h",
+			lookupStopID:   "any_stop",
+			lookupStopSeq:  5,
+			delay:          -60 * time.Minute,
+			tripLevelDelay: ptrDuration(-60 * time.Minute),
 		},
 	}
 
@@ -735,15 +722,10 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 				tc.tripID, tc.lookupStopID, tc.lookupStopSeq, scheduledTime, scheduledTime,
 			)
 
-			assert.Equal(t, tc.expectPredicted, predicted, "predicted flag")
-			if tc.expectDelayApplied {
-				expected := scheduledTime.Add(tc.delay)
-				assert.Equal(t, expected, predArrival, "arrival must be scheduled + delay")
-				assert.Equal(t, expected, predDeparture, "departure must be scheduled + delay")
-			} else {
-				assert.True(t, predArrival.IsZero(), "arrival must be zero-time on rejection")
-				assert.True(t, predDeparture.IsZero(), "departure must be zero-time on rejection")
-			}
+			expected := scheduledTime.Add(tc.delay)
+			assert.True(t, predicted, "predicted flag must be true")
+			assert.Equal(t, expected, predArrival, "arrival must be scheduled + delay")
+			assert.Equal(t, expected, predDeparture, "departure must be scheduled + delay")
 		})
 	}
 }
