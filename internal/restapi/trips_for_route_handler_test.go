@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
@@ -34,16 +37,16 @@ const (
 	tripsForRouteStop1ID  = "tfr-stop1"
 	tripsForRouteStop2ID  = "tfr-stop2"
 	tripsForRouteHeadsign = "Test Headsign"
+	// Real-time vehicle GPS position injected by the realtime fixture. Distinct
+	// from the fixture stops so status.position reflects the vehicle, not a stop.
+	tripsForRouteRealtimeLat = 37.7885
+	tripsForRouteRealtimeLon = -122.3962
 )
 
-// createTestApiWithTripsForRouteFixture builds a RestAPI backed by a minimal
-// in-memory GTFS dataset with a single trip active at tripsForRouteTestClock.
-// This guarantees the trips-for-route handler returns at least one entry, so
-// the per-entry assertions below validate real data instead of running over
-// an empty list (the RABA fixture's block_trip_indexes don't cover this path).
-func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
+// buildTripsForRouteFixtureZip writes the synthetic GTFS dataset used by the
+// trips-for-route fixture tests to a temp directory and returns its path.
+func buildTripsForRouteFixtureZip(t *testing.T) string {
 	t.Helper()
-	ctx := context.Background()
 
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
@@ -75,6 +78,19 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 
 	zipPath := filepath.Join(t.TempDir(), "trips-for-route.zip")
 	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+	return zipPath
+}
+
+// createTestApiWithTripsForRouteFixture builds a RestAPI backed by a minimal
+// in-memory GTFS dataset with a single trip active at tripsForRouteTestClock.
+// This guarantees the trips-for-route handler returns at least one entry, so
+// the per-entry assertions below validate real data instead of running over
+// an empty list (the RABA fixture's block_trip_indexes don't cover this path).
+func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+	ctx := context.Background()
+
+	zipPath := buildTripsForRouteFixtureZip(t)
 
 	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
@@ -99,6 +115,133 @@ func createTestApiWithTripsForRouteFixture(t *testing.T, c clock.Clock) *RestAPI
 	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	t.Cleanup(api.Shutdown)
 	return api
+}
+
+// createTestApiWithScheduledRealtimePosition builds a RestAPI backed by the same
+// synthetic GTFS as createTestApiWithTripsForRouteFixture, plus a real-time feed
+// that injects a SCHEDULED vehicle tracking the fixture trip with a GPS position.
+// The vehicle goes through the production updateFeedRealtime path, so the
+// trips-for-route handler builds entry status from real-time vehicle data.
+func createTestApiWithScheduledRealtimePosition(t *testing.T, c clock.Clock) (*RestAPI, func()) {
+	t.Helper()
+
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(tripsForRouteTestClock.Unix())),
+		},
+		Entity: []*gtfsrt.FeedEntity{
+			{
+				Id: proto.String("tracked-vehicle"),
+				Vehicle: &gtfsrt.VehiclePosition{
+					Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String("tfr-veh-1")},
+					Trip: &gtfsrt.TripDescriptor{
+						TripId:  proto.String(tripsForRouteTripID),
+						RouteId: proto.String(tripsForRouteRouteID),
+					},
+					Position: &gtfsrt.Position{
+						Latitude:  proto.Float32(tripsForRouteRealtimeLat),
+						Longitude: proto.Float32(tripsForRouteRealtimeLon),
+					},
+					Timestamp: proto.Uint64(uint64(tripsForRouteTestClock.Unix())),
+				},
+			},
+		},
+	}
+	feedPayload, err := proto.Marshal(feed)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(feedPayload)
+	})
+	server := httptest.NewServer(mux)
+
+	ctx := context.Background()
+	zipPath := buildTripsForRouteFixtureZip(t)
+
+	gtfsConfig := gtfs.Config{
+		GtfsURL:      zipPath,
+		GTFSDataPath: ":memory:",
+		RTFeeds: []gtfs.RTFeedConfig{
+			{
+				ID:                  "test-feed",
+				VehiclePositionsURL: server.URL + "/vehicle-positions",
+				RefreshInterval:     30,
+				Enabled:             true,
+			},
+		},
+	}
+
+	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+
+	dirCalc := gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: dirCalc,
+		Clock:               c,
+	}
+
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cleanup := func() {
+		api.Shutdown()
+		server.Close()
+		gtfsManager.Shutdown()
+	}
+	return api, cleanup
+}
+
+// TestTripsForRouteHandler_StatusFields verifies the real-time status sub-object
+// fields on trips-for-route entries. A SCHEDULED vehicle with a GPS position
+// tracks the fixture trip, so its entry status must carry the vehicle position,
+// the -1 occupancy sentinel when the feed omits occupancy, and non-nil empty
+// situationIds / vehicleFeatures slices.
+func TestTripsForRouteHandler_StatusFields(t *testing.T) {
+	api, cleanup := createTestApiWithScheduledRealtimePosition(t, clock.NewMockClock(tripsForRouteTestClock))
+	defer cleanup()
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+		combinedRouteID, tripsForRouteTestClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	require.Len(t, model.Data.List, 1, "the single fixture trip should be returned")
+	entry := model.Data.List[0]
+	assert.Equal(t, expectedTripID, entry.TripId)
+
+	require.NotNil(t, entry.Status, "entry should carry a real-time status")
+
+	assert.GreaterOrEqual(t, entry.Status.BlockTripSequence, 0,
+		"blockTripSequence should be a non-negative integer")
+
+	// GTFS-RT stores coordinates as float32, so compare against the round-tripped value.
+	assert.Equal(t, float64(float32(tripsForRouteRealtimeLat)), entry.Status.Position.Lat)
+	assert.Equal(t, float64(float32(tripsForRouteRealtimeLon)), entry.Status.Position.Lon)
+
+	assert.Equal(t, -1, entry.Status.OccupancyCount,
+		"occupancyCount should use the -1 sentinel when the feed omits occupancy")
+
+	require.NotNil(t, entry.Status.SituationIDs, "situationIds must be a non-null slice")
+	assert.Empty(t, entry.Status.SituationIDs, "situationIds should be exactly [] with no situations")
+
+	require.NotNil(t, entry.Status.VehicleFeatures, "vehicleFeatures must be a non-null slice")
+	assert.Empty(t, entry.Status.VehicleFeatures, "vehicleFeatures should be exactly [] with no data")
 }
 
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
