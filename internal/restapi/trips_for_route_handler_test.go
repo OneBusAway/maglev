@@ -870,7 +870,9 @@ func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 // TestTripsForRouteHandler_InterlinedBlock verifies that when a block spans
 // two routes (the queried route and another route), the entry's outer tripId
 // resolves to the queried-route trip in the block while status.activeTripId
-// reflects the vehicle's currently-running trip on the other route.
+// reflects the vehicle's currently-running trip on the other route, and that
+// schedule (built from tripId) carries the queried-route trip's own stop
+// times rather than the active trip's.
 func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock),
 		"trips-for-route-interline.zip", interlineFiles())
@@ -891,6 +893,13 @@ func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
 	require.NotNil(t, entry.Status)
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+
+	// tfr-trip-a (the entry's own tripId) runs 11:20-11:50; the active trip
+	// tfr-trip-b runs 11:55-12:05. Schedule must reflect tfr-trip-a's times.
+	require.NotNil(t, entry.Schedule)
+	require.Len(t, entry.Schedule.StopTimes, 2)
+	assert.Equal(t, 11*time.Hour+20*time.Minute, entry.Schedule.StopTimes[0].ArrivalTime.Duration)
+	assert.Equal(t, 11*time.Hour+50*time.Minute, entry.Schedule.StopTimes[1].ArrivalTime.Duration)
 }
 
 // TestTripsForRouteHandler_InterlinedBlock_TripReference verifies that with
