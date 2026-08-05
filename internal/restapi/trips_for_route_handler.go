@@ -331,11 +331,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		MaxDepartureTime int64
 		Trip             gtfsdb.Trip
 	}
-	type blockServiceKey struct {
-		BlockID   string
-		ServiceID string
-	}
-	blockTripForRoute := make(map[blockServiceKey][]blockTripEntry)
+	blockTripForRoute := make(map[string][]blockTripEntry)
 	var interlinedBlockIDs []sql.NullString
 	for _, t := range fetchedTrips {
 		if t.RouteID != routeID && t.BlockID.Valid {
@@ -361,7 +357,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		for _, bt := range blockTrips {
 			if bt.RouteID == routeID && bt.BlockID.Valid {
-				key := blockServiceKey{BlockID: bt.BlockID.String, ServiceID: bt.ServiceID}
+				key := bt.BlockID.String
 				blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 					ID:               bt.ID,
 					MinArrivalTime:   bt.MinArrivalTime.Int64,
@@ -394,12 +390,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		entryTripID := tripID
 		entryAgencyID := activeAgencyID
 		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
-			key := blockServiceKey{BlockID: fetchedTrip.BlockID.String, ServiceID: fetchedTrip.ServiceID}
+			key := fetchedTrip.BlockID.String
 			if entries, ok := blockTripForRoute[key]; ok && len(entries) > 0 {
-				// Among queried-route trips in the same block+service, find the one
-				// whose midpoint is closest to the active trip's midpoint. Block trips
+				// Among queried-route trips in the same block, find the one whose
+				// midpoint is closest to the active trip's midpoint. Block trips
 				// are sequential (one vehicle), so they never overlap in time — a
-				// standard overlap test would fail across any layover gap.
+				// standard overlap test would fail across any layover gap. Keying
+				// on block alone (not block+service) matters because a block's
+				// trips aren't guaranteed to share one literal service_id: GTFS
+				// allows two service_ids to be simultaneously active on the same
+				// calendar day, and nothing requires a block's trips to agree on
+				// which one they're tagged with.
 				activeMid := (fetchedTrip.MinArrivalTime.Int64 + fetchedTrip.MaxDepartureTime.Int64) / 2
 				bestIdx := 0
 				bestDist := int64(-1)
@@ -426,7 +427,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				}
 			} else {
 				// The active trip is on another route but no queried-route trip
-				// exists for this block+service: the entry's outer trip ID
+				// exists anywhere in this block: the entry's outer trip ID
 				// cannot be resolved. Per spec this endpoint always returns
 				// 200 OK, so skip this entry rather than emitting one whose
 				// tripId points at the other route's trip, or failing the

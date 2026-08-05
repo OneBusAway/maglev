@@ -134,6 +134,36 @@ func interlineFiles() map[string]string {
 	}
 }
 
+// twoServiceIDsInterlineFiles models a block whose active (other-route) trip
+// and queried-route trip run under two different service_ids that are both
+// active on the same calendar day (unlike overnightInterlineFiles, this isn't
+// a midnight split). GTFS allows more than one service_id to be active on a
+// given date, and nothing requires a block's trips to share one literal
+// service_id, so this doesn't require special calendar handling to trigger.
+func twoServiceIDsInterlineFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-a,1,1,1,1,1,1,1,20240101,20991231\n" +
+			"tfr-svc-b,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-a,tfr-trip-a,Headsign A,0,tfr-interline\n" +
+			"tfr-route-otr,tfr-svc-b,tfr-trip-b,Headsign B,0,tfr-interline\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-trip-a,11:20:00,11:20:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-a,11:50:00,11:50:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-b,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-b,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
 func overnightInterlineFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -930,5 +960,31 @@ func TestTripsForRouteHandler_GapCase(t *testing.T) {
 	assert.Equal(t, expectedTripID, entry.TripId)
 	require.NotNil(t, entry.Status)
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-gap-b")
+	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestTripsForRouteHandler_InterlinedBlockAcrossServiceIDs verifies that a
+// block still resolves when its active trip and its queried-route trip run
+// under two different service_ids both active on the query date. Resolution
+// must not require the block's trips to share one literal service_id.
+func TestTripsForRouteHandler_InterlinedBlockAcrossServiceIDs(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock),
+		"trips-for-route-interline-multisvc.zip", twoServiceIDsInterlineFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := tripsForRouteTestClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-a")
+	assert.Equal(t, expectedTripID, entry.TripId)
+	require.NotNil(t, entry.Status)
+	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
 }
