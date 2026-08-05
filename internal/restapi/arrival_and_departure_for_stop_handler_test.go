@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -978,4 +979,117 @@ func TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway(t *testing.T)
 	assert.Equal(t, 0, model.Data.Entry.NumberOfStopsAway,
 		"CANCELED trips report numberOfStopsAway=0 (no block location); "+
 			"-1 is reserved for the real 'one stop behind' signal")
+}
+
+// TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics guards the
+// handler's schedule-only fallback for numberOfStopsAway and distanceFromStop
+// (arrival_and_departure_for_stop_handler.go around the snapshot.metricsForStop
+// call). When the RT vehicle carries no Position and no CurrentStopSequence,
+// the handler must still derive both values through BuildTripStatus's block
+// snapshot -- not silently zero them out. A regression that dropped that
+// codepath would show up as numberOfStopsAway=0 for the queried stop, which
+// this test would catch: the queried stop sits one hop past the snapshot's
+// NextStopIndex, so metricsForStop must return numberOfStopsAway=1.
+// distanceFromStop stays 0 because the minimal fixture has no shape data,
+// but that 0 is snapshot-derived (target.DistanceAlongBlock - snap.DAB) --
+// asserting it pins the arithmetic path.
+func TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics(t *testing.T) {
+	// 2010-01-01 is a Friday; the fixture below enables all weekdays, so the
+	// service is active. Clock at 08:02:00 lands between stop A (08:00) and
+	// stop B (08:05), pinning the snapshot's NextStopIndex on B.
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID  = "sob-agency"
+		routeID   = "sob-route"
+		serviceID = "sob-svc"
+		blockID   = "sob-block"
+		tripID    = "sob-trip"
+		stopAID   = "sob-stop-a"
+		stopBID   = "sob-stop-b"
+		stopCID   = "sob-stop-c"
+	)
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Schedule-Only Block Agency", Url: "http://example.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+	for _, sid := range []string{stopAID, stopBID, stopCID} {
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: sid, Name: nulls.String(sid), Lat: 47.0, Lon: -122.0,
+		})
+		require.NoError(t, err)
+	}
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID,
+		ShortName: nulls.String("SOB"),
+		LongName:  nulls.String("Schedule-Only Block"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: serviceID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20100101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+		BlockID: nulls.String(blockID),
+	})
+	require.NoError(t, err)
+
+	// Three stops, 5 minutes apart, spanning 08:00-08:10.
+	type stopTime struct {
+		stopID string
+		seq    int64
+		offset time.Duration
+	}
+	for _, st := range []stopTime{
+		{stopAID, 1, 8 * time.Hour},
+		{stopBID, 2, 8*time.Hour + 5*time.Minute},
+		{stopCID, 3, 8*time.Hour + 10*time.Minute},
+	} {
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: st.stopID, StopSequence: st.seq,
+			ArrivalTime:   int64(st.offset),
+			DepartureTime: int64(st.offset),
+		})
+		require.NoError(t, err)
+	}
+
+	// Vehicle carries neither Position nor CurrentStopSequence -- the handler
+	// must fall back to the schedule-derived snapshot for the metrics.
+	api.GtfsManager.MockAddVehicleWithOptions("sob-vehicle", tripID, routeID, internalgtfs.MockVehicleOptions{})
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=3",
+		utils.FormCombinedID(agencyID, stopCID),
+		utils.FormCombinedID(agencyID, tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	// The snapshot's NextStopIndex is B (block sequence 1); the queried
+	// stop C is at block sequence 2. metricsForStop returns
+	// target.BlockSequence - stops[NextStopIndex].BlockSequence = 2 - 1 = 1.
+	// A 0 here would mean the metricsForStop / snapshot path never ran.
+	assert.Equal(t, 1, model.Data.Entry.NumberOfStopsAway,
+		"schedule-only snapshot must place the queried stop one hop past "+
+			"the next stop; a 0 would mean the snapshot path did not run")
+	// distanceFromStop is snapshot-derived (target.DAB - snap.DAB). With no
+	// shape data both DABs are 0, so the difference is 0 -- but that 0 comes
+	// from the arithmetic, not from the "no snapshot" default.
+	assert.InDelta(t, 0.0, model.Data.Entry.DistanceFromStop, 0.001,
+		"schedule-only snapshot with no shape data yields distanceFromStop=0 "+
+			"via the arithmetic path, not via the metricsForStop-skipped default")
 }
