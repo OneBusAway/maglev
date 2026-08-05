@@ -540,8 +540,12 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 
 	// Shape errors are non-fatal — emitBlockStops falls back to haversine.
 	// A total failure of the batch query means we degrade every trip to
-	// the fallback, still correct just less precise.
-	shapeRows, _ := q.GetShapePointsByTripIDs(ctx, tripIDs)
+	// the fallback, still correct just less precise. Log real DB errors
+	// so an operator sees the degradation instead of silently losing
+	// shape-based precision across every block trip.
+	shapeRows, err := q.GetShapePointsByTripIDs(ctx, tripIDs)
+	warnIfRealDBError(err, "loadBlockTripData: GetShapePointsByTripIDs failed, degrading every trip to haversine fallback",
+		slog.Int("trip_count", len(tripIDs)))
 	shapePointsByTrip := make(map[string][]gtfs.ShapePoint, len(tripIDs))
 	for _, sr := range shapeRows {
 		shapePointsByTrip[sr.TripID] = append(shapePointsByTrip[sr.TripID],
