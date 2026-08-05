@@ -185,6 +185,9 @@ func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActive
 
 	routeFilter := ""
 	if len(arg.RouteIDs) > 0 {
+		// Only generated "?N" placeholder strings go into the SQL text; the
+		// route IDs themselves are passed as bind values, so this is not a
+		// SQL-injection vector.
 		placeholders := make([]string, len(arg.RouteIDs))
 		for i, routeID := range arg.RouteIDs {
 			placeholders[i] = fmt.Sprintf("?%d", len(args)+1)
