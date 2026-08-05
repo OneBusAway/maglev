@@ -323,49 +323,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]string)
 
-	// When a block has multiple queried-route trips (e.g. route A → B → A),
-	// we need the specific trip whose time window is nearest to the active trip.
-	type blockTripEntry struct {
-		ID               string
-		MinArrivalTime   int64
-		MaxDepartureTime int64
-		Trip             gtfsdb.Trip
-	}
-	blockTripForRoute := make(map[string][]blockTripEntry)
-	var interlinedBlockIDs []sql.NullString
-	for _, t := range fetchedTrips {
-		if t.RouteID != routeID && t.BlockID.Valid {
-			interlinedBlockIDs = append(interlinedBlockIDs, t.BlockID)
-		}
-	}
-	if len(interlinedBlockIDs) > 0 {
-		// Explicit copy: append(serviceIDs, ...) could alias serviceIDs' backing
-		// array if it has spare capacity, which would mutate serviceIDs.
-		allServiceIDs := make([]string, len(serviceIDs))
-		copy(allServiceIDs, serviceIDs)
-		if len(prevServiceIDs) > 0 {
-			allServiceIDs = append(allServiceIDs, prevServiceIDs...)
-		}
-		blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
-			BlockIds:   interlinedBlockIDs,
-			ServiceIds: allServiceIDs,
-		})
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-
-		for _, bt := range blockTrips {
-			if bt.RouteID == routeID && bt.BlockID.Valid {
-				key := bt.BlockID.String
-				blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
-					ID:               bt.ID,
-					MinArrivalTime:   bt.MinArrivalTime.Int64,
-					MaxDepartureTime: bt.MaxDepartureTime.Int64,
-					Trip:             tripsByBlockIDsRowToTrip(bt),
-				})
-			}
-		}
+	blockTripForRoute, err := api.buildBlockTripForRoute(ctx, fetchedTrips, routeID, serviceIDs, prevServiceIDs)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
 	var result []models.TripsForRouteListEntry
@@ -390,52 +351,24 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		entryTripID := tripID
 		entryAgencyID := activeAgencyID
 		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
-			key := fetchedTrip.BlockID.String
-			if entries, ok := blockTripForRoute[key]; ok && len(entries) > 0 {
-				// Among queried-route trips in the same block, find the one whose
-				// midpoint is closest to the active trip's midpoint. Block trips
-				// are sequential (one vehicle), so they never overlap in time — a
-				// standard overlap test would fail across any layover gap. Keying
-				// on block alone (not block+service) matters because a block's
-				// trips aren't guaranteed to share one literal service_id: GTFS
-				// allows two service_ids to be simultaneously active on the same
-				// calendar day, and nothing requires a block's trips to agree on
-				// which one they're tagged with.
-				activeMid := (fetchedTrip.MinArrivalTime.Int64 + fetchedTrip.MaxDepartureTime.Int64) / 2
-				bestIdx := 0
-				bestDist := int64(-1)
-				for i, e := range entries {
-					eMid := (e.MinArrivalTime + e.MaxDepartureTime) / 2
-					dist := eMid - activeMid
-					if dist < 0 {
-						dist = -dist
-					}
-					if bestDist == -1 || dist < bestDist {
-						bestDist = dist
-						bestIdx = i
-					}
-				}
-				entryTripID = entries[bestIdx].ID
-				// Keep the selected queried-route trip available when building
-				// references so the entry's trip reference (route, headsign,
-				// ...) reflects the entry's tripId rather than the active trip's.
-				fetchedTrips = append(fetchedTrips, entries[bestIdx].Trip)
-				if queriedAgency, ok := routeAgencyMap[routeID]; ok {
-					entryAgencyID = queriedAgency
-				} else {
-					entryAgencyID = agencyID
-				}
-			} else {
-				// The active trip is on another route but no queried-route trip
-				// exists anywhere in this block: the entry's outer trip ID
-				// cannot be resolved. Per spec this endpoint always returns
-				// 200 OK, so skip this entry rather than emitting one whose
-				// tripId points at the other route's trip, or failing the
-				// entire response over a single unresolvable block.
+			resolution, resolved := resolveInterlinedEntryTripID(fetchedTrip, routeID, agencyID, blockTripForRoute, routeAgencyMap)
+			if !resolved {
+				// No queried-route trip exists anywhere in this block: the
+				// entry's outer trip ID cannot be resolved. Per spec this
+				// endpoint always returns 200 OK, so skip this entry rather
+				// than emitting one whose tripId points at the other route's
+				// trip, or failing the entire response over a single
+				// unresolvable block.
 				api.Logger.Warn("trips-for-route: no queried-route trip found for interlined block",
 					"block_id", fetchedTrip.BlockID.String, "service_id", fetchedTrip.ServiceID, "active_trip_id", tripID)
 				continue
 			}
+			entryTripID = resolution.EntryTripID
+			entryAgencyID = resolution.EntryAgencyID
+			// Keep the selected queried-route trip available when building
+			// references so the entry's trip reference (route, headsign,
+			// ...) reflects the entry's tripId rather than the active trip's.
+			fetchedTrips = append(fetchedTrips, resolution.SelectedTrip)
 		}
 
 		// Build schedule from entryTripID (the entry's own trip), not the active
@@ -575,6 +508,130 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// blockTripEntry is a candidate queried-route trip within an interlined
+// block, carrying just enough of its schedule window to pick the one nearest
+// a given active trip.
+type blockTripEntry struct {
+	ID               string
+	MinArrivalTime   int64
+	MaxDepartureTime int64
+	Trip             gtfsdb.Trip
+}
+
+// buildBlockTripForRoute batch-fetches every trip in the blocks that
+// fetchedTrips are interlined through (i.e. an active trip on another route
+// sharing a block with the queried route), and returns, per block ID, the
+// queried-route trips found in it. Only today's and yesterday's active
+// service IDs are considered, matching the rest of this handler's active-trip
+// resolution window.
+func (api *RestAPI) buildBlockTripForRoute(
+	ctx context.Context,
+	fetchedTrips []gtfsdb.Trip,
+	routeID string,
+	serviceIDs, prevServiceIDs []string,
+) (map[string][]blockTripEntry, error) {
+	blockTripForRoute := make(map[string][]blockTripEntry)
+
+	var interlinedBlockIDs []sql.NullString
+	for _, t := range fetchedTrips {
+		if t.RouteID != routeID && t.BlockID.Valid {
+			interlinedBlockIDs = append(interlinedBlockIDs, t.BlockID)
+		}
+	}
+	if len(interlinedBlockIDs) == 0 {
+		return blockTripForRoute, nil
+	}
+
+	// Explicit copy: append(serviceIDs, ...) could alias serviceIDs' backing
+	// array if it has spare capacity, which would mutate serviceIDs.
+	allServiceIDs := make([]string, len(serviceIDs))
+	copy(allServiceIDs, serviceIDs)
+	if len(prevServiceIDs) > 0 {
+		allServiceIDs = append(allServiceIDs, prevServiceIDs...)
+	}
+
+	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+		BlockIds:   interlinedBlockIDs,
+		ServiceIds: allServiceIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, bt := range blockTrips {
+		if bt.RouteID == routeID && bt.BlockID.Valid {
+			key := bt.BlockID.String
+			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
+				ID:               bt.ID,
+				MinArrivalTime:   bt.MinArrivalTime.Int64,
+				MaxDepartureTime: bt.MaxDepartureTime.Int64,
+				Trip:             tripsByBlockIDsRowToTrip(bt),
+			})
+		}
+	}
+	return blockTripForRoute, nil
+}
+
+// interlinedTripResolution is the outcome of resolving an entry's trip
+// identity when its active trip belongs to a different route than the one
+// queried.
+type interlinedTripResolution struct {
+	EntryTripID   string
+	EntryAgencyID string
+	SelectedTrip  gtfsdb.Trip
+}
+
+// resolveInterlinedEntryTripID finds, among the queried-route trips sharing
+// fetchedTrip's block (as built by buildBlockTripForRoute), the one whose
+// time window is nearest to fetchedTrip's own — i.e. "the trip on the
+// queried route that caused this block to be selected." Block trips are
+// sequential (one vehicle) and never overlap in time, so nearest-midpoint is
+// used instead of an overlap test, which would fail across any layover gap.
+// Keying blockTripForRoute on block alone (not block+service) matters
+// because a block's trips aren't guaranteed to share one literal service_id:
+// GTFS allows two service_ids to be simultaneously active on the same
+// calendar day, and nothing requires a block's trips to agree on which one
+// they're tagged with.
+//
+// ok is false if no queried-route trip exists anywhere in the block.
+func resolveInterlinedEntryTripID(
+	fetchedTrip gtfsdb.Trip,
+	routeID, agencyID string,
+	blockTripForRoute map[string][]blockTripEntry,
+	routeAgencyMap map[string]string,
+) (result interlinedTripResolution, ok bool) {
+	entries := blockTripForRoute[fetchedTrip.BlockID.String]
+	if len(entries) == 0 {
+		return interlinedTripResolution{}, false
+	}
+
+	activeMid := (fetchedTrip.MinArrivalTime.Int64 + fetchedTrip.MaxDepartureTime.Int64) / 2
+	bestIdx := 0
+	bestDist := int64(-1)
+	for i, e := range entries {
+		eMid := (e.MinArrivalTime + e.MaxDepartureTime) / 2
+		dist := eMid - activeMid
+		if dist < 0 {
+			dist = -dist
+		}
+		if bestDist == -1 || dist < bestDist {
+			bestDist = dist
+			bestIdx = i
+		}
+	}
+
+	entryAgencyID := agencyID
+	if queriedAgency, ok := routeAgencyMap[routeID]; ok {
+		entryAgencyID = queriedAgency
+	}
+
+	return interlinedTripResolution{
+		EntryTripID:   entries[bestIdx].ID,
+		EntryAgencyID: entryAgencyID,
+		SelectedTrip:  entries[bestIdx].Trip,
+	}, true
 }
 
 func tripsByBlockIDsRowToTrip(row gtfsdb.GetTripsByBlockIDsRow) gtfsdb.Trip {
