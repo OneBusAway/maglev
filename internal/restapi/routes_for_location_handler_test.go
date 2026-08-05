@@ -1,11 +1,13 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
@@ -163,34 +165,83 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
-// RABA (the test fixture) has only 13 routes total, so no maxCount value can
-// make the response list actually exceed 50 - these cases can't distinguish
-// "clamped to 50" from "clamped to 250" by list length alone. What they do
-// verify is that every value above the endpoint's 50 cap, including values
-// between 51 and the global 250 ceiling, succeeds with HTTP 200 and no
-// fieldErrors rather than being rejected.
+// seedRoutesNearLocation inserts count synthetic routes that all serve the stop
+// nearest to (lat, lon), so that route-count caps above the RABA fixture's 13
+// routes become observable. Rows are removed via t.Cleanup.
+func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count int) {
+	t.Helper()
+	ctx := context.Background()
+	db := api.GtfsManager.GtfsDB.DB
+
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies, "test data should contain at least one agency")
+	agencyID := agencies[0].ID
+
+	var serviceID string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT id FROM calendar LIMIT 1`).Scan(&serviceID))
+
+	var stopID string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT id FROM stops ORDER BY (lat-?)*(lat-?)+(lon-?)*(lon-?) LIMIT 1`,
+		lat, lat, lon, lon,
+	).Scan(&stopID))
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id LIKE 'clamp-test-%'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id LIKE 'clamp-test-%'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id LIKE 'clamp-test-%'`)
+	})
+
+	for i := range count {
+		id := fmt.Sprintf("clamp-test-%d", i)
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO routes (id, agency_id, short_name, type) VALUES (?, ?, ?, 3)`,
+			id, agencyID, id)
+		require.NoError(t, err)
+
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO trips (id, route_id, service_id) VALUES (?, ?, ?)`,
+			id, id, serviceID)
+		require.NoError(t, err)
+
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 0)`,
+			id, stopID)
+		require.NoError(t, err)
+	}
+}
+
 func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
+	const lat, lon = 40.583321, -122.362535
+
 	tests := []struct {
-		name     string
-		maxCount string
+		name        string
+		maxCount    string
+		wantLen     int
+		wantExceeds bool
 	}{
-		{"just above endpoint cap", "51"},
-		{"at global ceiling", "250"},
-		{"above global ceiling", "300"},
+		{"below endpoint cap", "10", 10, true},
+		{"at endpoint cap", "50", 50, true},
+		{"just above endpoint cap", "51", 50, true},
+		{"at global ceiling", "250", 50, true},
+		{"above global ceiling", "300", 50, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := createTestApi(t)
+			// Seed enough routes near the query point that the endpoint's 50 cap
+			// (and the fact it's 50, not 250) is actually observable - RABA alone
+			// only has 13 routes total.
+			seedRoutesNearLocation(t, api, lat, lon, 60)
 
 			resp, model := callAPIHandler[RoutesResponse](t, api,
-				"/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.362535&radius=5000&maxCount="+tt.maxCount)
+				fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=5000&maxCount=%s", lat, lon, tt.maxCount))
 
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.Equal(t, http.StatusOK, model.Code)
-			assert.NotEmpty(t, model.Data.List, "clamped request should still return routes")
-			assert.LessOrEqual(t, len(model.Data.List), models.MaxCountForRoutesForLocation)
-			assert.False(t, model.Data.LimitExceeded)
+			assert.Len(t, model.Data.List, tt.wantLen)
+			assert.Equal(t, tt.wantExceeds, model.Data.LimitExceeded)
 		})
 	}
 }
