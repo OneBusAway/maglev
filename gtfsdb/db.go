@@ -270,6 +270,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getShapePointsByTripIDStmt, err = db.PrepareContext(ctx, getShapePointsByTripID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetShapePointsByTripID: %w", err)
 	}
+	if q.getShapePointsByTripIDsStmt, err = db.PrepareContext(ctx, getShapePointsByTripIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetShapePointsByTripIDs: %w", err)
+	}
 	if q.getShapePointsForTripStmt, err = db.PrepareContext(ctx, getShapePointsForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetShapePointsForTrip: %w", err)
 	}
@@ -335,6 +338,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getTripStmt, err = db.PrepareContext(ctx, getTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTrip: %w", err)
+	}
+	if q.getTripTimeBoundsByIDsStmt, err = db.PrepareContext(ctx, getTripTimeBoundsByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTripTimeBoundsByIDs: %w", err)
 	}
 	if q.getTripsByBlockIDStmt, err = db.PrepareContext(ctx, getTripsByBlockID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsByBlockID: %w", err)
@@ -808,6 +814,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getShapePointsByTripIDStmt: %w", cerr)
 		}
 	}
+	if q.getShapePointsByTripIDsStmt != nil {
+		if cerr := q.getShapePointsByTripIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getShapePointsByTripIDsStmt: %w", cerr)
+		}
+	}
 	if q.getShapePointsForTripStmt != nil {
 		if cerr := q.getShapePointsForTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getShapePointsForTripStmt: %w", cerr)
@@ -916,6 +927,11 @@ func (q *Queries) Close() error {
 	if q.getTripStmt != nil {
 		if cerr := q.getTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getTripStmt: %w", cerr)
+		}
+	}
+	if q.getTripTimeBoundsByIDsStmt != nil {
+		if cerr := q.getTripTimeBoundsByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTripTimeBoundsByIDsStmt: %w", cerr)
 		}
 	}
 	if q.getTripsByBlockIDStmt != nil {
@@ -1134,6 +1150,7 @@ type Queries struct {
 	getShapePointWindowStmt                       *sql.Stmt
 	getShapePointsByIDsStmt                       *sql.Stmt
 	getShapePointsByTripIDStmt                    *sql.Stmt
+	getShapePointsByTripIDsStmt                   *sql.Stmt
 	getShapePointsForTripStmt                     *sql.Stmt
 	getShapePointsWithDistanceStmt                *sql.Stmt
 	getShapesGroupedByTripHeadSignStmt            *sql.Stmt
@@ -1156,6 +1173,7 @@ type Queries struct {
 	getTargetStopTimeWithTotalStopsStmt           *sql.Stmt
 	getTargetStopTimeWithTotalStopsBySequenceStmt *sql.Stmt
 	getTripStmt                                   *sql.Stmt
+	getTripTimeBoundsByIDsStmt                    *sql.Stmt
 	getTripsByBlockIDStmt                         *sql.Stmt
 	getTripsByBlockIDOrderedStmt                  *sql.Stmt
 	getTripsByBlockIDsStmt                        *sql.Stmt
@@ -1263,6 +1281,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getShapePointWindowStmt:                       q.getShapePointWindowStmt,
 		getShapePointsByIDsStmt:                       q.getShapePointsByIDsStmt,
 		getShapePointsByTripIDStmt:                    q.getShapePointsByTripIDStmt,
+		getShapePointsByTripIDsStmt:                   q.getShapePointsByTripIDsStmt,
 		getShapePointsForTripStmt:                     q.getShapePointsForTripStmt,
 		getShapePointsWithDistanceStmt:                q.getShapePointsWithDistanceStmt,
 		getShapesGroupedByTripHeadSignStmt:            q.getShapesGroupedByTripHeadSignStmt,
@@ -1285,6 +1304,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTargetStopTimeWithTotalStopsStmt:           q.getTargetStopTimeWithTotalStopsStmt,
 		getTargetStopTimeWithTotalStopsBySequenceStmt: q.getTargetStopTimeWithTotalStopsBySequenceStmt,
 		getTripStmt:                                   q.getTripStmt,
+		getTripTimeBoundsByIDsStmt:                    q.getTripTimeBoundsByIDsStmt,
 		getTripsByBlockIDStmt:                         q.getTripsByBlockIDStmt,
 		getTripsByBlockIDOrderedStmt:                  q.getTripsByBlockIDOrderedStmt,
 		getTripsByBlockIDsStmt:                        q.getTripsByBlockIDsStmt,

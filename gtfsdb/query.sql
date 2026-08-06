@@ -1193,6 +1193,32 @@ FROM shapes
 WHERE shape_id IN (sqlc.slice('shape_ids'))
 ORDER BY shape_id, shape_pt_sequence;
 
+-- name: GetShapePointsByTripIDs :many
+-- Batch equivalent of GetShapePointsByTripID for N+1 avoidance when loading
+-- an entire block's worth of trips at once (loadBlockTripData). Rows are
+-- returned with their originating trip_id so callers can group them.
+SELECT
+    t.id AS trip_id,
+    s.shape_id,
+    s.lat,
+    s.lon,
+    s.shape_pt_sequence,
+    s.shape_dist_traveled
+FROM shapes s
+JOIN trips t ON t.shape_id = s.shape_id
+WHERE t.id IN (sqlc.slice('trip_ids'))
+ORDER BY t.id ASC, s.shape_pt_sequence ASC;
+
+-- name: GetTripTimeBoundsByIDs :many
+-- Returns cached min_arrival_time and max_departure_time (nanoseconds since
+-- midnight) for each trip_id. Callers use these to sort a block's trips by
+-- start time and to detect temporal overlaps between consecutive trips (the
+-- "shift split" logic in keepShiftContainingTrip) without pulling every
+-- stop_times row per trip.
+SELECT id, min_arrival_time, max_departure_time
+FROM trips
+WHERE id IN (sqlc.slice('trip_ids'));
+
 -- name: GetStopTimesForTripIDs :many
 SELECT * FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
@@ -1266,26 +1292,79 @@ FROM (
 );
 
 -- name: RouteHasFutureService :one
--- Returns 1 if the given route has at least one trip whose calendar covers a date
--- strictly after the given date (YYYYMMDD), 0 otherwise. Used to distinguish
--- ServiceDateOutOfRange (no future service for this route) from NoServiceThatDay
--- (the route still has service on a later date).
-SELECT EXISTS (
-    SELECT 1
-    FROM trips t
-    JOIN calendar c ON c.id = t.service_id
-    WHERE t.route_id = ?
-      AND c.end_date > ?
-      AND (c.monday = 1 OR c.tuesday = 1 OR c.wednesday = 1 OR c.thursday = 1
-           OR c.friday = 1 OR c.saturday = 1 OR c.sunday = 1)
-    UNION ALL
-    SELECT 1
-    FROM trips t
-    JOIN calendar_dates cd ON cd.service_id = t.service_id
-    WHERE t.route_id = ?
-      AND cd.exception_type = 1
-      AND cd.date > ?
-) AS has_future_service;
+-- Returns 1 if the given route has at least one EFFECTIVE service date strictly
+-- after the given date (YYYYMMDD), 0 otherwise. "Effective" means: the date
+-- falls within a calendar row's [start_date, end_date] on an enabled weekday
+-- and is not removed by a calendar_dates exception (type=2), OR the date has
+-- a calendar_dates addition (type=1) for one of this route's services.
+--
+-- Used to distinguish ServiceDateOutOfRange from NoServiceThatDay in the
+-- schedule-for-route error path. Bounded to 2 years past the LATER of
+-- ref_date and today (anchoring to today matters for historical ref_date
+-- queries -- e.g. ref_date=1970 against a feed whose service starts in
+-- 2024 -- so the check still reaches "today's" feed span).
+--
+-- Implementation: two indexed range checks against calendar and
+-- calendar_dates -- no day-by-day enumeration. Part 1 asks "is there any
+-- exception_type=1 addition in the window?", Part 2 asks "does any
+-- calendar row overlap the window on an enabled weekday?".
+--
+-- Part 2 is a mild over-approximation: it does not verify that the
+-- calendar row's intersection with the window actually contains an
+-- enabled weekday, nor that every regular day in that intersection is
+-- cancelled by an exception_type=2 row. Given the 2-year horizon, the
+-- intersection is almost always >=7 days so every weekday appears; the
+-- rare edge cases where this over-reports would only flip the caller's
+-- error message from ServiceDateOutOfRange to NoServiceThatDay -- both
+-- surface an empty schedule, so the miscategorization is benign.
+WITH
+    -- Parse ref_date once; horizon = 2 years past MAX(ref_date, today).
+    -- CAST(... AS TEXT) once so sqlc infers RefDate as string, not
+    -- interface{}. YYYYMMDD strings sort lexicographically, so string
+    -- comparisons below are correct without any date() round-trip.
+    ref(ref_ymd, horizon_ymd) AS (
+        SELECT
+            ymd,
+            strftime('%Y%m%d', date(MAX(iso, date('now')), '+2 years'))
+        FROM (
+            SELECT
+                CAST(sqlc.arg(ref_date) AS TEXT) AS ymd,
+                substr(CAST(sqlc.arg(ref_date) AS TEXT), 1, 4) || '-' ||
+                substr(CAST(sqlc.arg(ref_date) AS TEXT), 5, 2) || '-' ||
+                substr(CAST(sqlc.arg(ref_date) AS TEXT), 7, 2) AS iso
+        )
+    )
+-- CAST(... AS INTEGER) so sqlc infers int64 for has_future_service
+-- instead of interface{}; callers rely on `== 0` / `== 1` comparisons.
+SELECT CAST((
+    -- Part 1: an exception-added service day strictly after ref_date,
+    -- within the horizon. Indexed via idx_calendar_dates_service_id.
+    EXISTS (
+        SELECT 1
+        FROM trips t
+        JOIN calendar_dates cd ON cd.service_id = t.service_id
+        WHERE t.route_id = sqlc.arg(route_id)
+          AND cd.exception_type = 1
+          AND cd.date > (SELECT ref_ymd FROM ref)
+          AND cd.date <= (SELECT horizon_ymd FROM ref)
+    )
+    OR
+    -- Part 2: a calendar row for this route overlaps (ref_date, horizon]
+    -- with at least one enabled weekday. Indexed via
+    -- idx_trips_route_service; cal.end_date > ref_ymd preserves strict
+    -- ref_date exclusivity, cal.start_date <= horizon_ymd preserves the
+    -- upper bound.
+    EXISTS (
+        SELECT 1
+        FROM trips t
+        JOIN calendar cal ON cal.id = t.service_id
+        WHERE t.route_id = sqlc.arg(route_id)
+          AND cal.end_date > (SELECT ref_ymd FROM ref)
+          AND cal.start_date <= (SELECT horizon_ymd FROM ref)
+          AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
+             + cal.thursday + cal.friday + cal.saturday) > 0
+    )
+) AS INTEGER) AS has_future_service;
 
 -- Optimized queries using SQLite window functions
 

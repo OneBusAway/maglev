@@ -3294,6 +3294,72 @@ func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shap
 	return items, nil
 }
 
+const getShapePointsByTripIDs = `-- name: GetShapePointsByTripIDs :many
+SELECT
+    t.id AS trip_id,
+    s.shape_id,
+    s.lat,
+    s.lon,
+    s.shape_pt_sequence,
+    s.shape_dist_traveled
+FROM shapes s
+JOIN trips t ON t.shape_id = s.shape_id
+WHERE t.id IN (/*SLICE:trip_ids*/?)
+ORDER BY t.id ASC, s.shape_pt_sequence ASC
+`
+
+type GetShapePointsByTripIDsRow struct {
+	TripID            string
+	ShapeID           string
+	Lat               float64
+	Lon               float64
+	ShapePtSequence   int64
+	ShapeDistTraveled sql.NullFloat64
+}
+
+// Batch equivalent of GetShapePointsByTripID for N+1 avoidance when loading
+// an entire block's worth of trips at once (loadBlockTripData). Rows are
+// returned with their originating trip_id so callers can group them.
+func (q *Queries) GetShapePointsByTripIDs(ctx context.Context, tripIds []string) ([]GetShapePointsByTripIDsRow, error) {
+	query := getShapePointsByTripIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetShapePointsByTripIDsRow
+	for rows.Next() {
+		var i GetShapePointsByTripIDsRow
+		if err := rows.Scan(
+			&i.TripID,
+			&i.ShapeID,
+			&i.Lat,
+			&i.Lon,
+			&i.ShapePtSequence,
+			&i.ShapeDistTraveled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getShapePointsForTrip = `-- name: GetShapePointsForTrip :many
 SELECT DISTINCT shapes.lat, shapes.lon, shapes.shape_pt_sequence
 FROM shapes
@@ -4436,6 +4502,56 @@ func (q *Queries) GetTrip(ctx context.Context, id string) (Trip, error) {
 	return i, err
 }
 
+const getTripTimeBoundsByIDs = `-- name: GetTripTimeBoundsByIDs :many
+SELECT id, min_arrival_time, max_departure_time
+FROM trips
+WHERE id IN (/*SLICE:trip_ids*/?)
+`
+
+type GetTripTimeBoundsByIDsRow struct {
+	ID               string
+	MinArrivalTime   sql.NullInt64
+	MaxDepartureTime sql.NullInt64
+}
+
+// Returns cached min_arrival_time and max_departure_time (nanoseconds since
+// midnight) for each trip_id. Callers use these to sort a block's trips by
+// start time and to detect temporal overlaps between consecutive trips (the
+// "shift split" logic in keepShiftContainingTrip) without pulling every
+// stop_times row per trip.
+func (q *Queries) GetTripTimeBoundsByIDs(ctx context.Context, tripIds []string) ([]GetTripTimeBoundsByIDsRow, error) {
+	query := getTripTimeBoundsByIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTripTimeBoundsByIDsRow
+	for rows.Next() {
+		var i GetTripTimeBoundsByIDsRow
+		if err := rows.Scan(&i.ID, &i.MinArrivalTime, &i.MaxDepartureTime); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTripsByBlockID = `-- name: GetTripsByBlockID :many
 SELECT
     id,
@@ -5220,42 +5336,88 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 }
 
 const routeHasFutureService = `-- name: RouteHasFutureService :one
-SELECT EXISTS (
-    SELECT 1
-    FROM trips t
-    JOIN calendar c ON c.id = t.service_id
-    WHERE t.route_id = ?
-      AND c.end_date > ?
-      AND (c.monday = 1 OR c.tuesday = 1 OR c.wednesday = 1 OR c.thursday = 1
-           OR c.friday = 1 OR c.saturday = 1 OR c.sunday = 1)
-    UNION ALL
-    SELECT 1
-    FROM trips t
-    JOIN calendar_dates cd ON cd.service_id = t.service_id
-    WHERE t.route_id = ?
-      AND cd.exception_type = 1
-      AND cd.date > ?
-) AS has_future_service
+WITH
+    -- Parse ref_date once; horizon = 2 years past MAX(ref_date, today).
+    -- CAST(... AS TEXT) once so sqlc infers RefDate as string, not
+    -- interface{}. YYYYMMDD strings sort lexicographically, so string
+    -- comparisons below are correct without any date() round-trip.
+    ref(ref_ymd, horizon_ymd) AS (
+        SELECT
+            ymd,
+            strftime('%Y%m%d', date(MAX(iso, date('now')), '+2 years'))
+        FROM (
+            SELECT
+                CAST(?2 AS TEXT) AS ymd,
+                substr(CAST(?2 AS TEXT), 1, 4) || '-' ||
+                substr(CAST(?2 AS TEXT), 5, 2) || '-' ||
+                substr(CAST(?2 AS TEXT), 7, 2) AS iso
+        )
+    )
+SELECT CAST((
+    -- Part 1: an exception-added service day strictly after ref_date,
+    -- within the horizon. Indexed via idx_calendar_dates_service_id.
+    EXISTS (
+        SELECT 1
+        FROM trips t
+        JOIN calendar_dates cd ON cd.service_id = t.service_id
+        WHERE t.route_id = ?1
+          AND cd.exception_type = 1
+          AND cd.date > (SELECT ref_ymd FROM ref)
+          AND cd.date <= (SELECT horizon_ymd FROM ref)
+    )
+    OR
+    -- Part 2: a calendar row for this route overlaps (ref_date, horizon]
+    -- with at least one enabled weekday. Indexed via
+    -- idx_trips_route_service; cal.end_date > ref_ymd preserves strict
+    -- ref_date exclusivity, cal.start_date <= horizon_ymd preserves the
+    -- upper bound.
+    EXISTS (
+        SELECT 1
+        FROM trips t
+        JOIN calendar cal ON cal.id = t.service_id
+        WHERE t.route_id = ?1
+          AND cal.end_date > (SELECT ref_ymd FROM ref)
+          AND cal.start_date <= (SELECT horizon_ymd FROM ref)
+          AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
+             + cal.thursday + cal.friday + cal.saturday) > 0
+    )
+) AS INTEGER) AS has_future_service
 `
 
 type RouteHasFutureServiceParams struct {
-	RouteID   string
-	EndDate   string
-	RouteID_2 string
-	Date      string
+	RouteID string
+	RefDate string
 }
 
-// Returns 1 if the given route has at least one trip whose calendar covers a date
-// strictly after the given date (YYYYMMDD), 0 otherwise. Used to distinguish
-// ServiceDateOutOfRange (no future service for this route) from NoServiceThatDay
-// (the route still has service on a later date).
+// Returns 1 if the given route has at least one EFFECTIVE service date strictly
+// after the given date (YYYYMMDD), 0 otherwise. "Effective" means: the date
+// falls within a calendar row's [start_date, end_date] on an enabled weekday
+// and is not removed by a calendar_dates exception (type=2), OR the date has
+// a calendar_dates addition (type=1) for one of this route's services.
+//
+// Used to distinguish ServiceDateOutOfRange from NoServiceThatDay in the
+// schedule-for-route error path. Bounded to 2 years past the LATER of
+// ref_date and today (anchoring to today matters for historical ref_date
+// queries -- e.g. ref_date=1970 against a feed whose service starts in
+// 2024 -- so the check still reaches "today's" feed span).
+//
+// Implementation: two indexed range checks against calendar and
+// calendar_dates -- no day-by-day enumeration. Part 1 asks "is there any
+// exception_type=1 addition in the window?", Part 2 asks "does any
+// calendar row overlap the window on an enabled weekday?".
+//
+// Part 2 is a mild over-approximation: it does not verify that the
+// calendar row's intersection with the window actually contains an
+// enabled weekday, nor that every regular day in that intersection is
+// cancelled by an exception_type=2 row. Given the 2-year horizon, the
+// intersection is almost always >=7 days so every weekday appears; the
+// rare edge cases where this over-reports would only flip the caller's
+// error message from ServiceDateOutOfRange to NoServiceThatDay -- both
+// surface an empty schedule, so the miscategorization is benign.
+// CAST(... AS INTEGER) so sqlc infers int64 for has_future_service
+// instead of interface{}; callers rely on `== 0` / `== 1` comparisons.
 func (q *Queries) RouteHasFutureService(ctx context.Context, arg RouteHasFutureServiceParams) (int64, error) {
-	row := q.queryRow(ctx, q.routeHasFutureServiceStmt, routeHasFutureService,
-		arg.RouteID,
-		arg.EndDate,
-		arg.RouteID_2,
-		arg.Date,
-	)
+	row := q.queryRow(ctx, q.routeHasFutureServiceStmt, routeHasFutureService, arg.RouteID, arg.RefDate)
 	var has_future_service int64
 	err := row.Scan(&has_future_service)
 	return has_future_service, err
