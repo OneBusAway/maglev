@@ -19,6 +19,25 @@ var (
 	fts5OperatorsRegex    = regexp.MustCompile(`(?i)\b(AND|OR|NOT|NEAR)\b`)
 )
 
+// GTFS extended special-vehicle route types. A stop served by exactly one route of
+// one of these types is excluded from stop search results.
+const (
+	routeTypeShuttleBus                int64 = 711
+	routeTypeSchoolBus                 int64 = 712
+	routeTypeSchoolAndPublicServiceBus int64 = 713
+	routeTypeRailReplacementBus        int64 = 714
+)
+
+// isSpecialVehicleRouteType reports whether a GTFS route type denotes a special
+// vehicle service that does not qualify a stop for stop search results on its own.
+func isSpecialVehicleRouteType(routeType int64) bool {
+	switch routeType {
+	case routeTypeShuttleBus, routeTypeSchoolBus, routeTypeSchoolAndPublicServiceBus, routeTypeRailReplacementBus:
+		return true
+	}
+	return false
+}
+
 // sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
 // to prevent query syntax errors. Does not preserve the original characters.
 func sanitizeFTS5Query(input string) string {
@@ -153,6 +172,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Organize Data
 	routesByStopID := make(map[string][]string)
+	routeTypes := make(map[string]int64)
 
 	for _, row := range routesRows {
 		if ctx.Err() != nil {
@@ -162,15 +182,13 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		combinedRouteID := utils.FormCombinedID(row.AgencyID, row.ID)
 		routesByStopID[row.StopID] = append(routesByStopID[row.StopID], combinedRouteID)
-	}
-
-	uniqueAgencies := make(map[string]bool)
-	for _, row := range agencyRows {
-		uniqueAgencies[row.ID] = true
+		routeTypes[combinedRouteID] = row.Type
 	}
 
 	// 6. Construct Stop Models
 	stopModels := make([]models.Stop, 0, len(stops))
+	keptStopIDs := make([]string, 0, len(stops))
+	keptStopsSet := make(map[string]bool)
 
 	for _, s := range stops {
 		if ctx.Err() != nil {
@@ -178,27 +196,21 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var agencyID string
-
-		if rts, ok := routesByStopID[s.ID]; ok && len(rts) > 0 {
-			agencyID, _, _ = utils.ExtractAgencyIDAndCodeID(rts[0])
-		} else if len(uniqueAgencies) == 1 {
-			for id := range uniqueAgencies {
-				agencyID = id
-				break
-			}
+		routeIDs := routesByStopID[s.ID]
+		if len(routeIDs) == 0 {
+			continue
 		}
 
-		var combinedStopID string
+		// Legacy behaviour: only stops with exactly one route are type-filtered
+		if len(routeIDs) == 1 && isSpecialVehicleRouteType(routeTypes[routeIDs[0]]) {
+			continue
+		}
+
+		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDs[0])
+
+		combinedStopID := s.ID
 		if agencyID != "" {
 			combinedStopID = utils.FormCombinedID(agencyID, s.ID)
-		} else {
-			combinedStopID = s.ID
-		}
-
-		routeIDs := routesByStopID[s.ID]
-		if routeIDs == nil {
-			routeIDs = []string{}
 		}
 
 		name := ""
@@ -236,19 +248,33 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stopModels = append(stopModels, stopModel)
+		keptStopIDs = append(keptStopIDs, s.ID)
+		keptStopsSet[s.ID] = true
 	}
 
 	// 7. Build References
 	references := models.NewEmptyReferences()
 	if includeReferences {
-		references.Routes = routeReferencesForStops(routesRows)
+		keptRoutesRows := make([]gtfsdb.GetRoutesForStopsRow, 0, len(routesRows))
+		for _, row := range routesRows {
+			if keptStopsSet[row.StopID] {
+				keptRoutesRows = append(keptRoutesRows, row)
+			}
+		}
+		references.Routes = routeReferencesForStops(keptRoutesRows)
 		utils.SortModelRoutesByName(references.Routes)
 
-		references.Agencies = agencyReferencesForStops(agencyRows)
+		keptAgencyRows := make([]gtfsdb.GetAgenciesForStopsRow, 0, len(agencyRows))
+		for _, row := range agencyRows {
+			if keptStopsSet[row.StopID] {
+				keptAgencyRows = append(keptAgencyRows, row)
+			}
+		}
+		references.Agencies = agencyReferencesForStops(keptAgencyRows)
 		utils.SortAgencyReferencesByID(references.Agencies)
 
 		// Populate situation references for alerts affecting the returned stops
-		alerts := api.collectAlertsForStops(stopIDs)
+		alerts := api.collectAlertsForStops(keptStopIDs)
 		situations := api.BuildSituationReferences(alerts)
 		references.Situations = append(references.Situations, situations...)
 	}

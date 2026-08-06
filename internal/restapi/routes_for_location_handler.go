@@ -27,14 +27,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 	query := queryParams.Get("query")
 
-	sanitizedQuery, err := utils.ValidateAndSanitizeQuery(query)
-	if err != nil {
-		fieldErrors := map[string][]string{
-			"query": {err.Error()},
-		}
-		api.validationErrorResponse(w, r, fieldErrors)
-		return
-	}
+	query = utils.SanitizeInput(query)
 	if loc.Radius == 0 {
 		loc.Radius = models.DefaultSearchRadiusInMeters
 		if query != "" {
@@ -43,7 +36,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc, sanitizedQuery, maxCount, time.Time{})
+	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc, query, maxCount, time.Time{})
 	if len(routes) == 0 {
 		references := models.NewEmptyReferences()
 		response := models.NewListResponseWithRange([]models.Route{}, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, false)
