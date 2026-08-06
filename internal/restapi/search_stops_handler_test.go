@@ -652,10 +652,10 @@ func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
 	db := api.GtfsManager.GtfsDB.DB
 
 	registerFixtureCleanup(t, db,
-		`DELETE FROM stop_times WHERE trip_id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5')`,
-		`DELETE FROM trips WHERE id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5')`,
+		`DELETE FROM stop_times WHERE trip_id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
+		`DELETE FROM trips WHERE id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
 		`DELETE FROM routes WHERE id = 'revenue_route_1'`,
-		`DELETE FROM stops WHERE id IN ('revenue_both_restricted', 'revenue_pickup_only', 'revenue_dropoff_only', 'revenue_phone_agency', 'revenue_null_columns')`,
+		`DELETE FROM stops WHERE id IN ('revenue_both_restricted', 'revenue_pickup_only', 'revenue_dropoff_only', 'revenue_phone_agency', 'revenue_coordinate_driver', 'revenue_null_columns')`,
 	)
 
 	// Every fixture stop is served by the same single type-3 (Bus) route, so the route-type
@@ -685,6 +685,11 @@ func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
 		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_4', 'revenue_route_1', 'service_1');
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_4', 'revenue_phone_agency', 1, 28800, 28800, 2, 2);
 
+		-- Coordinate-with-driver pickup and drop-off (type 3): excluded, same as type 2.
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_coordinate_driver', 'Revenue Test Coordinate Driver', 40.0, -120.0, 0);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_6', 'revenue_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_6', 'revenue_coordinate_driver', 1, 28800, 28800, 3, 3);
+
 		-- pickup_type/drop_off_type omitted (NULL in storage): included. This is the shape
 		-- every real feed row is stored in (GTFS import stores a value of 0 as NULL).
 		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_null_columns', 'Revenue Test Null Columns', 40.0, -120.0, 0);
@@ -703,6 +708,7 @@ func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
 
 	assert.NotContains(t, names, "Revenue Test Both Restricted", "stop with no unrestricted pickup/drop-off must be excluded")
 	assert.NotContains(t, names, "Revenue Test Phone Agency", "phone-agency-only pickup/drop-off (type 2) must be excluded, not just type 1")
+	assert.NotContains(t, names, "Revenue Test Coordinate Driver", "coordinate-with-driver-only pickup/drop-off (type 3) must be excluded, not just type 1")
 	assert.Contains(t, names, "Revenue Test Pickup Only")
 	assert.Contains(t, names, "Revenue Test Dropoff Only")
 	assert.Contains(t, names, "Revenue Test Null Columns", "NULL pickup_type/drop_off_type must be treated as unrestricted (type 0)")
