@@ -178,12 +178,14 @@ func TestSanitizeFTS5Query(t *testing.T) {
 		{"empty string", "", ""},
 		{"whitespace only", "     ", ""},
 		{"all special characters", `"*()`, ""},
-		{"mixed case operators AND", "test AND foo", "test foo"},
-		{"mixed case operators And", "test And foo", "test foo"},
-		{"mixed case operators aNd", "test aNd foo", "test foo"},
-		{"consecutive operators", "foo AND AND bar", "foo bar"},
-		{"operator at beginning", "AND test", "test"},
-		{"operator at end", "test OR", "test"},
+		// Operator words are kept verbatim - the caller quotes every term, so FTS5 reads
+		// them as literal tokens. Stop names such as "Park and Ride" depend on this.
+		{"operator word AND preserved", "test AND foo", "test AND foo"},
+		{"operator word And preserved", "test And foo", "test And foo"},
+		{"operator word aNd preserved", "test aNd foo", "test aNd foo"},
+		{"consecutive operator words preserved", "foo AND AND bar", "foo AND AND bar"},
+		{"operator word at beginning preserved", "AND test", "AND test"},
+		{"operator word at end preserved", "test OR", "test OR"},
 		{"unicode input", "中央駅 テスト", "中央駅 テスト"},
 		{"colon character", "column:value", "column value"},
 		{"caret character", "test^2", "test 2"},
@@ -192,8 +194,8 @@ func TestSanitizeFTS5Query(t *testing.T) {
 		{"angle brackets", "test<foo>bar", "test foo bar"},
 		{"tilde character", "test~2", "test 2"},
 		{"pipe character", "test|foo", "test foo"},
-		{"NEAR operator", "test NEAR foo", "test foo"},
-		{"NEAR operator mixed case", "test near foo", "test foo"},
+		{"operator word NEAR preserved", "test NEAR foo", "test NEAR foo"},
+		{"operator word near preserved", "test near foo", "test near foo"},
 	}
 
 	for _, tt := range tests {
@@ -237,6 +239,44 @@ func TestSearchStopsHandlerIgnoredPunctuation(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
 	assert.Empty(t, stopsResp.Data.List)
+}
+
+func TestSearchStopsHandlerOperatorWordInput(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		expectedStop string
+	}{
+		// FTS5 operator words must search as ordinary prefixes. Both stops come from the
+		// RABA fixture, so no synthetic rows are needed.
+		{"OR matches Oregon", "or", "25_1062"}, // "Shasta Dam Blvd at 5001 Oregon"
+		{"AND matches and", "and", "25_4404"},  // "Shingletown Park and Ride Lot"
+		{"NOT is a valid query", "not", ""},    // no RABA stop has a "not" prefix token
+		{"NEAR is a valid query", "near", ""},  // no RABA stop has a "near" prefix token
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {tt.input}}))
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+			if tt.expectedStop == "" {
+				return
+			}
+
+			ids := make([]string, 0, len(stopsResp.Data.List))
+			for _, stop := range stopsResp.Data.List {
+				ids = append(ids, stop.ID)
+			}
+			assert.Contains(t, ids, tt.expectedStop,
+				"stop names containing %q must be reachable by that query", tt.input)
+		})
+	}
 }
 
 func TestSearchStopsHandlerReferencesSorting(t *testing.T) {
