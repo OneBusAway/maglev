@@ -237,6 +237,26 @@ func TestSearchStopsByName(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// SearchStopsByName only returns stops with revenue service (a stop time with
+	// unrestricted pickup or drop-off), so every stop needs one. PickupType/DropOffType are
+	// left unset, matching how a real feed's "0" (unrestricted) value is stored.
+	_, err := client.Queries.CreateCalendar(ctx, CreateCalendarParams{
+		ID: "service1", Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20230101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+	_, err = client.Queries.CreateRoute(ctx, CreateRouteParams{ID: "route1", AgencyID: "agency1", Type: 3})
+	require.NoError(t, err)
+	for _, s := range stops {
+		tripID := "trip_" + s.ID
+		_, err := client.Queries.CreateTrip(ctx, CreateTripParams{ID: tripID, RouteID: "route1", ServiceID: "service1"})
+		require.NoError(t, err)
+		_, err = client.Queries.CreateStopTime(ctx, CreateStopTimeParams{
+			TripID: tripID, StopID: s.ID, StopSequence: 1, ArrivalTime: 28800, DepartureTime: 28800,
+		})
+		require.NoError(t, err)
+	}
+
 	t.Run("matches by stop name", func(t *testing.T) {
 		results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
 			SearchQuery: "Main",

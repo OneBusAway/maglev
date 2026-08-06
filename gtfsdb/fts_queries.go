@@ -95,6 +95,20 @@ FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid
 WHERE fts.stop_name MATCH ?
+  -- A stop qualifies only if some stop time permits unrestricted pick-up or
+  -- drop-off (pickup_type/drop_off_type == 0). GTFS import stores a value of
+  -- 0 as NULL (see toNullInt64 in gtfsdb/helpers.go), so NULL must coalesce
+  -- to 0 here. Types 2 (phone agency) and 3 (coordinate with driver) are
+  -- restricted and intentionally do not qualify.
+  AND EXISTS (
+      SELECT 1
+      FROM stop_times st
+      WHERE st.stop_id = s.id
+        AND (
+            COALESCE(st.pickup_type, 0) = 0
+            OR COALESCE(st.drop_off_type, 0) = 0
+        )
+  )
 ORDER BY s.id
 LIMIT ?
 `
