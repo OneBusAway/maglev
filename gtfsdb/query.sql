@@ -670,7 +670,10 @@ FROM
     JOIN trips ON stop_times.trip_id = trips.id
     JOIN routes ON trips.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'));
+    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+ORDER BY
+    routes.agency_id ASC,
+    routes.id ASC;
 
 -- name: GetRouteIDsForStops :many
 SELECT DISTINCT
