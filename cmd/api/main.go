@@ -62,6 +62,7 @@ func main() {
 	flag.StringVar(&configFile, "f", "", "Path to JSON configuration file (mutually exclusive with other flags)")
 	flag.BoolVar(&dumpConfig, "dump-config", false, "Dump current configuration as JSON and exit")
 	flag.IntVar(&cfg.Port, "port", 4000, "API server port")
+	flag.StringVar(&cfg.Host, "host", "", "Address to bind the server to (default: 0.0.0.0)")
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
 	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
 	flag.StringVar(&exemptApiKeysFlag, "exempt-api-keys", "org.onebusaway.iphone", "Comma separated list of API keys exempt from rate limiting")
@@ -116,6 +117,7 @@ func main() {
 		// This allows us to run the exact same robust validation logic as the JSON path!
 		cliConfig := appconf.JSONConfig{
 			Port:          cfg.Port,
+			Host:          cfg.Host,
 			Env:           envFlag,
 			ApiKeys:       ParseAPIKeys(apiKeysFlag),
 			ExemptApiKeys: ParseAPIKeys(exemptApiKeysFlag),

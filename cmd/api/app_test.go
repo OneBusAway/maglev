@@ -166,7 +166,7 @@ func TestCreateServer(t *testing.T) {
 	defer api.Shutdown()
 
 	assert.NotNil(t, srv, "Server should not be nil")
-	assert.Equal(t, ":8080", srv.Addr, "Server address should match port")
+	assert.Equal(t, "0.0.0.0:8080", srv.Addr, "Server address should match port and address")
 	assert.NotNil(t, srv.Handler, "Server handler should be set")
 	assert.Equal(t, time.Minute, srv.IdleTimeout, "IdleTimeout should be 1 minute")
 	assert.Equal(t, 5*time.Second, srv.ReadTimeout, "ReadTimeout should be 5 seconds")
