@@ -383,7 +383,7 @@ func TestStopsForLocationQueryFallsBackToClosestMatch(t *testing.T) {
 	assert.Equal(t, "2042", model.Data.List[0].Code)
 }
 
-// Merged feeds can repeat a stop code, so in-bounds matches can exceed maxCount.
+// Merged feeds can repeat a stop code. DupB is seeded nearer than DupA, which sorts first by id.
 func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
@@ -409,7 +409,7 @@ func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
 
 		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
 			ID: stopID, Code: nulls.String(sharedCode), Name: nulls.String("Dup Stop"),
-			Lat: lat + float64(i)*0.001, Lon: lon,
+			Lat: lat + float64(1-i)*0.001, Lon: lon,
 		})
 		require.NoError(t, err)
 
@@ -435,7 +435,8 @@ func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
 	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Len(t, model.Data.List, 1, "in-bounds matches should be truncated to maxCount")
+	require.Len(t, model.Data.List, 1, "in-bounds matches should be truncated to maxCount")
+	assert.Equal(t, "DupB_DupBS", model.Data.List[0].ID, "the nearest match should survive the cap")
 	assert.True(t, model.Data.LimitExceeded)
 }
 
