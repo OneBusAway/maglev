@@ -194,7 +194,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
 		var references models.ReferencesModel
 		if includeReferences {
-			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil, nil, nil)
+			references = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
 		} else {
 			references = *models.NewEmptyReferences()
 		}
@@ -500,7 +500,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips, stopIDsMap, situations.refs)
+		references = api.buildTripReferences(ctx, tripReferenceParams{
+			IncludeTrip:     includeTrip,
+			Trips:           result,
+			Stops:           stops,
+			PreFetchedTrips: fetchedTrips,
+			StopIDMap:       stopIDsMap,
+			Situations:      situations.refs,
+		})
 	} else {
 		references = *models.NewEmptyReferences()
 	}
@@ -693,21 +700,24 @@ func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[s
 	}
 }
 
-func buildTripReferences(
-	api *RestAPI,
-	ctx context.Context,
-	includeTrip bool,
-	trips []models.TripsForRouteListEntry,
-	stops []gtfsdb.Stop,
-	preFetchedTrips []gtfsdb.Trip,
-	stopIDMap map[string]string,
-	situations []situationRef,
-) models.ReferencesModel {
+// tripReferenceParams bundles the inputs the trips-for-route reference block is
+// built from, so the builder does not grow another positional parameter each
+// time a reference kind is added.
+type tripReferenceParams struct {
+	IncludeTrip     bool
+	Trips           []models.TripsForRouteListEntry
+	Stops           []gtfsdb.Stop
+	PreFetchedTrips []gtfsdb.Trip
+	StopIDMap       map[string]string
+	Situations      []situationRef
+}
+
+func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenceParams) models.ReferencesModel {
 
 	presentTrips := make(map[string]models.Trip)
 	presentRoutes := make(map[string]models.Route)
 
-	for _, trip := range preFetchedTrips {
+	for _, trip := range params.PreFetchedTrips {
 		presentTrips[trip.ID] = models.Trip{
 			ID:            trip.ID,
 			RouteID:       trip.RouteID,
@@ -721,14 +731,14 @@ func buildTripReferences(
 		presentRoutes[trip.RouteID] = models.Route{}
 	}
 
-	for _, trip := range trips {
+	for _, trip := range params.Trips {
 		_, tripID, _ := utils.ExtractAgencyIDAndCodeID(trip.GetTripId())
 		if _, exists := presentTrips[tripID]; !exists {
 			presentTrips[tripID] = models.Trip{}
 		}
 	}
 
-	for _, entry := range trips {
+	for _, entry := range params.Trips {
 		if entry.Schedule != nil {
 			if entry.Schedule.NextTripId != "" {
 				_, nextTripID, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.NextTripId)
@@ -768,7 +778,7 @@ func buildTripReferences(
 	if len(tripIDsToFetch) > 0 {
 		extraTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDsToFetch)
 		if err != nil {
-			logging.LogError(api.Logger, "failed to fetch trips for references", err)
+			logging.LogError(api.Logger, "failed to fetch params.Trips for references", err)
 		}
 
 		for _, trip := range extraTrips {
@@ -825,9 +835,9 @@ func buildTripReferences(
 	}
 
 	stopRouteIDs := make(map[string][]string)
-	if len(stops) > 0 {
-		stopIDs := make([]string, len(stops))
-		for i, s := range stops {
+	if len(params.Stops) > 0 {
+		stopIDs := make([]string, len(params.Stops))
+		for i, s := range params.Stops {
 			stopIDs[i] = s.ID
 		}
 		if rows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs); err == nil {
@@ -839,8 +849,8 @@ func buildTripReferences(
 		}
 	}
 
-	stopList := make([]models.Stop, 0, len(stops))
-	for _, stop := range stops {
+	stopList := make([]models.Stop, 0, len(params.Stops))
+	for _, stop := range params.Stops {
 		routeIdsString := stopRouteIDs[stop.ID]
 		if routeIdsString == nil {
 			routeIdsString = []string{}
@@ -854,7 +864,7 @@ func buildTripReferences(
 		stopList = append(stopList, models.Stop{
 			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
-			ID:                 stopIDMap[stop.ID],
+			ID:                 params.StopIDMap[stop.ID],
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       0,
@@ -867,7 +877,7 @@ func buildTripReferences(
 	}
 
 	tripsRefList := make([]models.Trip, 0, len(presentTrips))
-	if includeTrip {
+	if params.IncludeTrip {
 		for _, trip := range presentTrips {
 			// Ensure we have the route to get the Agency ID
 			if route, ok := presentRoutes[trip.RouteID]; ok {
@@ -903,7 +913,7 @@ func buildTripReferences(
 	references.Routes = routes
 	references.Stops = stopList
 	references.Trips = tripsRefList
-	references.Situations = api.situationReferences(situations)
+	references.Situations = api.situationReferences(params.Situations)
 	return *references
 }
 
