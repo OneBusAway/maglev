@@ -331,6 +331,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	situations := newSituationCollector()
 
+	// Indexed so an entry's route and agency resolve without a per-trip query.
+	// entryTripID can differ from the active trip on interlined blocks, so the
+	// route must come from the entry trip itself.
+	tripsByID := make(map[string]gtfsdb.Trip, len(fetchedTrips))
+	for _, trip := range fetchedTrips {
+		tripsByID[trip.ID] = trip
+	}
+
 	var result []models.TripsForRouteListEntry
 	for _, fetchedTrip := range fetchedTrips {
 		if ctx.Err() != nil {
@@ -402,7 +410,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: situations.addRefs(api.situationRefsForTrip(ctx, entryTripID)),
+			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, entryTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
 		result = append(result, entry)
@@ -466,7 +474,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: situations.addRefs(api.situationRefsForTrip(ctx, baseTripID)),
+			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, baseTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
 		result = append(result, entry)
@@ -728,6 +736,24 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	return *references
 }
 
+// tripSituationRefs resolves a trip's situations from data already loaded,
+// falling back to situationRefsForTrip when the trip was not among those
+// fetched — DUPLICATED trips with no static counterpart, for instance.
+func (api *RestAPI) tripSituationRefs(
+	ctx context.Context,
+	tripID string,
+	tripsByID map[string]gtfsdb.Trip,
+	routeAgencyMap map[string]string,
+) []situationRef {
+	trip, ok := tripsByID[tripID]
+	if !ok {
+		return api.situationRefsForTrip(ctx, tripID)
+	}
+
+	agencyID := routeAgencyMap[trip.RouteID]
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), agencyID)
+}
+
 // tripReferenceSets accumulates the entities a trips-for-route response refers
 // to, keyed by bare ID so each is emitted once.
 type tripReferenceSets struct {
@@ -895,6 +921,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 
 	rows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
 	if err != nil {
+		logging.LogError(api.Logger, "failed to fetch routes for stop references", err)
 		return routeIDsByStop
 	}
 	for _, row := range rows {
@@ -914,8 +941,11 @@ func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
 	}
 
 	for _, trip := range s.trips {
+		// A route that was noted but never resolved is still in the map as a
+		// zero value; combining IDs against its empty agency would emit
+		// references whose every ID is the empty string.
 		route, ok := s.routes[trip.RouteID]
-		if !ok {
+		if !ok || route.AgencyID == "" {
 			continue
 		}
 		tripsRefList = append(tripsRefList, models.Trip{

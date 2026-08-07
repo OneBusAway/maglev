@@ -626,7 +626,11 @@ func TestTripsForLocationHandler_SituationReferences(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
-	time.Sleep(500 * time.Millisecond)
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
 
 	// Real-time alerts carry the raw (un-prefixed) agency ID from the feed.
 	rawAgencyID := "25"

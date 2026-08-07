@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
@@ -85,8 +86,12 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 			url:  fmt.Sprintf("/api/where/trip-details/25_%s.json?key=TEST&includeStatus=true", tripID),
 		},
 		{
+			// Pinned to a weekday inside the RABA fixture's calendar range, which
+			// ended in 2025; under the real clock the stop has no arrivals and the
+			// case would assert nothing.
 			name: "arrivals-and-departures-for-stop",
-			url:  fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/25_%s.json?key=TEST", stopID),
+			url: fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/25_%s.json?key=TEST&time=%d&minutesAfter=240",
+				stopID, time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC).UnixMilli()),
 		},
 		{
 			name: "trip-for-vehicle",
@@ -103,10 +108,13 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 			collectSituationIDs(body, &emitted)
 			referenced := referencedSituationIDs(t, body)
 
+			sawSituationID := false
 			for _, id := range emitted {
+				sawSituationID = true
 				assert.True(t, referenced[id],
 					"situationId %q must resolve to an entry in references.situations", id)
 			}
+			require.True(t, sawSituationID, "expected the seeded alert to surface as a situationId")
 		})
 	}
 }

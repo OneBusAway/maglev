@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -532,6 +534,14 @@ func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation 
 	}
 
 	situations := api.BuildSituationReferences(alerts)
+	if len(situations) != len(refs) {
+		// The ID stamping below pairs by position, so a length change in
+		// BuildSituationReferences would silently mislabel every situation.
+		logging.LogError(api.Logger, "situation reference count does not match the alerts it was built from",
+			fmt.Errorf("built %d situations from %d alerts", len(situations), len(refs)))
+		return situations
+	}
+
 	for i := range situations {
 		situations[i].ID = refs[i].ID
 	}
