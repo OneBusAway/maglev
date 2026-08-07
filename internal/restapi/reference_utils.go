@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -461,22 +462,30 @@ type situationRef struct {
 	Alert gtfs.Alert
 }
 
-// situationRefsFromAlerts drops alerts with no ID and pairs the rest with their
-// combined-form situation ID, falling back to the raw alert ID when agencyID is
-// unknown.
+// situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
+// situation ID used to refer to them.
 func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
 	refs := make([]situationRef, 0, len(alerts))
 	for _, alert := range alerts {
 		if alert.ID == "" {
 			continue
 		}
-		id := alert.ID
-		if agencyID != "" {
-			id = utils.FormCombinedID(agencyID, alert.ID)
-		}
-		refs = append(refs, situationRef{ID: id, Alert: alert})
+		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyID), Alert: alert})
 	}
 	return refs
+}
+
+// situationID returns the combined-form ID for an alert.
+//
+// Prefixing is idempotent, not unconditional: a GTFS-RT feed exported by an OBA
+// instance already carries the agency prefix on its alert IDs — Puget Sound
+// ships "1_92239" — and prefixing again would publish "1_1_92239", which
+// resolves against nothing a client has seen. Upstream reports "1_92239".
+func situationID(alertID, agencyID string) string {
+	if agencyID == "" || strings.HasPrefix(alertID, agencyID+"_") {
+		return alertID
+	}
+	return utils.FormCombinedID(agencyID, alertID)
 }
 
 // situationCollector deduplicates the alerts referenced by list entries so the
