@@ -109,10 +109,21 @@ New config key / CLI flag `role`, default `all`:
   (`gtfs_manager.go:117-120`) totals ~110 seconds, far shorter than a first
   NYC-scale import, so reusing it would crash-loop the fleet during initial
   bring-up; the server role gets its own patient wait loop. The loop's
-  error taxonomy matters: "row not found" *and* "relation/table does not
-  exist" (fresh Postgres before the ingester has applied DDL) both mean
-  not-ready; anything else is fatal — including `insufficient_privilege`,
-  which means a misconfigured DB role (§4.1), not a not-ready dataset.
+  error taxonomy matters, and it has three classes, not two:
+  - **Not-ready** (keep waiting): "row not found"; "relation/table does
+    not exist" (fresh Postgres before the ingester has applied DDL); and,
+    in the same-host SQLite topology, the DB file not existing yet —
+    `mode=ro` cannot create a missing file, so the read-only *open
+    itself* sits inside the wait loop rather than before it (today
+    `NewClient` opens eagerly and would exit instead of waiting).
+  - **Retryable** (keep waiting, log at warning): connection refused,
+    timeouts, and server-unavailable errors — a server starting while a
+    replica or pooler reboots must not crash-loop when an import already
+    exists.
+  - **Fatal**: invalid configuration, authentication failures, and
+    `insufficient_privilege` — a misconfigured DB role (§4.1), not a
+    not-ready dataset.
+
   Once data exists, it computes region bounds and starts serving, learning
   about new datasets by watching `import_metadata` (§5.3).
 - **Ingester HA is explicitly not v1.** If the ingester dies, servers keep
@@ -151,8 +162,18 @@ New config key / CLI flag `role`, default `all`:
    - No `busy_timeout` is set today (`helpers.go:1192-1203`), and the
      daily whole-dataset import writes a WAL roughly the size of the
      dataset while N reader processes can starve checkpoints. Add
-     `busy_timeout` for all roles and have the ingester run
-     `wal_checkpoint(TRUNCATE)` after each import.
+     `busy_timeout` for all roles — **per connection, not per pool**:
+     `database/sql` is a connection pool, so a post-open `PRAGMA` only
+     configures whichever connection executed it; the setting must go
+     through the DSN/connector path both drivers support (`_busy_timeout`
+     / `_pragma=busy_timeout(...)` URI parameters) so every pooled
+     connection gets it. Have the ingester run `wal_checkpoint(TRUNCATE)`
+     after each import, and define its failure mode: TRUNCATE returns
+     `SQLITE_BUSY` whenever reader snapshots are active, which with N
+     polling servers will happen routinely — the ingester logs the
+     outcome and tolerates a non-truncated WAL (the passive-degraded
+     checkpoint still moved frames; the next quiet moment or import
+     truncates it), rather than retry-looping against its own readers.
 3. **Multi-host:** ingester writes to a Postgres primary; each server points
    at the primary, a read replica, or a pooler (§4). This is the Puget
    Sound / NYC shape.
@@ -244,9 +265,16 @@ The pieces:
   `sql_package: "database/sql"`, so `pg.Stop` is field-identical to
   `gtfsdb.Stop` (`sql.NullString`, `sql.NullInt64`, …) and Go converts
   identical structs directly. The interface is defined over the
-  `gtfsdb` (SQLite) types every handler already uses — zero call-site
-  churn outside `gtfsdb` itself; the SQLite `Queries` satisfies it as-is;
-  the PG adapter is one generatable line per method
+  `gtfsdb` (SQLite) types every handler already uses. Be precise about
+  the churn: `Manager.GtfsDB` is a `*gtfsdb.Client` whose `Queries`
+  field is the concrete generated type, and handlers and tests
+  dereference `GtfsDB.Queries` directly — so the `Queries` field's
+  *type* becomes the interface. Because the SQLite `Queries` satisfies
+  it as-is and the method set is identical, existing call sites keep
+  compiling unchanged; the churn concentrates in the `gtfsdb.Client` /
+  `Manager` type declarations and any test that constructs a concrete
+  `Queries`, not in per-call-site edits. The PG adapter is one
+  generatable line per method
   (`return gtfsdb.Stop(row), err`), with element-wise loops for
   slice-returning methods. If the two schemas drift, the conversions stop
   compiling — the parity check is the type system, not a CI diff.
@@ -270,7 +298,12 @@ The pieces:
   suite. The known dialect escapes get moved or rewritten:
   - `INSERT OR REPLACE` (`query.sql:582`) and `INSERT OR IGNORE`
     (`query.sql:130`) → `INSERT … ON CONFLICT …` forms (valid on SQLite
-    ≥3.24 too, so the portable form replaces both).
+    ≥3.24 too, so the portable form replaces both). One semantic trap to
+    handle deliberately: `OR IGNORE` also suppresses `NOT NULL`
+    violations, which `ON CONFLICT DO NOTHING` does not — it only covers
+    uniqueness conflicts. The `CreateFrequency` rewrite therefore either
+    adds explicit validation for rows the old form silently dropped, or
+    documents the stricter portable semantics as intended.
   - Datetime and scalar functions: `strftime`/`date(…, '+2 years')`
     (`query.sql:1306`), a second `STRFTIME` in the hot
     `GetActiveServiceIDsForDate` (`query.sql:429`), and the two-argument
@@ -285,7 +318,12 @@ The pieces:
   exceptions.** FTS5 and R-Tree queries are already hand-written because
   sqlc can't express them; they gain Postgres twins:
   - `fts_queries_postgres.go`: `tsvector` columns + GIN index, `ts_rank`
-    replacing `bm25()`. Same Go signatures, same result types.
+    replacing `bm25()`. Same Go signatures, same result types. The sync
+    mechanism is explicit, since SQLite keeps its FTS tables current via
+    schema machinery the PG side won't have: the `tsvector` columns are
+    `GENERATED ALWAYS AS (to_tsvector(…)) STORED`, so population is
+    automatic on every insert — no triggers, nothing for `StoreGtfsData`
+    to know about — with a clear-and-reinsert search test proving it.
   - `stops_spatial_postgres.go`: plain bounding-box `WHERE lat BETWEEN …`
     over a composite `(lat, lon)` B-tree index. **No PostGIS.** Even
     NYC-scale stop counts (tens of thousands of rows) make an R-Tree
@@ -361,6 +399,13 @@ discrepancy rule:
   no two runs are byte-identical even on a single engine. Affected tests
   assert set-membership and count, not order.
 
+One adjacent hazard that is *not* a sanctioned divergence: queries whose
+`ORDER BY` keys admit ties may break those ties differently on the two
+engines. When the equivalence suite catches one, the fix is to make the
+ordering fully deterministic (append a unique key to the `ORDER BY`) —
+on both engines, in the shared `query.sql` — not to add a third
+exception.
+
 ---
 
 ## 5. Static data flow in split mode
@@ -419,10 +464,16 @@ Two Postgres footnotes, addressed rather than discovered later:
   in a metadata transaction — a design explicitly deferred (§9), not
   precluded; nothing in v1 bakes in an assumption against it.
 - The import transaction holds no locks that block readers (plain
-  row-version writes). A *second concurrent import* fails loudly — a
-  duplicate-key violation or deadlock abort, not clean queueing — rather
-  than corrupting. The §3 singleton contract remains the real control;
-  the database just makes violating it noisy instead of silent.
+  row-version writes). A *second concurrent import*, however, does **not**
+  reliably fail loudly on its own: under READ COMMITTED, two
+  delete-then-reinsert transactions serialize on row locks and the loser
+  silently overwrites the winner — no duplicate-key error, no deadlock,
+  just last-commit-wins. So the import transaction opens with
+  `pg_advisory_xact_lock` on a fixed key (SQLite needs nothing — its
+  single-writer lock already serializes), with a short `lock_timeout` so
+  a second ingester fails fast with an unambiguous error instead of
+  quietly interleaving. The §3 singleton contract remains the deployment
+  rule; the advisory lock is what makes violating it observable.
 
 On same-host SQLite (§3.1), WAL provides the same guarantee: readers hold
 their snapshot for the duration of each read transaction while the writer
@@ -433,8 +484,10 @@ commits.
 First, be precise about what a server "noticing" even means, because it
 bounds every consistency worry below: in split mode servers do not *hold*
 the dataset — every handler query runs against the shared DB per request,
-so when the import commits, **all servers see the new rows on their next
-statement, simultaneously**, watcher or no watcher. `GetSystemETag`
+so when the import commits, **all servers on a given DB endpoint see the
+new rows on their next statement, simultaneously**, watcher or no
+watcher; servers on a lagging replica converge when their replica does
+(§4.1). `GetSystemETag`
 likewise reads `import_metadata` per request, so HTTP caching flips
 fleet-wide at commit. The watcher exists only to refresh **per-process
 derived caches**: region bounds (`computeRegionBounds`, `static.go:223`)
@@ -528,7 +581,7 @@ disagreeing with each other.
 
 ### 6.2 Relay endpoints (ingester)
 
-```
+```text
 GET /internal/rt/{feed-id}/trip-updates.pb
 GET /internal/rt/{feed-id}/vehicle-positions.pb
 GET /internal/rt/{feed-id}/service-alerts.pb
@@ -578,7 +631,11 @@ GET /metrics                   ← ingester keeps Prometheus metrics
   Unauthenticated requests get a cheap, uniform 401 *before any routing or
   per-feed work* — uniform so feed IDs can't be enumerated via 401-vs-404
   differences — with rate-limited logging so a scanner can't flood the
-  ingester's logs.
+  ingester's logs. And the no-key case **fails closed**: a role that
+  exposes `/internal/*` (or, as a server, consumes it) with an empty
+  `internal-api-key` list is a startup validation error, not a silently
+  unauthenticated relay. There is no insecure-mode escape hatch in v1 —
+  the key costs one config line.
 - The internal listener is a hardened `http.Server`, not a bare mux: the
   same timeout/limit settings as the API server (`ReadTimeout`,
   `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes` —
@@ -661,7 +718,10 @@ Secrets follow the existing env-override pattern
 (`json_config.go:382-442`, which already does this for API keys and feed
 auth values): `MAGLEV_INTERNAL_API_KEY` and `MAGLEV_DATABASE_DSN` override
 the file values, so the fleet-shared config file can omit secrets
-entirely. Config files that do carry secrets should be mode `0600`, and
+entirely. Because `internal-api-key` is a list, its env form is defined
+explicitly: comma-separated, entries whitespace-trimmed, empty entries a
+validation error — the same convention the API-keys env override uses —
+with a rotation test covering mixed file + env configuration. Config files that do carry secrets should be mode `0600`, and
 `docker-compose.scaled.yml` demonstrates env/secret injection rather than
 baked-in values. One inherited gap gets fixed on the way: `--dump-config`
 redacts header values but prints RT feed URLs verbatim
@@ -685,7 +745,7 @@ already-proven process split.
 |---|---|---|
 | **1. Role + database config plumbing** (no behavior change) | Parse/validate `role` (strict three-value check), `database.*`, `ingester-url`, `internal-api-key` (list); env overrides `MAGLEV_INTERNAL_API_KEY`/`MAGLEV_DATABASE_DSN`; extend `--dump-config` redaction to URL query strings (§7). `role` defaults to `all`; everything behaves identically. | `internal/appconf/json_config.go`, `internal/gtfs/config.go`, `cmd/api/main.go`, `cmd/api/app.go`, `config.schema.json` |
 | **2. Ingester role** | `role=ingester`: run static load/refresh loops + hardened healthz/status/metrics listener (§6.2); skip REST API and webui registration. `role=server`: skip `ReloadStatic`-driven import; patient wait-for-`import_metadata` startup (§3); read-only DB open — a real `gtfsdb` change, since `createDB` applies write PRAGMAs and DDL on every open (`helpers.go:135-161`). Extract the post-import tail of `ReloadStatic` into a shared `refreshDerivedState`; move the `import_metadata` hash write to after direction precompute, still-written-on-precompute-error (§5.2); make the periodic-reload timeout configurable, default none (§3); add `busy_timeout` + post-import `wal_checkpoint(TRUNCATE)` (§3.1). New goroutines follow the existing `shutdownChan` + `WaitGroup` pattern; ingester shutdown drains the listener before stopping fetch loops, mirroring `Run`'s ordering (`cmd/api/app.go:254-273`). Per CONTRIBUTING's size guidance this lands as 2–3 stacked PRs: the `refreshDerivedState` + hash-reorder refactor first (self-contained, independently testable), then the role split, then read-only open. | `cmd/api/main.go`, `internal/gtfs/gtfs_manager.go`, `internal/gtfs/static.go`, `gtfsdb/helpers.go` |
-| **3. Server dataset watcher** | Jittered, configurable `import_metadata` poll (`dataset-watch-interval`, §5.3) → `refreshDerivedState` on hash change; runs on the `shutdownChan` + `WaitGroup` pattern with a per-iteration context timeout, like `updateStaticGTFS` (`context.Background()` is legitimate here per CONTRIBUTING — no request behind it). Test: two clients on one WAL SQLite file; writer imports a second fixture; reader converges without restart. | `internal/gtfs/static.go`, tests |
+| **3. Server dataset watcher** | Jittered, configurable `import_metadata` poll (`dataset-watch-interval`, §5.3) → `refreshDerivedState` on hash change; runs on the `shutdownChan` + `WaitGroup` pattern with a per-iteration context timeout, like `updateStaticGTFS` (`context.Background()` is legitimate here per CONTRIBUTING — no request behind it). Test: two clients on one WAL SQLite file; writer imports a second fixture; reader converges without restart. That test conflicts with today's test-env guard — `createDB` rejects every non-`:memory:` path when `Env == Test` (`helpers.go:136-138`) — so this PR relaxes the guard to also accept paths under the test's temp directory (`t.TempDir()`), keeping the original protection against tests touching real DB files. | `internal/gtfs/static.go`, `gtfsdb/helpers.go`, tests |
 | **4. RT relay** | Ingester: byte-cache fetch loop + `/internal/rt/*` endpoints (ETag/304, 503 before first fetch and on stale cache, hash-then-compare key auth, nosniff/content-type, 25MB fetch cap — §6.2). The byte cache is its own type with its own mutex — not new fields on `Manager`, which already carries a documented two-lock ordering policy (`gtfs_manager.go:35-40`); the cache type is the seam between the `internal/gtfs` fetch loop and the HTTP handlers. Server: relay URL derivation, three-outcome conditional fetch, and the `updateFeedRealtime`/`pollFeed` success-bookkeeping change with `X-Maglev-Fetched-At` clock anchoring (§6.1); merge/rebuild untouched. Test: a feed returning only 304s for longer than `staleFeedThreshold` retains its data and stays at base poll interval. | new `internal/gtfs/rt_relay.go`, `internal/restapi/` internal routes, `internal/gtfs/config.go`, `internal/gtfs/realtime.go` (fetch + poll bookkeeping) |
 | **5. Postgres engine** | Prep PR: mechanical `?`→named-param conversion of `query.sql` (no behavior change; doubles as the §4.2 decision-gate spike). Then: PG engine block generating `gtfsdb/pg` (`sql_package: "database/sql"`) via `pgx/v5/stdlib`; `Store` interface over the existing `gtfsdb` types + generated conversion adapter (compile-enforced schema parity); `schema_postgres.sql` + startup DDL + two-role GRANT setup (§4.1); per-engine forks for the dialect escapes (`INSERT OR REPLACE`/`OR IGNORE`, `strftime`, scalar `MAX`→`GREATEST`, full audit of `query.sql` + `helpers.go`); `fts_queries_postgres.go`, `stops_spatial_postgres.go`; engine-aware batch size + placeholder emission in the batch builders; engine-aware test-env guard (`helpers.go:136-138` rejects non-`:memory:` paths when `Env == Test`). Lands as 3–4 stacked PRs (named-param prep / engine block + adapter / schema + DDL / FTS + spatial). | `gtfsdb/*` |
 | **6. Equivalence CI + load tests** | CI job: full `internal/restapi` handler suite against dockerized Postgres (same fixtures, byte-identical JSON assertions per §4.3). k6 scenario for the split topology; document results at Puget Sound-scale data. | `.github/workflows/*`, `loadtest/` |
@@ -709,7 +769,12 @@ job and available locally.
   future `ALTER TABLE` on a live Postgres deployment needs a real
   (additive, ingester-applied) migration step. Deferred until the first
   post-launch schema change forces the issue — but the deferral is named
-  here so it isn't mistaken for a solved problem.
+  here so it isn't mistaken for a solved problem. One cheap guard lands
+  with v1 rather than deferring: `CREATE … IF NOT EXISTS` validates
+  nothing about tables that already exist, so the PG DDL stamps a schema
+  version row and both roles refuse to start against a version they don't
+  recognize — drift becomes a loud startup error instead of a subtle
+  scan mismatch.
 - **Ingester deploys vs. the 5-minute RT circuit breaker.** Servers
   tolerate a relay outage shorter than `staleFeedThreshold`; an ingester
   restart exceeding ~5 minutes clears RT fleet-wide until the next
@@ -793,8 +858,13 @@ Run before calling the feature done:
 - [ ] Scheduled (not just startup) reimport of the largest target dataset
       completes on the ingester — the periodic-reload timeout no longer
       caps it at 5 minutes (§3).
-- [ ] A write attempted through a server's Postgres connection fails with
-      a permission error (§4.1 GRANTs), and the server wait loop treats
+- [ ] Server-side write protection is verified **twice, independently**:
+      once through a connection *without* `default_transaction_read_only`
+      so the `SELECT`-only GRANTs themselves reject the write
+      (`insufficient_privilege`), and once with the read-only DSN setting
+      so the belt-and-suspenders layer is exercised too — the DSN setting
+      fails writes before the ACL check, so a single combined test would
+      leave the GRANTs untested (§4.1). The server wait loop treats
       `insufficient_privilege` as fatal, not not-ready (§3).
 - [ ] Ingester down 1 hour: static serving unaffected; each RT feed clears
       after ~5 minutes via the existing circuit breaker
