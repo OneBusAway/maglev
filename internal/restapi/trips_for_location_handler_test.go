@@ -11,6 +11,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -838,4 +839,53 @@ func uniqueStrings(values []string) []string {
 		unique = append(unique, value)
 	}
 	return unique
+}
+
+func TestTripsForLocationRequest_ScheduleLocation(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+
+	req := &tripsForLocationRequest{
+		CurrentLocation: losAngeles,
+		AgencyLocations: map[string]*time.Location{"1": losAngeles, "2": chicago},
+	}
+
+	tests := []struct {
+		name     string
+		agencyID string
+		want     *time.Location
+	}{
+		{name: "First agency", agencyID: "1", want: losAngeles},
+		{name: "Agency in a different zone", agencyID: "2", want: chicago},
+		{name: "Unknown agency falls back to the query zone", agencyID: "99", want: losAngeles},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, req.scheduleLocation(tt.agencyID))
+		})
+	}
+}
+
+func TestAgencyLocations(t *testing.T) {
+	t.Run("Resolves each agency's zone", func(t *testing.T) {
+		locations, err := agencyLocations([]gtfsdb.Agency{
+			{ID: "1", Timezone: "America/Los_Angeles"},
+			{ID: "2", Timezone: "America/Chicago"},
+		})
+
+		require.NoError(t, err)
+		require.Len(t, locations, 2)
+		assert.Equal(t, "America/Los_Angeles", locations["1"].String())
+		assert.Equal(t, "America/Chicago", locations["2"].String())
+	})
+
+	t.Run("Reports an unparseable zone", func(t *testing.T) {
+		_, err := agencyLocations([]gtfsdb.Agency{{ID: "1", Timezone: "Not/A_Zone"}})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `invalid timezone for agency "1"`)
+	})
 }
