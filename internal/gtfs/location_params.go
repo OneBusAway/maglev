@@ -53,13 +53,17 @@ func BoundsFromParams(loc *LocationParams, clamp ...bool) utils.CoordinateBounds
 
 // CheckIfOutOfBounds returns true if the user's search area is completely
 // outside every agency's region bounds.
-func (manager *Manager) CheckIfOutOfBounds(loc *LocationParams) bool {
+//
+// clamp must match what the caller passed to BoundsFromParams when it ran the
+// search. Reporting on unclamped bounds while searching clamped ones lets an
+// oversized radius overlap a region it never actually searched.
+func (manager *Manager) CheckIfOutOfBounds(loc *LocationParams, clamp ...bool) bool {
 	boundsMap := manager.GetRegionBounds()
 	if len(boundsMap) == 0 {
 		return false
 	}
 
-	innerBounds := BoundsFromParams(loc)
+	innerBounds := BoundsFromParams(loc, clamp...)
 
 	for _, region := range boundsMap {
 		outerBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)

@@ -129,7 +129,8 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		})
 	}
 
-	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(parsedReq.LocationParams), api.Clock, false)
+	outOfRange := api.GtfsManager.CheckIfOutOfBounds(parsedReq.LocationParams, true)
+	response := models.NewListResponseWithRange(result, references, outOfRange, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
