@@ -142,9 +142,35 @@ type tripsForLocationRequest struct {
 	IncludeSchedule bool
 	IncludeStatus   bool
 	CurrentLocation *time.Location
+	// AgencyLocations maps agency ID to that agency's timezone, so a trip's
+	// schedule reports its own agency's zone rather than the first agency's.
+	AgencyLocations map[string]*time.Location
 	CurrentTime     time.Time
 	TodayMidnight   time.Time
 	ServiceDate     time.Time
+}
+
+// scheduleLocation returns the timezone to report for a trip belonging to
+// agencyID, falling back to the query timezone for an agency that was not in
+// the agency table when the request was parsed.
+func (req *tripsForLocationRequest) scheduleLocation(agencyID string) *time.Location {
+	if location, ok := req.AgencyLocations[agencyID]; ok {
+		return location
+	}
+	return req.CurrentLocation
+}
+
+// agencyLocations resolves every agency's timezone once per request.
+func agencyLocations(agencies []gtfsdb.Agency) (map[string]*time.Location, error) {
+	locations := make(map[string]*time.Location, len(agencies))
+	for _, agency := range agencies {
+		location, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			return nil, err
+		}
+		locations[agency.ID] = location
+	}
+	return locations, nil
 }
 
 func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
@@ -168,11 +194,14 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
-	currentAgency := agencies[0]
-	currentLocation, serverErr := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
+	locations, serverErr := agencyLocations(agencies)
 	if serverErr != nil {
 		return nil, nil, serverErr
 	}
+
+	// The query time is interpreted in the first agency's zone; only the
+	// per-trip schedule timezone varies by agency.
+	currentLocation := locations[agencies[0].ID]
 
 	currentTime, timeFieldErrors := api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
 	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
@@ -189,6 +218,7 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		IncludeSchedule: includeSchedule,
 		IncludeStatus:   includeStatus,
 		CurrentLocation: currentLocation,
+		AgencyLocations: locations,
 		CurrentTime:     currentTime,
 		TodayMidnight:   todayMidnight,
 		ServiceDate:     serviceDate,
@@ -434,7 +464,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			schedule = api.buildScheduleFromMemory(
 				tripData,
 				agencyID,
-				req.CurrentLocation,
+				req.scheduleLocation(agencyID),
 				stopTimesMap[tripID],
 				shapePoints,
 				stopCoords,
