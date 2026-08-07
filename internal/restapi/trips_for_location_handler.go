@@ -100,7 +100,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result, situations := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
+	result, situations := api.buildTripsForLocationEntries(ctx, parsedReq, trips, tripAgencyMap, w, r)
 	if result == nil {
 		return
 	}
@@ -292,17 +292,13 @@ func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles
 // returning the entries alongside the situations they reference.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
+	req *tripsForLocationRequest,
 	trips []gtfsdb.Trip,
 	tripAgencyMap map[string]string,
-	includeSchedule bool,
-	includeStatus bool,
-	currentLocation *time.Location,
-	currentTime time.Time,
-	todayMidnight time.Time,
-	serviceDate time.Time,
 	w http.ResponseWriter,
 	r *http.Request,
 ) ([]models.TripsForLocationListEntry, []situationRef) {
+	includeSchedule := req.IncludeSchedule
 	if len(trips) == 0 {
 		return []models.TripsForLocationListEntry{}, nil
 	}
@@ -364,7 +360,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				blockIDs = append(blockIDs, bid)
 			}
 
-			dateStr := serviceDate.Format("20060102")
+			dateStr := req.ServiceDate.Format("20060102")
 			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
 			if err != nil {
 				activeServiceIDs = []string{}
@@ -438,7 +434,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			schedule = api.buildScheduleFromMemory(
 				tripData,
 				agencyID,
-				currentLocation,
+				req.CurrentLocation,
 				stopTimesMap[tripID],
 				shapePoints,
 				stopCoords,
@@ -446,9 +442,9 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			)
 		}
 
-		if includeStatus {
+		if req.IncludeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, req.TodayMidnight, req.CurrentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
@@ -465,7 +461,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  req.TodayMidnight.UnixMilli(),
 			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
