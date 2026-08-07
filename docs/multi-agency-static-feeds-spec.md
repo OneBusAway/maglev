@@ -1,3 +1,5 @@
+# Multi-Agency Static GTFS Feeds and Stop Consolidation
+
 ## 1. What the Java feature is, in one paragraph
 
 The Java OBA bundle builder can load **N per-agency GTFS zips** instead of one
@@ -120,7 +122,16 @@ Per-feed fields: `url` (required), `default-agency-id` (optional),
 
 - Each feed's URL gets the same checks the single feed gets today
   (`json_config.go:184-201`).
+- A present `gtfs-static-feeds` key must contain at least one feed — an
+  explicitly empty list is a validation error, not "no feeds" (the staged
+  implementation reads `staticFeeds()[0]`, and an empty list would
+  otherwise panic, or silently fall through to a legacy default).
 - Specifying both `gtfs-static-feed` and `gtfs-static-feeds` is an error.
+  Detecting this requires knowing the singular key was *present*, which
+  the current value-struct config can't tell apart from an omitted key —
+  an empty `gtfs-static-feed: {}` and no key at all produce the same zero
+  value. PR 1 either makes the legacy field a pointer or checks presence
+  against the raw JSON before defaults run.
   **Defaulting interaction:** `setDefaults()` currently injects a Sound
   Transit URL when the singular key is empty (`json_config.go:71-73`); that
   defaulting must be skipped whenever the plural list is non-empty,
@@ -172,16 +183,23 @@ New (all inside the existing `ReloadStatic` / `staticUpdateMutex` envelope,
    same conclusion).
 2. Per feed: resolve `default-agency-id` (config value or first agency), and
    stamp it onto any route with a nil/empty `Agency`.
-3. **Merge** the N parsed `gtfs.Static` structs into one (§4) —
-   concatenation only; collision checking is deferred one step.
-4. **Consolidate** stops if a consolidation file is configured (§5).
-5. **Collision-check** the consolidated result (§4.3) — after consolidation,
-   so declared shared stops don't trip it.
+3. **Consolidate** stops if a consolidation file is configured (§5) —
+   applied to the **per-feed** structs, per §4.1's pointer-aliasing rule,
+   through a provenance index built over the per-feed data. Absorbed
+   stops are removed from their owning feed's slices here, so they never
+   exist anywhere downstream.
+4. **Collision-check** (§4.3) — scans the per-feed ID sets, which
+   consolidation has already purged of absorbed stops, so declared shared
+   stops don't trip it, and which-feed-owns-which-ID provenance is
+   inherent for every entity type in the error message.
+5. **Merge** the N parsed `gtfs.Static` structs into one (§4) — pure
+   concatenation, assembled only after all per-feed mutations (§4.1).
 6. Compute the combined hash (§4.4) and hand the merged result to the
    existing `importStaticIntoDB` / `StoreGtfsData` unchanged.
 
-With one configured feed and no consolidation file, steps 2–4 are no-ops and
-behavior is byte-for-byte today's.
+With one configured feed, no explicit `default-agency-id`, and no
+consolidation file, steps 2–5 are no-ops and behavior is byte-for-byte
+today's (§4.2's stamping condition is what keeps step 2 inert here).
 
 ### 3.3 Resulting API behavior (what to assert in tests)
 
@@ -263,15 +281,22 @@ type parsedFeed struct {
     source          string // URL or path, for error messages
 }
 
-// mergeFeeds concatenates per-agency feeds into a single gtfs.Static and
-// returns a per-feed provenance index used by consolidation and the
-// collision check. It does not itself reject collisions — see
-// checkCrossFeedCollisions, which the caller runs after consolidation.
-func mergeFeeds(feeds []parsedFeed) (*gtfs.Static, map[stopKey]*gtfs.Stop, error)
+// buildStopIndex indexes every feed's stops by (defaultAgencyID, stopID)
+// for consolidation-token resolution (§5.2). Built over the per-feed
+// structs, so mutations through it satisfy §4.1's pointer-aliasing rule.
+func buildStopIndex(feeds []parsedFeed) map[stopKey]*gtfs.Stop
 
-// checkCrossFeedCollisions fails if any two feeds still share a raw
-// stop/trip/route/service/shape/block/agency ID after consolidation.
-func checkCrossFeedCollisions(feeds []parsedFeed, merged *gtfs.Static) error
+// checkCrossFeedCollisions fails if any two feeds share a raw
+// stop/trip/route/service/shape/block/agency ID. It scans the per-feed
+// data — from which consolidation has already removed absorbed stops —
+// so both source feeds are known for every collision, for every entity
+// type, without a separate provenance structure.
+func checkCrossFeedCollisions(feeds []parsedFeed) error
+
+// mergeFeeds concatenates per-agency feeds into a single gtfs.Static.
+// Called only after all per-feed mutations (route stamping,
+// consolidation) are complete — see the §4.1 pointer-aliasing rule.
+func mergeFeeds(feeds []parsedFeed) (*gtfs.Static, error)
 ```
 
 ### 4.1 Concatenation
@@ -300,8 +325,16 @@ pointers against merged copies silently rewrites nothing.
 ### 4.2 Route agency stamping (before merge, per feed)
 
 For each feed, for each route where `route.Agency == nil` or
-`route.Agency.Id == ""`, set it to the feed's default agency. This must
-happen per feed because after merging, `StoreGtfsData`'s
+`route.Agency.Id == ""`, set it to the feed's default agency — but **only
+when the feed ships exactly one agency in its `agency.txt`, or the
+operator configured an explicit `default-agency-id`.** A multi-agency
+feed with agency-less routes (invalid GTFS — `agency_id` is required when
+multiple agencies exist) keeps today's behavior: the route stays
+unstamped, exactly as the inert `singleAgencyID` fallback leaves it.
+Stamping the first agency there would silently guess an owner and change
+single-feed behavior, breaking §3.2's byte-for-byte claim.
+
+The stamping must happen per feed because after merging, `StoreGtfsData`'s
 `len(Agencies) == 1` fallback (`gtfsdb/helpers.go:283-286`) no longer fires.
 Leave the existing fallback in place — it still covers the single-feed path.
 
@@ -360,15 +393,21 @@ mirroring the Java `GtfsBundle` field, for feeds that both ship
 Replace the single-zip hash with a combined fingerprint, computed in the new
 load path and passed through the existing `GtfsData.Hash`/`Source` fields:
 
-- `Hash` = sha256 over, in config order: each feed's URL and content hash,
-  plus the consolidation file's content hash (or a fixed marker when absent).
-  Including URLs means reordering or re-pointing feeds triggers reimport;
-  including the consolidation file means editing it triggers reimport — both
-  required for correctness.
+- `Hash` = sha256 over, in config order: each feed's URL, resolved
+  `default-agency-id`, and content hash, plus the consolidation file's
+  content hash (or a fixed marker when absent) — with each field
+  length-prefixed (or delimiter-escaped) so adjacent values can't collide
+  ambiguously. Including URLs means reordering or re-pointing feeds
+  triggers reimport; including the consolidation file means editing it
+  triggers reimport; including the resolved `default-agency-id` means a
+  config change that alters route stamping or consolidation-token
+  resolution (§4.2, §5.2) triggers reimport even though no zip's bytes
+  changed — all three required for correctness.
 - `Source` = the feed URLs joined with `,` (it's a TEXT column used only for
   logging and the skip-check).
-- **Single-feed compatibility:** with exactly one feed and no consolidation
-  file, `Hash` degenerates to the raw zip-bytes sha256 exactly as today
+- **Single-feed compatibility:** with exactly one feed, no explicit
+  `default-agency-id`, and no consolidation file, `Hash` degenerates to
+  the raw zip-bytes sha256 exactly as today
   (`gtfsdb/helpers.go:40-41`) and `Source` to the single URL — otherwise
   every existing deployment would see a spurious hash mismatch and a forced
   full reimport on upgrade, violating the §3.2/§7 "identical behavior"
@@ -438,16 +477,28 @@ MTS_70114   NCTD_OSTC_bay1  NCTD_OSTC_bay2
 ```
 
 ```go
-// stopConsolidation maps absorbed stops to their canonical stop.
-// Keys and values are (agencyID, rawStopID) pairs.
+// stopKey addresses a stop as an (agencyID, rawStopID) pair.
 type stopKey struct{ AgencyID, StopID string }
 
-func parseConsolidationFile(r io.Reader) (map[stopKey]stopKey, error)
+// consolidationRule is one parsed mapping line. Line and RawText survive
+// into apply-time errors: §5.4 requires canonical-not-found to name the
+// offending line, and that condition is only detectable during
+// application — a bare map would have discarded the metadata by then.
+type consolidationRule struct {
+    Canonical stopKey
+    Absorbed  []stopKey
+    Line      int
+    RawText   string
+}
 
-// applyStopConsolidation removes absorbed stops from merged and rewrites
-// every reference to them to point at the canonical stop.
-func applyStopConsolidation(merged *gtfs.Static, feeds []parsedFeed,
-    mapping map[stopKey]stopKey) error
+func parseConsolidationFile(r io.Reader) ([]consolidationRule, error)
+
+// applyStopConsolidation removes absorbed stops from their owning feed's
+// data and rewrites every reference to point at the canonical stop.
+// Operates on the per-feed structs via the §5.2 index — never on merged
+// copies (§4.1) — and runs before mergeFeeds (§3.2).
+func applyStopConsolidation(feeds []parsedFeed,
+    index map[stopKey]*gtfs.Stop, rules []consolidationRule) error
 ```
 
 ### 5.2 Matching tokens to stops
@@ -457,7 +508,8 @@ matches; the stop ID then selects the stop within that feed's `Stops`. This
 mirrors the Java semantics exactly: there, stops are addressable as
 `(defaultAgencyId, stopId)` because the loader stamped them; here we keep the
 per-feed provenance around through the merge instead of stamping anything.
-Build the lookup while merging (`map[stopKey]*gtfs.Stop`).
+The lookup (`map[stopKey]*gtfs.Stop`) is built over the per-feed data by
+`buildStopIndex` before consolidation runs (§3.2, §4).
 
 One inherited limitation: a feed containing multiple agencies (the real MTS
 zip carries both MTS and SAN in `agency.txt`) has **one** default agency, so
@@ -468,15 +520,21 @@ this only constrains how consolidation tokens are written.
 
 ### 5.3 Applying a mapping
 
-For each `absorbed → canonical` pair, on the merged data:
+For each `absorbed → canonical` pair, on the **per-feed** data — never
+the merged slices, which don't exist yet (§3.2) and whose value-copies
+the per-feed pointers wouldn't reference anyway (§4.1):
 
-1. Remove the absorbed `gtfs.Stop` from `Stops` — it must never reach the DB
-   (the Java `_rejectionStore` equivalent, minus the side-store: Maglev has
-   no consumer for rejected entities).
-2. Rewrite every `StopTime.Stop` pointer that references the absorbed stop to
-   the canonical stop (walk `Trips[i].StopTimes`).
+1. Remove the absorbed `gtfs.Stop` from its owning feed's `Stops` — it
+   must never reach the DB (the Java `_rejectionStore` equivalent, minus
+   the side-store: Maglev has no consumer for rejected entities), and its
+   absence from the per-feed data is what keeps it out of the §4.3
+   collision check.
+2. Rewrite every `StopTime.Stop` pointer that references the absorbed stop
+   to the canonical stop (walk every feed's `Trips[i].StopTimes` — the
+   absorbed agency's feed is the usual referrer, but don't assume it's
+   the only one).
 3. Rewrite every `Stop.Parent` pointer referencing the absorbed stop to the
-   canonical stop.
+   canonical stop, in every feed.
 4. Rewrite `Transfers` to/from pointers the same way (harmless today, correct
    if transfers are ever persisted).
 
@@ -517,7 +575,11 @@ accepts this: for SDMTS, the canonical is chosen as the curb-owning agency,
 whose RT feed uses the canonical ID, so the common case works. Rewriting
 absorbed IDs at RT ingest (the consolidation map applied to incoming
 StopTimeUpdates) is the fix if this bites — file it as follow-up work, and
-verify the behavior via the §7 checklist row on absorbed-agency RT.
+verify the behavior via the §7 checklist row on absorbed-agency RT. If
+that measurement shows material prediction loss for a deployment, the
+RT-ingest rewrite stops being optional follow-up and becomes a
+prerequisite for enabling consolidation there — record the decision
+alongside the measurement.
 
 ---
 
@@ -543,7 +605,7 @@ normalization and validation only.
 | File | Change |
 |---|---|
 | `internal/gtfs/static.go` | `loadGTFSData` becomes: loop `staticFeeds()`, call `rawGtfsData`+`ParseGtfsData` per feed (thread per-feed auth/tidy through — `rawGtfsData`'s config params become per-feed), resolve default agency, stamp route agencies, `mergeFeeds`, compute combined hash/source (§4.4), validate timezones on the merged result. `updateStaticGTFS`/`ReloadStatic` log the feed count instead of the single URL. |
-| `internal/gtfs/merge.go` (new) | `parsedFeed`, `mergeFeeds`, `checkCrossFeedCollisions` (§4.3). In this PR (no consolidation yet) the check runs immediately after merge; PR 3 moves it to after consolidation. |
+| `internal/gtfs/merge.go` (new) | `parsedFeed`, `buildStopIndex`, `mergeFeeds`, `checkCrossFeedCollisions` (§4.3) — the check scans per-feed data. In this PR (no consolidation yet) it runs immediately after route stamping; PR 3 inserts consolidation ahead of it (§3.2). |
 | `internal/gtfs/merge_test.go` (new) | Table-driven: 2-feed happy path; every collision class errors with both feed sources named (including `block_id` and `agency_id`); route-agency stamping; single-feed passthrough produces identical output to today. |
 
 ### PR 3 — Stop consolidation
@@ -577,8 +639,10 @@ multi-feed config before calling the feature done:
       its source feed (per-agency, not per-zip — a multi-agency zip like
       MTS+SAN contributes to two counts).
 - [ ] `stop-ids-for-agency/{X}` is non-empty for every agency; the sum over
-      agencies ≥ (total stops − absorbed count) (≥, not =, because
-      multi-agency stops are counted once per serving agency — §2.2).
+      agencies ≥ (stops served by at least one trip − absorbed count)
+      (≥, not =, because multi-agency stops are counted once per serving
+      agency; trip-less stops are excluded from the right side because
+      they belong to no agency's list — §2.2).
 - [ ] Consolidated stop: absorbed ID 404s; canonical returns arrivals from
       both agencies; both agencies appear in `references.agencies`.
 - [ ] Editing the consolidation file (or any feed) triggers reimport on the
