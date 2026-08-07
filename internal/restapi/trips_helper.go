@@ -847,18 +847,36 @@ func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) [
 	alerts := api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID)
 
 	situationIDs := []string{}
+	for _, ref := range situationRefsFromAlerts(alerts, agencyID) {
+		situationIDs = append(situationIDs, ref.ID)
+	}
+
+	return situationIDs
+}
+
+// situationRef pairs an alert with the situation ID that both list entries and
+// situation references use to refer to it.
+type situationRef struct {
+	ID    string
+	Alert gtfs.Alert
+}
+
+// situationRefsFromAlerts drops alerts with no ID and pairs the rest with their
+// combined-form situation ID, falling back to the raw alert ID when agencyID is
+// unknown.
+func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
+	refs := make([]situationRef, 0, len(alerts))
 	for _, alert := range alerts {
 		if alert.ID == "" {
 			continue
 		}
+		id := alert.ID
 		if agencyID != "" {
-			situationIDs = append(situationIDs, utils.FormCombinedID(agencyID, alert.ID))
-		} else {
-			situationIDs = append(situationIDs, alert.ID)
+			id = utils.FormCombinedID(agencyID, alert.ID)
 		}
+		refs = append(refs, situationRef{ID: id, Alert: alert})
 	}
-
-	return situationIDs
+	return refs
 }
 
 func (api *RestAPI) calculateOffsetForStop(

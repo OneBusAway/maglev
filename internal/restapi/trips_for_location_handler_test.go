@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
@@ -616,4 +617,41 @@ func TestTripsForLocationHandler_ContextCancellation(t *testing.T) {
 		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
 		assert.Contains(t, rec.Body.String(), "gateway timeout")
 	})
+}
+
+// TestTripsForLocationHandler_SituationReferences verifies that every
+// situationId emitted on a list entry resolves to an entry in
+// references.situations.
+func TestTripsForLocationHandler_SituationReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Real-time alerts carry the raw (un-prefixed) agency ID from the feed.
+	rawAgencyID := "25"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               "test-alert-trips-for-location",
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &rawAgencyID}},
+		Header:           []gtfs.AlertText{{Text: "Test Agency Alert", Language: "en"}},
+	})
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(2.0, 3.0))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so situation references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		referenced[situation.ID] = true
+	}
+
+	sawSituationID := false
+	for _, entry := range model.Data.List {
+		for _, id := range entry.SituationIds {
+			sawSituationID = true
+			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
+		}
+	}
+	require.True(t, sawSituationID, "expected the seeded alert to surface as a situationId")
 }

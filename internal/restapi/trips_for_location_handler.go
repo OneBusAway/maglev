@@ -98,7 +98,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
+	result, situations := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
 	if result == nil {
 		return
 	}
@@ -117,6 +117,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			IncludeTrip: parsedReq.IncludeTrip,
 			Stops:       stops,
 			Trips:       result,
+			Situations:  situations,
 		})
 	}
 
@@ -242,7 +243,33 @@ func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles
 	return activeTrips
 }
 
-// buildTripsForLocationEntries builds trip entries from pre-fetched batch data.
+// situationCollector deduplicates the alerts referenced by list entries so the
+// response emits one situation reference per distinct situation ID.
+type situationCollector struct {
+	seen map[string]struct{}
+	refs []situationRef
+}
+
+func newSituationCollector() *situationCollector {
+	return &situationCollector{seen: make(map[string]struct{})}
+}
+
+// add records the alerts affecting one trip and returns their situation IDs.
+func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
+	ids := make([]string, 0, len(alerts))
+	for _, ref := range situationRefsFromAlerts(alerts, agencyID) {
+		ids = append(ids, ref.ID)
+		if _, ok := c.seen[ref.ID]; ok {
+			continue
+		}
+		c.seen[ref.ID] = struct{}{}
+		c.refs = append(c.refs, ref)
+	}
+	return ids
+}
+
+// buildTripsForLocationEntries builds trip entries from pre-fetched batch data,
+// returning the entries alongside the situations they reference.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
 	trips []gtfsdb.Trip,
@@ -255,9 +282,9 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	serviceDate time.Time,
 	w http.ResponseWriter,
 	r *http.Request,
-) []models.TripsForLocationListEntry {
+) ([]models.TripsForLocationListEntry, []situationRef) {
 	if len(trips) == 0 {
-		return []models.TripsForLocationListEntry{}
+		return []models.TripsForLocationListEntry{}, nil
 	}
 
 	tripsMap := make(map[string]gtfsdb.Trip)
@@ -304,7 +331,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, validVehicleTrips)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
-			return nil
+			return nil, nil
 		}
 		for _, st := range stopTimesRaw {
 			stopTimesMap[st.TripID] = append(stopTimesMap[st.TripID], st)
@@ -361,10 +388,11 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	}
 
 	var result []models.TripsForLocationListEntry
+	situations := newSituationCollector()
 
 	for _, tripID := range validVehicleTrips {
 		if ctx.Err() != nil {
-			return result
+			return result, situations.refs
 		}
 
 		agencyID := tripAgencyMap[tripID]
@@ -407,17 +435,23 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			}
 		}
 
+		// The trip's route and agency are already resolved here, so the alerts
+		// are looked up directly rather than through GetSituationIDsForTrip,
+		// which would re-query both per trip and discard the alerts we need
+		// for the situation references.
+		alerts := api.GtfsManager.GetAlertsByIDs(tripID, tripData.RouteID, agencyID)
+
 		entry := models.TripsForLocationListEntry{
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(ctx, tripID),
+			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
 	}
-	return result
+	return result, situations.refs
 }
 
 func (api *RestAPI) buildScheduleForTrip(
@@ -486,6 +520,7 @@ type ReferenceParams struct {
 	IncludeTrip bool
 	Stops       []gtfsdb.Stop
 	Trips       []models.TripsForLocationListEntry
+	Situations  []situationRef
 }
 
 func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx context.Context, params ReferenceParams) models.ReferencesModel {
@@ -512,9 +547,11 @@ type referenceBuilder struct {
 	presentAgencies map[string]models.AgencyReference
 	stopList        []models.Stop
 	tripsRefList    []models.Trip
+	situations      []situationRef
 }
 
 func (rb *referenceBuilder) build(params ReferenceParams) error {
+	rb.situations = params.Situations
 	rb.collectTripIDs(params.Trips)
 	rb.buildStopList(params.Stops)
 
@@ -771,8 +808,29 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 	references.Routes = rb.getRoutesList()
 	references.Stops = stops
 	references.Trips = trips
+	references.Situations = rb.getSituationsList()
 
 	return *references
+}
+
+// getSituationsList converts the collected alerts into situation references,
+// stamping the same combined IDs the list entries use. BuildSituationReferences
+// emits raw alert IDs and preserves input order one-for-one.
+func (rb *referenceBuilder) getSituationsList() []models.Situation {
+	if len(rb.situations) == 0 {
+		return []models.Situation{}
+	}
+
+	alerts := make([]gtfs.Alert, 0, len(rb.situations))
+	for _, ref := range rb.situations {
+		alerts = append(alerts, ref.Alert)
+	}
+
+	situations := rb.api.BuildSituationReferences(alerts)
+	for i := range situations {
+		situations[i].ID = rb.situations[i].ID
+	}
+	return situations
 }
 
 func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
