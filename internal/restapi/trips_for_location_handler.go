@@ -33,8 +33,8 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
-	stopIDs := extractStopIDs(stops)
+	stopsInBounds := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
+	stopIDs := extractStopIDs(stopsInBounds)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -113,9 +113,15 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
+		referencedStops, stopsErr := api.stopsReferencedByEntries(ctx, result)
+		if stopsErr != nil {
+			api.serverErrorResponse(w, r, stopsErr)
+			return
+		}
+
 		references = api.BuildReference(w, r, ctx, ReferenceParams{
 			IncludeTrip: parsedReq.IncludeTrip,
-			Stops:       stops,
+			Stops:       referencedStops,
 			Trips:       result,
 			Situations:  situations,
 		})
@@ -219,6 +225,42 @@ func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
 		dst[k] = append(dst[k], v...)
 	}
 	return dst
+}
+
+// stopsReferencedByEntries fetches the stops the response actually refers to:
+// those on each entry's schedule, plus the closest and next stops on its status.
+// The in-bounds stop set is deliberately not included — it is a candidate-trip
+// selection detail, and stops on it that no returned trip serves have nothing in
+// the response pointing at them.
+func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []models.TripsForLocationListEntry) ([]gtfsdb.Stop, error) {
+	stopIDsByBareID := make(map[string]string)
+
+	for _, entry := range entries {
+		collectStopIDsFromSchedule(entry.Schedule, stopIDsByBareID)
+		if entry.Status == nil {
+			continue
+		}
+		for _, combinedID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
+			_, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+			if err != nil {
+				continue
+			}
+			if _, exists := stopIDsByBareID[bareID]; !exists {
+				stopIDsByBareID[bareID] = combinedID
+			}
+		}
+	}
+
+	if len(stopIDsByBareID) == 0 {
+		return nil, nil
+	}
+
+	bareIDs := make([]string, 0, len(stopIDsByBareID))
+	for bareID := range stopIDsByBareID {
+		bareIDs = append(bareIDs, bareID)
+	}
+
+	return api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {

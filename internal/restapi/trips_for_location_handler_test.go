@@ -660,3 +660,54 @@ func TestTripsForLocationHandler_SituationReferences(t *testing.T) {
 	require.Contains(t, emitted, "25_test-alert-trips-for-location",
 		"expected the seeded alert to surface as a situationId")
 }
+
+// TestTripsForLocationHandler_ScheduleStopsAreReferenced verifies that every
+// stop named by an entry's schedule resolves to an entry in references.stops.
+func TestTripsForLocationHandler_ScheduleStopsAreReferenced(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true", "includeStatus=true")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so stop references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		referenced[stop.ID] = true
+	}
+
+	sawStopTime := false
+	for _, entry := range model.Data.List {
+		require.NotNil(t, entry.Schedule, "includeSchedule=true should populate the schedule")
+		for _, stopTime := range entry.Schedule.StopTimes {
+			sawStopTime = true
+			assert.True(t, referenced[stopTime.StopID],
+				"stop %q named by trip %q must appear in references.stops", stopTime.StopID, entry.TripId)
+		}
+	}
+	require.True(t, sawStopTime, "expected at least one scheduled stop time to assert against")
+}
+
+// TestTripsForLocationHandler_UnreferencedStopsAreOmitted verifies that stops
+// merely inside the search bounds are not emitted as references when nothing in
+// the response points at them.
+func TestTripsForLocationHandler_UnreferencedStopsAreOmitted(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=false", "includeStatus=false")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so the reference set is meaningful")
+	assert.Empty(t, model.Data.References.Stops,
+		"no schedule or status means nothing in the response refers to a stop")
+}
