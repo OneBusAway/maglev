@@ -33,7 +33,9 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stopsInBounds := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
+	// Uncapped: this stop set only narrows the candidate trips, and a cap here
+	// silently drops trips the spec says should all be returned.
+	stopsInBounds := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, 0, true)
 	stopIDs := extractStopIDs(stopsInBounds)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
