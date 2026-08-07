@@ -243,36 +243,6 @@ func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles
 	return activeTrips
 }
 
-// situationCollector deduplicates the alerts referenced by list entries so the
-// response emits one situation reference per distinct situation ID.
-type situationCollector struct {
-	seen map[string]struct{}
-	refs []situationRef
-}
-
-func newSituationCollector() *situationCollector {
-	return &situationCollector{seen: make(map[string]struct{})}
-}
-
-// add records the alerts affecting one trip and returns their situation IDs.
-func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
-	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
-}
-
-// addRefs records already-resolved situation references and returns their IDs.
-func (c *situationCollector) addRefs(refs []situationRef) []string {
-	ids := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		ids = append(ids, ref.ID)
-		if _, ok := c.seen[ref.ID]; ok {
-			continue
-		}
-		c.seen[ref.ID] = struct{}{}
-		c.refs = append(c.refs, ref)
-	}
-	return ids
-}
-
 // buildTripsForLocationEntries builds trip entries from pre-fetched batch data,
 // returning the entries alongside the situations they reference.
 func (api *RestAPI) buildTripsForLocationEntries(
@@ -820,44 +790,6 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 
 func (rb *referenceBuilder) getSituationsList() []models.Situation {
 	return rb.api.situationReferences(rb.situations)
-}
-
-// situationReferences converts collected alerts into situation references,
-// stamping the same IDs the list entries use. BuildSituationReferences emits raw
-// alert IDs and preserves input order one-for-one.
-func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation {
-	if len(refs) == 0 {
-		return []models.Situation{}
-	}
-
-	alerts := make([]gtfs.Alert, 0, len(refs))
-	for _, ref := range refs {
-		alerts = append(alerts, ref.Alert)
-	}
-
-	situations := api.BuildSituationReferences(alerts)
-	for i := range situations {
-		situations[i].ID = refs[i].ID
-	}
-	return situations
-}
-
-func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
-	agencies := make([]models.AgencyReference, 0, len(rb.presentAgencies))
-	for _, agency := range rb.presentAgencies {
-		agencies = append(agencies, agency)
-	}
-	return agencies
-}
-
-func (rb *referenceBuilder) getRoutesList() []models.Route {
-	routes := make([]models.Route, 0, len(rb.presentRoutes))
-	for _, route := range rb.presentRoutes {
-		if route.ID != "" {
-			routes = append(routes, route)
-		}
-	}
-	return routes
 }
 
 // buildScheduleFromMemory constructs a TripsSchedule from pre-fetched stop times, shape points, and block trips.
