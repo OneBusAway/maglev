@@ -12,7 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 const (
@@ -709,4 +711,63 @@ func TestTripsForLocationHandler_UnreferencedStopsAreOmitted(t *testing.T) {
 	require.NotEmpty(t, model.Data.List, "expected trips so the reference set is meaningful")
 	assert.Empty(t, model.Data.References.Stops,
 		"no schedule or status means nothing in the response refers to a stop")
+}
+
+// TestTripsForLocationHandler_CandidateStopsAreNotCapped verifies that the
+// candidate stop set is not truncated, which previously dropped trips serving
+// only stops beyond the cap.
+func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	params := &internalgtfs.LocationParams{
+		Lat:     tripsForLocationLat,
+		Lon:     tripsForLocationLon,
+		LatSpan: 2.0,
+		LonSpan: 3.0,
+	}
+
+	uncapped := api.GtfsManager.GetStopsInBounds(context.Background(), params, 0, true)
+	require.Greater(t, len(uncapped), models.DefaultMaxCountForStops,
+		"fixture must hold more in-bounds stops than the old cap for this test to mean anything")
+
+	bounds := internalgtfs.BoundsFromParams(params, true)
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(2.0, 3.0))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	returned := make(map[string]bool, len(model.Data.List))
+	for _, entry := range model.Data.List {
+		_, tripID, err := utils.ExtractAgencyIDAndCodeID(entry.TripId)
+		require.NoError(t, err)
+		returned[tripID] = true
+	}
+
+	// Every real-time vehicle positioned inside the bounds must be represented.
+	// The RABA fixture's vehicles all happen to serve stops early in the
+	// in-bounds ordering, so this guards the invariant rather than reproducing
+	// a truncation the fixture cannot produce.
+	assertedAnyVehicle := false
+	for _, vehicle := range api.GtfsManager.GetRealTimeVehicles() {
+		if vehicle.Trip == nil || vehicle.Position == nil ||
+			vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
+			continue
+		}
+		lat, lon := float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude)
+		if lat < bounds.MinLat || lat > bounds.MaxLat || lon < bounds.MinLon || lon > bounds.MaxLon {
+			continue
+		}
+
+		tripID := vehicle.Trip.ID.ID
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), tripID)
+		if err != nil || len(stopTimes) == 0 {
+			continue
+		}
+
+		assertedAnyVehicle = true
+		assert.True(t, returned[tripID], "in-bounds vehicle's trip %q must be returned", tripID)
+	}
+	require.True(t, assertedAnyVehicle, "expected at least one in-bounds vehicle to assert against")
 }
