@@ -435,6 +435,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 	var result []models.TripsForLocationListEntry
 	situations := newSituationCollector()
+	serviceDates := api.newServiceDateResolver(ctx, req.TodayMidnight, req.CurrentTime)
 
 	for _, tripID := range validVehicleTrips {
 		if ctx.Err() != nil {
@@ -472,9 +473,11 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			)
 		}
 
+		serviceDate := serviceDates.Resolve(tripData)
+
 		if req.IncludeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, req.TodayMidnight, req.CurrentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, req.CurrentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
@@ -491,7 +494,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  req.TodayMidnight.UnixMilli(),
+			ServiceDate:  serviceDate.UnixMilli(),
 			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
