@@ -1232,3 +1232,67 @@ func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 	}
 	return groups
 }
+
+// serviceDateResolver picks the service date a trip instance belongs to at one
+// moment in time. GTFS stop times may run past 24:00:00, so a trip still
+// running just after midnight belongs to the previous day's service; reporting
+// the query day would put serviceDate and the trip's stop-time offsets a day
+// apart.
+type serviceDateResolver struct {
+	queryDayMidnight    time.Time
+	sinceMidnightNs     int64
+	queryDayServices    map[string]struct{}
+	previousDayServices map[string]struct{}
+}
+
+// newServiceDateResolver loads the services active on the query day and the day
+// before it. A lookup failure is not fatal — the resolver then reports the
+// query day for every trip, which is what callers did before it existed.
+func (api *RestAPI) newServiceDateResolver(ctx context.Context, queryDayMidnight, currentTime time.Time) *serviceDateResolver {
+	previousDayMidnight := queryDayMidnight.AddDate(0, 0, -1)
+
+	return &serviceDateResolver{
+		queryDayMidnight:    queryDayMidnight,
+		sinceMidnightNs:     wallClockSinceMidnightNs(currentTime),
+		queryDayServices:    api.activeServiceIDSet(ctx, queryDayMidnight),
+		previousDayServices: api.activeServiceIDSet(ctx, previousDayMidnight),
+	}
+}
+
+func (api *RestAPI) activeServiceIDSet(ctx context.Context, day time.Time) map[string]struct{} {
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, day.Format("20060102"))
+	if err != nil {
+		api.Logger.Warn("failed to fetch active service IDs for service date resolution",
+			"date", day.Format("20060102"), "error", err)
+		return nil
+	}
+
+	set := make(map[string]struct{}, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		set[serviceID] = struct{}{}
+	}
+	return set
+}
+
+// Resolve returns midnight of the service date trip belongs to.
+func (r *serviceDateResolver) Resolve(trip gtfsdb.Trip) time.Time {
+	if r.runsOn(r.queryDayServices, trip, r.sinceMidnightNs) {
+		return r.queryDayMidnight
+	}
+	if r.runsOn(r.previousDayServices, trip, r.sinceMidnightNs+int64(24*time.Hour)) {
+		return r.queryDayMidnight.AddDate(0, 0, -1)
+	}
+	return r.queryDayMidnight
+}
+
+// runsOn reports whether trip's service is active in services and its scheduled
+// span contains sinceMidnightNs, measured from that service day's midnight.
+func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.Trip, sinceMidnightNs int64) bool {
+	if _, active := services[trip.ServiceID]; !active {
+		return false
+	}
+	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+		return false
+	}
+	return sinceMidnightNs >= trip.MinArrivalTime.Int64 && sinceMidnightNs <= trip.MaxDepartureTime.Int64
+}

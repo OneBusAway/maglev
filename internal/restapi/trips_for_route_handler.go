@@ -321,6 +321,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
+	serviceDates := api.newServiceDateResolver(ctx, todayMidnight, currentTime)
 	stopIDsMap := make(map[string]string)
 
 	blockTripForRoute, err := api.buildBlockTripForRoute(ctx, fetchedTrips, routeID, serviceIDs, prevServiceIDs)
@@ -400,12 +401,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
+		serviceDate := serviceDates.Resolve(fetchedTrip)
+
 		// Build status from the active trip (tripID). Per spec,
 		// status.activeTripId is "the trip the vehicle is currently executing."
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, serviceDate, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
@@ -416,7 +419,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  serviceDate.UnixMilli(),
 			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, entryTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
@@ -444,7 +447,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// Try the full ID first; if not found, strip a trailing numeric suffix
 		// (e.g., ".00060") that some feeds append to distinguish duplicated runs.
 		baseTripID := dupTripID
-		if _, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID); err != nil {
+		baseTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
+		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
 					"dup_trip_id", dupTripID, "error", err)
@@ -452,8 +456,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			stripped := stripNumericSuffix(dupTripID)
 			if stripped != dupTripID {
 				baseTripID = stripped
+				if strippedTrip, strippedErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID); strippedErr == nil {
+					baseTrip = strippedTrip
+				}
 			}
 		}
+
+		// A DUPLICATED trip with no static counterpart leaves baseTrip zeroed,
+		// which the resolver reports as the query day.
+		serviceDate := serviceDates.Resolve(baseTrip)
 
 		var schedule *models.TripsSchedule
 		if includeSchedule {
@@ -469,7 +480,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, serviceDate, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
@@ -480,15 +491,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  serviceDate.UnixMilli(),
 			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, baseTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
 		result = append(result, entry)
 
 		if !filteredRouteTrips[baseTripID] {
-			baseTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID)
-			if err == nil {
+			if baseTrip.ID != "" {
 				fetchedTrips = append(fetchedTrips, baseTrip)
 				filteredRouteTrips[baseTripID] = true
 			}
