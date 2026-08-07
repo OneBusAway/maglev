@@ -1344,3 +1344,58 @@ func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.T
 	endsAfterWindowStarts := trip.MaxDepartureTime.Int64 >= sinceMidnightNs-int64(runningLate)
 	return startsBeforeWindowEnds && endsAfterWindowStarts
 }
+
+// serviceDay pairs the services active on one day with the time-since-midnight
+// offset a trip's scheduled span is measured against for that day.
+type serviceDay struct {
+	serviceIDs      []string
+	sinceMidnightNs int64
+}
+
+// ServiceDays returns the query day and the day before it. A trip belonging to
+// the previous service day is matched against the query moment offset by +24h,
+// since GTFS expresses its stop times relative to its own service date.
+func (r *serviceDateResolver) ServiceDays() []serviceDay {
+	return []serviceDay{
+		{serviceIDs: serviceIDSlice(r.queryDayServices), sinceMidnightNs: r.sinceMidnightNs},
+		{serviceIDs: serviceIDSlice(r.previousDayServices), sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour)},
+	}
+}
+
+func serviceIDSlice(services map[string]struct{}) []string {
+	ids := make([]string, 0, len(services))
+	for id := range services {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// scheduledPositionAtTime interpolates where a trip is along its shape at
+// currentTime using its schedule alone. This is the no-real-time-vehicle
+// equivalent of a GTFS-RT position; it returns nil when the trip has no usable
+// shape or stop times.
+func (api *RestAPI) scheduledPositionAtTime(
+	ctx context.Context,
+	stopTimes []gtfsdb.StopTime,
+	shapePoints []gtfs.ShapePoint,
+	currentTime time.Time,
+	serviceDate time.Time,
+) *models.Location {
+	if len(stopTimes) == 0 || len(shapePoints) < 2 {
+		return nil
+	}
+
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	stopDistances := projectStopsInSequence(
+		stopTimes,
+		api.fetchStopCoordsForStopTimes(ctx, stopTimes),
+		shapePoints,
+		cumulativeDistances,
+	)
+
+	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
+	scheduledDistance := interpolateDistanceAtScheduledTime(currentSeconds, stopTimes, stopDistances)
+
+	position, _ := positionAndOrientationAtDistance(shapePoints, cumulativeDistances, scheduledDistance)
+	return position
+}

@@ -889,3 +889,55 @@ func TestAgencyLocations(t *testing.T) {
 		assert.Contains(t, err.Error(), `invalid timezone for agency "1"`)
 	})
 }
+
+// tripsForLocationServiceDayClock is noon Pacific on a Wednesday inside the
+// RABA fixture's calendar range, when scheduled trips are actually running.
+var tripsForLocationServiceDayClock = time.Date(2025, 6, 11, 19, 0, 0, 0, time.UTC)
+
+// TestTripsForLocationHandler_ScheduledTripsWithoutVehicles verifies that trips
+// in service at the query time are returned from the schedule alone, with no
+// real-time feed configured.
+func TestTripsForLocationHandler_ScheduledTripsWithoutVehicles(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
+	defer api.Shutdown()
+
+	require.Empty(t, api.GtfsManager.GetRealTimeVehicles(),
+		"this test covers the static-only path, so there must be no live vehicles")
+
+	url := tripsForLocationURL(2.0, 3.0, "includeStatus=true")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List,
+		"scheduled trips must be returned even with no real-time feed")
+
+	for _, entry := range model.Data.List {
+		assert.NotEmpty(t, entry.TripId)
+		if assert.NotNil(t, entry.Status, "includeStatus=true should populate the status") {
+			assert.False(t, entry.Status.Predicted,
+				"a schedule-derived position is not a prediction")
+		}
+	}
+}
+
+// TestTripsForLocationHandler_ScheduledTripsHonorTimeParameter verifies that the
+// time parameter selects which trips are in service, not just how their status
+// is calculated.
+func TestTripsForLocationHandler_ScheduledTripsHonorTimeParameter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
+	defer api.Shutdown()
+
+	middayURL := tripsForLocationURL(2.0, 3.0, "time=2025-06-11_12-00-00")
+	deadOfNightURL := tripsForLocationURL(2.0, 3.0, "time=2025-06-11_03-00-00")
+
+	middayResp, midday := callAPIHandler[TripsForLocationResponse](t, api, middayURL)
+	nightResp, night := callAPIHandler[TripsForLocationResponse](t, api, deadOfNightURL)
+
+	require.Equal(t, http.StatusOK, middayResp.StatusCode)
+	require.Equal(t, http.StatusOK, nightResp.StatusCode)
+
+	require.NotEmpty(t, midday.Data.List, "midday should have trips in service")
+	assert.Less(t, len(night.Data.List), len(midday.Data.List),
+		"fewer trips run at 3am than at midday, so time must drive selection")
+}
