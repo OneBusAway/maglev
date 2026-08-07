@@ -819,6 +819,17 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 }
 
 func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
+	situationIDs := []string{}
+	for _, ref := range api.situationRefsForTrip(ctx, tripID) {
+		situationIDs = append(situationIDs, ref.ID)
+	}
+	return situationIDs
+}
+
+// situationRefsForTrip resolves the alerts affecting a trip and pairs each with
+// the situation ID that refers to it, so a caller needing both the entry IDs and
+// the situation references gets them from one lookup.
+func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []situationRef {
 	var routeID string
 	var agencyID string
 
@@ -844,14 +855,7 @@ func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) [
 		}
 	}
 
-	alerts := api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID)
-
-	situationIDs := []string{}
-	for _, ref := range situationRefsFromAlerts(alerts, agencyID) {
-		situationIDs = append(situationIDs, ref.ID)
-	}
-
-	return situationIDs
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID), agencyID)
 }
 
 // situationRef pairs an alert with the situation ID that both list entries and

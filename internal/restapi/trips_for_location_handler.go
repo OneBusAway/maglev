@@ -256,8 +256,13 @@ func newSituationCollector() *situationCollector {
 
 // add records the alerts affecting one trip and returns their situation IDs.
 func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
-	ids := make([]string, 0, len(alerts))
-	for _, ref := range situationRefsFromAlerts(alerts, agencyID) {
+	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
+}
+
+// addRefs records already-resolved situation references and returns their IDs.
+func (c *situationCollector) addRefs(refs []situationRef) []string {
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
 		ids = append(ids, ref.ID)
 		if _, ok := c.seen[ref.ID]; ok {
 			continue
@@ -813,22 +818,26 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 	return *references
 }
 
-// getSituationsList converts the collected alerts into situation references,
-// stamping the same combined IDs the list entries use. BuildSituationReferences
-// emits raw alert IDs and preserves input order one-for-one.
 func (rb *referenceBuilder) getSituationsList() []models.Situation {
-	if len(rb.situations) == 0 {
+	return rb.api.situationReferences(rb.situations)
+}
+
+// situationReferences converts collected alerts into situation references,
+// stamping the same IDs the list entries use. BuildSituationReferences emits raw
+// alert IDs and preserves input order one-for-one.
+func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation {
+	if len(refs) == 0 {
 		return []models.Situation{}
 	}
 
-	alerts := make([]gtfs.Alert, 0, len(rb.situations))
-	for _, ref := range rb.situations {
+	alerts := make([]gtfs.Alert, 0, len(refs))
+	for _, ref := range refs {
 		alerts = append(alerts, ref.Alert)
 	}
 
-	situations := rb.api.BuildSituationReferences(alerts)
+	situations := api.BuildSituationReferences(alerts)
 	for i := range situations {
-		situations[i].ID = rb.situations[i].ID
+		situations[i].ID = refs[i].ID
 	}
 	return situations
 }

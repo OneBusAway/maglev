@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1111,4 +1112,47 @@ func TestResolveInterlinedEntryTripID_NoCandidateInBlock(t *testing.T) {
 		map[string][]blockTripEntry{}, map[string]string{})
 
 	assert.False(t, resolved)
+}
+
+// TestTripsForRouteHandler_SituationReferences verifies that every situationId
+// emitted on a list entry resolves to an entry in references.situations.
+func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
+	// A dedicated manager, so the seeded alert is not clobbered by other tests
+	// sharing the package-level fixture.
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// Real-time alerts carry the raw (un-prefixed) route ID from the feed.
+	rawRouteID := "151"
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "test-alert-trips-for-route",
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &rawRouteID}},
+		Header:           []gogtfs.AlertText{{Text: "Test Route Alert", Language: "en"}},
+	})
+
+	// ParseTimeParameter ignores api.Clock when no time= is given, so pin the
+	// handler's window explicitly. Midday Pacific on a weekday inside the RABA
+	// fixture's calendar range, when its trips are running.
+	queryTime := time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
+	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=true&time=%d",
+		queryTime.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so situation references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		referenced[situation.ID] = true
+	}
+
+	sawSituationID := false
+	for _, entry := range model.Data.List {
+		for _, id := range entry.SituationIds {
+			sawSituationID = true
+			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
+		}
+	}
+	require.True(t, sawSituationID, "expected the seeded alert to surface as a situationId")
 }

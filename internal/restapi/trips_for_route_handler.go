@@ -194,7 +194,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
 		var references models.ReferencesModel
 		if includeReferences {
-			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil, nil)
+			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil, nil, nil)
 		} else {
 			references = *models.NewEmptyReferences()
 		}
@@ -329,6 +329,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	situations := newSituationCollector()
+
 	var result []models.TripsForRouteListEntry
 	for _, fetchedTrip := range fetchedTrips {
 		if ctx.Err() != nil {
@@ -400,7 +402,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(r.Context(), entryTripID),
+			SituationIds: situations.addRefs(api.situationRefsForTrip(ctx, entryTripID)),
 			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
 		result = append(result, entry)
@@ -464,7 +466,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(r.Context(), baseTripID),
+			SituationIds: situations.addRefs(api.situationRefsForTrip(ctx, baseTripID)),
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
 		result = append(result, entry)
@@ -498,7 +500,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips, stopIDsMap)
+		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips, stopIDsMap, situations.refs)
 	} else {
 		references = *models.NewEmptyReferences()
 	}
@@ -699,6 +701,7 @@ func buildTripReferences(
 	stops []gtfsdb.Stop,
 	preFetchedTrips []gtfsdb.Trip,
 	stopIDMap map[string]string,
+	situations []situationRef,
 ) models.ReferencesModel {
 
 	presentTrips := make(map[string]models.Trip)
@@ -900,6 +903,7 @@ func buildTripReferences(
 	references.Routes = routes
 	references.Stops = stopList
 	references.Trips = tripsRefList
+	references.Situations = api.situationReferences(situations)
 	return *references
 }
 
