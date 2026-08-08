@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -144,7 +143,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	addedAgencyIDs := make(map[string]bool)
 	addedAgencyIDs[agency.ID] = true
 
-	collectedAlerts := make(map[string]gtfs.Alert)
+	situations := newSituationCollector()
 	alertAgencyID := stopAgencyID
 
 	type activeStopTime struct {
@@ -444,17 +443,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
 		tripAlerts := api.GtfsManager.GetAlertsForTrip(r.Context(), st.TripID)
-		situationIDs := make([]string, 0, len(tripAlerts))
-		for _, alert := range tripAlerts {
-			if alert.ID == "" {
-				continue
-			}
-
-			situationIDs = append(situationIDs, utils.FormCombinedID(route.AgencyID, alert.ID))
-			if _, seen := collectedAlerts[alert.ID]; !seen {
-				collectedAlerts[alert.ID] = alert
-			}
-		}
+		situationIDs := situations.add(tripAlerts, route.AgencyID)
 
 		if alertAgencyID == "" && route.AgencyID != "" {
 			alertAgencyID = route.AgencyID
@@ -629,30 +618,15 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 	}
 
-	for _, alert := range api.GtfsManager.GetAlertsForStop(stopCode) {
-		if alert.ID != "" {
-			if _, seen := collectedAlerts[alert.ID]; !seen {
-				collectedAlerts[alert.ID] = alert
-			}
-		}
-	}
+	situations.add(api.GtfsManager.GetAlertsForStop(stopCode), alertAgencyID)
 
-	if len(collectedAlerts) > 0 {
-		alertSlice := make([]gtfs.Alert, 0, len(collectedAlerts))
-		for _, a := range collectedAlerts {
-			alertSlice = append(alertSlice, a)
-		}
-		situations := api.BuildSituationReferences(alertSlice)
-		references.Situations = append(references.Situations, situations...)
-	}
+	references.Situations = append(references.Situations, api.situationReferences(situations.refs)...)
 
-	topLevelSituationIDSet := make(map[string]struct{}, len(collectedAlerts))
-	for alertID := range collectedAlerts {
-		topLevelSituationIDSet[utils.FormCombinedID(alertAgencyID, alertID)] = struct{}{}
-	}
-	topLevelSituationIDs := make([]string, 0, len(topLevelSituationIDSet))
-	for id := range topLevelSituationIDSet {
-		topLevelSituationIDs = append(topLevelSituationIDs, id)
+	// The top-level list covers every alert reachable from this stop, whether it
+	// was matched through an arrival's trip or through the stop itself.
+	topLevelSituationIDs := make([]string, 0, len(situations.refs))
+	for _, ref := range situations.refs {
+		topLevelSituationIDs = append(topLevelSituationIDs, ref.ID)
 	}
 
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)

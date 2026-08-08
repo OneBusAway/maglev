@@ -109,12 +109,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	var situationIDs []string
-	if status != nil && len(status.SituationIDs) > 0 {
-		situationIDs = status.SituationIDs
-	} else {
-		situationIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
-	}
+	// BuildTripStatus above was given this same tripID, so the status carries
+	// the same situations this resolves.
+	situationIDs, situationRefs := api.TripSituations(ctx, tripID)
 
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
@@ -127,6 +124,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	// Build references
 	references := models.NewEmptyReferences()
+	references.Situations = situationRefs
 
 	agencyModel := models.AgencyReferenceFromDatabase(&agency)
 
