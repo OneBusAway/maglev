@@ -204,6 +204,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getImportMetadataStmt, err = db.PrepareContext(ctx, getImportMetadata); err != nil {
 		return nil, fmt.Errorf("error preparing query GetImportMetadata: %w", err)
 	}
+	if q.getInServiceTripIDsForStopsStmt, err = db.PrepareContext(ctx, getInServiceTripIDsForStops); err != nil {
+		return nil, fmt.Errorf("error preparing query GetInServiceTripIDsForStops: %w", err)
+	}
 	if q.getNextAndPreviousTripsInBlockStmt, err = db.PrepareContext(ctx, getNextAndPreviousTripsInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextAndPreviousTripsInBlock: %w", err)
 	}
@@ -704,6 +707,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getImportMetadataStmt: %w", cerr)
 		}
 	}
+	if q.getInServiceTripIDsForStopsStmt != nil {
+		if cerr := q.getInServiceTripIDsForStopsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getInServiceTripIDsForStopsStmt: %w", cerr)
+		}
+	}
 	if q.getNextAndPreviousTripsInBlockStmt != nil {
 		if cerr := q.getNextAndPreviousTripsInBlockStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getNextAndPreviousTripsInBlockStmt: %w", cerr)
@@ -1128,6 +1136,7 @@ type Queries struct {
 	getFrequenciesForTripsStmt                    *sql.Stmt
 	getFrequencyTripIDsStmt                       *sql.Stmt
 	getImportMetadataStmt                         *sql.Stmt
+	getInServiceTripIDsForStopsStmt               *sql.Stmt
 	getNextAndPreviousTripsInBlockStmt            *sql.Stmt
 	getNextStopInTripStmt                         *sql.Stmt
 	getOrderedStopIDsForRouteDirectionStmt        *sql.Stmt
@@ -1259,6 +1268,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getFrequenciesForTripsStmt:                    q.getFrequenciesForTripsStmt,
 		getFrequencyTripIDsStmt:                       q.getFrequencyTripIDsStmt,
 		getImportMetadataStmt:                         q.getImportMetadataStmt,
+		getInServiceTripIDsForStopsStmt:               q.getInServiceTripIDsForStopsStmt,
 		getNextAndPreviousTripsInBlockStmt:            q.getNextAndPreviousTripsInBlockStmt,
 		getNextStopInTripStmt:                         q.getNextStopInTripStmt,
 		getOrderedStopIDsForRouteDirectionStmt:        q.getOrderedStopIDsForRouteDirectionStmt,
