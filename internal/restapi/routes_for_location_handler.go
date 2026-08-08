@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -36,7 +35,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc, query, maxCount, time.Time{})
+	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc, query, maxCount)
 	if len(routes) == 0 {
 		references := models.NewEmptyReferences()
 		response := models.NewListResponseWithRange([]models.Route{}, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, false)

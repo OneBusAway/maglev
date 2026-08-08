@@ -130,6 +130,19 @@ func TestSearchRoutes_WhitespaceOnlyInput(t *testing.T) {
 	assert.Empty(t, routes, "Whitespace-only input should short-circuit and return empty slice")
 }
 
+func TestSearchRoutes_PunctuationOnlyInput(t *testing.T) {
+	// "%" tokenizes to nothing under FTS5's unicode61 tokenizer; without
+	// filtering it out, the built query becomes `"%"*`, which raises a
+	// syntax error at MATCH time rather than simply matching nothing.
+	ctx := context.Background()
+	manager, _ := getSharedTestComponents(t)
+	require.NotNil(t, manager)
+
+	routes, err := manager.SearchRoutes(ctx, "%", 20)
+	require.NoError(t, err)
+	assert.Empty(t, routes, "Punctuation-only input should short-circuit and return empty slice")
+}
+
 func TestSearchRoutes_DefaultLimit(t *testing.T) {
 	ctx := context.Background()
 	manager, _ := getSharedTestComponents(t)

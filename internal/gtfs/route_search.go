@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // buildRouteSearchQuery normalizes user input into an FTS5-safe prefix search query.
@@ -16,7 +17,9 @@ func buildRouteSearchQuery(input string) string {
 
 	for _, term := range terms {
 		trimmed := strings.TrimSpace(term)
-		if trimmed == "" {
+		// FTS5 tokenizes punctuation-only terms (e.g. "%") to nothing, which
+		// raises a syntax error at query time rather than just matching nothing.
+		if trimmed == "" || !utils.ContainsLetterOrDigit(trimmed) {
 			continue
 		}
 		escaped := strings.ReplaceAll(trimmed, `"`, `""`)
