@@ -416,6 +416,63 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	}
 }
 
+// TestTripsForRouteHandler_TimeOmitted verifies that omitting the time parameter
+// correctly falls back to the injected api.Clock to resolve active trips.
+func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true", combinedRouteID)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, 2, model.Version)
+	// currentTime comes from the API clock, as does the omitted time= lookup.
+	assert.Equal(t, tripsForRouteTestClock.UnixMilli(), model.CurrentTime)
+	assert.False(t, model.Data.LimitExceeded)
+	assert.False(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.FieldErrors)
+
+	require.Len(t, model.Data.List, 1, "the fixture trip must be active at the pinned clock time")
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	assert.Equal(t, expectedTripID, model.Data.List[0].TripId)
+	assert.NotZero(t, model.Data.List[0].ServiceDate)
+}
+
+// TestTripsForRouteHandler_InvalidTimeParameter verifies that malformed time
+// parameter values correctly trigger a 400 Bad Request validation error.
+func TestTripsForRouteHandler_InvalidTimeParameter(t *testing.T) {
+	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	tests := []struct {
+		name string
+		time string
+	}{
+		{name: "Garbage String", time: "garbage"},
+		{name: "Overflowing Epoch", time: "99999999999999999999"},
+		{name: "Invalid Calendar Date", time: "2024-13-45"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%s",
+				combinedRouteID, tt.time)
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
+			assert.Equal(t, "Invalid field value for field \"time\".", model.Text)
+			assert.Equal(t, 2, model.Version)
+			require.Contains(t, model.Data.FieldErrors, "time")
+			assert.Equal(t, []string{"Invalid field value for field \"time\"."}, model.Data.FieldErrors["time"])
+		})
+	}
+}
+
 func TestTripsForRouteHandler_ScheduleInclusion(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
