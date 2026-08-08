@@ -1,0 +1,96 @@
+package restapi
+
+import (
+	"database/sql"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/gtfsdb"
+)
+
+// tripWithWindow builds a trip whose scheduled span runs from minHours to
+// maxHours after its service date's midnight. GTFS allows values past 24h.
+func tripWithWindow(serviceID string, minHours, maxHours float64) gtfsdb.Trip {
+	return gtfsdb.Trip{
+		ID:               "trip-1",
+		ServiceID:        serviceID,
+		MinArrivalTime:   sql.NullInt64{Int64: int64(float64(time.Hour) * minHours), Valid: true},
+		MaxDepartureTime: sql.NullInt64{Int64: int64(float64(time.Hour) * maxHours), Valid: true},
+	}
+}
+
+func TestServiceDateResolver_Resolve(t *testing.T) {
+	location := time.FixedZone("TEST", 0)
+	queryDay := time.Date(2024, 3, 15, 0, 0, 0, 0, location)
+	previousDay := queryDay.AddDate(0, 0, -1)
+
+	// The query moment is 00:30 on the query day — the window where a trip could
+	// belong to either service date.
+	resolver := &serviceDateResolver{
+		queryDayMidnight:    queryDay,
+		sinceMidnightNs:     int64(30 * time.Minute),
+		queryDayServices:    map[string]struct{}{"weekday": {}},
+		previousDayServices: map[string]struct{}{"weekday": {}},
+	}
+
+	tests := []struct {
+		name string
+		trip gtfsdb.Trip
+		want time.Time
+	}{
+		{
+			name: "Trip running now on today's service",
+			trip: tripWithWindow("weekday", 0, 1),
+			want: queryDay,
+		},
+		{
+			name: "Past-midnight trip belongs to yesterday's service",
+			trip: tripWithWindow("weekday", 24, 25.5),
+			want: previousDay,
+		},
+		{
+			name: "Trip not running at this moment falls back to the query day",
+			trip: tripWithWindow("weekday", 6, 7),
+			want: queryDay,
+		},
+		{
+			name: "Service inactive on both days falls back to the query day",
+			trip: tripWithWindow("weekend", 0, 1),
+			want: queryDay,
+		},
+		{
+			name: "Trip with no cached time window falls back to the query day",
+			trip: gtfsdb.Trip{ID: "trip-1", ServiceID: "weekday"},
+			want: queryDay,
+		},
+		{
+			name: "Zero trip falls back to the query day",
+			trip: gtfsdb.Trip{},
+			want: queryDay,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, resolver.Resolve(tt.trip))
+		})
+	}
+}
+
+// TestServiceDateResolver_PreviousDayServiceOnly covers a trip whose service
+// runs only on the previous day, so today's set cannot match it at all.
+func TestServiceDateResolver_PreviousDayServiceOnly(t *testing.T) {
+	location := time.FixedZone("TEST", 0)
+	queryDay := time.Date(2024, 3, 15, 0, 0, 0, 0, location)
+
+	resolver := &serviceDateResolver{
+		queryDayMidnight:    queryDay,
+		sinceMidnightNs:     int64(30 * time.Minute),
+		queryDayServices:    map[string]struct{}{"weekday": {}},
+		previousDayServices: map[string]struct{}{"friday-night": {}},
+	}
+
+	assert.Equal(t, queryDay.AddDate(0, 0, -1),
+		resolver.Resolve(tripWithWindow("friday-night", 23, 26)))
+}

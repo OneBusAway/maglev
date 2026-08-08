@@ -8,10 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 const (
@@ -615,5 +619,205 @@ func TestTripsForLocationHandler_ContextCancellation(t *testing.T) {
 		// When context deadline is exceeded, clientCanceledResponse writes 504 Gateway Timeout.
 		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
 		assert.Contains(t, rec.Body.String(), "gateway timeout")
+	})
+}
+
+// TestTripsForLocationHandler_SituationReferences verifies that every
+// situationId emitted on a list entry resolves to an entry in
+// references.situations.
+func TestTripsForLocationHandler_SituationReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
+	// Real-time alerts carry the raw (un-prefixed) agency ID from the feed.
+	rawAgencyID := "25"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               "test-alert-trips-for-location",
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &rawAgencyID}},
+		Header:           []gtfs.AlertText{{Text: "Test Agency Alert", Language: "en"}},
+	})
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(2.0, 3.0))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so situation references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		referenced[situation.ID] = true
+	}
+
+	sawSituationID := false
+	for _, entry := range model.Data.List {
+		for _, id := range entry.SituationIds {
+			sawSituationID = true
+			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
+		}
+	}
+	require.True(t, sawSituationID, "expected the seeded alert to surface as a situationId")
+}
+
+// TestTripsForLocationHandler_ScheduleStopsAreReferenced verifies that every
+// stop named by an entry's schedule resolves to an entry in references.stops.
+func TestTripsForLocationHandler_ScheduleStopsAreReferenced(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true", "includeStatus=true")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so stop references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		referenced[stop.ID] = true
+	}
+
+	sawStopTime := false
+	for _, entry := range model.Data.List {
+		require.NotNil(t, entry.Schedule, "includeSchedule=true should populate the schedule")
+		for _, stopTime := range entry.Schedule.StopTimes {
+			sawStopTime = true
+			assert.True(t, referenced[stopTime.StopID],
+				"stop %q named by trip %q must appear in references.stops", stopTime.StopID, entry.TripId)
+		}
+	}
+	require.True(t, sawStopTime, "expected at least one scheduled stop time to assert against")
+}
+
+// TestTripsForLocationHandler_UnreferencedStopsAreOmitted verifies that stops
+// merely inside the search bounds are not emitted as references when nothing in
+// the response points at them.
+func TestTripsForLocationHandler_UnreferencedStopsAreOmitted(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=false", "includeStatus=false")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so the reference set is meaningful")
+	assert.Empty(t, model.Data.References.Stops,
+		"no schedule or status means nothing in the response refers to a stop")
+}
+
+// TestTripsForLocationHandler_CandidateStopsAreNotCapped verifies that the
+// candidate stop set is not truncated, which previously dropped trips serving
+// only stops beyond the cap.
+func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	time.Sleep(500 * time.Millisecond)
+
+	params := &internalgtfs.LocationParams{
+		Lat:     tripsForLocationLat,
+		Lon:     tripsForLocationLon,
+		LatSpan: 2.0,
+		LonSpan: 3.0,
+	}
+
+	uncapped := api.GtfsManager.GetStopsInBounds(context.Background(), params, 0, true)
+	require.Greater(t, len(uncapped), models.DefaultMaxCountForStops,
+		"fixture must hold more in-bounds stops than the old cap for this test to mean anything")
+
+	bounds := internalgtfs.BoundsFromParams(params, true)
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(2.0, 3.0))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	returned := make(map[string]bool, len(model.Data.List))
+	for _, entry := range model.Data.List {
+		_, tripID, err := utils.ExtractAgencyIDAndCodeID(entry.TripId)
+		require.NoError(t, err)
+		returned[tripID] = true
+	}
+
+	// Every real-time vehicle positioned inside the bounds must be represented.
+	// The RABA fixture's vehicles all happen to serve stops early in the
+	// in-bounds ordering, so this guards the invariant rather than reproducing
+	// a truncation the fixture cannot produce.
+	assertedAnyVehicle := false
+	for _, vehicle := range api.GtfsManager.GetRealTimeVehicles() {
+		if vehicle.Trip == nil || vehicle.Position == nil ||
+			vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
+			continue
+		}
+		lat, lon := float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude)
+		if lat < bounds.MinLat || lat > bounds.MaxLat || lon < bounds.MinLon || lon > bounds.MaxLon {
+			continue
+		}
+
+		tripID := vehicle.Trip.ID.ID
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), tripID)
+		if err != nil || len(stopTimes) == 0 {
+			continue
+		}
+
+		assertedAnyVehicle = true
+		assert.True(t, returned[tripID], "in-bounds vehicle's trip %q must be returned", tripID)
+	}
+	require.True(t, assertedAnyVehicle, "expected at least one in-bounds vehicle to assert against")
+}
+
+func TestTripsForLocationRequest_ScheduleLocation(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+
+	req := &tripsForLocationRequest{
+		CurrentLocation: losAngeles,
+		AgencyLocations: map[string]*time.Location{"1": losAngeles, "2": chicago},
+	}
+
+	tests := []struct {
+		name     string
+		agencyID string
+		want     *time.Location
+	}{
+		{name: "First agency", agencyID: "1", want: losAngeles},
+		{name: "Agency in a different zone", agencyID: "2", want: chicago},
+		{name: "Unknown agency falls back to the query zone", agencyID: "99", want: losAngeles},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, req.scheduleLocation(tt.agencyID))
+		})
+	}
+}
+
+func TestAgencyLocations(t *testing.T) {
+	t.Run("Resolves each agency's zone", func(t *testing.T) {
+		locations, err := agencyLocations([]gtfsdb.Agency{
+			{ID: "1", Timezone: "America/Los_Angeles"},
+			{ID: "2", Timezone: "America/Chicago"},
+		})
+
+		require.NoError(t, err)
+		require.Len(t, locations, 2)
+		assert.Equal(t, "America/Los_Angeles", locations["1"].String())
+		assert.Equal(t, "America/Chicago", locations["2"].String())
+	})
+
+	t.Run("Reports an unparseable zone", func(t *testing.T) {
+		_, err := agencyLocations([]gtfsdb.Agency{{ID: "1", Timezone: "Not/A_Zone"}})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `invalid timezone for agency "1"`)
 	})
 }
