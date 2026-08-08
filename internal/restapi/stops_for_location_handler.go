@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -95,7 +96,13 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	// Bounds that miss every agency's coverage area yield an empty list, so no search
 	// runs — otherwise a stop-code query would fall back to its closest match worldwide.
-	outOfRange := api.GtfsManager.CheckIfOutOfBounds(loc)
+	// Query mode searches a wider default radius than geospatial mode, so this check must
+	// consider the same widened bounds GetStopsForLocation's stop-code path searches with.
+	outOfRangeLoc := loc
+	if query != "" {
+		outOfRangeLoc = gtfs.CodeQueryLocation(loc)
+	}
+	outOfRange := api.GtfsManager.CheckIfOutOfBounds(outOfRangeLoc)
 
 	var stops []gtfsdb.Stop
 	var limitExceeded bool

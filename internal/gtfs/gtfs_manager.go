@@ -407,7 +407,7 @@ func (manager *Manager) stopsMatchingCode(
 		return nil, false
 	}
 
-	bounds := BoundsFromParams(codeQueryLocation(loc))
+	bounds := BoundsFromParams(CodeQueryLocation(loc))
 	within := make([]gtfsdb.Stop, 0, len(candidates))
 	for _, stop := range candidates {
 		inBounds := stop.Lat >= bounds.MinLat && stop.Lat <= bounds.MaxLat &&
@@ -433,9 +433,9 @@ func (manager *Manager) stopsMatchingCode(
 	return within, false
 }
 
-// codeQueryLocation applies the wider default radius used by stop-code queries,
+// CodeQueryLocation applies the wider default radius used by stop-code queries,
 // leaving an explicit radius or span untouched.
-func codeQueryLocation(loc *LocationParams) *LocationParams {
+func CodeQueryLocation(loc *LocationParams) *LocationParams {
 	hasExplicitArea := loc.Radius > 0 || (loc.LatSpan > 0 && loc.LonSpan > 0)
 	if hasExplicitArea {
 		return loc

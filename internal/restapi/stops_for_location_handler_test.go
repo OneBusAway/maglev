@@ -453,6 +453,22 @@ func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 	assert.Empty(t, model.Data.List)
 }
 
+// A point ~3.3km north of RABA's coverage edge (max lat ~40.9373) falls within the
+// 10km default radius query mode should use, but outside the 600m non-query default —
+// the out-of-range check must use the same widened bounds the search itself does.
+func TestStopsForLocationQueryOutOfRangeUsesWidenedRadius(t *testing.T) {
+	clock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clock)
+
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.9673&lon=-122.098197&query=2042")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.False(t, model.Data.OutOfRange, "query mode should widen the search radius before checking range")
+	require.Len(t, model.Data.List, 1)
+	assert.Equal(t, "2042", model.Data.List[0].Code)
+}
+
 func TestStopsForLocationMissingLat(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lon=-122.426966")
