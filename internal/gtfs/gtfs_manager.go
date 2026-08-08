@@ -379,10 +379,7 @@ func (manager *Manager) GetStopsForLocation(
 			stops = filteredStops
 		}
 
-		if len(stops) > maxCount {
-			limitExceeded = true
-			stops = stops[:maxCount]
-		}
+		// Capped downstream, after stops with no service that date are dropped.
 	}
 
 	return stops, limitExceeded
