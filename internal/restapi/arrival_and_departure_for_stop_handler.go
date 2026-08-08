@@ -398,7 +398,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceMidnight)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
+	situationIDs, situationRefs := api.TripSituations(ctx, tripID)
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
@@ -595,13 +595,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 	references.Routes = utils.MapValues(routeRefs)
 
-	if len(situationIDs) > 0 {
-		alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-		if len(alerts) > 0 {
-			situations := api.BuildSituationReferences(alerts)
-			references.Situations = append(references.Situations, situations...)
-		}
-	}
+	references.Situations = append(references.Situations, situationRefs...)
 
 	response := models.NewEntryResponse(arrival, *references, api.Clock)
 	api.sendResponse(w, r, response)

@@ -2,12 +2,15 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -447,4 +450,130 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
 	}
+}
+
+// Situation references
+//
+// An entry's situationIds and the response's references.situations must use the
+// same ID, or the IDs resolve to nothing. Everything that derives one derives
+// the other, so the two cannot drift apart.
+// situationRef pairs an alert with the situation ID that both list entries and
+// situation references use to refer to it.
+type situationRef struct {
+	ID    string
+	Alert gtfs.Alert
+}
+
+// situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
+// situation ID used to refer to them.
+func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
+	refs := make([]situationRef, 0, len(alerts))
+	for _, alert := range alerts {
+		if alert.ID == "" {
+			continue
+		}
+		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyID), Alert: alert})
+	}
+	return refs
+}
+
+// situationID returns the combined-form ID for an alert.
+//
+// Prefixing is idempotent, not unconditional: a GTFS-RT feed exported by an OBA
+// instance already carries the agency prefix on its alert IDs — Puget Sound
+// ships "1_92239" — and prefixing again would publish "1_1_92239", which
+// resolves against nothing a client has seen. Upstream reports "1_92239".
+func situationID(alertID, agencyID string) string {
+	if agencyID == "" || strings.HasPrefix(alertID, agencyID+"_") {
+		return alertID
+	}
+	return utils.FormCombinedID(agencyID, alertID)
+}
+
+// situationCollector deduplicates the alerts referenced by list entries so the
+// response emits one situation reference per distinct situation ID.
+type situationCollector struct {
+	seen map[string]struct{}
+	refs []situationRef
+}
+
+func newSituationCollector() *situationCollector {
+	return &situationCollector{seen: make(map[string]struct{})}
+}
+
+// add records the alerts affecting one trip and returns their situation IDs.
+func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
+	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
+}
+
+// addRefs records already-resolved situation references and returns their IDs.
+func (c *situationCollector) addRefs(refs []situationRef) []string {
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ids = append(ids, ref.ID)
+		if _, ok := c.seen[ref.ID]; ok {
+			continue
+		}
+		c.seen[ref.ID] = struct{}{}
+		c.refs = append(c.refs, ref)
+	}
+	return ids
+}
+
+// situationReferences converts collected alerts into situation references,
+// stamping the same IDs the list entries use. BuildSituationReferences emits raw
+// alert IDs and preserves input order one-for-one.
+func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation {
+	if len(refs) == 0 {
+		return []models.Situation{}
+	}
+
+	alerts := make([]gtfs.Alert, 0, len(refs))
+	for _, ref := range refs {
+		alerts = append(alerts, ref.Alert)
+	}
+
+	situations := api.BuildSituationReferences(alerts)
+	if len(situations) != len(refs) {
+		// The ID stamping below pairs by position, so a length change in
+		// BuildSituationReferences would silently mislabel every situation.
+		logging.LogError(api.Logger, "situation reference count does not match the alerts it was built from",
+			fmt.Errorf("built %d situations from %d alerts", len(situations), len(refs)))
+		return situations
+	}
+
+	for i := range situations {
+		situations[i].ID = refs[i].ID
+	}
+	return situations
+}
+
+func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
+	agencies := make([]models.AgencyReference, 0, len(rb.presentAgencies))
+	for _, agency := range rb.presentAgencies {
+		agencies = append(agencies, agency)
+	}
+	return agencies
+}
+
+func (rb *referenceBuilder) getRoutesList() []models.Route {
+	routes := make([]models.Route, 0, len(rb.presentRoutes))
+	for _, route := range rb.presentRoutes {
+		if route.ID != "" {
+			routes = append(routes, route)
+		}
+	}
+	return routes
+}
+
+// TripSituations returns a trip's situation IDs together with the matching
+// situation references, so an entry's situationIds always resolve.
+func (api *RestAPI) TripSituations(ctx context.Context, tripID string) ([]string, []models.Situation) {
+	refs := api.situationRefsForTrip(ctx, tripID)
+
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ids = append(ids, ref.ID)
+	}
+	return ids, api.situationReferences(refs)
 }

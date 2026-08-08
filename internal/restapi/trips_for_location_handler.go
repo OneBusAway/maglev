@@ -33,8 +33,10 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
-	stopIDs := extractStopIDs(stops)
+	// Uncapped: this stop set only narrows the candidate trips, and a cap here
+	// silently drops trips the spec says should all be returned.
+	stopsInBounds := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, 0, true)
+	stopIDs := extractStopIDs(stopsInBounds)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -98,7 +100,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
+	result, situations := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
 	if result == nil {
 		return
 	}
@@ -113,10 +115,17 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
+		referencedStops, stopsErr := api.stopsReferencedByEntries(ctx, result)
+		if stopsErr != nil {
+			api.serverErrorResponse(w, r, stopsErr)
+			return
+		}
+
 		references = api.BuildReference(w, r, ctx, ReferenceParams{
 			IncludeTrip: parsedReq.IncludeTrip,
-			Stops:       stops,
+			Stops:       referencedStops,
 			Trips:       result,
+			Situations:  situations,
 		})
 	}
 
@@ -220,6 +229,42 @@ func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
 	return dst
 }
 
+// stopsReferencedByEntries fetches the stops the response actually refers to:
+// those on each entry's schedule, plus the closest and next stops on its status.
+// The in-bounds stop set is deliberately not included — it is a candidate-trip
+// selection detail, and stops on it that no returned trip serves have nothing in
+// the response pointing at them.
+func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []models.TripsForLocationListEntry) ([]gtfsdb.Stop, error) {
+	stopIDsByBareID := make(map[string]string)
+
+	for _, entry := range entries {
+		collectStopIDsFromSchedule(entry.Schedule, stopIDsByBareID)
+		if entry.Status == nil {
+			continue
+		}
+		for _, combinedID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
+			_, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+			if err != nil {
+				continue
+			}
+			if _, exists := stopIDsByBareID[bareID]; !exists {
+				stopIDsByBareID[bareID] = combinedID
+			}
+		}
+	}
+
+	if len(stopIDsByBareID) == 0 {
+		return nil, nil
+	}
+
+	bareIDs := make([]string, 0, len(stopIDsByBareID))
+	for bareID := range stopIDsByBareID {
+		bareIDs = append(bareIDs, bareID)
+	}
+
+	return api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
+}
+
 func extractStopIDs(stops []gtfsdb.Stop) []string {
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
@@ -242,7 +287,8 @@ func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles
 	return activeTrips
 }
 
-// buildTripsForLocationEntries builds trip entries from pre-fetched batch data.
+// buildTripsForLocationEntries builds trip entries from pre-fetched batch data,
+// returning the entries alongside the situations they reference.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
 	trips []gtfsdb.Trip,
@@ -255,9 +301,9 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	serviceDate time.Time,
 	w http.ResponseWriter,
 	r *http.Request,
-) []models.TripsForLocationListEntry {
+) ([]models.TripsForLocationListEntry, []situationRef) {
 	if len(trips) == 0 {
-		return []models.TripsForLocationListEntry{}
+		return []models.TripsForLocationListEntry{}, nil
 	}
 
 	tripsMap := make(map[string]gtfsdb.Trip)
@@ -304,7 +350,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, validVehicleTrips)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
-			return nil
+			return nil, nil
 		}
 		for _, st := range stopTimesRaw {
 			stopTimesMap[st.TripID] = append(stopTimesMap[st.TripID], st)
@@ -361,10 +407,11 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	}
 
 	var result []models.TripsForLocationListEntry
+	situations := newSituationCollector()
 
 	for _, tripID := range validVehicleTrips {
 		if ctx.Err() != nil {
-			return result
+			return result, situations.refs
 		}
 
 		agencyID := tripAgencyMap[tripID]
@@ -407,17 +454,23 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			}
 		}
 
+		// The trip's route and agency are already resolved here, so the alerts
+		// are looked up directly rather than through GetSituationIDsForTrip,
+		// which would re-query both per trip and discard the alerts we need
+		// for the situation references.
+		alerts := api.GtfsManager.GetAlertsByIDs(tripID, tripData.RouteID, agencyID)
+
 		entry := models.TripsForLocationListEntry{
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(ctx, tripID),
+			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
 	}
-	return result
+	return result, situations.refs
 }
 
 func (api *RestAPI) buildScheduleForTrip(
@@ -486,6 +539,7 @@ type ReferenceParams struct {
 	IncludeTrip bool
 	Stops       []gtfsdb.Stop
 	Trips       []models.TripsForLocationListEntry
+	Situations  []situationRef
 }
 
 func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx context.Context, params ReferenceParams) models.ReferencesModel {
@@ -512,9 +566,11 @@ type referenceBuilder struct {
 	presentAgencies map[string]models.AgencyReference
 	stopList        []models.Stop
 	tripsRefList    []models.Trip
+	situations      []situationRef
 }
 
 func (rb *referenceBuilder) build(params ReferenceParams) error {
+	rb.situations = params.Situations
 	rb.collectTripIDs(params.Trips)
 	rb.buildStopList(params.Stops)
 
@@ -771,26 +827,13 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 	references.Routes = rb.getRoutesList()
 	references.Stops = stops
 	references.Trips = trips
+	references.Situations = rb.getSituationsList()
 
 	return *references
 }
 
-func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
-	agencies := make([]models.AgencyReference, 0, len(rb.presentAgencies))
-	for _, agency := range rb.presentAgencies {
-		agencies = append(agencies, agency)
-	}
-	return agencies
-}
-
-func (rb *referenceBuilder) getRoutesList() []models.Route {
-	routes := make([]models.Route, 0, len(rb.presentRoutes))
-	for _, route := range rb.presentRoutes {
-		if route.ID != "" {
-			routes = append(routes, route)
-		}
-	}
-	return routes
+func (rb *referenceBuilder) getSituationsList() []models.Situation {
+	return rb.api.situationReferences(rb.situations)
 }
 
 // buildScheduleFromMemory constructs a TripsSchedule from pre-fetched stop times, shape points, and block trips.

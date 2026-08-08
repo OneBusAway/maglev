@@ -254,12 +254,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var situationsIDs []string
-	if status != nil && len(status.SituationIDs) > 0 {
-		situationsIDs = status.SituationIDs
-	} else {
-		situationsIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
-	}
+	// trip is looked up by tripID, and BuildTripStatus was given trip.ID, so the
+	// status carries the same situations this resolves.
+	situationsIDs, situationRefs := api.TripSituations(ctx, tripID)
 
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
@@ -334,13 +331,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		agencyModel := models.AgencyReferenceFromDatabase(&agency)
 		references.Agencies = append(references.Agencies, agencyModel)
 
-		if len(situationsIDs) > 0 {
-			alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-			if len(alerts) > 0 {
-				situations := api.BuildSituationReferences(alerts)
-				references.Situations = append(references.Situations, situations...)
-			}
-		}
+		references.Situations = append(references.Situations, situationRefs...)
 
 		if params.IncludeSchedule && schedule != nil {
 			stopIDs := make([]string, 0, len(schedule.StopTimes))
