@@ -19,12 +19,14 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 
 	var fieldErrors map[string][]string
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
-	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, models.DefaultMaxCountForRoutes, fieldErrors)
+	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForRoutes, fieldErrors)
 
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
+	// The spec caps this endpoint below the global maxCount ceiling.
+	maxCount = min(maxCount, models.MaxCountForRoutesForLocation)
 	query := queryParams.Get("query")
 
 	query = utils.SanitizeInput(query)
