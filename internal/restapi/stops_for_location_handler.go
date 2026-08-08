@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"net/http"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -92,7 +94,21 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops, limitExceeded := api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+	// Bounds that miss every agency's coverage area yield an empty list, so no search
+	// runs — otherwise a stop-code query would fall back to its closest match worldwide.
+	// Query mode searches a wider default radius than geospatial mode, so this check must
+	// consider the same widened bounds GetStopsForLocation's stop-code path searches with.
+	outOfRangeLoc := loc
+	if query != "" {
+		outOfRangeLoc = gtfs.CodeQueryLocation(loc)
+	}
+	outOfRange := api.GtfsManager.CheckIfOutOfBounds(outOfRangeLoc)
+
+	var stops []gtfsdb.Stop
+	var limitExceeded bool
+	if !outOfRange {
+		stops, limitExceeded = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+	}
 
 	results := []models.Stop{}
 	routeIDs := map[string]bool{}
@@ -120,7 +136,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
 		references.Routes = routes
-		response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, false)
+		response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -133,17 +149,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Batch query to get route IDs for all stops, strictly filtered by active service IDs
-	var routeIDsForStops []gtfsdb.GetActiveRouteIDsForStopsOnDateRow
-	if len(activeServiceIDs) > 0 {
-		routeIDsForStops, err = api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
-			StopIds:    stopIDs,
-			ServiceIds: activeServiceIDs,
-		})
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
+	stopRouteIDs, err := api.routeIDsByStop(ctx, stopIDs, query, activeServiceIDs)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
 	// Batch query to get agencies for all stops
@@ -153,26 +162,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Create maps for efficient lookup
-	stopRouteIDs := make(map[string][]string)
 	stopAgency := make(map[string]*gtfsdb.GetAgenciesForStopsRow)
-
-	for _, routeIDRow := range routeIDsForStops {
-		stopID := routeIDRow.StopID
-		routeIDStr, ok := routeIDRow.RouteID.(string)
-		if !ok {
-			api.Logger.Warn("unexpected RouteID type",
-				"stopID", stopID,
-				"routeID", routeIDRow.RouteID,
-			)
-			continue
-		}
-
-		if _, _, err := utils.ExtractAgencyIDAndCodeID(routeIDStr); err != nil {
-			continue // Skip malformed route IDs
-		}
-		stopRouteIDs[stopID] = append(stopRouteIDs[stopID], routeIDStr)
-	}
 
 	// Group agencies by stop (take the first agency for each stop)
 	for _, agencyRow := range agenciesForStops {
@@ -196,7 +186,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		rids := stopRouteIDs[stopID]
 		agency := stopAgency[stopID]
 
-		if len(rids) == 0 || agency == nil {
+		// A stop-code lookup still resolves the stop when nothing is scheduled that day.
+		if agency == nil || (len(rids) == 0 && query == "") {
 			continue
 		}
 
@@ -268,6 +259,56 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	references.Routes = routes
 	references.Situations = situations
 
-	response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, isLimitExceeded)
+	response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
+}
+
+// routeIDsByStop maps each stop to the routes serving it. Stop-code queries report every
+// route serving the stop, matching legacy; geospatial searches report only the routes
+// active on the queried date.
+func (api *RestAPI) routeIDsByStop(
+	ctx context.Context,
+	stopIDs []string,
+	stopCodeQuery string,
+	activeServiceIDs []string,
+) (map[string][]string, error) {
+	byStop := make(map[string][]string)
+	collect := func(stopID string, routeID interface{}) {
+		routeIDStr, ok := routeID.(string)
+		if !ok {
+			api.Logger.Warn("unexpected RouteID type", "stopID", stopID, "routeID", routeID)
+			return
+		}
+		if _, _, err := utils.ExtractAgencyIDAndCodeID(routeIDStr); err != nil {
+			return
+		}
+		byStop[stopID] = append(byStop[stopID], routeIDStr)
+	}
+
+	if stopCodeQuery != "" {
+		rows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			collect(row.StopID, row.RouteID)
+		}
+		return byStop, nil
+	}
+
+	if len(activeServiceIDs) == 0 {
+		return byStop, nil
+	}
+
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
+		StopIds:    stopIDs,
+		ServiceIds: activeServiceIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		collect(row.StopID, row.RouteID)
+	}
+	return byStop, nil
 }

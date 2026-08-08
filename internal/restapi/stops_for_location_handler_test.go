@@ -252,7 +252,7 @@ func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 
 	ctx := context.Background()
 	q := api.GtfsManager.GtfsDB.Queries
-	lat, lon := 41.5, -123.5 // away from the RABA fixture stops
+	lat, lon := 40.583321, -122.426966 // inside the RABA coverage area
 
 	for i, tc := range []struct {
 		agencyID string
@@ -412,6 +412,89 @@ func TestStopsForLocationHandlerRouteTypeValidMultiple(t *testing.T) {
 	assert.NotEmpty(t, model.Data.References.Routes)
 }
 
+// Stop 2042 runs Thu/Fri/Sat only, so a Monday leaves it with no active service.
+func TestStopsForLocationQueryIgnoresActiveService(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 16, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1, "stop-code lookup should not depend on the queried date")
+	assert.Equal(t, "2042", model.Data.List[0].Code)
+}
+
+// A radius that excludes the match still returns it as the closest candidate.
+func TestStopsForLocationQueryFallsBackToClosestMatch(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.62&lon=-122.39&radius=1&query=2042")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1, "closest code match should be returned when none are in bounds")
+	assert.Equal(t, "2042", model.Data.List[0].Code)
+}
+
+// Merged feeds can repeat a stop code. DupB is seeded nearer than DupA, which sorts first by id.
+func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	lat, lon := 40.583321, -122.426966
+	const sharedCode = "DUPCODE"
+
+	for i, agencyID := range []string{"DupA", "DupB"} {
+		_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+			ID: agencyID, Name: agencyID, Url: "http://example.com", Timezone: "America/Los_Angeles",
+		})
+		require.NoError(t, err)
+
+		routeID, svcID, tripID, stopID := agencyID+"R", agencyID+"Svc", agencyID+"T", agencyID+"S"
+
+		_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+			ID: routeID, AgencyID: agencyID, ShortName: nulls.String("D"), Type: 3,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: stopID, Code: nulls.String(sharedCode), Name: nulls.String("Dup Stop"),
+			Lat: lat + float64(1-i)*0.001, Lon: lon,
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+			ID: svcID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+			StartDate: "20240101", EndDate: "20241231",
+		})
+		require.NoError(t, err)
+
+		_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: tripID, RouteID: routeID, ServiceID: svcID})
+		require.NoError(t, err)
+
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: stopID, StopSequence: 1,
+			ArrivalTime: 12 * 3600 * int64(time.Second), DepartureTime: 12 * 3600 * int64(time.Second),
+		})
+		require.NoError(t, err)
+	}
+
+	endpoint := fmt.Sprintf(
+		"/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=2000&query=%s&maxCount=1",
+		lat, lon, sharedCode)
+	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1, "in-bounds matches should be truncated to maxCount")
+	assert.Equal(t, "DupB_DupBS", model.Data.List[0].ID, "the nearest match should survive the cap")
+	assert.True(t, model.Data.LimitExceeded)
+}
+
 func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 	clock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, clock)
@@ -424,6 +507,22 @@ func TestStopsForLocationQueryOutOfArea(t *testing.T) {
 	// curl https://api.pugetsound.onebusaway.org/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&query=10914
 	// returns no results.
 	assert.Empty(t, model.Data.List)
+}
+
+// A point ~3.3km north of RABA's coverage edge (max lat ~40.9373) falls within the
+// 10km default radius query mode should use, but outside the 600m non-query default —
+// the out-of-range check must use the same widened bounds the search itself does.
+func TestStopsForLocationQueryOutOfRangeUsesWidenedRadius(t *testing.T) {
+	clock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, clock)
+
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.9673&lon=-122.098197&query=2042")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.False(t, model.Data.OutOfRange, "query mode should widen the search radius before checking range")
+	require.Len(t, model.Data.List, 1)
+	assert.Equal(t, "2042", model.Data.List[0].Code)
 }
 
 func TestStopsForLocationMissingLat(t *testing.T) {

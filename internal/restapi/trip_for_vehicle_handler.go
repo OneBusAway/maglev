@@ -70,7 +70,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	var status *models.TripStatus
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+		status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("failed to build trip status",
 				"tripID", tripID,
@@ -161,8 +161,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	routeRefs := make(map[string]models.Route, len(uniqueRouteMap))
 	for combinedID, route := range uniqueRouteMap {
 		routeRefs[combinedID] = models.NewRoute(
-			utils.FormCombinedID(agencyID, route.ID),
-			agencyID,
+			combinedID,
+			route.AgencyID,
 			route.ShortName.String,
 			route.LongName.String,
 			route.Desc.String,

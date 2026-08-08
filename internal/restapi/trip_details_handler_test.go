@@ -469,6 +469,19 @@ func TestTripDetailsHandlerWithVehicleId(t *testing.T) {
 		assert.Equal(t, http.StatusOK, model.Code)
 		assert.Equal(t, tripID, model.Data.Entry.TripID)
 	})
+
+	t.Run("vehicleId on a different trip returns 404", func(t *testing.T) {
+		// Java's TripDetailsBeanService rejects a vehicle whose current trip
+		// isn't the trip being described, so the response can't conflate two
+		// unrelated trips. See trip_details_handler.go:220-223.
+		api.GtfsManager.MockAddVehicle("mismatched-vehicle", "some-other-trip-id", trip.RouteID)
+
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			"/api/where/trip-details/"+tripID+".json?key=TEST&vehicleId="+agency.ID+"_mismatched-vehicle")
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, model.Code)
+	})
 }
 
 // Guards the handler currentTime -> StaleDetector wiring at the endpoint (#1169).
