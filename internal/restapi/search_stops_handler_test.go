@@ -1,6 +1,8 @@
 package restapi
 
 import (
+	"context"
+	"database/sql"
 	"maps"
 	"net/http"
 	"net/url"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -17,6 +20,20 @@ func searchStopsURL(params url.Values) string {
 	q := url.Values{"key": {"TEST"}}
 	maps.Copy(q, params)
 	return "/api/where/search/stop.json?" + q.Encode()
+}
+
+// registerFixtureCleanup schedules fixture deletions before the inserts run, so the rows
+// are still removed when an insert fails and aborts the test. The test database is shared
+// by every test in the package run, so leftover rows leak into other tests' results.
+func registerFixtureCleanup(t *testing.T, db *sql.DB, statements ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, statement := range statements {
+			if _, err := db.ExecContext(context.Background(), statement); err != nil {
+				t.Errorf("fixture cleanup failed for %q: %v", statement, err)
+			}
+		}
+	})
 }
 
 func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
@@ -300,11 +317,260 @@ func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
 	assert.Len(t, stopsRespExceeded.Data.List, totalMatches-1)
 }
 
+func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
+		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
+		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
+		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2', 'route_parent_only')`,
+		`DELETE FROM agencies WHERE id IN ('999', '888')`,
+		`DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency')`,
+	)
+
+	// routes.agency_id and trips.service_id are foreign keys, so the agencies and the
+	// calendar entry the fixture rows point at must exist before those rows are inserted.
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO agencies (id, name, url, timezone)
+		VALUES ('999', 'Parent Test Agency One', 'http://one.example.test', 'America/Los_Angeles'),
+		       ('888', 'Parent Test Agency Two', 'http://two.example.test', 'America/Los_Angeles')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20240101', '20251231')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding)
+		VALUES ('parent_stat_1', 'P1', 'Parent Station One', 40.0, -120.0, 1, 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_1', 'C1', 'Child Stop One', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO routes (id, agency_id, short_name, type)
+		VALUES ('route_parent_test', '999', 'RT-P', 3)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO trips (id, route_id, service_id)
+		VALUES ('trip_parent_test', 'route_parent_test', 'service_1')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test', 'child_stop_1', 1, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding)
+		VALUES ('parent_stat_2', 'P2', 'Parent Station Two', 40.0, -120.0, 1, 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_2', 'C2', 'Child Stop Two', 40.0, -120.0, 0, 'parent_stat_2', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO routes (id, agency_id, short_name, type)
+		VALUES ('route_parent_test_2', '888', 'RT-P2', 3)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO trips (id, route_id, service_id)
+		VALUES ('trip_parent_test_2', 'route_parent_test_2', 'service_1')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test_2', 'child_stop_2', 1, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	// A second agency serving parent_stat_1, so that one parent station is referenced
+	// under two different agency prefixes.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_shared', 'C4', 'Child Stop Shared', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test_2', 'child_stop_shared', 2, 29400, 29400)
+	`)
+	require.NoError(t, err)
+
+	// parent_stat_1 is served directly by its own route, with no child stop on that
+	// route, so references.routes must be populated from the parent lookup alone.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO routes (id, agency_id, short_name, type)
+		VALUES ('route_parent_only', '999', 'RT-PARENT-ONLY', 3)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO trips (id, route_id, service_id)
+		VALUES ('trip_parent_only', 'route_parent_only', 'service_1')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_only', 'parent_stat_1', 1, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	// A stop served by routes from both agencies, to verify agency selection is
+	// deterministic (lowest agency ID) rather than dependent on query row order.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, parent_station, wheelchair_boarding)
+		VALUES ('child_stop_multi_agency', 'C5', 'Child Stop Multi Agency', 40.0, -120.0, 0, 'parent_stat_1', 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test', 'child_stop_multi_agency', 2, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_parent_test_2', 'child_stop_multi_agency', 3, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, stopsResp.Code)
+
+	require.Len(t, stopsResp.Data.List, 4)
+
+	stopsByName := make(map[string]models.Stop, len(stopsResp.Data.List))
+	for _, stop := range stopsResp.Data.List {
+		stopsByName[stop.Name] = stop
+	}
+
+	child1, ok := stopsByName["Child Stop One"]
+	require.True(t, ok)
+	assert.Equal(t, "999_child_stop_1", child1.ID)
+	assert.Equal(t, "999_parent_stat_1", child1.Parent)
+
+	child2, ok := stopsByName["Child Stop Two"]
+	require.True(t, ok)
+	assert.Equal(t, "888_child_stop_2", child2.ID)
+	assert.Equal(t, "888_parent_stat_2", child2.Parent)
+
+	// The same parent station reached through a second agency keeps that agency's prefix.
+	childShared, ok := stopsByName["Child Stop Shared"]
+	require.True(t, ok)
+	assert.Equal(t, "888_child_stop_shared", childShared.ID)
+	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
+
+	// A stop served by two agencies picks the lowest agency ID deterministically,
+	// rather than whichever route GetRoutesForStops happens to return first.
+	childMultiAgency, ok := stopsByName["Child Stop Multi Agency"]
+	require.True(t, ok)
+	assert.Equal(t, "888_child_stop_multi_agency", childMultiAgency.ID)
+	assert.Equal(t, "888_parent_stat_1", childMultiAgency.Parent)
+	assert.Equal(t, []string{"888_route_parent_test_2", "999_route_parent_test"}, childMultiAgency.RouteIDs,
+		"routeIds must be in a stable, deterministic order")
+
+	referenceIDs := make([]string, 0, len(stopsResp.Data.References.Stops))
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		referenceIDs = append(referenceIDs, parentRef.ID)
+	}
+	require.Equal(t, []string{"888_parent_stat_1", "888_parent_stat_2", "999_parent_stat_1"}, referenceIDs,
+		"references.stops must hold one entry per (parent station, agency) pair, sorted by ID")
+
+	parentRefsByID := make(map[string]models.Stop, len(stopsResp.Data.References.Stops))
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		parentRefsByID[parentRef.ID] = parentRef
+	}
+
+	// The contract that matters: every parent a returned stop points at must resolve.
+	for _, stop := range stopsResp.Data.List {
+		if stop.Parent == "" {
+			continue
+		}
+		assert.Contains(t, parentRefsByID, stop.Parent,
+			"parent %q of stop %q has no entry in references.stops", stop.Parent, stop.ID)
+	}
+
+	assert.Equal(t, "Parent Station One", parentRefsByID["999_parent_stat_1"].Name)
+	assert.Equal(t, "Parent Station One", parentRefsByID["888_parent_stat_1"].Name)
+	assert.Equal(t, "Parent Station Two", parentRefsByID["888_parent_stat_2"].Name)
+
+	// Parent references carry route arrays like every other stop-emitting endpoint.
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		assert.NotNil(t, parentRef.RouteIDs, "parent %q is missing routeIds", parentRef.ID)
+		assert.NotNil(t, parentRef.StaticRouteIDs, "parent %q is missing staticRouteIds", parentRef.ID)
+	}
+
+	// route_parent_only serves parent_stat_1 directly and is not on any returned child
+	// stop, so it must still be merged into references.routes rather than dropped.
+	routesByID := make(map[string]models.Route, len(stopsResp.Data.References.Routes))
+	for _, route := range stopsResp.Data.References.Routes {
+		routesByID[route.ID] = route
+	}
+	_, hasParentOnlyRoute := routesByID["999_route_parent_only"]
+	assert.True(t, hasParentOnlyRoute,
+		"references.routes must include parent-only routes so parent routeIds always resolve")
+	assert.Equal(t, "999", routesByID["999_route_parent_only"].AgencyID,
+		"a route's agencyId must match its own ID prefix, not the child stop's agency that reached it")
+
+	// route_parent_only belongs to agency 999. parent_stat_1 is also reached through
+	// agency 888 (via child_stop_shared/child_stop_multi_agency), so a route must not be
+	// re-prefixed with the agency of whichever child stop happened to reach the parent.
+	_, hasMisprefixedRoute := routesByID["888_route_parent_only"]
+	assert.False(t, hasMisprefixedRoute,
+		"routes must not be re-prefixed with a child stop's agency")
+
+	// A parent reached through agency 888 still points at the route's real 999-prefixed ID.
+	assert.Contains(t, parentRefsByID["888_parent_stat_1"].RouteIDs, "999_route_parent_only")
+
+	// Every routeId referenced by any parent stop must resolve in references.routes.
+	for _, parentRef := range stopsResp.Data.References.Stops {
+		for _, routeID := range parentRef.RouteIDs {
+			assert.Contains(t, routesByID, routeID,
+				"parent %q references route %q which is missing from references.routes", parentRef.ID, routeID)
+		}
+	}
+}
+
 func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
 	db := api.GtfsManager.GtfsDB.DB
+
+	// The RABA agency and the service_1 calendar are shared records and are left in place.
+	registerFixtureCleanup(t, db,
+		`DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
+		`DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
+		`DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`,
+		`DELETE FROM stops WHERE id IN ('zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3')`,
+	)
 
 	// Insert mock data for exclusion testing
 	_, err := db.Exec(`

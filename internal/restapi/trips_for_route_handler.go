@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -27,16 +28,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	includeSchedule := r.URL.Query().Get("includeSchedule") != "false"
-	includeStatus := r.URL.Query().Get("includeStatus") != "false"
-	includeTrip := parseIncludeTrip(r.URL.Query())
+	query := r.URL.Query()
+	includeSchedule := parseBoolQueryParam(query, "includeSchedule")
+	includeStatus := parseBoolQueryParam(query, "includeStatus")
+	includeTrip := parseIncludeTrip(query)
 	includeReferences := ShouldIncludeReferences(r)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			references := models.NewEmptyReferences()
-			response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, *references, false, api.Clock, false)
+			response := models.NewListResponse([]models.TripsForRouteListEntry{}, *references, false, api.Clock)
 			api.sendResponse(w, r, response)
 			return
 		}
@@ -201,7 +203,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			nullBlockTrips = append(nullBlockTrips, prevNullBlockTrips...)
 			for _, id := range prevNullBlockTrips {
-				tripServiceDay[id] = prevDayMidnight
+				if _, ok := tripServiceDay[id]; !ok {
+					tripServiceDay[id] = prevDayMidnight
+				}
 			}
 		}
 	}
@@ -209,11 +213,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if len(allLinkedBlocks) == 0 && len(nullBlockTrips) == 0 {
 		var references models.ReferencesModel
 		if includeReferences {
-			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil)
+			references = buildTripReferences(api, ctx, includeTrip, []models.TripsForRouteListEntry{}, []gtfsdb.Stop{}, nil, nil)
 		} else {
 			references = *models.NewEmptyReferences()
 		}
-		response := models.NewListResponseWithRange([]models.TripsForRouteListEntry{}, references, false, api.Clock, false)
+		response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -311,6 +315,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	tripAgencyMap := make(map[string]string)
+	routeAgencyMap := make(map[string]string)
 	if len(fetchedTrips) > 0 {
 		routeIDSet := make(map[string]struct{})
 		for _, trip := range fetchedTrips {
@@ -327,18 +332,23 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		routeAgencyMap := make(map[string]string, len(routes))
 		for _, route := range routes {
 			routeAgencyMap[route.ID] = route.AgencyID
 		}
 		for _, trip := range fetchedTrips {
-			if agencyID, ok := routeAgencyMap[trip.RouteID]; ok {
-				tripAgencyMap[trip.ID] = agencyID
+			if aID, ok := routeAgencyMap[trip.RouteID]; ok {
+				tripAgencyMap[trip.ID] = aID
 			}
 		}
 	}
 
-	stopIDsMap := make(map[string]bool)
+	stopIDsMap := make(map[string]string)
+
+	blockTripForRoute, err := api.buildBlockTripForRoute(ctx, fetchedTrips, routeID, serviceIDs, prevServiceIDs)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	var result []models.TripsForRouteListEntry
 	for _, fetchedTrip := range fetchedTrips {
@@ -349,33 +359,49 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		tripID := fetchedTrip.ID
 
-		agencyID, ok := tripAgencyMap[tripID]
+		activeAgencyID, ok := tripAgencyMap[tripID]
 		if !ok {
 			continue
 		}
 
-		var schedule *models.TripsSchedule
-		var status *models.TripStatus
+		// Determine the entry's trip identity. For interlined blocks where the
+		// active trip is on another route, entryTripID is the queried-route trip
+		// in this block whose time window is nearest to the active trip — i.e.
+		// "the trip on the queried route that caused this block to be selected."
+		// status.activeTripId will still reflect the vehicle's current trip.
+		entryTripID := tripID
+		entryAgencyID := activeAgencyID
+		if fetchedTrip.RouteID != routeID && fetchedTrip.BlockID.Valid {
+			if resolution, resolved := resolveInterlinedEntryTripID(fetchedTrip, routeID, agencyID, blockTripForRoute, routeAgencyMap); resolved {
+				entryTripID = resolution.EntryTripID
+				entryAgencyID = resolution.EntryAgencyID
+				// Keep the selected queried-route trip available when
+				// building references so the entry's trip reference (route,
+				// headsign, ...) reflects the entry's tripId rather than the
+				// active trip's.
+				fetchedTrips = append(fetchedTrips, resolution.SelectedTrip)
+			}
+			// If unresolved (no queried-route trip exists anywhere in this
+			// block), entryTripID/entryAgencyID keep their active-trip
+			// defaults above. This matches legacy OBA, which always reports
+			// the active trip's own ID here, and preserves the one-entry-
+			// per-active-block guarantee rather than dropping the entry.
+		}
 
+		// Build schedule from entryTripID (the entry's own trip), not the active
+		// trip. Per spec, schedule.stopTimes is "scheduled stop times for this
+		// trip" and schedule.previousTripId is "the preceding trip in this
+		// vehicle's block" — both relative to the entry's trip identity.
+		var schedule *models.TripsSchedule
 		if includeSchedule {
 			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, tripID, agencyID, currentTime, currentLocation)
+			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, currentTime, currentLocation)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
 			}
 
 			collectStopIDsFromSchedule(schedule, stopIDsMap)
-		}
-
-		// Build status if we have a vehicle (either on this trip or we know block has vehicles)
-		if includeStatus {
-			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
-			if statusErr != nil {
-				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
-				status = nil
-			}
 		}
 
 		// Per spec, serviceDate is "Unix millisecond timestamp of midnight at
@@ -387,13 +413,25 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			serviceDate = midnight
 		}
 
+		// Build status from the active trip (tripID). Per spec,
+		// status.activeTripId is "the trip the vehicle is currently executing."
+		var status *models.TripStatus
+		if includeStatus {
+			var statusErr error
+			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, serviceDate, currentTime)
+			if statusErr != nil {
+				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
+				status = nil
+			}
+		}
+
 		entry := models.TripsForRouteListEntry{
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  serviceDate.UnixMilli(),
-			SituationIds: api.GetSituationIDsForTrip(r.Context(), tripID),
-			TripId:       utils.FormCombinedID(agencyID, tripID),
+			SituationIds: api.GetSituationIDsForTrip(r.Context(), entryTripID),
+			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
 		result = append(result, entry)
 	}
@@ -441,10 +479,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
+		serviceDate := todayMidnight
+		if midnight, ok := tripServiceDay[baseTripID]; ok {
+			serviceDate = midnight
+		}
+
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, serviceDate, currentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
@@ -455,7 +498,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  serviceDate.UnixMilli(),
 			SituationIds: api.GetSituationIDsForTrip(r.Context(), baseTripID),
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
@@ -478,34 +521,207 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	if includeReferences {
 		var stops []gtfsdb.Stop
 		if len(stopIDsMap) > 0 {
-			stopIDs := make([]string, 0, len(stopIDsMap))
-			for stopID := range stopIDsMap {
-				stopIDs = append(stopIDs, stopID)
+			bareIDs := make([]string, 0, len(stopIDsMap))
+			for bareID := range stopIDsMap {
+				bareIDs = append(bareIDs, bareID)
 			}
 			var err error
-			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
 			if err != nil {
-				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(stopIDs))
+				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
 				stops = []gtfsdb.Stop{}
 			}
 		}
 
-		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips)
+		references = buildTripReferences(api, ctx, includeTrip, result, stops, fetchedTrips, stopIDsMap)
 	} else {
 		references = *models.NewEmptyReferences()
 	}
-	response := models.NewListResponseWithRange(result, references, false, api.Clock, false)
+	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
-func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]bool) {
+// blockTripEntry is a candidate queried-route trip within an interlined
+// block, carrying just enough of its schedule window to pick the one nearest
+// a given active trip.
+type blockTripEntry struct {
+	ID               string
+	MinArrivalTime   int64
+	MaxDepartureTime int64
+	Trip             gtfsdb.Trip
+}
+
+// buildBlockTripForRoute batch-fetches every trip in the blocks that
+// fetchedTrips are interlined through (i.e. an active trip on another route
+// sharing a block with the queried route), and returns, per block ID, the
+// queried-route trips found in it. Only today's and yesterday's active
+// service IDs are considered, matching the rest of this handler's active-trip
+// resolution window.
+func (api *RestAPI) buildBlockTripForRoute(
+	ctx context.Context,
+	fetchedTrips []gtfsdb.Trip,
+	routeID string,
+	serviceIDs, prevServiceIDs []string,
+) (map[string][]blockTripEntry, error) {
+	blockTripForRoute := make(map[string][]blockTripEntry)
+
+	var interlinedBlockIDs []sql.NullString
+	for _, t := range fetchedTrips {
+		if t.RouteID != routeID && t.BlockID.Valid {
+			interlinedBlockIDs = append(interlinedBlockIDs, t.BlockID)
+		}
+	}
+	if len(interlinedBlockIDs) == 0 {
+		return blockTripForRoute, nil
+	}
+
+	// Explicit copy: append(serviceIDs, ...) could alias serviceIDs' backing
+	// array if it has spare capacity, which would mutate serviceIDs.
+	allServiceIDs := make([]string, len(serviceIDs))
+	copy(allServiceIDs, serviceIDs)
+	if len(prevServiceIDs) > 0 {
+		allServiceIDs = append(allServiceIDs, prevServiceIDs...)
+	}
+
+	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+		BlockIds:   interlinedBlockIDs,
+		ServiceIds: allServiceIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, bt := range blockTrips {
+		// MinArrivalTime/MaxDepartureTime are NULL for a trip with no
+		// stop_times (see schema.sql); such a trip has no time window to
+		// compare against, so it can't be a nearest-midpoint candidate.
+		if bt.RouteID == routeID && bt.BlockID.Valid && bt.MinArrivalTime.Valid && bt.MaxDepartureTime.Valid {
+			key := bt.BlockID.String
+			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
+				ID:               bt.ID,
+				MinArrivalTime:   bt.MinArrivalTime.Int64,
+				MaxDepartureTime: bt.MaxDepartureTime.Int64,
+				Trip:             tripsByBlockIDsRowToTrip(bt),
+			})
+		}
+	}
+	return blockTripForRoute, nil
+}
+
+// interlinedTripResolution is the outcome of resolving an entry's trip
+// identity when its active trip belongs to a different route than the one
+// queried.
+type interlinedTripResolution struct {
+	EntryTripID   string
+	EntryAgencyID string
+	SelectedTrip  gtfsdb.Trip
+}
+
+// resolveInterlinedEntryTripID finds, among the queried-route trips sharing
+// fetchedTrip's block (as built by buildBlockTripForRoute), the one whose
+// time window is nearest to fetchedTrip's own — i.e. "the trip on the
+// queried route that caused this block to be selected." Block trips are
+// sequential (one vehicle) and never overlap in time, so nearest-midpoint is
+// used instead of an overlap test, which would fail across any layover gap.
+// Keying blockTripForRoute on block alone (not block+service) matters
+// because a block's trips aren't guaranteed to share one literal service_id:
+// GTFS allows two service_ids to be simultaneously active on the same
+// calendar day, and nothing requires a block's trips to agree on which one
+// they're tagged with.
+//
+// A block ID can also be reused across otherwise-unrelated service_ids (e.g.
+// an agency reusing block "101" for both yesterday's and today's schedule),
+// which would let a same-block candidate from the wrong calendar day win a
+// nearest-midpoint search purely by time-of-day coincidence. Candidates that
+// share fetchedTrip's exact service_id are preferred first: trips under one
+// service_id recur together on every date that service_id is active, so
+// they can never be a cross-day collision. The broader nearest-midpoint
+// search across all candidates remains as a fallback for the legitimate
+// case of two distinct service_ids both active on the same calendar day.
+//
+// ok is false if no queried-route trip exists anywhere in the block.
+func resolveInterlinedEntryTripID(
+	fetchedTrip gtfsdb.Trip,
+	routeID, agencyID string,
+	blockTripForRoute map[string][]blockTripEntry,
+	routeAgencyMap map[string]string,
+) (result interlinedTripResolution, ok bool) {
+	entries := blockTripForRoute[fetchedTrip.BlockID.String]
+	if len(entries) == 0 {
+		return interlinedTripResolution{}, false
+	}
+	if !fetchedTrip.MinArrivalTime.Valid || !fetchedTrip.MaxDepartureTime.Valid {
+		return interlinedTripResolution{}, false
+	}
+
+	if sameService := entriesWithServiceID(entries, fetchedTrip.ServiceID); len(sameService) > 0 {
+		entries = sameService
+	}
+
+	activeMid := (fetchedTrip.MinArrivalTime.Int64 + fetchedTrip.MaxDepartureTime.Int64) / 2
+	bestIdx := 0
+	bestDist := int64(-1)
+	for i, e := range entries {
+		eMid := (e.MinArrivalTime + e.MaxDepartureTime) / 2
+		dist := eMid - activeMid
+		if dist < 0 {
+			dist = -dist
+		}
+		if bestDist == -1 || dist < bestDist {
+			bestDist = dist
+			bestIdx = i
+		}
+	}
+
+	entryAgencyID := agencyID
+	if queriedAgency, ok := routeAgencyMap[routeID]; ok {
+		entryAgencyID = queriedAgency
+	}
+
+	return interlinedTripResolution{
+		EntryTripID:   entries[bestIdx].ID,
+		EntryAgencyID: entryAgencyID,
+		SelectedTrip:  entries[bestIdx].Trip,
+	}, true
+}
+
+// entriesWithServiceID returns the subset of entries whose trip runs under
+// serviceID.
+func entriesWithServiceID(entries []blockTripEntry, serviceID string) []blockTripEntry {
+	matches := make([]blockTripEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Trip.ServiceID == serviceID {
+			matches = append(matches, e)
+		}
+	}
+	return matches
+}
+
+func tripsByBlockIDsRowToTrip(row gtfsdb.GetTripsByBlockIDsRow) gtfsdb.Trip {
+	return gtfsdb.Trip{
+		ID:               row.ID,
+		RouteID:          row.RouteID,
+		ServiceID:        row.ServiceID,
+		TripHeadsign:     row.TripHeadsign,
+		TripShortName:    row.TripShortName,
+		DirectionID:      row.DirectionID,
+		BlockID:          row.BlockID,
+		ShapeID:          row.ShapeID,
+		MinArrivalTime:   row.MinArrivalTime,
+		MaxDepartureTime: row.MaxDepartureTime,
+	}
+}
+
+func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]string) {
 	if schedule == nil {
 		return
 	}
 	for _, stopTime := range schedule.StopTimes {
-		_, stopID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
+		_, bareID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 		if err == nil {
-			stopIDsMap[stopID] = true
+			if _, exists := stopIDsMap[bareID]; !exists {
+				stopIDsMap[bareID] = stopTime.StopID
+			}
 		}
 	}
 }
@@ -517,6 +733,7 @@ func buildTripReferences(
 	trips []models.TripsForRouteListEntry,
 	stops []gtfsdb.Stop,
 	preFetchedTrips []gtfsdb.Trip,
+	stopIDMap map[string]string,
 ) models.ReferencesModel {
 
 	presentTrips := make(map[string]models.Trip)
@@ -669,7 +886,7 @@ func buildTripReferences(
 		stopList = append(stopList, models.Stop{
 			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
-			ID:                 stop.ID,
+			ID:                 stopIDMap[stop.ID],
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       0,
@@ -738,4 +955,14 @@ func stripNumericSuffix(tripID string) string {
 		}
 	}
 	return tripID[:idx]
+}
+
+// parseBoolQueryParam parses a boolean query parameter, defaulting to true when
+// the parameter is omitted and to false when present but not a valid boolean.
+func parseBoolQueryParam(query url.Values, name string) bool {
+	if !query.Has(name) {
+		return true
+	}
+	val, err := strconv.ParseBool(query.Get(name))
+	return err == nil && val
 }
