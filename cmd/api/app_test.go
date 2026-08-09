@@ -166,11 +166,42 @@ func TestCreateServer(t *testing.T) {
 	defer api.Shutdown()
 
 	assert.NotNil(t, srv, "Server should not be nil")
-	assert.Equal(t, "0.0.0.0:8080", srv.Addr, "Server address should match port and address")
+	assert.Equal(t, ":8080", srv.Addr, "Server address should match port and address")
 	assert.NotNil(t, srv.Handler, "Server handler should be set")
 	assert.Equal(t, time.Minute, srv.IdleTimeout, "IdleTimeout should be 1 minute")
 	assert.Equal(t, 5*time.Second, srv.ReadTimeout, "ReadTimeout should be 5 seconds")
 	assert.Equal(t, 10*time.Second, srv.WriteTimeout, "WriteTimeout should be 10 seconds")
+}
+
+func TestCreateServerWithConfiguredHost(t *testing.T) {
+	ctx := context.Background()
+
+	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
+	if _, err := os.Stat(testDataPath); os.IsNotExist(err) {
+		t.Skip("Test data not available, skipping test")
+	}
+
+	cfg := appconf.Config{
+		Port:      8080,
+		Host:      "127.0.0.1",
+		Env:       appconf.Test,
+		ApiKeys:   []string{"test"},
+		RateLimit: 100,
+	}
+
+	gtfsCfg := gtfs.Config{
+		GTFSDataPath: ":memory:",
+		GtfsURL:      testDataPath,
+	}
+
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+	require.NoError(t, err, "BuildApplication should not fail")
+
+	srv, api := CreateServer(coreApp, cfg)
+	defer api.Shutdown()
+
+	assert.NotNil(t, srv, "Server should not be nil")
+	assert.Equal(t, "127.0.0.1:8080", srv.Addr, "Server address should use configured host")
 }
 
 func TestCreateServerHandlerResponds(t *testing.T) {
