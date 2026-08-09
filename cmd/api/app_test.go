@@ -146,10 +146,10 @@ func TestCreateServer(t *testing.T) {
 	}
 
 	tests := []struct {
-	name     string
-	host     string
-	port     int
-	wantAddr string
+		name     string
+		host     string
+		port     int
+		wantAddr string
 	}{
 		{
 			name:     "empty host uses wildcard",
@@ -163,8 +163,14 @@ func TestCreateServer(t *testing.T) {
 			port:     8080,
 			wantAddr: "127.0.0.1:8080",
 		},
+		{
+			name:     "IPv6 host is bracketed",
+			host:     "::1",
+			port:     8080,
+			wantAddr: "[::1]:8080",
+		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -184,7 +190,7 @@ func TestCreateServer(t *testing.T) {
 
 			srv, api := CreateServer(coreApp, cfg)
 			defer api.Shutdown()
-			
+
 			assert.NotNil(t, srv, "Server should not be nil")
 			assert.Equal(t, tt.wantAddr, srv.Addr, "Server address should match port and address")
 			assert.NotNil(t, srv.Handler, "Server handler should be set")
