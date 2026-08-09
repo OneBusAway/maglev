@@ -560,7 +560,10 @@ func (api *RestAPI) buildBlockTripForRoute(
 		// MinArrivalTime/MaxDepartureTime are NULL for a trip with no
 		// stop_times (see schema.sql); such a trip has no time window to
 		// compare against, so it can't be a nearest-midpoint candidate.
-		if bt.RouteID == routeID && bt.BlockID.Valid && bt.MinArrivalTime.Valid && bt.MaxDepartureTime.Valid {
+		if bt.RouteID == routeID &&
+			bt.BlockID.Valid &&
+			bt.MinArrivalTime.Valid &&
+			bt.MaxDepartureTime.Valid {
 			key := bt.BlockID.String
 			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 				ID:               bt.ID,
