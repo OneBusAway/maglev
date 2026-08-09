@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -150,10 +152,6 @@ func createClock(env appconf.Environment) clock.Clock {
 // CreateServer creates and configures the HTTP server with routes and middleware.
 // Sets up both REST API routes and WebUI routes, applies security headers, and adds request logging.
 func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *restapi.RestAPI) {
-	host := cfg.Host
-	if host == "" {
-		host = "0.0.0.0"
-	}
 
 	api := restapi.NewRestAPI(coreApp)
 
@@ -202,7 +200,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	)
 
 	srv := &http.Server{
-		Addr:           fmt.Sprintf("%s:%d", host, cfg.Port),
+		Addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		Handler:        handler,
 		IdleTimeout:    time.Minute,
 		ReadTimeout:    5 * time.Second,
