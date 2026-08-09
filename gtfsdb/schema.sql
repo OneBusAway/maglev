@@ -405,6 +405,8 @@ CREATE INDEX IF NOT EXISTS idx_trips_route_id ON trips (route_id);
 CREATE INDEX IF NOT EXISTS idx_trips_service_id ON trips (service_id);
 
 -- migrate
+CREATE INDEX IF NOT EXISTS idx_stops_code ON stops (code);
+
 CREATE INDEX IF NOT EXISTS idx_stop_times_trip_id ON stop_times (trip_id);
 
 -- migrate

@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -36,8 +35,11 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	// Initialize errors map
 	fieldErrors := make(map[string][]string)
 
-	const maxMinutesAfter = 240
-	const maxMinutesBefore = 60
+	// Cap at one service day. Java has no cap; we keep one to bound
+	// per-request work — the handler iterates only ±1 day of stop_times,
+	// so anything larger returns the same data anyway.
+	const maxMinutesAfter = 24 * 60
+	const maxMinutesBefore = 24 * 60
 
 	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
@@ -179,13 +181,21 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
 	stopAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -207,7 +217,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -288,7 +302,15 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	scheduledArrivalTime := serviceMidnight.Add(arrivalOffset)
 	scheduledDepartureTime := serviceMidnight.Add(departureOffset)
 
-	// Get real-time data for this trip if available
+	// Get real-time data for this trip if available.
+	//
+	// numberOfStopsAway is initialized to 0, matching the plural handler and
+	// the spec's "no block location available → distanceFromStop,
+	// numberOfStopsAway, vehicleId, predicted, lastUpdateTime, and tripStatus
+	// are absent or zero" (arrivals-and-departures-for-stop §11a). A real
+	// negative value (vehicle already past this stop) comes back from
+	// snapshot.metricsForStop and overrides the zero init — the sentinel
+	// -1 collided with that legitimate signal.
 	var (
 		predicted         bool
 		vehicleID         string
@@ -319,14 +341,23 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	if vehicle != nil && vehicle.Trip != nil {
 		if vehicle.ID != nil {
-			vehicleID = vehicle.ID.ID
+			// Combined {agencyId}_{vehicleId} form per spec; matches
+			// tripStatus.vehicleId (set by BuildTripStatus below) and lets
+			// clients round-trip this value into /trip-for-vehicle/{id} and
+			// /trip-details/{id}?vehicleId=... which both extract the agency
+			// prefix before doing GetVehicleByID on the raw id.
+			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
 		} else {
 			api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		}
 		predicted = true
 	}
 
-	status, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceDate, currentTime)
+	// Use serviceMidnight (not the raw user-supplied serviceDate, which may
+	// carry a wall-clock time portion) for all schedule math — matches Java's
+	// BlockInstance contract ("midnight time relative to stop times"; see
+	// BlockInstance.java:69-72) and the plural handler's convention.
+	status, snapshot, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
 	if statusErr != nil {
 		api.Logger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -351,21 +382,20 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predicted = false
 		}
 
-		if vehicle != nil && vehicle.Position != nil {
-			distanceFromStop = api.getBlockDistanceToStop(ctx, tripID, stopCode, vehicle, serviceDate)
-
-			numberOfStopsAwayPtr := api.getNumberOfStopsAway(ctx, tripID, int(targetStopTime.StopSequence), vehicle, serviceDate)
-			if numberOfStopsAwayPtr != nil {
-				numberOfStopsAway = *numberOfStopsAwayPtr
-			} else {
-				numberOfStopsAway = -1
+		// Reuse the snapshot BuildTripStatus already computed for this trip.
+		// It applies the same schedule-deviation shift internally, so
+		// recomputing here just to run metricsForStop was duplicating work.
+		if snapshot != nil {
+			if d, n, ok := snapshot.metricsForStop(tripID, int(targetStopTime.StopSequence)); ok {
+				distanceFromStop = d
+				numberOfStopsAway = n
 			}
 		}
 	}
 
 	totalStopsInTrip := int(targetRow.TotalStops)
 
-	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceMidnight)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 	situationIDs := api.GetSituationIDsForTrip(r.Context(), tripID)
@@ -592,7 +622,6 @@ func (api *RestAPI) getPredictedTimes(
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	// trip-level delay exists but StopTimeUpdates is empty
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
 		return time.Time{}, time.Time{}, false
 	}
@@ -662,12 +691,34 @@ func (api *RestAPI) getPredictedTimes(
 		}
 	}
 
-	if arrivalOffset == nil {
+	// Mirror Java's propagateScheduleDeviationForwardAcrossStop
+	// (ArrivalAndDepartureServiceImpl.java:925-930). When slack between arrival
+	// and departure is zero (the typical case at most stops), the
+	// propagation reduces to "copy the present side." Falling back to
+	// propagatedDelay here would mix the target stop with an unrelated
+	// earlier stop's deviation, producing a negative dwell on stops where
+	// arr != dep. Only fall back to propagatedDelay if BOTH sides are nil.
+	if arrivalOffset == nil && departureOffset != nil {
+		arrivalOffset = departureOffset
+	} else if arrivalOffset == nil {
 		arrivalOffset = &propagatedDelay
 	}
-	if departureOffset == nil {
+	if departureOffset == nil && arrivalOffset != nil {
+		departureOffset = arrivalOffset
+	} else if departureOffset == nil {
 		departureOffset = &propagatedDelay
 	}
+
+	// Java's ±1h blockNotActive filter (GtfsRealtimeSource.java:711-752)
+	// lives at RT ingestion — it stops the VehicleLocationRecord from
+	// becoming a BlockLocation. Once a BlockLocation exists, Java's
+	// setPredictedTimesFromScheduleDeviation (ArrivalAndDepartureService
+	// Impl.java:772-805) applies the deviation unconditionally, no cap.
+	// Applying the guard HERE silently drops predictions for genuinely
+	// severely-late buses (which is exactly when riders most need to see
+	// the delay), so we skip the cap on this path and let the offset flow
+	// through. Block-level scheduleDeviation may still be gated upstream
+	// by GetScheduleDeviationForBlock — that's the appropriate location.
 
 	// Rule 1: arrival == departure (Simplified Logic)
 	if scheduledArrivalTime.Equal(scheduledDepartureTime) {
@@ -687,22 +738,4 @@ func (api *RestAPI) getPredictedTimes(
 	predictedDeparture := scheduledDepartureTime.Add(*departureOffset)
 
 	return predictedArrival, predictedDeparture, true
-}
-
-func (api *RestAPI) getNumberOfStopsAway(ctx context.Context, targetTripID string, targetStopSequence int, vehicle *gtfs.Vehicle, serviceDate time.Time) *int {
-	currentVehicleStopSequence := getCurrentVehicleStopSequence(vehicle)
-	if currentVehicleStopSequence == nil {
-		return nil
-	}
-
-	activeTripID := GetVehicleActiveTripID(vehicle)
-	if activeTripID == "" {
-		activeTripID = targetTripID
-	}
-
-	targetGlobalSeq := api.getBlockSequenceForStopSequence(ctx, targetTripID, targetStopSequence, serviceDate)
-	vehicleGlobalSeq := api.getBlockSequenceForStopSequence(ctx, activeTripID, *currentVehicleStopSequence, serviceDate)
-
-	numberOfStopsAway := targetGlobalSeq - vehicleGlobalSeq - 1
-	return &numberOfStopsAway
 }
