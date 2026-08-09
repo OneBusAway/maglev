@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -200,7 +200,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	)
 
 	srv := &http.Server{
-		Addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		Addr:           net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		Handler:        handler,
 		IdleTimeout:    time.Minute,
 		ReadTimeout:    5 * time.Second,
