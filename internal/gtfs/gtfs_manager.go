@@ -315,7 +315,9 @@ func (manager *Manager) RoutesForAgencyID(ctx context.Context, agencyID string) 
 //
 // GetStopsForLocation is used by the stops-for-location endpoint.
 // BOUNDS mode (no routeTypes): shuffles stops then truncates before route-type filtering.
-// ORDERED_BY_CLOSEST mode (routeTypes present): sorts by distance, filters by route type, then truncates.
+// ORDERED_BY_CLOSEST mode (routeTypes present): sorts by distance and filters by route type.
+// The caller caps results after dropping stops without service on the queried date;
+// limitExceeded is therefore only meaningful for BOUNDS mode.
 func (manager *Manager) GetStopsForLocation(
 	ctx context.Context,
 	loc *LocationParams,
@@ -349,7 +351,8 @@ func (manager *Manager) GetStopsForLocation(
 			stops = stops[:maxCount]
 		}
 	} else {
-		// ORDERED_BY_CLOSEST mode: sort by distance, filter by route type, then truncate.
+		// ORDERED_BY_CLOSEST mode: sort by distance and filter by route type.
+		// The caller caps after filtering inactive stops, so limitExceeded remains false.
 		slices.SortFunc(stops, func(a, b gtfsdb.Stop) int {
 			aDist := utils.Distance(loc.Lat, loc.Lon, a.Lat, a.Lon)
 			bDist := utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon)
