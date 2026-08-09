@@ -1193,6 +1193,11 @@ func TestTripsForRouteHandler_PastMidnightServiceDate(t *testing.T) {
 	// 00:30 on 2025-06-13, so its service day starts at Thursday's midnight.
 	expectedServiceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	assert.Equal(t, expectedServiceDate, entry.ServiceDate)
+
+	// BuildTripStatus receives the same resolved serviceDate, so the status
+	// must agree with the entry rather than reporting today's midnight.
+	require.NotNil(t, entry.Status, "entry.Status should not be nil")
+	assert.Equal(t, expectedServiceDate, entry.Status.ServiceDate.UnixMilli())
 }
 
 // TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip verifies that a
@@ -1221,4 +1226,9 @@ func TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip(t *testing.T) {
 
 	expectedServiceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	assert.Equal(t, expectedServiceDate, entry.ServiceDate)
+
+	// BuildTripStatus receives the same resolved serviceDate, so the status
+	// must agree with the entry rather than reporting today's midnight.
+	require.NotNil(t, entry.Status, "entry.Status should not be nil")
+	assert.Equal(t, expectedServiceDate, entry.Status.ServiceDate.UnixMilli())
 }
