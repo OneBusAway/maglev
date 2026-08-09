@@ -148,6 +148,61 @@ func TestStopsForLocationActiveRoutesOnly(t *testing.T) {
 	assert.Empty(t, model.Data.List, "Should return empty stops when no routes are active")
 }
 
+// The cap must apply after inactive stops are dropped, not before.
+func TestStopsForLocationRouteTypeCapsAfterServiceFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxCount    string
+		expectedIDs []string
+	}{
+		{name: "caps at two", maxCount: "2", expectedIDs: []string{"25_2047", "25_3049"}},
+		{
+			name:        "caps at five",
+			maxCount:    "5",
+			expectedIDs: []string{"25_2033", "25_2047", "25_2048", "25_3048", "25_3049"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClock := clock.NewMockClock(time.Date(2025, 12, 26, 14, 0, 0, 0, time.UTC))
+			api := createTestApiWithClock(t, mockClock)
+
+			resp, model := callAPIHandler[StopsResponse](t, api,
+				"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=5000&routeType=3&maxCount="+tt.maxCount)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			ids := make([]string, 0, len(model.Data.List))
+			for _, stop := range model.Data.List {
+				ids = append(ids, stop.ID)
+			}
+			assert.Equal(t, tt.expectedIDs, ids, "the nearest route-type matches should survive the cap")
+			assert.True(t, model.Data.LimitExceeded)
+
+			usedRouteIDs := map[string]bool{}
+			for _, stop := range model.Data.List {
+				for _, routeID := range stop.RouteIDs {
+					usedRouteIDs[routeID] = true
+				}
+			}
+			assert.Len(t, model.Data.References.Routes, len(usedRouteIDs),
+				"references should cover the returned stops only")
+		})
+	}
+}
+
+func TestStopsForLocationRouteTypeReportsNoOverflowUnderCap(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2025, 12, 26, 14, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+
+	resp, model := callAPIHandler[StopsResponse](t, api,
+		"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=5000&routeType=3&maxCount=1000")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotEmpty(t, model.Data.List)
+	assert.False(t, model.Data.LimitExceeded, "everything matching fits under the cap")
+}
+
 func TestStopsForLocationHandlerValidatesParameters(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=invalid&lon=-121.74")

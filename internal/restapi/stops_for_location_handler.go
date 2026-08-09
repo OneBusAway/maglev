@@ -155,17 +155,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	for _, routeIDsForStop := range stopRouteIDs {
-		for _, routeID := range routeIDsForStop {
-			agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				continue
-			}
-			agencyIDs[agencyID] = true
-			routeIDs[routeID] = true
-		}
-	}
-
 	// Batch query to get agencies for all stops
 	agenciesForStops, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
 	if err != nil {
@@ -224,6 +213,26 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	if ctx.Err() != nil {
 		api.clientCanceledResponse(w, r, ctx.Err())
 		return
+	}
+
+	// Bounds searches are capped upstream; route-type searches cap here instead,
+	// after inactive stops are dropped.
+	if len(routeTypes) > 0 && len(results) > maxCount {
+		results = results[:maxCount]
+		resultRawStopIDs = resultRawStopIDs[:maxCount]
+		isLimitExceeded = true
+	}
+
+	// References describe the returned stops, so they are collected after capping.
+	for _, stopID := range resultRawStopIDs {
+		for _, routeID := range stopRouteIDs[stopID] {
+			agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
+			if err != nil {
+				continue
+			}
+			agencyIDs[agencyID] = true
+			routeIDs[routeID] = true
+		}
 	}
 
 	// Spec: results are ordered lexicographically by combined stop ID.
