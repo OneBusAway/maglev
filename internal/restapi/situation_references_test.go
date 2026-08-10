@@ -77,6 +77,11 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 	tripID, stopID := anyTripAndStop(t, api)
 	vehicleID := anyRealTimeVehicleID(t, api)
 
+	// Pinned to a weekday inside the RABA fixture's calendar range, which ended in
+	// 2025; under the real clock the stop has no arrivals and the cases keyed off
+	// it would assert nothing.
+	serviceTime := time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
+
 	tests := []struct {
 		name string
 		url  string
@@ -86,12 +91,16 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 			url:  fmt.Sprintf("/api/where/trip-details/25_%s.json?key=TEST&includeStatus=true", tripID),
 		},
 		{
-			// Pinned to a weekday inside the RABA fixture's calendar range, which
-			// ended in 2025; under the real clock the stop has no arrivals and the
-			// case would assert nothing.
 			name: "arrivals-and-departures-for-stop",
 			url: fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/25_%s.json?key=TEST&time=%d&minutesAfter=240",
-				stopID, time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC).UnixMilli()),
+				stopID, serviceTime.UnixMilli()),
+		},
+		{
+			// The singular endpoint identifies one arrival, so it needs the trip
+			// and service date the stop is being asked about.
+			name: "arrival-and-departure-for-stop",
+			url: fmt.Sprintf("/api/where/arrival-and-departure-for-stop/25_%s.json?key=TEST&tripId=25_%s&serviceDate=%d",
+				stopID, tripID, serviceTime.Truncate(24*time.Hour).UnixMilli()),
 		},
 		{
 			name: "trip-for-vehicle",
