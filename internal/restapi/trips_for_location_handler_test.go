@@ -669,7 +669,11 @@ func TestTripsForLocationHandler_ScheduleStopsAreReferenced(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
-	time.Sleep(500 * time.Millisecond)
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
 
 	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true", "includeStatus=true")
 
@@ -683,16 +687,29 @@ func TestTripsForLocationHandler_ScheduleStopsAreReferenced(t *testing.T) {
 		referenced[stop.ID] = true
 	}
 
+	pointedAt := make(map[string]bool)
 	sawStopTime := false
 	for _, entry := range model.Data.List {
 		require.NotNil(t, entry.Schedule, "includeSchedule=true should populate the schedule")
+		if entry.Status != nil {
+			pointedAt[entry.Status.ClosestStop] = true
+			pointedAt[entry.Status.NextStop] = true
+		}
 		for _, stopTime := range entry.Schedule.StopTimes {
+			pointedAt[stopTime.StopID] = true
 			sawStopTime = true
 			assert.True(t, referenced[stopTime.StopID],
 				"stop %q named by trip %q must appear in references.stops", stopTime.StopID, entry.TripId)
 		}
 	}
 	require.True(t, sawStopTime, "expected at least one scheduled stop time to assert against")
+
+	// And nothing extra: a reference stamped with an ID no entry used would
+	// resolve for no one.
+	for _, stop := range model.Data.References.Stops {
+		assert.True(t, pointedAt[stop.ID],
+			"reference %q is not the ID any entry referred to that stop by", stop.ID)
+	}
 }
 
 // TestTripsForLocationHandler_UnreferencedStopsAreOmitted verifies that stops
@@ -702,7 +719,11 @@ func TestTripsForLocationHandler_UnreferencedStopsAreOmitted(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
-	time.Sleep(500 * time.Millisecond)
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
 
 	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=false", "includeStatus=false")
 
@@ -721,7 +742,11 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
-	time.Sleep(500 * time.Millisecond)
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
 
 	params := &internalgtfs.LocationParams{
 		Lat:     tripsForLocationLat,
