@@ -88,6 +88,13 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 	// 2025; under the real clock the stop has no arrivals and the cases keyed off
 	// it would assert nothing.
 	serviceTime := time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
+	// The handler reads serviceDate in the agency's timezone, so midnight has to
+	// be that day's local midnight — UTC midnight lands on the 11th in Pacific.
+	agencyLocation, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	localServiceTime := serviceTime.In(agencyLocation)
+	serviceDate := time.Date(localServiceTime.Year(), localServiceTime.Month(), localServiceTime.Day(),
+		0, 0, 0, 0, agencyLocation)
 
 	tests := []struct {
 		name string
@@ -107,7 +114,7 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 			// and service date the stop is being asked about.
 			name: "arrival-and-departure-for-stop",
 			url: fmt.Sprintf("/api/where/arrival-and-departure-for-stop/25_%s.json?key=TEST&tripId=25_%s&serviceDate=%d",
-				stopID, tripID, serviceTime.Truncate(24*time.Hour).UnixMilli()),
+				stopID, tripID, serviceDate.UnixMilli()),
 		},
 		{
 			name: "trip-for-vehicle",
