@@ -50,6 +50,19 @@ func TestServiceDateResolver_Resolve(t *testing.T) {
 			want: previousDay,
 		},
 		{
+			// The handlers select on overlap with [now-runningLate, now+runningEarly],
+			// so a trip that ended 20 minutes ago is still returned and must be
+			// dated to the service day it ran on.
+			name: "Previous-day trip that just ended is still yesterday's",
+			trip: tripWithWindow("weekday", 23, 24+10.0/60),
+			want: previousDay,
+		},
+		{
+			name: "Previous-day trip past the late window is not resolved to yesterday",
+			trip: tripWithWindow("weekday", 22, 23+50.0/60),
+			want: queryDay,
+		},
+		{
 			name: "Trip not running at this moment falls back to the query day",
 			trip: tripWithWindow("weekday", 6, 7),
 			want: queryDay,

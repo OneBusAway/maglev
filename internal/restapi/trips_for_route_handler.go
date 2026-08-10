@@ -72,12 +72,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	// Check the previous day's service for trips running past midnight.
 	// GTFS allows departure times > 24:00:00 (e.g., 25:30:00 = 1:30 AM next day).
 	// These trips belong to yesterday's service but are still active now.
-	// TODO: We should add config for runningLateWindow and runningEarlyWindow like Java OBA
-	// source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
-	const (
-		runningLate  = 30 * time.Minute // runningLateWindow
-		runningEarly = 10 * time.Minute // runningEarlyWindow
-	)
 	prevDay := currentTime.AddDate(0, 0, -1)
 	prevFormattedDate := prevDay.Format("20060102")
 	prevServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, prevFormattedDate)

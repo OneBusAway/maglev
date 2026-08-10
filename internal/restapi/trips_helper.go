@@ -1233,6 +1233,18 @@ func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 	return groups
 }
 
+// Match Java OBA: a trip counts as running now if it started up to
+// runningLateWindow ago or starts within runningEarlyWindow. Trip selection and
+// service-date resolution must use the same window, or a trip can be selected
+// and then classified as not running.
+//
+// TODO: We should add config for these like Java OBA
+// source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
+const (
+	runningLate  = 30 * time.Minute // runningLateWindow
+	runningEarly = 10 * time.Minute // runningEarlyWindow
+)
+
 // serviceDateResolver picks the service date a trip instance belongs to at one
 // moment in time. GTFS stop times may run past 24:00:00, so a trip still
 // running just after midnight belongs to the previous day's service; reporting
@@ -1259,6 +1271,17 @@ func (api *RestAPI) newServiceDateResolver(ctx context.Context, queryDayMidnight
 	}
 }
 
+func serviceIDSet(serviceIDs []string) map[string]struct{} {
+	if len(serviceIDs) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		set[serviceID] = struct{}{}
+	}
+	return set
+}
+
 func (api *RestAPI) activeServiceIDSet(ctx context.Context, day time.Time) map[string]struct{} {
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, day.Format("20060102"))
 	if err != nil {
@@ -1267,11 +1290,7 @@ func (api *RestAPI) activeServiceIDSet(ctx context.Context, day time.Time) map[s
 		return nil
 	}
 
-	set := make(map[string]struct{}, len(serviceIDs))
-	for _, serviceID := range serviceIDs {
-		set[serviceID] = struct{}{}
-	}
-	return set
+	return serviceIDSet(serviceIDs)
 }
 
 // Resolve returns midnight of the service date trip belongs to.
@@ -1286,7 +1305,14 @@ func (r *serviceDateResolver) Resolve(trip gtfsdb.Trip) time.Time {
 }
 
 // runsOn reports whether trip's service is active in services and its scheduled
-// span contains sinceMidnightNs, measured from that service day's midnight.
+// span overlaps the running window around sinceMidnightNs, measured from that
+// service day's midnight.
+//
+// Overlap rather than containment, and with the same slack the handlers select
+// on: a trip is selected when its span meets [now-runningLate, now+runningEarly],
+// so requiring the span to contain now would classify a just-ended previous-day
+// trip as not running and report it against the wrong service date — putting
+// its position and schedule deviation a day out.
 func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.Trip, sinceMidnightNs int64) bool {
 	if _, active := services[trip.ServiceID]; !active {
 		return false
@@ -1294,5 +1320,7 @@ func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.T
 	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
 		return false
 	}
-	return sinceMidnightNs >= trip.MinArrivalTime.Int64 && sinceMidnightNs <= trip.MaxDepartureTime.Int64
+	startsBeforeWindowEnds := trip.MinArrivalTime.Int64 <= sinceMidnightNs+int64(runningEarly)
+	endsAfterWindowStarts := trip.MaxDepartureTime.Int64 >= sinceMidnightNs-int64(runningLate)
+	return startsBeforeWindowEnds && endsAfterWindowStarts
 }
