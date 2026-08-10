@@ -254,8 +254,16 @@ func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
 		tripForVehicleURL(utils.FormCombinedID(testdata.Raba.ID, orphanVehicleID),
 			url.Values{"includeTrip": {"true"}}))
 
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"a dangling route reference must not fail the request")
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, orphanTripID), model.Data.Entry.TripID,
+		"the trip the vehicle is running is still served")
+	assert.NotEmpty(t, model.Data.References.Trips,
+		"the trip reference survives even though its route cannot be resolved")
+	assert.Empty(t, model.Data.References.Routes,
+		"the unresolvable route is simply absent from references")
 }
 
 // TestTripForVehicleHandler_TripReferences covers where the active trip's

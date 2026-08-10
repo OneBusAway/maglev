@@ -132,10 +132,6 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if ShouldIncludeReferences(r) {
 		references, err = api.buildTripForVehicleReferences(ctx, agencyID, agency, trip, status, schedule, params.IncludeTrip)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
-				return
-			}
 			api.serverErrorResponse(w, r, err)
 			return
 		}
@@ -195,14 +191,18 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 		references.Trips = append(references.Trips, *tripRef)
 
 		routeRef, err := api.routeReferenceByID(ctx, agencyID, trip.RouteID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				api.Logger.Warn("trip references non-existent route",
-					"tripID", trip.ID, "routeID", trip.RouteID, "agencyID", agencyID)
-			}
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// A dangling trips.route_id costs one reference, not the response: the
+			// vehicle and its trip both resolved, and the batch reference builders
+			// likewise omit rows they cannot resolve rather than failing.
+			api.Logger.Warn("trip references non-existent route",
+				"tripID", trip.ID, "routeID", trip.RouteID, "agencyID", agencyID)
+		case err != nil:
 			return nil, err
+		default:
+			routeRefs[utils.FormCombinedID(agencyID, trip.RouteID)] = routeRef
 		}
-		routeRefs[utils.FormCombinedID(agencyID, trip.RouteID)] = routeRef
 	}
 
 	references.Routes = utils.MapValues(routeRefs)
