@@ -4461,9 +4461,10 @@ WHERE
     stop_id IN (/*SLICE:stop_ids*/?)
 `
 
-// DISTINCT on trip_id alone so the existing (stop_id, trip_id) index covers
-// this: the caller only needs to know which trips touch these stops, and the
-// stop set can be every stop inside a 20 km box.
+// GetTripIDsForStops returns the IDs of the trips serving any of these stops.
+// DISTINCT on trip_id alone so the existing (stop_id, trip_id) index covers it:
+// the caller only needs to know which trips touch these stops, and the stop set
+// can be every stop inside a 20 km box.
 func (q *Queries) GetTripIDsForStops(ctx context.Context, stopIds []string) ([]string, error) {
 	query := getTripIDsForStops
 	var queryParams []interface{}

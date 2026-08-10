@@ -797,3 +797,45 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 	}
 	require.True(t, assertedAnyVehicle, "expected at least one in-bounds vehicle to assert against")
 }
+
+// TestCandidateTripIDsForStops_BatchesLargeStopSets covers the uncapped stop
+// set exceeding one query's bind variable budget: the batches together must
+// return what a single query would.
+func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	stopIDs := make([]string, 0, stopIDsPerTripIDQuery+len(stops))
+	for len(stopIDs) <= stopIDsPerTripIDQuery {
+		for _, stop := range stops {
+			stopIDs = append(stopIDs, stop.ID)
+		}
+	}
+	require.Greater(t, len(stopIDs), stopIDsPerTripIDQuery,
+		"the input must span more than one batch for this test to mean anything")
+
+	batched, err := api.candidateTripIDsForStops(ctx, stopIDs)
+	require.NoError(t, err)
+
+	singleQuery, err := api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops(ctx, stopIDs[:len(stops)])
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, singleQuery, uniqueStrings(batched))
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
+}

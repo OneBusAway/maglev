@@ -37,7 +37,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// silently drops trips the spec says should all be returned.
 	stopsInBounds := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, 0, true)
 	stopIDs := extractStopIDs(stopsInBounds)
-	candidateTripIDs, err := api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops(ctx, stopIDs)
+	candidateTripIDs, err := api.candidateTripIDsForStops(ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -265,6 +265,29 @@ func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []mode
 
 	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
 	return stops, stopIDsByBareID, err
+}
+
+// stopIDsPerTripIDQuery bounds how many stop IDs go into one IN (...) list.
+// The candidate stop set is uncapped, and SQLite rejects a statement carrying
+// more bind variables than it allows rather than truncating it. Kept well under
+// the oldest limit (999) so the batch size does not depend on which SQLite the
+// build links against.
+const stopIDsPerTripIDQuery = 900
+
+// candidateTripIDsForStops returns the IDs of the trips serving any of these
+// stops, in batches so an uncapped stop set cannot overflow the bind variable
+// limit. IDs may repeat across batches; the caller sets them.
+func (api *RestAPI) candidateTripIDsForStops(ctx context.Context, stopIDs []string) ([]string, error) {
+	tripIDs := make([]string, 0, len(stopIDs))
+	for start := 0; start < len(stopIDs); start += stopIDsPerTripIDQuery {
+		end := min(start+stopIDsPerTripIDQuery, len(stopIDs))
+		batch, err := api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops(ctx, stopIDs[start:end])
+		if err != nil {
+			return nil, err
+		}
+		tripIDs = append(tripIDs, batch...)
+	}
+	return tripIDs, nil
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
