@@ -650,12 +650,13 @@ func TestTripsForLocationHandler_SituationReferences(t *testing.T) {
 		referenced[situation.ID] = true
 	}
 
-	sawSituationID := false
+	var emitted []string
 	for _, entry := range model.Data.List {
 		for _, id := range entry.SituationIds {
-			sawSituationID = true
+			emitted = append(emitted, id)
 			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
 		}
 	}
-	require.True(t, sawSituationID, "expected the seeded alert to surface as a situationId")
+	require.Contains(t, emitted, "25_test-alert-trips-for-location",
+		"expected the seeded alert to surface as a situationId")
 }

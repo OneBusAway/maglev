@@ -66,6 +66,12 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// anyRealTimeVehicleID needs a vehicle to pick from.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
 	// Agency-scoped so it matches whichever trips and stops each endpoint returns.
 	rawAgencyID := "25"
 	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
@@ -73,6 +79,7 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 		InformedEntities: []gogtfs.AlertInformedEntity{{AgencyID: &rawAgencyID}},
 		Header:           []gogtfs.AlertText{{Text: "Test Agency Alert", Language: "en"}},
 	})
+	const seededSituationID = "25_situation-resolution-alert"
 
 	tripID, stopID := anyTripAndStop(t, api)
 	vehicleID := anyRealTimeVehicleID(t, api)
@@ -117,13 +124,12 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 			collectSituationIDs(body, &emitted)
 			referenced := referencedSituationIDs(t, body)
 
-			sawSituationID := false
 			for _, id := range emitted {
-				sawSituationID = true
 				assert.True(t, referenced[id],
 					"situationId %q must resolve to an entry in references.situations", id)
 			}
-			require.True(t, sawSituationID, "expected the seeded alert to surface as a situationId")
+			require.Contains(t, emitted, seededSituationID,
+				"expected the seeded alert to surface as a situationId")
 		})
 	}
 }
@@ -171,6 +177,7 @@ func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
 		alert            gogtfs.Alert
 		callerAgencyIDs  []string
 		wantSituationIDs []string
+		wantCollected    []string
 	}{
 		{
 			name: "The alert's own agency wins over whichever lookup found it",
@@ -180,8 +187,12 @@ func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
 			},
 			callerAgencyIDs:  []string{"1", "40"},
 			wantSituationIDs: []string{"1_86736", "1_86736"},
+			wantCollected:    []string{"1_86736"},
 		},
 		{
+			// Known limitation rather than desired behaviour: with no agency to
+			// read off the alert, the two paths have nothing in common to agree
+			// on. Every alert in the feeds maglev serves names one.
 			name: "An alert naming no agency falls back to the caller's",
 			alert: gogtfs.Alert{
 				ID:               "86736",
@@ -189,17 +200,30 @@ func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
 			},
 			callerAgencyIDs:  []string{"1", "40"},
 			wantSituationIDs: []string{"1_86736", "40_86736"},
+			wantCollected:    []string{"1_86736", "40_86736"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// One collector across both paths, as a handler reaching the same
+			// alert through a route and through a stop would have.
+			collected := newSituationCollector()
+
 			for i, callerAgencyID := range tt.callerAgencyIDs {
 				refs := situationRefsFromAlerts([]gogtfs.Alert{tt.alert}, callerAgencyID)
 				require.Len(t, refs, 1)
 				assert.Equal(t, tt.wantSituationIDs[i], refs[0].ID,
 					"alert reached with caller agency %q", callerAgencyID)
+				collected.addRefs(refs)
 			}
+
+			collectedIDs := make([]string, 0, len(collected.refs))
+			for _, ref := range collected.refs {
+				collectedIDs = append(collectedIDs, ref.ID)
+			}
+			assert.Equal(t, tt.wantCollected, collectedIDs,
+				"references.situations must carry the alert once per distinct ID")
 		})
 	}
 }

@@ -1147,12 +1147,15 @@ func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
 		referenced[situation.ID] = true
 	}
 
-	sawSituationID := false
+	var emitted []string
 	for _, entry := range model.Data.List {
 		for _, id := range entry.SituationIds {
-			sawSituationID = true
+			emitted = append(emitted, id)
 			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
 		}
 	}
-	require.True(t, sawSituationID, "expected the seeded alert to surface as a situationId")
+	// The alert names a route but no agency, so its ID is scoped to the agency
+	// the handler resolved the route under.
+	require.Contains(t, emitted, "25_test-alert-trips-for-route",
+		"expected the seeded alert to surface as a situationId")
 }
