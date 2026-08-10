@@ -228,7 +228,8 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 }
 
 // TestTripForVehicleHandler_MissingRoute verifies that a trip pointing at a
-// route which is not in the database yields a 404 rather than a 500.
+// route which is not in the database is still served: the response is a 200
+// carrying the trip, with only the unresolvable route reference absent.
 func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
 	api, _ := setupTestApiWithMockVehicle(t)
 
@@ -373,13 +374,18 @@ func TestParseTripForVehicleParams_Unit(t *testing.T) {
 	defer api.Shutdown()
 
 	t.Run("explicit params", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/?includeStatus=false&time=1609459200000", nil)
+		// The millisecond remainder is deliberate: it is what a truncating
+		// seconds-based conversion would drop.
+		const timeMillis = 1609459200123
+		req := httptest.NewRequest("GET",
+			fmt.Sprintf("/?includeStatus=false&time=%d", timeMillis), nil)
 
 		params, errs := api.parseTripParams(req, TripParamDefaults{})
 
 		assert.Nil(t, errs)
 		assert.False(t, params.IncludeStatus)
-		assert.NotNil(t, params.Time)
+		require.NotNil(t, params.Time)
+		assert.Equal(t, int64(timeMillis), params.Time.UnixMilli())
 	})
 
 	t.Run("defaults for trip-for-vehicle", func(t *testing.T) {

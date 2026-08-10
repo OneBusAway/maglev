@@ -47,7 +47,7 @@ func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *t
 	}
 
 	if epochMillis, err := strconv.ParseInt(value, 10, 64); err == nil {
-		fromEpoch := time.Unix(epochMillis/1000, 0)
+		fromEpoch := time.UnixMilli(epochMillis)
 		return &fromEpoch, true
 	}
 
