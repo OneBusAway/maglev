@@ -72,6 +72,24 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 	}
 }
 
+func TestTripsForLocationServiceDateUsesTripAgencyTimezone(t *testing.T) {
+	currentTime := time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC)
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+
+	assert.Equal(t,
+		time.Date(2026, 8, 10, 0, 0, 0, 0, losAngeles),
+		serviceDateMidnight(currentTime, losAngeles))
+	assert.Equal(t,
+		time.Date(2026, 8, 10, 0, 0, 0, 0, chicago),
+		serviceDateMidnight(currentTime, chicago))
+	assert.Equal(t, 2*time.Hour,
+		serviceDateMidnight(currentTime, losAngeles).Sub(serviceDateMidnight(currentTime, chicago)),
+		"a Chicago trip must not use Los Angeles midnight")
+}
+
 // TestTripsForLocationHandler_ReferencesAreConsistent consolidates the previous
 // per-aspect reference tests (stops/routes/agencies cross-references, combined IDs,
 // orphaned stops, direction populated) into one fetch + structured assertions.
