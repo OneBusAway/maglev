@@ -883,9 +883,12 @@ WHERE
 ORDER BY
     t.id, st.stop_sequence;
 
--- name: GetStopTimesByStopIDs :many
-SELECT
-    *
+-- name: GetTripIDsForStops :many
+-- DISTINCT on trip_id alone so the existing (stop_id, trip_id) index covers
+-- this: the caller only needs to know which trips touch these stops, and the
+-- stop set can be every stop inside a 20 km box.
+SELECT DISTINCT
+    trip_id
 FROM
     stop_times
 WHERE
