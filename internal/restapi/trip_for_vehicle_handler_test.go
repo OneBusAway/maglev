@@ -223,6 +223,9 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 		assert.Nil(t, entry.Schedule)
 		assert.Nil(t, entry.Status)
 		assert.Empty(t, model.Data.References.Trips)
+		// The active trip's route rides along with the trip reference, so it is
+		// absent for the same reason: no status block, and includeTrip=false.
+		assert.Empty(t, model.Data.References.Routes)
 		assert.NotEmpty(t, model.Data.References.Agencies)
 	})
 }
