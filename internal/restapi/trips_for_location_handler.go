@@ -98,7 +98,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq, w, r)
+	result := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, routeAgencyMap, parsedReq, w, r)
 	if result == nil {
 		return
 	}
@@ -245,6 +245,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
 	trips []gtfsdb.Trip,
 	tripAgencyMap map[string]string,
+	routeAgencyMap map[string]string,
 	request *tripsForLocationRequest,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -330,8 +331,24 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 			blockTripsRaw, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, params)
 			if err == nil {
+				missingRouteIDs := make([]string, 0)
 				for _, bt := range blockTripsRaw {
-					if bt.BlockID.Valid {
+					if _, found := routeAgencyMap[bt.RouteID]; !found {
+						missingRouteIDs = append(missingRouteIDs, bt.RouteID)
+					}
+				}
+				if len(missingRouteIDs) > 0 {
+					routes, routeErr := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, missingRouteIDs)
+					if routeErr != nil {
+						api.Logger.Warn("failed to fetch block trip routes", "agency_id", agencyID, "error", routeErr)
+						continue
+					}
+					for _, route := range routes {
+						routeAgencyMap[route.ID] = route.AgencyID
+					}
+				}
+				for _, bt := range blockTripsRaw {
+					if bt.BlockID.Valid && routeAgencyMap[bt.RouteID] == agencyID {
 						key := blockTripsKey{agencyID: agencyID, blockID: bt.BlockID.String}
 						blockTripsMap[key] = append(blockTripsMap[key], bt)
 					}
