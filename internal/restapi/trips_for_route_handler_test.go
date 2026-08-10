@@ -1169,3 +1169,61 @@ func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
 			"entry %q reports a different serviceDate than its status", entry.TripId)
 	}
 }
+
+// TestResolveDuplicatedBaseTrip covers the IDs a DUPLICATED real-time trip can
+// arrive under, including the one that used to hand a nonexistent trip ID to
+// the schedule and status builders.
+func TestResolveDuplicatedBaseTrip(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	trips, err := api.GtfsManager.GtfsDB.Queries.ListTrips(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips, "fixture must contain trips")
+	staticTripID := trips[0].ID
+
+	tests := []struct {
+		name        string
+		dupTripID   string
+		wantTripID  string
+		wantMatched bool
+	}{
+		{
+			name:        "Feed reuses the static trip ID",
+			dupTripID:   staticTripID,
+			wantTripID:  staticTripID,
+			wantMatched: true,
+		},
+		{
+			name:        "Feed appends a numeric suffix to the static trip ID",
+			dupTripID:   staticTripID + ".00060",
+			wantTripID:  staticTripID,
+			wantMatched: true,
+		},
+		{
+			name:        "Neither the suffixed nor the stripped ID resolves",
+			dupTripID:   "no-such-trip.00060",
+			wantTripID:  "no-such-trip.00060",
+			wantMatched: false,
+		},
+		{
+			name:        "Synthetic ID with nothing to strip",
+			dupTripID:   "no-such-trip",
+			wantTripID:  "no-such-trip",
+			wantMatched: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseTripID, baseTrip := api.resolveDuplicatedBaseTrip(ctx, tt.dupTripID)
+
+			assert.Equal(t, tt.wantTripID, baseTripID)
+			if tt.wantMatched {
+				assert.Equal(t, tt.wantTripID, baseTrip.ID, "the returned trip must be the one the ID names")
+			} else {
+				assert.Empty(t, baseTrip.ID, "an unresolved trip must come back zeroed")
+			}
+		})
+	}
+}

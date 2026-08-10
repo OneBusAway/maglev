@@ -440,24 +440,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 		dupTripID := vehicle.Trip.ID.ID
 
-		// Resolve the base trip ID for DB lookups.
-		// Try the full ID first; if not found, strip a trailing numeric suffix
-		// (e.g., ".00060") that some feeds append to distinguish duplicated runs.
-		baseTripID := dupTripID
-		baseTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
-		if err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
-					"dup_trip_id", dupTripID, "error", err)
-			}
-			stripped := stripNumericSuffix(dupTripID)
-			if stripped != dupTripID {
-				baseTripID = stripped
-				if strippedTrip, strippedErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID); strippedErr == nil {
-					baseTrip = strippedTrip
-				}
-			}
-		}
+		baseTripID, baseTrip := api.resolveDuplicatedBaseTrip(ctx, dupTripID)
 
 		// A DUPLICATED trip with no static counterpart leaves baseTrip zeroed,
 		// which the resolver reports as the query day.
@@ -1006,6 +989,42 @@ func newTripReference(trip gtfsdb.Trip) models.Trip {
 // distinguish individual runs (e.g., "LLR_..._1083.00060" -> "LLR_..._1083").
 // If the ID has no dot, or the part after the last dot contains non-digits,
 // the original string is returned unchanged.
+// resolveDuplicatedBaseTrip finds the static trip a DUPLICATED real-time trip
+// is a run of, returning the ID to use for schedule and status lookups together
+// with the trip row itself.
+//
+// The full ID is tried first, then the ID with a trailing numeric suffix
+// stripped, which is how some feeds distinguish duplicated runs. The stripped
+// ID is adopted only once it resolves: handing on an ID that matches no trip is
+// worse than keeping the unresolvable one the feed sent. When neither resolves,
+// the trip comes back zeroed, which the service date resolver reports as the
+// query day.
+func (api *RestAPI) resolveDuplicatedBaseTrip(ctx context.Context, dupTripID string) (string, gtfsdb.Trip) {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
+	if err == nil {
+		return dupTripID, trip
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
+			"dup_trip_id", dupTripID, "error", err)
+	}
+
+	stripped := stripNumericSuffix(dupTripID)
+	if stripped == dupTripID {
+		return dupTripID, gtfsdb.Trip{}
+	}
+
+	strippedTrip, strippedErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, stripped)
+	if strippedErr != nil {
+		if !errors.Is(strippedErr, sql.ErrNoRows) {
+			api.Logger.Warn("trips-for-route: failed to resolve stripped DUPLICATED trip ID",
+				"dup_trip_id", dupTripID, "stripped_trip_id", stripped, "error", strippedErr)
+		}
+		return dupTripID, gtfsdb.Trip{}
+	}
+	return stripped, strippedTrip
+}
+
 func stripNumericSuffix(tripID string) string {
 	idx := strings.LastIndex(tripID, ".")
 	if idx == -1 || idx == len(tripID)-1 {
