@@ -1134,7 +1134,7 @@ func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
 	// handler's window explicitly. Midday Pacific on a weekday inside the RABA
 	// fixture's calendar range, when its trips are running.
 	queryTime := time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
-	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=true&time=%d",
+	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
 		queryTime.UnixMilli())
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
@@ -1158,4 +1158,14 @@ func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
 	// the handler resolved the route under.
 	require.Contains(t, emitted, "25_test-alert-trips-for-route",
 		"expected the seeded alert to surface as a situationId")
+
+	// The resolved date is handed to BuildTripStatus as well as stamped on the
+	// entry, so the two must never disagree.
+	for _, entry := range model.Data.List {
+		if entry.Status == nil {
+			continue
+		}
+		assert.Equal(t, entry.ServiceDate, entry.Status.ServiceDate.UnixMilli(),
+			"entry %q reports a different serviceDate than its status", entry.TripId)
+	}
 }
