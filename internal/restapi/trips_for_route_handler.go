@@ -369,6 +369,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				// headsign, ...) reflects the entry's tripId rather than the
 				// active trip's.
 				fetchedTrips = append(fetchedTrips, resolution.SelectedTrip)
+				// Index it too: the entry's situations are looked up by
+				// entryTripID, which is this trip, and an unindexed trip sends
+				// tripSituationRefs back to the database for what is already here.
+				tripsByID[resolution.SelectedTrip.ID] = resolution.SelectedTrip
+				if _, known := routeAgencyMap[resolution.SelectedTrip.RouteID]; !known {
+					routeAgencyMap[resolution.SelectedTrip.RouteID] = resolution.EntryAgencyID
+				}
 			}
 			// If unresolved (no queried-route trip exists anywhere in this
 			// block), entryTripID/entryAgencyID keep their active-trip
