@@ -472,9 +472,27 @@ func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRe
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyID), Alert: alert})
+		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
 	}
 	return refs
+}
+
+// agencyIDForAlert returns the agency whose prefix an alert's situation ID
+// carries, preferring the alert's own informed entity over the caller's agency.
+//
+// One alert is reachable by more than one path: a stop served by another
+// agency's route matches the same alert through both the route and the stop, and
+// each path knows a different agency. Scoping the ID to the caller's agency
+// would then publish that alert twice under two IDs, and an entry's
+// situationIds would resolve to whichever one it happened to be built from.
+// The informed entity is the only source that does not vary by lookup path.
+func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
+	for _, entity := range alert.InformedEntities {
+		if entity.AgencyID != nil && *entity.AgencyID != "" {
+			return *entity.AgencyID
+		}
+	}
+	return fallbackAgencyID
 }
 
 // situationID returns the combined-form ID for an alert.

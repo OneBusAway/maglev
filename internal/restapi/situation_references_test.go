@@ -149,6 +149,52 @@ func anyRealTimeVehicleID(t *testing.T, api *RestAPI) string {
 	return ""
 }
 
+// TestSituationRefsFromAlertsAgencyScope covers an alert reachable through both
+// a route and a stop that belong to different agencies. Both paths must produce
+// the same ID, or references.situations carries the alert twice and an entry's
+// situationIds resolve to only one of the two.
+func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
+	informedAgencyID := "1"
+	stopID := "10190"
+
+	tests := []struct {
+		name             string
+		alert            gogtfs.Alert
+		callerAgencyIDs  []string
+		wantSituationIDs []string
+	}{
+		{
+			name: "The alert's own agency wins over whichever lookup found it",
+			alert: gogtfs.Alert{
+				ID:               "86736",
+				InformedEntities: []gogtfs.AlertInformedEntity{{AgencyID: &informedAgencyID}, {StopID: &stopID}},
+			},
+			callerAgencyIDs:  []string{"1", "40"},
+			wantSituationIDs: []string{"1_86736", "1_86736"},
+		},
+		{
+			name: "An alert naming no agency falls back to the caller's",
+			alert: gogtfs.Alert{
+				ID:               "86736",
+				InformedEntities: []gogtfs.AlertInformedEntity{{StopID: &stopID}},
+			},
+			callerAgencyIDs:  []string{"1", "40"},
+			wantSituationIDs: []string{"1_86736", "40_86736"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i, callerAgencyID := range tt.callerAgencyIDs {
+				refs := situationRefsFromAlerts([]gogtfs.Alert{tt.alert}, callerAgencyID)
+				require.Len(t, refs, 1)
+				assert.Equal(t, tt.wantSituationIDs[i], refs[0].ID,
+					"alert reached with caller agency %q", callerAgencyID)
+			}
+		})
+	}
+}
+
 func TestSituationID(t *testing.T) {
 	tests := []struct {
 		name     string
