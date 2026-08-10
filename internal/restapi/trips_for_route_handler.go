@@ -315,7 +315,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	serviceDates := api.newServiceDateResolver(ctx, todayMidnight, currentTime)
+	serviceDates := newServiceDateResolverFor(todayMidnight, currentTime, serviceIDsByDay{
+		QueryDay:    serviceIDs,
+		PreviousDay: prevServiceIDs,
+	})
 	stopIDsMap := make(map[string]string)
 
 	blockTripForRoute, err := api.buildBlockTripForRoute(ctx, fetchedTrips, routeID, serviceIDs, prevServiceIDs)

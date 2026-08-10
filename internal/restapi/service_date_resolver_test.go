@@ -107,3 +107,21 @@ func TestServiceDateResolver_PreviousDayServiceOnly(t *testing.T) {
 	assert.Equal(t, queryDay.AddDate(0, 0, -1),
 		resolver.Resolve(tripWithWindow("friday-night", 23, 26)))
 }
+
+// TestNewServiceDateResolverFor covers the constructor handlers use when they
+// already hold the day's service IDs, so it must resolve the same as one that
+// loaded them itself.
+func TestNewServiceDateResolverFor(t *testing.T) {
+	location := time.FixedZone("TEST", 0)
+	queryDay := time.Date(2024, 3, 15, 0, 0, 0, 0, location)
+	currentTime := queryDay.Add(30 * time.Minute)
+
+	resolver := newServiceDateResolverFor(queryDay, currentTime, serviceIDsByDay{
+		QueryDay:    []string{"weekday"},
+		PreviousDay: []string{"friday-night"},
+	})
+
+	assert.Equal(t, queryDay, resolver.Resolve(tripWithWindow("weekday", 0, 1)))
+	assert.Equal(t, queryDay.AddDate(0, 0, -1), resolver.Resolve(tripWithWindow("friday-night", 23, 26)))
+	assert.Equal(t, queryDay, resolver.Resolve(tripWithWindow("saturday", 0, 1)))
+}
