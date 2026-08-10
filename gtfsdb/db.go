@@ -312,6 +312,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStopTimesForTripIDsStmt, err = db.PrepareContext(ctx, getStopTimesForTripIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopTimesForTripIDs: %w", err)
 	}
+	if q.getStopsByCodeStmt, err = db.PrepareContext(ctx, getStopsByCode); err != nil {
+		return nil, fmt.Errorf("error preparing query GetStopsByCode: %w", err)
+	}
 	if q.getStopsByIDsStmt, err = db.PrepareContext(ctx, getStopsByIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopsByIDs: %w", err)
 	}
@@ -881,6 +884,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStopTimesForTripIDsStmt: %w", cerr)
 		}
 	}
+	if q.getStopsByCodeStmt != nil {
+		if cerr := q.getStopsByCodeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getStopsByCodeStmt: %w", cerr)
+		}
+	}
 	if q.getStopsByIDsStmt != nil {
 		if cerr := q.getStopsByIDsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopsByIDsStmt: %w", cerr)
@@ -1156,6 +1164,7 @@ type Queries struct {
 	getStopTimesForStopInWindowStmt               *sql.Stmt
 	getStopTimesForTripStmt                       *sql.Stmt
 	getStopTimesForTripIDsStmt                    *sql.Stmt
+	getStopsByCodeStmt                            *sql.Stmt
 	getStopsByIDsStmt                             *sql.Stmt
 	getStopsForRouteStmt                          *sql.Stmt
 	getStopsWithShapeContextStmt                  *sql.Stmt
@@ -1286,6 +1295,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getStopTimesForStopInWindowStmt:               q.getStopTimesForStopInWindowStmt,
 		getStopTimesForTripStmt:                       q.getStopTimesForTripStmt,
 		getStopTimesForTripIDsStmt:                    q.getStopTimesForTripIDsStmt,
+		getStopsByCodeStmt:                            q.getStopsByCodeStmt,
 		getStopsByIDsStmt:                             q.getStopsByIDsStmt,
 		getStopsForRouteStmt:                          q.getStopsForRouteStmt,
 		getStopsWithShapeContextStmt:                  q.getStopsWithShapeContextStmt,
