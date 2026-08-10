@@ -1238,7 +1238,8 @@ func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 // service-date resolution must use the same window, or a trip can be selected
 // and then classified as not running.
 //
-// TODO: We should add config for these like Java OBA
+// Java OBA makes these configurable; maglev hard-codes its defaults, tracked in
+// https://github.com/OneBusAway/maglev/issues/800
 // source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
 const (
 	runningLate  = 30 * time.Minute // runningLateWindow
