@@ -1375,9 +1375,9 @@ func serviceIDSlice(services map[string]struct{}) []string {
 // equivalent of a GTFS-RT position; it returns nil when the trip has no usable
 // shape or stop times.
 func (api *RestAPI) scheduledPositionAtTime(
-	ctx context.Context,
 	stopTimes []gtfsdb.StopTime,
 	shapePoints []gtfs.ShapePoint,
+	stopsByID map[string]gtfsdb.Stop,
 	currentTime time.Time,
 	serviceDate time.Time,
 ) *models.Location {
@@ -1388,7 +1388,7 @@ func (api *RestAPI) scheduledPositionAtTime(
 	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
 	stopDistances := projectStopsInSequence(
 		stopTimes,
-		api.fetchStopCoordsForStopTimes(ctx, stopTimes),
+		stopsByID,
 		shapePoints,
 		cumulativeDistances,
 	)

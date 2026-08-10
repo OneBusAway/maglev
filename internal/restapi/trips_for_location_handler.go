@@ -310,6 +310,9 @@ func (api *RestAPI) scheduledTripIDsInBounds(
 	if err != nil {
 		return nil, err
 	}
+	// One lookup for the union of every candidate's stops. Fetching per trip
+	// would be a query per candidate, and the candidate set runs to hundreds.
+	stopsByID := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes(stopTimesByTrip))
 
 	visible := make([]string, 0, len(trips))
 	for _, trip := range trips {
@@ -321,9 +324,9 @@ func (api *RestAPI) scheduledTripIDsInBounds(
 		}
 
 		position := api.scheduledPositionAtTime(
-			ctx,
 			stopTimesByTrip[trip.ID],
 			shapesByID[trip.ShapeID.String],
+			stopsByID,
 			currentTime,
 			serviceDates.Resolve(trip),
 		)
@@ -332,6 +335,21 @@ func (api *RestAPI) scheduledTripIDsInBounds(
 		}
 	}
 	return visible, nil
+}
+
+// unionStopTimes flattens per-trip stop times into one slice, so their stops can
+// be fetched in a single query.
+func unionStopTimes(stopTimesByTrip map[string][]gtfsdb.StopTime) []gtfsdb.StopTime {
+	total := 0
+	for _, stopTimes := range stopTimesByTrip {
+		total += len(stopTimes)
+	}
+
+	union := make([]gtfsdb.StopTime, 0, total)
+	for _, stopTimes := range stopTimesByTrip {
+		union = append(union, stopTimes...)
+	}
+	return union
 }
 
 // inServiceTripIDs collects trips serving an in-bounds stop whose scheduled
@@ -517,9 +535,9 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	}
 
 	tripsMap := make(map[string]gtfsdb.Trip)
-	var shapeIDs []string
 	uniqueBlockIDs := make(map[string]struct{})
 	var validVehicleTrips []string
+	var shapedTrips []gtfsdb.Trip
 
 	for _, trip := range trips {
 		// Ensure we only process trips that have a valid agency mapping
@@ -528,28 +546,16 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 		validVehicleTrips = append(validVehicleTrips, trip.ID)
 		tripsMap[trip.ID] = trip
-		if trip.ShapeID.Valid {
-			shapeIDs = append(shapeIDs, trip.ShapeID.String)
-		}
+		shapedTrips = append(shapedTrips, trip)
 		if trip.BlockID.Valid {
 			uniqueBlockIDs[trip.BlockID.String] = struct{}{}
 		}
 	}
 
-	shapesMap := make(map[string][]gtfs.ShapePoint)
-	if len(shapeIDs) > 0 {
-		shapes, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs(ctx, shapeIDs)
-		if err == nil {
-			for _, sp := range shapes {
-				sid := sp.ShapeID
-				shapesMap[sid] = append(shapesMap[sid], gtfs.ShapePoint{
-					Latitude:  sp.Lat,
-					Longitude: sp.Lon,
-				})
-			}
-		} else {
-			api.Logger.Warn("failed to bulk fetch shapes", "error", err)
-		}
+	shapesMap, err := api.shapePointsForTrips(ctx, shapedTrips)
+	if err != nil {
+		api.Logger.Warn("failed to bulk fetch shapes", "error", err)
+		shapesMap = map[string][]gtfs.ShapePoint{}
 	}
 
 	stopTimesMap := make(map[string][]gtfsdb.StopTime)
