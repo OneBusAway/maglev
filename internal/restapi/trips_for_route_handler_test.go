@@ -695,6 +695,9 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 			for i, entry := range model.Data.List {
 				if want {
 					require.NotNil(t, entry.Status, "list[%d].status should be present", i)
+					assert.NotEmpty(t, entry.Status.ActiveTripID, "list[%d].status.activeTripId should be set", i)
+					assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase,
+						"list[%d].status.phase should be a known value", i)
 				} else {
 					assert.Nil(t, entry.Status, "list[%d].status should be omitted", i)
 				}
