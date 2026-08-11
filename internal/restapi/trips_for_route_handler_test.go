@@ -8,13 +8,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
@@ -46,12 +49,16 @@ const (
 	tripsForRouteStop1ID  = "tfr-stop1"
 	tripsForRouteStop2ID  = "tfr-stop2"
 	tripsForRouteHeadsign = "Test Headsign"
+	// Vehicle GPS position injected via the real-time feed, distinct from the
+	// fixture stops so status.position reflects the vehicle, not a stop.
+	tripsForRouteRealtimeLat = 37.7885
+	tripsForRouteRealtimeLon = -122.3962
 )
 
 // createTestApiWithGTFSFixture builds a RestAPI backed by an in-memory GTFS
 // dataset from the given file-content map. This eliminates the duplicated
 // boilerplate across the various per-scenario fixture builders.
-func createTestApiWithGTFSFixture(t *testing.T, c clock.Clock, zipName string, files map[string]string) *RestAPI {
+func createTestApiWithGTFSFixture(t *testing.T, c clock.Clock, zipName string, files map[string]string, rtFeeds ...gtfs.RTFeedConfig) *RestAPI {
 	t.Helper()
 	ctx := context.Background()
 
@@ -68,7 +75,7 @@ func createTestApiWithGTFSFixture(t *testing.T, c clock.Clock, zipName string, f
 	zipPath := filepath.Join(t.TempDir(), zipName)
 	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
 
-	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
+	gtfsConfig := gtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:", RTFeeds: rtFeeds}
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
 	t.Cleanup(gtfsManager.Shutdown)
@@ -287,6 +294,98 @@ func crossDayBlockReuseFiles() map[string]string {
 			"tfr-today-b,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-today-b,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n",
 	}
+}
+
+// createTestApiWithScheduledRealtimePosition builds a RestAPI from the
+// trips-for-route fixture plus a real-time feed injecting a SCHEDULED vehicle
+// with a GPS position.
+func createTestApiWithScheduledRealtimePosition(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(tripsForRouteTestClock.Unix())),
+		},
+		Entity: []*gtfsrt.FeedEntity{
+			{
+				Id: proto.String("tracked-vehicle"),
+				Vehicle: &gtfsrt.VehiclePosition{
+					Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String("tfr-veh-1")},
+					Trip: &gtfsrt.TripDescriptor{
+						TripId:  proto.String(tripsForRouteTripID),
+						RouteId: proto.String(tripsForRouteRouteID),
+					},
+					Position: &gtfsrt.Position{
+						Latitude:  proto.Float32(tripsForRouteRealtimeLat),
+						Longitude: proto.Float32(tripsForRouteRealtimeLon),
+					},
+					Timestamp: proto.Uint64(uint64(tripsForRouteTestClock.Unix())),
+				},
+			},
+		},
+	}
+	feedPayload, err := proto.Marshal(feed)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(feedPayload)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	return createTestApiWithGTFSFixture(t, c, "trips-for-route.zip", basicTripsForRouteFiles(),
+		gtfs.RTFeedConfig{
+			ID:                  "test-feed",
+			VehiclePositionsURL: server.URL + "/vehicle-positions",
+			RefreshInterval:     30,
+			Enabled:             true,
+		})
+}
+
+// TestTripsForRouteHandler_StatusFields verifies the real-time status sub-object
+// fields: vehicle position, the -1 occupancy sentinel, and non-null empty
+// situationIds/vehicleFeatures slices.
+func TestTripsForRouteHandler_StatusFields(t *testing.T) {
+	api := createTestApiWithScheduledRealtimePosition(t, clock.NewMockClock(tripsForRouteTestClock))
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+		combinedRouteID, tripsForRouteTestClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	require.Len(t, model.Data.List, 1, "the single fixture trip should be returned")
+	entry := model.Data.List[0]
+	assert.Equal(t, expectedTripID, entry.TripId)
+
+	require.NotNil(t, entry.Status, "entry should carry a real-time status")
+
+	assert.Equal(t, 0, entry.Status.BlockTripSequence,
+		"blockTripSequence should be exactly 0 for this deterministic fixture")
+
+	// GTFS-RT stores coordinates as float32, so compare against the round-tripped value.
+	assert.Equal(t, float64(float32(tripsForRouteRealtimeLat)), entry.Status.Position.Lat)
+	assert.Equal(t, float64(float32(tripsForRouteRealtimeLon)), entry.Status.Position.Lon)
+
+	assert.Equal(t, -1, entry.Status.OccupancyCount,
+		"occupancyCount should use the -1 sentinel when the feed omits occupancy")
+
+	require.NotNil(t, entry.Status.SituationIDs, "situationIds must be a non-null slice")
+	assert.Empty(t, entry.Status.SituationIDs, "situationIds should be exactly [] with no situations")
+
+	require.NotNil(t, entry.Status.VehicleFeatures, "vehicleFeatures must be a non-null slice")
+	assert.Empty(t, entry.Status.VehicleFeatures, "vehicleFeatures should be exactly [] with no data")
+
+	// SCHEDULED vehicle; Java OBA sets phase "in_progress" on any vehicle fix.
+	assert.Equal(t, "SCHEDULED", entry.Status.Status)
+	assert.Equal(t, "in_progress", entry.Status.Phase)
 }
 
 func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
