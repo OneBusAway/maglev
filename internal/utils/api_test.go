@@ -449,8 +449,9 @@ func TestParseTimeParameter(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
-	// Get current time for testing
-	now := time.Now().In(loc)
+	// Use a fixed time for deterministic testing
+	now := time.Date(2025, 6, 12, 12, 0, 0, 0, loc)
+	testClock := clock.NewMockClock(now)
 	todayFormatted := now.Format("20060102")
 
 	// Calculate yesterday
@@ -563,7 +564,7 @@ func TestParseTimeParameter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(tt.timeParam, loc, clock.RealClock{})
+			dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(tt.timeParam, loc, testClock)
 
 			if tt.expectError {
 				assert.False(t, valid)
