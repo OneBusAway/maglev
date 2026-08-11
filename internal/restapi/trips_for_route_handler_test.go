@@ -337,8 +337,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 		},
 	}
 
-	// ParseTimeParameter ignores api.Clock when no time= is given, so pass it explicitly
-	// to pin the handler's time window to our fixture.
+	// Pass time explicitly to pin the handler's time window to our fixture.
 	timeMs := tripsForRouteTestClock.UnixMilli()
 
 	for _, tt := range tests {
@@ -419,7 +418,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 // TestTripsForRouteHandler_TimeOmitted verifies that omitting the time parameter
 // correctly falls back to the injected api.Clock to resolve active trips.
 func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true", combinedRouteID)
 
@@ -444,7 +443,7 @@ func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {
 // TestTripsForRouteHandler_InvalidTimeParameter verifies that malformed time
 // parameter values correctly trigger a 400 Bad Request validation error.
 func TestTripsForRouteHandler_InvalidTimeParameter(t *testing.T) {
-	api := createTestApiWithTripsForRouteFixture(t, clock.NewMockClock(tripsForRouteTestClock))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 
 	tests := []struct {
