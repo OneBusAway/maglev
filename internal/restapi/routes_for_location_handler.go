@@ -25,10 +25,14 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
-	query := queryParams.Get("query")
 
-	query = utils.SanitizeInput(query)
-	if loc.Radius == 0 {
+	query := utils.SanitizeInput(queryParams.Get("query"))
+
+	// Both spans must be positive for BoundsFromParams to size the box from them;
+	// otherwise it falls back to a radius, which is only query-aware here.
+	hasSpanBounds := loc.LatSpan > 0 && loc.LonSpan > 0
+	needsDefaultRadius := loc.Radius == 0 && !hasSpanBounds
+	if needsDefaultRadius {
 		loc.Radius = models.DefaultSearchRadiusInMeters
 		if query != "" {
 			loc.Radius = models.QuerySearchRadiusInMeters

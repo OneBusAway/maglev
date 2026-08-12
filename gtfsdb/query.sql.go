@@ -3986,6 +3986,70 @@ func (q *Queries) GetStopTimesForTripIDs(ctx context.Context, tripIds []string) 
 	return items, nil
 }
 
+const getStopsByCode = `-- name: GetStopsByCode :many
+SELECT
+    id,
+    code,
+    name,
+    desc,
+    lat,
+    lon,
+    zone_id,
+    url,
+    location_type,
+    timezone,
+    wheelchair_boarding,
+    platform_code,
+    direction,
+    parent_station
+FROM
+    stops
+WHERE
+    code = ?
+ORDER BY
+    id
+LIMIT
+    10
+`
+
+func (q *Queries) GetStopsByCode(ctx context.Context, code sql.NullString) ([]Stop, error) {
+	rows, err := q.query(ctx, q.getStopsByCodeStmt, getStopsByCode, code)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Stop
+	for rows.Next() {
+		var i Stop
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.Desc,
+			&i.Lat,
+			&i.Lon,
+			&i.ZoneID,
+			&i.Url,
+			&i.LocationType,
+			&i.Timezone,
+			&i.WheelchairBoarding,
+			&i.PlatformCode,
+			&i.Direction,
+			&i.ParentStation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStopsByIDs = `-- name: GetStopsByIDs :many
 SELECT
     id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station

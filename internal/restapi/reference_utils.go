@@ -14,7 +14,7 @@ import (
 )
 
 func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
-	var refs []models.AgencyReference
+	refs := make([]models.AgencyReference, 0, len(agencies))
 	for _, agency := range agencies {
 		refs = append(refs, models.AgencyReferenceFromDatabase(&agency))
 	}

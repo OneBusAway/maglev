@@ -15,6 +15,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/metrics"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 
@@ -322,26 +323,21 @@ func (manager *Manager) GetStopsForLocation(
 	maxCount int,
 	routeTypes []int,
 ) ([]gtfsdb.Stop, bool) {
-	bounds := BoundsFromParams(loc)
 	if ctx.Err() != nil {
 		return []gtfsdb.Stop{}, false
 	}
+
+	if stopCodeQuery != "" {
+		return manager.stopsMatchingCode(ctx, loc, stopCodeQuery, maxCount)
+	}
+
+	bounds := BoundsFromParams(loc)
 
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogError(logger, "could not query stops within bounds", err)
 		return []gtfsdb.Stop{}, false
-	}
-
-	if stopCodeQuery != "" {
-		idx := slices.IndexFunc(stops, func(stop gtfsdb.Stop) bool {
-			return nulls.StringOrEmpty(stop.Code) == stopCodeQuery
-		})
-		if idx >= 0 {
-			return []gtfsdb.Stop{stops[idx]}, false
-		}
-		return nil, false
 	}
 
 	var limitExceeded bool
@@ -383,13 +379,79 @@ func (manager *Manager) GetStopsForLocation(
 			stops = filteredStops
 		}
 
-		if len(stops) > maxCount {
-			limitExceeded = true
-			stops = stops[:maxCount]
-		}
+		// Capped downstream, after stops with no service that date are dropped.
 	}
 
 	return stops, limitExceeded
+}
+
+// stopsMatchingCode resolves a stop-code query. Candidates are drawn from the whole
+// feed rather than the search bounds so that the closest match can still be returned
+// when none of them fall inside those bounds.
+func (manager *Manager) stopsMatchingCode(
+	ctx context.Context,
+	loc *LocationParams,
+	stopCode string,
+	maxCount int,
+) ([]gtfsdb.Stop, bool) {
+	candidates, err := manager.GtfsDB.Queries.GetStopsByCode(ctx, nulls.String(stopCode))
+	if err != nil {
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+		logging.LogError(logger, "could not query stops by code", err)
+		return nil, false
+	}
+	if len(candidates) == 0 {
+		return nil, false
+	}
+
+	bounds := BoundsFromParams(CodeQueryLocation(loc))
+	within := make([]gtfsdb.Stop, 0, len(candidates))
+	for _, stop := range candidates {
+		inBounds := stop.Lat >= bounds.MinLat && stop.Lat <= bounds.MaxLat &&
+			stop.Lon >= bounds.MinLon && stop.Lon <= bounds.MaxLon
+		if inBounds {
+			within = append(within, stop)
+		}
+	}
+
+	if len(within) == 0 {
+		return []gtfsdb.Stop{closestStop(candidates, loc)}, false
+	}
+
+	if len(within) > maxCount {
+		slices.SortFunc(within, func(a, b gtfsdb.Stop) int {
+			return cmp.Compare(
+				utils.Distance(loc.Lat, loc.Lon, a.Lat, a.Lon),
+				utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon),
+			)
+		})
+		return within[:maxCount], true
+	}
+	return within, false
+}
+
+// CodeQueryLocation applies the wider default radius used by stop-code queries,
+// leaving an explicit radius or span untouched.
+func CodeQueryLocation(loc *LocationParams) *LocationParams {
+	hasExplicitArea := loc.Radius > 0 || (loc.LatSpan > 0 && loc.LonSpan > 0)
+	if hasExplicitArea {
+		return loc
+	}
+
+	widened := *loc
+	widened.Radius = models.QuerySearchRadiusInMeters
+	return &widened
+}
+
+func closestStop(stops []gtfsdb.Stop, loc *LocationParams) gtfsdb.Stop {
+	closest := stops[0]
+	shortest := utils.Distance(loc.Lat, loc.Lon, closest.Lat, closest.Lon)
+	for _, stop := range stops[1:] {
+		if distance := utils.Distance(loc.Lat, loc.Lon, stop.Lat, stop.Lon); distance < shortest {
+			closest, shortest = stop, distance
+		}
+	}
+	return closest
 }
 
 // GetStopsInBounds returns stops within the given bounds up to maxCount, without shuffling
@@ -474,8 +536,18 @@ func (manager *Manager) GetRoutesForLocation(
 	return routes, limitExceeded
 }
 
+// maxRoutesFetchedForShuffle bounds how many in-bounds route matches are pulled
+// into memory before shuffling. BoundsFromParams is called without clamping for
+// this query, so a caller-supplied radius/span can be arbitrarily large; this
+// ceiling is a defensive backstop against that, not a functional limit — real
+// GTFS feeds have nowhere near this many routes, so it never affects the
+// uniform-random selection required by the spec.
+const maxRoutesFetchedForShuffle = 5000
+
 // queryRoutesInBounds retrieves all routes serving stops within the given geographic bounds
-// from the database's stops_rtree spatial index.
+// from the database's stops_rtree spatial index. When the match count exceeds maxCount,
+// the full set is randomly shuffled before truncation (per spec), so the SQL's
+// ORDER BY min_distance does not determine which routes survive truncation.
 // Despite the query's name, this doesn't actually check "Active" stops beyond
 // checking that the stop has at least one stop_time. The corresponding GetStopsForLocation
 // checks active service dates as well.
@@ -491,14 +563,13 @@ func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.Co
 		return nil, false, fmt.Errorf("query min lon %f exceeds max lon %f", bounds.MinLon, bounds.MaxLon)
 	}
 	routes, err := manager.GtfsDB.Queries.GetActiveRoutesWithinBounds(ctx, gtfsdb.GetActiveRoutesWithinBoundsParams{
-		MinLat: bounds.MinLat,
-		MaxLat: bounds.MaxLat,
-		MinLon: bounds.MinLon,
-		MaxLon: bounds.MaxLon,
-		Lat:    lat,
-		Lon:    lon,
-		// Ask for an extra element so that we can determine if we hit the max count.
-		MaxCount:  maxCount + 1,
+		MinLat:    bounds.MinLat,
+		MaxLat:    bounds.MaxLat,
+		MinLon:    bounds.MinLon,
+		MaxLon:    bounds.MaxLon,
+		Lat:       lat,
+		Lon:       lon,
+		MaxCount:  maxRoutesFetchedForShuffle,
 		ShortName: shortNameQuery,
 	})
 	if err != nil {
@@ -506,9 +577,8 @@ func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.Co
 	}
 
 	if len(routes) > maxCount {
-		// Drop the extra last element. This is correct because results are in ascending distance order.
-		routes = routes[:maxCount]
-		return routes, true, nil
+		rand.Shuffle(len(routes), func(i, j int) { routes[i], routes[j] = routes[j], routes[i] })
+		return routes[:maxCount], true, nil
 	}
 
 	return routes, false, nil

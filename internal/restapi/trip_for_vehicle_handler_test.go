@@ -174,6 +174,44 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.NotEmpty(t, model.Data.Entry.TripID)
+
+		schedule := model.Data.Entry.Schedule
+		require.NotNil(t, schedule, "schedule should be present when includeSchedule=true")
+		require.NotEmpty(t, schedule.StopTimes, "the fixture trip should have stop times")
+
+		referencedStops := make(map[string]struct{}, len(model.Data.References.Stops))
+		for _, stop := range model.Data.References.Stops {
+			referencedStops[stop.ID] = struct{}{}
+		}
+		for _, stopTime := range schedule.StopTimes {
+			assert.Contains(t, referencedStops, stopTime.StopID,
+				"every schedule stop must be dereferenceable in references.stops")
+		}
+	})
+
+	t.Run("includeReferences=false empties the references block", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{"includeReferences": {"false"}}))
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NotEmpty(t, model.Data.Entry.TripID, "the entry must still be populated")
+
+		// Every collection must serialize as [] rather than null: the block stays
+		// present and merely empty, so a nil slice here would be a wire-format
+		// regression rather than a reference the handler chose not to populate.
+		refs := model.Data.References
+		emptyCollections := map[string]any{
+			"agencies":   refs.Agencies,
+			"routes":     refs.Routes,
+			"trips":      refs.Trips,
+			"stops":      refs.Stops,
+			"situations": refs.Situations,
+			"stopTimes":  refs.StopTimes,
+		}
+		for name, collection := range emptyCollections {
+			assert.NotNil(t, collection, "%s must be present when includeReferences=false", name)
+			assert.Empty(t, collection, "%s must be empty when includeReferences=false", name)
+		}
 	})
 
 	t.Run("all-false strips schedule/status/trip refs", func(t *testing.T) {
@@ -291,4 +329,78 @@ func TestParseTripForVehicleParams_Unit(t *testing.T) {
 		assert.Contains(t, errs, "time")
 		assert.Equal(t, "must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format", errs["serviceDate"][0])
 	})
+}
+
+// TestReferencedStopIDs_Unit covers the stop IDs collected for the references
+// block: which entry fields contribute, that absent stops are skipped, and that
+// an unparseable combined ID surfaces an error for the handler to report.
+func TestReferencedStopIDs_Unit(t *testing.T) {
+	combined := func(stopID string) string {
+		return utils.FormCombinedID(testdata.Raba.ID, stopID)
+	}
+
+	tests := []struct {
+		name     string
+		status   *models.TripStatus
+		schedule *models.Schedule
+		want     []string
+		wantErr  bool
+	}{
+		{
+			name: "no status or schedule yields no stops",
+			want: []string{},
+		},
+		{
+			name:   "closest and next stops are collected",
+			status: &models.TripStatus{ClosestStop: combined("1"), NextStop: combined("2")},
+			want:   []string{"1", "2"},
+		},
+		{
+			name:   "absent status stops are skipped",
+			status: &models.TripStatus{ClosestStop: "", NextStop: combined("2")},
+			want:   []string{"2"},
+		},
+		{
+			name:   "schedule stops are collected alongside status stops",
+			status: &models.TripStatus{ClosestStop: combined("1")},
+			schedule: &models.Schedule{StopTimes: []models.StopTime{
+				{StopID: combined("2")}, {StopID: combined("3")},
+			}},
+			want: []string{"1", "2", "3"},
+		},
+		{
+			name: "absent schedule stop IDs are skipped",
+			schedule: &models.Schedule{StopTimes: []models.StopTime{
+				{StopID: ""}, {StopID: combined("2")},
+			}},
+			want: []string{"2"},
+		},
+		{
+			name:    "malformed status stop ID returns an error",
+			status:  &models.TripStatus{ClosestStop: "missing-separator"},
+			wantErr: true,
+		},
+		{
+			name: "malformed schedule stop ID returns an error",
+			schedule: &models.Schedule{StopTimes: []models.StopTime{
+				{StopID: "missing-separator"},
+			}},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := referencedStopIDs(tt.status, tt.schedule)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, got, "no stop IDs should be returned alongside an error")
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
