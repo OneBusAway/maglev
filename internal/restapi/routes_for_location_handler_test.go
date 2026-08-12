@@ -41,14 +41,68 @@ func TestRoutesForLocationQuery(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
-func TestRoutesForLocationLatSpanAndLonSpan(t *testing.T) {
-	api := createTestApi(t)
+// TestRoutesForLocationBoundingBoxSizing pins the sizing precedence from the spec:
+// radius wins, then latSpan/lonSpan, then the query-aware default radius.
+//
+// Each case must produce a different result than the default box would, otherwise it
+// cannot tell a working span implementation from one that silently ignores the spans.
+func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
+	// Both centres are RABA stops. At the default radius, sparseCentre serves one route
+	// and denseCentre serves three; the counts below are relative to those baselines.
+	const sparseCentre = "lat=40.583321&lon=-122.426966"
+	const denseCentre = "lat=40.583321&lon=-122.362535"
 
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&latSpan=0.01&lonSpan=0.01")
+	tests := []struct {
+		name             string
+		params           string
+		expectedRouteIDs []string
+	}{
+		{
+			name:             "spans widen the box beyond the default radius",
+			params:           denseCentre + "&latSpan=0.1&lonSpan=0.1",
+			expectedRouteIDs: []string{"25_15", "25_151", "25_153", "25_154", "25_157", "25_159", "25_160", "25_161", "25_1885", "25_24", "25_3779", "25_44X", "25_6446"},
+		},
+		{
+			name:             "spans narrow the box below the default radius",
+			params:           denseCentre + "&latSpan=0.0002&lonSpan=0.0002",
+			expectedRouteIDs: []string{},
+		},
+		{
+			name:             "radius takes precedence over spans",
+			params:           sparseCentre + "&radius=2000&latSpan=0.5&lonSpan=0.5",
+			expectedRouteIDs: []string{"25_153", "25_3779"},
+		},
+		{
+			// Only one span is unusable, so the default radius still applies — and it must
+			// stay the 10km query radius, not the 600m no-query one. Route 3 sits outside
+			// 600m of denseCentre but inside 10km.
+			name:             "one span alone falls back to the query default radius",
+			params:           denseCentre + "&latSpan=0.1&query=3",
+			expectedRouteIDs: []string{"25_153"},
+		},
+	}
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.ElementsMatch(t, model.Data.List, []models.Route{testdata.Route19})
-	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A fresh API per case: the shared TEST key is rate limited across requests.
+			api := createTestApi(t)
+
+			resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&"+tt.params)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			// Other tests in this package write synthetic agencies into the shared test DB
+			// and never remove them, so a wide box can pick them up depending on test order.
+			// Only the RABA fixture is meaningful here.
+			routeIDs := make([]string, 0, len(model.Data.List))
+			for _, route := range model.Data.List {
+				if route.AgencyID == testdata.Raba.ID {
+					routeIDs = append(routeIDs, route.ID)
+				}
+			}
+			assert.ElementsMatch(t, tt.expectedRouteIDs, routeIDs)
+		})
+	}
 }
 
 func TestRoutesForLocationRadius(t *testing.T) {
