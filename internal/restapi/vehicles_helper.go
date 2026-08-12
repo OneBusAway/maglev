@@ -126,10 +126,8 @@ func (api *RestAPI) BuildVehicleStatus(
 			Lon: float64(*vehicle.Position.Longitude),
 		}
 		status.LastKnownLocation = &actualPosition
-		// Position is initially set to the raw GPS position.
-		// BuildTripStatus will refine this by projecting it onto the route shape
-		// after fetching shape data. Note: getVehicleDistanceAlongShapeContextual
-		// makes its own GetShapePointsByTripID call; these two fetches are separate.
+		// Position is initially set to the raw GPS position; BuildTripStatus
+		// refines it by projecting onto the route shape after fetching shape data.
 		status.Position = actualPosition
 
 		status.LastLocationUpdateTime = models.NewModelTime(lastUpdateTime)
@@ -261,10 +259,45 @@ func projectPointToSegment(px, py, x1, y1, x2, y2 float64) (float64, models.Loca
 	return dist, models.Location{Lat: projLat, Lon: projLon}
 }
 
-func getCurrentVehicleStopSequence(vehicle *gtfs.Vehicle) *int {
-	if vehicle == nil || vehicle.CurrentStopSequence == nil {
-		return nil
+// projectVehicleDistanceOnShape returns the vehicle's cumulative distance
+// along the given shape polyline, projected from its lat/lon. Returns
+// (0, false) when the shape is unusable or the projection is farther than
+// 200m from every segment (matches the projectPositionWithShapePoints
+// threshold — bus is off-route or the shape doesn't cover it).
+//
+// The caller decides what the "given shape" is. For tripStatus.distance
+// AlongTrip on an arrivals row, the correct shape is the BLOCK's currently-
+// active-trip shape (snap.ActiveTripShape), NOT the arrival's target trip.
+// Projecting onto the target trip's shape gives a nonsense number when the
+// vehicle is currently on a different trip in the same block — the shared
+// polyline coincidence makes the projection succeed with a large-but-
+// meaningless distance.
+func projectVehicleDistanceOnShape(
+	shapePoints []gtfs.ShapePoint,
+	cumulativeDistances []float64,
+	pos models.Location,
+) (float64, bool) {
+	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
+		return 0, false
 	}
-	val := int(*vehicle.CurrentStopSequence)
-	return &val
+	minDist := math.MaxFloat64
+	bestIdx := -1
+	bestRatio := 0.0
+	for i := 0; i < len(shapePoints)-1; i++ {
+		d, ratio, _, _ := projectOntoSegment(
+			pos.Lat, pos.Lon,
+			shapePoints[i].Latitude, shapePoints[i].Longitude,
+			shapePoints[i+1].Latitude, shapePoints[i+1].Longitude,
+		)
+		if d < minDist {
+			minDist = d
+			bestIdx = i
+			bestRatio = ratio
+		}
+	}
+	if bestIdx < 0 || minDist > 200 {
+		return 0, false
+	}
+	segLen := cumulativeDistances[bestIdx+1] - cumulativeDistances[bestIdx]
+	return cumulativeDistances[bestIdx] + bestRatio*segLen, true
 }
