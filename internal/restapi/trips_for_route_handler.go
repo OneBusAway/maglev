@@ -560,7 +560,10 @@ func (api *RestAPI) buildBlockTripForRoute(
 		// MinArrivalTime/MaxDepartureTime are NULL for a trip with no
 		// stop_times (see schema.sql); such a trip has no time window to
 		// compare against, so it can't be a nearest-midpoint candidate.
-		if bt.RouteID == routeID && bt.BlockID.Valid && bt.MinArrivalTime.Valid && bt.MaxDepartureTime.Valid {
+		if bt.RouteID == routeID &&
+			bt.BlockID.Valid &&
+			bt.MinArrivalTime.Valid &&
+			bt.MaxDepartureTime.Valid {
 			key := bt.BlockID.String
 			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 				ID:               bt.ID,
@@ -704,6 +707,14 @@ func buildTripReferences(
 	presentTrips := make(map[string]models.Trip)
 	presentRoutes := make(map[string]models.Route)
 
+	// referencedTripIDs tracks the trips referenced by the response (entry
+	// tripIds, schedule.nextTripId/previousTripId, status.activeTripId) that
+	// were not part of preFetchedTrips and still need to be fetched, so their
+	// full records are present in references.trips. Encoding this as an
+	// explicit set rather than inferring it from a zero-value ID sentinel makes
+	// it unambiguous which trips are still missing from the references.
+	referencedTripIDs := make(map[string]bool)
+
 	for _, trip := range preFetchedTrips {
 		presentTrips[trip.ID] = models.Trip{
 			ID:            trip.ID,
@@ -722,6 +733,7 @@ func buildTripReferences(
 		_, tripID, _ := utils.ExtractAgencyIDAndCodeID(trip.GetTripId())
 		if _, exists := presentTrips[tripID]; !exists {
 			presentTrips[tripID] = models.Trip{}
+			referencedTripIDs[tripID] = true
 		}
 	}
 
@@ -732,6 +744,7 @@ func buildTripReferences(
 				if err == nil {
 					if _, exists := presentTrips[nextTripID]; !exists {
 						presentTrips[nextTripID] = models.Trip{}
+						referencedTripIDs[nextTripID] = true
 					}
 				}
 			}
@@ -740,6 +753,7 @@ func buildTripReferences(
 				if err == nil {
 					if _, exists := presentTrips[prevTripID]; !exists {
 						presentTrips[prevTripID] = models.Trip{}
+						referencedTripIDs[prevTripID] = true
 					}
 				}
 			}
@@ -750,16 +764,15 @@ func buildTripReferences(
 			if err == nil {
 				if _, exists := presentTrips[activeTripID]; !exists {
 					presentTrips[activeTripID] = models.Trip{}
+					referencedTripIDs[activeTripID] = true
 				}
 			}
 		}
 	}
 
 	var tripIDsToFetch []string
-	for id, t := range presentTrips {
-		if t.ID == "" {
-			tripIDsToFetch = append(tripIDsToFetch, id)
-		}
+	for id := range referencedTripIDs {
+		tripIDsToFetch = append(tripIDsToFetch, id)
 	}
 
 	if len(tripIDsToFetch) > 0 {
