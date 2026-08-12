@@ -134,12 +134,9 @@ func (api *RestAPI) BuildVehicleStatus(
 	}
 
 	if vehicle.Position != nil && vehicle.Position.Bearing != nil {
-		obaOrientation := (90 - *vehicle.Position.Bearing)
-		if obaOrientation < 0 {
-			obaOrientation += 360
-		}
-		status.Orientation = float64(obaOrientation)
-		status.LastKnownOrientation = float64(obaOrientation)
+		orientation := OrientationFromGTFSBearing(*vehicle.Position.Bearing)
+		status.Orientation = orientation
+		status.LastKnownOrientation = orientation
 	}
 
 	status.Status, status.Phase = GetVehicleStatusAndPhase(vehicle)
@@ -149,6 +146,16 @@ func (api *RestAPI) BuildVehicleStatus(
 	} else {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	}
+}
+
+// OrientationFromGTFSBearing converts a GTFS-RT bearing (0° = North, increasing
+// clockwise) to an OBA orientation (0° = East, increasing counter-clockwise).
+func OrientationFromGTFSBearing(bearing float32) float64 {
+	orientation := 90 - bearing
+	if orientation < 0 {
+		orientation += 360
+	}
+	return float64(orientation)
 }
 
 func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {

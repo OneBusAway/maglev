@@ -25,6 +25,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // vehiclesForAgencyURL builds the /vehicles-for-agency URL with key=TEST baked in.
@@ -1040,6 +1041,206 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 	}
 	assert.True(t, refRouteIDs[expectedNominalRoute], "nominal route must be in references.routes")
 	assert.True(t, refRouteIDs[expectedActiveRoute], "active route must be in references.routes")
+}
+
+// findTripActiveWithStopTimes returns a trip whose block is active on serviceDate
+// and which has at least minStopTimes stop times, together with those stop times.
+func findTripActiveWithStopTimes(t testing.TB, api *RestAPI, ctx context.Context, serviceDate time.Time, minStopTimes int) (gtfsdb.Trip, []gtfsdb.StopTime) {
+	t.Helper()
+	trip := findTripWithBlock(t, api, ctx, func(row gtfsdb.Trip) bool {
+		if _, ok := api.blockTripSequence(ctx, row.ID, serviceDate); !ok {
+			return false
+		}
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, row.ID)
+		return err == nil && len(stopTimes) >= minStopTimes
+	})
+	require.NotEmpty(t, trip.ID, "need a trip with >= %d stop times active on %s",
+		minStopTimes, serviceDate.Format("2006-01-02"))
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	require.NoError(t, err)
+	return trip, stopTimes
+}
+
+// TestVehiclesForAgencyHandler_TripStatusSpecFields verifies that tripStatus carries
+// the stop-relative, distance and prediction fields the spec defines, rather than
+// leaving them at their zero values. These are computed by the shared
+// api.BuildTripStatus that the other real-time endpoints already use.
+func TestVehiclesForAgencyHandler_TripStatusSpecFields(t *testing.T) {
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	// Monday within the RABA dataset's active service period.
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(12*time.Hour)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	trip, stopTimes := findTripActiveWithStopTimes(t, api, ctx, serviceDate, 3)
+
+	// Park the vehicle at the trip's second stop, at that stop's scheduled arrival,
+	// so both closestStop and nextStop resolve against real schedule data.
+	target := stopTimes[1]
+	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, target.StopID)
+	require.NoError(t, err)
+
+	referenceTime := serviceDate.Add(time.Duration(target.ArrivalTime))
+	lat, lon := float32(stop.Lat), float32(stop.Lon)
+	stoppedAt := gogtfs.CurrentStatus(1)
+	stopID := target.StopID
+
+	const vehicleID = "v_trip_status_fields"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Position:      &gogtfs.Position{Latitude: &lat, Longitude: &lon},
+		StopID:        &stopID,
+		CurrentStatus: &stoppedAt,
+		Timestamp:     &referenceTime,
+	})
+
+	params := url.Values{"time": {strconv.FormatInt(referenceTime.UnixMilli(), 10)}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+
+	status := entry.TripStatus
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, target.StopID), status.ClosestStop,
+		"closestStop must resolve to the stop the vehicle is stopped at")
+	assert.NotEmpty(t, status.NextStop, "nextStop must be populated")
+	assert.True(t, status.Predicted, "predicted must be true for a fresh real-time vehicle")
+	assert.False(t, status.Scheduled, "scheduled must be the inverse of predicted")
+	assert.Greater(t, status.TotalDistanceAlongTrip, float64(0),
+		"totalDistanceAlongTrip must be populated from the trip's shape")
+	assert.NotNil(t, status.SituationIDs, "situationIds must never be null")
+}
+
+// TestVehiclesForAgencyHandler_StaleVehicleKeepsPosition verifies a vehicle whose
+// last update predates the staleness window still reports its GPS position and
+// orientation on tripStatus, matching the vehicle-level location on the same entry.
+// The shared BuildTripStatus reports nothing for a stale vehicle, and any `time`
+// far enough from the feed timestamp makes every vehicle stale — without the
+// fallback the entry would pair a real location with a tripStatus at (0, 0).
+func TestVehiclesForAgencyHandler_StaleVehicleKeepsPosition(t *testing.T) {
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	referenceTime := time.Date(2024, 11, 4, 12, 0, 0, 0, loc)
+
+	api := createTestApiWithClock(t, clock.NewMockClock(referenceTime))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTrip(t, api)
+	lat, lon, bearing := float32(40.5865), float32(-122.3917), float32(90)
+	staleTimestamp := referenceTime.Add(-1 * time.Hour)
+
+	const vehicleID = "v_stale_position"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+		Position:  &gogtfs.Position{Latitude: &lat, Longitude: &lon, Bearing: &bearing},
+		Timestamp: &staleTimestamp,
+	})
+
+	params := url.Values{"time": {strconv.FormatInt(referenceTime.UnixMilli(), 10)}}
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	require.NotNil(t, entry.Location)
+
+	assert.InDelta(t, entry.Location.Lat, entry.TripStatus.Position.Lat, 0.0001,
+		"tripStatus.position.lat must match the vehicle-level location")
+	assert.InDelta(t, entry.Location.Lon, entry.TripStatus.Position.Lon, 0.0001,
+		"tripStatus.position.lon must match the vehicle-level location")
+	assert.Equal(t, OrientationFromGTFSBearing(bearing), entry.TripStatus.Orientation,
+		"tripStatus.orientation must be derived from the reported bearing")
+}
+
+// findTripsActiveWithStopTimes returns up to limit trips whose block is active on
+// serviceDate and which have at least three stop times.
+func findTripsActiveWithStopTimes(t testing.TB, api *RestAPI, ctx context.Context, serviceDate time.Time, limit int) []gtfsdb.Trip {
+	t.Helper()
+	candidates, err := api.GtfsManager.GetTrips(ctx, 2000)
+	require.NoError(t, err)
+
+	matches := make([]gtfsdb.Trip, 0, limit)
+	for _, trip := range candidates {
+		if len(matches) == limit {
+			break
+		}
+		if !trip.BlockID.Valid || trip.BlockID.String == "" {
+			continue
+		}
+		if _, ok := api.blockTripSequence(ctx, trip.ID, serviceDate); !ok {
+			continue
+		}
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		if err != nil || len(stopTimes) < 3 {
+			continue
+		}
+		matches = append(matches, trip)
+	}
+	require.NotEmpty(t, matches, "need trips with stop times active on %s", serviceDate.Format("2006-01-02"))
+	return matches
+}
+
+// benchmarkVehiclesForAgencyWithVehicles serves vehicles-for-agency with vehicleCount
+// live vehicles parked on distinct active trips. Unlike BenchmarkVehiclesForAgency,
+// which runs against the single-vehicle RABA fixture whose positions go stale, this
+// holds the clock still so the per-vehicle tripStatus cost is what actually scales.
+func benchmarkVehiclesForAgencyWithVehicles(b *testing.B, vehicleCount int) {
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(b, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+	referenceTime := serviceDate.Add(12 * time.Hour)
+
+	api := createTestApiWithClock(b, clock.NewMockClock(referenceTime))
+	defer api.Shutdown()
+	b.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	trips := findTripsActiveWithStopTimes(b, api, ctx, serviceDate, vehicleCount)
+
+	for i, trip := range trips {
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		require.NoError(b, err)
+		target := stopTimes[len(stopTimes)/2]
+		stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, target.StopID)
+		require.NoError(b, err)
+
+		lat, lon := float32(stop.Lat), float32(stop.Lon)
+		stoppedAt := gogtfs.CurrentStatus(1)
+		stopID := target.StopID
+		timestamp := referenceTime
+		api.GtfsManager.MockAddVehicleWithOptions(
+			"bench_vehicle_"+strconv.Itoa(i), trip.ID, trip.RouteID, gtfs.MockVehicleOptions{
+				Position:      &gogtfs.Position{Latitude: &lat, Longitude: &lon},
+				StopID:        &stopID,
+				CurrentStatus: &stoppedAt,
+				Timestamp:     &timestamp,
+			})
+	}
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, vehiclesForAgencyURL(testdata.Raba.ID), nil)
+
+	warmup := httptest.NewRecorder()
+	mux.ServeHTTP(warmup, req)
+	require.Equal(b, http.StatusOK, warmup.Code)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+	}
+}
+
+func BenchmarkVehiclesForAgency_1Vehicle(b *testing.B) {
+	benchmarkVehiclesForAgencyWithVehicles(b, 1)
+}
+
+func BenchmarkVehiclesForAgency_50Vehicles(b *testing.B) {
+	benchmarkVehiclesForAgencyWithVehicles(b, 50)
 }
 
 // TestAddRouteReference verifies a gtfsdb.Route is keyed by its combined

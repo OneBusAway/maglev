@@ -1,10 +1,12 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -18,7 +20,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ctx := r.Context()
+	// This endpoint builds a trip status per vehicle, so vehicles sharing a block
+	// would otherwise recompute that block's snapshot and reload its trip data once
+	// per vehicle. The plural arrivals handler installs the snapshot cache for the
+	// same reason; the trip-data memo additionally covers the schedule-deviation
+	// path, which resolves the same block without going through a snapshot.
+	ctx := withRequestCache(WithSnapshotCache(r.Context(), newSnapshotCache()))
 
 	agency, err := api.GtfsManager.FindAgency(ctx, id)
 	if err != nil {
@@ -49,7 +56,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Service date is midnight of the reference date in the agency timezone.
-	serviceDate := models.NewModelTime(utils.CalculateServiceDate(referenceTime))
+	serviceDate := utils.CalculateServiceDate(referenceTime)
 
 	vehiclesForAgency, err := api.GtfsManager.VehiclesForAgencyID(ctx, id)
 	if err != nil {
@@ -74,17 +81,28 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
 
-	// Collect unique route IDs and batch-fetch routes
+	// Collect unique route and trip IDs, then batch-fetch what every vehicle needs.
 	routeIDSet := make(map[string]struct{})
+	tripIDSet := make(map[string]struct{})
 	for _, vehicle := range vehiclesForAgency {
 		if vehicle.Trip != nil {
 			routeIDSet[vehicle.Trip.ID.RouteID] = struct{}{}
+			tripIDSet[vehicle.Trip.ID.ID] = struct{}{}
 		}
 	}
 	routeIDs := make([]string, 0, len(routeIDSet))
 	for routeID := range routeIDSet {
 		routeIDs = append(routeIDs, routeID)
 	}
+
+	// Resolve every vehicle's stop times in one query, so the trip status built
+	// for each one reads them from the request memo rather than issuing its own.
+	tripIDs := make([]string, 0, len(tripIDSet))
+	for tripID := range tripIDSet {
+		tripIDs = append(tripIDs, tripID)
+	}
+	api.prefetchStopTimes(ctx, tripIDs)
+
 	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -136,55 +154,26 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		if vehicle.Trip != nil {
 			vehicleStatus.TripID = utils.FormCombinedID(id, vehicle.Trip.ID.ID)
 
-			tripStatus := models.NewTripStatus()
 			// Resolve the executing trip; may differ from the nominal trip when interlining.
 			activeTripID := api.resolveActiveTripID(ctx, vehicle.Trip.ID.ID, referenceTime)
-			tripStatus.ActiveTripID = utils.FormCombinedID(id, activeTripID)
-			// Resolve the block trip sequence for the active (not nominal) trip,
-			// so it reflects the position of the trip actually being executed.
-			if seq, ok := api.blockTripSequence(ctx, activeTripID, referenceTime); ok {
-				tripStatus.BlockTripSequence = seq
-			} else {
-				tripStatus.BlockTripSequence = -1
-			}
-			tripStatus.Phase = vehicleStatus.Phase
-			tripStatus.Status = vehicleStatus.Status
 
-			// Add position information to trip status
-			if vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-				tripStatus.Position = models.Location{
-					Lat: float64(*vehicle.Position.Latitude),
-					Lon: float64(*vehicle.Position.Longitude),
-				}
-			}
+			tripStatus := api.buildVehicleTripStatus(ctx, &vehicle, vehicleTripStatusParams{
+				AgencyID:               id,
+				ActiveTripID:           activeTripID,
+				ServiceDate:            serviceDate,
+				ReferenceTime:          referenceTime,
+				Status:                 vehicleStatus.Status,
+				Phase:                  vehicleStatus.Phase,
+				LastUpdateTime:         vehicleStatus.LastUpdateTime,
+				LastLocationUpdateTime: vehicleStatus.LastLocationUpdateTime,
+			})
 
-			// Add orientation if available (convert from GTFS bearing to OBA orientation)
-			if vehicle.Position != nil && vehicle.Position.Bearing != nil {
-				// Convert from GTFS bearing (0° = North, 90° = East) to OBA orientation (0° = East, 90° = North)
-				// OBA orientation = (90 - GTFS bearing) mod 360
-				obaOrientation := (90 - *vehicle.Position.Bearing)
-				if obaOrientation < 0 {
-					obaOrientation += 360
-				}
-				tripStatus.Orientation = float64(obaOrientation)
-			}
-
-			// Trip status update times default to 0 when no real update exists.
-			if vehicle.Timestamp != nil {
-				ts := models.NewModelTime(*vehicle.Timestamp)
-				tripStatus.LastUpdateTime = ts
-				tripStatus.LastLocationUpdateTime = ts
-			}
-
-			tripStatus.ServiceDate = serviceDate
-
-			// Propagate occupancy status from GTFS-RT to both TripStatus and VehicleStatus.
+			// Propagate occupancy status from GTFS-RT to the vehicle-level field as well;
+			// BuildTripStatus already sets it on the trip status.
 			// There is no source for occupancyCapacity or occupancyCount anywhere in maglev — not in the SQLite DB,
 			// not in GTFS-RT. Those fields will remain omitted.
 			if vehicle.OccupancyStatus != nil {
-				occupancy := vehicle.OccupancyStatus.String()
-				tripStatus.OccupancyStatus = occupancy
-				vehicleStatus.OccupancyStatus = occupancy
+				vehicleStatus.OccupancyStatus = vehicle.OccupancyStatus.String()
 			}
 
 			vehicleStatus.TripStatus = tripStatus
@@ -256,6 +245,89 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
 	response := models.NewListResponse(vehiclesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// vehicleTripStatusParams carries the per-request values buildVehicleTripStatus needs
+// alongside the vehicle itself.
+type vehicleTripStatusParams struct {
+	AgencyID string
+	// ActiveTripID is the trip actually executing at ReferenceTime, which differs
+	// from the vehicle's nominal trip when interlining is in play.
+	ActiveTripID  string
+	ServiceDate   time.Time
+	ReferenceTime time.Time
+	// Status, Phase and the update times are the enclosing vehicleStatus values,
+	// mirrored onto the trip status so the two never disagree within a single list
+	// entry. BuildTripStatus derives its own equivalents from vehicle freshness and
+	// position, which would otherwise make the nested object contradict the outer one.
+	Status                 string
+	Phase                  string
+	LastUpdateTime         models.ModelTime
+	LastLocationUpdateTime models.ModelTime
+}
+
+// buildVehicleTripStatus builds the tripStatus for one vehicles-for-agency entry.
+//
+// It delegates to the shared api.BuildTripStatus so this endpoint reports the same
+// stop-relative, schedule-deviation, distance-along-trip, predicted and situation
+// fields as the other real-time endpoints, then re-applies the two behaviours that
+// are specific to this endpoint: the active trip is resolved against the request's
+// reference time, and an unresolvable block sequence is reported as -1 rather than 0.
+func (api *RestAPI) buildVehicleTripStatus(ctx context.Context, vehicle *gtfs.Vehicle, params vehicleTripStatusParams) *models.TripStatus {
+	tripStatus, _, err := api.BuildTripStatus(
+		ctx, params.AgencyID, vehicle.Trip.ID.ID, vehicle, params.ServiceDate, params.ReferenceTime,
+	)
+	if err != nil {
+		api.Logger.Warn("vehicles-for-agency: failed to build trip status",
+			"tripID", vehicle.Trip.ID.ID, "error", err)
+	}
+	if tripStatus == nil {
+		tripStatus = models.NewTripStatus()
+	}
+
+	tripStatus.ActiveTripID = utils.FormCombinedID(params.AgencyID, params.ActiveTripID)
+
+	// Resolve the block trip sequence for the active (not nominal) trip, so it
+	// reflects the position of the trip actually being executed.
+	if seq, ok := api.blockTripSequence(ctx, params.ActiveTripID, params.ReferenceTime); ok {
+		tripStatus.BlockTripSequence = seq
+	} else {
+		tripStatus.BlockTripSequence = -1
+	}
+
+	tripStatus.Status = params.Status
+	tripStatus.Phase = params.Phase
+	tripStatus.LastUpdateTime = params.LastUpdateTime
+	tripStatus.LastLocationUpdateTime = params.LastLocationUpdateTime
+	applyRawVehiclePosition(tripStatus, vehicle)
+
+	return tripStatus
+}
+
+// applyRawVehiclePosition fills position and orientation from the vehicle's own
+// GPS when BuildTripStatus left them unset.
+//
+// BuildTripStatus reports nothing for a vehicle it considers stale, and a
+// requested `time` more than the staleness window away from the feed timestamp
+// makes every vehicle stale. Without this the entry would carry a real
+// vehicle-level location next to a tripStatus sitting at (0, 0). This endpoint
+// has always published the raw position regardless of freshness.
+func applyRawVehiclePosition(tripStatus *models.TripStatus, vehicle *gtfs.Vehicle) {
+	if vehicle.Position == nil {
+		return
+	}
+
+	hasCoordinates := vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil
+	if hasCoordinates && tripStatus.Position == (models.Location{}) {
+		tripStatus.Position = models.Location{
+			Lat: float64(*vehicle.Position.Latitude),
+			Lon: float64(*vehicle.Position.Longitude),
+		}
+	}
+
+	if vehicle.Position.Bearing != nil && tripStatus.Orientation == 0 {
+		tripStatus.Orientation = OrientationFromGTFSBearing(*vehicle.Position.Bearing)
+	}
 }
 
 // addRouteReference inserts a route reference keyed by its combined agencyID_routeID.
