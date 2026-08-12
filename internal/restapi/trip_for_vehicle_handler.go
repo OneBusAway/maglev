@@ -1,12 +1,14 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -125,44 +127,42 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		SituationIDs: situationIDs,
 	}
 
-	// Build references
+	references := models.NewEmptyReferences()
+	// When includeReferences=false the references block is present but empty.
+	if ShouldIncludeReferences(r) {
+		references, err = api.buildTripForVehicleReferences(ctx, agencyID, agency, trip, status, schedule, params.IncludeTrip)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+	}
+
+	response := models.NewEntryResponse(entry, *references, api.Clock)
+	api.sendResponse(w, r, response)
+}
+
+// buildTripForVehicleReferences dereferences the IDs the entry exposes: the
+// agency, the stops named by the status and schedule blocks, the routes serving
+// those stops, and — when includeTrip is set — the scheduled trip record.
+func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID string, agency gtfsdb.Agency, trip gtfsdb.Trip, status *models.TripStatus, schedule *models.Schedule, includeTrip bool) (*models.ReferencesModel, error) {
 	references := models.NewEmptyReferences()
 
-	agencyModel := models.AgencyReferenceFromDatabase(&agency)
-
-	stopIDs := []string{}
-
-	if status != nil {
-		if status.ClosestStop != "" {
-			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-			stopIDs = append(stopIDs, closestStopID)
-		}
-		if status.NextStop != "" {
-			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-			stopIDs = append(stopIDs, nextStopID)
-		}
+	stopIDs, err := referencedStopIDs(status, schedule)
+	if err != nil {
+		return nil, err
 	}
+
 	stops, uniqueRouteMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+		return nil, err
 	}
-
 	references.Stops = stops
 
 	routeRefs := make(map[string]models.Route, len(uniqueRouteMap))
 	for combinedID, route := range uniqueRouteMap {
 		routeRefs[combinedID] = models.NewRoute(
-			utils.FormCombinedID(agencyID, route.ID),
-			agencyID,
+			combinedID,
+			route.AgencyID,
 			route.ShortName.String,
 			route.LongName.String,
 			route.Desc.String,
@@ -173,9 +173,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 	references.Routes = utils.MapValues(routeRefs)
 
-	references.Agencies = append(references.Agencies, agencyModel)
+	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
-	if params.IncludeTrip {
+	if includeTrip {
 		tripRef := models.NewTripReference(
 			utils.FormCombinedID(agencyID, trip.ID),
 			utils.FormCombinedID(agencyID, trip.RouteID),
@@ -189,6 +189,37 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		references.Trips = append(references.Trips, *tripRef)
 	}
 
-	response := models.NewEntryResponse(entry, *references, api.Clock)
-	api.sendResponse(w, r, response)
+	return references, nil
+}
+
+// referencedStopIDs returns the bare stop IDs that the entry refers to and so
+// need dereferencing in the response: the status block's closest and next stops,
+// plus every stop the schedule block lists. Both blocks carry combined
+// {agencyID}_{stopID} identifiers; the reference builders take bare ones.
+func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]string, error) {
+	var combinedIDs []string
+
+	if status != nil {
+		combinedIDs = append(combinedIDs, status.ClosestStop, status.NextStop)
+	}
+	if schedule != nil {
+		for _, stopTime := range schedule.StopTimes {
+			combinedIDs = append(combinedIDs, stopTime.StopID)
+		}
+	}
+
+	stopIDs := make([]string, 0, len(combinedIDs))
+	for _, combinedID := range combinedIDs {
+		if combinedID == "" {
+			continue
+		}
+
+		_, stopID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+		if err != nil {
+			return nil, err
+		}
+		stopIDs = append(stopIDs, stopID)
+	}
+
+	return stopIDs, nil
 }

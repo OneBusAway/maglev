@@ -312,6 +312,31 @@ WHERE
 LIMIT
     1;
 
+-- name: GetStopsByCode :many
+SELECT
+    id,
+    code,
+    name,
+    desc,
+    lat,
+    lon,
+    zone_id,
+    url,
+    location_type,
+    timezone,
+    wheelchair_boarding,
+    platform_code,
+    direction,
+    parent_station
+FROM
+    stops
+WHERE
+    code = ?
+ORDER BY
+    id
+LIMIT
+    10;
+
 -- name: GetStopForAgency :one
 -- Return the stop only if it is served by any route that belongs to the specified agency.
 -- We join stop_times -> trips -> routes and filter by routes.agency_id to enforce agency ownership.
@@ -645,7 +670,10 @@ FROM
     JOIN trips ON stop_times.trip_id = trips.id
     JOIN routes ON trips.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'));
+    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+ORDER BY
+    routes.agency_id ASC,
+    routes.id ASC;
 
 -- name: GetRouteIDsForStops :many
 SELECT DISTINCT
