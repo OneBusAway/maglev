@@ -70,7 +70,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	var status *models.TripStatus
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+		status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("failed to build trip status",
 				"tripID", tripID,
@@ -130,26 +130,12 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	agencyModel := models.AgencyReferenceFromDatabase(&agency)
 
-	stopIDs := []string{}
-
-	if status != nil {
-		if status.ClosestStop != "" {
-			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-			stopIDs = append(stopIDs, closestStopID)
-		}
-		if status.NextStop != "" {
-			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-			stopIDs = append(stopIDs, nextStopID)
-		}
+	stopIDs, err := referencedStopIDs(status, schedule)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
 	}
+
 	stops, uniqueRouteMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -161,8 +147,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	routeRefs := make(map[string]models.Route, len(uniqueRouteMap))
 	for combinedID, route := range uniqueRouteMap {
 		routeRefs[combinedID] = models.NewRoute(
-			utils.FormCombinedID(agencyID, route.ID),
-			agencyID,
+			combinedID,
+			route.AgencyID,
 			route.ShortName.String,
 			route.LongName.String,
 			route.Desc.String,
@@ -191,4 +177,36 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// referencedStopIDs returns the bare stop IDs that the entry refers to and so
+// need dereferencing in the response: the status block's closest and next stops,
+// plus every stop the schedule block lists. Both blocks carry combined
+// {agencyID}_{stopID} identifiers; the reference builders take bare ones.
+func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]string, error) {
+	var combinedIDs []string
+
+	if status != nil {
+		combinedIDs = append(combinedIDs, status.ClosestStop, status.NextStop)
+	}
+	if schedule != nil {
+		for _, stopTime := range schedule.StopTimes {
+			combinedIDs = append(combinedIDs, stopTime.StopID)
+		}
+	}
+
+	stopIDs := make([]string, 0, len(combinedIDs))
+	for _, combinedID := range combinedIDs {
+		if combinedID == "" {
+			continue
+		}
+
+		_, stopID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+		if err != nil {
+			return nil, err
+		}
+		stopIDs = append(stopIDs, stopID)
+	}
+
+	return stopIDs, nil
 }
