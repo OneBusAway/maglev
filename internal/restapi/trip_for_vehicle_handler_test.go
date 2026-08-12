@@ -189,6 +189,31 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 		}
 	})
 
+	t.Run("includeReferences=false empties the references block", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(vehicleID, url.Values{"includeReferences": {"false"}}))
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NotEmpty(t, model.Data.Entry.TripID, "the entry must still be populated")
+
+		// Every collection must serialize as [] rather than null: the block stays
+		// present and merely empty, so a nil slice here would be a wire-format
+		// regression rather than a reference the handler chose not to populate.
+		refs := model.Data.References
+		emptyCollections := map[string]any{
+			"agencies":   refs.Agencies,
+			"routes":     refs.Routes,
+			"trips":      refs.Trips,
+			"stops":      refs.Stops,
+			"situations": refs.Situations,
+			"stopTimes":  refs.StopTimes,
+		}
+		for name, collection := range emptyCollections {
+			assert.NotNil(t, collection, "%s must be present when includeReferences=false", name)
+			assert.Empty(t, collection, "%s must be empty when includeReferences=false", name)
+		}
+	})
+
 	t.Run("all-false strips schedule/status/trip refs", func(t *testing.T) {
 		_, model := callAPIHandler[TripDetailsResponse](t, api,
 			tripForVehicleURL(vehicleID, url.Values{
