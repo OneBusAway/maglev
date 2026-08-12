@@ -199,7 +199,7 @@ func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID strin
 // activeTripInBlockAt returns the block trip whose scheduled window contains
 // sinceMidnightNs on serviceDay's active services, if any.
 func (api *RestAPI) activeTripInBlockAt(ctx context.Context, blockID sql.NullString, serviceDay time.Time, sinceMidnightNs int64) (string, bool) {
-	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDay.Format("20060102"))
+	serviceIDs, err := api.activeServiceIDsForDate(ctx, serviceDay.Format("20060102"))
 	if err != nil || len(serviceIDs) == 0 {
 		return "", false
 	}

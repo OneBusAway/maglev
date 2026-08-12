@@ -138,7 +138,7 @@ func (api *RestAPI) BuildTripStatus(
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
 
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
+	stopTimes, err := api.stopTimesForTrip(ctx, dbTripID)
 	if err != nil {
 		slog.Warn("buildTripStatusCore: failed to get stop times",
 			slog.String("trip_id", dbTripID),
@@ -731,7 +731,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	}
 
 	formattedDate := serviceDate.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	activeServiceIDs, err := api.activeServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		slog.Warn("blockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),

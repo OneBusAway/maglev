@@ -490,7 +490,7 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	if len(blockTrips) == 0 {
 		return fallback
 	}
-	activeServiceIDs, err := q.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	activeServiceIDs, err := api.activeServiceIDsForDate(ctx, serviceDate.Format("20060102"))
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetActiveServiceIDsForDate failed, degrading to single-trip mode",
 			slog.String("trip_id", targetTripID), slog.String("date", serviceDate.Format("20060102")))
@@ -527,6 +527,31 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 	if len(tripIDs) == 0 {
 		return nil
 	}
+
+	cache := requestCacheFrom(ctx)
+	if cache == nil {
+		return api.loadBlockTripDataFromDB(ctx, tripIDs)
+	}
+
+	key := blockTripDataCacheKeyFor(tripIDs)
+	trips, ok := cache.getBlockTripData(key)
+	if !ok {
+		trips = api.loadBlockTripDataFromDB(ctx, tripIDs)
+		// A nil result means the stop-times query failed; the no-usable-trips case
+		// returns an empty non-nil slice. Caching the failure would turn one
+		// transient DB error into a block-wide degradation for the whole request,
+		// with every later row silently skipping its retry.
+		if trips != nil {
+			cache.putBlockTripData(key, trips)
+		}
+	}
+	// loadShiftTrips sorts the result in place and reslices it, so each caller
+	// needs its own backing array. The elements are treated as read-only.
+	return slices.Clone(trips)
+}
+
+// loadBlockTripDataFromDB is loadBlockTripData without the request-scoped memo.
+func (api *RestAPI) loadBlockTripDataFromDB(ctx context.Context, tripIDs []string) []blockTripData {
 	q := api.GtfsManager.GtfsDB.Queries
 
 	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
