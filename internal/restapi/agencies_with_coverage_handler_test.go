@@ -100,6 +100,7 @@ func TestAgenciesWithCoverageHandlerLimitExceeded(t *testing.T) {
 	}{
 		{"maxCount below total caps the list", "&maxCount=1", 1, true},
 		{"maxCount equal to total returns all", "&maxCount=2", 2, false},
+		{"maxCount above total returns all", "&maxCount=3", 2, false},
 		{"no maxCount returns all", "", 2, false},
 	}
 
