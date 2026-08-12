@@ -536,8 +536,18 @@ func (manager *Manager) GetRoutesForLocation(
 	return routes, limitExceeded
 }
 
+// maxRoutesFetchedForShuffle bounds how many in-bounds route matches are pulled
+// into memory before shuffling. BoundsFromParams is called without clamping for
+// this query, so a caller-supplied radius/span can be arbitrarily large; this
+// ceiling is a defensive backstop against that, not a functional limit — real
+// GTFS feeds have nowhere near this many routes, so it never affects the
+// uniform-random selection required by the spec.
+const maxRoutesFetchedForShuffle = 5000
+
 // queryRoutesInBounds retrieves all routes serving stops within the given geographic bounds
-// from the database's stops_rtree spatial index.
+// from the database's stops_rtree spatial index. When the match count exceeds maxCount,
+// the full set is randomly shuffled before truncation (per spec), so the SQL's
+// ORDER BY min_distance does not determine which routes survive truncation.
 // Despite the query's name, this doesn't actually check "Active" stops beyond
 // checking that the stop has at least one stop_time. The corresponding GetStopsForLocation
 // checks active service dates as well.
@@ -553,14 +563,13 @@ func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.Co
 		return nil, false, fmt.Errorf("query min lon %f exceeds max lon %f", bounds.MinLon, bounds.MaxLon)
 	}
 	routes, err := manager.GtfsDB.Queries.GetActiveRoutesWithinBounds(ctx, gtfsdb.GetActiveRoutesWithinBoundsParams{
-		MinLat: bounds.MinLat,
-		MaxLat: bounds.MaxLat,
-		MinLon: bounds.MinLon,
-		MaxLon: bounds.MaxLon,
-		Lat:    lat,
-		Lon:    lon,
-		// Ask for an extra element so that we can determine if we hit the max count.
-		MaxCount:  maxCount + 1,
+		MinLat:    bounds.MinLat,
+		MaxLat:    bounds.MaxLat,
+		MinLon:    bounds.MinLon,
+		MaxLon:    bounds.MaxLon,
+		Lat:       lat,
+		Lon:       lon,
+		MaxCount:  maxRoutesFetchedForShuffle,
 		ShortName: shortNameQuery,
 	})
 	if err != nil {
@@ -568,9 +577,8 @@ func (manager *Manager) queryRoutesInBounds(ctx context.Context, bounds utils.Co
 	}
 
 	if len(routes) > maxCount {
-		// Drop the extra last element. This is correct because results are in ascending distance order.
-		routes = routes[:maxCount]
-		return routes, true, nil
+		rand.Shuffle(len(routes), func(i, j int) { routes[i], routes[j] = routes[j], routes[i] })
+		return routes[:maxCount], true, nil
 	}
 
 	return routes, false, nil
