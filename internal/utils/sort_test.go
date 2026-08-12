@@ -148,3 +148,17 @@ func TestSortAgencyReferencesByID(t *testing.T) {
 	assert.Equal(t, "metro", agencies[1].ID)
 	assert.Equal(t, "sound-transit", agencies[2].ID)
 }
+
+func TestSortModelStopsByID(t *testing.T) {
+	stops := []models.Stop{
+		{ID: "999_parent_stat_1", Name: "Parent Station One"},
+		{ID: "parent_stat_3", Name: "Parent Station Three"},
+		{ID: "888_parent_stat_2", Name: "Parent Station Two"},
+	}
+
+	utils.SortModelStopsByID(stops)
+
+	assert.Equal(t, "888_parent_stat_2", stops[0].ID)
+	assert.Equal(t, "999_parent_stat_1", stops[1].ID)
+	assert.Equal(t, "parent_stat_3", stops[2].ID)
+}

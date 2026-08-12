@@ -213,6 +213,14 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			api.sendNotFound(w, r)
 			return
 		}
+		// The trip-details endpoint must not accept a vehicle currently on
+		// a different trip. Java's TripDetailsBeanService restricts the
+		// vehicle argument to the trip we're describing; a mismatch is 404
+		// so the response never conflates two unrelated trips.
+		if v.Trip == nil || v.Trip.ID.ID != trip.ID {
+			api.sendNotFound(w, r)
+			return
+		}
 		requestedVehicle = v
 	}
 
@@ -221,7 +229,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
+		status, _, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed",
 				"trip_id", trip.ID,
