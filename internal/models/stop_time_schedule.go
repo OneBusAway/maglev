@@ -14,8 +14,8 @@ type ScheduleStopTime struct {
 // StopRouteDirectionSchedule represents schedule for a specific direction of a route
 type StopRouteDirectionSchedule struct {
 	ScheduleFrequencies []ScheduleFrequency `json:"scheduleFrequencies"`
-	ScheduleStopTimes   []ScheduleStopTime `json:"scheduleStopTimes"`
-	TripHeadsign        string             `json:"tripHeadsign"`
+	ScheduleStopTimes   []ScheduleStopTime  `json:"scheduleStopTimes"`
+	TripHeadsign        string              `json:"tripHeadsign"`
 }
 
 // StopRouteSchedule represents the schedule for a route at a stop

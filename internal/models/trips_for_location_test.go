@@ -58,6 +58,9 @@ func TestTripsForLocationListEntryJSON(t *testing.T) {
 	assert.Equal(t, entry.ServiceDate, unmarshaledEntry.ServiceDate)
 	assert.NotNil(t, unmarshaledEntry.Frequency)
 	assert.Equal(t, entry.Frequency.Headway, unmarshaledEntry.Frequency.Headway)
+	assert.Equal(t, entry.Frequency.StartTime, unmarshaledEntry.Frequency.StartTime)
+	assert.Equal(t, entry.Frequency.EndTime, unmarshaledEntry.Frequency.EndTime)
+	assert.Equal(t, entry.Frequency.ExactTimes, unmarshaledEntry.Frequency.ExactTimes)
 	assert.Equal(t, entry.SituationIds, unmarshaledEntry.SituationIds)
 
 	assert.NotNil(t, unmarshaledEntry.Status)
