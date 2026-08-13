@@ -1,12 +1,14 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -125,23 +127,35 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		SituationIDs: situationIDs,
 	}
 
-	// Build references
 	references := models.NewEmptyReferences()
+	// When includeReferences=false the references block is present but empty.
+	if ShouldIncludeReferences(r) {
+		references, err = api.buildTripForVehicleReferences(ctx, agencyID, agency, trip, status, schedule, params.IncludeTrip)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+	}
 
-	agencyModel := models.AgencyReferenceFromDatabase(&agency)
+	response := models.NewEntryResponse(entry, *references, api.Clock)
+	api.sendResponse(w, r, response)
+}
+
+// buildTripForVehicleReferences dereferences the IDs the entry exposes: the
+// agency, the stops named by the status and schedule blocks, the routes serving
+// those stops, and — when includeTrip is set — the scheduled trip record.
+func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID string, agency gtfsdb.Agency, trip gtfsdb.Trip, status *models.TripStatus, schedule *models.Schedule, includeTrip bool) (*models.ReferencesModel, error) {
+	references := models.NewEmptyReferences()
 
 	stopIDs, err := referencedStopIDs(status, schedule)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+		return nil, err
 	}
 
 	stops, uniqueRouteMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+		return nil, err
 	}
-
 	references.Stops = stops
 
 	routeRefs := make(map[string]models.Route, len(uniqueRouteMap))
@@ -159,9 +173,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 	references.Routes = utils.MapValues(routeRefs)
 
-	references.Agencies = append(references.Agencies, agencyModel)
+	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
-	if params.IncludeTrip {
+	if includeTrip {
 		tripRef := models.NewTripReference(
 			utils.FormCombinedID(agencyID, trip.ID),
 			utils.FormCombinedID(agencyID, trip.RouteID),
@@ -175,8 +189,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		references.Trips = append(references.Trips, *tripRef)
 	}
 
-	response := models.NewEntryResponse(entry, *references, api.Clock)
-	api.sendResponse(w, r, response)
+	return references, nil
 }
 
 // referencedStopIDs returns the bare stop IDs that the entry refers to and so
