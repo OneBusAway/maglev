@@ -18,12 +18,12 @@ func TestNewTripDetails(t *testing.T) {
 	serviceDate := time.UnixMilli(1609459200000)
 
 	frequency := &Frequency{
-		StartTime:   NewModelTime(serviceDate.Add(8 * time.Hour)),
-		EndTime:     NewModelTime(serviceDate.Add(9 * time.Hour)),
-		Headway:     NewModelDuration(300 * time.Second),
-		ServiceDate: NewModelTime(serviceDate),
-		ServiceID:   "service_789",
-		TripID:      tripID,
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(serviceDate.Add(8 * time.Hour)),
+			EndTime:   NewModelTime(serviceDate.Add(9 * time.Hour)),
+			Headway:   NewModelDuration(300 * time.Second),
+		},
+		ExactTimes: 1,
 	}
 
 	status := &TripStatus{
@@ -66,12 +66,12 @@ func TestNewEmptyTripDetails(t *testing.T) {
 func TestTripDetailsJSON(t *testing.T) {
 	serviceDate := time.UnixMilli(1609459200000)
 	frequency := &Frequency{
-		StartTime:   NewModelTime(serviceDate.Add(8 * time.Hour)),
-		EndTime:     NewModelTime(serviceDate.Add(9 * time.Hour)),
-		Headway:     NewModelDuration(300 * time.Second),
-		ServiceDate: NewModelTime(serviceDate),
-		ServiceID:   "service_789",
-		TripID:      "trip_123",
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(serviceDate.Add(8 * time.Hour)),
+			EndTime:   NewModelTime(serviceDate.Add(9 * time.Hour)),
+			Headway:   NewModelDuration(300 * time.Second),
+		},
+		ExactTimes: 1,
 	}
 
 	status := NewTripStatus()

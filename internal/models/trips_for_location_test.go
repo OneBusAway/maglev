@@ -10,9 +10,11 @@ import (
 
 func newTestFrequency(headwaySecs int) *Frequency {
 	return &Frequency{
-		StartTime: NewModelTime(time.UnixMilli(1609459200000)),
-		EndTime:   NewModelTime(time.UnixMilli(1609462800000)),
-		Headway:   NewModelDuration(time.Duration(headwaySecs) * time.Second),
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(time.UnixMilli(1609459200000)),
+			EndTime:   NewModelTime(time.UnixMilli(1609462800000)),
+			Headway:   NewModelDuration(time.Duration(headwaySecs) * time.Second),
+		},
 	}
 }
 
