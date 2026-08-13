@@ -59,21 +59,6 @@ func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *t
 	return &fromLayout, true
 }
 
-// parseIncludeParam reads a boolean include* param, falling back to fallback when
-// the request omits it. ok is false when a supplied value is not a boolean.
-func parseIncludeParam(value string, fallback bool) (parsed bool, ok bool) {
-	if value == "" {
-		return fallback, true
-	}
-
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return fallback, false
-	}
-
-	return parsed, true
-}
-
 // localizeTripTimes re-expresses the parsed times in loc, so that downstream
 // Year()/Month()/Day()/Format() calls extract the agency's calendar date rather
 // than UTC's — time.Unix() alone would land those endpoints a day out for
@@ -128,12 +113,7 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 		"includeStatus":   &params.IncludeStatus,
 	}
 	for name, target := range includeParams {
-		value, ok := parseIncludeParam(query.Get(name), *target)
-		if !ok {
-			fieldErrors[name] = []string{"must be a boolean value (true/false)"}
-			continue
-		}
-		*target = value
+		*target, fieldErrors = utils.ParseBoolParam(query, name, *target, fieldErrors)
 	}
 
 	if len(fieldErrors) > 0 {
