@@ -133,6 +133,19 @@ func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.
 	return utils.MapValues(routesMap)
 }
 
+// routeReferenceForTrip returns the Route reference for the route a trip runs on.
+// A route already resolved for the trip's stop references is preferred over a fresh
+// lookup, since a trip's own route commonly also serves its closest and next stops.
+func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, stopRoutes map[string]gtfsdb.GetRoutesForStopsRow) (models.Route, error) {
+	for _, row := range stopRoutes {
+		if row.ID == routeID {
+			return routeReferenceFromStopRow(row), nil
+		}
+	}
+
+	return api.routeReferenceByID(ctx, routeID)
+}
+
 // mergeParentRouteReferences appends any parent-station routes not already present in
 // routes, so parent stop references never point at an absent route.
 func mergeParentRouteReferences(routes []models.Route, parentRoutes map[string]gtfsdb.GetRoutesForStopsRow) []models.Route {

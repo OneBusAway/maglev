@@ -174,7 +174,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 		// vehicle-prefixed ID below is only the fallback for an unresolvable route.
 		combinedRouteID := utils.FormCombinedID(agencyID, trip.RouteID)
 
-		routeRef, err := api.routeReferenceByID(ctx, trip.RouteID)
+		routeRef, err := api.routeReferenceForTrip(ctx, trip.RouteID, uniqueRouteMap)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			// A dangling trips.route_id costs one reference, not the response: the
