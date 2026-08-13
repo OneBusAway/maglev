@@ -230,6 +230,37 @@ func TestTripForVehicleHandler_IncludeToggles(t *testing.T) {
 	})
 }
 
+// insertStubTrip adds a bare trip row for tests that need a trip the fixture does
+// not have. Foreign keys are disabled for the insert so the trip may point at a
+// route or service that does not exist. SQLite tracks the setting per connection
+// and only the connection that applied the schema has it on, so the pragma and the
+// insert have to share one pinned connection — which is also why MockAddTrip,
+// issuing both on the pool, fails or succeeds depending on the connection it draws.
+func insertStubTrip(t *testing.T, api *RestAPI, tripID, routeID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	conn, err := api.GtfsManager.GtfsDB.DB.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, conn.Close()) }()
+
+	var foreignKeysWereOn bool
+	require.NoError(t, conn.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeysWereOn))
+
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`)
+	require.NoError(t, err)
+	defer func() {
+		if foreignKeysWereOn {
+			_, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+			require.NoError(t, err)
+		}
+	}()
+
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO trips (id, route_id, service_id) VALUES (?, ?, '')`, tripID, routeID)
+	require.NoError(t, err)
+}
+
 // TestTripForVehicleHandler_MissingRoute verifies that a trip pointing at a
 // route which is not in the database is still served: the response is a 200
 // carrying the trip, with only the unresolvable route reference absent.
@@ -242,7 +273,7 @@ func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
 		missingRouteID  = "ROUTE_THAT_DOES_NOT_EXIST"
 	)
 
-	api.GtfsManager.MockAddTrip(orphanTripID, testdata.Raba.ID, missingRouteID)
+	insertStubTrip(t, api, orphanTripID, missingRouteID)
 	api.GtfsManager.MockAddVehicle(orphanVehicleID, orphanTripID, missingRouteID)
 
 	// The trip row lands in the package-shared fixture database, so take it back
