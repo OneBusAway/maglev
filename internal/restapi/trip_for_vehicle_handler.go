@@ -161,16 +161,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 
 	routeRefs := make(map[string]models.Route, len(uniqueRouteMap))
 	for combinedID, route := range uniqueRouteMap {
-		routeRefs[combinedID] = models.NewRoute(
-			combinedID,
-			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
-			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+		routeRefs[combinedID] = routeReferenceFromStopRow(route)
 	}
 	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
@@ -178,9 +169,30 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 	// so includeTrip is only the fallback: it decides the matter solely when no
 	// status block was built.
 	if includeTrip || status != nil {
+		// The trip's routeId must match the ID its route reference is filed under,
+		// which carries the route's own agency rather than the vehicle's. The
+		// vehicle-prefixed ID below is only the fallback for an unresolvable route.
+		combinedRouteID := utils.FormCombinedID(agencyID, trip.RouteID)
+
+		routeRef, err := api.routeReferenceByID(ctx, trip.RouteID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// A dangling trips.route_id costs one reference, not the response: the
+			// vehicle and its trip both resolved, and the batch reference builders
+			// likewise omit rows they cannot resolve rather than failing. With no row
+			// to read an agency from, the routeId keeps the vehicle's prefix.
+			api.Logger.Warn("trip references non-existent route",
+				"tripID", trip.ID, "routeID", trip.RouteID, "agencyID", agencyID)
+		case err != nil:
+			return nil, err
+		default:
+			combinedRouteID = routeRef.ID
+			routeRefs[routeRef.ID] = routeRef
+		}
+
 		tripRef := models.NewTripReference(
 			utils.FormCombinedID(agencyID, trip.ID),
-			utils.FormCombinedID(agencyID, trip.RouteID),
+			combinedRouteID,
 			utils.FormCombinedID(agencyID, trip.ServiceID),
 			trip.TripHeadsign.String,
 			trip.TripShortName.String,
@@ -189,20 +201,6 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			utils.FormCombinedID(agencyID, trip.ShapeID.String),
 		)
 		references.Trips = append(references.Trips, *tripRef)
-
-		routeRef, err := api.routeReferenceByID(ctx, agencyID, trip.RouteID)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			// A dangling trips.route_id costs one reference, not the response: the
-			// vehicle and its trip both resolved, and the batch reference builders
-			// likewise omit rows they cannot resolve rather than failing.
-			api.Logger.Warn("trip references non-existent route",
-				"tripID", trip.ID, "routeID", trip.RouteID, "agencyID", agencyID)
-		case err != nil:
-			return nil, err
-		default:
-			routeRefs[utils.FormCombinedID(agencyID, trip.RouteID)] = routeRef
-		}
 	}
 
 	references.Routes = utils.MapValues(routeRefs)

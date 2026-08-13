@@ -301,6 +301,53 @@ func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
 		"the unresolvable route is simply absent from references")
 }
 
+// TestTripForVehicleHandler_RouteFromAnotherAgency covers a vehicle running a
+// trip whose route belongs to a different agency: the route reference must keep
+// its own agency prefix, or the trip's routeId points at a route the client
+// cannot resolve.
+func TestTripForVehicleHandler_RouteFromAnotherAgency(t *testing.T) {
+	api, _ := setupTestApiWithMockVehicle(t)
+
+	const (
+		otherAgencyID    = "OTHERAGENCY"
+		otherRouteID     = "OTHERROUTE"
+		crossAgencyTrip  = "TRIP_ON_OTHER_AGENCY_ROUTE"
+		crossAgencyVehID = "CROSS_AGENCY_VEHICLE"
+	)
+
+	api.GtfsManager.MockAddAgency(otherAgencyID, "Other Agency")
+	api.GtfsManager.MockAddRoute(otherRouteID, otherAgencyID, "Cross-agency route")
+	insertStubTrip(t, api, crossAgencyTrip, otherRouteID)
+	api.GtfsManager.MockAddVehicle(crossAgencyVehID, crossAgencyTrip, otherRouteID)
+
+	// These rows land in the package-shared fixture database, so take them back
+	// out rather than leaving them behind for later tests.
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id = ?`, crossAgencyTrip)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id = ?`, otherRouteID)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id = ?`, otherAgencyID)
+	})
+
+	// includeTrip=true so the route lookup is reached even though the mock trip
+	// has no real-time status to build.
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		tripForVehicleURL(utils.FormCombinedID(testdata.Raba.ID, crossAgencyVehID),
+			url.Values{"includeTrip": {"true"}}))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.Len(t, model.Data.References.Trips, 1)
+	require.Len(t, model.Data.References.Routes, 1)
+
+	routeRef := model.Data.References.Routes[0]
+	assert.Equal(t, otherAgencyID, routeRef.AgencyID,
+		"the route reference carries the route's own agency, not the vehicle's")
+	assert.Equal(t, utils.FormCombinedID(otherAgencyID, otherRouteID), routeRef.ID)
+	assert.Equal(t, routeRef.ID, model.Data.References.Trips[0].RouteID,
+		"the trip's routeId must resolve against references.routes")
+}
+
 // TestTripForVehicleHandler_TripReferences covers where the active trip's
 // reference comes from: the status path adds it whenever the status block is
 // present, and includeTrip only matters once includeStatus=false.

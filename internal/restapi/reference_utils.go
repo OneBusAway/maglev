@@ -84,19 +84,36 @@ func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Rout
 }
 
 // routeReferenceByID builds the Route reference for a single route, looked up by
-// its bare (agency-less) route ID.
-func (api *RestAPI) routeReferenceByID(ctx context.Context, agencyID string, routeID string) (models.Route, error) {
+// its bare (agency-less) route ID. The reference is labelled with the route's own
+// agency, which need not be the agency of the entity that referenced it.
+func (api *RestAPI) routeReferenceByID(ctx context.Context, routeID string) (models.Route, error) {
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
 		return models.Route{}, err
 	}
 
-	routeModels, err := buildRouteModels(ctx, agencyID, []gtfsdb.Route{route})
+	routeModels, err := buildRouteModels(ctx, route.AgencyID, []gtfsdb.Route{route})
 	if err != nil {
 		return models.Route{}, err
 	}
 
 	return routeModels[0], nil
+}
+
+// routeReferenceFromStopRow builds a Route reference from a stops-derived route row,
+// labelled with the route's own agency rather than the agency that was queried, so
+// results spanning multiple agencies stay resolvable.
+func routeReferenceFromStopRow(row gtfsdb.GetRoutesForStopsRow) models.Route {
+	return models.NewRoute(
+		utils.FormCombinedID(row.AgencyID, row.ID),
+		row.AgencyID,
+		nulls.StringOrEmpty(row.ShortName),
+		nulls.StringOrEmpty(row.LongName),
+		nulls.StringOrEmpty(row.Desc),
+		models.RouteType(row.Type),
+		nulls.StringOrEmpty(row.Url),
+		nulls.StringOrEmpty(row.Color),
+		nulls.StringOrEmpty(row.TextColor))
 }
 
 // routeReferencesForStops deduplicates the rows returned by GetRoutesForStops into Route
@@ -110,16 +127,7 @@ func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.
 			continue
 		}
 
-		routesMap[combinedRouteID] = models.NewRoute(
-			combinedRouteID,
-			row.AgencyID,
-			nulls.StringOrEmpty(row.ShortName),
-			nulls.StringOrEmpty(row.LongName),
-			nulls.StringOrEmpty(row.Desc),
-			models.RouteType(row.Type),
-			nulls.StringOrEmpty(row.Url),
-			nulls.StringOrEmpty(row.Color),
-			nulls.StringOrEmpty(row.TextColor))
+		routesMap[combinedRouteID] = routeReferenceFromStopRow(row)
 	}
 
 	return utils.MapValues(routesMap)
