@@ -1393,16 +1393,7 @@ func (api *RestAPI) scheduledPositionAtTime(
 	}
 
 	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-	stopDistances := projectStopsInSequence(
-		stopTimes,
-		stopsByID,
-		shapePoints,
-		cumulativeDistances,
-	)
-
-	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-	scheduledDistance := interpolateDistanceAtScheduledTime(currentSeconds, stopTimes, stopDistances)
-
-	position, _ := positionAndOrientationAtDistance(shapePoints, cumulativeDistances, scheduledDistance)
+	position, _, _ := scheduledTripPosition(
+		stopTimes, stopsByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
 	return position
 }

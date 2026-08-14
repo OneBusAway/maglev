@@ -403,18 +403,38 @@ func (api *RestAPI) applyScheduledTripPositionToStatus(
 		return
 	}
 	stopByID := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
-	stopDistances := projectStopsInSequence(stopTimes, stopByID, shapePoints, cumulativeDistances)
+	pos, orient, dist := scheduledTripPosition(
+		stopTimes, stopByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
+	status.ScheduledDistanceAlongTrip = dist
 
-	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
-	scheduledDist := interpolateDistanceAtScheduledTime(currentSeconds, stopTimes, stopDistances)
-	status.ScheduledDistanceAlongTrip = scheduledDist
-
-	if pos, orient := positionAndOrientationAtDistance(shapePoints, cumulativeDistances, scheduledDist); pos != nil {
+	if pos != nil {
 		status.Position = *pos
 		if orient >= 0 {
 			status.Orientation = orient
 		}
 	}
+}
+
+// scheduledTripPosition projects a trip's schedule onto its shape at
+// currentTime: where along the shape the trip should be, its orientation
+// there, and the distance along the trip that position represents.
+// cumulativeDistances is precalculated by the caller since some callers need
+// it for more than this one projection.
+func scheduledTripPosition(
+	stopTimes []gtfsdb.StopTime,
+	stopByID map[string]gtfsdb.Stop,
+	shapePoints []gtfs.ShapePoint,
+	cumulativeDistances []float64,
+	currentTime time.Time,
+	serviceDate time.Time,
+) (position *models.Location, orientation float64, distanceAlongTrip float64) {
+	stopDistances := projectStopsInSequence(stopTimes, stopByID, shapePoints, cumulativeDistances)
+
+	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
+	distanceAlongTrip = interpolateDistanceAtScheduledTime(currentSeconds, stopTimes, stopDistances)
+
+	position, orientation = positionAndOrientationAtDistance(shapePoints, cumulativeDistances, distanceAlongTrip)
+	return position, orientation, distanceAlongTrip
 }
 
 // keepShiftContainingTrip splits the time-sorted block trips at temporal
