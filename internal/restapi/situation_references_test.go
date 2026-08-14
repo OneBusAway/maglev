@@ -10,6 +10,7 @@ import (
 	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 )
 
@@ -179,6 +180,48 @@ func anyRealTimeVehicleID(t *testing.T, api *RestAPI) string {
 	}
 	t.Fatal("fixture must contain a real-time vehicle running a trip")
 	return ""
+}
+
+// TestTripSituationRefsAgencyFallback covers both paths tripSituationRefs takes
+// for a trip it has already loaded: reading the agency out of routeAgencyMap,
+// and falling back to a lookup when that map has no entry for the trip's route.
+// Both must produce the same combined-form ID — an unresolved agency would emit
+// the bare alert ID, which resolves against nothing the response carries.
+func TestTripSituationRefsAgencyFallback(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	ctx := context.Background()
+	tripID, _ := anyTripAndStop(t, api)
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	require.NoError(t, err)
+
+	rawAgencyID := "25"
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "trip-situation-refs-alert",
+		InformedEntities: []gogtfs.AlertInformedEntity{{AgencyID: &rawAgencyID}},
+		Header:           []gogtfs.AlertText{{Text: "Test Agency Alert", Language: "en"}},
+	})
+	const wantSituationID = "25_trip-situation-refs-alert"
+
+	tripsByID := map[string]gtfsdb.Trip{tripID: trip}
+
+	tests := []struct {
+		name           string
+		routeAgencyMap map[string]string
+	}{
+		{name: "route agency known", routeAgencyMap: map[string]string{trip.RouteID: rawAgencyID}},
+		{name: "route agency unknown", routeAgencyMap: map[string]string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refs := api.tripSituationRefs(ctx, tripID, tripsByID, tt.routeAgencyMap)
+
+			assert.Contains(t, situationIDsFromRefs(refs), wantSituationID,
+				"the situation ID must carry the agency prefix on both paths")
+		})
+	}
 }
 
 // TestSituationRefsFromAlertsAgencyScope covers an alert reachable through both

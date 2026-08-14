@@ -760,12 +760,19 @@ func (api *RestAPI) tripSituationRefs(
 	tripsByID map[string]gtfsdb.Trip,
 	routeAgencyMap map[string]string,
 ) []situationRef {
-	trip, ok := tripsByID[tripID]
-	if !ok {
+	trip, indexed := tripsByID[tripID]
+	if !indexed {
 		return api.situationRefsForTrip(ctx, tripID)
 	}
 
-	agencyID := routeAgencyMap[trip.RouteID]
+	// An unknown agency would scope the situation ID to "", emitting the bare
+	// alert ID where every other ID in the response is combined-form. The
+	// fallback resolves the route and agency itself rather than guessing.
+	agencyID, agencyKnown := routeAgencyMap[trip.RouteID]
+	if !agencyKnown {
+		return api.situationRefsForTrip(ctx, tripID)
+	}
+
 	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), agencyID)
 }
 
