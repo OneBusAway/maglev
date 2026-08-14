@@ -226,10 +226,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var schedule *models.Schedule
 	var status *models.TripStatus
+	var statusExtras *tripStatusExtras
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, _, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed",
 				"trip_id", trip.ID,
@@ -254,12 +255,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var situationsIDs []string
-	if status != nil && len(status.SituationIDs) > 0 {
-		situationsIDs = status.SituationIDs
-	} else {
-		situationsIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
-	}
+	// trip is looked up by tripID and BuildTripStatus was given trip.ID, so when
+	// the status was built its situations are this trip's and are reused here.
+	situationsIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
@@ -331,13 +329,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		agencyModel := models.AgencyReferenceFromDatabase(&agency)
 		references.Agencies = append(references.Agencies, agencyModel)
 
-		if len(situationsIDs) > 0 {
-			alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-			if len(alerts) > 0 {
-				situations := api.BuildSituationReferences(alerts)
-				references.Situations = append(references.Situations, situations...)
-			}
-		}
+		references.Situations = append(references.Situations, situationRefs...)
 
 		if params.IncludeSchedule && schedule != nil {
 			stopIDs := make([]string, 0, len(schedule.StopTimes))
