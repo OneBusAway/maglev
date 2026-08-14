@@ -502,7 +502,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				bareIDs = append(bareIDs, bareID)
 			}
 			var err error
-			stops, err = api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
+			stops, err = queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 			if err != nil {
 				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
 				stops = []gtfsdb.Stop{}
