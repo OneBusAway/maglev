@@ -86,6 +86,39 @@ func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Rout
 	return modelRoutes, nil
 }
 
+// routeReferenceByID builds the Route reference for a single route, looked up by
+// its bare (agency-less) route ID. The reference is labelled with the route's own
+// agency, which need not be the agency of the entity that referenced it.
+func (api *RestAPI) routeReferenceByID(ctx context.Context, routeID string) (models.Route, error) {
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+	if err != nil {
+		return models.Route{}, err
+	}
+
+	routeModels, err := buildRouteModels(ctx, route.AgencyID, []gtfsdb.Route{route})
+	if err != nil {
+		return models.Route{}, err
+	}
+
+	return routeModels[0], nil
+}
+
+// routeReferenceFromStopRow builds a Route reference from a stops-derived route row,
+// labelled with the route's own agency rather than the agency that was queried, so
+// results spanning multiple agencies stay resolvable.
+func routeReferenceFromStopRow(row gtfsdb.GetRoutesForStopsRow) models.Route {
+	return models.NewRoute(
+		utils.FormCombinedID(row.AgencyID, row.ID),
+		row.AgencyID,
+		nulls.StringOrEmpty(row.ShortName),
+		nulls.StringOrEmpty(row.LongName),
+		nulls.StringOrEmpty(row.Desc),
+		models.RouteType(row.Type),
+		nulls.StringOrEmpty(row.Url),
+		nulls.StringOrEmpty(row.Color),
+		nulls.StringOrEmpty(row.TextColor))
+}
+
 // routeReferencesForStops deduplicates the rows returned by GetRoutesForStops into Route
 // reference objects, keyed by each row's own agency ID so results spanning multiple
 // agencies are handled correctly.
@@ -97,19 +130,42 @@ func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.
 			continue
 		}
 
-		routesMap[combinedRouteID] = models.NewRoute(
-			combinedRouteID,
-			row.AgencyID,
-			nulls.StringOrEmpty(row.ShortName),
-			nulls.StringOrEmpty(row.LongName),
-			nulls.StringOrEmpty(row.Desc),
-			models.RouteType(row.Type),
-			nulls.StringOrEmpty(row.Url),
-			nulls.StringOrEmpty(row.Color),
-			nulls.StringOrEmpty(row.TextColor))
+		routesMap[combinedRouteID] = routeReferenceFromStopRow(row)
 	}
 
 	return utils.MapValues(routesMap)
+}
+
+// routeReferenceForTrip returns the Route reference for the route a trip runs on.
+// A route already resolved for the trip's stop references is preferred over a fresh
+// lookup, since a trip's own route commonly also serves its closest and next stops.
+func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, stopRoutes map[string]gtfsdb.GetRoutesForStopsRow) (models.Route, error) {
+	for _, row := range stopRoutes {
+		if row.ID == routeID {
+			return routeReferenceFromStopRow(row), nil
+		}
+	}
+
+	return api.routeReferenceByID(ctx, routeID)
+}
+
+// appendRouteAgencyReference adds a route's own agency to references when it is not
+// the agency the request was scoped to, so the agencyId a cross-agency route
+// reference carries resolves against references.agencies. A lookup that fails costs
+// the reference rather than the response, as with the route itself.
+func (api *RestAPI) appendRouteAgencyReference(ctx context.Context, references *models.ReferencesModel, routeAgencyID, requestAgencyID string) {
+	if routeAgencyID == requestAgencyID {
+		return
+	}
+
+	routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, routeAgencyID)
+	if err != nil {
+		api.Logger.Warn("failed to fetch route agency for reference",
+			"agencyID", routeAgencyID, "error", err)
+		return
+	}
+
+	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&routeAgency))
 }
 
 // mergeParentRouteReferences appends any parent-station routes not already present in
