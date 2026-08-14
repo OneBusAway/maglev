@@ -1326,14 +1326,15 @@ func (r *serviceDateResolver) Resolve(trip gtfsdb.Trip) time.Time {
 }
 
 // runsOn reports whether trip's service is active in services and its scheduled
-// span overlaps the running window around sinceMidnightNs, measured from that
-// service day's midnight.
+// span overlaps the running window [sinceMidnightNs-runningLate,
+// sinceMidnightNs+runningEarly], measured from that service day's midnight.
 //
-// Overlap rather than containment, and with the same slack the handlers select
-// on: a trip is selected when its span meets [now-runningLate, now+runningEarly],
-// so requiring the span to contain now would classify a just-ended previous-day
-// trip as not running and report it against the wrong service date — putting
-// its position and schedule deviation a day out.
+// Overlap rather than containment: requiring the span to contain sinceMidnightNs
+// would classify a just-ended previous-day trip as not running and report it
+// against the wrong service date — putting its position and schedule deviation
+// a day out. The window matches trips-for-route's own selection window; other
+// callers may select trips by a different window and still need this overlap
+// check to resolve their service date correctly.
 func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.Trip, sinceMidnightNs int64) bool {
 	if _, active := services[trip.ServiceID]; !active {
 		return false
