@@ -2,6 +2,8 @@ package gtfsdb
 
 import (
 	"context"
+	"fmt"
+	"strings"
 )
 
 // Implemented manually because sqlc doesn't support the virtual tables from the RTree module.
@@ -111,7 +113,12 @@ func (q *Queries) GetStopIDsWithinBounds(ctx context.Context, arg GetStopIDsWith
 	return ids, nil
 }
 
-const getActiveRoutesWithinBounds = `
+// getActiveRoutesWithinBoundsTemplate has two substitution points filled in by
+// GetActiveRoutesWithinBounds: %[1]s is the optional "WHERE routes.id IN (...)"
+// route-ID filter (empty string when no candidate list is supplied), and %[2]d
+// is the positional index of the MaxCount bind parameter, which shifts based on
+// how many route-ID placeholders were inserted ahead of it.
+const getActiveRoutesWithinBoundsTemplate = `
 -- Calculate stop distance once per stop (not once per stop_time).
 WITH nearby_stops AS (
     SELECT
@@ -152,29 +159,47 @@ SELECT
 FROM stop_routes sr
 JOIN nearby_stops ns ON ns.stop_id = sr.stop_id
 JOIN routes ON routes.id = sr.route_id
-    -- COLLATE NOCASE gives case-insensitive equality without LIKE's wildcard
-    -- semantics. Note: NOCASE only folds ASCII A-Z; non-ASCII short names
-    -- will not match case-insensitively.
-WHERE ?7 == "" OR routes.short_name = ?7 COLLATE NOCASE
+%[1]s
 GROUP BY routes.id
 ORDER BY min_distance ASC
-LIMIT ?8
+LIMIT ?%[2]d
 `
 
+// GetActiveRoutesWithinBoundsParams holds the bind parameters for GetActiveRoutesWithinBounds.
+// RouteIDs is optional: when empty, no route-ID filter is applied.
 type GetActiveRoutesWithinBoundsParams struct {
-	Lat       float64
-	Lon       float64
-	MinLat    float64
-	MaxLat    float64
-	MinLon    float64
-	MaxLon    float64
-	ShortName string
-	MaxCount  int
+	Lat      float64
+	Lon      float64
+	MinLat   float64
+	MaxLat   float64
+	MinLon   float64
+	MaxLon   float64
+	RouteIDs []string
+	MaxCount int
 }
 
+// GetActiveRoutesWithinBounds returns routes serving stops within the given bounding box,
+// ordered by ascending distance from (Lat, Lon), optionally restricted to RouteIDs.
 func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActiveRoutesWithinBoundsParams) ([]Route, error) {
-	rows, err := q.db.QueryContext(ctx, getActiveRoutesWithinBounds,
-		arg.Lat, arg.Lon, arg.MinLat, arg.MaxLat, arg.MinLon, arg.MaxLon, arg.ShortName, arg.MaxCount)
+	args := []any{arg.Lat, arg.Lon, arg.MinLat, arg.MaxLat, arg.MinLon, arg.MaxLon}
+
+	routeFilter := ""
+	if len(arg.RouteIDs) > 0 {
+		// Only generated "?N" placeholder strings go into the SQL text; the
+		// route IDs themselves are passed as bind values, so this is not a
+		// SQL-injection vector.
+		placeholders := make([]string, len(arg.RouteIDs))
+		for i, routeID := range arg.RouteIDs {
+			placeholders[i] = fmt.Sprintf("?%d", len(args)+1)
+			args = append(args, routeID)
+		}
+		routeFilter = "WHERE routes.id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	args = append(args, arg.MaxCount)
+
+	query := fmt.Sprintf(getActiveRoutesWithinBoundsTemplate, routeFilter, len(args))
+
+	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
