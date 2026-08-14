@@ -201,6 +201,43 @@ func TestRouteHasFutureService_ServiceEndedInPast(t *testing.T) {
 		"a route whose only service already ended must report no future service")
 }
 
+func TestRouteHasFutureService_AllFutureRegularDatesRemoved(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx := context.Background()
+	_, err = client.Queries.CreateAgency(ctx, CreateAgencyParams{
+		ID: "agency-1", Name: "Test Agency", Url: "https://example.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+	_, err = client.Queries.CreateRoute(ctx, CreateRouteParams{ID: "route-1", AgencyID: "agency-1", Type: 3})
+	require.NoError(t, err)
+	_, err = client.Queries.CreateCalendar(ctx, CreateCalendarParams{
+		ID: "weekday-service", Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1,
+		StartDate: "20240101", EndDate: "20240105",
+	})
+	require.NoError(t, err)
+	_, err = client.Queries.CreateTrip(ctx, CreateTripParams{ID: "trip-1", RouteID: "route-1", ServiceID: "weekday-service"})
+	require.NoError(t, err)
+
+	// The calendar normally enables every remaining weekday, but the feed
+	// explicitly removes each one. No effective future service remains.
+	for _, date := range []string{"20240102", "20240103", "20240104", "20240105"} {
+		_, err = client.Queries.CreateCalendarDate(ctx, CreateCalendarDateParams{
+			ServiceID: "weekday-service", Date: date, ExceptionType: 2,
+		})
+		require.NoError(t, err)
+	}
+
+	hasFuture, err := client.Queries.RouteHasFutureService(ctx, RouteHasFutureServiceParams{
+		RouteID: "route-1", RefDate: "20240101",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), hasFuture,
+		"a regular calendar with every future date removed must not report future service")
+}
+
 // TestRouteHasFutureService_AdditionBeyondCalendarEnd covers Part 1 of the
 // RouteHasFutureService query directly: an exception_type=1 addition on a
 // date past every calendar row's end_date should still be detected. The
@@ -208,14 +245,6 @@ func TestRouteHasFutureService_ServiceEndedInPast(t *testing.T) {
 // contributes nothing -- if the query returns 1 here, it's exclusively
 // because Part 1 caught the addition against the (ref_date, horizon]
 // window without needing any calendar row to cover the date.
-//
-// The symmetric "exception_type=2 removal cancels an otherwise-valid
-// regular service day, should return 0" case is intentionally NOT tested:
-// the query's Part 2 is documented as a mild over-approximation that does
-// not verify per-day exception cancellations. Handling that would require
-// re-introducing the day-by-day enumeration the previous refactor
-// removed; the benign miscategorization is called out in the query's
-// doc comment (gtfsdb/query.sql above RouteHasFutureService).
 func TestRouteHasFutureService_AdditionBeyondCalendarEnd(t *testing.T) {
 	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
 	require.NoError(t, err)

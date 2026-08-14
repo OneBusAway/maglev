@@ -1307,20 +1307,11 @@ FROM (
 -- queries -- e.g. ref_date=1970 against a feed whose service starts in
 -- 2024 -- so the check still reaches "today's" feed span).
 --
--- Implementation: two indexed range checks against calendar and
--- calendar_dates -- no day-by-day enumeration. Part 1 asks "is there any
--- exception_type=1 addition in the window?", Part 2 asks "does any
--- calendar row overlap the window on an enabled weekday?".
---
--- Part 2 is a mild over-approximation: it does not verify that the
--- calendar row's intersection with the window actually contains an
--- enabled weekday, nor that every regular day in that intersection is
--- cancelled by an exception_type=2 row. Given the 2-year horizon, the
--- intersection is almost always >=7 days so every weekday appears; the
--- rare edge cases where this over-reports would only flip the caller's
--- error message from ServiceDateOutOfRange to NoServiceThatDay -- both
--- surface an empty schedule, so the miscategorization is benign.
-WITH
+-- Implementation: Part 1 is an indexed range check for exception_type=1
+-- additions. Part 2 enumerates the query window through its bounded horizon so it
+-- can verify both the calendar weekday and any exception_type=2 removal for
+-- each candidate regular-service date.
+WITH RECURSIVE
     -- Parse ref_date once; horizon = 2 years past MAX(ref_date, today).
     -- CAST(... AS TEXT) once so sqlc infers RefDate as string, not
     -- interface{}. YYYYMMDD strings sort lexicographically, so string
@@ -1336,6 +1327,23 @@ WITH
                 substr(CAST(sqlc.arg(ref_date) AS TEXT), 5, 2) || '-' ||
                 substr(CAST(sqlc.arg(ref_date) AS TEXT), 7, 2) AS iso
         )
+    ),
+    -- Every date in (ref_date, horizon], stored as YYYYMMDD to match GTFS.
+    -- The recursion stops at the horizon above.
+    dates(date_ymd, weekday) AS (
+        SELECT
+            strftime('%Y%m%d', date(iso, '+1 day')),
+            strftime('%w', date(iso, '+1 day'))
+        FROM (
+            SELECT substr(ref_ymd, 1, 4) || '-' || substr(ref_ymd, 5, 2) || '-' || substr(ref_ymd, 7, 2) AS iso
+            FROM ref
+        )
+        UNION ALL
+        SELECT
+            strftime('%Y%m%d', date(substr(date_ymd, 1, 4) || '-' || substr(date_ymd, 5, 2) || '-' || substr(date_ymd, 7, 2), '+1 day')),
+            strftime('%w', date(substr(date_ymd, 1, 4) || '-' || substr(date_ymd, 5, 2) || '-' || substr(date_ymd, 7, 2), '+1 day'))
+        FROM dates
+        WHERE date_ymd < (SELECT horizon_ymd FROM ref)
     )
 -- CAST(... AS INTEGER) so sqlc infers int64 for has_future_service
 -- instead of interface{}; callers rely on `== 0` / `== 1` comparisons.
@@ -1352,20 +1360,32 @@ SELECT CAST((
           AND cd.date <= (SELECT horizon_ymd FROM ref)
     )
     OR
-    -- Part 2: a calendar row for this route overlaps (ref_date, horizon]
-    -- with at least one enabled weekday. Indexed via
-    -- idx_trips_route_service; cal.end_date > ref_ymd preserves strict
-    -- ref_date exclusivity, cal.start_date <= horizon_ymd preserves the
-    -- upper bound.
+    -- Part 2: an effective regular-calendar service date in the window.
+    -- A candidate must be an enabled weekday and must not have a matching
+    -- exception_type=2 removal.
     EXISTS (
         SELECT 1
         FROM trips t
         JOIN calendar cal ON cal.id = t.service_id
+        JOIN dates d ON d.date_ymd >= cal.start_date
+                    AND d.date_ymd <= cal.end_date
         WHERE t.route_id = sqlc.arg(route_id)
-          AND cal.end_date > (SELECT ref_ymd FROM ref)
-          AND cal.start_date <= (SELECT horizon_ymd FROM ref)
-          AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
-             + cal.thursday + cal.friday + cal.saturday) > 0
+          AND (
+            (d.weekday = '0' AND cal.sunday = 1) OR
+            (d.weekday = '1' AND cal.monday = 1) OR
+            (d.weekday = '2' AND cal.tuesday = 1) OR
+            (d.weekday = '3' AND cal.wednesday = 1) OR
+            (d.weekday = '4' AND cal.thursday = 1) OR
+            (d.weekday = '5' AND cal.friday = 1) OR
+            (d.weekday = '6' AND cal.saturday = 1)
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM calendar_dates cd
+            WHERE cd.service_id = t.service_id
+              AND cd.date = d.date_ymd
+              AND cd.exception_type = 2
+          )
     )
 ) AS INTEGER) AS has_future_service;
 
@@ -1463,5 +1483,3 @@ FROM
     JOIN stops s ON s.id = st.stop_id
 GROUP BY
     r.agency_id;
-
-
