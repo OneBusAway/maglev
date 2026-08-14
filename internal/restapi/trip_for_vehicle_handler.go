@@ -188,6 +188,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 		default:
 			combinedRouteID = routeRef.ID
 			routeRefs[routeRef.ID] = routeRef
+			api.appendRouteAgencyReference(ctx, references, routeRef.AgencyID, agencyID)
 		}
 
 		tripRef := models.NewTripReference(

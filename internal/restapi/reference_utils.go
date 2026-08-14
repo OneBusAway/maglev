@@ -146,6 +146,25 @@ func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, s
 	return api.routeReferenceByID(ctx, routeID)
 }
 
+// appendRouteAgencyReference adds a route's own agency to references when it is not
+// the agency the request was scoped to, so the agencyId a cross-agency route
+// reference carries resolves against references.agencies. A lookup that fails costs
+// the reference rather than the response, as with the route itself.
+func (api *RestAPI) appendRouteAgencyReference(ctx context.Context, references *models.ReferencesModel, routeAgencyID, requestAgencyID string) {
+	if routeAgencyID == requestAgencyID {
+		return
+	}
+
+	routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, routeAgencyID)
+	if err != nil {
+		api.Logger.Warn("failed to fetch route agency for reference",
+			"agencyID", routeAgencyID, "error", err)
+		return
+	}
+
+	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&routeAgency))
+}
+
 // mergeParentRouteReferences appends any parent-station routes not already present in
 // routes, so parent stop references never point at an absent route.
 func mergeParentRouteReferences(routes []models.Route, parentRoutes map[string]gtfsdb.GetRoutesForStopsRow) []models.Route {

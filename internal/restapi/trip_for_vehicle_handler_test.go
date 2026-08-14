@@ -340,6 +340,14 @@ func TestTripForVehicleHandler_RouteFromAnotherAgency(t *testing.T) {
 	require.Len(t, model.Data.References.Trips, 1)
 	require.Len(t, model.Data.References.Routes, 1)
 
+	referencedAgencies := make([]string, 0, len(model.Data.References.Agencies))
+	for _, agency := range model.Data.References.Agencies {
+		referencedAgencies = append(referencedAgencies, agency.ID)
+	}
+	assert.Contains(t, referencedAgencies, testdata.Raba.ID, "the vehicle's own agency")
+	assert.Contains(t, referencedAgencies, otherAgencyID,
+		"the route's agency must be dereferenceable too, or references.routes[0].agencyId resolves to nothing")
+
 	routeRef := model.Data.References.Routes[0]
 	assert.Equal(t, otherAgencyID, routeRef.AgencyID,
 		"the route reference carries the route's own agency, not the vehicle's")
