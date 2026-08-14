@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 const (
@@ -761,4 +762,223 @@ func TestTripsForLocationHandler_SituationReferences(t *testing.T) {
 	}
 	require.Contains(t, emitted, "25_test-alert-trips-for-location",
 		"expected the seeded alert to surface as a situationId")
+}
+
+// TestTripsForLocationHandler_ScheduleStopsAreReferenced verifies that every
+// stop named by an entry's schedule resolves to an entry in references.stops.
+func TestTripsForLocationHandler_ScheduleStopsAreReferenced(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=true", "includeStatus=true")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so stop references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		referenced[stop.ID] = true
+	}
+
+	pointedAt := make(map[string]bool)
+	sawStopTime := false
+	for _, entry := range model.Data.List {
+		require.NotNil(t, entry.Schedule, "includeSchedule=true should populate the schedule")
+		if entry.Status != nil {
+			pointedAt[entry.Status.ClosestStop] = true
+			pointedAt[entry.Status.NextStop] = true
+		}
+		for _, stopTime := range entry.Schedule.StopTimes {
+			pointedAt[stopTime.StopID] = true
+			sawStopTime = true
+			assert.True(t, referenced[stopTime.StopID],
+				"stop %q named by trip %q must appear in references.stops", stopTime.StopID, entry.TripId)
+		}
+	}
+	require.True(t, sawStopTime, "expected at least one scheduled stop time to assert against")
+
+	// And nothing extra: a reference stamped with an ID no entry used would
+	// resolve for no one.
+	for _, stop := range model.Data.References.Stops {
+		assert.True(t, pointedAt[stop.ID],
+			"reference %q is not the ID any entry referred to that stop by", stop.ID)
+	}
+}
+
+// TestTripsForLocationHandler_StatusStopsAreReferenced covers the path where a
+// status is the only thing naming a stop: with includeSchedule=false there are
+// no stop times to collect, so closestStop and nextStop are the whole of what
+// references.stops has to resolve.
+func TestTripsForLocationHandler_StatusStopsAreReferenced(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=false", "includeStatus=true")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so status stop references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		referenced[stop.ID] = true
+	}
+
+	sawStatusStop := false
+	for _, entry := range model.Data.List {
+		require.Nil(t, entry.Schedule, "includeSchedule=false should leave the schedule out")
+		if entry.Status == nil {
+			continue
+		}
+		for _, stopID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
+			if stopID == "" {
+				continue
+			}
+			sawStatusStop = true
+			assert.True(t, referenced[stopID],
+				"stop %q named by trip %q's status must appear in references.stops", stopID, entry.TripId)
+		}
+	}
+	require.True(t, sawStatusStop, "expected at least one status stop to assert against")
+}
+
+// TestTripsForLocationHandler_UnreferencedStopsAreOmitted verifies that stops
+// merely inside the search bounds are not emitted as references when nothing in
+// the response points at them.
+func TestTripsForLocationHandler_UnreferencedStopsAreOmitted(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=false", "includeStatus=false")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so the reference set is meaningful")
+	assert.Empty(t, model.Data.References.Stops,
+		"no schedule or status means nothing in the response refers to a stop")
+}
+
+// TestTripsForLocationHandler_CandidateStopsAreNotCapped verifies that the
+// candidate stop set is not truncated, which previously dropped trips serving
+// only stops beyond the cap.
+func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
+	params := &internalgtfs.LocationParams{
+		Lat:     tripsForLocationLat,
+		Lon:     tripsForLocationLon,
+		LatSpan: 2.0,
+		LonSpan: 3.0,
+	}
+
+	uncapped := api.GtfsManager.GetStopsInBounds(context.Background(), params, 0, true)
+	require.Greater(t, len(uncapped), models.DefaultMaxCountForStops,
+		"fixture must hold more in-bounds stops than the old cap for this test to mean anything")
+
+	bounds := internalgtfs.BoundsFromParams(params, true)
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(2.0, 3.0))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	returned := make(map[string]bool, len(model.Data.List))
+	for _, entry := range model.Data.List {
+		_, tripID, err := utils.ExtractAgencyIDAndCodeID(entry.TripId)
+		require.NoError(t, err)
+		returned[tripID] = true
+	}
+
+	// Every real-time vehicle positioned inside the bounds must be represented.
+	// The RABA fixture's vehicles all happen to serve stops early in the
+	// in-bounds ordering, so this guards the invariant rather than reproducing
+	// a truncation the fixture cannot produce.
+	assertedAnyVehicle := false
+	for _, vehicle := range api.GtfsManager.GetRealTimeVehicles() {
+		if vehicle.Trip == nil || vehicle.Position == nil ||
+			vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
+			continue
+		}
+		lat, lon := float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude)
+		if lat < bounds.MinLat || lat > bounds.MaxLat || lon < bounds.MinLon || lon > bounds.MaxLon {
+			continue
+		}
+
+		tripID := vehicle.Trip.ID.ID
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), tripID)
+		if err != nil || len(stopTimes) == 0 {
+			continue
+		}
+
+		assertedAnyVehicle = true
+		assert.True(t, returned[tripID], "in-bounds vehicle's trip %q must be returned", tripID)
+	}
+	require.True(t, assertedAnyVehicle, "expected at least one in-bounds vehicle to assert against")
+}
+
+// TestCandidateTripIDsForStops_BatchesLargeStopSets covers the uncapped stop
+// set exceeding one query's bind variable budget: the batches together must
+// return what a single query would.
+func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= idsPerBatchedQuery {
+		for _, stop := range stops {
+			stopIDs = append(stopIDs, stop.ID)
+		}
+	}
+	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+		"the input must span more than one batch for this test to mean anything")
+
+	batched, err := api.candidateTripIDsForStops(ctx, stopIDs)
+	require.NoError(t, err)
+
+	singleQuery, err := api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops(ctx, stopIDs[:len(stops)])
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, singleQuery, uniqueStrings(batched))
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
 }

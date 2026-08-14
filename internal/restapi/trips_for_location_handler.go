@@ -33,15 +33,17 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stops := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, models.DefaultMaxCountForStops, true)
-	stopIDs := extractStopIDs(stops)
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesByStopIDs(ctx, stopIDs)
+	// Uncapped: this stop set only narrows the candidate trips, and a cap here
+	// silently drops trips the spec says should all be returned.
+	stopsInBounds := api.GtfsManager.GetStopsInBounds(ctx, parsedReq.LocationParams, 0, true)
+	stopIDs := extractStopIDs(stopsInBounds)
+	candidateTripIDs, err := api.candidateTripIDsForStops(ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
 
-	activeTrips := api.getActiveTrips(stopTimes, api.GtfsManager.GetRealTimeVehicles())
+	activeTrips := api.getActiveTrips(candidateTripIDs, api.GtfsManager.GetRealTimeVehicles())
 
 	bounds := internalgtfs.BoundsFromParams(parsedReq.LocationParams, true)
 	visibleTripIDs := make([]string, 0, len(activeTrips))
@@ -113,11 +115,18 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
+		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedByEntries(ctx, result)
+		if stopsErr != nil {
+			api.serverErrorResponse(w, r, stopsErr)
+			return
+		}
+
 		references = api.BuildReference(w, r, ctx, ReferenceParams{
-			IncludeTrip: parsedReq.IncludeTrip,
-			Stops:       stops,
-			Trips:       result,
-			Situations:  situations,
+			IncludeTrip:     parsedReq.IncludeTrip,
+			Stops:           referencedStops,
+			StopIDsByBareID: stopIDsByBareID,
+			Trips:           result,
+			Situations:      situations,
 		})
 	}
 
@@ -219,6 +228,49 @@ func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
 	return dst
 }
 
+// stopsReferencedByEntries fetches the stops the response actually refers to:
+// those on each entry's schedule, plus the closest and next stops on its status.
+// The in-bounds stop set is deliberately not included — it is a candidate-trip
+// selection detail, and stops on it that no returned trip serves have nothing in
+// the response pointing at them.
+func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []models.TripsForLocationListEntry) ([]gtfsdb.Stop, map[string]string, error) {
+	stopIDsByBareID := make(map[string]string)
+
+	for _, entry := range entries {
+		collectStopIDsFromSchedule(entry.Schedule, stopIDsByBareID)
+		if entry.Status == nil {
+			continue
+		}
+		for _, combinedID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
+			_, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+			if err != nil {
+				continue
+			}
+			if _, exists := stopIDsByBareID[bareID]; !exists {
+				stopIDsByBareID[bareID] = combinedID
+			}
+		}
+	}
+
+	if len(stopIDsByBareID) == 0 {
+		return nil, nil, nil
+	}
+
+	bareIDs := make([]string, 0, len(stopIDsByBareID))
+	for bareID := range stopIDsByBareID {
+		bareIDs = append(bareIDs, bareID)
+	}
+
+	stops, err := queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	return stops, stopIDsByBareID, err
+}
+
+// candidateTripIDsForStops returns the IDs of the trips serving any of these
+// stops. IDs may repeat across batches; the caller sets them.
+func (api *RestAPI) candidateTripIDsForStops(ctx context.Context, stopIDs []string) ([]string, error) {
+	return queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops)
+}
+
 func extractStopIDs(stops []gtfsdb.Stop) []string {
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
@@ -227,10 +279,10 @@ func extractStopIDs(stops []gtfsdb.Stop) []string {
 	return stopIDs
 }
 
-func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles []gtfs.Vehicle) map[string]gtfs.Vehicle {
-	trips := make(map[string]bool)
-	for _, stopTime := range stopTimes {
-		trips[stopTime.TripID] = true
+func (api *RestAPI) getActiveTrips(candidateTripIDs []string, realTimeVehicles []gtfs.Vehicle) map[string]gtfs.Vehicle {
+	trips := make(map[string]bool, len(candidateTripIDs))
+	for _, tripID := range candidateTripIDs {
+		trips[tripID] = true
 	}
 	activeTrips := make(map[string]gtfs.Vehicle)
 	for _, vehicle := range realTimeVehicles {
@@ -525,8 +577,11 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 type ReferenceParams struct {
 	IncludeTrip bool
 	Stops       []gtfsdb.Stop
-	Trips       []models.TripsForLocationListEntry
-	Situations  []situationRef
+	// StopIDsByBareID maps each stop's bare ID to the combined ID the entries
+	// referred to it by, so a reference is published under the ID pointing at it.
+	StopIDsByBareID map[string]string
+	Trips           []models.TripsForLocationListEntry
+	Situations      []situationRef
 }
 
 func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx context.Context, params ReferenceParams) models.ReferencesModel {
@@ -559,7 +614,7 @@ type referenceBuilder struct {
 func (rb *referenceBuilder) build(params ReferenceParams) error {
 	rb.situations = params.Situations
 	rb.collectTripIDs(params.Trips)
-	rb.buildStopList(params.Stops)
+	rb.buildStopList(params.Stops, params.StopIDsByBareID)
 
 	rb.enrichTripsData()
 
@@ -601,73 +656,22 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 	}
 }
 
-func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop) {
-	rb.stopList = make([]models.Stop, 0, len(stops))
-	if len(stops) == 0 {
-		return
-	}
+// buildStopList emits the stop references and registers the routes serving them.
+// A stop referred to by more than one agency still gets a single reference — the
+// first ID seen wins, and the other stays dangling.
+func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string]string) {
+	stopList, routeIDsByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+	rb.stopList = stopList
 
-	stopIDs := make([]string, 0, len(stops))
-	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.ID)
-	}
-
-	routesForStops, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(rb.ctx, stopIDs)
-	if err != nil {
-		logging.LogError(rb.api.Logger, "failed to batch fetch routes for stops", err)
-		return
-	}
-
-	// Build in-memory map: stopID → []combinedRouteID (e.g. "40_100479").
-	// Also register the raw route ID (e.g. "100479") in presentRoutes so that
-	// collectAgenciesAndRoutes can fetch full route details via GetRoutesByIDs,
-	// which queries WHERE routes.id IN (?), using raw IDs — not combined ones.
-	stopRouteMap := make(map[string][]string)
-	for _, r := range routesForStops {
-		combinedID, ok := r.RouteID.(string)
-		if !ok {
-			continue
+	// Register the raw route ID (e.g. "100479") rather than the combined one, so
+	// that collectAgenciesAndRoutes can fetch full route details via
+	// GetRoutesByIDs, which queries WHERE routes.id IN (?) using raw IDs.
+	for _, combinedRouteIDs := range routeIDsByStop {
+		for _, combinedID := range combinedRouteIDs {
+			if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
+				rb.presentRoutes[rawID] = models.Route{}
+			}
 		}
-		stopRouteMap[r.StopID] = append(stopRouteMap[r.StopID], combinedID)
-		if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
-			rb.presentRoutes[rawID] = models.Route{}
-		}
-	}
-
-	for _, stop := range stops {
-		if rb.ctx.Err() != nil {
-			return
-		}
-		combinedRouteIDs := stopRouteMap[stop.ID]
-		if len(combinedRouteIDs) == 0 {
-			continue
-		}
-		rb.stopList = append(rb.stopList, rb.createStop(stop, combinedRouteIDs))
-	}
-}
-
-func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string) models.Stop {
-	agencyID := ""
-	if len(routeIds) > 0 {
-		if id, err := utils.ExtractAgencyID(routeIds[0]); err == nil {
-			agencyID = id
-		}
-	}
-
-	direction := rb.api.DirectionCalculator.CalculateStopDirection(rb.ctx, stop.ID, stop.Direction)
-
-	return models.Stop{
-		Code:               nulls.StringOrEmpty(stop.Code),
-		Direction:          direction,
-		ID:                 utils.FormCombinedID(agencyID, stop.ID),
-		Lat:                stop.Lat,
-		Lon:                stop.Lon,
-		LocationType:       0,
-		Name:               nulls.StringOrEmpty(stop.Name),
-		Parent:             "",
-		RouteIDs:           routeIds,
-		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 	}
 }
 
