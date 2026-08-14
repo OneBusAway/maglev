@@ -96,10 +96,15 @@ JOIN stops_fts fts
   ON s.rowid = fts.rowid
 WHERE fts.stop_name MATCH ?
   -- A stop qualifies only if some stop time permits unrestricted pick-up or
-  -- drop-off (pickup_type/drop_off_type == 0). GTFS import stores a value of
-  -- 0 as NULL (see toNullInt64 in gtfsdb/helpers.go), so NULL must coalesce
-  -- to 0 here. Types 2 (phone agency) and 3 (coordinate with driver) are
-  -- restricted and intentionally do not qualify.
+  -- drop-off (pickup_type/drop_off_type == 0), matching the legacy
+  -- stopHasRevenueService predicate. Types 2 (phone agency) and 3 (coordinate
+  -- with driver) are restricted and intentionally do not qualify.
+  --
+  -- Storage chain behind the COALESCE: GTFS leaves pickup_type/drop_off_type
+  -- optional and defines an empty value as 0, which go-gtfs normalizes to 0 at
+  -- parse time; toNullInt64 (gtfsdb/helpers.go) then persists 0 as NULL. So
+  -- NULL and 0 both mean unrestricted and must compare equal here, while a
+  -- stored 1 is always an explicit "not allowed" from the feed.
   AND EXISTS (
       SELECT 1
       FROM stop_times st

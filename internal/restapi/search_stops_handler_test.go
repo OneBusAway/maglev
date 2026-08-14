@@ -705,7 +705,9 @@ func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
 		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20230101', '20251231');
 		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('revenue_route_1', 'RABA', 'Revenue Route', 3);
 
-		-- Both pickup and drop-off restricted: excluded.
+		-- Both pickup and drop-off restricted: excluded. A stored 1 only ever comes from a
+		-- literal 1 in the feed, never from an omitted or blank column, so this is an
+		-- unambiguous "no boarding here".
 		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_both_restricted', 'Revenue Test Both Restricted', 40.0, -120.0, 0);
 		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_1', 'revenue_route_1', 'service_1');
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_1', 'revenue_both_restricted', 1, 28800, 28800, 1, 1);
@@ -730,8 +732,10 @@ func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
 		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_6', 'revenue_route_1', 'service_1');
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_6', 'revenue_coordinate_driver', 1, 28800, 28800, 3, 3);
 
-		-- pickup_type/drop_off_type omitted (NULL in storage): included. This is the shape
-		-- every real feed row is stored in (GTFS import stores a value of 0 as NULL).
+		-- pickup_type/drop_off_type omitted (NULL in storage): included. Import reaches this
+		-- shape from either an explicit 0 or an absent/blank column, both of which GTFS
+		-- defines as unrestricted; toNullInt64 then stores that 0 as NULL. Covered against
+		-- the importer in gtfsdb.TestImportedStopTimesOmittingPickupColumns.
 		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_null_columns', 'Revenue Test Null Columns', 40.0, -120.0, 0);
 		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_5', 'revenue_route_1', 'service_1');
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('revenue_trip_5', 'revenue_null_columns', 1, 28800, 28800);
