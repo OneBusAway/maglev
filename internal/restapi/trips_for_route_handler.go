@@ -444,14 +444,27 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// Try the full ID first; if not found, strip a trailing numeric suffix
 		// (e.g., ".00060") that some feeds append to distinguish duplicated runs.
 		baseTripID := dupTripID
-		if _, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
+		baseTrip, baseTripErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
+		if baseTripErr != nil {
+			if !errors.Is(baseTripErr, sql.ErrNoRows) {
 				api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
-					"dup_trip_id", dupTripID, "error", err)
+					"dup_trip_id", dupTripID, "error", baseTripErr)
 			}
 			stripped := stripNumericSuffix(dupTripID)
 			if stripped != dupTripID {
 				baseTripID = stripped
+				baseTrip, baseTripErr = api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID)
+			}
+		}
+
+		// Index the base trip before the situation lookup below: an unindexed
+		// trip sends tripSituationRefs back to the database for the record
+		// already in hand, the same reuse the interlined path above relies on.
+		if baseTripErr == nil {
+			tripsByID[baseTrip.ID] = baseTrip
+			if !filteredRouteTrips[baseTripID] {
+				fetchedTrips = append(fetchedTrips, baseTrip)
+				filteredRouteTrips[baseTripID] = true
 			}
 		}
 
@@ -485,14 +498,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
 		result = append(result, entry)
-
-		if !filteredRouteTrips[baseTripID] {
-			baseTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID)
-			if err == nil {
-				fetchedTrips = append(fetchedTrips, baseTrip)
-				filteredRouteTrips[baseTripID] = true
-			}
-		}
 	}
 
 	if result == nil {
