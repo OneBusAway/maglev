@@ -673,81 +673,22 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 	}
 }
 
+// buildStopList emits the stop references and registers the routes serving them.
+// A stop referred to by more than one agency still gets a single reference — the
+// first ID seen wins, and the other stays dangling.
 func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string]string) {
-	rb.stopList = make([]models.Stop, 0, len(stops))
-	if len(stops) == 0 {
-		return
-	}
+	stopList, routeIDsByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+	rb.stopList = stopList
 
-	stopIDs := make([]string, 0, len(stops))
-	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.ID)
-	}
-
-	routesForStops, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(rb.ctx, stopIDs)
-	if err != nil {
-		logging.LogError(rb.api.Logger, "failed to batch fetch routes for stops", err)
-		return
-	}
-
-	// Build in-memory map: stopID → []combinedRouteID (e.g. "40_100479").
-	// Also register the raw route ID (e.g. "100479") in presentRoutes so that
-	// collectAgenciesAndRoutes can fetch full route details via GetRoutesByIDs,
-	// which queries WHERE routes.id IN (?), using raw IDs — not combined ones.
-	stopRouteMap := make(map[string][]string)
-	for _, r := range routesForStops {
-		combinedID, ok := r.RouteID.(string)
-		if !ok {
-			continue
-		}
-		stopRouteMap[r.StopID] = append(stopRouteMap[r.StopID], combinedID)
-		if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
-			rb.presentRoutes[rawID] = models.Route{}
-		}
-	}
-
-	for _, stop := range stops {
-		if rb.ctx.Err() != nil {
-			return
-		}
-		combinedRouteIDs := stopRouteMap[stop.ID]
-		if len(combinedRouteIDs) == 0 {
-			continue
-		}
-		rb.stopList = append(rb.stopList, rb.createStop(stop, combinedRouteIDs, stopIDsByBareID[stop.ID]))
-	}
-}
-
-// createStop builds one stop reference. referredID is the combined ID an entry
-// pointed at this stop by; it is preferred over deriving one from the stop's
-// first route, whose agency need not be the agency of the trip that referred to
-// it. A stop referred to by more than one agency still gets a single reference —
-// the first ID seen wins, and the other stays dangling.
-func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string, referredID string) models.Stop {
-	if referredID == "" {
-		agencyID := ""
-		if len(routeIds) > 0 {
-			if id, err := utils.ExtractAgencyID(routeIds[0]); err == nil {
-				agencyID = id
+	// Register the raw route ID (e.g. "100479") rather than the combined one, so
+	// that collectAgenciesAndRoutes can fetch full route details via
+	// GetRoutesByIDs, which queries WHERE routes.id IN (?) using raw IDs.
+	for _, combinedRouteIDs := range routeIDsByStop {
+		for _, combinedID := range combinedRouteIDs {
+			if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
+				rb.presentRoutes[rawID] = models.Route{}
 			}
 		}
-		referredID = utils.FormCombinedID(agencyID, stop.ID)
-	}
-
-	direction := rb.api.DirectionCalculator.CalculateStopDirection(rb.ctx, stop.ID, stop.Direction)
-
-	return models.Stop{
-		Code:               nulls.StringOrEmpty(stop.Code),
-		Direction:          direction,
-		ID:                 referredID,
-		Lat:                stop.Lat,
-		Lon:                stop.Lon,
-		LocationType:       0,
-		Name:               nulls.StringOrEmpty(stop.Name),
-		Parent:             "",
-		RouteIDs:           routeIds,
-		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 	}
 }
 

@@ -452,6 +452,71 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
+// stopReferences builds the stop reference block for a set of list entries,
+// labelling each stop with the combined ID the entries actually referred to it
+// by — the referring trip's agency need not own the stop's first route. A stop
+// whose routes do not resolve still gets a reference, with an empty route list,
+// so every stop ID an entry emits resolves in the block.
+//
+// The routes each stop serves are returned alongside the references, for callers
+// that collect route references from them.
+func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string]string) ([]models.Stop, map[string][]string) {
+	routeIDsByStop := api.routeIDsForStops(ctx, stops)
+
+	stopList := make([]models.Stop, 0, len(stops))
+	for _, stop := range stops {
+		routeIDs := routeIDsByStop[stop.ID]
+		if routeIDs == nil {
+			routeIDs = []string{}
+		}
+
+		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
+		if direction == "" {
+			direction = models.UnknownValue
+		}
+
+		stopList = append(stopList, models.Stop{
+			Code:               nulls.StringOrEmpty(stop.Code),
+			Direction:          direction,
+			ID:                 idsByBareID[stop.ID],
+			Lat:                stop.Lat,
+			Lon:                stop.Lon,
+			LocationType:       0,
+			Name:               nulls.StringOrEmpty(stop.Name),
+			Parent:             "",
+			RouteIDs:           routeIDs,
+			StaticRouteIDs:     routeIDs,
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		})
+	}
+	return stopList, routeIDsByStop
+}
+
+// routeIDsForStops maps each stop to the combined IDs of the routes serving it.
+func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) map[string][]string {
+	routeIDsByStop := make(map[string][]string)
+	if len(stops) == 0 {
+		return routeIDsByStop
+	}
+
+	stopIDs := make([]string, len(stops))
+	for i, stop := range stops {
+		stopIDs[i] = stop.ID
+	}
+
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+	if err != nil {
+		logging.LogError(api.Logger, "failed to fetch routes for stop references", err)
+		return routeIDsByStop
+	}
+	for _, row := range rows {
+		if routeID, ok := row.RouteID.(string); ok {
+			routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], routeID)
+		}
+	}
+	return routeIDsByStop
+}
+
 // Situation references
 //
 // An entry's situationIds and the response's references.situations must use the

@@ -745,7 +745,7 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	references := models.NewEmptyReferences()
 	references.Agencies = utils.MapValues(sets.agencies)
 	references.Routes = sets.routeList()
-	references.Stops = api.stopReferenceList(ctx, params.Stops, params.StopIDMap)
+	references.Stops, _ = api.stopReferences(ctx, params.Stops, params.StopIDMap)
 	references.Trips = sets.tripReferenceList(params.IncludeTrip)
 	references.Situations = api.situationReferences(params.Situations)
 	return *references
@@ -902,64 +902,6 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 	if agency != nil {
 		sets.agencies[agency.ID] = models.AgencyReferenceFromDatabase(agency)
 	}
-}
-
-// stopReferenceList builds the stop references, labelling each with the combined
-// ID the list entries used for it.
-func (api *RestAPI) stopReferenceList(ctx context.Context, stops []gtfsdb.Stop, stopIDMap map[string]string) []models.Stop {
-	routeIDsByStop := api.routeIDsForStops(ctx, stops)
-
-	stopList := make([]models.Stop, 0, len(stops))
-	for _, stop := range stops {
-		routeIDs := routeIDsByStop[stop.ID]
-		if routeIDs == nil {
-			routeIDs = []string{}
-		}
-
-		direction := models.UnknownValue
-		if stop.Direction.Valid && stop.Direction.String != "" {
-			direction = stop.Direction.String
-		}
-
-		stopList = append(stopList, models.Stop{
-			Code:               nulls.StringOrEmpty(stop.Code),
-			Direction:          direction,
-			ID:                 stopIDMap[stop.ID],
-			Lat:                stop.Lat,
-			Lon:                stop.Lon,
-			LocationType:       0,
-			Name:               nulls.StringOrEmpty(stop.Name),
-			Parent:             "",
-			RouteIDs:           routeIDs,
-			StaticRouteIDs:     routeIDs,
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-		})
-	}
-	return stopList
-}
-
-func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) map[string][]string {
-	routeIDsByStop := make(map[string][]string)
-	if len(stops) == 0 {
-		return routeIDsByStop
-	}
-
-	stopIDs := make([]string, len(stops))
-	for i, stop := range stops {
-		stopIDs[i] = stop.ID
-	}
-
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
-	if err != nil {
-		logging.LogError(api.Logger, "failed to fetch routes for stop references", err)
-		return routeIDsByStop
-	}
-	for _, row := range rows {
-		if routeID, ok := row.RouteID.(string); ok {
-			routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], routeID)
-		}
-	}
-	return routeIDsByStop
 }
 
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
