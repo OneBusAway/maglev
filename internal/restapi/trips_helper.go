@@ -1380,7 +1380,13 @@ func serviceIDSlice(services map[string]struct{}) []string {
 // scheduledPositionAtTime interpolates where a trip is along its shape at
 // currentTime using its schedule alone. This is the no-real-time-vehicle
 // equivalent of a GTFS-RT position; it returns nil when the trip has no usable
-// shape or stop times.
+// shape or stop times, or when stopsByID is missing any stop the trip serves.
+//
+// Failing closed on a missing stop matters here specifically: this result
+// feeds a bounds-membership test deciding whether a trip is included in the
+// response. projectStopsInSequence defaults a missing stop's distance to 0,
+// which would place the trip at the start of its shape and risk a false
+// positive rather than simply a wrong displayed position.
 func (api *RestAPI) scheduledPositionAtTime(
 	stopTimes []gtfsdb.StopTime,
 	shapePoints []gtfs.ShapePoint,
@@ -1390,6 +1396,11 @@ func (api *RestAPI) scheduledPositionAtTime(
 ) *models.Location {
 	if len(stopTimes) == 0 || len(shapePoints) < 2 {
 		return nil
+	}
+	for _, st := range stopTimes {
+		if _, ok := stopsByID[st.StopID]; !ok {
+			return nil
+		}
 	}
 
 	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
