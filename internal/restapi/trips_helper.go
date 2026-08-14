@@ -1270,14 +1270,7 @@ type serviceIDsByDay struct {
 // before it. A lookup failure is not fatal — the resolver then reports the
 // query day for every trip, which is what callers did before it existed.
 func (api *RestAPI) newServiceDateResolver(ctx context.Context, queryDayMidnight, currentTime time.Time) *serviceDateResolver {
-	previousDayMidnight := queryDayMidnight.AddDate(0, 0, -1)
-
-	return &serviceDateResolver{
-		queryDayMidnight:    queryDayMidnight,
-		sinceMidnightNs:     wallClockSinceMidnightNs(currentTime),
-		queryDayServices:    api.activeServiceIDSet(ctx, queryDayMidnight),
-		previousDayServices: api.activeServiceIDSet(ctx, previousDayMidnight),
-	}
+	return newServiceDateResolverFor(queryDayMidnight, currentTime, api.serviceIDsForDays(ctx, queryDayMidnight))
 }
 
 // newServiceDateResolverFor builds a resolver from service IDs the caller has
@@ -1303,7 +1296,19 @@ func serviceIDSet(serviceIDs []string) map[string]struct{} {
 	return set
 }
 
-func (api *RestAPI) activeServiceIDSet(ctx context.Context, day time.Time) map[string]struct{} {
+// serviceIDsForDays fetches the service IDs active on queryDayMidnight and the
+// day before it, for a caller that wants both days' raw IDs — e.g. to also run
+// a second query with the same service-ID list, the way the block lookup in
+// trips-for-location does. A lookup failure is not fatal — that day comes back
+// empty.
+func (api *RestAPI) serviceIDsForDays(ctx context.Context, queryDayMidnight time.Time) serviceIDsByDay {
+	return serviceIDsByDay{
+		QueryDay:    api.activeServiceIDsForDate(ctx, queryDayMidnight),
+		PreviousDay: api.activeServiceIDsForDate(ctx, queryDayMidnight.AddDate(0, 0, -1)),
+	}
+}
+
+func (api *RestAPI) activeServiceIDsForDate(ctx context.Context, day time.Time) []string {
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, day.Format("20060102"))
 	if err != nil {
 		api.Logger.Warn("failed to fetch active service IDs for service date resolution",
@@ -1311,7 +1316,7 @@ func (api *RestAPI) activeServiceIDSet(ctx context.Context, day time.Time) map[s
 		return nil
 	}
 
-	return serviceIDSet(serviceIDs)
+	return serviceIDs
 }
 
 // Resolve returns midnight of the service date trip belongs to.
