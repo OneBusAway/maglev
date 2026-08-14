@@ -407,7 +407,7 @@ func groupScheduleRowsByRouteAndDirection(
 		}
 		if !hasFrequency {
 			group.stopTimes = append(group.stopTimes, templateStopTime)
-			recordHeadsignVotes(group, row.TripHeadsign, 1)
+			recordHeadsignVotes(group, nulls.StringOrEmpty(row.TripHeadsign), 1)
 			continue
 		}
 
@@ -416,14 +416,14 @@ func groupScheduleRowsByRouteAndDirection(
 			group.frequencies = append(group.frequencies, buildScheduleFrequency(row, rowCtx, templateStopTime, frequency))
 			runCount := (frequency.endTime - frequency.startTime) /
 				(frequency.headwaySecs * int64(time.Second))
-			recordHeadsignVotes(group, row.TripHeadsign, runCount)
+			recordHeadsignVotes(group, nulls.StringOrEmpty(row.TripHeadsign), runCount)
 		case 1:
 			expanded, err := expandExactScheduleStopTimes(ctx, row, rowCtx, templateStopTime, frequency)
 			if err != nil {
 				return nil, err
 			}
 			group.stopTimes = append(group.stopTimes, expanded...)
-			recordHeadsignVotes(group, row.TripHeadsign, int64(len(expanded)))
+			recordHeadsignVotes(group, nulls.StringOrEmpty(row.TripHeadsign), int64(len(expanded)))
 		}
 	}
 
@@ -513,31 +513,25 @@ func getScheduleDirectionGroup(
 }
 
 func parseScheduleFrequencyRow(row gtfsdb.GetScheduleForStopOnDateRow) (scheduleFrequencyRow, bool, error) {
-	fieldsPresent := []bool{
-		row.FrequencyStartTime.Valid,
-		row.FrequencyEndTime.Valid,
-		row.FrequencyHeadwaySecs.Valid,
-		row.FrequencyExactTimes.Valid,
+	fields := []sql.NullInt64{
+		row.FrequencyStartTime,
+		row.FrequencyEndTime,
+		row.FrequencyHeadwaySecs,
+		row.FrequencyExactTimes,
 	}
-
-	presentCount := 0
-	for _, present := range fieldsPresent {
-		if present {
-			presentCount++
-		}
-	}
+	presentCount := nulls.ValidInt64Count(fields...)
 	if presentCount == 0 {
 		return scheduleFrequencyRow{}, false, nil
 	}
-	if presentCount != len(fieldsPresent) {
+	if presentCount != len(fields) {
 		return scheduleFrequencyRow{}, false, fmt.Errorf("incomplete frequency row for trip %q", row.TripID)
 	}
 
 	frequency := scheduleFrequencyRow{
-		startTime:   row.FrequencyStartTime.Int64,
-		endTime:     row.FrequencyEndTime.Int64,
-		headwaySecs: row.FrequencyHeadwaySecs.Int64,
-		exactTimes:  row.FrequencyExactTimes.Int64,
+		startTime:   nulls.Int64OrDefault(row.FrequencyStartTime, 0),
+		endTime:     nulls.Int64OrDefault(row.FrequencyEndTime, 0),
+		headwaySecs: nulls.Int64OrDefault(row.FrequencyHeadwaySecs, 0),
+		exactTimes:  nulls.Int64OrDefault(row.FrequencyExactTimes, 0),
 	}
 	const maxHeadwaySeconds = int64(^uint64(0)>>1) / int64(time.Second)
 	if frequency.startTime < 0 || frequency.endTime <= frequency.startTime {
@@ -568,7 +562,7 @@ func buildScheduleFrequency(
 		ServiceDate:      models.NewModelTime(rowCtx.startOfDay),
 		ServiceID:        templateStopTime.ServiceID,
 		TripID:           templateStopTime.TripID,
-		StopHeadsign:     row.StopHeadsign.String,
+		StopHeadsign:     templateStopTime.StopHeadsign,
 		ArrivalEnabled:   templateStopTime.ArrivalEnabled,
 		DepartureEnabled: templateStopTime.DepartureEnabled,
 	}
@@ -632,11 +626,11 @@ func addScheduleOffset(base, offset int64) (int64, error) {
 
 // recordHeadsignVotes weights fixed trips once and frequency trips by their estimated
 // number of runs, matching the legacy endpoint's representative-headsign selection.
-func recordHeadsignVotes(group *scheduleDirectionGroup, headsign sql.NullString, count int64) {
-	if !headsign.Valid || headsign.String == "" || count <= 0 {
+func recordHeadsignVotes(group *scheduleDirectionGroup, headsign string, count int64) {
+	if headsign == "" || count <= 0 {
 		return
 	}
-	group.headsignCounts[headsign.String] += count
+	group.headsignCounts[headsign] += count
 }
 
 func bestHeadsign(headsignCounts map[string]int64) string {

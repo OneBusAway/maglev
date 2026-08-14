@@ -24,6 +24,14 @@ func TestNullInt64OrDefault(t *testing.T) {
 	assert.Equal(t, int64(10), Int64OrDefault(sql.NullInt64{Int64: 42, Valid: false}, 10))
 }
 
+func TestValidInt64Count(t *testing.T) {
+	assert.Equal(t, 2, ValidInt64Count(
+		sql.NullInt64{Int64: 1, Valid: true},
+		sql.NullInt64{},
+		sql.NullInt64{Int64: 3, Valid: true},
+	))
+}
+
 func TestNonEmptyString(t *testing.T) {
 	assert.Equal(t, sql.NullString{String: "test", Valid: true}, NonEmptyString("test"))
 	assert.Equal(t, sql.NullString{String: "", Valid: false}, NonEmptyString(""))

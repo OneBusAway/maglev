@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -911,10 +912,10 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 		startTime, endTime time.Duration,
 		headwaySecs, exactTimes int64,
 	) gtfsdb.GetScheduleForStopOnDateRow {
-		row.FrequencyStartTime = sql.NullInt64{Int64: int64(startTime), Valid: true}
-		row.FrequencyEndTime = sql.NullInt64{Int64: int64(endTime), Valid: true}
-		row.FrequencyHeadwaySecs = sql.NullInt64{Int64: headwaySecs, Valid: true}
-		row.FrequencyExactTimes = sql.NullInt64{Int64: exactTimes, Valid: true}
+		row.FrequencyStartTime = nulls.Int64(int64(startTime))
+		row.FrequencyEndTime = nulls.Int64(int64(endTime))
+		row.FrequencyHeadwaySecs = nulls.Int64(headwaySecs)
+		row.FrequencyExactTimes = nulls.Int64(exactTimes)
 		return row
 	}
 
@@ -1061,4 +1062,165 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 		_, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
+}
+
+func TestParseScheduleFrequencyRow(t *testing.T) {
+	validRow := gtfsdb.GetScheduleForStopOnDateRow{
+		TripID:               "trip-frequency",
+		FrequencyStartTime:   nulls.Int64(int64(6 * time.Hour)),
+		FrequencyEndTime:     nulls.Int64(int64(7 * time.Hour)),
+		FrequencyHeadwaySecs: nulls.Int64(600),
+		FrequencyExactTimes:  nulls.Int64(0),
+	}
+
+	tests := []struct {
+		name        string
+		mutate      func(*gtfsdb.GetScheduleForStopOnDateRow)
+		wantPresent bool
+		wantErr     string
+	}{
+		{
+			name: "no frequency",
+			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
+				row.FrequencyStartTime = sql.NullInt64{}
+				row.FrequencyEndTime = sql.NullInt64{}
+				row.FrequencyHeadwaySecs = sql.NullInt64{}
+				row.FrequencyExactTimes = sql.NullInt64{}
+			},
+		},
+		{
+			name: "incomplete frequency",
+			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
+				row.FrequencyEndTime = sql.NullInt64{}
+			},
+			wantErr: "incomplete frequency row",
+		},
+		{
+			name: "negative start",
+			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
+				row.FrequencyStartTime = nulls.Int64(-1)
+			},
+			wantErr: "invalid frequency window",
+		},
+		{
+			name: "non-increasing window",
+			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
+				row.FrequencyEndTime = row.FrequencyStartTime
+			},
+			wantErr: "invalid frequency window",
+		},
+		{
+			name: "zero headway",
+			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
+				row.FrequencyHeadwaySecs = nulls.Int64(0)
+			},
+			wantErr: "invalid frequency headway",
+		},
+		{
+			name: "overflowing headway",
+			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
+				const maxHeadwaySeconds = int64(^uint64(0)>>1) / int64(time.Second)
+				row.FrequencyHeadwaySecs = nulls.Int64(maxHeadwaySeconds + 1)
+			},
+			wantErr: "invalid frequency headway",
+		},
+		{
+			name: "unsupported exact_times",
+			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
+				row.FrequencyExactTimes = nulls.Int64(2)
+			},
+			wantErr: "invalid exact_times",
+		},
+		{
+			name:        "valid frequency",
+			mutate:      func(*gtfsdb.GetScheduleForStopOnDateRow) {},
+			wantPresent: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := validRow
+			test.mutate(&row)
+
+			frequency, present, err := parseScheduleFrequencyRow(row)
+			if test.wantErr != "" {
+				assert.ErrorContains(t, err, test.wantErr)
+				assert.False(t, present)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, test.wantPresent, present)
+			if present {
+				assert.Equal(t, int64(6*time.Hour), frequency.startTime)
+				assert.Equal(t, int64(7*time.Hour), frequency.endTime)
+				assert.Equal(t, int64(600), frequency.headwaySecs)
+				assert.Equal(t, int64(0), frequency.exactTimes)
+			}
+		})
+	}
+}
+
+func TestExpandExactScheduleStopTimesValidation(t *testing.T) {
+	row := gtfsdb.GetScheduleForStopOnDateRow{
+		TripID:             "trip-frequency",
+		ArrivalTime:        int64(7 * time.Hour),
+		DepartureTime:      int64(7 * time.Hour),
+		FirstDepartureTime: int64(6 * time.Hour),
+	}
+	rowCtx := scheduleRowContext{startOfDay: time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)}
+	frequency := scheduleFrequencyRow{
+		startTime:   int64(6 * time.Hour),
+		endTime:     int64(7 * time.Hour),
+		headwaySecs: 600,
+		exactTimes:  1,
+	}
+
+	t.Run("rejects a negative first departure", func(t *testing.T) {
+		invalidRow := row
+		invalidRow.FirstDepartureTime = -1
+		_, err := expandExactScheduleStopTimes(
+			context.Background(), invalidRow, rowCtx, models.ScheduleStopTime{}, frequency,
+		)
+		assert.ErrorContains(t, err, "invalid first departure time")
+	})
+
+	t.Run("honors cancellation during expansion", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := expandExactScheduleStopTimes(ctx, row, rowCtx, models.ScheduleStopTime{}, frequency)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+func TestAddScheduleOffset(t *testing.T) {
+	const (
+		maxInt64 = int64(^uint64(0) >> 1)
+		minInt64 = -maxInt64 - 1
+	)
+	tests := []struct {
+		name    string
+		base    int64
+		offset  int64
+		want    int64
+		wantErr string
+	}{
+		{name: "adds a positive offset", base: 10, offset: 5, want: 15},
+		{name: "adds a negative offset", base: 10, offset: -5, want: 5},
+		{name: "rejects overflow", base: maxInt64, offset: 1, wantErr: "time overflow"},
+		{name: "rejects underflow", base: minInt64, offset: -1, wantErr: "time underflow"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := addScheduleOffset(test.base, test.offset)
+			if test.wantErr != "" {
+				assert.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got)
+		})
+	}
 }
