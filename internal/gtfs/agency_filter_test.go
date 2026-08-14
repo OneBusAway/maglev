@@ -214,9 +214,11 @@ func TestAlertMatchesAgency(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	routeIDSet := map[string]struct{}{"R1": {}, "R2": {}, "R999": {}}
+	routeAgencyMap := manager.buildRouteAgencyMap(ctx, routeIDSet)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := alertMatchesAgency(ctx, manager, tt.alert, tt.allowed)
+			got := alertMatchesAgency(tt.alert, tt.allowed, routeAgencyMap)
 			assert.Equal(t, tt.want, got)
 		})
 	}

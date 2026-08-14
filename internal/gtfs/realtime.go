@@ -240,7 +240,8 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 
 // updateFeedRealtime fetches and processes realtime data for a single feed.
 // It updates the per-feed sub-maps and then calls rebuildMergedRealtimeLocked.
-// Returns true if new data was successfully fetched and processed.
+// Returns true if new data was successfully fetched and applied. A vehicle
+// feed that is fetched but skipped as stale does not count as new data.
 func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) bool {
 	logger := logging.FromContext(ctx).With(slog.String("component", "gtfs_realtime"))
 	feedID := feedCfg.ID
@@ -318,8 +319,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedTrips[feedID] = tripData.Trips
 	}
 
+	// applyVehicleUpdate is true only when fetched vehicle data is actually stored.
+	// A successful HTTP fetch of a stale feed must not count as new data.
+	applyVehicleUpdate := false
+
 	if vehicleData != nil && vehicleErr == nil {
-		applyVehicleUpdate := true
+		applyVehicleUpdate = true
 
 		// Guard against zero CreatedAt from feeds without FeedHeader timestamp.
 		// When CreatedAt is zero time.Time{}, UnixNano() returns a negative value that
@@ -424,7 +429,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	tripsUpdated := tripData != nil && tripErr == nil
-	vehiclesUpdated := vehicleData != nil && vehicleErr == nil
+	vehiclesUpdated := applyVehicleUpdate
 	alertsUpdated := alertData != nil && alertErr == nil
 
 	// OR logic: A feed is partially successful if ANY configured sub-feed succeeds.
@@ -510,20 +515,51 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	return hasNewData
 }
 
+// buildRouteAgencyMap resolves route ID → agency ID in a single GetRoutesByIDs
+// query. Unresolvable routes are omitted, matching the previous per-entity
+// GetRoute skip-on-error behavior.
+func (manager *Manager) buildRouteAgencyMap(ctx context.Context, routeIDSet map[string]struct{}) map[string]string {
+	if len(routeIDSet) == 0 {
+		return map[string]string{}
+	}
+
+	routeIDs := make([]string, 0, len(routeIDSet))
+	for id := range routeIDSet {
+		routeIDs = append(routeIDs, id)
+	}
+
+	routes, err := manager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
+	if err != nil {
+		return map[string]string{}
+	}
+
+	routeAgencyMap := make(map[string]string, len(routes))
+	for _, route := range routes {
+		routeAgencyMap[route.ID] = route.AgencyID
+	}
+	return routeAgencyMap
+}
+
 // filterTripsByAgency returns only the trips whose route belongs to one of the
 // allowed agencies. Trips with an unresolvable route are dropped.
 func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool) []gtfs.Trip {
 	ctx := context.TODO()
+
+	routeIDSet := make(map[string]struct{})
+	for _, trip := range trips {
+		if trip.ID.RouteID != "" {
+			routeIDSet[trip.ID.RouteID] = struct{}{}
+		}
+	}
+	routeAgencyMap := manager.buildRouteAgencyMap(ctx, routeIDSet)
 
 	filtered := make([]gtfs.Trip, 0, len(trips))
 	for _, trip := range trips {
 		if trip.ID.RouteID == "" {
 			continue
 		}
-		if route, err := manager.GtfsDB.Queries.GetRoute(ctx, trip.ID.RouteID); err == nil {
-			if allowed[route.AgencyID] {
-				filtered = append(filtered, trip)
-			}
+		if agencyID, ok := routeAgencyMap[trip.ID.RouteID]; ok && allowed[agencyID] {
+			filtered = append(filtered, trip)
 		}
 	}
 	return filtered
@@ -534,15 +570,21 @@ func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[strin
 func (manager *Manager) filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed map[string]bool) []gtfs.Vehicle {
 	ctx := context.TODO()
 
+	routeIDSet := make(map[string]struct{})
+	for _, v := range vehicles {
+		if v.Trip != nil && v.Trip.ID.RouteID != "" {
+			routeIDSet[v.Trip.ID.RouteID] = struct{}{}
+		}
+	}
+	routeAgencyMap := manager.buildRouteAgencyMap(ctx, routeIDSet)
+
 	filtered := make([]gtfs.Vehicle, 0, len(vehicles))
 	for _, v := range vehicles {
 		if v.Trip == nil || v.Trip.ID.RouteID == "" {
 			continue
 		}
-		if route, err := manager.GtfsDB.Queries.GetRoute(ctx, v.Trip.ID.RouteID); err == nil {
-			if allowed[route.AgencyID] {
-				filtered = append(filtered, v)
-			}
+		if agencyID, ok := routeAgencyMap[v.Trip.ID.RouteID]; ok && allowed[agencyID] {
+			filtered = append(filtered, v)
 		}
 	}
 	return filtered
@@ -552,16 +594,29 @@ func (manager *Manager) filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed 
 func (manager *Manager) filterAlertsByAgency(alerts []gtfs.Alert, allowed map[string]bool) []gtfs.Alert {
 	ctx := context.TODO()
 
+	routeIDSet := make(map[string]struct{})
+	for _, alert := range alerts {
+		for _, entity := range alert.InformedEntities {
+			if entity.RouteID != nil && *entity.RouteID != "" {
+				routeIDSet[*entity.RouteID] = struct{}{}
+			}
+			if entity.TripID != nil && entity.TripID.RouteID != "" {
+				routeIDSet[entity.TripID.RouteID] = struct{}{}
+			}
+		}
+	}
+	routeAgencyMap := manager.buildRouteAgencyMap(ctx, routeIDSet)
+
 	filtered := make([]gtfs.Alert, 0, len(alerts))
 	for _, alert := range alerts {
-		if alertMatchesAgency(ctx, manager, alert, allowed) {
+		if alertMatchesAgency(alert, allowed, routeAgencyMap) {
 			filtered = append(filtered, alert)
 		}
 	}
 	return filtered
 }
 
-func alertMatchesAgency(ctx context.Context, manager *Manager, alert gtfs.Alert, allowed map[string]bool) bool {
+func alertMatchesAgency(alert gtfs.Alert, allowed map[string]bool, routeAgencyMap map[string]string) bool {
 	// NOTE: stop-only InformedEntities are not resolved to agencies.
 	// Alerts referencing only stop IDs will be dropped when agency filtering is active.
 	for _, entity := range alert.InformedEntities {
@@ -569,17 +624,13 @@ func alertMatchesAgency(ctx context.Context, manager *Manager, alert gtfs.Alert,
 			return true
 		}
 		if entity.RouteID != nil && *entity.RouteID != "" {
-			if route, err := manager.GtfsDB.Queries.GetRoute(ctx, *entity.RouteID); err == nil {
-				if allowed[route.AgencyID] {
-					return true
-				}
+			if agencyID, ok := routeAgencyMap[*entity.RouteID]; ok && allowed[agencyID] {
+				return true
 			}
 		}
 		if entity.TripID != nil && entity.TripID.RouteID != "" {
-			if route, err := manager.GtfsDB.Queries.GetRoute(ctx, entity.TripID.RouteID); err == nil {
-				if allowed[route.AgencyID] {
-					return true
-				}
+			if agencyID, ok := routeAgencyMap[entity.TripID.RouteID]; ok && allowed[agencyID] {
+				return true
 			}
 		}
 	}
