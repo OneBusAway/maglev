@@ -272,9 +272,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
 		// we take the first row which gives us the frequency with the earliest start_time
 		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
-		converted.ServiceDate = models.NewModelTime(midnight)
-		converted.ServiceID = utils.FormCombinedID(agencyID, trip.ServiceID)
-		converted.TripID = utils.FormCombinedID(agencyID, trip.ID)
 		frequency = &converted
 	}
 
