@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net/http"
@@ -303,6 +304,87 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 	// Ordering matters! Routes should still be sorted by ID after truncation.
 	assert.True(t, model.Data.List[0].ID < model.Data.List[1].ID)
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
+}
+
+// seedRoutesNearLocation inserts count synthetic routes that all serve the stop
+// nearest to (lat, lon), so that route-count caps above the RABA fixture's 13
+// routes become observable. Rows are removed via t.Cleanup.
+func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count int) {
+	t.Helper()
+	ctx := context.Background()
+	db := api.GtfsManager.GtfsDB.DB
+
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies, "test data should contain at least one agency")
+	agencyID := agencies[0].ID
+
+	var serviceID string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT id FROM calendar LIMIT 1`).Scan(&serviceID))
+
+	var stopID string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT id FROM stops ORDER BY (lat-?)*(lat-?)+(lon-?)*(lon-?) LIMIT 1`,
+		lat, lat, lon, lon,
+	).Scan(&stopID))
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id LIKE 'clamp-test-%'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id LIKE 'clamp-test-%'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id LIKE 'clamp-test-%'`)
+	})
+
+	for i := range count {
+		id := fmt.Sprintf("clamp-test-%d", i)
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO routes (id, agency_id, short_name, type) VALUES (?, ?, ?, 3)`,
+			id, agencyID, id)
+		require.NoError(t, err)
+
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO trips (id, route_id, service_id) VALUES (?, ?, ?)`,
+			id, id, serviceID)
+		require.NoError(t, err)
+
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 0)`,
+			id, stopID)
+		require.NoError(t, err)
+	}
+}
+
+func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
+	const lat, lon = 40.583321, -122.362535
+
+	tests := []struct {
+		name        string
+		maxCount    string
+		wantLen     int
+		wantExceeds bool
+	}{
+		{"below endpoint cap", "10", 10, true},
+		{"at endpoint cap", "50", 50, true},
+		{"just above endpoint cap", "51", 50, true},
+		{"at global ceiling", "250", 50, true},
+		{"above global ceiling", "300", 50, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			// Seed enough routes near the query point that the endpoint's 50 cap
+			// (and the fact it's 50, not 250) is actually observable - RABA alone
+			// only has 13 routes total.
+			seedRoutesNearLocation(t, api, lat, lon, 60)
+
+			resp, model := callAPIHandler[RoutesResponse](t, api,
+				fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=5000&maxCount=%s", lat, lon, tt.maxCount))
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.Len(t, model.Data.List, tt.wantLen)
+			assert.Equal(t, tt.wantExceeds, model.Data.LimitExceeded)
+		})
+	}
 }
 
 // routesForLocationShuffleIterations bounds the flake probability of
