@@ -365,7 +365,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		// Always built — Java attaches a BlockLocation (real-time or scheduled) to
 		// every arrival, so tripStatus is always non-null.
-		status, snapshot, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
+		status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed for arrival",
 				"tripID", st.TripID, "error", statusErr)
@@ -391,8 +391,8 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			// so recomputing here just to run metricsForStop was doubling every
 			// per-arrival snapshot cost — a real problem on the plural handler
 			// where minutesBefore/minutesAfter can be 24h in each direction.
-			if snapshot != nil {
-				if d, n, ok := snapshot.metricsForStop(st.TripID, int(st.StopSequence)); ok {
+			if statusExtras.snapshot != nil {
+				if d, n, ok := statusExtras.snapshot.metricsForStop(st.TripID, int(st.StopSequence)); ok {
 					distanceFromStop = d
 					numberOfStopsAway = n
 				}

@@ -357,7 +357,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, snapshot, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
+	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
 	if statusErr != nil {
 		api.Logger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -385,8 +385,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		// Reuse the snapshot BuildTripStatus already computed for this trip.
 		// It applies the same schedule-deviation shift internally, so
 		// recomputing here just to run metricsForStop was duplicating work.
-		if snapshot != nil {
-			if d, n, ok := snapshot.metricsForStop(tripID, int(targetStopTime.StopSequence)); ok {
+		if statusExtras.snapshot != nil {
+			if d, n, ok := statusExtras.snapshot.metricsForStop(tripID, int(targetStopTime.StopSequence)); ok {
 				distanceFromStop = d
 				numberOfStopsAway = n
 			}
@@ -398,7 +398,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceMidnight)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-	situationIDs, situationRefs := api.TripSituations(ctx, tripID)
+	situationIDs, situationRefs := api.situationsFromRefs(statusExtras.situations)
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID

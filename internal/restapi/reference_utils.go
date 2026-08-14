@@ -584,14 +584,34 @@ func (rb *referenceBuilder) getRoutesList() []models.Route {
 	return routes
 }
 
-// TripSituations returns a trip's situation IDs together with the matching
-// situation references, so an entry's situationIds always resolve.
-func (api *RestAPI) TripSituations(ctx context.Context, tripID string) ([]string, []models.Situation) {
-	refs := api.situationRefsForTrip(ctx, tripID)
-
+// situationIDsFromRefs returns the situation IDs of already-resolved references,
+// so entry IDs are always derived the same way the references are.
+func situationIDsFromRefs(refs []situationRef) []string {
 	ids := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		ids = append(ids, ref.ID)
 	}
-	return ids, api.situationReferences(refs)
+	return ids
+}
+
+// TripSituations returns a trip's situation IDs together with the matching
+// situation references, so an entry's situationIds always resolve.
+func (api *RestAPI) TripSituations(ctx context.Context, tripID string) ([]string, []models.Situation) {
+	return api.situationsFromRefs(api.situationRefsForTrip(ctx, tripID))
+}
+
+// situationsFromRefs splits already-resolved references into the entry IDs and
+// the reference block built from the same lookup.
+func (api *RestAPI) situationsFromRefs(refs []situationRef) ([]string, []models.Situation) {
+	return situationIDsFromRefs(refs), api.situationReferences(refs)
+}
+
+// tripSituationsFor returns a trip's situations, reusing the references
+// BuildTripStatus already resolved for the same trip rather than querying for
+// them a second time. Extras is nil when the caller skipped the status.
+func (api *RestAPI) tripSituationsFor(ctx context.Context, tripID string, extras *tripStatusExtras) ([]string, []models.Situation) {
+	if extras == nil {
+		return api.TripSituations(ctx, tripID)
+	}
+	return api.situationsFromRefs(extras.situations)
 }

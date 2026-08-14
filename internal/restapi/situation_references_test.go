@@ -120,6 +120,16 @@ func TestSituationIDsResolveToReferences(t *testing.T) {
 			name: "trip-for-vehicle",
 			url:  fmt.Sprintf("/api/where/trip-for-vehicle/25_%s.json?key=TEST&includeStatus=true", vehicleID),
 		},
+		{
+			// Without a status there are no situations resolved alongside it to
+			// reuse, so the entry's own IDs must still resolve.
+			name: "trip-details without status",
+			url:  fmt.Sprintf("/api/where/trip-details/25_%s.json?key=TEST&includeStatus=false", tripID),
+		},
+		{
+			name: "trip-for-vehicle without status",
+			url:  fmt.Sprintf("/api/where/trip-for-vehicle/25_%s.json?key=TEST&includeStatus=false", vehicleID),
+		},
 	}
 
 	for _, tt := range tests {
