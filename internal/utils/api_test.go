@@ -1157,3 +1157,58 @@ func TestClampRadius(t *testing.T) {
 	assert.Equal(t, 5000.0, ClampRadius(5000.0))
 	assert.Equal(t, float64(models.MaxSearchRadiusInMeters), ClampRadius(models.MaxSearchRadiusInMeters+10000.0))
 }
+
+func TestParseBoolParam(t *testing.T) {
+	tests := []struct {
+		name          string
+		params        url.Values
+		fallback      bool
+		expectedValue bool
+		expectError   bool
+	}{
+		{
+			name:          "Explicit true overrides the fallback",
+			params:        url.Values{"includeTrip": []string{"true"}},
+			fallback:      false,
+			expectedValue: true,
+		},
+		{
+			name:          "Explicit false overrides the fallback",
+			params:        url.Values{"includeTrip": []string{"false"}},
+			fallback:      true,
+			expectedValue: false,
+		},
+		{
+			name:          "Missing parameter takes the fallback",
+			params:        url.Values{},
+			fallback:      true,
+			expectedValue: true,
+		},
+		{
+			name:          "Empty value takes the fallback",
+			params:        url.Values{"includeTrip": []string{""}},
+			fallback:      true,
+			expectedValue: true,
+		},
+		{
+			name:          "Non-boolean value errors and keeps the fallback",
+			params:        url.Values{"includeTrip": []string{"maybe"}},
+			fallback:      true,
+			expectedValue: true,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, fieldErrors := ParseBoolParam(tt.params, "includeTrip", tt.fallback, nil)
+
+			assert.Equal(t, tt.expectedValue, value)
+			if tt.expectError {
+				assert.Contains(t, fieldErrors, "includeTrip")
+			} else {
+				assert.Empty(t, fieldErrors)
+			}
+		})
+	}
+}
