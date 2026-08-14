@@ -2,12 +2,15 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -447,4 +450,168 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
 	}
+}
+
+// Situation references
+//
+// An entry's situationIds and the response's references.situations must use the
+// same ID, or the IDs resolve to nothing. Everything that derives one derives
+// the other, so the two cannot drift apart.
+// situationRef pairs an alert with the situation ID that both list entries and
+// situation references use to refer to it.
+type situationRef struct {
+	ID    string
+	Alert gtfs.Alert
+}
+
+// situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
+// situation ID used to refer to them.
+func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
+	refs := make([]situationRef, 0, len(alerts))
+	for _, alert := range alerts {
+		if alert.ID == "" {
+			continue
+		}
+		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
+	}
+	return refs
+}
+
+// agencyIDForAlert returns the agency whose prefix an alert's situation ID
+// carries, preferring the alert's own informed entity over the caller's agency.
+//
+// One alert is reachable by more than one path: a stop served by another
+// agency's route matches the same alert through both the route and the stop, and
+// each path knows a different agency. Scoping the ID to the caller's agency
+// would then publish that alert twice under two IDs, and an entry's
+// situationIds would resolve to whichever one it happened to be built from.
+// The informed entity is the only source that does not vary by lookup path.
+func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
+	for _, entity := range alert.InformedEntities {
+		if entity.AgencyID != nil && *entity.AgencyID != "" {
+			return *entity.AgencyID
+		}
+	}
+	return fallbackAgencyID
+}
+
+// situationID returns the combined-form ID for an alert.
+//
+// Prefixing is idempotent, not unconditional: a GTFS-RT feed exported by an OBA
+// instance already carries the agency prefix on its alert IDs — Puget Sound
+// ships "1_92239" — and prefixing again would publish "1_1_92239", which
+// resolves against nothing a client has seen. Upstream reports "1_92239".
+func situationID(alertID, agencyID string) string {
+	if agencyID == "" || strings.HasPrefix(alertID, agencyID+"_") {
+		return alertID
+	}
+	return utils.FormCombinedID(agencyID, alertID)
+}
+
+// situationCollector deduplicates the alerts referenced by list entries so the
+// response emits one situation reference per distinct situation ID.
+type situationCollector struct {
+	seen map[string]struct{}
+	refs []situationRef
+}
+
+func newSituationCollector() *situationCollector {
+	return &situationCollector{seen: make(map[string]struct{})}
+}
+
+// add records the alerts affecting one trip and returns their situation IDs.
+func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
+	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
+}
+
+// addRefs records already-resolved situation references and returns their IDs.
+func (c *situationCollector) addRefs(refs []situationRef) []string {
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ids = append(ids, ref.ID)
+		if _, ok := c.seen[ref.ID]; ok {
+			continue
+		}
+		c.seen[ref.ID] = struct{}{}
+		c.refs = append(c.refs, ref)
+	}
+	return ids
+}
+
+// situationReferences converts collected alerts into situation references,
+// stamping the same IDs the list entries use. BuildSituationReferences emits raw
+// alert IDs and preserves input order one-for-one.
+func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation {
+	if len(refs) == 0 {
+		return []models.Situation{}
+	}
+
+	alerts := make([]gtfs.Alert, 0, len(refs))
+	for _, ref := range refs {
+		alerts = append(alerts, ref.Alert)
+	}
+
+	situations := api.BuildSituationReferences(alerts)
+	if len(situations) != len(refs) {
+		// The ID stamping below pairs by position, so a length change in
+		// BuildSituationReferences would silently mislabel every situation.
+		logging.LogError(api.Logger, "situation reference count does not match the alerts it was built from",
+			fmt.Errorf("built %d situations from %d alerts", len(situations), len(refs)))
+		return situations
+	}
+
+	for i := range situations {
+		situations[i].ID = refs[i].ID
+	}
+	return situations
+}
+
+func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
+	agencies := make([]models.AgencyReference, 0, len(rb.presentAgencies))
+	for _, agency := range rb.presentAgencies {
+		agencies = append(agencies, agency)
+	}
+	return agencies
+}
+
+func (rb *referenceBuilder) getRoutesList() []models.Route {
+	routes := make([]models.Route, 0, len(rb.presentRoutes))
+	for _, route := range rb.presentRoutes {
+		if route.ID != "" {
+			routes = append(routes, route)
+		}
+	}
+	return routes
+}
+
+// situationIDsFromRefs returns the situation IDs of already-resolved references,
+// so entry IDs are always derived the same way the references are.
+func situationIDsFromRefs(refs []situationRef) []string {
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ids = append(ids, ref.ID)
+	}
+	return ids
+}
+
+// TripSituations returns a trip's situation IDs together with the matching
+// situation references, so an entry's situationIds always resolve.
+func (api *RestAPI) TripSituations(ctx context.Context, tripID string) ([]string, []models.Situation) {
+	return api.situationsFromRefs(api.situationRefsForTrip(ctx, tripID))
+}
+
+// situationsFromRefs splits already-resolved references into the entry IDs and
+// the reference block built from the same lookup.
+func (api *RestAPI) situationsFromRefs(refs []situationRef) ([]string, []models.Situation) {
+	return situationIDsFromRefs(refs), api.situationReferences(refs)
+}
+
+// tripSituationsFor returns a trip's situations, reusing the references
+// BuildTripStatus already resolved for the same trip rather than querying for
+// them a second time. Extras is nil when the caller skipped the status.
+func (api *RestAPI) tripSituationsFor(ctx context.Context, tripID string, extras *tripStatusExtras) ([]string, []models.Situation) {
+	if extras == nil {
+		return api.TripSituations(ctx, tripID)
+	}
+	return api.situationsFromRefs(extras.situations)
 }

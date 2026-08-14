@@ -720,3 +720,45 @@ func TestTripsForLocationHandler_ContextCancellation(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "gateway timeout")
 	})
 }
+
+// TestTripsForLocationHandler_SituationReferences verifies that every
+// situationId emitted on a list entry resolves to an entry in
+// references.situations.
+func TestTripsForLocationHandler_SituationReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// createTestApiWithRealTimeData returns before the first feed poll lands, and
+	// this endpoint selects trips from live vehicles, so wait for one to arrive.
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
+	// Real-time alerts carry the raw (un-prefixed) agency ID from the feed.
+	rawAgencyID := "25"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               "test-alert-trips-for-location",
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &rawAgencyID}},
+		Header:           []gtfs.AlertText{{Text: "Test Agency Alert", Language: "en"}},
+	})
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(2.0, 3.0))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so situation references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		referenced[situation.ID] = true
+	}
+
+	var emitted []string
+	for _, entry := range model.Data.List {
+		for _, id := range entry.SituationIds {
+			emitted = append(emitted, id)
+			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
+		}
+	}
+	require.Contains(t, emitted, "25_test-alert-trips-for-location",
+		"expected the seeded alert to surface as a situationId")
+}

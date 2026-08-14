@@ -70,9 +70,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
 	var status *models.TripStatus
+	var statusExtras *tripStatusExtras
 	if params.IncludeStatus {
 		var statusErr error
-		status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("failed to build trip status",
 				"tripID", tripID,
@@ -111,12 +112,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	var situationIDs []string
-	if status != nil && len(status.SituationIDs) > 0 {
-		situationIDs = status.SituationIDs
-	} else {
-		situationIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
-	}
+	// BuildTripStatus above was given this same tripID, so when the status was
+	// built its situations are this trip's and are reused here.
+	situationIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
@@ -135,6 +133,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 			api.serverErrorResponse(w, r, err)
 			return
 		}
+		references.Situations = situationRefs
 	}
 
 	response := models.NewEntryResponse(entry, *references, api.Clock)

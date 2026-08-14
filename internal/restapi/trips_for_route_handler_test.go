@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1207,6 +1208,52 @@ func TestResolveInterlinedEntryTripID_NoCandidateInBlock(t *testing.T) {
 	assert.False(t, resolved)
 }
 
+// TestTripsForRouteHandler_SituationReferences verifies that every situationId
+// emitted on a list entry resolves to an entry in references.situations.
+func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
+	// A dedicated manager, so the seeded alert is not clobbered by other tests
+	// sharing the package-level fixture.
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// Real-time alerts carry the raw (un-prefixed) route ID from the feed.
+	rawRouteID := "151"
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "test-alert-trips-for-route",
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &rawRouteID}},
+		Header:           []gogtfs.AlertText{{Text: "Test Route Alert", Language: "en"}},
+	})
+
+	// ParseTimeParameter ignores api.Clock when no time= is given, so pin the
+	// handler's window explicitly. Midday Pacific on a weekday inside the RABA
+	// fixture's calendar range, when its trips are running.
+	queryTime := time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
+	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=true&time=%d",
+		queryTime.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so situation references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		referenced[situation.ID] = true
+	}
+
+	var emitted []string
+	for _, entry := range model.Data.List {
+		for _, id := range entry.SituationIds {
+			emitted = append(emitted, id)
+			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
+		}
+	}
+	// The alert names a route but no agency, so its ID is scoped to the agency
+	// the handler resolved the route under.
+	require.Contains(t, emitted, "25_test-alert-trips-for-route",
+		"expected the seeded alert to surface as a situationId")
+}
+
 // TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences verifies that
 // schedule.previousTripId and schedule.nextTripId trips — which are not part
 // of the handler's fetched trips — are fully populated in references.trips
@@ -1276,7 +1323,11 @@ func TestBuildTripReferences_FetchesUnprefetchedTrips(t *testing.T) {
 		},
 	}
 
-	references := buildTripReferences(api, ctx, true, entries, nil, []gtfsdb.Trip{preFetchedTrip}, nil)
+	references := api.buildTripReferences(ctx, tripReferenceParams{
+		IncludeTrip:     true,
+		Trips:           entries,
+		PreFetchedTrips: []gtfsdb.Trip{preFetchedTrip},
+	})
 
 	refTrips := make(map[string]models.Trip)
 	for _, ref := range references.Trips {
