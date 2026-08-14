@@ -707,11 +707,20 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 		query string
 		want  bool
 	}{
-		{name: "omitted defaults to true", query: "", want: true},
+		{name: "omitted", query: "", want: true},
 		{name: "explicit true", query: "=true", want: true},
 		{name: "explicit false", query: "=false", want: false},
 		{name: "empty value", query: "=", want: false},
 		{name: "junk value", query: "=abc", want: false},
+	}
+
+	// OpenAPI: includeStatus/includeSchedule default to false on trips-for-route.
+	// includeTrip and includeReferences keep their existing true defaults.
+	omittedDefault := map[string]bool{
+		"includeSchedule":   false,
+		"includeStatus":     false,
+		"includeTrip":       true,
+		"includeReferences": true,
 	}
 
 	assertFlag := func(t *testing.T, model *TripsForRouteResponse, flag string, want bool) {
@@ -748,7 +757,8 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 				assert.NotEmpty(t, model.Data.References.Agencies, "references.agencies should be populated")
 				assert.NotEmpty(t, model.Data.References.Routes, "references.routes should be populated")
 				assert.NotEmpty(t, model.Data.References.Trips, "references.trips should be populated")
-				assert.NotEmpty(t, model.Data.References.Stops, "references.stops should be populated")
+				// Stop refs are only filled when includeSchedule is true; that
+				// flag defaults to false, so this isolated check does not require them.
 			} else {
 				assert.NotNil(t, model.Data.References.Agencies, "references.agencies should be non-nil")
 				assert.Empty(t, model.Data.References.Agencies, "references.agencies should be empty")
@@ -765,6 +775,9 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 	for _, flag := range []string{"includeSchedule", "includeStatus", "includeTrip", "includeReferences"} {
 		for _, tt := range values {
 			want := tt.want
+			if tt.query == "" {
+				want = omittedDefault[flag]
+			}
 			if flag == "includeReferences" && (tt.name == "empty value" || tt.name == "junk value") {
 				// includeReferences is parsed by the shared ShouldIncludeReferences
 				// helper (also used by every other endpoint), which treats an
@@ -786,14 +799,14 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 		}
 	}
 
-	t.Run("all omitted default to true", func(t *testing.T) {
+	t.Run("omitted defaults match OpenAPI", func(t *testing.T) {
 		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
 
 		resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		for _, flag := range []string{"includeSchedule", "includeStatus", "includeTrip", "includeReferences"} {
-			assertFlag(t, &model, flag, true)
+		for flag, want := range omittedDefault {
+			assertFlag(t, &model, flag, want)
 		}
 	})
 }

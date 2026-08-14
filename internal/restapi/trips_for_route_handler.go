@@ -935,12 +935,11 @@ func stripNumericSuffix(tripID string) string {
 	return tripID[:idx]
 }
 
-// parseBoolQueryParam parses a boolean query parameter, defaulting to true when
-// the parameter is omitted and to false when present but not a valid boolean.
+// parseBoolQueryParam parses a boolean query parameter, defaulting to false when
+// the parameter is omitted or not a valid boolean. This matches the OpenAPI
+// default for includeStatus and includeSchedule on trips-for-route and
+// trips-for-location.
 func parseBoolQueryParam(query url.Values, name string) bool {
-	if !query.Has(name) {
-		return true
-	}
 	val, err := strconv.ParseBool(query.Get(name))
 	return err == nil && val
 }

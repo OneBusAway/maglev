@@ -143,10 +143,8 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 	queryParams := r.URL.Query()
 
 	includeTrip := parseIncludeTrip(queryParams)
-	includeSchedule, _ := strconv.ParseBool(queryParams.Get("includeSchedule"))
-	// Intentionally defaulting includeStatus to false to align with includeSchedule
-	// behavior for this endpoint, even though trips-for-route defaults to true.
-	includeStatus, _ := strconv.ParseBool(queryParams.Get("includeStatus"))
+	includeSchedule := parseBoolQueryParam(queryParams, "includeSchedule")
+	includeStatus := parseBoolQueryParam(queryParams, "includeStatus")
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 
