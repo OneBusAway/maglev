@@ -40,7 +40,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 	referenceTime := api.Clock.Now().In(loc)
 	if timeParam := r.URL.Query().Get("time"); timeParam != "" {
-		_, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, loc)
+		_, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, loc, api.Clock)
 		if !ok {
 			api.validationErrorResponse(w, r, fieldErrors)
 			return

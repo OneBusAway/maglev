@@ -53,7 +53,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	timeParam := r.URL.Query().Get("time")
-	formattedDate, currentTime, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
+	formattedDate, currentTime, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
 	if !success {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -444,14 +444,27 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// Try the full ID first; if not found, strip a trailing numeric suffix
 		// (e.g., ".00060") that some feeds append to distinguish duplicated runs.
 		baseTripID := dupTripID
-		if _, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
+		baseTrip, baseTripErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
+		if baseTripErr != nil {
+			if !errors.Is(baseTripErr, sql.ErrNoRows) {
 				api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
-					"dup_trip_id", dupTripID, "error", err)
+					"dup_trip_id", dupTripID, "error", baseTripErr)
 			}
 			stripped := stripNumericSuffix(dupTripID)
 			if stripped != dupTripID {
 				baseTripID = stripped
+				baseTrip, baseTripErr = api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID)
+			}
+		}
+
+		// Index the base trip before the situation lookup below: an unindexed
+		// trip sends tripSituationRefs back to the database for the record
+		// already in hand, the same reuse the interlined path above relies on.
+		if baseTripErr == nil {
+			tripsByID[baseTrip.ID] = baseTrip
+			if !filteredRouteTrips[baseTripID] {
+				fetchedTrips = append(fetchedTrips, baseTrip)
+				filteredRouteTrips[baseTripID] = true
 			}
 		}
 
@@ -485,14 +498,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
 		result = append(result, entry)
-
-		if !filteredRouteTrips[baseTripID] {
-			baseTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID)
-			if err == nil {
-				fetchedTrips = append(fetchedTrips, baseTrip)
-				filteredRouteTrips[baseTripID] = true
-			}
-		}
 	}
 
 	if result == nil {
@@ -584,7 +589,10 @@ func (api *RestAPI) buildBlockTripForRoute(
 		// MinArrivalTime/MaxDepartureTime are NULL for a trip with no
 		// stop_times (see schema.sql); such a trip has no time window to
 		// compare against, so it can't be a nearest-midpoint candidate.
-		if bt.RouteID == routeID && bt.BlockID.Valid && bt.MinArrivalTime.Valid && bt.MaxDepartureTime.Valid {
+		if bt.RouteID == routeID &&
+			bt.BlockID.Valid &&
+			bt.MinArrivalTime.Valid &&
+			bt.MaxDepartureTime.Valid {
 			key := bt.BlockID.String
 			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 				ID:               bt.ID,
@@ -752,12 +760,19 @@ func (api *RestAPI) tripSituationRefs(
 	tripsByID map[string]gtfsdb.Trip,
 	routeAgencyMap map[string]string,
 ) []situationRef {
-	trip, ok := tripsByID[tripID]
-	if !ok {
+	trip, indexed := tripsByID[tripID]
+	if !indexed {
 		return api.situationRefsForTrip(ctx, tripID)
 	}
 
-	agencyID := routeAgencyMap[trip.RouteID]
+	// An unknown agency would scope the situation ID to "", emitting the bare
+	// alert ID where every other ID in the response is combined-form. The
+	// fallback resolves the route and agency itself rather than guessing.
+	agencyID, agencyKnown := routeAgencyMap[trip.RouteID]
+	if !agencyKnown {
+		return api.situationRefsForTrip(ctx, tripID)
+	}
+
 	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), agencyID)
 }
 
@@ -767,6 +782,12 @@ type tripReferenceSets struct {
 	trips    map[string]models.Trip
 	routes   map[string]models.Route
 	agencies map[string]models.AgencyReference
+	// missing holds the trips the response refers to — entry tripIds,
+	// schedule.nextTripId/previousTripId, status.activeTripId — whose full
+	// records have not been fetched yet. Tracking them explicitly, rather than
+	// inferring them from a zero-valued reference, keeps it unambiguous which
+	// trips still need a lookup.
+	missing map[string]bool
 }
 
 func newTripReferenceSets() *tripReferenceSets {
@@ -774,6 +795,7 @@ func newTripReferenceSets() *tripReferenceSets {
 		trips:    make(map[string]models.Trip),
 		routes:   make(map[string]models.Route),
 		agencies: make(map[string]models.AgencyReference),
+		missing:  make(map[string]bool),
 	}
 }
 
@@ -786,6 +808,7 @@ func (s *tripReferenceSets) noteTripID(combinedID string) {
 	}
 	if _, exists := s.trips[tripID]; !exists {
 		s.trips[tripID] = models.Trip{}
+		s.missing[tripID] = true
 	}
 }
 
@@ -793,6 +816,7 @@ func (s *tripReferenceSets) collectPreFetchedTrips(trips []gtfsdb.Trip) {
 	for _, trip := range trips {
 		s.trips[trip.ID] = newTripReference(trip)
 		s.routes[trip.RouteID] = models.Route{}
+		delete(s.missing, trip.ID)
 	}
 }
 
@@ -814,14 +838,13 @@ func (s *tripReferenceSets) collectTripIDsFromEntries(entries []models.TripsForR
 
 // fillMissingTrips loads the trips that were noted by ID but never fetched.
 func (api *RestAPI) fillMissingTrips(ctx context.Context, sets *tripReferenceSets) {
-	var missingIDs []string
-	for id, trip := range sets.trips {
-		if trip.ID == "" {
-			missingIDs = append(missingIDs, id)
-		}
-	}
-	if len(missingIDs) == 0 {
+	if len(sets.missing) == 0 {
 		return
+	}
+
+	missingIDs := make([]string, 0, len(sets.missing))
+	for id := range sets.missing {
+		missingIDs = append(missingIDs, id)
 	}
 
 	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, missingIDs)

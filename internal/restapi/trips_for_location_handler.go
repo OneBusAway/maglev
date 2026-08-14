@@ -100,7 +100,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result, situations := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, parsedReq.IncludeSchedule, parsedReq.IncludeStatus, parsedReq.CurrentLocation, parsedReq.CurrentTime, parsedReq.TodayMidnight, parsedReq.ServiceDate, w, r)
+	result, situations := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, routeAgencyMap, parsedReq, w, r)
 	if result == nil {
 		return
 	}
@@ -141,10 +141,8 @@ type tripsForLocationRequest struct {
 	IncludeTrip     bool
 	IncludeSchedule bool
 	IncludeStatus   bool
-	CurrentLocation *time.Location
 	CurrentTime     time.Time
-	TodayMidnight   time.Time
-	ServiceDate     time.Time
+	AgencyLocations map[string]*time.Location
 }
 
 func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
@@ -168,16 +166,18 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
-	currentAgency := agencies[0]
-	currentLocation, serverErr := loadAgencyLocation(currentAgency.ID, currentAgency.Timezone)
-	if serverErr != nil {
-		return nil, nil, serverErr
+	agencyLocations := make(map[string]*time.Location, len(agencies))
+	for _, agency := range agencies {
+		location, locationErr := loadAgencyLocation(agency.ID, agency.Timezone)
+		if locationErr != nil {
+			return nil, nil, locationErr
+		}
+		agencyLocations[agency.ID] = location
 	}
+	currentLocation := agencyLocations[agencies[0].ID]
 
 	currentTime, timeFieldErrors := api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
 	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
-
-	serviceDate, todayMidnight := utils.ServiceDateMidnight(nil, currentTime)
 
 	if len(fieldErrors) > 0 {
 		return nil, fieldErrors, nil
@@ -188,10 +188,8 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		IncludeTrip:     includeTrip,
 		IncludeSchedule: includeSchedule,
 		IncludeStatus:   includeStatus,
-		CurrentLocation: currentLocation,
 		CurrentTime:     currentTime,
-		TodayMidnight:   todayMidnight,
-		ServiceDate:     serviceDate,
+		AgencyLocations: agencyLocations,
 	}
 	return parsedReq, nil, nil
 }
@@ -212,7 +210,7 @@ func (api *RestAPI) resolveCurrentTime(timeParam string, currentLocation *time.L
 	if timeParam == "" {
 		return api.Clock.Now().In(currentLocation), nil
 	}
-	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation)
+	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
 	return currentTime, timeFieldErrors
 }
 
@@ -314,16 +312,14 @@ func (api *RestAPI) getActiveTrips(candidateTripIDs []string, realTimeVehicles [
 
 // buildTripsForLocationEntries builds trip entries from pre-fetched batch data,
 // returning the entries alongside the situations they reference.
+// It returns nil entries only when an error response has already been sent to
+// the client.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
 	trips []gtfsdb.Trip,
 	tripAgencyMap map[string]string,
-	includeSchedule bool,
-	includeStatus bool,
-	currentLocation *time.Location,
-	currentTime time.Time,
-	todayMidnight time.Time,
-	serviceDate time.Time,
+	routeAgencyMap map[string]string,
+	request *tripsForLocationRequest,
 	w http.ResponseWriter,
 	r *http.Request,
 ) ([]models.TripsForLocationListEntry, []situationRef) {
@@ -333,7 +329,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 	tripsMap := make(map[string]gtfsdb.Trip)
 	var shapeIDs []string
-	uniqueBlockIDs := make(map[string]struct{})
+	blockIDsByAgency := make(map[string]map[string]struct{})
 	var validVehicleTrips []string
 
 	for _, trip := range trips {
@@ -347,7 +343,12 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			shapeIDs = append(shapeIDs, trip.ShapeID.String)
 		}
 		if trip.BlockID.Valid {
-			uniqueBlockIDs[trip.BlockID.String] = struct{}{}
+			agencyBlockIDs := blockIDsByAgency[tripAgencyMap[trip.ID]]
+			if agencyBlockIDs == nil {
+				agencyBlockIDs = make(map[string]struct{})
+				blockIDsByAgency[tripAgencyMap[trip.ID]] = agencyBlockIDs
+			}
+			agencyBlockIDs[trip.BlockID.String] = struct{}{}
 		}
 	}
 
@@ -368,10 +369,10 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	}
 
 	stopTimesMap := make(map[string][]gtfsdb.StopTime)
-	blockTripsMap := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
+	blockTripsMap := make(map[blockTripsKey][]gtfsdb.GetTripsByBlockIDsRow)
 	var allStopIDs []string
 
-	if includeSchedule {
+	if request.IncludeSchedule {
 		stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, validVehicleTrips)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
@@ -382,22 +383,18 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			allStopIDs = append(allStopIDs, st.StopID)
 		}
 
-		if len(uniqueBlockIDs) > 0 {
-			var blockIDs []string
-			for bid := range uniqueBlockIDs {
-				blockIDs = append(blockIDs, bid)
-			}
-
-			dateStr := serviceDate.Format("20060102")
+		for agencyID, agencyBlockIDs := range blockIDsByAgency {
+			agencyLocation := request.AgencyLocations[agencyID]
+			dateStr := serviceDateMidnight(request.CurrentTime, agencyLocation).Format("20060102")
 			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
 			if err != nil {
 				activeServiceIDs = []string{}
-				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
+				api.Logger.Warn("failed to fetch active service IDs for block logic", "agency_id", agencyID, "error", err)
 			}
 
-			blockIDsNull := make([]sql.NullString, len(blockIDs))
-			for i, id := range blockIDs {
-				blockIDsNull[i] = nulls.String(id)
+			blockIDsNull := make([]sql.NullString, 0, len(agencyBlockIDs))
+			for id := range agencyBlockIDs {
+				blockIDsNull = append(blockIDsNull, nulls.String(id))
 			}
 
 			params := gtfsdb.GetTripsByBlockIDsParams{
@@ -407,14 +404,30 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 			blockTripsRaw, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, params)
 			if err == nil {
+				missingRouteIDs := make([]string, 0)
 				for _, bt := range blockTripsRaw {
-					if bt.BlockID.Valid {
-						bid := bt.BlockID.String
-						blockTripsMap[bid] = append(blockTripsMap[bid], bt)
+					if _, found := routeAgencyMap[bt.RouteID]; !found {
+						missingRouteIDs = append(missingRouteIDs, bt.RouteID)
+					}
+				}
+				if len(missingRouteIDs) > 0 {
+					routes, routeErr := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, missingRouteIDs)
+					if routeErr != nil {
+						api.Logger.Warn("failed to fetch block trip routes", "agency_id", agencyID, "error", routeErr)
+						continue
+					}
+					for _, route := range routes {
+						routeAgencyMap[route.ID] = route.AgencyID
+					}
+				}
+				for _, bt := range blockTripsRaw {
+					if bt.BlockID.Valid && routeAgencyMap[bt.RouteID] == agencyID {
+						key := blockTripsKey{agencyID: agencyID, blockID: bt.BlockID.String}
+						blockTripsMap[key] = append(blockTripsMap[key], bt)
 					}
 				}
 			} else {
-				api.Logger.Warn("failed to bulk fetch block trips", "error", err)
+				api.Logger.Warn("failed to bulk fetch block trips", "agency_id", agencyID, "error", err)
 			}
 		}
 	}
@@ -436,7 +449,8 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 	for _, tripID := range validVehicleTrips {
 		if ctx.Err() != nil {
-			return result, situations.refs
+			api.clientCanceledResponse(w, r, ctx.Err())
+			return nil, nil
 		}
 
 		agencyID := tripAgencyMap[tripID]
@@ -444,11 +458,17 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		if !tripFound {
 			continue
 		}
+		agencyLocation, locationFound := request.AgencyLocations[agencyID]
+		if !locationFound {
+			api.Logger.Warn("missing timezone for trip agency", "trip_id", tripID, "agency_id", agencyID)
+			continue
+		}
+		tripMidnight := serviceDateMidnight(request.CurrentTime, agencyLocation)
 
 		var schedule *models.TripsSchedule
 		var status *models.TripStatus
 
-		if includeSchedule {
+		if request.IncludeSchedule {
 			var shapePoints []gtfs.ShapePoint
 			if tripData.ShapeID.Valid {
 				shapePoints = shapesMap[tripData.ShapeID.String]
@@ -456,13 +476,13 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 			var blockTrips []gtfsdb.GetTripsByBlockIDsRow
 			if tripData.BlockID.Valid {
-				blockTrips = blockTripsMap[tripData.BlockID.String]
+				blockTrips = blockTripsMap[blockTripsKey{agencyID: agencyID, blockID: tripData.BlockID.String}]
 			}
 
 			schedule = api.buildScheduleFromMemory(
 				tripData,
 				agencyID,
-				currentLocation,
+				agencyLocation,
 				stopTimesMap[tripID],
 				shapePoints,
 				stopCoords,
@@ -470,9 +490,9 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			)
 		}
 
-		if includeStatus {
+		if request.IncludeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, tripMidnight, request.CurrentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
@@ -489,13 +509,24 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  todayMidnight.UnixMilli(),
+			ServiceDate:  tripMidnight.UnixMilli(),
 			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
 	}
 	return result, situations.refs
+}
+
+type blockTripsKey struct {
+	agencyID string
+	blockID  string
+}
+
+// serviceDateMidnight returns the start of the service day in an agency's timezone.
+func serviceDateMidnight(currentTime time.Time, agencyLocation *time.Location) time.Time {
+	_, midnight := utils.ServiceDateMidnight(nil, currentTime.In(agencyLocation))
+	return midnight
 }
 
 func (api *RestAPI) buildScheduleForTrip(
