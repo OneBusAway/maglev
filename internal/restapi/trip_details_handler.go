@@ -226,10 +226,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var schedule *models.Schedule
 	var status *models.TripStatus
+	var statusExtras *tripStatusExtras
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, _, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed",
 				"trip_id", trip.ID,
@@ -254,9 +255,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// trip is looked up by tripID, and BuildTripStatus was given trip.ID, so the
-	// status carries the same situations this resolves.
-	situationsIDs, situationRefs := api.TripSituations(ctx, tripID)
+	// trip is looked up by tripID and BuildTripStatus was given trip.ID, so when
+	// the status was built its situations are this trip's and are reused here.
+	situationsIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
@@ -272,9 +273,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
 		// we take the first row which gives us the frequency with the earliest start_time
 		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
-		converted.ServiceDate = models.NewModelTime(midnight)
-		converted.ServiceID = utils.FormCombinedID(agencyID, trip.ServiceID)
-		converted.TripID = utils.FormCombinedID(agencyID, trip.ID)
 		frequency = &converted
 	}
 

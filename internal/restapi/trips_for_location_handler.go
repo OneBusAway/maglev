@@ -100,7 +100,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Build entries from pre-fetched trip data
-	result, situations := api.buildTripsForLocationEntries(ctx, parsedReq, trips, tripAgencyMap, w, r)
+	result, situations := api.buildTripsForLocationEntries(ctx, trips, tripAgencyMap, routeAgencyMap, parsedReq, w, r)
 	if result == nil {
 		return
 	}
@@ -130,6 +130,8 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		})
 	}
 
+	// The search clamped its bounds, so outOfRange has to be reported against
+	// the clamped bounds too.
 	outOfRange := api.GtfsManager.CheckIfOutOfBounds(parsedReq.LocationParams, true)
 	response := models.NewListResponseWithRange(result, references, outOfRange, api.Clock, false)
 	api.sendResponse(w, r, response)
@@ -142,36 +144,8 @@ type tripsForLocationRequest struct {
 	IncludeTrip     bool
 	IncludeSchedule bool
 	IncludeStatus   bool
-	CurrentLocation *time.Location
-	// AgencyLocations maps agency ID to that agency's timezone, so a trip's
-	// schedule reports its own agency's zone rather than the first agency's.
-	AgencyLocations map[string]*time.Location
 	CurrentTime     time.Time
-	TodayMidnight   time.Time
-	ServiceDate     time.Time
-}
-
-// scheduleLocation returns the timezone to report for a trip belonging to
-// agencyID, falling back to the query timezone for an agency that was not in
-// the agency table when the request was parsed.
-func (req *tripsForLocationRequest) scheduleLocation(agencyID string) *time.Location {
-	if location, ok := req.AgencyLocations[agencyID]; ok {
-		return location
-	}
-	return req.CurrentLocation
-}
-
-// agencyLocations resolves every agency's timezone once per request.
-func agencyLocations(agencies []gtfsdb.Agency) (map[string]*time.Location, error) {
-	locations := make(map[string]*time.Location, len(agencies))
-	for _, agency := range agencies {
-		location, err := loadAgencyLocation(agency.ID, agency.Timezone)
-		if err != nil {
-			return nil, err
-		}
-		locations[agency.ID] = location
-	}
-	return locations, nil
+	AgencyLocations map[string]*time.Location
 }
 
 func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
@@ -195,19 +169,18 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
-	locations, serverErr := agencyLocations(agencies)
-	if serverErr != nil {
-		return nil, nil, serverErr
+	agencyLocations := make(map[string]*time.Location, len(agencies))
+	for _, agency := range agencies {
+		location, locationErr := loadAgencyLocation(agency.ID, agency.Timezone)
+		if locationErr != nil {
+			return nil, nil, locationErr
+		}
+		agencyLocations[agency.ID] = location
 	}
-
-	// The query time is interpreted in the first agency's zone; only the
-	// per-trip schedule timezone varies by agency.
-	currentLocation := locations[agencies[0].ID]
+	currentLocation := agencyLocations[agencies[0].ID]
 
 	currentTime, timeFieldErrors := api.resolveCurrentTime(queryParams.Get("time"), currentLocation)
 	fieldErrors = mergeFieldErrors(fieldErrors, timeFieldErrors)
-
-	serviceDate, todayMidnight := utils.ServiceDateMidnight(nil, currentTime)
 
 	if len(fieldErrors) > 0 {
 		return nil, fieldErrors, nil
@@ -218,11 +191,8 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		IncludeTrip:     includeTrip,
 		IncludeSchedule: includeSchedule,
 		IncludeStatus:   includeStatus,
-		CurrentLocation: currentLocation,
-		AgencyLocations: locations,
 		CurrentTime:     currentTime,
-		TodayMidnight:   todayMidnight,
-		ServiceDate:     serviceDate,
+		AgencyLocations: agencyLocations,
 	}
 	return parsedReq, nil, nil
 }
@@ -243,7 +213,7 @@ func (api *RestAPI) resolveCurrentTime(timeParam string, currentLocation *time.L
 	if timeParam == "" {
 		return api.Clock.Now().In(currentLocation), nil
 	}
-	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation)
+	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
 	return currentTime, timeFieldErrors
 }
 
@@ -345,22 +315,24 @@ func (api *RestAPI) getActiveTrips(candidateTripIDs []string, realTimeVehicles [
 
 // buildTripsForLocationEntries builds trip entries from pre-fetched batch data,
 // returning the entries alongside the situations they reference.
+// It returns nil entries only when an error response has already been sent to
+// the client.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
-	req *tripsForLocationRequest,
 	trips []gtfsdb.Trip,
 	tripAgencyMap map[string]string,
+	routeAgencyMap map[string]string,
+	request *tripsForLocationRequest,
 	w http.ResponseWriter,
 	r *http.Request,
 ) ([]models.TripsForLocationListEntry, []situationRef) {
-	includeSchedule := req.IncludeSchedule
 	if len(trips) == 0 {
 		return []models.TripsForLocationListEntry{}, nil
 	}
 
 	tripsMap := make(map[string]gtfsdb.Trip)
 	var shapeIDs []string
-	uniqueBlockIDs := make(map[string]struct{})
+	blockIDsByAgency := make(map[string]map[string]struct{})
 	var validVehicleTrips []string
 
 	for _, trip := range trips {
@@ -374,7 +346,12 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			shapeIDs = append(shapeIDs, trip.ShapeID.String)
 		}
 		if trip.BlockID.Valid {
-			uniqueBlockIDs[trip.BlockID.String] = struct{}{}
+			agencyBlockIDs := blockIDsByAgency[tripAgencyMap[trip.ID]]
+			if agencyBlockIDs == nil {
+				agencyBlockIDs = make(map[string]struct{})
+				blockIDsByAgency[tripAgencyMap[trip.ID]] = agencyBlockIDs
+			}
+			agencyBlockIDs[trip.BlockID.String] = struct{}{}
 		}
 	}
 
@@ -395,10 +372,10 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	}
 
 	stopTimesMap := make(map[string][]gtfsdb.StopTime)
-	blockTripsMap := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
+	blockTripsMap := make(map[blockTripsKey][]gtfsdb.GetTripsByBlockIDsRow)
 	var allStopIDs []string
 
-	if includeSchedule {
+	if request.IncludeSchedule {
 		stopTimesRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, validVehicleTrips)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
@@ -409,22 +386,18 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			allStopIDs = append(allStopIDs, st.StopID)
 		}
 
-		if len(uniqueBlockIDs) > 0 {
-			var blockIDs []string
-			for bid := range uniqueBlockIDs {
-				blockIDs = append(blockIDs, bid)
-			}
-
-			dateStr := req.ServiceDate.Format("20060102")
+		for agencyID, agencyBlockIDs := range blockIDsByAgency {
+			agencyLocation := request.AgencyLocations[agencyID]
+			dateStr := serviceDateMidnight(request.CurrentTime, agencyLocation).Format("20060102")
 			activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
 			if err != nil {
 				activeServiceIDs = []string{}
-				api.Logger.Warn("failed to fetch active service IDs for block logic", "error", err)
+				api.Logger.Warn("failed to fetch active service IDs for block logic", "agency_id", agencyID, "error", err)
 			}
 
-			blockIDsNull := make([]sql.NullString, len(blockIDs))
-			for i, id := range blockIDs {
-				blockIDsNull[i] = nulls.String(id)
+			blockIDsNull := make([]sql.NullString, 0, len(agencyBlockIDs))
+			for id := range agencyBlockIDs {
+				blockIDsNull = append(blockIDsNull, nulls.String(id))
 			}
 
 			params := gtfsdb.GetTripsByBlockIDsParams{
@@ -434,14 +407,30 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 			blockTripsRaw, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, params)
 			if err == nil {
+				missingRouteIDs := make([]string, 0)
 				for _, bt := range blockTripsRaw {
-					if bt.BlockID.Valid {
-						bid := bt.BlockID.String
-						blockTripsMap[bid] = append(blockTripsMap[bid], bt)
+					if _, found := routeAgencyMap[bt.RouteID]; !found {
+						missingRouteIDs = append(missingRouteIDs, bt.RouteID)
+					}
+				}
+				if len(missingRouteIDs) > 0 {
+					routes, routeErr := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, missingRouteIDs)
+					if routeErr != nil {
+						api.Logger.Warn("failed to fetch block trip routes", "agency_id", agencyID, "error", routeErr)
+						continue
+					}
+					for _, route := range routes {
+						routeAgencyMap[route.ID] = route.AgencyID
+					}
+				}
+				for _, bt := range blockTripsRaw {
+					if bt.BlockID.Valid && routeAgencyMap[bt.RouteID] == agencyID {
+						key := blockTripsKey{agencyID: agencyID, blockID: bt.BlockID.String}
+						blockTripsMap[key] = append(blockTripsMap[key], bt)
 					}
 				}
 			} else {
-				api.Logger.Warn("failed to bulk fetch block trips", "error", err)
+				api.Logger.Warn("failed to bulk fetch block trips", "agency_id", agencyID, "error", err)
 			}
 		}
 	}
@@ -463,7 +452,8 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 	for _, tripID := range validVehicleTrips {
 		if ctx.Err() != nil {
-			return result, situations.refs
+			api.clientCanceledResponse(w, r, ctx.Err())
+			return nil, nil
 		}
 
 		agencyID := tripAgencyMap[tripID]
@@ -471,11 +461,17 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		if !tripFound {
 			continue
 		}
+		agencyLocation, locationFound := request.AgencyLocations[agencyID]
+		if !locationFound {
+			api.Logger.Warn("missing timezone for trip agency", "trip_id", tripID, "agency_id", agencyID)
+			continue
+		}
+		tripMidnight := serviceDateMidnight(request.CurrentTime, agencyLocation)
 
 		var schedule *models.TripsSchedule
 		var status *models.TripStatus
 
-		if includeSchedule {
+		if request.IncludeSchedule {
 			var shapePoints []gtfs.ShapePoint
 			if tripData.ShapeID.Valid {
 				shapePoints = shapesMap[tripData.ShapeID.String]
@@ -483,13 +479,13 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 			var blockTrips []gtfsdb.GetTripsByBlockIDsRow
 			if tripData.BlockID.Valid {
-				blockTrips = blockTripsMap[tripData.BlockID.String]
+				blockTrips = blockTripsMap[blockTripsKey{agencyID: agencyID, blockID: tripData.BlockID.String}]
 			}
 
 			schedule = api.buildScheduleFromMemory(
 				tripData,
 				agencyID,
-				req.scheduleLocation(agencyID),
+				agencyLocation,
 				stopTimesMap[tripID],
 				shapePoints,
 				stopCoords,
@@ -497,9 +493,9 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			)
 		}
 
-		if req.IncludeStatus {
+		if request.IncludeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, req.TodayMidnight, req.CurrentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, tripMidnight, request.CurrentTime)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
@@ -516,13 +512,24 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    nil,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  req.TodayMidnight.UnixMilli(),
+			ServiceDate:  tripMidnight.UnixMilli(),
 			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
 	}
 	return result, situations.refs
+}
+
+type blockTripsKey struct {
+	agencyID string
+	blockID  string
+}
+
+// serviceDateMidnight returns the start of the service day in an agency's timezone.
+func serviceDateMidnight(currentTime time.Time, agencyLocation *time.Location) time.Time {
+	_, midnight := utils.ServiceDateMidnight(nil, currentTime.In(agencyLocation))
+	return midnight
 }
 
 func (api *RestAPI) buildScheduleForTrip(
@@ -669,81 +676,22 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 	}
 }
 
+// buildStopList emits the stop references and registers the routes serving them.
+// A stop referred to by more than one agency still gets a single reference — the
+// first ID seen wins, and the other stays dangling.
 func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string]string) {
-	rb.stopList = make([]models.Stop, 0, len(stops))
-	if len(stops) == 0 {
-		return
-	}
+	stopList, routeIDsByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+	rb.stopList = stopList
 
-	stopIDs := make([]string, 0, len(stops))
-	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.ID)
-	}
-
-	routesForStops, err := rb.api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(rb.ctx, stopIDs)
-	if err != nil {
-		logging.LogError(rb.api.Logger, "failed to batch fetch routes for stops", err)
-		return
-	}
-
-	// Build in-memory map: stopID → []combinedRouteID (e.g. "40_100479").
-	// Also register the raw route ID (e.g. "100479") in presentRoutes so that
-	// collectAgenciesAndRoutes can fetch full route details via GetRoutesByIDs,
-	// which queries WHERE routes.id IN (?), using raw IDs — not combined ones.
-	stopRouteMap := make(map[string][]string)
-	for _, r := range routesForStops {
-		combinedID, ok := r.RouteID.(string)
-		if !ok {
-			continue
-		}
-		stopRouteMap[r.StopID] = append(stopRouteMap[r.StopID], combinedID)
-		if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
-			rb.presentRoutes[rawID] = models.Route{}
-		}
-	}
-
-	for _, stop := range stops {
-		if rb.ctx.Err() != nil {
-			return
-		}
-		combinedRouteIDs := stopRouteMap[stop.ID]
-		if len(combinedRouteIDs) == 0 {
-			continue
-		}
-		rb.stopList = append(rb.stopList, rb.createStop(stop, combinedRouteIDs, stopIDsByBareID[stop.ID]))
-	}
-}
-
-// createStop builds one stop reference. referredID is the combined ID an entry
-// pointed at this stop by; it is preferred over deriving one from the stop's
-// first route, whose agency need not be the agency of the trip that referred to
-// it. A stop referred to by more than one agency still gets a single reference —
-// the first ID seen wins, and the other stays dangling.
-func (rb *referenceBuilder) createStop(stop gtfsdb.Stop, routeIds []string, referredID string) models.Stop {
-	if referredID == "" {
-		agencyID := ""
-		if len(routeIds) > 0 {
-			if id, err := utils.ExtractAgencyID(routeIds[0]); err == nil {
-				agencyID = id
+	// Register the raw route ID (e.g. "100479") rather than the combined one, so
+	// that collectAgenciesAndRoutes can fetch full route details via
+	// GetRoutesByIDs, which queries WHERE routes.id IN (?) using raw IDs.
+	for _, combinedRouteIDs := range routeIDsByStop {
+		for _, combinedID := range combinedRouteIDs {
+			if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
+				rb.presentRoutes[rawID] = models.Route{}
 			}
 		}
-		referredID = utils.FormCombinedID(agencyID, stop.ID)
-	}
-
-	direction := rb.api.DirectionCalculator.CalculateStopDirection(rb.ctx, stop.ID, stop.Direction)
-
-	return models.Stop{
-		Code:               nulls.StringOrEmpty(stop.Code),
-		Direction:          direction,
-		ID:                 referredID,
-		Lat:                stop.Lat,
-		Lon:                stop.Lon,
-		LocationType:       0,
-		Name:               nulls.StringOrEmpty(stop.Name),
-		Parent:             "",
-		RouteIDs:           routeIds,
-		StaticRouteIDs:     routeIds,
-		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 	}
 }
 
