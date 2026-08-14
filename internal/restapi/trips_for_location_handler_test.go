@@ -156,6 +156,48 @@ func TestTripsForLocationHandler_UsesEachTripAgencyTimezone(t *testing.T) {
 	}
 }
 
+// TestTripsForLocationHandler_LiveVehicleWithoutPositionStillScheduled verifies
+// that a trip with a live vehicle reporting no position still falls through to
+// the scheduled pass: only an actual reported position outranks the schedule,
+// not merely the vehicle's existence. Without this, the trip is excluded from
+// both the live path (no position to place it) and the scheduled path (deemed
+// already covered by the live vehicle) and never appears at all.
+func TestTripsForLocationHandler_LiveVehicleWithoutPositionStillScheduled(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
+	defer api.Shutdown()
+
+	require.Empty(t, api.GtfsManager.GetRealTimeVehicles(),
+		"the baseline fetch below must reflect the schedule alone")
+
+	url := tripsForLocationURL(2.0, 3.0)
+	baselineResp, baseline := callAPIHandler[TripsForLocationResponse](t, api, url)
+	require.Equal(t, http.StatusOK, baselineResp.StatusCode)
+	require.NotEmpty(t, baseline.Data.List, "expected scheduled trips with no live vehicles")
+
+	target := baseline.Data.List[0]
+	_, tripID, err := utils.ExtractAgencyIDAndCodeID(target.TripId)
+	require.NoError(t, err)
+
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+	require.NoError(t, err)
+
+	api.GtfsManager.MockAddVehicleWithOptions("vehicle-"+tripID, tripID, trip.RouteID,
+		internalgtfs.MockVehicleOptions{Timestamp: &tripsForLocationServiceDayClock})
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	found := false
+	for _, entry := range model.Data.List {
+		if entry.TripId == target.TripId {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "a live vehicle with no reported position must not suppress the scheduled trip")
+}
+
 func multiTimezoneTripsForLocationFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -1049,7 +1091,7 @@ func TestInServiceTripIDs_BatchesLargeStopSets(t *testing.T) {
 	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
-	batched, err := api.inServiceTripIDs(ctx, stopIDs, resolver, map[string]gtfs.Vehicle{})
+	batched, err := api.inServiceTripIDs(ctx, stopIDs, resolver, map[string]struct{}{})
 	require.NoError(t, err)
 
 	singleQuery, err := api.GtfsManager.GtfsDB.Queries.GetInServiceTripIDsForStops(ctx, gtfsdb.GetInServiceTripIDsForStopsParams{

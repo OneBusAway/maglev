@@ -53,6 +53,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	bounds := internalgtfs.BoundsFromParams(parsedReq.LocationParams, true)
 	visibleTripIDs := make([]string, 0, len(activeTrips))
+	positionedTripIDs := make(map[string]struct{}, len(activeTrips))
 	for _, vehicle := range activeTrips {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
@@ -62,13 +63,14 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		if vehicle.Position == nil || vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
 			continue
 		}
+		positionedTripIDs[vehicle.Trip.ID.ID] = struct{}{}
 		vLat, vLon := float64(*vehicle.Position.Latitude), float64(*vehicle.Position.Longitude)
 		if boundsContain(bounds, vLat, vLon) {
 			visibleTripIDs = append(visibleTripIDs, vehicle.Trip.ID.ID)
 		}
 	}
 
-	scheduledTripIDs, err := api.scheduledTripIDsInBounds(ctx, stopIDs, bounds, serviceDates, parsedReq.CurrentTime, activeTrips)
+	scheduledTripIDs, err := api.scheduledTripIDsInBounds(ctx, stopIDs, bounds, serviceDates, parsedReq.CurrentTime, positionedTripIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -250,21 +252,23 @@ func boundsContain(bounds utils.CoordinateBounds, lat, lon float64) bool {
 // service at currentTime, and whose schedule-derived position falls inside the
 // search box.
 //
-// Real-time vehicles are the better signal when they exist, so trips in
-// liveTrips are skipped here rather than being placed twice.
+// A live vehicle's reported position is the better signal when one exists, so
+// a trip in positionedTripIDs is skipped here rather than being placed twice.
+// A trip with a live vehicle but no reported position is not in
+// positionedTripIDs and still runs through the schedule below.
 func (api *RestAPI) scheduledTripIDsInBounds(
 	ctx context.Context,
 	stopIDs []string,
 	bounds utils.CoordinateBounds,
 	serviceDates *serviceDateResolver,
 	currentTime time.Time,
-	liveTrips map[string]gtfs.Vehicle,
+	positionedTripIDs map[string]struct{},
 ) ([]string, error) {
 	if len(stopIDs) == 0 {
 		return nil, nil
 	}
 
-	candidateIDs, err := api.inServiceTripIDs(ctx, stopIDs, serviceDates, liveTrips)
+	candidateIDs, err := api.inServiceTripIDs(ctx, stopIDs, serviceDates, positionedTripIDs)
 	if err != nil || len(candidateIDs) == 0 {
 		return nil, err
 	}
@@ -330,7 +334,7 @@ func (api *RestAPI) inServiceTripIDs(
 	ctx context.Context,
 	stopIDs []string,
 	serviceDates *serviceDateResolver,
-	liveTrips map[string]gtfs.Vehicle,
+	positionedTripIDs map[string]struct{},
 ) ([]string, error) {
 	seen := make(map[string]struct{})
 	var candidateIDs []string
@@ -352,7 +356,7 @@ func (api *RestAPI) inServiceTripIDs(
 		}
 
 		for _, tripID := range tripIDs {
-			if _, live := liveTrips[tripID]; live {
+			if _, positioned := positionedTripIDs[tripID]; positioned {
 				continue
 			}
 			if _, ok := seen[tripID]; ok {
