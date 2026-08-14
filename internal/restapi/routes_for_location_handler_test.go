@@ -77,11 +77,13 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 		},
 		{
 			// Only one span is unusable, so the default radius still applies — and it must
-			// stay the 10km query radius, not the 600m no-query one. Route 3 sits outside
-			// 600m of denseCentre but inside 10km.
+			// stay the 10km query radius, not the 600m no-query one. Both routes matching
+			// "3" sit outside 600m of denseCentre but inside 10km, so a regression to the
+			// no-query radius empties the list. 25_24 matches on its long name
+			// ("Route 99X/Amtrak Thruway Route 3"), not its short name.
 			name:             "one span alone falls back to the query default radius",
 			params:           denseCentre + "&latSpan=0.1&query=3",
-			expectedRouteIDs: []string{"25_153"},
+			expectedRouteIDs: []string{"25_153", "25_24"},
 		},
 	}
 
