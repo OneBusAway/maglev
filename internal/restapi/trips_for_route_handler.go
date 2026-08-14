@@ -948,11 +948,6 @@ func newTripReference(trip gtfsdb.Trip) models.Trip {
 	}
 }
 
-// stripNumericSuffix removes a trailing ".<digits>" from a trip ID.
-// Some GTFS-RT feeds append a numeric suffix to DUPLICATED trip IDs to
-// distinguish individual runs (e.g., "LLR_..._1083.00060" -> "LLR_..._1083").
-// If the ID has no dot, or the part after the last dot contains non-digits,
-// the original string is returned unchanged.
 // resolveDuplicatedBaseTrip finds the static trip a DUPLICATED real-time trip
 // is a run of, returning the ID to use for schedule and status lookups together
 // with the trip row itself.
@@ -989,6 +984,11 @@ func (api *RestAPI) resolveDuplicatedBaseTrip(ctx context.Context, dupTripID str
 	return stripped, strippedTrip
 }
 
+// stripNumericSuffix removes a trailing ".<digits>" from a trip ID.
+// Some GTFS-RT feeds append a numeric suffix to DUPLICATED trip IDs to
+// distinguish individual runs (e.g., "LLR_..._1083.00060" -> "LLR_..._1083").
+// If the ID has no dot, or the part after the last dot contains non-digits,
+// the original string is returned unchanged.
 func stripNumericSuffix(tripID string) string {
 	idx := strings.LastIndex(tripID, ".")
 	if idx == -1 || idx == len(tripID)-1 {
