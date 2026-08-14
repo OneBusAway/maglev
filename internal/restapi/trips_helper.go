@@ -152,6 +152,16 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
 	}
+
+	// Populate frequency data for the trip's status.
+	// This covers all downstream consumers (trip-details, trip-for-vehicle,
+	// trips-for-route, trips-for-location, arrival-and-departure).
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, dbTripID)
+	if freqErr == nil && len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		status.Frequency = &converted
+	}
+
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
@@ -402,10 +412,18 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
+	// Populate frequency data for the schedule sub-object.
+	var scheduleFrequency *models.Frequency
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, trip.ID)
+	if freqErr == nil && len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		scheduleFrequency = &converted
+	}
+
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
 		TimeZone:       loc.String(),
-		Frequency:      nil,
+		Frequency:      scheduleFrequency,
 		NextTripID:     nextTripID,
 		PreviousTripID: previousTripID,
 	}, nil
