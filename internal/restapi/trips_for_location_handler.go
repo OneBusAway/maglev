@@ -130,7 +130,10 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		})
 	}
 
-	response := models.NewListResponseWithRange(result, references, api.GtfsManager.CheckIfOutOfBounds(parsedReq.LocationParams), api.Clock, false)
+	// The search clamped its bounds, so outOfRange has to be reported against
+	// the clamped bounds too.
+	outOfRange := api.GtfsManager.CheckIfOutOfBounds(parsedReq.LocationParams, true)
+	response := models.NewListResponseWithRange(result, references, outOfRange, api.Clock, false)
 	api.sendResponse(w, r, response)
 }
 
