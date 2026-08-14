@@ -243,6 +243,7 @@ func (api *RestAPI) getActiveTrips(stopTimes []gtfsdb.StopTime, realTimeVehicles
 }
 
 // buildTripsForLocationEntries builds trip entries from pre-fetched batch data.
+// It returns nil only when an error response has already been sent to the client.
 func (api *RestAPI) buildTripsForLocationEntries(
 	ctx context.Context,
 	trips []gtfsdb.Trip,
@@ -364,7 +365,8 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 	for _, tripID := range validVehicleTrips {
 		if ctx.Err() != nil {
-			return result
+			api.clientCanceledResponse(w, r, ctx.Err())
+			return nil
 		}
 
 		agencyID := tripAgencyMap[tripID]
