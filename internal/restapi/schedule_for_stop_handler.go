@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -155,9 +157,9 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Group schedule data by route -> direction -> slice of stop times, and track
-	// per-direction headsign vote counts, per spec steps 6-7.
-	routeDirectionScheduleMap, routeDirectionHeadsignCounts, err := groupScheduleRowsByRouteAndDirection(
+	// Group fixed and frequency-based schedule data by route and direction while
+	// tracking the weighted headsign votes required by spec steps 6-7.
+	routeDirectionScheduleGroups, err := groupScheduleRowsByRouteAndDirection(
 		ctx, scheduleRows, scheduleRowContext{
 			agencyID:                   agencyID,
 			startOfDay:                 startOfDay,
@@ -165,7 +167,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		},
 	)
 	if err != nil {
-		api.clientCanceledResponse(w, r, err)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			api.clientCanceledResponse(w, r, err)
+		} else {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -174,32 +180,26 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	var routeSchedules []models.StopRouteSchedule
 	for _, rt := range routesForStop {
 		combinedRouteID := utils.FormCombinedID(agencyID, rt.ID)
-		directionMap, hasSchedule := routeDirectionScheduleMap[combinedRouteID]
+		directionMap, hasSchedule := routeDirectionScheduleGroups[combinedRouteID]
 		if !hasSchedule {
 			continue
 		}
 
 		var directionSchedules []models.StopRouteDirectionSchedule
 
-		for dirID, stopTimes := range directionMap {
-			tripHeadsign := ""
-			maxCount := 0
-			if dirHeadsigns, exists := routeDirectionHeadsignCounts[combinedRouteID][dirID]; exists {
-				headsigns := make([]string, 0, len(dirHeadsigns))
-				for headsign := range dirHeadsigns {
-					headsigns = append(headsigns, headsign)
-				}
-				slices.Sort(headsigns)
-				for _, headsign := range headsigns {
-					count := dirHeadsigns[headsign]
-					if count > maxCount {
-						maxCount = count
-						tripHeadsign = headsign
-					}
-				}
-			}
+		for _, group := range directionMap {
+			slices.SortStableFunc(group.stopTimes, func(a, b models.ScheduleStopTime) int {
+				return cmp.Compare(a.DepartureTime, b.DepartureTime)
+			})
+			slices.SortStableFunc(group.frequencies, func(a, b models.ScheduleFrequency) int {
+				return cmp.Compare(a.StartTime.UnixMilli(), b.StartTime.UnixMilli())
+			})
 
-			directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, nil)
+			directionSchedule := models.NewStopRouteDirectionSchedule(
+				bestHeadsign(group.headsignCounts),
+				group.stopTimes,
+				group.frequencies,
+			)
 			directionSchedules = append(directionSchedules, directionSchedule)
 		}
 
@@ -369,37 +369,65 @@ type scheduleRowContext struct {
 	activeServiceBlockTripsMap map[string][]gtfsdb.GetTripsByBlockIDsRow
 }
 
-// groupScheduleRowsByRouteAndDirection partitions schedule rows first by route, then by
-// GTFS direction_id (defaulting to "0" when absent), per spec steps 6-7. It returns the
-// grouped stop times alongside per-direction headsign vote counts used to pick each
-// direction group's representative tripHeadsign. Returns a non-nil error only if ctx is
-// canceled mid-computation.
+type scheduleDirectionGroup struct {
+	stopTimes      []models.ScheduleStopTime
+	frequencies    []models.ScheduleFrequency
+	headsignCounts map[string]int64
+}
+
+type scheduleFrequencyRow struct {
+	startTime   int64
+	endTime     int64
+	headwaySecs int64
+	exactTimes  int64
+}
+
+// groupScheduleRowsByRouteAndDirection partitions fixed and frequency-based service
+// first by route, then by GTFS direction_id (defaulting to "0" when absent).
 func groupScheduleRowsByRouteAndDirection(
 	ctx context.Context,
 	scheduleRows []gtfsdb.GetScheduleForStopOnDateRow,
 	rowCtx scheduleRowContext,
-) (
-	routeDirectionScheduleMap map[string]map[string][]models.ScheduleStopTime,
-	routeDirectionHeadsignCounts map[string]map[string]map[string]int,
-	err error,
-) {
-	routeDirectionScheduleMap = make(map[string]map[string][]models.ScheduleStopTime)
-	routeDirectionHeadsignCounts = make(map[string]map[string]map[string]int)
+) (map[string]map[string]*scheduleDirectionGroup, error) {
+	groups := make(map[string]map[string]*scheduleDirectionGroup)
 
 	for _, row := range scheduleRows {
 		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
+			return nil, ctx.Err()
 		}
 
 		directionID := directionIDForRow(row)
 		combinedRouteID := utils.FormCombinedID(rowCtx.agencyID, row.RouteID)
-		stopTime := buildScheduleStopTime(row, rowCtx)
+		group := getScheduleDirectionGroup(groups, combinedRouteID, directionID)
+		templateStopTime := buildScheduleStopTime(row, rowCtx)
 
-		addStopTimeToDirectionGroup(routeDirectionScheduleMap, combinedRouteID, directionID, stopTime)
-		recordHeadsignVote(routeDirectionHeadsignCounts, combinedRouteID, directionID, row.TripHeadsign)
+		frequency, hasFrequency, err := parseScheduleFrequencyRow(row)
+		if err != nil {
+			return nil, err
+		}
+		if !hasFrequency {
+			group.stopTimes = append(group.stopTimes, templateStopTime)
+			recordHeadsignVotes(group, row.TripHeadsign, 1)
+			continue
+		}
+
+		switch frequency.exactTimes {
+		case 0:
+			group.frequencies = append(group.frequencies, buildScheduleFrequency(row, rowCtx, templateStopTime, frequency))
+			runCount := (frequency.endTime - frequency.startTime) /
+				(frequency.headwaySecs * int64(time.Second))
+			recordHeadsignVotes(group, row.TripHeadsign, runCount)
+		case 1:
+			expanded, err := expandExactScheduleStopTimes(ctx, row, rowCtx, templateStopTime, frequency)
+			if err != nil {
+				return nil, err
+			}
+			group.stopTimes = append(group.stopTimes, expanded...)
+			recordHeadsignVotes(group, row.TripHeadsign, int64(len(expanded)))
+		}
 	}
 
-	return routeDirectionScheduleMap, routeDirectionHeadsignCounts, nil
+	return groups, nil
 }
 
 // directionIDForRow returns the row's GTFS direction_id as a string, defaulting to "0"
@@ -467,36 +495,164 @@ func blockBoundaries(
 	return isFirstInBlock, isLastInBlock
 }
 
-// addStopTimeToDirectionGroup appends stopTime to the route's direction bucket, creating
-// the intermediate map when this is the route's first stop time seen so far.
-func addStopTimeToDirectionGroup(
-	routeDirectionScheduleMap map[string]map[string][]models.ScheduleStopTime,
+func getScheduleDirectionGroup(
+	groups map[string]map[string]*scheduleDirectionGroup,
 	combinedRouteID, directionID string,
-	stopTime models.ScheduleStopTime,
-) {
-	if routeDirectionScheduleMap[combinedRouteID] == nil {
-		routeDirectionScheduleMap[combinedRouteID] = make(map[string][]models.ScheduleStopTime)
+) *scheduleDirectionGroup {
+	if groups[combinedRouteID] == nil {
+		groups[combinedRouteID] = make(map[string]*scheduleDirectionGroup)
 	}
-	routeDirectionScheduleMap[combinedRouteID][directionID] = append(routeDirectionScheduleMap[combinedRouteID][directionID], stopTime)
+	if groups[combinedRouteID][directionID] == nil {
+		groups[combinedRouteID][directionID] = &scheduleDirectionGroup{
+			stopTimes:      []models.ScheduleStopTime{},
+			frequencies:    []models.ScheduleFrequency{},
+			headsignCounts: make(map[string]int64),
+		}
+	}
+	return groups[combinedRouteID][directionID]
 }
 
-// recordHeadsignVote tallies one vote for headsign under the route's direction bucket, used
-// later to pick each direction group's plurality tripHeadsign. Blank/absent headsigns cast
-// no vote.
-func recordHeadsignVote(
-	routeDirectionHeadsignCounts map[string]map[string]map[string]int,
-	combinedRouteID, directionID string,
-	headsign sql.NullString,
-) {
-	if !headsign.Valid || headsign.String == "" {
-		return
+func parseScheduleFrequencyRow(row gtfsdb.GetScheduleForStopOnDateRow) (scheduleFrequencyRow, bool, error) {
+	fieldsPresent := []bool{
+		row.FrequencyStartTime.Valid,
+		row.FrequencyEndTime.Valid,
+		row.FrequencyHeadwaySecs.Valid,
+		row.FrequencyExactTimes.Valid,
 	}
 
-	if routeDirectionHeadsignCounts[combinedRouteID] == nil {
-		routeDirectionHeadsignCounts[combinedRouteID] = make(map[string]map[string]int)
+	presentCount := 0
+	for _, present := range fieldsPresent {
+		if present {
+			presentCount++
+		}
 	}
-	if routeDirectionHeadsignCounts[combinedRouteID][directionID] == nil {
-		routeDirectionHeadsignCounts[combinedRouteID][directionID] = make(map[string]int)
+	if presentCount == 0 {
+		return scheduleFrequencyRow{}, false, nil
 	}
-	routeDirectionHeadsignCounts[combinedRouteID][directionID][headsign.String]++
+	if presentCount != len(fieldsPresent) {
+		return scheduleFrequencyRow{}, false, fmt.Errorf("incomplete frequency row for trip %q", row.TripID)
+	}
+
+	frequency := scheduleFrequencyRow{
+		startTime:   row.FrequencyStartTime.Int64,
+		endTime:     row.FrequencyEndTime.Int64,
+		headwaySecs: row.FrequencyHeadwaySecs.Int64,
+		exactTimes:  row.FrequencyExactTimes.Int64,
+	}
+	const maxHeadwaySeconds = int64(^uint64(0)>>1) / int64(time.Second)
+	if frequency.startTime < 0 || frequency.endTime <= frequency.startTime {
+		return scheduleFrequencyRow{}, false, fmt.Errorf("invalid frequency window for trip %q", row.TripID)
+	}
+	if frequency.headwaySecs <= 0 || frequency.headwaySecs > maxHeadwaySeconds {
+		return scheduleFrequencyRow{}, false, fmt.Errorf("invalid frequency headway for trip %q", row.TripID)
+	}
+	if frequency.exactTimes != 0 && frequency.exactTimes != 1 {
+		return scheduleFrequencyRow{}, false, fmt.Errorf("invalid exact_times for trip %q", row.TripID)
+	}
+
+	return frequency, true, nil
+}
+
+func buildScheduleFrequency(
+	row gtfsdb.GetScheduleForStopOnDateRow,
+	rowCtx scheduleRowContext,
+	templateStopTime models.ScheduleStopTime,
+	frequency scheduleFrequencyRow,
+) models.ScheduleFrequency {
+	return models.ScheduleFrequency{
+		FrequencyWindow: models.FrequencyWindow{
+			StartTime: models.NewModelTime(rowCtx.startOfDay.Add(time.Duration(frequency.startTime))),
+			EndTime:   models.NewModelTime(rowCtx.startOfDay.Add(time.Duration(frequency.endTime))),
+			Headway:   models.NewModelDuration(time.Duration(frequency.headwaySecs) * time.Second),
+		},
+		ServiceDate:      models.NewModelTime(rowCtx.startOfDay),
+		ServiceID:        templateStopTime.ServiceID,
+		TripID:           templateStopTime.TripID,
+		StopHeadsign:     row.StopHeadsign.String,
+		ArrivalEnabled:   templateStopTime.ArrivalEnabled,
+		DepartureEnabled: templateStopTime.DepartureEnabled,
+	}
+}
+
+func expandExactScheduleStopTimes(
+	ctx context.Context,
+	row gtfsdb.GetScheduleForStopOnDateRow,
+	rowCtx scheduleRowContext,
+	templateStopTime models.ScheduleStopTime,
+	frequency scheduleFrequencyRow,
+) ([]models.ScheduleStopTime, error) {
+	if row.FirstDepartureTime < 0 {
+		return nil, fmt.Errorf("invalid first departure time for trip %q", row.TripID)
+	}
+
+	headway := frequency.headwaySecs * int64(time.Second)
+	expanded := make([]models.ScheduleStopTime, 0)
+
+	for instanceStart := frequency.startTime; instanceStart < frequency.endTime; {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		shift := instanceStart - row.FirstDepartureTime
+		shiftedArrival, err := addScheduleOffset(row.ArrivalTime, shift)
+		if err != nil {
+			return nil, fmt.Errorf("invalid frequency arrival for trip %q: %w", row.TripID, err)
+		}
+		shiftedDeparture, err := addScheduleOffset(row.DepartureTime, shift)
+		if err != nil {
+			return nil, fmt.Errorf("invalid frequency departure for trip %q: %w", row.TripID, err)
+		}
+		arrivalTime := rowCtx.startOfDay.Add(time.Duration(shiftedArrival)).UnixMilli()
+		departureTime := rowCtx.startOfDay.Add(time.Duration(shiftedDeparture)).UnixMilli()
+		stopTime := templateStopTime
+		stopTime.ArrivalTime = arrivalTime
+		stopTime.DepartureTime = departureTime
+		expanded = append(expanded, stopTime)
+
+		if headway >= frequency.endTime-instanceStart {
+			break
+		}
+		instanceStart += headway
+	}
+
+	return expanded, nil
+}
+
+func addScheduleOffset(base, offset int64) (int64, error) {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	const minInt64 = -maxInt64 - 1
+	if offset > 0 && base > maxInt64-offset {
+		return 0, fmt.Errorf("time overflow")
+	}
+	if offset < 0 && base < minInt64-offset {
+		return 0, fmt.Errorf("time underflow")
+	}
+	return base + offset, nil
+}
+
+// recordHeadsignVotes weights fixed trips once and frequency trips by their estimated
+// number of runs, matching the legacy endpoint's representative-headsign selection.
+func recordHeadsignVotes(group *scheduleDirectionGroup, headsign sql.NullString, count int64) {
+	if !headsign.Valid || headsign.String == "" || count <= 0 {
+		return
+	}
+	group.headsignCounts[headsign.String] += count
+}
+
+func bestHeadsign(headsignCounts map[string]int64) string {
+	headsigns := make([]string, 0, len(headsignCounts))
+	for headsign := range headsignCounts {
+		headsigns = append(headsigns, headsign)
+	}
+	slices.Sort(headsigns)
+
+	best := ""
+	var maxCount int64
+	for _, headsign := range headsigns {
+		if headsignCounts[headsign] > maxCount {
+			best = headsign
+			maxCount = headsignCounts[headsign]
+		}
+	}
+	return best
 }

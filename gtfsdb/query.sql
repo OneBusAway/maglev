@@ -551,12 +551,25 @@ SELECT
     t.min_arrival_time,
     t.max_departure_time,
     t.direction_id,
+    first_st.departure_time AS first_departure_time,
+    f.start_time AS frequency_start_time,
+    f.end_time AS frequency_end_time,
+    f.headway_secs AS frequency_headway_secs,
+    f.exact_times AS frequency_exact_times,
     r.id as route_id,
     r.agency_id
 FROM
     stop_times st
     JOIN trips t ON st.trip_id = t.id
+    JOIN stop_times first_st
+      ON first_st.trip_id = t.id
+     AND first_st.stop_sequence = (
+        SELECT MIN(first_st_lookup.stop_sequence)
+        FROM stop_times first_st_lookup
+        WHERE first_st_lookup.trip_id = t.id
+     )
     JOIN routes r ON t.route_id = r.id
+    LEFT JOIN frequencies f ON f.trip_id = t.id
     LEFT JOIN (
         SELECT c.id AS service_id
         FROM calendar c
@@ -1463,5 +1476,4 @@ FROM
     JOIN stops s ON s.id = st.stop_id
 GROUP BY
     r.agency_id;
-
 

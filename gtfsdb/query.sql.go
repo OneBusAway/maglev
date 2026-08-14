@@ -2998,12 +2998,25 @@ SELECT
     t.min_arrival_time,
     t.max_departure_time,
     t.direction_id,
+    first_st.departure_time AS first_departure_time,
+    f.start_time AS frequency_start_time,
+    f.end_time AS frequency_end_time,
+    f.headway_secs AS frequency_headway_secs,
+    f.exact_times AS frequency_exact_times,
     r.id as route_id,
     r.agency_id
 FROM
     stop_times st
     JOIN trips t ON st.trip_id = t.id
+    JOIN stop_times first_st
+      ON first_st.trip_id = t.id
+     AND first_st.stop_sequence = (
+        SELECT MIN(first_st_lookup.stop_sequence)
+        FROM stop_times first_st_lookup
+        WHERE first_st_lookup.trip_id = t.id
+     )
     JOIN routes r ON t.route_id = r.id
+    LEFT JOIN frequencies f ON f.trip_id = t.id
     LEFT JOIN (
         SELECT c.id AS service_id
         FROM calendar c
@@ -3049,18 +3062,23 @@ type GetScheduleForStopOnDateParams struct {
 }
 
 type GetScheduleForStopOnDateRow struct {
-	TripID           string
-	ArrivalTime      int64
-	DepartureTime    int64
-	StopHeadsign     sql.NullString
-	ServiceID        string
-	TripHeadsign     sql.NullString
-	BlockID          sql.NullString
-	MinArrivalTime   sql.NullInt64
-	MaxDepartureTime sql.NullInt64
-	DirectionID      sql.NullInt64
-	RouteID          string
-	AgencyID         string
+	TripID               string
+	ArrivalTime          int64
+	DepartureTime        int64
+	StopHeadsign         sql.NullString
+	ServiceID            string
+	TripHeadsign         sql.NullString
+	BlockID              sql.NullString
+	MinArrivalTime       sql.NullInt64
+	MaxDepartureTime     sql.NullInt64
+	DirectionID          sql.NullInt64
+	FirstDepartureTime   int64
+	FrequencyStartTime   sql.NullInt64
+	FrequencyEndTime     sql.NullInt64
+	FrequencyHeadwaySecs sql.NullInt64
+	FrequencyExactTimes  sql.NullInt64
+	RouteID              string
+	AgencyID             string
 }
 
 func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleForStopOnDateParams) ([]GetScheduleForStopOnDateRow, error) {
@@ -3096,6 +3114,11 @@ func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleF
 			&i.MinArrivalTime,
 			&i.MaxDepartureTime,
 			&i.DirectionID,
+			&i.FirstDepartureTime,
+			&i.FrequencyStartTime,
+			&i.FrequencyEndTime,
+			&i.FrequencyHeadwaySecs,
+			&i.FrequencyExactTimes,
 			&i.RouteID,
 			&i.AgencyID,
 		); err != nil {

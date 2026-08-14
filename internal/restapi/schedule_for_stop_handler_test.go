@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -398,6 +400,164 @@ func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
 	})
 }
 
+func TestScheduleForStopHandlerFrequencies(t *testing.T) {
+	const targetDate = "20250612"
+	const dateParam = "2025-06-12"
+
+	findActiveScheduleRow := func(t *testing.T, api *RestAPI) (gtfsdb.Agency, gtfsdb.Stop, gtfsdb.GetScheduleForStopOnDateRow, time.Time) {
+		t.Helper()
+		agencies := mustGetAgencies(t, api)
+		require.NotEmpty(t, agencies)
+		agency := agencies[0]
+		location, err := time.LoadLocation(agency.Timezone)
+		require.NoError(t, err)
+		startOfDay, err := time.ParseInLocation("20060102", targetDate, location)
+		require.NoError(t, err)
+
+		for _, stop := range mustGetStops(t, api) {
+			routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(context.Background(), stop.ID)
+			require.NoError(t, err)
+			routeIDs := make([]string, 0, len(routes))
+			for _, route := range routes {
+				routeIDs = append(routeIDs, route.ID)
+			}
+			if len(routeIDs) == 0 {
+				continue
+			}
+
+			rows, err := api.GtfsManager.GtfsDB.Queries.GetScheduleForStopOnDate(
+				context.Background(),
+				gtfsdb.GetScheduleForStopOnDateParams{
+					TargetDate: targetDate,
+					Weekday:    "thursday",
+					StopID:     stop.ID,
+					RouteIds:   routeIDs,
+				},
+			)
+			require.NoError(t, err)
+			if len(rows) > 0 {
+				return agency, stop, rows[0], startOfDay
+			}
+		}
+
+		t.Fatal("test feed has no active schedule row")
+		return gtfsdb.Agency{}, gtfsdb.Stop{}, gtfsdb.GetScheduleForStopOnDateRow{}, time.Time{}
+	}
+
+	collectTripEntries := func(
+		t *testing.T,
+		model models.ResponseModel,
+		combinedTripID string,
+	) (frequencies, stopTimes []map[string]any) {
+		t.Helper()
+		require.Equal(t, http.StatusOK, model.Code)
+		data, ok := model.Data.(map[string]any)
+		require.True(t, ok)
+		entry, ok := data["entry"].(map[string]any)
+		require.True(t, ok)
+		routeSchedules, ok := entry["stopRouteSchedules"].([]any)
+		require.True(t, ok)
+
+		for _, routeScheduleValue := range routeSchedules {
+			routeSchedule := routeScheduleValue.(map[string]any)
+			directions := routeSchedule["stopRouteDirectionSchedules"].([]any)
+			for _, directionValue := range directions {
+				direction := directionValue.(map[string]any)
+				for _, frequencyValue := range direction["scheduleFrequencies"].([]any) {
+					frequency := frequencyValue.(map[string]any)
+					if frequency["tripId"] == combinedTripID {
+						frequencies = append(frequencies, frequency)
+					}
+				}
+				for _, stopTimeValue := range direction["scheduleStopTimes"].([]any) {
+					stopTime := stopTimeValue.(map[string]any)
+					if stopTime["tripId"] == combinedTripID {
+						stopTimes = append(stopTimes, stopTime)
+					}
+				}
+			}
+		}
+		return frequencies, stopTimes
+	}
+
+	t.Run("exact_times=0 populates sorted schedule frequencies", func(t *testing.T) {
+		api := createTestApi(t)
+		defer api.Shutdown()
+		agency, stop, row, startOfDay := findActiveScheduleRow(t, api)
+		ctx := context.Background()
+		require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearFrequencies(ctx))
+
+		const headwaySecs = int64(900)
+		headway := time.Duration(headwaySecs) * time.Second
+		windows := [][2]int64{
+			{row.FirstDepartureTime + int64(2*time.Hour), row.FirstDepartureTime + int64(2*time.Hour+2*headway)},
+			{row.FirstDepartureTime, row.FirstDepartureTime + int64(2*headway)},
+		}
+		for _, window := range windows {
+			require.NoError(t, api.GtfsManager.GtfsDB.Queries.CreateFrequency(ctx, gtfsdb.CreateFrequencyParams{
+				TripID:      row.TripID,
+				StartTime:   window[0],
+				EndTime:     window[1],
+				HeadwaySecs: headwaySecs,
+				ExactTimes:  0,
+			}))
+		}
+
+		stopID := utils.FormCombinedID(agency.ID, stop.ID)
+		_, model := serveApiAndRetrieveEndpoint(
+			t,
+			api,
+			"/api/where/schedule-for-stop/"+stopID+".json?key=TEST&date="+dateParam,
+		)
+		combinedTripID := utils.FormCombinedID(agency.ID, row.TripID)
+		frequencies, stopTimes := collectTripEntries(t, model, combinedTripID)
+
+		require.Len(t, frequencies, 2)
+		assert.Empty(t, stopTimes, "the template trip must not also appear as fixed service")
+		assert.Equal(t, float64(startOfDay.Add(time.Duration(windows[1][0])).UnixMilli()), frequencies[0]["startTime"])
+		assert.Equal(t, float64(startOfDay.Add(time.Duration(windows[0][0])).UnixMilli()), frequencies[1]["startTime"])
+		assert.Equal(t, float64(startOfDay.UnixMilli()), frequencies[0]["serviceDate"])
+		assert.Equal(t, float64(headwaySecs), frequencies[0]["headway"])
+		assert.Equal(t, utils.FormCombinedID(agency.ID, row.ServiceID), frequencies[0]["serviceId"])
+		assert.IsType(t, true, frequencies[0]["arrivalEnabled"])
+		assert.IsType(t, true, frequencies[0]["departureEnabled"])
+	})
+
+	t.Run("exact_times=1 expands deterministic stop times", func(t *testing.T) {
+		api := createTestApi(t)
+		defer api.Shutdown()
+		agency, stop, row, startOfDay := findActiveScheduleRow(t, api)
+		ctx := context.Background()
+		require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearFrequencies(ctx))
+
+		const headwaySecs = int64(1200)
+		headway := time.Duration(headwaySecs) * time.Second
+		require.NoError(t, api.GtfsManager.GtfsDB.Queries.CreateFrequency(ctx, gtfsdb.CreateFrequencyParams{
+			TripID:      row.TripID,
+			StartTime:   row.FirstDepartureTime,
+			EndTime:     row.FirstDepartureTime + int64(2*headway),
+			HeadwaySecs: headwaySecs,
+			ExactTimes:  1,
+		}))
+
+		stopID := utils.FormCombinedID(agency.ID, stop.ID)
+		_, model := serveApiAndRetrieveEndpoint(
+			t,
+			api,
+			"/api/where/schedule-for-stop/"+stopID+".json?key=TEST&date="+dateParam,
+		)
+		combinedTripID := utils.FormCombinedID(agency.ID, row.TripID)
+		frequencies, stopTimes := collectTripEntries(t, model, combinedTripID)
+
+		assert.Empty(t, frequencies)
+		require.Len(t, stopTimes, 2)
+		assert.Equal(t, float64(startOfDay.Add(time.Duration(row.ArrivalTime)).UnixMilli()), stopTimes[0]["arrivalTime"])
+		assert.Equal(t, float64(startOfDay.Add(time.Duration(row.DepartureTime)).UnixMilli()), stopTimes[0]["departureTime"])
+		assert.Equal(t, float64(startOfDay.Add(time.Duration(row.ArrivalTime)+headway).UnixMilli()), stopTimes[1]["arrivalTime"])
+		assert.Equal(t, float64(startOfDay.Add(time.Duration(row.DepartureTime)+headway).UnixMilli()), stopTimes[1]["departureTime"])
+	})
+}
+
 // TestScheduleForStopQueryValidation verifies the SQL query logic
 func TestScheduleForStopQueryValidation(t *testing.T) {
 	api := createTestApi(t)
@@ -746,6 +906,17 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			TripHeadsign:  sql.NullString{String: headsign, Valid: headsign != ""},
 		}
 	}
+	withFrequency := func(
+		row gtfsdb.GetScheduleForStopOnDateRow,
+		startTime, endTime time.Duration,
+		headwaySecs, exactTimes int64,
+	) gtfsdb.GetScheduleForStopOnDateRow {
+		row.FrequencyStartTime = sql.NullInt64{Int64: int64(startTime), Valid: true}
+		row.FrequencyEndTime = sql.NullInt64{Int64: int64(endTime), Valid: true}
+		row.FrequencyHeadwaySecs = sql.NullInt64{Int64: headwaySecs, Valid: true}
+		row.FrequencyExactTimes = sql.NullInt64{Int64: exactTimes, Valid: true}
+		return row
+	}
 
 	t.Run("splits rows on the same route into separate direction groups", func(t *testing.T) {
 		rows := []gtfsdb.GetScheduleForStopOnDateRow{
@@ -753,18 +924,18 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		routeGroups, ok := schedules["1_10"]
 		assert.True(t, ok, "expected a group for route 1_10")
 		assert.Len(t, routeGroups, 2, "expected two distinct direction buckets")
 
-		assert.Len(t, routeGroups["0"], 1)
-		assert.Equal(t, "1_trip-out", routeGroups["0"][0].TripID)
+		assert.Len(t, routeGroups["0"].stopTimes, 1)
+		assert.Equal(t, "1_trip-out", routeGroups["0"].stopTimes[0].TripID)
 
-		assert.Len(t, routeGroups["1"], 1)
-		assert.Equal(t, "1_trip-in", routeGroups["1"][0].TripID)
+		assert.Len(t, routeGroups["1"].stopTimes, 1)
+		assert.Equal(t, "1_trip-in", routeGroups["1"].stopTimes[0].TripID)
 	})
 
 	t.Run("groups rows on the same route and direction together", func(t *testing.T) {
@@ -773,12 +944,12 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-b", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		schedules, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1, "expected a single direction bucket")
-		assert.Len(t, schedules["1_10"]["0"], 2, "expected both stop times grouped together")
-		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
+		assert.Len(t, schedules["1_10"]["0"].stopTimes, 2, "expected both stop times grouped together")
+		assert.Equal(t, int64(2), schedules["1_10"]["0"].headsignCounts["Downtown"])
 	})
 
 	t.Run("defaults a missing direction_id to bucket 0", func(t *testing.T) {
@@ -786,12 +957,12 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Valid: false}, "Downtown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1)
 		assert.Contains(t, schedules["1_10"], "0")
-		assert.Len(t, schedules["1_10"]["0"], 1)
+		assert.Len(t, schedules["1_10"]["0"].stopTimes, 1)
 	})
 
 	t.Run("tracks headsign votes separately per direction", func(t *testing.T) {
@@ -801,12 +972,82 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in-1", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		_, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
-		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
-		assert.Equal(t, 1, headsignCounts["1_10"]["1"]["Uptown"])
-		assert.Equal(t, 0, headsignCounts["1_10"]["1"]["Downtown"], "direction 1 should not see direction 0's headsign votes")
+		assert.Equal(t, int64(2), schedules["1_10"]["0"].headsignCounts["Downtown"])
+		assert.Equal(t, int64(1), schedules["1_10"]["1"].headsignCounts["Uptown"])
+		assert.Equal(t, int64(0), schedules["1_10"]["1"].headsignCounts["Downtown"], "direction 1 should not see direction 0's headsign votes")
+	})
+
+	t.Run("represents approximate service as a frequency instead of a template stop time", func(t *testing.T) {
+		row := makeRow("trip-frequency", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown")
+		row.StopHeadsign = sql.NullString{String: "Central", Valid: true}
+		row.FirstDepartureTime = int64(7 * time.Hour)
+		row = withFrequency(row, 6*time.Hour, 9*time.Hour, 600, 0)
+
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), []gtfsdb.GetScheduleForStopOnDateRow{row}, rowCtx)
+		assert.NoError(t, err)
+
+		group := schedules["1_10"]["0"]
+		assert.Empty(t, group.stopTimes, "the GTFS template stop time must not leak into fixed schedules")
+		if assert.Len(t, group.frequencies, 1) {
+			frequency := group.frequencies[0]
+			assert.Equal(t, startOfDay.Add(6*time.Hour), frequency.StartTime.Time)
+			assert.Equal(t, startOfDay.Add(9*time.Hour), frequency.EndTime.Time)
+			assert.Equal(t, 600*time.Second, frequency.Headway.Duration)
+			assert.Equal(t, startOfDay, frequency.ServiceDate.Time)
+			assert.Equal(t, "1_svc1", frequency.ServiceID)
+			assert.Equal(t, "1_trip-frequency", frequency.TripID)
+			assert.Equal(t, "Central", frequency.StopHeadsign)
+			assert.True(t, frequency.ArrivalEnabled)
+			assert.True(t, frequency.DepartureEnabled)
+		}
+		assert.Equal(t, int64(18), group.headsignCounts["Downtown"])
+	})
+
+	t.Run("expands exact service relative to the template first departure", func(t *testing.T) {
+		row := makeRow("trip-exact", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown")
+		row.ArrivalTime = int64(8 * time.Hour)
+		row.DepartureTime = int64(8*time.Hour + 2*time.Minute)
+		row.FirstDepartureTime = int64(7 * time.Hour)
+		row = withFrequency(row, 6*time.Hour, 7*time.Hour, 1800, 1)
+
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), []gtfsdb.GetScheduleForStopOnDateRow{row}, rowCtx)
+		assert.NoError(t, err)
+
+		group := schedules["1_10"]["1"]
+		assert.Empty(t, group.frequencies)
+		if assert.Len(t, group.stopTimes, 2) {
+			assert.Equal(t, startOfDay.Add(7*time.Hour).UnixMilli(), group.stopTimes[0].ArrivalTime)
+			assert.Equal(t, startOfDay.Add(7*time.Hour+2*time.Minute).UnixMilli(), group.stopTimes[0].DepartureTime)
+			assert.Equal(t, startOfDay.Add(7*time.Hour+30*time.Minute).UnixMilli(), group.stopTimes[1].ArrivalTime)
+			assert.Equal(t, startOfDay.Add(7*time.Hour+32*time.Minute).UnixMilli(), group.stopTimes[1].DepartureTime)
+		}
+		assert.Equal(t, int64(2), group.headsignCounts["Uptown"])
+	})
+
+	t.Run("frequency headsign weighting can select the representative headsign", func(t *testing.T) {
+		fixedA := makeRow("trip-fixed-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Local")
+		fixedB := makeRow("trip-fixed-b", "10", sql.NullInt64{Int64: 0, Valid: true}, "Local")
+		frequency := makeRow("trip-frequency", "10", sql.NullInt64{Int64: 0, Valid: true}, "Express")
+		frequency = withFrequency(frequency, 6*time.Hour, 8*time.Hour, 600, 0)
+
+		schedules, err := groupScheduleRowsByRouteAndDirection(
+			context.Background(),
+			[]gtfsdb.GetScheduleForStopOnDateRow{fixedA, fixedB, frequency},
+			rowCtx,
+		)
+		assert.NoError(t, err)
+		assert.Equal(t, "Express", bestHeadsign(schedules["1_10"]["0"].headsignCounts))
+	})
+
+	t.Run("rejects an invalid frequency before expansion", func(t *testing.T) {
+		row := makeRow("trip-invalid", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown")
+		row = withFrequency(row, 6*time.Hour, 7*time.Hour, 0, 1)
+
+		_, err := groupScheduleRowsByRouteAndDirection(context.Background(), []gtfsdb.GetScheduleForStopOnDateRow{row}, rowCtx)
+		assert.ErrorContains(t, err, "invalid frequency headway")
 	})
 
 	t.Run("returns an error when the context is already canceled", func(t *testing.T) {
@@ -817,7 +1058,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		_, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
+		_, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
