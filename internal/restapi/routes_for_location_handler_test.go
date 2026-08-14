@@ -78,11 +78,13 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 		},
 		{
 			// Only one span is unusable, so the default radius still applies — and it must
-			// stay the 10km query radius, not the 600m no-query one. Route 3 sits outside
-			// 600m of denseCentre but inside 10km.
+			// stay the 10km query radius, not the 600m no-query one. Both routes matching
+			// "3" sit outside 600m of denseCentre but inside 10km, so a regression to the
+			// no-query radius empties the list. 25_24 matches on its long name
+			// ("Route 99X/Amtrak Thruway Route 3"), not its short name.
 			name:             "one span alone falls back to the query default radius",
 			params:           denseCentre + "&latSpan=0.1&query=3",
-			expectedRouteIDs: []string{"25_153"},
+			expectedRouteIDs: []string{"25_153", "25_24"},
 		},
 	}
 
@@ -155,6 +157,84 @@ func TestRoutesForLocationWildcardQueryDoesNotMatch(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
 	assert.Empty(t, model.Data.List)
+}
+
+func TestRoutesForLocationQueryMatchesRouteText(t *testing.T) {
+	// lat/lon are for stop 2000, which is served by both Route44X and Route17.
+	// Query mode defaults to a 10km radius, so any RABA route is reachable from here.
+	const stop2000 = "lat=40.583170&lon=-122.392586"
+
+	tests := []struct {
+		name       string
+		url        string
+		wantRoutes []models.Route
+	}{
+		{
+			name:       "matches long name only",
+			url:        "query=Shasta&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route17},
+		},
+		{
+			name:       "matches a long-name prefix token",
+			url:        "query=Chur&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route15},
+		},
+		{
+			name:       "multiple terms both matching one route",
+			url:        "query=Shasta+College&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route17},
+		},
+		{
+			name:       "terms are ORed so either may match",
+			url:        "query=Shasta+Airport&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route17, testdata.Route15},
+		},
+		{
+			name:       "no route text matches the query",
+			url:        "query=zzzz&" + stop2000,
+			wantRoutes: []models.Route{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&"+tt.url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.False(t, model.Data.LimitExceeded)
+			assert.ElementsMatch(t, tt.wantRoutes, model.Data.List)
+		})
+	}
+}
+
+func TestRoutesForLocationQueryCandidatesAreCappedAtMaxCountPlusOne(t *testing.T) {
+	// Ten RABA routes have a long name starting with "Route ", far more than
+	// maxCount+1 candidates. With maxCount=1, only the top-ranked text-search
+	// candidates are considered, so the result must be truncated and flagged.
+	api := createTestApi(t)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=Route&maxCount=1")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Len(t, model.Data.List, 1)
+	assert.True(t, model.Data.LimitExceeded)
+}
+
+func TestRoutesForLocationQueryMatchIgnoredWhenOutOfBounds(t *testing.T) {
+	// "Shasta" matches Route17's long name, but a tiny explicit radius far from
+	// any RABA stop must still drop it: text-index candidates are filtered by
+	// location, not returned unconditionally.
+	api := createTestApi(t)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=0.0&lon=0.0&radius=100&query=Shasta")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Empty(t, model.Data.List)
+	assert.False(t, model.Data.LimitExceeded)
 }
 
 func TestRoutesForLocationHandlerValidatesParameters(t *testing.T) {

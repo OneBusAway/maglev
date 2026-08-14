@@ -22,12 +22,12 @@ func TestBuildRouteSearchQuery(t *testing.T) {
 		{
 			name:     "MultipleWords",
 			input:    "redding express",
-			expected: `"redding"* AND "express"*`,
+			expected: `"redding"* OR "express"*`,
 		},
 		{
 			name:     "InputIsLowered",
 			input:    "Airport Express",
-			expected: `"airport"* AND "express"*`,
+			expected: `"airport"* OR "express"*`,
 		},
 		{
 			name:     "EmptyString",
@@ -62,17 +62,17 @@ func TestBuildRouteSearchQuery(t *testing.T) {
 		{
 			name:     "UnicodeCJK",
 			input:    "日本 電車",
-			expected: `"日本"* AND "電車"*`,
+			expected: `"日本"* OR "電車"*`,
 		},
 		{
 			name:     "EmbeddedDoubleQuotes",
 			input:    `the "quick" route`,
-			expected: `"the"* AND """quick"""* AND "route"*`,
+			expected: `"the"* OR """quick"""* OR "route"*`,
 		},
 		{
 			name:     "ExtraWhitespace",
 			input:    "  route   one  ",
-			expected: `"route"* AND "one"*`,
+			expected: `"route"* OR "one"*`,
 		},
 	}
 
@@ -128,6 +128,19 @@ func TestSearchRoutes_WhitespaceOnlyInput(t *testing.T) {
 	routes, err := manager.SearchRoutes(ctx, "   \t  ", 20)
 	require.NoError(t, err)
 	assert.Empty(t, routes, "Whitespace-only input should short-circuit and return empty slice")
+}
+
+func TestSearchRoutes_PunctuationOnlyInput(t *testing.T) {
+	// "%" tokenizes to nothing under FTS5's unicode61 tokenizer; without
+	// filtering it out, the built query becomes `"%"*`, which raises a
+	// syntax error at MATCH time rather than simply matching nothing.
+	ctx := context.Background()
+	manager, _ := getSharedTestComponents(t)
+	require.NotNil(t, manager)
+
+	routes, err := manager.SearchRoutes(ctx, "%", 20)
+	require.NoError(t, err)
+	assert.Empty(t, routes, "Punctuation-only input should short-circuit and return empty slice")
 }
 
 func TestSearchRoutes_DefaultLimit(t *testing.T) {
