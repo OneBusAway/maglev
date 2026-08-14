@@ -179,14 +179,14 @@ func TestRoutesForLocationQueryMatchesRouteText(t *testing.T) {
 			wantRoutes: []models.Route{testdata.Route15},
 		},
 		{
-			name:       "multiple terms are ANDed and both must match",
+			name:       "multiple terms both matching one route",
 			url:        "query=Shasta+College&" + stop2000,
 			wantRoutes: []models.Route{testdata.Route17},
 		},
 		{
-			name:       "multiple terms with one absent from any route match nothing",
+			name:       "terms are ORed so either may match",
 			url:        "query=Shasta+Airport&" + stop2000,
-			wantRoutes: []models.Route{},
+			wantRoutes: []models.Route{testdata.Route17, testdata.Route15},
 		},
 		{
 			name:       "no route text matches the query",

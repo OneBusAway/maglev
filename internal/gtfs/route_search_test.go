@@ -22,12 +22,12 @@ func TestBuildRouteSearchQuery(t *testing.T) {
 		{
 			name:     "MultipleWords",
 			input:    "redding express",
-			expected: `"redding"* AND "express"*`,
+			expected: `"redding"* OR "express"*`,
 		},
 		{
 			name:     "InputIsLowered",
 			input:    "Airport Express",
-			expected: `"airport"* AND "express"*`,
+			expected: `"airport"* OR "express"*`,
 		},
 		{
 			name:     "EmptyString",
@@ -62,17 +62,17 @@ func TestBuildRouteSearchQuery(t *testing.T) {
 		{
 			name:     "UnicodeCJK",
 			input:    "日本 電車",
-			expected: `"日本"* AND "電車"*`,
+			expected: `"日本"* OR "電車"*`,
 		},
 		{
 			name:     "EmbeddedDoubleQuotes",
 			input:    `the "quick" route`,
-			expected: `"the"* AND """quick"""* AND "route"*`,
+			expected: `"the"* OR """quick"""* OR "route"*`,
 		},
 		{
 			name:     "ExtraWhitespace",
 			input:    "  route   one  ",
-			expected: `"route"* AND "one"*`,
+			expected: `"route"* OR "one"*`,
 		},
 	}
 
