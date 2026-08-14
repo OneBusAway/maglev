@@ -11,9 +11,11 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1012,6 +1014,52 @@ func TestTripsForLocationHandler_ScheduledTripsWithoutVehicles(t *testing.T) {
 				"a schedule-derived position is not a prediction")
 		}
 	}
+}
+
+// TestInServiceTripIDs_BatchesLargeStopSets guards against an unbatched
+// regression: the in-bounds stop set inServiceTripIDs is called with is
+// uncapped, and SQLite rejects a statement carrying more bind variables than
+// it allows rather than truncating it.
+func TestInServiceTripIDs_BatchesLargeStopSets(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	currentTime := tripsForLocationServiceDayClock
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentTime.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs, "the fixture must have service running on this test's clock")
+
+	queryDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(),
+		0, 0, 0, 0, currentTime.Location())
+	// PreviousDay is left empty so inServiceTripIDs' second service-day layer is
+	// skipped, isolating this test to the one query being batched.
+	resolver := newServiceDateResolverFor(queryDayMidnight, currentTime, serviceIDsByDay{QueryDay: serviceIDs})
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= idsPerBatchedQuery {
+		for _, stop := range stops {
+			stopIDs = append(stopIDs, stop.ID)
+		}
+	}
+	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+		"the input must span more than one batch for this test to mean anything")
+
+	batched, err := api.inServiceTripIDs(ctx, stopIDs, resolver, map[string]gtfs.Vehicle{})
+	require.NoError(t, err)
+
+	singleQuery, err := api.GtfsManager.GtfsDB.Queries.GetInServiceTripIDsForStops(ctx, gtfsdb.GetInServiceTripIDsForStopsParams{
+		StopIds:       stopIDs[:len(stops)],
+		ServiceIds:    serviceIDs,
+		SinceMidnight: nulls.Int64(wallClockSinceMidnightNs(currentTime)),
+	})
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, singleQuery, batched)
 }
 
 // TestTripsForLocationHandler_ScheduledTripsHonorTimeParameter verifies that the

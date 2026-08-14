@@ -581,8 +581,10 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 	return out
 }
 
-// fetchStopCoordsForStopTimes batches GetStopsByIDs for the unique stop IDs in
-// stopTimes. Returns nil on error; callers fall back to zero distance.
+// fetchStopCoordsForStopTimes fetches the unique stops in stopTimes, batching
+// the lookup so an unbounded caller — the scheduled-position candidate set
+// among them — cannot overflow the bind variable limit. Returns nil on error;
+// callers fall back to zero distance.
 func (api *RestAPI) fetchStopCoordsForStopTimes(
 	ctx context.Context,
 	stopTimes []gtfsdb.StopTime,
@@ -599,7 +601,7 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 	if len(ids) == 0 {
 		return nil
 	}
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, ids)
+	stops, err := queryInBatches(ctx, ids, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
 		// Returning nil here causes projectStopsInSequence to write 0 for
 		// every geometric-projection stop, silently corrupting downstream

@@ -485,6 +485,37 @@ func TestFetchStopCoordsForStopTimes_EmptyInput(t *testing.T) {
 	assert.Nil(t, coords)
 }
 
+// TestFetchStopCoordsForStopTimes_BatchesLargeStopSets guards against an
+// unbatched regression: an unbounded caller — the scheduled-position
+// candidate set among stop_times — can push the unique stop count past
+// SQLite's bind variable limit, which the query rejects rather than
+// truncates.
+func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	stopTimes := make([]gtfsdb.StopTime, 0, idsPerBatchedQuery+len(stops))
+	for len(stopTimes) <= idsPerBatchedQuery {
+		for _, stop := range stops {
+			stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: stop.ID})
+		}
+	}
+	require.Greater(t, len(stopTimes), idsPerBatchedQuery,
+		"the input must span more than one batch for this test to mean anything")
+
+	coords := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	require.NotNil(t, coords)
+	for _, stop := range stops {
+		_, ok := coords[stop.ID]
+		assert.True(t, ok, "stop %q should be in coord map", stop.ID)
+	}
+}
+
 func TestComputeScheduledBlockSnapshot_BasicShape(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
