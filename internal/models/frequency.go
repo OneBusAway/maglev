@@ -6,17 +6,31 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 )
 
-// Frequency represents a GTFS frequency entry in API responses.
+// FrequencyWindow holds the fields common to both legacy frequency shapes.
+type FrequencyWindow struct {
+	StartTime ModelTime     `json:"startTime"`
+	EndTime   ModelTime     `json:"endTime"`
+	Headway   ModelDuration `json:"headway"`
+}
+
+// Frequency is the generic frequency descriptor embedded in trip-details,
+// TripStatus, ArrivalAndDeparture, trips-for-route, trips-for-location,
+// and the Schedule sub-object. It matches the legacy FrequencyV2Bean.
 type Frequency struct {
-	StartTime ModelTime `json:"startTime"`
-	EndTime   ModelTime `json:"endTime"`
-	// Headway is the time between departures.
-	Headway ModelDuration `json:"headway"`
-	// ExactTimes is used internally for business logic but omitted from API responses
-	ExactTimes  int       `json:"-"`
-	ServiceDate ModelTime `json:"serviceDate"`
-	ServiceID   string    `json:"serviceId"`
-	TripID      string    `json:"tripId"`
+	FrequencyWindow
+	ExactTimes int `json:"exactTimes"`
+}
+
+// ScheduleFrequency is a schedule-for-stop scheduleFrequencies[] entry.
+// It matches the legacy ScheduleFrequencyInstanceV2Bean.
+type ScheduleFrequency struct {
+	FrequencyWindow
+	ServiceDate      ModelTime `json:"serviceDate"`
+	ServiceID        string    `json:"serviceId"`
+	TripID           string    `json:"tripId"`
+	StopHeadsign     string    `json:"stopHeadsign,omitempty"`
+	ArrivalEnabled   bool      `json:"arrivalEnabled"`
+	DepartureEnabled bool      `json:"departureEnabled"`
 }
 
 // NewFrequencyFromDB converts a database Frequency row into an API Frequency model.
@@ -28,9 +42,11 @@ func NewFrequencyFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Frequenc
 	startOfDay := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, serviceDate.Location())
 
 	return Frequency{
-		StartTime:  NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
-		EndTime:    NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
-		Headway:    NewModelDuration(time.Duration(dbFreq.HeadwaySecs) * time.Second),
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
+			EndTime:   NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
+			Headway:   NewModelDuration(time.Duration(dbFreq.HeadwaySecs) * time.Second),
+		},
 		ExactTimes: int(dbFreq.ExactTimes),
 	}
 }

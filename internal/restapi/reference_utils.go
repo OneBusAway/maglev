@@ -17,7 +17,7 @@ import (
 )
 
 func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
-	var refs []models.AgencyReference
+	refs := make([]models.AgencyReference, 0, len(agencies))
 	for _, agency := range agencies {
 		refs = append(refs, models.AgencyReferenceFromDatabase(&agency))
 	}
@@ -452,6 +452,71 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
+// stopReferences builds the stop reference block for a set of list entries,
+// labelling each stop with the combined ID the entries actually referred to it
+// by — the referring trip's agency need not own the stop's first route. A stop
+// whose routes do not resolve still gets a reference, with an empty route list,
+// so every stop ID an entry emits resolves in the block.
+//
+// The routes each stop serves are returned alongside the references, for callers
+// that collect route references from them.
+func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string]string) ([]models.Stop, map[string][]string) {
+	routeIDsByStop := api.routeIDsForStops(ctx, stops)
+
+	stopList := make([]models.Stop, 0, len(stops))
+	for _, stop := range stops {
+		routeIDs := routeIDsByStop[stop.ID]
+		if routeIDs == nil {
+			routeIDs = []string{}
+		}
+
+		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
+		if direction == "" {
+			direction = models.UnknownValue
+		}
+
+		stopList = append(stopList, models.Stop{
+			Code:               nulls.StringOrEmpty(stop.Code),
+			Direction:          direction,
+			ID:                 idsByBareID[stop.ID],
+			Lat:                stop.Lat,
+			Lon:                stop.Lon,
+			LocationType:       0,
+			Name:               nulls.StringOrEmpty(stop.Name),
+			Parent:             "",
+			RouteIDs:           routeIDs,
+			StaticRouteIDs:     routeIDs,
+			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
+		})
+	}
+	return stopList, routeIDsByStop
+}
+
+// routeIDsForStops maps each stop to the combined IDs of the routes serving it.
+func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) map[string][]string {
+	routeIDsByStop := make(map[string][]string)
+	if len(stops) == 0 {
+		return routeIDsByStop
+	}
+
+	stopIDs := make([]string, len(stops))
+	for i, stop := range stops {
+		stopIDs[i] = stop.ID
+	}
+
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
+	if err != nil {
+		logging.LogError(api.Logger, "failed to fetch routes for stop references", err)
+		return routeIDsByStop
+	}
+	for _, row := range rows {
+		if routeID, ok := row.RouteID.(string); ok {
+			routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], routeID)
+		}
+	}
+	return routeIDsByStop
+}
+
 // Situation references
 //
 // An entry's situationIds and the response's references.situations must use the
@@ -584,14 +649,34 @@ func (rb *referenceBuilder) getRoutesList() []models.Route {
 	return routes
 }
 
-// TripSituations returns a trip's situation IDs together with the matching
-// situation references, so an entry's situationIds always resolve.
-func (api *RestAPI) TripSituations(ctx context.Context, tripID string) ([]string, []models.Situation) {
-	refs := api.situationRefsForTrip(ctx, tripID)
-
+// situationIDsFromRefs returns the situation IDs of already-resolved references,
+// so entry IDs are always derived the same way the references are.
+func situationIDsFromRefs(refs []situationRef) []string {
 	ids := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		ids = append(ids, ref.ID)
 	}
-	return ids, api.situationReferences(refs)
+	return ids
+}
+
+// TripSituations returns a trip's situation IDs together with the matching
+// situation references, so an entry's situationIds always resolve.
+func (api *RestAPI) TripSituations(ctx context.Context, tripID string) ([]string, []models.Situation) {
+	return api.situationsFromRefs(api.situationRefsForTrip(ctx, tripID))
+}
+
+// situationsFromRefs splits already-resolved references into the entry IDs and
+// the reference block built from the same lookup.
+func (api *RestAPI) situationsFromRefs(refs []situationRef) ([]string, []models.Situation) {
+	return situationIDsFromRefs(refs), api.situationReferences(refs)
+}
+
+// tripSituationsFor returns a trip's situations, reusing the references
+// BuildTripStatus already resolved for the same trip rather than querying for
+// them a second time. Extras is nil when the caller skipped the status.
+func (api *RestAPI) tripSituationsFor(ctx context.Context, tripID string, extras *tripStatusExtras) ([]string, []models.Situation) {
+	if extras == nil {
+		return api.TripSituations(ctx, tripID)
+	}
+	return api.situationsFromRefs(extras.situations)
 }

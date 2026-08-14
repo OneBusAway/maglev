@@ -71,7 +71,7 @@ func TestStopRouteDirectionScheduleJSON(t *testing.T) {
 	stopTime := NewScheduleStopTime(1609462800000, 1609462900000, "service_1", "Downtown", "trip_1")
 
 	directionSchedule := StopRouteDirectionSchedule{
-		ScheduleFrequencies: []Frequency{},
+		ScheduleFrequencies: []ScheduleFrequency{},
 		ScheduleStopTimes:   []ScheduleStopTime{stopTime},
 		TripHeadsign:        "Northbound to Terminal",
 	}
@@ -199,12 +199,16 @@ func TestScheduleForStopEntryWithEmptyRouteSchedules(t *testing.T) {
 
 func TestNewStopRouteDirectionSchedule_WithFrequencies(t *testing.T) {
 	schedule := []ScheduleStopTime{}
-	frequencies := []Frequency{
+	frequencies := []ScheduleFrequency{
 		{
-			StartTime:  NewModelTime(time.UnixMilli(1609459200000)),
-			EndTime:    NewModelTime(time.UnixMilli(1609459300000)),
-			Headway:    NewModelDuration(600 * time.Second),
-			ExactTimes: 0,
+			FrequencyWindow: FrequencyWindow{
+				StartTime: NewModelTime(time.UnixMilli(1609459200000)),
+				EndTime:   NewModelTime(time.UnixMilli(1609459300000)),
+				Headway:   NewModelDuration(600 * time.Second),
+			},
+			ServiceDate: NewModelTime(time.UnixMilli(1609459200000)),
+			ServiceID:   "service_1",
+			TripID:      "trip_1",
 		},
 	}
 

@@ -11,6 +11,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -156,6 +157,35 @@ func TestBuildStopReferencesAndRouteIDsForStops(t *testing.T) {
 			assert.True(t, ok, "route %q referenced by stop should be present in routeMap", rid)
 		}
 	}
+}
+
+func TestStopReferences(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	servedStopID := firstRabaStopIDs(t, api, 1)[0]
+	servedStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, servedStopID)
+	require.NoError(t, err)
+
+	// No stop_times point at this stop, so no route resolves for it.
+	routelessStop := gtfsdb.Stop{ID: "stop-served-by-no-route", Lat: 40.5, Lon: -122.3}
+
+	referringIDs := map[string]string{
+		servedStopID:     utils.FormCombinedID("referring-agency", servedStopID),
+		routelessStop.ID: utils.FormCombinedID("referring-agency", routelessStop.ID),
+	}
+
+	refs, routeIDsByStop := api.stopReferences(ctx, []gtfsdb.Stop{servedStop, routelessStop}, referringIDs)
+	require.Len(t, refs, 2, "a stop with no resolvable routes still gets a reference")
+
+	assert.Equal(t, referringIDs[servedStopID], refs[0].ID, "the referring entry's ID labels the reference")
+	assert.NotEmpty(t, refs[0].RouteIDs)
+	assert.Equal(t, routeIDsByStop[servedStopID], refs[0].RouteIDs)
+
+	assert.Equal(t, referringIDs[routelessStop.ID], refs[1].ID)
+	assert.Empty(t, refs[1].RouteIDs)
+	assert.NotNil(t, refs[1].RouteIDs, "an unresolved route list is empty, not null")
+	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
 }
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {
