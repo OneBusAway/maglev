@@ -15,11 +15,8 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// Pre-compiled regex patterns for FTS5 query sanitization
-var (
-	fts5SpecialCharsRegex = regexp.MustCompile(`[*"():^$@#~<>{}[\]\\|&!]`)
-	fts5OperatorsRegex    = regexp.MustCompile(`(?i)\b(AND|OR|NOT|NEAR)\b`)
-)
+// Pre-compiled regex pattern for FTS5 query sanitization
+var fts5SpecialCharsRegex = regexp.MustCompile(`[*"():^$@#~<>{}[\]\\|&!]`)
 
 // GTFS extended special-vehicle route types. A stop served by exactly one route of
 // one of these types is excluded from stop search results.
@@ -42,18 +39,15 @@ func isSpecialVehicleRouteType(routeType int64) bool {
 
 // sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
 // to prevent query syntax errors. Does not preserve the original characters.
+//
+// Operator words (AND, OR, NOT, NEAR) are deliberately left intact: every term is wrapped
+// in double quotes before the query is assembled, so FTS5 reads them as literal tokens
+// rather than syntax. Stripping them made stop names containing those words unsearchable.
 func sanitizeFTS5Query(input string) string {
-	// 1. Remove ALL FTS5 special characters using pre-compiled regex
 	sanitized := fts5SpecialCharsRegex.ReplaceAllString(input, " ")
-
-	// 2. Remove FTS5 operators using pre-compiled regex
-	sanitized = fts5OperatorsRegex.ReplaceAllString(sanitized, " ")
-
-	// 3. Trim and collapse whitespace
 	sanitized = strings.TrimSpace(sanitized)
-	sanitized = strings.Join(strings.Fields(sanitized), " ")
 
-	return sanitized
+	return strings.Join(strings.Fields(sanitized), " ")
 }
 
 // extractFTS5Terms splits sanitized input into terms and filters out stray punctuation
