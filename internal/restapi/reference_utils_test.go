@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -159,6 +161,34 @@ func TestBuildStopReferencesAndRouteIDsForStops(t *testing.T) {
 	}
 }
 
+func TestQueryInBatches(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("An empty ID set runs no query", func(t *testing.T) {
+		queried := false
+		results, err := queryInBatches(ctx, nil, func(context.Context, []string) ([]string, error) {
+			queried = true
+			return nil, nil
+		})
+
+		require.NoError(t, err)
+		assert.Empty(t, results)
+		assert.False(t, queried, "there is nothing to look up")
+	})
+
+	t.Run("A failing batch stops the run", func(t *testing.T) {
+		batches := 0
+		_, err := queryInBatches(ctx, make([]string, idsPerBatchedQuery+1),
+			func(context.Context, []string) ([]string, error) {
+				batches++
+				return nil, errors.New("query failed")
+			})
+
+		require.Error(t, err)
+		assert.Equal(t, 1, batches, "the remaining batches must not run once one fails")
+	})
+}
+
 func TestStopReferences(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
@@ -186,6 +216,8 @@ func TestStopReferences(t *testing.T) {
 	assert.Empty(t, refs[1].RouteIDs)
 	assert.NotNil(t, refs[1].RouteIDs, "an unresolved route list is empty, not null")
 	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
+	// No stop_times and no shape, so nothing supports a direction.
+	assert.Equal(t, models.UnknownValue, refs[1].Direction)
 }
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {
