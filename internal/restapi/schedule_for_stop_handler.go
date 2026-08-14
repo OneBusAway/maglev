@@ -4,8 +4,8 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -167,11 +167,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		},
 	)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			api.clientCanceledResponse(w, r, err)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 
@@ -185,28 +181,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 
-		var directionSchedules []models.StopRouteDirectionSchedule
-
-		for _, group := range directionMap {
-			slices.SortStableFunc(group.stopTimes, func(a, b models.ScheduleStopTime) int {
-				return cmp.Compare(a.DepartureTime, b.DepartureTime)
-			})
-			slices.SortStableFunc(group.frequencies, func(a, b models.ScheduleFrequency) int {
-				return cmp.Compare(a.StartTime.UnixMilli(), b.StartTime.UnixMilli())
-			})
-
-			directionSchedule := models.NewStopRouteDirectionSchedule(
-				bestHeadsign(group.headsignCounts),
-				group.stopTimes,
-				group.frequencies,
-			)
-			directionSchedules = append(directionSchedules, directionSchedule)
-		}
-
-		// Sort direction groups alphabetically by headsign
-		slices.SortStableFunc(directionSchedules, func(a, b models.StopRouteDirectionSchedule) int {
-			return cmp.Compare(a.TripHeadsign, b.TripHeadsign)
-		})
+		directionSchedules := buildDirectionSchedules(directionMap)
 
 		routeSchedule := models.NewStopRouteSchedule(combinedRouteID, directionSchedules)
 		routeSchedules = append(routeSchedules, routeSchedule)
@@ -382,6 +357,9 @@ type scheduleFrequencyRow struct {
 	exactTimes  int64
 }
 
+// maxExpandedScheduleStopTimes bounds exact-frequency fan-out for one request.
+const maxExpandedScheduleStopTimes int64 = 10_000
+
 // groupScheduleRowsByRouteAndDirection partitions fixed and frequency-based service
 // first by route, then by GTFS direction_id (defaulting to "0" when absent).
 func groupScheduleRowsByRouteAndDirection(
@@ -390,6 +368,7 @@ func groupScheduleRowsByRouteAndDirection(
 	rowCtx scheduleRowContext,
 ) (map[string]map[string]*scheduleDirectionGroup, error) {
 	groups := make(map[string]map[string]*scheduleDirectionGroup)
+	var expandedStopTimeCount int64
 
 	for _, row := range scheduleRows {
 		if ctx.Err() != nil {
@@ -414,14 +393,22 @@ func groupScheduleRowsByRouteAndDirection(
 		switch frequency.exactTimes {
 		case 0:
 			group.frequencies = append(group.frequencies, buildScheduleFrequency(row, rowCtx, templateStopTime, frequency))
-			runCount := (frequency.endTime - frequency.startTime) /
-				(frequency.headwaySecs * int64(time.Second))
+			runCount := frequencyInstanceCount(frequency)
 			recordHeadsignVotes(group, nulls.StringOrEmpty(row.TripHeadsign), runCount)
 		case 1:
-			expanded, err := expandExactScheduleStopTimes(ctx, row, rowCtx, templateStopTime, frequency)
+			remainingExpansionCapacity := maxExpandedScheduleStopTimes - expandedStopTimeCount
+			expanded, err := expandExactScheduleStopTimes(
+				ctx,
+				row,
+				rowCtx,
+				templateStopTime,
+				frequency,
+				remainingExpansionCapacity,
+			)
 			if err != nil {
 				return nil, err
 			}
+			expandedStopTimeCount += int64(len(expanded))
 			group.stopTimes = append(group.stopTimes, expanded...)
 			recordHeadsignVotes(group, nulls.StringOrEmpty(row.TripHeadsign), int64(len(expanded)))
 		}
@@ -512,6 +499,39 @@ func getScheduleDirectionGroup(
 	return groups[combinedRouteID][directionID]
 }
 
+func buildDirectionSchedules(
+	directionMap map[string]*scheduleDirectionGroup,
+) []models.StopRouteDirectionSchedule {
+	directionIDs := make([]string, 0, len(directionMap))
+	for directionID := range directionMap {
+		directionIDs = append(directionIDs, directionID)
+	}
+	slices.Sort(directionIDs)
+
+	directionSchedules := make([]models.StopRouteDirectionSchedule, 0, len(directionIDs))
+	for _, directionID := range directionIDs {
+		group := directionMap[directionID]
+		slices.SortStableFunc(group.stopTimes, func(a, b models.ScheduleStopTime) int {
+			return cmp.Compare(a.DepartureTime, b.DepartureTime)
+		})
+		slices.SortStableFunc(group.frequencies, func(a, b models.ScheduleFrequency) int {
+			return cmp.Compare(a.StartTime.UnixMilli(), b.StartTime.UnixMilli())
+		})
+
+		directionSchedules = append(directionSchedules, models.NewStopRouteDirectionSchedule(
+			bestHeadsign(group.headsignCounts),
+			group.stopTimes,
+			group.frequencies,
+		))
+	}
+
+	// Stable sorting preserves direction ID order when headsigns match.
+	slices.SortStableFunc(directionSchedules, func(a, b models.StopRouteDirectionSchedule) int {
+		return cmp.Compare(a.TripHeadsign, b.TripHeadsign)
+	})
+	return directionSchedules
+}
+
 func parseScheduleFrequencyRow(row gtfsdb.GetScheduleForStopOnDateRow) (scheduleFrequencyRow, bool, error) {
 	fields := []sql.NullInt64{
 		row.FrequencyStartTime,
@@ -533,7 +553,7 @@ func parseScheduleFrequencyRow(row gtfsdb.GetScheduleForStopOnDateRow) (schedule
 		headwaySecs: nulls.Int64OrDefault(row.FrequencyHeadwaySecs, 0),
 		exactTimes:  nulls.Int64OrDefault(row.FrequencyExactTimes, 0),
 	}
-	const maxHeadwaySeconds = int64(^uint64(0)>>1) / int64(time.Second)
+	const maxHeadwaySeconds = math.MaxInt64 / int64(time.Second)
 	if frequency.startTime < 0 || frequency.endTime <= frequency.startTime {
 		return scheduleFrequencyRow{}, false, fmt.Errorf("invalid frequency window for trip %q", row.TripID)
 	}
@@ -574,13 +594,25 @@ func expandExactScheduleStopTimes(
 	rowCtx scheduleRowContext,
 	templateStopTime models.ScheduleStopTime,
 	frequency scheduleFrequencyRow,
+	maxInstances int64,
 ) ([]models.ScheduleStopTime, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if row.FirstDepartureTime < 0 {
 		return nil, fmt.Errorf("invalid first departure time for trip %q", row.TripID)
 	}
 
 	headway := frequency.headwaySecs * int64(time.Second)
-	expanded := make([]models.ScheduleStopTime, 0)
+	instanceCount := frequencyInstanceCount(frequency)
+	if instanceCount > maxInstances {
+		return nil, fmt.Errorf(
+			"frequency expansion for trip %q exceeds the %d-stop-time request limit",
+			row.TripID,
+			maxExpandedScheduleStopTimes,
+		)
+	}
+	expanded := make([]models.ScheduleStopTime, 0, int(instanceCount))
 
 	for instanceStart := frequency.startTime; instanceStart < frequency.endTime; {
 		if ctx.Err() != nil {
@@ -612,13 +644,17 @@ func expandExactScheduleStopTimes(
 	return expanded, nil
 }
 
+func frequencyInstanceCount(frequency scheduleFrequencyRow) int64 {
+	headway := frequency.headwaySecs * int64(time.Second)
+	window := frequency.endTime - frequency.startTime
+	return 1 + (window-1)/headway
+}
+
 func addScheduleOffset(base, offset int64) (int64, error) {
-	const maxInt64 = int64(^uint64(0) >> 1)
-	const minInt64 = -maxInt64 - 1
-	if offset > 0 && base > maxInt64-offset {
+	if offset > 0 && base > math.MaxInt64-offset {
 		return 0, fmt.Errorf("time overflow")
 	}
-	if offset < 0 && base < minInt64-offset {
+	if offset < 0 && base < math.MinInt64-offset {
 		return 0, fmt.Errorf("time underflow")
 	}
 	return base + offset, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -480,13 +481,39 @@ func TestScheduleForStopHandlerFrequencies(t *testing.T) {
 		}
 		return frequencies, stopTimes
 	}
+	replaceFrequenciesForTest := func(t *testing.T, api *RestAPI) {
+		t.Helper()
+		ctx := context.Background()
+		tripIDs, err := api.GtfsManager.GtfsDB.Queries.GetFrequencyTripIDs(ctx)
+		require.NoError(t, err)
+		originalFrequencies, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, tripIDs)
+		require.NoError(t, err)
+		require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearFrequencies(ctx))
+
+		t.Cleanup(func() {
+			cleanupCtx := context.Background()
+			require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearFrequencies(cleanupCtx))
+			for _, frequency := range originalFrequencies {
+				require.NoError(t, api.GtfsManager.GtfsDB.Queries.CreateFrequency(
+					cleanupCtx,
+					gtfsdb.CreateFrequencyParams{
+						TripID:      frequency.TripID,
+						StartTime:   frequency.StartTime,
+						EndTime:     frequency.EndTime,
+						HeadwaySecs: frequency.HeadwaySecs,
+						ExactTimes:  frequency.ExactTimes,
+					},
+				))
+			}
+		})
+	}
 
 	t.Run("exact_times=0 populates sorted schedule frequencies", func(t *testing.T) {
 		api := createTestApi(t)
 		defer api.Shutdown()
 		agency, stop, row, startOfDay := findActiveScheduleRow(t, api)
 		ctx := context.Background()
-		require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearFrequencies(ctx))
+		replaceFrequenciesForTest(t, api)
 
 		const headwaySecs = int64(900)
 		headway := time.Duration(headwaySecs) * time.Second
@@ -529,7 +556,7 @@ func TestScheduleForStopHandlerFrequencies(t *testing.T) {
 		defer api.Shutdown()
 		agency, stop, row, startOfDay := findActiveScheduleRow(t, api)
 		ctx := context.Background()
-		require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearFrequencies(ctx))
+		replaceFrequenciesForTest(t, api)
 
 		const headwaySecs = int64(1200)
 		headway := time.Duration(headwaySecs) * time.Second
@@ -1043,6 +1070,19 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 		assert.Equal(t, "Express", bestHeadsign(schedules["1_10"]["0"].headsignCounts))
 	})
 
+	t.Run("counts a frequency window shorter than its headway", func(t *testing.T) {
+		row := makeRow("trip-frequency", "10", nulls.Int64(0), "Downtown")
+		row = withFrequency(row, 6*time.Hour, 6*time.Hour+5*time.Minute, 600, 0)
+
+		schedules, err := groupScheduleRowsByRouteAndDirection(
+			context.Background(),
+			[]gtfsdb.GetScheduleForStopOnDateRow{row},
+			rowCtx,
+		)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), schedules["1_10"]["0"].headsignCounts["Downtown"])
+	})
+
 	t.Run("rejects an invalid frequency before expansion", func(t *testing.T) {
 		row := makeRow("trip-invalid", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown")
 		row = withFrequency(row, 6*time.Hour, 7*time.Hour, 0, 1)
@@ -1062,6 +1102,24 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 		_, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
+}
+
+func TestBuildDirectionSchedulesUsesDirectionIDForHeadsignTies(t *testing.T) {
+	directionMap := map[string]*scheduleDirectionGroup{
+		"1": {
+			stopTimes:      []models.ScheduleStopTime{{TripID: "trip-direction-1"}},
+			headsignCounts: map[string]int64{"Downtown": 1},
+		},
+		"0": {
+			stopTimes:      []models.ScheduleStopTime{{TripID: "trip-direction-0"}},
+			headsignCounts: map[string]int64{"Downtown": 1},
+		},
+	}
+
+	schedules := buildDirectionSchedules(directionMap)
+	require.Len(t, schedules, 2)
+	assert.Equal(t, "trip-direction-0", schedules[0].ScheduleStopTimes[0].TripID)
+	assert.Equal(t, "trip-direction-1", schedules[1].ScheduleStopTimes[0].TripID)
 }
 
 func TestParseScheduleFrequencyRow(t *testing.T) {
@@ -1119,7 +1177,7 @@ func TestParseScheduleFrequencyRow(t *testing.T) {
 		{
 			name: "overflowing headway",
 			mutate: func(row *gtfsdb.GetScheduleForStopOnDateRow) {
-				const maxHeadwaySeconds = int64(^uint64(0)>>1) / int64(time.Second)
+				const maxHeadwaySeconds = math.MaxInt64 / int64(time.Second)
 				row.FrequencyHeadwaySecs = nulls.Int64(maxHeadwaySeconds + 1)
 			},
 			wantErr: "invalid frequency headway",
@@ -1182,6 +1240,7 @@ func TestExpandExactScheduleStopTimesValidation(t *testing.T) {
 		invalidRow.FirstDepartureTime = -1
 		_, err := expandExactScheduleStopTimes(
 			context.Background(), invalidRow, rowCtx, models.ScheduleStopTime{}, frequency,
+			maxExpandedScheduleStopTimes,
 		)
 		assert.ErrorContains(t, err, "invalid first departure time")
 	})
@@ -1189,16 +1248,30 @@ func TestExpandExactScheduleStopTimesValidation(t *testing.T) {
 	t.Run("honors cancellation during expansion", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := expandExactScheduleStopTimes(ctx, row, rowCtx, models.ScheduleStopTime{}, frequency)
+		_, err := expandExactScheduleStopTimes(
+			ctx, row, rowCtx, models.ScheduleStopTime{}, frequency, maxExpandedScheduleStopTimes,
+		)
 		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("rejects expansions beyond the request limit", func(t *testing.T) {
+		largeFrequency := frequency
+		largeFrequency.headwaySecs = 1
+		largeFrequency.endTime = largeFrequency.startTime +
+			(maxExpandedScheduleStopTimes+1)*int64(time.Second)
+		_, err := expandExactScheduleStopTimes(
+			context.Background(),
+			row,
+			rowCtx,
+			models.ScheduleStopTime{},
+			largeFrequency,
+			maxExpandedScheduleStopTimes,
+		)
+		assert.ErrorContains(t, err, "exceeds the 10000-stop-time request limit")
 	})
 }
 
 func TestAddScheduleOffset(t *testing.T) {
-	const (
-		maxInt64 = int64(^uint64(0) >> 1)
-		minInt64 = -maxInt64 - 1
-	)
 	tests := []struct {
 		name    string
 		base    int64
@@ -1208,8 +1281,8 @@ func TestAddScheduleOffset(t *testing.T) {
 	}{
 		{name: "adds a positive offset", base: 10, offset: 5, want: 15},
 		{name: "adds a negative offset", base: 10, offset: -5, want: 5},
-		{name: "rejects overflow", base: maxInt64, offset: 1, wantErr: "time overflow"},
-		{name: "rejects underflow", base: minInt64, offset: -1, wantErr: "time underflow"},
+		{name: "rejects overflow", base: math.MaxInt64, offset: 1, wantErr: "time overflow"},
+		{name: "rejects underflow", base: math.MinInt64, offset: -1, wantErr: "time underflow"},
 	}
 
 	for _, test := range tests {
