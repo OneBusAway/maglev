@@ -10,9 +10,11 @@ import (
 
 func newTestFrequency(headwaySecs int) *Frequency {
 	return &Frequency{
-		StartTime: NewModelTime(time.UnixMilli(1609459200000)),
-		EndTime:   NewModelTime(time.UnixMilli(1609462800000)),
-		Headway:   NewModelDuration(time.Duration(headwaySecs) * time.Second),
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(time.UnixMilli(1609459200000)),
+			EndTime:   NewModelTime(time.UnixMilli(1609462800000)),
+			Headway:   NewModelDuration(time.Duration(headwaySecs) * time.Second),
+		},
 	}
 }
 
@@ -56,6 +58,9 @@ func TestTripsForLocationListEntryJSON(t *testing.T) {
 	assert.Equal(t, entry.ServiceDate, unmarshaledEntry.ServiceDate)
 	assert.NotNil(t, unmarshaledEntry.Frequency)
 	assert.Equal(t, entry.Frequency.Headway, unmarshaledEntry.Frequency.Headway)
+	assert.Equal(t, entry.Frequency.StartTime, unmarshaledEntry.Frequency.StartTime)
+	assert.Equal(t, entry.Frequency.EndTime, unmarshaledEntry.Frequency.EndTime)
+	assert.Equal(t, entry.Frequency.ExactTimes, unmarshaledEntry.Frequency.ExactTimes)
 	assert.Equal(t, entry.SituationIds, unmarshaledEntry.SituationIds)
 
 	assert.NotNil(t, unmarshaledEntry.Status)

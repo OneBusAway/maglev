@@ -19,6 +19,16 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripStatusExtras carries what BuildTripStatus resolved on the way to the
+// status, so a caller needing the same values does not query for them again.
+//
+// snapshot may be nil (no live vehicle, no in-range block, etc.); callers
+// should handle that case.
+type tripStatusExtras struct {
+	snapshot   *scheduledBlockSnapshot
+	situations []situationRef
+}
+
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
@@ -28,22 +38,19 @@ import (
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
 // trip ID so the correct schedule data is used.
-// BuildTripStatus returns the trip status and the snapshot it built along
-// the way. Callers that also need per-stop block metrics (distanceFromStop,
-// numberOfStopsAway) should reuse the returned snapshot instead of calling
-// computeScheduledBlockSnapshot a second time — the amplification matters
-// for the plural arrivals-and-departures endpoint which is called
-// per-arrival-row across wide time windows.
 //
-// Snapshot may be nil (no live vehicle, no in-range block, etc.); callers
-// should handle that case.
+// It also returns the intermediate results it built along the way. Callers
+// needing per-stop block metrics (distanceFromStop, numberOfStopsAway) or the
+// trip's situations should reuse those instead of resolving them a second time —
+// the amplification matters for the plural arrivals-and-departures endpoint
+// which is called per-arrival-row across wide time windows.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
 	vehicle *gtfs.Vehicle,
 	serviceDate time.Time,
 	currentTime time.Time,
-) (*models.TripStatus, *scheduledBlockSnapshot, error) {
+) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
 		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 	}
@@ -53,7 +60,8 @@ func (api *RestAPI) BuildTripStatus(
 	status := models.NewTripStatus()
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	status.ServiceDate = models.NewModelTime(sdMidnight)
-	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
+	extras := &tripStatusExtras{situations: api.situationRefsForTrip(ctx, tripID)}
+	status.SituationIDs = situationIDsFromRefs(extras.situations)
 	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
 	// Computed up front (independent of vehicle/stop-time/shape data below) so
@@ -92,12 +100,12 @@ func (api *RestAPI) BuildTripStatus(
 	if status.Status == "CANCELED" {
 		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 		status.Scheduled = !status.Predicted
-		return status, nil, nil
+		return status, extras, nil
 	}
 
 	_, activeTripRawID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 	if err != nil {
-		return status, nil, err
+		return status, extras, err
 	}
 
 	// Determine which trip ID to use for DB lookups (stop times, shapes, etc.).
@@ -354,7 +362,8 @@ func (api *RestAPI) BuildTripStatus(
 		}
 	}
 
-	return status, snap, nil
+	extras.snapshot = snap
+	return status, extras, nil
 }
 
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
@@ -816,14 +825,6 @@ func projectOntoSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio float64
 func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio float64) {
 	d, r, _, _ := projectOntoSegment(px, py, x1, y1, x2, y2)
 	return d, r
-}
-
-func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
-	situationIDs := []string{}
-	for _, ref := range api.situationRefsForTrip(ctx, tripID) {
-		situationIDs = append(situationIDs, ref.ID)
-	}
-	return situationIDs
 }
 
 // situationRefsForTrip resolves the alerts affecting a trip and pairs each with

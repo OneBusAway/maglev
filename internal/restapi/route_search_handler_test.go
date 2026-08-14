@@ -1,12 +1,15 @@
 package restapi
 
 import (
+	"context"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +45,10 @@ func TestRouteSearchHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, models.APIVersion, model.Version)
+	assert.NotZero(t, model.CurrentTime)
+	assert.Empty(t, model.Data.References.Routes)
+	assert.False(t, model.Data.OutOfRange, "search-route performs no geographic bounding; outOfRange is always false")
 
 	require.NotEmpty(t, model.Data.List)
 
@@ -66,13 +73,38 @@ func TestRouteSearchHandlerRequiresInput(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestRouteSearchHandlerMissingInputParam(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, _ := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{}))
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestRouteSearchHandlerValidatesMaxCount(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, _ := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"1"}, "maxCount": {"-1"}}))
+	tests := []struct {
+		name       string
+		maxCount   string
+		wantStatus int
+	}{
+		{"negative", "-1", http.StatusBadRequest},
+		{"zero", "0", http.StatusBadRequest},
+		{"non-numeric", "abc", http.StatusBadRequest},
+		{"at max allowed", "250", http.StatusOK},
+		{"above max allowed", "251", http.StatusBadRequest},
+	}
 
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, _ := callAPIHandler[RoutesResponse](t, api,
+				routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {tt.maxCount}}))
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+		})
+	}
 }
 
 func TestRouteSearchHandlerNoResults(t *testing.T) {
@@ -95,18 +127,6 @@ func TestRouteSearchHandlerWhitespaceInput(t *testing.T) {
 	assert.Empty(t, model.Data.List)
 }
 
-func TestRouteSearchHandlerMaxCountBoundaries(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"250"}}))
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-
-	resp2, _ := callAPIHandler[models.ResponseModel](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"251"}}))
-	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
-}
-
 func TestRouteSearchHandlerLimitExceeded(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -120,6 +140,17 @@ func TestRouteSearchHandlerLimitExceeded(t *testing.T) {
 
 	assert.True(t, model.Data.LimitExceeded, "limitExceeded should be true when results are truncated")
 	assert.Equal(t, 1, len(model.Data.List), "results should be truncated to maxCount")
+}
+
+func TestRouteSearchHandlerLimitNotExceeded(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {"250"}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.False(t, model.Data.LimitExceeded, "limitExceeded should be false when results fit within maxCount")
 }
 
 func TestRouteSearchHandlerIncludeReferencesFalse(t *testing.T) {
@@ -215,4 +246,24 @@ func TestRouteSearchHandlerPaginationBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRouteSearchHandlerContextCancellation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	req, err := http.NewRequest("GET", routeSearchURL(url.Values{"input": {"shasta"}}), nil)
+	require.NoError(t, err)
+	// Use a deadline in the past — context.Err() is DeadlineExceeded immediately,
+	// no timer resolution dependency (avoids Windows ~15ms minimum sleep issue).
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
 }

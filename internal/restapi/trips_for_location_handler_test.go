@@ -11,7 +11,6 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -73,6 +72,107 @@ func TestTripsForLocationHandler_DifferentAreas(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTripsForLocationServiceDateUsesTripAgencyTimezone(t *testing.T) {
+	currentTime := time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC)
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+
+	assert.Equal(t,
+		time.Date(2026, 8, 10, 0, 0, 0, 0, losAngeles),
+		serviceDateMidnight(currentTime, losAngeles))
+	assert.Equal(t,
+		time.Date(2026, 8, 10, 0, 0, 0, 0, chicago),
+		serviceDateMidnight(currentTime, chicago))
+	assert.Equal(t, 2*time.Hour,
+		serviceDateMidnight(currentTime, losAngeles).Sub(serviceDateMidnight(currentTime, chicago)),
+		"a Chicago trip must not use Los Angeles midnight")
+}
+
+func TestTripsForLocationHandler_UsesEachTripAgencyTimezone(t *testing.T) {
+	currentTime := time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime),
+		"trips-for-location-multi-timezone.zip", multiTimezoneTripsForLocationFiles())
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	latitude := float32(tripsForLocationLat)
+	longitude := float32(tripsForLocationLon)
+	for _, trip := range []struct {
+		tripID  string
+		routeID string
+	}{
+		{tripID: "la-trip", routeID: "la-route"},
+		{tripID: "chicago-trip", routeID: "chicago-route"},
+	} {
+		api.GtfsManager.MockAddVehicleWithOptions("vehicle-"+trip.tripID, trip.tripID, trip.routeID,
+			internalgtfs.MockVehicleOptions{
+				Timestamp: &currentTime,
+				Position: &gtfs.Position{
+					Latitude:  &latitude,
+					Longitude: &longitude,
+				},
+			})
+	}
+
+	url := tripsForLocationURL(0.1, 0.1,
+		"includeSchedule=true",
+		"includeStatus=true",
+		fmt.Sprintf("time=%d", currentTime.UnixMilli()))
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 2)
+
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+	expectedMidnights := map[string]time.Time{
+		"la_la-trip":           serviceDateMidnight(currentTime, losAngeles),
+		"chicago_chicago-trip": serviceDateMidnight(currentTime, chicago),
+	}
+	expectedTimezones := map[string]string{
+		"la_la-trip":           losAngeles.String(),
+		"chicago_chicago-trip": chicago.String(),
+	}
+
+	for _, entry := range model.Data.List {
+		expectedMidnight, found := expectedMidnights[entry.TripId]
+		require.True(t, found, "unexpected trip %q", entry.TripId)
+		assert.Equal(t, expectedMidnight.UnixMilli(), entry.ServiceDate)
+		require.NotNil(t, entry.Schedule)
+		assert.Equal(t, expectedTimezones[entry.TripId], entry.Schedule.TimeZone)
+		assert.Empty(t, entry.Schedule.NextTripId,
+			"trips with a shared block ID must remain isolated by agency")
+		assert.Empty(t, entry.Schedule.PreviousTripId,
+			"trips with a shared block ID must remain isolated by agency")
+		require.NotNil(t, entry.Status)
+		assert.Equal(t, expectedMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+	}
+}
+
+func multiTimezoneTripsForLocationFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"la,Los Angeles Transit,http://example.com/la,America/Los_Angeles\n" +
+			"chicago,Chicago Transit,http://example.com/chicago,America/Chicago\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"la-route,la,LA,Los Angeles Route,3\n" +
+			"chicago-route,chicago,CH,Chicago Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"shared-service,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"la-stop,Los Angeles Stop,40.5865,-122.3917\n" +
+			"chicago-stop,Chicago Stop,40.5865,-122.3917\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,block_id\n" +
+			"la-route,shared-service,la-trip,Los Angeles,shared-block\n" +
+			"chicago-route,shared-service,chicago-trip,Chicago,shared-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"la-trip,05:00:00,05:00:00,la-stop,1\n" +
+			"chicago-trip,07:00:00,07:00:00,chicago-stop,1\n",
 	}
 }
 
@@ -839,55 +939,6 @@ func uniqueStrings(values []string) []string {
 		unique = append(unique, value)
 	}
 	return unique
-}
-
-func TestTripsForLocationRequest_ScheduleLocation(t *testing.T) {
-	losAngeles, err := time.LoadLocation("America/Los_Angeles")
-	require.NoError(t, err)
-	chicago, err := time.LoadLocation("America/Chicago")
-	require.NoError(t, err)
-
-	req := &tripsForLocationRequest{
-		CurrentLocation: losAngeles,
-		AgencyLocations: map[string]*time.Location{"1": losAngeles, "2": chicago},
-	}
-
-	tests := []struct {
-		name     string
-		agencyID string
-		want     *time.Location
-	}{
-		{name: "First agency", agencyID: "1", want: losAngeles},
-		{name: "Agency in a different zone", agencyID: "2", want: chicago},
-		{name: "Unknown agency falls back to the query zone", agencyID: "99", want: losAngeles},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, req.scheduleLocation(tt.agencyID))
-		})
-	}
-}
-
-func TestAgencyLocations(t *testing.T) {
-	t.Run("Resolves each agency's zone", func(t *testing.T) {
-		locations, err := agencyLocations([]gtfsdb.Agency{
-			{ID: "1", Timezone: "America/Los_Angeles"},
-			{ID: "2", Timezone: "America/Chicago"},
-		})
-
-		require.NoError(t, err)
-		require.Len(t, locations, 2)
-		assert.Equal(t, "America/Los_Angeles", locations["1"].String())
-		assert.Equal(t, "America/Chicago", locations["2"].String())
-	})
-
-	t.Run("Reports an unparseable zone", func(t *testing.T) {
-		_, err := agencyLocations([]gtfsdb.Agency{{ID: "1", Timezone: "Not/A_Zone"}})
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), `invalid timezone for agency "1"`)
-	})
 }
 
 // tripsForLocationServiceDayClock is noon Pacific on a Wednesday inside the
