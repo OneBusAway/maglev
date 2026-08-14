@@ -813,6 +813,48 @@ func TestTripsForLocationHandler_ScheduleStopsAreReferenced(t *testing.T) {
 	}
 }
 
+// TestTripsForLocationHandler_StatusStopsAreReferenced covers the path where a
+// status is the only thing naming a stop: with includeSchedule=false there are
+// no stop times to collect, so closestStop and nextStop are the whole of what
+// references.stops has to resolve.
+func TestTripsForLocationHandler_StatusStopsAreReferenced(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	require.Eventually(t, func() bool {
+		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
+
+	url := tripsForLocationURL(2.0, 3.0, "includeSchedule=false", "includeStatus=true")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so status stop references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		referenced[stop.ID] = true
+	}
+
+	sawStatusStop := false
+	for _, entry := range model.Data.List {
+		require.Nil(t, entry.Schedule, "includeSchedule=false should leave the schedule out")
+		if entry.Status == nil {
+			continue
+		}
+		for _, stopID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
+			if stopID == "" {
+				continue
+			}
+			sawStatusStop = true
+			assert.True(t, referenced[stopID],
+				"stop %q named by trip %q's status must appear in references.stops", stopID, entry.TripId)
+		}
+	}
+	require.True(t, sawStatusStop, "expected at least one status stop to assert against")
+}
+
 // TestTripsForLocationHandler_UnreferencedStopsAreOmitted verifies that stops
 // merely inside the search bounds are not emitted as references when nothing in
 // the response points at them.
@@ -910,13 +952,13 @@ func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stops)
 
-	stopIDs := make([]string, 0, stopIDsPerTripIDQuery+len(stops))
-	for len(stopIDs) <= stopIDsPerTripIDQuery {
+	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= idsPerBatchedQuery {
 		for _, stop := range stops {
 			stopIDs = append(stopIDs, stop.ID)
 		}
 	}
-	require.Greater(t, len(stopIDs), stopIDsPerTripIDQuery,
+	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
 	batched, err := api.candidateTripIDsForStops(ctx, stopIDs)
