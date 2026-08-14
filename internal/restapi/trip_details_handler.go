@@ -107,14 +107,9 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 		fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
 	}
 
-	includeParams := map[string]*bool{
-		"includeTrip":     &params.IncludeTrip,
-		"includeSchedule": &params.IncludeSchedule,
-		"includeStatus":   &params.IncludeStatus,
-	}
-	for name, target := range includeParams {
-		*target, fieldErrors = utils.ParseBoolParam(query, name, *target, fieldErrors)
-	}
+	params.IncludeTrip, fieldErrors = utils.ParseBoolParam(query, "includeTrip", params.IncludeTrip, fieldErrors)
+	params.IncludeSchedule, fieldErrors = utils.ParseBoolParam(query, "includeSchedule", params.IncludeSchedule, fieldErrors)
+	params.IncludeStatus, fieldErrors = utils.ParseBoolParam(query, "includeStatus", params.IncludeStatus, fieldErrors)
 
 	if len(fieldErrors) > 0 {
 		return params, fieldErrors
