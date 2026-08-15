@@ -33,8 +33,9 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
+	const alertID = "situation-handler-alert"
 	alert := gtfs.Alert{
-		ID: "test-alert-123",
+		ID: alertID,
 		Header: []gtfs.AlertText{
 			{Text: "Service disruption", Language: "en"},
 		},
@@ -44,7 +45,7 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 	}
 	api.GtfsManager.AddAlertForTest(alert)
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/test-alert-123.json?key=TEST")
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/"+alertID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
@@ -55,7 +56,7 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 
 	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok, "response should include data.entry object")
-	assert.Equal(t, "test-alert-123", entry["id"])
+	assert.Equal(t, alertID, entry["id"])
 	assert.Equal(t, "UNKNOWN_CAUSE", entry["reason"])
 	assert.Equal(t, "noImpact", entry["severity"])
 
