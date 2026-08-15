@@ -24,6 +24,23 @@ type TripParams struct {
 	VehicleID       string
 }
 
+const errMustBeBoolean = "must be a boolean value (true/false)"
+
+// parseBoolParam parses raw as a boolean; an absent parameter yields
+// (false, false) so callers keep defaults. Invalid values record a field
+// error instead of failing the whole request.
+func parseBoolParam(key, raw string, fieldErrors map[string][]string) (bool, bool) {
+	if raw == "" {
+		return false, false
+	}
+	val, err := strconv.ParseBool(raw)
+	if err != nil {
+		fieldErrors[key] = []string{errMustBeBoolean}
+		return false, false
+	}
+	return val, true
+}
+
 // parseTripParams parses and validates the common trip query params
 // includeScheduleDefault controls the default value of IncludeSchedule when the
 // parameter is not present in the request (true for trip-details, false for trip-for-vehicle).
@@ -55,28 +72,16 @@ func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool
 		}
 	}
 
-	if includeTripStr := r.URL.Query().Get("includeTrip"); includeTripStr != "" {
-		if val, err := strconv.ParseBool(includeTripStr); err == nil {
-			params.IncludeTrip = val
-		} else {
-			fieldErrors["includeTrip"] = []string{"must be a boolean value (true/false)"}
-		}
+	if val, ok := parseBoolParam("includeTrip", r.URL.Query().Get("includeTrip"), fieldErrors); ok {
+		params.IncludeTrip = val
 	}
 
-	if includeScheduleStr := r.URL.Query().Get("includeSchedule"); includeScheduleStr != "" {
-		if val, err := strconv.ParseBool(includeScheduleStr); err == nil {
-			params.IncludeSchedule = val
-		} else {
-			fieldErrors["includeSchedule"] = []string{"must be a boolean value (true/false)"}
-		}
+	if val, ok := parseBoolParam("includeSchedule", r.URL.Query().Get("includeSchedule"), fieldErrors); ok {
+		params.IncludeSchedule = val
 	}
 
-	if includeStatusStr := r.URL.Query().Get("includeStatus"); includeStatusStr != "" {
-		if val, err := strconv.ParseBool(includeStatusStr); err == nil {
-			params.IncludeStatus = val
-		} else {
-			fieldErrors["includeStatus"] = []string{"must be a boolean value (true/false)"}
-		}
+	if val, ok := parseBoolParam("includeStatus", r.URL.Query().Get("includeStatus"), fieldErrors); ok {
+		params.IncludeStatus = val
 	}
 
 	// Validate time — accepts either a Unix timestamp in milliseconds
