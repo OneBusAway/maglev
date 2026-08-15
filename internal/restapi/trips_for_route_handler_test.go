@@ -758,7 +758,7 @@ func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
 // status is the only thing naming a stop: with includeSchedule=false there are
 // no stop times to collect, so closestStop and nextStop are the whole of what
 // references.stops has to resolve.
-func TestTripsForRouteHandler_StatusStopsAreReferencedx(t *testing.T) {
+func TestTripsForRouteHandler_StatusStopsAreReferenced(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
 
