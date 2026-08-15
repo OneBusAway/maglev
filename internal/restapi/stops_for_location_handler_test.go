@@ -591,3 +591,47 @@ func TestStopsForLocationHandlerWithSituations(t *testing.T) {
 
 	assert.True(t, foundOurAlert, "Expected to find our mock alert in the references.situations")
 }
+
+// Spec extension 8a: includeReferences=false leaves the references block present but empty.
+func TestStopsForLocationHonorsIncludeReferences(t *testing.T) {
+	tests := []struct {
+		name             string
+		param            string
+		expectReferences bool
+	}{
+		{name: "omitted", param: "", expectReferences: true},
+		{name: "true", param: "&includeReferences=true", expectReferences: true},
+		{name: "false", param: "&includeReferences=false", expectReferences: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+			api := createTestApiWithClock(t, mockClock)
+
+			stopID := "2042"
+			api.GtfsManager.AddAlertForTest(gtfs.Alert{
+				ID:               "test-alert-stop-2042",
+				InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+				Description:      []gtfs.AlertText{{Text: "Stop 2042 is closed today", Language: "en"}},
+			})
+
+			resp, model := callAPIHandler[StopsResponse](t, api,
+				"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042"+tt.param)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Len(t, model.Data.List, 1, "the stop itself is returned either way")
+
+			refs := model.Data.References
+			if tt.expectReferences {
+				assert.NotEmpty(t, refs.Agencies)
+				assert.NotEmpty(t, refs.Routes)
+				assert.NotEmpty(t, refs.Situations)
+			} else {
+				assert.Empty(t, refs.Agencies)
+				assert.Empty(t, refs.Routes)
+				assert.Empty(t, refs.Situations)
+			}
+		})
+	}
+}
