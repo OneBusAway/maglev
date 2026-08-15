@@ -287,12 +287,14 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 	}
 
-	// Batch-fetch frequencies for all trips in the window to avoid a
-	// per-arrival N+1 query. Multiple frequency rows per trip are kept in
-	// order; the arrival's frequency field takes the first (earliest
-	// start_time), matching the TripDetails contract.
-	freqMap := make(map[string][]gtfsdb.Frequency)
+	// Batch-fetch frequencies; seeding nil prevents BuildTripStatus from
+	// falling back to a per-arrival query. First row (earliest start_time)
+	// becomes the arrival's frequency field.
+	freqMap := make(map[string][]gtfsdb.Frequency, len(uniqueTripIDs))
 	if len(uniqueTripIDs) > 0 {
+		for _, tripID := range uniqueTripIDs {
+			freqMap[tripID] = nil
+		}
 		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, uniqueTripIDs)
 		if freqErr != nil {
 			api.Logger.Warn("failed to batch fetch frequencies for trips", slog.Any("error", freqErr))
@@ -380,8 +382,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 
 		// Always built — Java attaches a BlockLocation (real-time or scheduled) to
-		// every arrival, so tripStatus is always non-null.
-		status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
+		// every arrival, so tripStatus is always non-null. Pass freqMap to avoid
+		// per-arrival frequency queries.
+		status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time, freqMap)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed for arrival",
 				"tripID", st.TripID, "error", statusErr)

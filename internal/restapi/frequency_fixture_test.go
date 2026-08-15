@@ -14,8 +14,8 @@ const (
 	freqAgencyID    = "freq-agency"
 	freqRouteID     = "freq-route"
 	freqServiceID   = "freq-service"
-	freqTripID      = "freq-trip"       // frequency-based, exact_times=0
-	freqExactTripID = "freq-exact-trip" // frequency-based, exact_times=1
+	freqTripID      = "freq-trip"        // frequency-based, exact_times=0
+	freqExactTripID = "freq-exact-trip"  // frequency-based, exact_times=1
 	freqNormalTripD = "freq-normal-trip" // no frequency entry
 	freqStopAID     = "freq-stop-a"
 	freqStopBID     = "freq-stop-b"

@@ -134,10 +134,10 @@ func TestArrivalsAndDeparturesWithFrequency(t *testing.T) {
 	// Querying at 06:05 (default window 06:00-06:40) surfaces only the two
 	// frequency-based arrivals; querying at 08:05 surfaces only the normal one.
 	windowRequests := []struct {
-		name             string
-		timeMs           int64
-		wantTripIDs      []string
-		wantFreq         bool
+		name        string
+		timeMs      int64
+		wantTripIDs []string
+		wantFreq    bool
 	}{
 		{
 			name:        "frequency-based arrivals carry their window",

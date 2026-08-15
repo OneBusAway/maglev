@@ -78,4 +78,3 @@ func NewScheduleFrequencyFromDB(
 		DepartureEnabled: departureEnabled,
 	}
 }
-

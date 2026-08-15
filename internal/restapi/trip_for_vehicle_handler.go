@@ -73,13 +73,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	var statusExtras *tripStatusExtras
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
 		if statusErr != nil {
-			api.Logger.Warn("failed to build trip status",
-				"tripID", tripID,
-				"agencyID", agencyID,
-				"error", statusErr)
-			status = nil
+			api.serverErrorResponse(w, r, statusErr)
+			return
 		}
 	}
 
@@ -105,10 +102,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		var scheduleErr error
 		schedule, scheduleErr = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, loc)
 		if scheduleErr != nil {
-			api.Logger.Warn("failed to build trip schedule",
-				"tripID", tripID,
-				"agencyID", agencyID,
-				"error", scheduleErr)
+			api.serverErrorResponse(w, r, scheduleErr)
+			return
 		}
 	}
 
@@ -118,10 +113,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
-		api.Logger.Warn("GetFrequenciesForTrip failed",
-			"trip_id", tripID,
-			"error", err.Error())
-		freqRows = nil
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
 	var frequency *models.Frequency

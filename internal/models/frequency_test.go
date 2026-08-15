@@ -153,11 +153,11 @@ func TestNewScheduleFrequencyFromDB(t *testing.T) {
 	sf := NewScheduleFrequencyFromDB(
 		dbFreq,
 		serviceDate,
-		"service_1",          // serviceID
-		"15_trip_1",          // tripID (combined form)
-		"Downtown Terminal",  // stopHeadsign
-		true,                 // arrivalEnabled
-		false,                // departureEnabled
+		"service_1",         // serviceID
+		"15_trip_1",         // tripID (combined form)
+		"Downtown Terminal", // stopHeadsign
+		true,                // arrivalEnabled
+		false,               // departureEnabled
 	)
 
 	expectedStart := time.Date(2024, 1, 15, 6, 0, 0, 0, loc)

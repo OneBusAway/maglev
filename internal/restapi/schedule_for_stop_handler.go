@@ -168,11 +168,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, tripIDs)
 		if freqErr != nil {
-			api.Logger.Warn("schedule-for-stop: failed to batch fetch frequencies", "stop_id", stopID, "error", freqErr)
-		} else {
-			for _, f := range allFreqs {
-				freqMap[f.TripID] = append(freqMap[f.TripID], f)
-			}
+			api.serverErrorResponse(w, r, freqErr)
+			return
+		}
+		for _, f := range allFreqs {
+			freqMap[f.TripID] = append(freqMap[f.TripID], f)
 		}
 	}
 
@@ -564,6 +564,9 @@ func addFrequencyToDirectionGroup(
 // frequencyVoteWeight returns headsign votes per frequency row: estimated departures in
 // its window (range / headway), per Java OBA, falling back to 1 for bad headways.
 func frequencyVoteWeight(freq gtfsdb.Frequency) int {
+	if freq.HeadwaySecs <= 0 {
+		return 1
+	}
 	weight := (freq.EndTime - freq.StartTime) / int64(time.Second) / freq.HeadwaySecs
 	if weight <= 0 {
 		return 1
