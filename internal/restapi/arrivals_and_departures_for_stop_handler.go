@@ -287,6 +287,22 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 	}
 
+	// Batch-fetch frequencies for all trips in the window to avoid a
+	// per-arrival N+1 query. Multiple frequency rows per trip are kept in
+	// order; the arrival's frequency field takes the first (earliest
+	// start_time), matching the TripDetails contract.
+	freqMap := make(map[string][]gtfsdb.Frequency)
+	if len(uniqueTripIDs) > 0 {
+		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, uniqueTripIDs)
+		if freqErr != nil {
+			api.Logger.Warn("failed to batch fetch frequencies for trips", slog.Any("error", freqErr))
+		} else {
+			for _, f := range allFreqs {
+				freqMap[f.TripID] = append(freqMap[f.TripID], f)
+			}
+		}
+	}
+
 	for _, ast := range allActiveStopTimes {
 		st := ast.GetStopTimesForStopInWindowRow
 
@@ -478,6 +494,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			tripStatus,                                      // tripStatus
 			situationIDs,                                    // situationIDs
 		)
+
+		if freqs, ok := freqMap[st.TripID]; ok && len(freqs) > 0 {
+			converted := models.NewFrequencyFromDB(freqs[0], serviceMidnight)
+			arrival.Frequency = &converted
+		}
 
 		arrivals = append(arrivals, *arrival)
 	}

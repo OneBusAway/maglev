@@ -376,6 +376,29 @@ func (api *RestAPI) BuildTripStatus(
 	return status, extras, nil
 }
 
+// frequencyForEntry returns the trip's frequency data from a batch-fetched
+// freqMap, taking the first (earliest start_time) frequency row per the API
+// contract. Trips resolved after the batch was built (interlined block
+// members, DUPLICATED base trips) fall back to a single per-trip query and
+// cache the result so repeat lookups of the same ID hit the map.
+func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceDate time.Time) *models.Frequency {
+	freqs, ok := freqMap[tripID]
+	if !ok {
+		rows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+		if err != nil || len(rows) == 0 {
+			freqMap[tripID] = nil
+			return nil
+		}
+		freqs = rows
+		freqMap[tripID] = rows
+	}
+	if len(freqs) == 0 {
+		return nil
+	}
+	converted := models.NewFrequencyFromDB(freqs[0], serviceDate)
+	return &converted
+}
+
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {

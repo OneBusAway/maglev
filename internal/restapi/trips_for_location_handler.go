@@ -375,6 +375,20 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 	}
 
+	// Batch-fetch frequencies for all candidate trips to avoid per-entry N+1
+	// queries for the frequency field.
+	freqMap := make(map[string][]gtfsdb.Frequency)
+	if len(validVehicleTrips) > 0 {
+		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, validVehicleTrips)
+		if freqErr != nil {
+			api.Logger.Warn("failed to batch fetch frequencies for trips", "error", freqErr)
+		} else {
+			for _, f := range allFreqs {
+				freqMap[f.TripID] = append(freqMap[f.TripID], f)
+			}
+		}
+	}
+
 	var result []models.TripsForLocationListEntry
 	situations := newSituationCollector()
 
@@ -395,6 +409,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			continue
 		}
 		tripMidnight := serviceDateMidnight(request.CurrentTime, agencyLocation)
+		frequency := api.frequencyForEntry(ctx, freqMap, tripID, tripMidnight)
 
 		var schedule *models.TripsSchedule
 		var status *models.TripStatus
@@ -418,6 +433,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				shapePoints,
 				stopCoords,
 				blockTrips,
+				frequency,
 			)
 		}
 
@@ -437,7 +453,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		alerts := api.GtfsManager.GetAlertsByIDs(tripID, tripData.RouteID, agencyID)
 
 		entry := models.TripsForLocationListEntry{
-			Frequency:    nil,
+			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  tripMidnight.UnixMilli(),
@@ -464,6 +480,7 @@ func (api *RestAPI) buildScheduleForTrip(
 	ctx context.Context,
 	tripID, agencyID string, serviceDate time.Time,
 	currentLocation *time.Location,
+	freqMap map[string][]gtfsdb.Frequency,
 ) (*models.TripsSchedule, error) {
 	shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
 	var shapePoints []gtfs.ShapePoint
@@ -486,7 +503,7 @@ func (api *RestAPI) buildScheduleForTrip(
 
 	stopTimesList := buildStopTimesList(api, ctx, stopTimes, shapePoints, agencyID)
 	return &models.TripsSchedule{
-		Frequency:      nil,
+		Frequency:      api.frequencyForEntry(ctx, freqMap, tripID, serviceDate),
 		NextTripId:     nextTripID,
 		PreviousTripId: previousTripID,
 		StopTimes:      stopTimesList,
@@ -824,6 +841,7 @@ func (rb *referenceBuilder) getSituationsList() []models.Situation {
 }
 
 // buildScheduleFromMemory constructs a TripsSchedule from pre-fetched stop times, shape points, and block trips.
+// frequency is the caller's pre-computed entry frequency (nil when the trip has none).
 func (api *RestAPI) buildScheduleFromMemory(
 	trip gtfsdb.Trip,
 	agencyID string,
@@ -832,6 +850,7 @@ func (api *RestAPI) buildScheduleFromMemory(
 	shapePoints []gtfs.ShapePoint,
 	stopCoords map[string]struct{ lat, lon float64 },
 	blockTrips []gtfsdb.GetTripsByBlockIDsRow,
+	frequency *models.Frequency,
 ) *models.TripsSchedule {
 
 	// Calculate Next/Prev using in-memory block trips
@@ -841,7 +860,7 @@ func (api *RestAPI) buildScheduleFromMemory(
 	stopTimesList := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
 	return &models.TripsSchedule{
-		Frequency:      nil,
+		Frequency:      frequency,
 		NextTripId:     nextTripID,
 		PreviousTripId: previousTripID,
 		StopTimes:      stopTimesList,

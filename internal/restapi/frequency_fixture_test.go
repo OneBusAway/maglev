@@ -49,9 +49,9 @@ func frequencyFixtureFiles() map[string]string {
 			freqStopAID + ",Frequency Stop A,37.7749,-122.4194\n" +
 			freqStopBID + ",Frequency Stop B,37.7849,-122.4094\n",
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
-			freqRouteID + "," + freqServiceID + "," + freqTripID + ",Downtown via Freq,0,\n" +
-			freqRouteID + "," + freqServiceID + "," + freqExactTripID + ",Exact Times Trip,0,\n" +
-			freqRouteID + "," + freqServiceID + "," + freqNormalTripD + ",Normal Trip,0,\n",
+			freqRouteID + "," + freqServiceID + "," + freqTripID + ",Downtown via Freq,0,freq-block-1\n" +
+			freqRouteID + "," + freqServiceID + "," + freqExactTripID + ",Exact Times Trip,0,freq-block-2\n" +
+			freqRouteID + "," + freqServiceID + "," + freqNormalTripD + ",Normal Trip,0,freq-block-3\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			freqTripID + ",06:00:00,06:00:00," + freqStopAID + ",1\n" +
 			freqTripID + ",06:10:00,06:10:00," + freqStopBID + ",2\n" +
