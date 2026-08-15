@@ -115,7 +115,14 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
-		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedByEntries(ctx, result)
+		schedules := make([]*models.TripsSchedule, 0, len(result))
+		statuses := make([]*models.TripStatus, 0, len(result))
+	
+		for _, entry := range result {
+			schedules = append(schedules, entry.Schedule)
+			statuses = append(statuses, entry.Status)
+		}
+		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedByEntries(ctx, schedules, statuses)
 		if stopsErr != nil {
 			api.serverErrorResponse(w, r, stopsErr)
 			return
@@ -236,15 +243,17 @@ func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
 // The in-bounds stop set is deliberately not included — it is a candidate-trip
 // selection detail, and stops on it that no returned trip serves have nothing in
 // the response pointing at them.
-func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []models.TripsForLocationListEntry) ([]gtfsdb.Stop, map[string]string, error) {
+func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, schedules []*models.TripsSchedule, statuses []*models.TripStatus) ([]gtfsdb.Stop, map[string]string, error) {
 	stopIDsByBareID := make(map[string]string)
 
-	for _, entry := range entries {
-		collectStopIDsFromSchedule(entry.Schedule, stopIDsByBareID)
-		if entry.Status == nil {
+	for _, schedule := range schedules {
+		collectStopIDsFromSchedule(schedule, stopIDsByBareID)
+	}
+	for _, status := range statuses {
+		if status == nil {
 			continue
 		}
-		for _, combinedID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
+		for _, combinedID := range []string{status.ClosestStop, status.NextStop} {
 			_, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
 			if err != nil {
 				continue
