@@ -430,6 +430,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		situationIDs,                                   // situationIds
 	)
 
+	// Populate frequency for the arrival's trip. The singular handler serves
+	// one trip per request, so a per-trip query is appropriate here.
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr == nil && len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(freqRows[0], serviceMidnight)
+		arrival.Frequency = &converted
+	}
+
 	references := models.NewEmptyReferences()
 
 	// Add Stop Agency Reference
