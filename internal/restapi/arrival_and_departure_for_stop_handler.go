@@ -357,7 +357,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
+	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime, nil)
 	if statusErr != nil {
 		api.Logger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -429,6 +429,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		tripStatus,                                     // tripStatus
 		situationIDs,                                   // situationIds
 	)
+
+	// Populate frequency for the arrival's trip. The singular handler serves
+	// one trip per request, so a per-trip query is appropriate here.
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr == nil && len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(freqRows[0], serviceMidnight)
+		arrival.Frequency = &converted
+	}
 
 	references := models.NewEmptyReferences()
 

@@ -44,12 +44,15 @@ type tripStatusExtras struct {
 // trip's situations should reuse those instead of resolving them a second time —
 // the amplification matters for the plural arrivals-and-departures endpoint
 // which is called per-arrival-row across wide time windows.
+//
+// freqMap supplies batch-fetched frequency rows, avoiding a per-call query.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
 	vehicle *gtfs.Vehicle,
 	serviceDate time.Time,
 	currentTime time.Time,
+	freqMap map[string][]gtfsdb.Frequency,
 ) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
 		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
@@ -152,6 +155,15 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
 	}
+
+	// Reuse the batch-fetched frequencies when supplied; single-entry handlers
+	// fall back to a per-trip query.
+	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, dbTripID, serviceDate)
+	if freqErr != nil {
+		return status, extras, freqErr
+	}
+	status.Frequency = frequency
+
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
@@ -366,6 +378,28 @@ func (api *RestAPI) BuildTripStatus(
 	return status, extras, nil
 }
 
+// frequencyForEntry returns the first (earliest start_time) frequency row for
+// the trip, from the batch-fetched freqMap or a per-trip fallback query. Empty
+// results yield nil; DB errors propagate. A nil freqMap skips caching.
+func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceDate time.Time) (*models.Frequency, error) {
+	freqs, ok := freqMap[tripID]
+	if !ok {
+		rows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+		if err != nil {
+			return nil, err
+		}
+		freqs = rows
+		if freqMap != nil {
+			freqMap[tripID] = rows
+		}
+	}
+	if len(freqs) == 0 {
+		return nil, nil
+	}
+	converted := models.NewFrequencyFromDB(freqs[0], serviceDate)
+	return &converted, nil
+}
+
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
@@ -402,10 +436,21 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
+	// Populate frequency data for the schedule sub-object.
+	var scheduleFrequency *models.Frequency
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, trip.ID)
+	if freqErr != nil {
+		return nil, freqErr
+	}
+	if len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		scheduleFrequency = &converted
+	}
+
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
 		TimeZone:       loc.String(),
-		Frequency:      nil,
+		Frequency:      scheduleFrequency,
 		NextTripID:     nextTripID,
 		PreviousTripID: previousTripID,
 	}, nil
