@@ -635,3 +635,58 @@ func TestStopsForLocationHonorsIncludeReferences(t *testing.T) {
 		})
 	}
 }
+
+// The time parameter also accepts yyyy-MM-dd_HH-mm-ss, which was previously read as
+// epoch millis and silently resolved to 1970.
+func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
+	// 2025-06-13 14:00:00 in RABA's timezone, a date the fixture has service on.
+	const serviceDateEpochMs = "1749848400000"
+
+	tests := []struct {
+		name        string
+		timeParam   string
+		expectStops bool
+	}{
+		{name: "epoch millis", timeParam: serviceDateEpochMs, expectStops: true},
+		{name: "date and time", timeParam: "2025-06-13_14-00-00", expectStops: true},
+		{name: "date only", timeParam: "2025-06-13", expectStops: true},
+		{name: "malformed", timeParam: "garbage", expectStops: false},
+		{name: "absent", timeParam: "", expectStops: false},
+	}
+
+	var epochStopIDs []string
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A clock outside the fixture's service dates returns nothing, so a time
+			// that parses shows up as a non-empty result rather than a shifted count.
+			futureClock := clock.NewMockClock(time.Date(2031, 1, 1, 12, 0, 0, 0, time.UTC))
+			api := createTestApiWithClock(t, futureClock)
+
+			endpoint := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500"
+			if tt.timeParam != "" {
+				endpoint += "&time=" + tt.timeParam
+			}
+			resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode, "an unparseable time is served, not rejected")
+
+			stopIDs := make([]string, 0, len(model.Data.List))
+			for _, stop := range model.Data.List {
+				stopIDs = append(stopIDs, stop.ID)
+			}
+
+			if !tt.expectStops {
+				assert.Empty(t, stopIDs, "no service is active at the clock's date")
+				return
+			}
+
+			require.NotEmpty(t, stopIDs)
+			if epochStopIDs == nil {
+				epochStopIDs = stopIDs
+				return
+			}
+			assert.Equal(t, epochStopIDs, stopIDs, "every accepted form of the same date selects the same stops")
+		})
+	}
+}
