@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
@@ -753,7 +754,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, _, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		routeGroups, ok := schedules["1_10"]
@@ -773,7 +774,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-b", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		schedules, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, _, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1, "expected a single direction bucket")
@@ -786,7 +787,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Valid: false}, "Downtown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, _, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1)
@@ -801,7 +802,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in-1", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		_, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		_, _, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
@@ -817,7 +818,115 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		_, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
+		_, _, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
 		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("routes frequency-based trips to the frequency map", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-freq", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+			makeRow("trip-normal", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+		}
+		rowCtxWithFreqs := rowCtx
+		rowCtxWithFreqs.freqMap = map[string][]gtfsdb.Frequency{
+			"trip-freq": {
+				{TripID: "trip-freq", StartTime: int64(6 * time.Hour), EndTime: int64(9 * time.Hour), HeadwaySecs: 600, ExactTimes: 0},
+			},
+		}
+
+		schedules, frequencies, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtxWithFreqs)
+		assert.NoError(t, err)
+
+		assert.Len(t, schedules["1_10"]["0"], 1, "only the non-frequency trip keeps a schedule stop time")
+		assert.Equal(t, "1_trip-normal", schedules["1_10"]["0"][0].TripID)
+
+		require.Len(t, frequencies["1_10"]["0"], 1, "the frequency trip gets one schedule frequency per frequency row")
+		freqEntry := frequencies["1_10"]["0"][0]
+		assert.Equal(t, "1_trip-freq", freqEntry.TripID)
+		assert.Equal(t, startOfDay.Add(6*time.Hour).UnixMilli(), freqEntry.FrequencyWindow.StartTime.UnixMilli())
+	})
+
+	t.Run("keeps exact_times=1 trips on the stop-time path for now", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-exact", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+		}
+		rowCtxWithExactFreqs := rowCtx
+		rowCtxWithExactFreqs.freqMap = map[string][]gtfsdb.Frequency{
+			"trip-exact": {
+				{TripID: "trip-exact", StartTime: int64(6 * time.Hour), EndTime: int64(9 * time.Hour), HeadwaySecs: 1800, ExactTimes: 1},
+			},
+		}
+
+		schedules, frequencies, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtxWithExactFreqs)
+		assert.NoError(t, err)
+
+		assert.Len(t, schedules["1_10"]["0"], 1, "exact_times=1 trips keep their template stop times")
+		assert.Equal(t, "1_trip-exact", schedules["1_10"]["0"][0].TripID)
+		assert.Empty(t, frequencies, "exact_times=1 trips produce no schedule frequencies yet")
+	})
+}
+
+func TestScheduleForStopHandlerWithFrequency(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	defer api.Shutdown()
+
+	startOfDay := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+	combinedStopID := utils.FormCombinedID(freqAgencyID, freqStopBID)
+	endpoint := "/api/where/schedule-for-stop/" + combinedStopID + ".json?key=TEST&date=2025-06-12"
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := model.Data.(map[string]any)
+	entry := data["entry"].(map[string]any)
+	schedules := entry["stopRouteSchedules"].([]any)
+	require.Len(t, schedules, 1, "single frequency route in fixture")
+	require.Len(t, schedules[0].(map[string]any)["stopRouteDirectionSchedules"].([]any), 1)
+
+	dirSchedule := schedules[0].(map[string]any)["stopRouteDirectionSchedules"].([]any)[0].(map[string]any)
+
+	stopTimesByTrip := make(map[string]map[string]any)
+	for _, stAny := range dirSchedule["scheduleStopTimes"].([]any) {
+		st := stAny.(map[string]any)
+		stopTimesByTrip[st["tripId"].(string)] = st
+	}
+
+	frequenciesByTrip := make(map[string][]map[string]any)
+	for _, freqAny := range dirSchedule["scheduleFrequencies"].([]any) {
+		freq := freqAny.(map[string]any)
+		tripID := freq["tripId"].(string)
+		frequenciesByTrip[tripID] = append(frequenciesByTrip[tripID], freq)
+	}
+
+	t.Run("headway-based trip appears only as scheduleFrequencies", func(t *testing.T) {
+		combinedTripID := utils.FormCombinedID(freqAgencyID, freqTripID)
+		freqEntries, ok := frequenciesByTrip[combinedTripID]
+		require.True(t, ok, "expected a schedule frequency for the headway-based trip")
+		require.Len(t, freqEntries, 1, "one frequency row per frequency trip")
+
+		freqEntry := freqEntries[0]
+		assert.Equal(t, float64(startOfDay.Add(6*time.Hour).UnixMilli()), freqEntry["startTime"])
+		assert.Equal(t, float64(startOfDay.Add(9*time.Hour).UnixMilli()), freqEntry["endTime"])
+		assert.Equal(t, float64(600), freqEntry["headway"])
+		assert.Equal(t, float64(startOfDay.UnixMilli()), freqEntry["serviceDate"])
+		assert.Equal(t, utils.FormCombinedID(freqAgencyID, freqServiceID), freqEntry["serviceId"])
+		assert.Equal(t, combinedTripID, freqEntry["tripId"])
+		assert.True(t, freqEntry["arrivalEnabled"].(bool), "second stop of the two-stop block has an arrival")
+		assert.False(t, freqEntry["departureEnabled"].(bool), "last stop of the block has no onward departure")
+
+		_, stillHasStopTime := stopTimesByTrip[combinedTripID]
+		assert.False(t, stillHasStopTime, "headway-based trips have no template stop time in scheduleStopTimes")
+	})
+
+	t.Run("exact_times=1 and plain trips keep their schedule stop times", func(t *testing.T) {
+		assert.Len(t, stopTimesByTrip, 2, "exact_times=1 and plain trips remain in scheduleStopTimes")
+
+		exactStopTime := stopTimesByTrip[utils.FormCombinedID(freqAgencyID, freqExactTripID)]
+		assert.Equal(t, float64(startOfDay.Add(6*time.Hour+15*time.Minute).UnixMilli()), exactStopTime["departureTime"])
+		assert.Empty(t, frequenciesByTrip[utils.FormCombinedID(freqAgencyID, freqExactTripID)], "exact_times=1 trips are not expanded yet")
+
+		normalStopTime := stopTimesByTrip[utils.FormCombinedID(freqAgencyID, freqNormalTripD)]
+		assert.Equal(t, float64(startOfDay.Add(8*time.Hour+15*time.Minute).UnixMilli()), normalStopTime["departureTime"])
+		assert.Empty(t, frequenciesByTrip[utils.FormCombinedID(freqAgencyID, freqNormalTripD)], "plain trips have no schedule frequencies")
 	})
 }
