@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -31,11 +30,6 @@ func (api *RestAPI) situationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	situations := api.BuildSituationReferences([]gtfs.Alert{alert})
-	if len(situations) == 0 {
-		api.serverErrorResponse(w, r, fmt.Errorf("unexpected empty situation build for id %q", situationID))
-		return
-	}
-
 	references := models.NewEmptyReferences()
 	response := models.NewEntryResponse(situations[0], *references, api.Clock)
 	api.sendResponse(w, r, response)

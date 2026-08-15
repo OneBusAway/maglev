@@ -42,7 +42,7 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 			{Text: "Detour in effect", Language: "en"},
 		},
 	}
-	api.GtfsManager.AddTestAlert(alert)
+	api.GtfsManager.AddAlertForTest(alert)
 
 	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/test-alert-123.json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -58,6 +58,16 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 	assert.Equal(t, "test-alert-123", entry["id"])
 	assert.Equal(t, "UNKNOWN_CAUSE", entry["reason"])
 	assert.Equal(t, "noImpact", entry["severity"])
+
+	summary, ok := entry["summary"].(map[string]interface{})
+	require.True(t, ok, "entry should include summary")
+	assert.Equal(t, "Service disruption", summary["value"])
+	assert.Equal(t, "en", summary["lang"])
+
+	description, ok := entry["description"].(map[string]interface{})
+	require.True(t, ok, "entry should include description")
+	assert.Equal(t, "Detour in effect", description["value"])
+	assert.Equal(t, "en", description["lang"])
 
 	references, ok := data["references"].(map[string]interface{})
 	require.True(t, ok, "response should include data.references object")

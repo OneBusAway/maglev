@@ -211,7 +211,7 @@ func (manager *Manager) GetAllAlerts() []gtfs.Alert {
 	for feedID := range manager.feedAlerts {
 		feedIDs = append(feedIDs, feedID)
 	}
-	sort.Strings(feedIDs)
+	slices.Sort(feedIDs)
 
 	seen := make(map[string]struct{})
 	alerts := make([]gtfs.Alert, 0)
