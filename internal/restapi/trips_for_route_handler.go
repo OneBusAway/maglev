@@ -505,11 +505,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		schedules := make([]*models.TripsSchedule, 0, len(result))
 		statuses := make([]*models.TripStatus, 0, len(result))
 
-		for _, entry := range result {
-			schedules = append(schedules, entry.Schedule)
-			statuses = append(statuses, entry.Status)
+		for _, trip := range result {
+			schedules = append(schedules, trip.Schedule)
+			statuses = append(statuses, trip.Status)
 		}
-		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedByEntries(ctx, schedules, statuses)
+		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedByEntries(ctx, schedules, statuses)
 		if stopsErr != nil {
 			api.serverErrorResponse(w, r, stopsErr)
 			return
@@ -518,9 +518,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		references = api.buildTripReferences(ctx, tripReferenceParams{
 			IncludeTrip:     includeTrip,
 			Trips:           result,
-			Stops:           referencedStops,
+			Stops:           stopsReferenced,
 			PreFetchedTrips: fetchedTrips,
-			StopIDMap:       stopIDsByBareID,
+			StopIDMap:       stopIDsMap,
 			Situations:      situations.refs,
 		})
 	} else {

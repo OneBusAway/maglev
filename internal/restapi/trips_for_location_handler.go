@@ -115,8 +115,8 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
-		schedules := make([]*models.TripsSchedule, 0, len(result))
 		statuses := make([]*models.TripStatus, 0, len(result))
+		schedules := make([]*models.TripsSchedule, 0, len(result))
 
 		for _, entry := range result {
 			schedules = append(schedules, entry.Schedule)
