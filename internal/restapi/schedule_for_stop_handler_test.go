@@ -932,9 +932,13 @@ func TestScheduleForStopHandlerWithFrequency(t *testing.T) {
 		require.Len(t, exactStopTimes, 6, "window 06:00-09:00 at 30-minute headway yields 6 stop times")
 
 		for i, st := range exactStopTimes {
-			expectedDeparture := startOfDay.Add(6*time.Hour + 15*time.Minute + time.Duration(i)*30*time.Minute).UnixMilli()
-			assert.Equal(t, float64(expectedDeparture), st["departureTime"])
+			expected := startOfDay.Add(6*time.Hour + 15*time.Minute + time.Duration(i)*30*time.Minute).UnixMilli()
+			assert.Equal(t, float64(expected), st["arrivalTime"])
+			assert.Equal(t, float64(expected), st["departureTime"])
 		}
+		// Stop B is 15 minutes into the trip; block flags come from block position.
+		assert.True(t, exactStopTimes[0]["arrivalEnabled"].(bool), "stop B is not the first block stop")
+		assert.False(t, exactStopTimes[0]["departureEnabled"].(bool), "stop B is the block's last stop")
 		assert.Empty(t, frequenciesByTrip[exactTripID], "expanded exact_times=1 trips produce no schedule frequencies")
 
 		normalTripID := utils.FormCombinedID(freqAgencyID, freqNormalTripD)
@@ -942,52 +946,4 @@ func TestScheduleForStopHandlerWithFrequency(t *testing.T) {
 		assert.Equal(t, float64(startOfDay.Add(8*time.Hour+15*time.Minute).UnixMilli()), stopTimesByTrip[normalTripID][0]["departureTime"])
 		assert.Empty(t, frequenciesByTrip[normalTripID], "plain trips have no schedule frequencies")
 	})
-}
-
-// TestScheduleForStopWithExactTimesExpansion verifies exact_times=1 trips
-// expand into discrete stop times.
-func TestScheduleForStopWithExactTimesExpansion(t *testing.T) {
-	api := createTestApiWithFrequencyData(t)
-	defer api.Shutdown()
-
-	startOfDay := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
-	combinedStopID := utils.FormCombinedID(freqAgencyID, freqStopBID)
-	endpoint := "/api/where/schedule-for-stop/" + combinedStopID + ".json?key=TEST&date=2025-06-12"
-
-	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data := model.Data.(map[string]any)
-	entry := data["entry"].(map[string]any)
-	schedules := entry["stopRouteSchedules"].([]any)
-	require.Len(t, schedules, 1, "single frequency route in fixture")
-
-	dirSchedule := schedules[0].(map[string]any)["stopRouteDirectionSchedules"].([]any)[0].(map[string]any)
-
-	var expandedStopTimes []map[string]any
-	for _, stAny := range dirSchedule["scheduleStopTimes"].([]any) {
-		st := stAny.(map[string]any)
-		if st["tripId"].(string) == utils.FormCombinedID(freqAgencyID, freqExactTripID) {
-			expandedStopTimes = append(expandedStopTimes, st)
-		}
-	}
-
-	// 06:00-09:00 window at a 30-minute headway: offsets 06:00..08:30 → 6 entries.
-	require.Len(t, expandedStopTimes, 6, "exact_times=1 trip expands into one stop time per headway offset")
-
-	// Stop B is 15 minutes into the trip; times shift with each headway offset.
-	for i, st := range expandedStopTimes {
-		expected := startOfDay.Add(6*time.Hour + 15*time.Minute + time.Duration(i)*30*time.Minute).UnixMilli()
-		assert.Equal(t, float64(expected), st["arrivalTime"])
-		assert.Equal(t, float64(expected), st["departureTime"])
-	}
-
-	assert.True(t, expandedStopTimes[0]["arrivalEnabled"].(bool), "stop B is not the first block stop")
-	assert.False(t, expandedStopTimes[0]["departureEnabled"].(bool), "stop B is the block's last stop")
-
-	for _, freqAny := range dirSchedule["scheduleFrequencies"].([]any) {
-		freq := freqAny.(map[string]any)
-		assert.NotEqual(t, utils.FormCombinedID(freqAgencyID, freqExactTripID), freq["tripId"],
-			"expanded exact_times=1 trips must not appear in scheduleFrequencies")
-	}
 }
