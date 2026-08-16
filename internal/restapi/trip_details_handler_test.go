@@ -359,7 +359,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	t.Run("explicit params", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?includeTrip=false&includeSchedule=false&serviceDate=1609459200000", nil)
 
-		params, errs := api.parseTripParams(req, true)
+		params, errs := api.parseTripParams(req, TripParamDefaults{IncludeTrip: true, IncludeSchedule: true})
 
 		assert.Nil(t, errs)
 		assert.False(t, params.IncludeTrip)
@@ -370,7 +370,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	t.Run("serviceDate yyyy-MM-dd format", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?serviceDate=2024-06-15", nil)
 
-		params, errs := api.parseTripParams(req, true)
+		params, errs := api.parseTripParams(req, TripParamDefaults{IncludeTrip: true, IncludeSchedule: true})
 
 		assert.Nil(t, errs)
 		require.NotNil(t, params.ServiceDate)
@@ -382,7 +382,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 
-		params, errs := api.parseTripParams(req, true)
+		params, errs := api.parseTripParams(req, TripParamDefaults{IncludeTrip: true, IncludeSchedule: true})
 
 		assert.Nil(t, errs)
 		assert.True(t, params.IncludeTrip)
@@ -393,7 +393,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	t.Run("invalid params return field errors", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?time=invalid&serviceDate=invalid", nil)
 
-		_, errs := api.parseTripParams(req, true)
+		_, errs := api.parseTripParams(req, TripParamDefaults{IncludeTrip: true, IncludeSchedule: true})
 
 		assert.NotNil(t, errs)
 		assert.Contains(t, errs, "time")
@@ -404,7 +404,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	t.Run("time yyyy-MM-dd_HH-mm-ss format", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?time=2024-06-15_14-30-00", nil)
 
-		params, errs := api.parseTripParams(req, true)
+		params, errs := api.parseTripParams(req, TripParamDefaults{IncludeTrip: true, IncludeSchedule: true})
 
 		assert.Nil(t, errs)
 		require.NotNil(t, params.Time)
@@ -419,7 +419,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	t.Run("vehicleId is parsed", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?vehicleId=40_v123", nil)
 
-		params, errs := api.parseTripParams(req, true)
+		params, errs := api.parseTripParams(req, TripParamDefaults{IncludeTrip: true, IncludeSchedule: true})
 
 		assert.Nil(t, errs)
 		assert.Equal(t, "40_v123", params.VehicleID)
@@ -428,7 +428,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	t.Run("vehicleId defaults to empty", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 
-		params, errs := api.parseTripParams(req, true)
+		params, errs := api.parseTripParams(req, TripParamDefaults{IncludeTrip: true, IncludeSchedule: true})
 
 		assert.Nil(t, errs)
 		assert.Equal(t, "", params.VehicleID)
