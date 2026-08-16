@@ -255,26 +255,26 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	api.sendResponse(w, r, response)
 }
 
-// queryTimeForStops resolves the time parameter that selects which service date's
-// routes are considered active. The value is read in the agency's timezone, as in
-// trips-for-location. A value that does not parse falls back to the current time
-// rather than failing the request, which is what legacy does with one.
+// queryTimeForStops resolves the time that selects which service date's routes are
+// considered active. A service date is a local calendar date, so both an explicit
+// time parameter and the current-time fallback are read in the agency's timezone,
+// as in trips-for-location. A value that does not parse falls back to the current
+// time rather than failing the request, which is what legacy does with one.
 func (api *RestAPI) queryTimeForStops(timeParam string, agencies []gtfsdb.Agency) time.Time {
-	now := api.Clock.Now()
-	if timeParam == "" || len(agencies) == 0 {
-		return now
+	if len(agencies) == 0 {
+		return api.Clock.Now()
 	}
 
 	location, err := loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
 	if err != nil {
 		api.Logger.Warn("failed to load agency timezone for time parameter",
 			"agencyID", agencies[0].ID, "error", err)
-		return now
+		return api.Clock.Now()
 	}
 
 	_, parsedTime, _, ok := utils.ParseTimeParameter(timeParam, location, api.Clock)
 	if !ok {
-		return now
+		return api.Clock.Now().In(location)
 	}
 	return parsedTime
 }
