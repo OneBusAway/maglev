@@ -3762,59 +3762,6 @@ func (q *Queries) GetStopIDsForTrip(ctx context.Context, tripID string) ([]strin
 	return items, nil
 }
 
-const getStopTimesByStopIDs = `-- name: GetStopTimesByStopIDs :many
-SELECT
-    trip_id, arrival_time, departure_time, stop_id, stop_sequence, stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
-FROM
-    stop_times
-WHERE
-    stop_id IN (/*SLICE:stop_ids*/?)
-`
-
-func (q *Queries) GetStopTimesByStopIDs(ctx context.Context, stopIds []string) ([]StopTime, error) {
-	query := getStopTimesByStopIDs
-	var queryParams []interface{}
-	if len(stopIds) > 0 {
-		for _, v := range stopIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(stopIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
-	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []StopTime
-	for rows.Next() {
-		var i StopTime
-		if err := rows.Scan(
-			&i.TripID,
-			&i.ArrivalTime,
-			&i.DepartureTime,
-			&i.StopID,
-			&i.StopSequence,
-			&i.StopHeadsign,
-			&i.PickupType,
-			&i.DropOffType,
-			&i.ShapeDistTraveled,
-			&i.Timepoint,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getStopTimesForStopInWindow = `-- name: GetStopTimesForStopInWindow :many
 SELECT
     st.trip_id,
@@ -4503,6 +4450,52 @@ func (q *Queries) GetTrip(ctx context.Context, id string) (Trip, error) {
 		&i.MaxDepartureTime,
 	)
 	return i, err
+}
+
+const getTripIDsForStops = `-- name: GetTripIDsForStops :many
+SELECT DISTINCT
+    trip_id
+FROM
+    stop_times
+WHERE
+    stop_id IN (/*SLICE:stop_ids*/?)
+`
+
+// GetTripIDsForStops returns the IDs of the trips serving any of these stops.
+// DISTINCT on trip_id alone so the existing (stop_id, trip_id) index covers it:
+// the caller only needs to know which trips touch these stops, and the stop set
+// can be every stop inside a 20 km box.
+func (q *Queries) GetTripIDsForStops(ctx context.Context, stopIds []string) ([]string, error) {
+	query := getTripIDsForStops
+	var queryParams []interface{}
+	if len(stopIds) > 0 {
+		for _, v := range stopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(stopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var trip_id string
+		if err := rows.Scan(&trip_id); err != nil {
+			return nil, err
+		}
+		items = append(items, trip_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getTripTimeBoundsByIDs = `-- name: GetTripTimeBoundsByIDs :many
