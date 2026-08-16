@@ -423,22 +423,9 @@ func groupScheduleRowsByRouteAndDirection(
 
 		freqs, isFrequencyTrip := rowCtx.freqMap[row.TripID]
 		if isFrequencyTrip && len(freqs) > 0 {
-			for _, freq := range freqs {
-				if freq.ExactTimes != 0 {
-					expanded := expandExactTimesStopTimes(row, freq, rowCtx)
-					for _, st := range expanded {
-						addStopTimeToDirectionGroup(routeDirectionScheduleMap, combinedRouteID, directionID, st)
-					}
-					if len(expanded) > 0 {
-						recordHeadsignVote(routeDirectionHeadsignCounts, combinedRouteID, directionID, row.TripHeadsign, len(expanded))
-					}
-					continue
-				}
-				scheduleFreq := buildScheduleFrequency(row, freq, rowCtx)
-				addFrequencyToDirectionGroup(routeDirectionFrequencyMap, combinedRouteID, directionID, scheduleFreq)
-				// Weight frequency headsign votes by trips in the window (Java OBA).
-				recordHeadsignVote(routeDirectionHeadsignCounts, combinedRouteID, directionID, row.TripHeadsign, frequencyVoteWeight(freq))
-			}
+			processFrequencyTrip(row, freqs, rowCtx,
+				routeDirectionScheduleMap, routeDirectionFrequencyMap, routeDirectionHeadsignCounts,
+				combinedRouteID, directionID)
 			continue
 		}
 
@@ -448,6 +435,36 @@ func groupScheduleRowsByRouteAndDirection(
 	}
 
 	return routeDirectionScheduleMap, routeDirectionFrequencyMap, routeDirectionHeadsignCounts, nil
+}
+
+// processFrequencyTrip routes a frequency trip's rows: exact_times=0 rows
+// become schedule frequencies weighted by trips in the window, exact_times=1
+// rows expand into discrete stop times (Java OBA).
+func processFrequencyTrip(
+	row gtfsdb.GetScheduleForStopOnDateRow,
+	freqs []gtfsdb.Frequency,
+	rowCtx scheduleRowContext,
+	routeDirectionScheduleMap map[string]map[string][]models.ScheduleStopTime,
+	routeDirectionFrequencyMap map[string]map[string][]models.ScheduleFrequency,
+	routeDirectionHeadsignCounts map[string]map[string]map[string]int,
+	combinedRouteID, directionID string,
+) {
+	for _, freq := range freqs {
+		if freq.ExactTimes != 0 {
+			expanded := expandExactTimesStopTimes(row, freq, rowCtx)
+			for _, st := range expanded {
+				addStopTimeToDirectionGroup(routeDirectionScheduleMap, combinedRouteID, directionID, st)
+			}
+			if len(expanded) > 0 {
+				recordHeadsignVote(routeDirectionHeadsignCounts, combinedRouteID, directionID, row.TripHeadsign, len(expanded))
+			}
+			continue
+		}
+		scheduleFreq := buildScheduleFrequency(row, freq, rowCtx)
+		addFrequencyToDirectionGroup(routeDirectionFrequencyMap, combinedRouteID, directionID, scheduleFreq)
+		// Weight frequency headsign votes by trips in the window (Java OBA).
+		recordHeadsignVote(routeDirectionHeadsignCounts, combinedRouteID, directionID, row.TripHeadsign, frequencyVoteWeight(freq))
+	}
 }
 
 // directionIDForRow returns the row's GTFS direction_id as a string, defaulting to "0"
