@@ -24,8 +24,15 @@ type requestCacheKey struct{}
 //
 // The memo is deliberately request-scoped rather than a field on RestAPI: static
 // GTFS data is reloaded in the background, and a longer-lived cache would need
-// invalidation wired to that reload. It is mutex-guarded because nothing
-// prevents a handler from building statuses concurrently.
+// invalidation wired to that reload.
+//
+// No handler builds trip statuses concurrently today, so every access is in fact
+// serial; the mutex is here so that the memo stays safe if one ever does. For the
+// same reason there is no in-flight coordination between a miss and its load: with
+// serial callers there are no concurrent misses to collapse, and adding
+// singleflight machinery for a case that cannot currently arise would cost more in
+// complexity than it could save. Should a handler start fanning out, note that the
+// sibling snapshotCache is an unguarded map and would need attention first.
 //
 // This complements the existing snapshotCache (see WithSnapshotCache), which
 // memoizes whole block snapshots. These entries sit a level below that and are
@@ -116,10 +123,13 @@ func (c *requestCache) getStopTimes(tripID string) ([]gtfsdb.StopTime, bool) {
 //
 // A failed prefetch is logged and swallowed: an absent entry falls back to the
 // per-trip query, so the response stays correct and is merely slower.
-func (api *RestAPI) prefetchStopTimes(ctx context.Context, tripIDs []string) {
-	cache := requestCacheFrom(ctx)
-	if cache == nil || len(tripIDs) == 0 {
-		return
+//
+// The loaded rows are also returned grouped by trip ID, so a caller that needs
+// them directly — the arrivals handler counts each trip's stops — can use them
+// without a second pass through the memo. The result is nil when the query failed.
+func (api *RestAPI) prefetchStopTimes(ctx context.Context, tripIDs []string) map[string][]gtfsdb.StopTime {
+	if len(tripIDs) == 0 {
+		return nil
 	}
 
 	rows, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
@@ -130,7 +140,7 @@ func (api *RestAPI) prefetchStopTimes(ctx context.Context, tripIDs []string) {
 		// rather than a slower correct one.
 		slog.Warn("prefetchStopTimes: GetStopTimesForTripIDs failed, falling back to per-trip lookups",
 			slog.Int("trip_count", len(tripIDs)), slog.String("error", err.Error()))
-		return
+		return nil
 	}
 
 	stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripIDs))
@@ -138,11 +148,17 @@ func (api *RestAPI) prefetchStopTimes(ctx context.Context, tripIDs []string) {
 		stopTimesByTrip[row.TripID] = append(stopTimesByTrip[row.TripID], row)
 	}
 
+	cache := requestCacheFrom(ctx)
+	if cache == nil {
+		return stopTimesByTrip
+	}
+
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	for _, tripID := range tripIDs {
 		cache.stopTimes[tripID] = stopTimesByTrip[tripID]
 	}
+	return stopTimesByTrip
 }
 
 // stopTimesForTrip returns tripID's stop times, preferring a prefetched entry.

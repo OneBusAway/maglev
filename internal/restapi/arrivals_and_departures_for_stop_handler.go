@@ -98,7 +98,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// in the same shift. Without this each row pays for the full compute
 	// chain (blockTripIDsForServiceDate + loadBlockTripData + emitBlock
 	// Stops), amplifying to thousands of round-trips on wide time windows.
-	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
+	//
+	// The request cache sits one level below that, covering the block trip
+	// data and service calendar that rows outside a shared shift still
+	// resolve individually, plus the stop times prefetched further down.
+	ctx := withRequestCache(WithSnapshotCache(r.Context(), newSnapshotCache()))
 
 	// Capture parsing errors
 	params, fieldErrors := api.parseArrivalsAndDeparturesParams(r)
@@ -275,17 +279,13 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		tripsLookup[trip.ID] = trip
 	}
 
-	// Batch-fetch stop counts per trip to avoid per-arrival N+1 queries for totalStopsInTrip.
-	tripStopCountMap := make(map[string]int, len(uniqueTripIDs))
-	if len(uniqueTripIDs) > 0 {
-		allStopTimesForTrips, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, uniqueTripIDs)
-		if err != nil {
-			api.Logger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
-		} else {
-			for _, st := range allStopTimesForTrips {
-				tripStopCountMap[st.TripID]++
-			}
-		}
+	// One batch load serves two purposes: totalStopsInTrip below, and seeding the
+	// request memo so the per-arrival BuildTripStatus calls read each trip's stop
+	// times from it instead of issuing a query per row.
+	stopTimesByTrip := api.prefetchStopTimes(ctx, uniqueTripIDs)
+	tripStopCountMap := make(map[string]int, len(stopTimesByTrip))
+	for tripID, stopTimes := range stopTimesByTrip {
+		tripStopCountMap[tripID] = len(stopTimes)
 	}
 
 	for _, ast := range allActiveStopTimes {
