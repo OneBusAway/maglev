@@ -62,8 +62,11 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 		expectedRouteIDs []string
 	}{
 		{
+			// maxCount is set explicitly above the RABA fixture's route count so this
+			// case stays about box sizing; the endpoint's default maxCount (10) would
+			// otherwise randomly truncate these 13 matches on every run.
 			name:             "spans widen the box beyond the default radius",
-			params:           denseCentre + "&latSpan=0.1&lonSpan=0.1",
+			params:           denseCentre + "&latSpan=0.1&lonSpan=0.1&maxCount=50",
 			expectedRouteIDs: []string{"25_15", "25_151", "25_153", "25_154", "25_157", "25_159", "25_160", "25_161", "25_1885", "25_24", "25_3779", "25_44X", "25_6446"},
 		},
 		{
@@ -385,6 +388,22 @@ func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
 			assert.Equal(t, tt.wantExceeds, model.Data.LimitExceeded)
 		})
 	}
+}
+
+func TestRoutesForLocationHandlerDefaultsMaxCountToTen(t *testing.T) {
+	const lat, lon = 40.583321, -122.362535
+	api := createTestApi(t)
+	// Seed past 10 in-bounds routes so the spec default (10, not the endpoint's
+	// 50 clamp ceiling) is actually observable.
+	seedRoutesNearLocation(t, api, lat, lon, 15)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=5000", lat, lon))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Len(t, model.Data.List, 10)
+	assert.True(t, model.Data.LimitExceeded)
 }
 
 // routesForLocationShuffleIterations bounds the flake probability of
