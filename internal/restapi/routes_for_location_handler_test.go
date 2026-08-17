@@ -84,13 +84,19 @@ func TestRoutesForLocationHandlerSituationReferences(t *testing.T) {
 		Header:           []gogtfs.AlertText{{Text: "Test Route Alert", Language: "en"}},
 	})
 
-	_, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966")
+	const baseURL = "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966"
+
+	_, model := callAPIHandler[RoutesResponse](t, api, baseURL)
 
 	situationIDs := make([]string, 0, len(model.Data.References.Situations))
 	for _, situation := range model.Data.References.Situations {
 		situationIDs = append(situationIDs, situation.ID)
 	}
 	assert.Contains(t, situationIDs, "test-alert-routes-for-location")
+
+	// With an alert actually present, includeReferences=false must still suppress it.
+	_, suppressedModel := callAPIHandler[RoutesResponse](t, api, baseURL+"&includeReferences=false")
+	assert.Empty(t, suppressedModel.Data.References.Situations)
 }
 
 func TestRoutesForLocationQuery(t *testing.T) {
