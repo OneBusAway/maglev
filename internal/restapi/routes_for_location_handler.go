@@ -69,18 +69,20 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	references := models.NewEmptyReferences()
+	// When includeReferences=false the references block is present but empty.
+	if ShouldIncludeReferences(r) {
+		agencyIDList := slices.Collect(maps.Keys(agencyIDs))
+		agencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDList)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		references.Agencies = buildAgencyReferences(agencies)
 
-	agencyIDList := slices.Collect(maps.Keys(agencyIDs))
-	agencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDList)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+		// Populate situation references for alerts affecting the returned routes
+		alerts := api.collectAlertsForRoutes(slices.Collect(maps.Keys(routeIDs)))
+		references.Situations = api.BuildSituationReferences(alerts)
 	}
-	references.Agencies = buildAgencyReferences(agencies)
-
-	// Populate situation references for alerts affecting the returned routes
-	alerts := api.collectAlertsForRoutes(slices.Collect(maps.Keys(routeIDs)))
-	references.Situations = api.BuildSituationReferences(alerts)
 
 	// Results must be sorted by ID after maxCount limit is applied.
 	// See how response changes when calling java API with different maxCounts.
