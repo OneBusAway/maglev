@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
 )
@@ -139,6 +140,42 @@ func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
 		RouteID:   routeID,
 		ServiceID: "",
 	})
+}
+
+// MockAddDuplicatedVehicle adds a real-time vehicle carrying a DUPLICATED trip
+// descriptor for the given route, filing it into both the merged vehicle list
+// and the per-route duplicated-vehicle index (mirroring
+// rebuildMergedRealtimeLocked) so GetDuplicatedVehiclesForRoute picks it up.
+func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	for _, v := range m.realTimeVehicles {
+		if v.ID != nil && v.ID.ID == vehicleID {
+			return
+		}
+	}
+	now := time.Now()
+	if opts.Timestamp != nil {
+		now = *opts.Timestamp
+	}
+
+	v := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:                   tripID,
+				RouteID:              routeID,
+				ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+			},
+		},
+	}
+	m.realTimeVehicles = append(m.realTimeVehicles, v)
+	if m.duplicatedVehicleByRoute == nil {
+		m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
+	}
+	m.duplicatedVehicleByRoute[routeID] = append(m.duplicatedVehicleByRoute[routeID], v)
 }
 
 func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTimeUpdates []gtfs.StopTimeUpdate) {
