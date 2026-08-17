@@ -206,14 +206,24 @@ func TestStopReferences(t *testing.T) {
 		LocationType:  nulls.Int64(1),
 		ParentStation: nulls.String("parent-station"),
 	}
-
-	referringIDs := map[string]string{
-		servedStopID:     utils.FormCombinedID("referring-agency", servedStopID),
-		routelessStop.ID: utils.FormCombinedID("referring-agency", routelessStop.ID),
+	defaultStop := gtfsdb.Stop{ID: "default-stop", Lat: 40.6, Lon: -122.4}
+	malformedReferenceStop := gtfsdb.Stop{
+		ID:            "malformed-reference-stop",
+		Lat:           40.7,
+		Lon:           -122.5,
+		ParentStation: nulls.String("parent-station"),
 	}
 
-	refs, routeIDsByStop := api.stopReferences(ctx, []gtfsdb.Stop{servedStop, routelessStop}, referringIDs)
-	require.Len(t, refs, 2, "a stop with no resolvable routes still gets a reference")
+	referringIDs := map[string]string{
+		servedStopID:              utils.FormCombinedID("referring-agency", servedStopID),
+		routelessStop.ID:          utils.FormCombinedID("referring-agency", routelessStop.ID),
+		defaultStop.ID:            utils.FormCombinedID("referring-agency", defaultStop.ID),
+		malformedReferenceStop.ID: "malformed-reference-id",
+	}
+
+	refs, routeIDsByStop := api.stopReferences(ctx,
+		[]gtfsdb.Stop{servedStop, routelessStop, defaultStop, malformedReferenceStop}, referringIDs)
+	require.Len(t, refs, 4, "a stop with no resolvable routes still gets a reference")
 
 	assert.Equal(t, referringIDs[servedStopID], refs[0].ID, "the referring entry's ID labels the reference")
 	assert.NotEmpty(t, refs[0].RouteIDs)
@@ -227,6 +237,12 @@ func TestStopReferences(t *testing.T) {
 	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
 	// No stop_times and no shape, so nothing supports a direction.
 	assert.Equal(t, models.UnknownValue, refs[1].Direction)
+
+	assert.Equal(t, 0, refs[2].LocationType)
+	assert.Empty(t, refs[2].Parent)
+
+	assert.Equal(t, 0, refs[3].LocationType)
+	assert.Empty(t, refs[3].Parent)
 }
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {
