@@ -425,10 +425,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// the start of the service day for this trip." A trip running past
 		// midnight was matched via the previous service day, so its service day
 		// starts at yesterday's midnight, not today's.
-		serviceDate := todayMidnight
-		if midnight, ok := tripServiceDay[tripID]; ok {
-			serviceDate = midnight
-		}
+		serviceDate := serviceDateFor(tripServiceDay, tripID, todayMidnight)
 
 		// Build status from the active trip (tripID). Per spec,
 		// status.activeTripId is "the trip the vehicle is currently executing."
@@ -470,9 +467,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 		dupTripID := vehicle.Trip.ID.ID
 
-		// Resolve the base trip ID for DB lookups.
-		// Try the full ID first; if not found, strip a trailing numeric suffix
-		// (e.g., ".00060") that some feeds append to distinguish duplicated runs.
+		// Fetch the base trip once; its stop-time window drives the
+		// service-date resolution below.
 		baseTripID := dupTripID
 		baseTrip, baseTripErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
 		if baseTripErr != nil {
@@ -509,9 +505,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
-		serviceDate := todayMidnight
-		if midnight, ok := tripServiceDay[baseTripID]; ok {
-			serviceDate = midnight
+		serviceDate := serviceDateFor(tripServiceDay, baseTripID, todayMidnight)
+		// DUPLICATED trips skip the discovery windows: if the base trip's
+		// window overlaps the previous day's window, the run is yesterday's.
+		if serviceDate == todayMidnight && baseTripErr == nil &&
+			tripWindowOverlapsRange(baseTrip,
+				prevDaySinceMidnight+timeRangeStart-currentSinceMidnight,
+				prevDaySinceMidnight+timeRangeEnd-currentSinceMidnight) {
+			serviceDate = prevDayMidnight
 		}
 
 		var status *models.TripStatus
@@ -756,6 +757,27 @@ func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[s
 			}
 		}
 	}
+}
+
+// serviceDateFor returns the service-day midnight recorded for id, falling
+// back to todayMidnight. Both call sites use it so they stay in sync.
+func serviceDateFor(tripServiceDay map[string]time.Time, id string, todayMidnight time.Time) time.Time {
+	if midnight, ok := tripServiceDay[id]; ok {
+		return midnight
+	}
+	return todayMidnight
+}
+
+// tripWindowOverlapsRange reports whether the trip's scheduled window
+// (MinArrivalTime/MaxDepartureTime, ns since midnight) overlaps [start, end] —
+// the same test the discovery queries apply to the previous day. Trips with no
+// stop_times never overlap.
+func tripWindowOverlapsRange(trip gtfsdb.Trip, start, end time.Duration) bool {
+	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+		return false
+	}
+	return trip.MinArrivalTime.Int64 <= end.Nanoseconds() &&
+		trip.MaxDepartureTime.Int64 >= start.Nanoseconds()
 }
 
 // tripReferenceParams bundles the inputs the trips-for-route reference block is
