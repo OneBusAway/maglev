@@ -1501,7 +1501,7 @@ func TestTripsForRouteHandler_StopRoutesResolveInReferences(t *testing.T) {
 		}
 	}
 
-	assert.Contains(t, referenceAgencyIDs, orphanRouteAgencyID, 
+	assert.Contains(t, referenceAgencyIDs, orphanRouteAgencyID,
 		"references.agencies should contain agency: %s for orphaned route: %s", orphanRouteAgencyID, orphanRouteID)
 	for _, route := range refs.Routes {
 		assert.True(t, referenceAgencyIDs[route.AgencyID],
