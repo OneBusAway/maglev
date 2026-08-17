@@ -530,20 +530,22 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 
 	cache := requestCacheFrom(ctx)
 	if cache == nil {
-		return api.loadBlockTripDataFromDB(ctx, tripIDs)
+		trips, _ := api.loadBlockTripDataFromDB(ctx, tripIDs)
+		return trips
 	}
 
 	key := blockTripDataCacheKeyFor(tripIDs)
 	trips, ok := cache.getBlockTripData(key)
 	if !ok {
-		trips = api.loadBlockTripDataFromDB(ctx, tripIDs)
-		// A nil result means the stop-times query failed; the no-usable-trips case
-		// returns an empty non-nil slice. Caching the failure would turn one
-		// transient DB error into a block-wide degradation for the whole request,
-		// with every later row silently skipping its retry.
-		if trips != nil {
-			cache.putBlockTripData(key, trips)
+		loaded, complete := api.loadBlockTripDataFromDB(ctx, tripIDs)
+		// Only a complete load is worth keeping. A stop-times failure yields nil,
+		// and a shape failure yields a haversine-degraded but non-nil result;
+		// caching either would pin one transient error to this block for the rest
+		// of the request, where an uncached call would simply retry and recover.
+		if complete {
+			cache.putBlockTripData(key, loaded)
 		}
+		trips = loaded
 	}
 	// loadShiftTrips sorts the result in place and reslices it, so each caller
 	// needs its own backing array. The elements are treated as read-only.
@@ -551,12 +553,18 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 }
 
 // loadBlockTripDataFromDB is loadBlockTripData without the request-scoped memo.
-func (api *RestAPI) loadBlockTripDataFromDB(ctx context.Context, tripIDs []string) []blockTripData {
+//
+// The second return value reports whether every underlying query succeeded. It is
+// false when stop times could not be loaded at all, in which case the slice is
+// nil, and also when only the shape query failed, since the trips are then usable
+// but carry haversine-derived distances rather than shape-derived ones. Callers
+// that memoize must not store an incomplete result.
+func (api *RestAPI) loadBlockTripDataFromDB(ctx context.Context, tripIDs []string) ([]blockTripData, bool) {
 	q := api.GtfsManager.GtfsDB.Queries
 
 	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripIDs))
 	for _, st := range stopTimeRows {
@@ -568,8 +576,8 @@ func (api *RestAPI) loadBlockTripDataFromDB(ctx context.Context, tripIDs []strin
 	// the fallback, still correct just less precise. Log real DB errors
 	// so an operator sees the degradation instead of silently losing
 	// shape-based precision across every block trip.
-	shapeRows, err := q.GetShapePointsByTripIDs(ctx, tripIDs)
-	warnIfRealDBError(err, "loadBlockTripData: GetShapePointsByTripIDs failed, degrading every trip to haversine fallback",
+	shapeRows, shapeErr := q.GetShapePointsByTripIDs(ctx, tripIDs)
+	warnIfRealDBError(shapeErr, "loadBlockTripData: GetShapePointsByTripIDs failed, degrading every trip to haversine fallback",
 		slog.Int("trip_count", len(tripIDs)))
 	shapePointsByTrip := make(map[string][]gtfs.ShapePoint, len(tripIDs))
 	for _, sr := range shapeRows {
@@ -603,7 +611,7 @@ func (api *RestAPI) loadBlockTripDataFromDB(ctx context.Context, tripIDs []strin
 			),
 		})
 	}
-	return out
+	return out, shapeErr == nil
 }
 
 // fetchStopCoordsForStopTimes batches GetStopsByIDs for the unique stop IDs in

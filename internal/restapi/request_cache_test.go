@@ -168,3 +168,51 @@ func TestActiveServiceIDsForDateUsesCache(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"sentinel"}, second, "the memo must be consulted before the database")
 }
+
+// cancelledWithin returns a cancelled child of ctx, so a query issued with it fails
+// while the request memo carried on ctx stays reachable. This stands in for a
+// transient database failure without disturbing the shared fixture.
+func cancelledWithin(ctx context.Context) context.Context {
+	failing, cancel := context.WithCancel(ctx)
+	cancel()
+	return failing
+}
+
+// TestLoadBlockTripDataDoesNotCacheFailedLoad verifies a failed load leaves the
+// memo empty and a later call recovers. Caching the failure would pin one transient
+// error to this block for every remaining row of the request.
+func TestLoadBlockTripDataDoesNotCacheFailedLoad(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	trip := mustGetTrip(t, api)
+	tripIDs := []string{trip.ID}
+	ctx := withRequestCache(context.Background())
+
+	require.Empty(t, api.loadBlockTripData(cancelledWithin(ctx), tripIDs),
+		"a failed load must not return trip data")
+
+	_, cached := requestCacheFrom(ctx).getBlockTripData(blockTripDataCacheKeyFor(tripIDs))
+	require.False(t, cached, "a failed load must not be memoized")
+
+	recovered := api.loadBlockTripData(ctx, tripIDs)
+	require.Len(t, recovered, 1, "a later call must retry rather than reuse the failure")
+	assert.Equal(t, trip.ID, recovered[0].id)
+}
+
+// TestLoadBlockTripDataFromDBReportsIncompleteLoad verifies the completeness flag
+// that gates memoization is false when the underlying queries fail.
+func TestLoadBlockTripDataFromDBReportsIncompleteLoad(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	trip := mustGetTrip(t, api)
+
+	trips, complete := api.loadBlockTripDataFromDB(context.Background(), []string{trip.ID})
+	require.Len(t, trips, 1)
+	assert.True(t, complete, "a fully successful load must be reported as complete")
+
+	trips, complete = api.loadBlockTripDataFromDB(cancelledWithin(context.Background()), []string{trip.ID})
+	assert.Nil(t, trips)
+	assert.False(t, complete, "a failed load must be reported as incomplete")
+}
