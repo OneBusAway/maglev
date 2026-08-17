@@ -869,6 +869,16 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 	manager.rebuildMergedRealtimeLocked()
 }
 
+// SetRealTimeVehiclesForTest injects real-time vehicles under the synthetic
+// feed ID "_test" so real feed updates do not discard them.
+func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle) {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	manager.feedVehicles["_test"] = vehicles
+	manager.rebuildMergedRealtimeLocked()
+}
+
 // GetStaticLastUpdated reads the timestamp when static GTFS data was last loaded from the database.
 func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
