@@ -173,6 +173,35 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 	}
 }
 
+// TestRoutesForLocationDefaultRadiusMatches600Meters pins the no-query default
+// radius (600m) by equivalence rather than a hardcoded distance: this RABA stop
+// has a neighboring stop whose routes only enter the box between 500m and 600m,
+// so a request with no radius/span must match radius=600 exactly and return
+// strictly more routes than radius=500.
+func TestRoutesForLocationDefaultRadiusMatches600Meters(t *testing.T) {
+	const lat, lon = 40.618458, -122.37598
+
+	routeIDsFor := func(t *testing.T, params string) []string {
+		t.Helper()
+		api := createTestApi(t)
+		_, model := callAPIHandler[RoutesResponse](t, api,
+			fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&maxCount=50%s", lat, lon, params))
+		ids := make([]string, 0, len(model.Data.List))
+		for _, route := range model.Data.List {
+			ids = append(ids, route.ID)
+		}
+		return ids
+	}
+
+	defaultIDs := routeIDsFor(t, "")
+	radius500IDs := routeIDsFor(t, "&radius=500")
+	radius600IDs := routeIDsFor(t, "&radius=600")
+
+	assert.ElementsMatch(t, radius600IDs, defaultIDs, "no radius/span must match radius=600 exactly")
+	assert.Subset(t, defaultIDs, radius500IDs, "every radius=500 route must still be within the default radius")
+	assert.Greater(t, len(defaultIDs), len(radius500IDs), "the default radius must include routes radius=500 misses")
+}
+
 func TestRoutesForLocationRadius(t *testing.T) {
 	api := createTestApi(t)
 
