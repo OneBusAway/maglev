@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -198,7 +199,13 @@ func TestStopReferences(t *testing.T) {
 	require.NoError(t, err)
 
 	// No stop_times point at this stop, so no route resolves for it.
-	routelessStop := gtfsdb.Stop{ID: "stop-served-by-no-route", Lat: 40.5, Lon: -122.3}
+	routelessStop := gtfsdb.Stop{
+		ID:            "stop-served-by-no-route",
+		Lat:           40.5,
+		Lon:           -122.3,
+		LocationType:  nulls.Int64(1),
+		ParentStation: nulls.String("parent-station"),
+	}
 
 	referringIDs := map[string]string{
 		servedStopID:     utils.FormCombinedID("referring-agency", servedStopID),
@@ -213,6 +220,8 @@ func TestStopReferences(t *testing.T) {
 	assert.Equal(t, routeIDsByStop[servedStopID], refs[0].RouteIDs)
 
 	assert.Equal(t, referringIDs[routelessStop.ID], refs[1].ID)
+	assert.Equal(t, 1, refs[1].LocationType)
+	assert.Equal(t, utils.FormCombinedID("referring-agency", "parent-station"), refs[1].Parent)
 	assert.Empty(t, refs[1].RouteIDs)
 	assert.NotNil(t, refs[1].RouteIDs, "an unresolved route list is empty, not null")
 	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
