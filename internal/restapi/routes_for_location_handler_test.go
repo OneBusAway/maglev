@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/gtfs"
@@ -65,6 +66,31 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRoutesForLocationHandlerSituationReferences verifies that a route-scoped
+// alert surfaces as a situation reference — the alert-collection branch feeding
+// data.references.situations had no coverage before this test.
+func TestRoutesForLocationHandlerSituationReferences(t *testing.T) {
+	api := createTestApi(t)
+
+	// testdata.Route19's combined ID is "25_3779"; GetAlertsForRoute matches on
+	// the raw (un-prefixed) route ID, and BuildSituationReferences keys the
+	// resulting situation by the alert's own ID, not the combined form.
+	rawRouteID := "3779"
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "test-alert-routes-for-location",
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &rawRouteID}},
+		Header:           []gogtfs.AlertText{{Text: "Test Route Alert", Language: "en"}},
+	})
+
+	_, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966")
+
+	situationIDs := make([]string, 0, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		situationIDs = append(situationIDs, situation.ID)
+	}
+	assert.Contains(t, situationIDs, "test-alert-routes-for-location")
 }
 
 func TestRoutesForLocationQuery(t *testing.T) {
