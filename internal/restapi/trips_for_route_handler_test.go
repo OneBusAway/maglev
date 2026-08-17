@@ -5,14 +5,17 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -38,6 +41,10 @@ var afterMidnightClock = time.Date(2025, 6, 13, 0, 30, 0, 0, time.UTC)
 // loopRouteClock is 10:15 UTC on 2025-06-12 — used by the looping-route
 // and gap-case fixtures.
 var loopRouteClock = time.Date(2025, 6, 12, 10, 15, 0, 0, time.UTC)
+
+// blockSequenceClock is 09:50 UTC on 2025-06-12, when the middle trip of the
+// block-sequence fixture (tfr-trip-2, 09:35–10:05) is active.
+var blockSequenceClock = time.Date(2025, 6, 12, 9, 50, 0, 0, time.UTC)
 
 const (
 	tripsForRouteAgencyID = "tfr-agency"
@@ -314,6 +321,35 @@ func overnightFiles() map[string]string {
 	}
 }
 
+// blockSequenceFiles models three trips in one block: tfr-trip-1
+// (09:00–09:30), tfr-trip-2 (09:35–10:05), and tfr-trip-3 (10:10–10:40). At
+// blockSequenceClock only tfr-trip-2 is active; its schedule references the
+// adjacent block trips, which are not part of the handler's fetched trips.
+func blockSequenceFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-1,Headsign 1,0,tfr-seq-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-2,Headsign 2,0,tfr-seq-block\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-trip-3,Headsign 3,0,tfr-seq-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-trip-1,09:00:00,09:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-1,09:30:00,09:30:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-2,09:35:00,09:35:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-2,10:05:00,10:05:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-trip-3,10:10:00,10:10:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-trip-3,10:40:00,10:40:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
 // overnightBlockFiles models two trips in block tfr-overnight on service
 // tfr-svc-yest (Thursday 2025-06-12 only): tfr-yest-a (23:00–24:10) links the
 // block via the previous-day window, while tfr-yest-b (23:55–24:45) is the
@@ -390,8 +426,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 		},
 	}
 
-	// ParseTimeParameter ignores api.Clock when no time= is given, so pass it explicitly
-	// to pin the handler's time window to our fixture.
+	// Pass time explicitly to pin the handler's time window to our fixture.
 	timeMs := tripsForRouteTestClock.UnixMilli()
 
 	for _, tt := range tests {
@@ -465,6 +500,63 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 			}
 
 			assert.Equal(t, expectedStopIDs, actualStopIDs, "reference stop IDs must exactly match the deduped schedule stop IDs")
+		})
+	}
+}
+
+// TestTripsForRouteHandler_TimeOmitted verifies that omitting the time parameter
+// correctly falls back to the injected api.Clock to resolve active trips.
+func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true", combinedRouteID)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, 2, model.Version)
+	// currentTime comes from the API clock, as does the omitted time= lookup.
+	assert.Equal(t, tripsForRouteTestClock.UnixMilli(), model.CurrentTime)
+	assert.False(t, model.Data.LimitExceeded)
+	assert.False(t, model.Data.OutOfRange)
+	assert.Empty(t, model.Data.FieldErrors)
+
+	require.Len(t, model.Data.List, 1, "the fixture trip must be active at the pinned clock time")
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	assert.Equal(t, expectedTripID, model.Data.List[0].TripId)
+	assert.NotZero(t, model.Data.List[0].ServiceDate)
+}
+
+// TestTripsForRouteHandler_InvalidTimeParameter verifies that malformed time
+// parameter values correctly trigger a 400 Bad Request validation error.
+func TestTripsForRouteHandler_InvalidTimeParameter(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	tests := []struct {
+		name string
+		time string
+	}{
+		{name: "Garbage String", time: "garbage"},
+		{name: "Overflowing Epoch", time: "99999999999999999999"},
+		{name: "Invalid Calendar Date", time: "2024-13-45"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%s",
+				combinedRouteID, tt.time)
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
+			assert.Equal(t, "Invalid field value for field \"time\".", model.Text)
+			assert.Equal(t, 2, model.Version)
+			require.Contains(t, model.Data.FieldErrors, "time")
+			assert.Equal(t, []string{"Invalid field value for field \"time\"."}, model.Data.FieldErrors["time"])
 		})
 	}
 }
@@ -748,6 +840,9 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 			for i, entry := range model.Data.List {
 				if want {
 					require.NotNil(t, entry.Status, "list[%d].status should be present", i)
+					assert.NotEmpty(t, entry.Status.ActiveTripID, "list[%d].status.activeTripId should be set", i)
+					assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase,
+						"list[%d].status.phase should be a known value", i)
 				} else {
 					assert.Nil(t, entry.Status, "list[%d].status should be omitted", i)
 				}
@@ -1166,17 +1261,70 @@ func TestResolveInterlinedEntryTripID_NoCandidateInBlock(t *testing.T) {
 	assert.False(t, resolved)
 }
 
-// TestTripsForRouteHandler_PastMidnightServiceDate verifies that a trip running
-// past midnight (matched via the previous service day) reports yesterday's
-// midnight as its serviceDate, per the API spec — "Unix millisecond timestamp
-// of midnight at the start of the service day for this trip" — instead of the
-// current calendar day's midnight.
+// PastMidnightServiceDate verifies that a trip running past midnight (via the
+// previous service day) reports yesterday's midnight as its serviceDate.
 func TestTripsForRouteHandler_PastMidnightServiceDate(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
 		"trips-for-route-overnight.zip", overnightFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 	timeMs := afterMidnightClock.UnixMilli()
 	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+
+// TestTripsForRouteHandler_SituationReferences verifies that every situationId
+// emitted on a list entry resolves to an entry in references.situations.
+func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
+	// A dedicated manager, so the seeded alert is not clobbered by other tests
+	// sharing the package-level fixture.
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+
+	// Real-time alerts carry the raw (un-prefixed) route ID from the feed.
+	rawRouteID := "151"
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "test-alert-trips-for-route",
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &rawRouteID}},
+		Header:           []gogtfs.AlertText{{Text: "Test Route Alert", Language: "en"}},
+	})
+
+	// ParseTimeParameter ignores api.Clock when no time= is given, so pin the
+	// handler's window explicitly. Midday Pacific on a weekday inside the RABA
+	// fixture's calendar range, when its trips are running.
+	queryTime := time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
+	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=true&time=%d",
+		queryTime.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "expected trips so situation references can be asserted")
+
+	referenced := make(map[string]bool, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		referenced[situation.ID] = true
+	}
+
+	var emitted []string
+	for _, entry := range model.Data.List {
+		for _, id := range entry.SituationIds {
+			emitted = append(emitted, id)
+			assert.True(t, referenced[id], "situationId %q must resolve to a situation reference", id)
+		}
+	}
+	// The alert names a route but no agency, so its ID is scoped to the agency
+	// the handler resolved the route under.
+	require.Contains(t, emitted, "25_test-alert-trips-for-route",
+		"expected the seeded alert to surface as a situationId")
+}
+
+// BlockSequence_AdjacentTripReferences verifies that schedule.previousTripId
+// and schedule.nextTripId trips — which are not part of the handler's fetched
+// trips — are fully populated in references.trips, not emitted as empty objects.
+func TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(blockSequenceClock),
+		"trips-for-route-block-seq.zip", blockSequenceFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := blockSequenceClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeTrip=true&time=%d",
 		combinedRouteID, timeMs)
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
@@ -1186,23 +1334,20 @@ func TestTripsForRouteHandler_PastMidnightServiceDate(t *testing.T) {
 	require.Len(t, model.Data.List, 1)
 
 	entry := model.Data.List[0]
-	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-a")
+expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-a")
 	assert.Equal(t, expectedTripID, entry.TripId)
 
-	// The trip departed 23:00 on 2025-06-12 (Thursday) and is still running at
-	// 00:30 on 2025-06-13, so its service day starts at Thursday's midnight.
+	// The trip runs past midnight, so its service day is Thursday 2025-06-12.
 	expectedServiceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	assert.Equal(t, expectedServiceDate, entry.ServiceDate)
 
-	// BuildTripStatus receives the same resolved serviceDate, so the status
-	// must agree with the entry rather than reporting today's midnight.
+	// Status must agree with the entry's serviceDate.
 	require.NotNil(t, entry.Status, "entry.Status should not be nil")
 	assert.Equal(t, expectedServiceDate, entry.Status.ServiceDate.UnixMilli())
 }
 
-// TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip verifies that a
-// past-midnight trip selected through the block path (block linked via the
-// previous service day) also reports yesterday's midnight as its serviceDate.
+// PastMidnightServiceDate_BlockTrip is the block-path variant: the block is
+// linked via the previous service day's window.
 func TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
 		"trips-for-route-overnight-block.zip", overnightBlockFiles())
@@ -1218,17 +1363,160 @@ func TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip(t *testing.T) {
 	require.Len(t, model.Data.List, 1)
 
 	entry := model.Data.List[0]
-	// The block is linked via tfr-yest-a (23:00–24:10, overlaps the previous
-	// day's 24:00–24:40 window), but the active trip at 00:30 is tfr-yest-b
-	// (23:55–24:45), selected via the block path.
+	// The block is linked via tfr-yest-a (overlaps the previous day's window);
+	// the active trip at 00:30 is tfr-yest-b.
 	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
 	assert.Equal(t, expectedTripID, entry.TripId)
 
 	expectedServiceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	assert.Equal(t, expectedServiceDate, entry.ServiceDate)
 
-	// BuildTripStatus receives the same resolved serviceDate, so the status
-	// must agree with the entry rather than reporting today's midnight.
+	// Status must agree with the entry's serviceDate.
 	require.NotNil(t, entry.Status, "entry.Status should not be nil")
 	assert.Equal(t, expectedServiceDate, entry.Status.ServiceDate.UnixMilli())
+}
+
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-2"), entry.TripId)
+	require.NotNil(t, entry.Schedule)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1"), entry.Schedule.PreviousTripId)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-3"), entry.Schedule.NextTripId)
+
+	refTrips := make(map[string]models.Trip)
+	for _, ref := range model.Data.References.Trips {
+		refTrips[ref.ID] = ref
+	}
+
+	// The adjacent block trips are not part of the handler's fetched trips, but
+	// their full records must still be present in the references.
+	expectedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	expectedBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-seq-block")
+	expectedServiceID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-svc")
+	for i, tripID := range []string{"tfr-trip-1", "tfr-trip-3"} {
+		ref, ok := refTrips[utils.FormCombinedID(tripsForRouteAgencyID, tripID)]
+		require.Truef(t, ok, "references must include adjacent trip %s", tripID)
+		assert.Equalf(t, expectedRouteID, ref.RouteID, "adjacent trip %s must carry a routeId", tripID)
+		assert.NotEmptyf(t, ref.TripHeadsign, "adjacent trip %s must carry a headsign", tripID)
+		assert.Equalf(t, expectedBlockID, ref.BlockID, "adjacent trip %s must carry its blockId", tripID)
+		assert.Equalf(t, expectedServiceID, ref.ServiceID, "adjacent trip %s must carry its serviceId", tripID)
+		assert.Truef(t,
+			i == 0 ||
+				ref.TripHeadsign != refTrips[utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1")].TripHeadsign,
+			"adjacent trips must not both be the same record")
+	}
+}
+
+// TestBuildTripReferences_FetchesUnprefetchedTrips verifies that trips
+// referenced by entry TripId or Status.ActiveTripID are fetched and fully
+// populated in references.trips when not pre-fetched.
+func TestBuildTripReferences_FetchesUnprefetchedTrips(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(blockSequenceClock),
+		"trips-for-route-block-seq.zip", blockSequenceFiles())
+	ctx := context.Background()
+
+	// Only tfr-trip-2 is pre-fetched; tfr-trip-1 (referenced by an entry
+	// TripId) and tfr-trip-3 (referenced by Status.ActiveTripID) are not.
+	preFetchedTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, "tfr-trip-2")
+	require.NoError(t, err)
+
+	entries := []models.TripsForRouteListEntry{
+		{TripId: utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1")},
+		{
+			TripId: utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-2"),
+			Status: &models.TripStatus{ActiveTripID: utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-3")},
+		},
+	}
+
+	references := api.buildTripReferences(ctx, tripReferenceParams{
+		IncludeTrip:     true,
+		Trips:           entries,
+		PreFetchedTrips: []gtfsdb.Trip{preFetchedTrip},
+	})
+
+	refTrips := make(map[string]models.Trip)
+	for _, ref := range references.Trips {
+		refTrips[ref.ID] = ref
+	}
+
+	expectedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	expectedBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-seq-block")
+	expectedServiceID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-svc")
+
+	for _, tc := range []struct {
+		name   string
+		tripID string
+	}{
+		{name: "entry TripId", tripID: "tfr-trip-1"},
+		{name: "status ActiveTripID", tripID: "tfr-trip-3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ref, ok := refTrips[utils.FormCombinedID(tripsForRouteAgencyID, tc.tripID)]
+			require.Truef(t, ok, "references must include the trip referenced by %s", tc.name)
+			assert.Equal(t, expectedRouteID, ref.RouteID)
+			assert.NotEmpty(t, ref.TripHeadsign)
+			assert.Equal(t, expectedBlockID, ref.BlockID)
+			assert.Equal(t, expectedServiceID, ref.ServiceID)
+		})
+	}
+}
+
+// tripFetchFailureDB wraps the GTFS DB and fails GetTripsByIDs lookups that
+// query any trip ID in failWhenArgsContain. The handler's active-trip fetch
+// never queries those IDs, so only the buildTripReferences lookup fails.
+type tripFetchFailureDB struct {
+	gtfsdb.DBTX
+	failWith            error
+	failWhenArgsContain []string
+}
+
+func (f *tripFetchFailureDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "-- name: GetTripsByIDs") {
+		for _, arg := range args {
+			tripID, ok := arg.(string)
+			if !ok {
+				continue
+			}
+			for _, failID := range f.failWhenArgsContain {
+				if tripID == failID {
+					return nil, f.failWith
+				}
+			}
+		}
+	}
+	return f.DBTX.QueryContext(ctx, query, args...)
+}
+
+// TestTripsForRouteHandler_ReferenceLookupFailureDegradesGracefully verifies
+// that a failure to fetch a referenced trip degrades gracefully: the handler
+// logs and continues, still returning a 200 with the other references intact,
+// rather than failing the whole response.
+func TestTripsForRouteHandler_ReferenceLookupFailureDegradesGracefully(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(blockSequenceClock),
+		"trips-for-route-block-seq.zip", blockSequenceFiles())
+
+	// Block-adjacent trips are referenced by tfr-trip-2's schedule but are
+	// not part of the handler's fetched trips.
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&tripFetchFailureDB{
+		DBTX:                api.GtfsManager.GtfsDB.DB,
+		failWith:            errors.New("forced lookup failure"),
+		failWhenArgsContain: []string{"tfr-trip-1", "tfr-trip-3"},
+	})
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeTrip=true&time=%d",
+		combinedRouteID, blockSequenceClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+refTrips := make(map[string]models.Trip)
+	for _, ref := range model.Data.References.Trips {
+		refTrips[ref.ID] = ref
+	}
+	require.Contains(t, refTrips, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-2"),
+		"the pre-fetched entry trip must still be referenced despite the lookup failure")
+	require.NotContains(t, refTrips, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1"),
+		"the unfetchable adjacent trip must not appear in references")
 }

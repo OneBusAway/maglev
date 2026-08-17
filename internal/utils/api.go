@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -169,10 +170,10 @@ func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[stri
 
 }
 
-func ParseTimeParameter(timeParam string, currentLocation *time.Location) (string, time.Time, map[string][]string, bool) {
+func ParseTimeParameter(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
 	if timeParam == "" {
-		// No time parameter, use current date
-		now := time.Now().In(currentLocation)
+		// No time parameter, use the provided clock's current time
+		now := c.Now().In(currentLocation)
 		return now.Format("20060102"), now, nil, true
 	}
 
@@ -385,6 +386,28 @@ func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[str
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
 	}
 	return val, fieldErrors
+}
+
+// ParseBoolParam retrieves a boolean value from the provided URL query parameters,
+// falling back to fallback when the key is absent. A value that is not a boolean
+// records a field error and leaves the fallback in place.
+func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors map[string][]string) (bool, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		return fallback, fieldErrors
+	}
+
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], "must be a boolean value (true/false)")
+		return fallback, fieldErrors
+	}
+
+	return parsed, fieldErrors
 }
 
 // ClampRadius restricts a radius value to MaxSearchRadiusInMeters

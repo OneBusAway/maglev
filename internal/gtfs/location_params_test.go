@@ -154,3 +154,36 @@ func TestCheckIfOutOfBounds(t *testing.T) {
 		assert.False(t, manager.CheckIfOutOfBounds(params))
 	})
 }
+
+func TestCheckIfOutOfBoundsClamping(t *testing.T) {
+	manager := &Manager{
+		regionBounds: map[string]*RegionBounds{
+			"agency1": {Lat: 40.0, Lon: -70.0, LatSpan: 1.0, LonSpan: 1.0},
+		},
+	}
+	// Seattle, with a radius wide enough to reach the east-coast region only if
+	// the radius is left unclamped.
+	params := &LocationParams{Lat: 47.6, Lon: -122.3, Radius: 5_000_000}
+
+	tests := []struct {
+		name  string
+		clamp []bool
+		want  bool
+	}{
+		{
+			name: "Unclamped bounds still overlap the distant region",
+			want: false,
+		},
+		{
+			name:  "Clamped to 20km the search never reaches the region",
+			clamp: []bool{true},
+			want:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, manager.CheckIfOutOfBounds(params, tt.clamp...))
+		})
+	}
+}

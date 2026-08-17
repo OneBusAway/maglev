@@ -65,6 +65,55 @@ func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
 	assert.False(t, model.Data.LimitExceeded)
 }
 
+// TestAgenciesWithCoverageHandlerEmptyReferencesNotNull pins the wire format:
+// references.agencies must decode as an empty slice, never nil, so it
+// serializes as `[]` rather than `null`.
+func TestAgenciesWithCoverageHandlerEmptyReferencesNotNull(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotNil(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Agencies)
+}
+
+func TestAgenciesWithCoverageHandlerLimitExceeded(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, err := api.GtfsManager.GtfsDB.DB.Exec("INSERT INTO agencies (id, name, url, timezone) VALUES ('MOCK_SECOND', 'Mock Second Agency', 'http://mock.agency', 'America/Los_Angeles')")
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		if _, err := api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM agencies WHERE id = 'MOCK_SECOND'"); err != nil {
+			t.Errorf("failed to clean up MOCK_SECOND agency: %v", err)
+		}
+	})
+
+	tests := []struct {
+		name              string
+		query             string
+		wantLen           int
+		wantLimitExceeded bool
+	}{
+		{"maxCount below total caps the list", "&maxCount=1", 1, true},
+		{"maxCount equal to total returns all", "&maxCount=2", 2, false},
+		{"maxCount above total returns all", "&maxCount=3", 2, false},
+		{"no maxCount returns all", "", 2, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, model := callAPIHandler[CoverageResponse](t, api,
+				"/api/where/agencies-with-coverage.json?key=TEST"+tt.query)
+			assert.Len(t, model.Data.List, tt.wantLen)
+			assert.Equal(t, tt.wantLimitExceeded, model.Data.LimitExceeded)
+		})
+	}
+}
+
 func TestAgenciesWithCoverageHandlerIncludeReferencesFalse(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

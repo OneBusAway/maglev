@@ -90,13 +90,12 @@ func TestNewFrequencyFromDB_OverMidnight(t *testing.T) {
 
 func TestFrequencyJSON(t *testing.T) {
 	freq := Frequency{
-		StartTime:   NewModelTime(time.UnixMilli(1705305600000)),
-		EndTime:     NewModelTime(time.UnixMilli(1705316400000)),
-		Headway:     NewModelDuration(600 * time.Second),
-		ExactTimes:  1, // This shouldn't be serialized to API clients
-		ServiceDate: NewModelTime(time.UnixMilli(1705305600000)),
-		ServiceID:   "service_123",
-		TripID:      "trip_67",
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(time.UnixMilli(1705305600000)),
+			EndTime:   NewModelTime(time.UnixMilli(1705316400000)),
+			Headway:   NewModelDuration(600 * time.Second),
+		},
+		ExactTimes: 1,
 	}
 
 	jsonData, err := json.Marshal(freq)
@@ -106,10 +105,7 @@ func TestFrequencyJSON(t *testing.T) {
 	err = json.Unmarshal(jsonData, &unmarshaled)
 	require.NoError(t, err)
 
-	// Since ExactTimes is ignored in JSON, it defaults to 0 when unmarshaled
-	expected := freq
-	expected.ExactTimes = 0
-	assert.Equal(t, expected, unmarshaled)
+	assert.Equal(t, freq, unmarshaled)
 
 	// Verify JSON field names
 	var raw map[string]any
@@ -118,12 +114,12 @@ func TestFrequencyJSON(t *testing.T) {
 	assert.Contains(t, raw, "startTime")
 	assert.Contains(t, raw, "endTime")
 	assert.Contains(t, raw, "headway")
-	assert.Contains(t, raw, "serviceDate")
-	assert.Contains(t, raw, "serviceId")
-	assert.Contains(t, raw, "tripId")
+	assert.Contains(t, raw, "exactTimes")
 
-	// IMPORTANT: Verify exactTimes is NOT in the JSON (API Backward Compatibility)
-	assert.NotContains(t, raw, "exactTimes")
+	// Verify schedule-for-stop fields are NOT present on the generic Frequency
+	assert.NotContains(t, raw, "serviceDate")
+	assert.NotContains(t, raw, "serviceId")
+	assert.NotContains(t, raw, "tripId")
 }
 
 func TestFrequencyJSON_NilPointer(t *testing.T) {
@@ -136,4 +132,76 @@ func TestFrequencyJSON_NilPointer(t *testing.T) {
 	jsonData, err := json.Marshal(w)
 	require.NoError(t, err)
 	assert.Contains(t, string(jsonData), `"frequency":null`)
+}
+
+func TestScheduleFrequencyJSON(t *testing.T) {
+	sf := ScheduleFrequency{
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(time.UnixMilli(1705305600000)),
+			EndTime:   NewModelTime(time.UnixMilli(1705316400000)),
+			Headway:   NewModelDuration(600 * time.Second),
+		},
+		ServiceDate:      NewModelTime(time.UnixMilli(1705276800000)),
+		ServiceID:        "service_123",
+		TripID:           "trip_67",
+		StopHeadsign:     "Downtown Terminal",
+		ArrivalEnabled:   true,
+		DepartureEnabled: true,
+	}
+
+	jsonData, err := json.Marshal(sf)
+	require.NoError(t, err)
+
+	var unmarshaled ScheduleFrequency
+	err = json.Unmarshal(jsonData, &unmarshaled)
+	require.NoError(t, err)
+
+	assert.Equal(t, sf, unmarshaled)
+
+	// Verify JSON field names
+	var raw map[string]any
+	err = json.Unmarshal(jsonData, &raw)
+	require.NoError(t, err)
+	assert.Contains(t, raw, "startTime")
+	assert.Contains(t, raw, "endTime")
+	assert.Contains(t, raw, "headway")
+	assert.Contains(t, raw, "serviceDate")
+	assert.Contains(t, raw, "serviceId")
+	assert.Contains(t, raw, "tripId")
+	assert.Contains(t, raw, "stopHeadsign")
+	assert.Contains(t, raw, "arrivalEnabled")
+	assert.Contains(t, raw, "departureEnabled")
+
+	// Verify exactTimes is NOT present on ScheduleFrequency
+	assert.NotContains(t, raw, "exactTimes")
+}
+
+func TestScheduleFrequencyJSON_StopHeadsignOmitEmpty(t *testing.T) {
+	sf := ScheduleFrequency{
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(time.UnixMilli(1705305600000)),
+			EndTime:   NewModelTime(time.UnixMilli(1705316400000)),
+			Headway:   NewModelDuration(600 * time.Second),
+		},
+		ServiceDate:      NewModelTime(time.UnixMilli(1705276800000)),
+		ServiceID:        "service_123",
+		TripID:           "trip_67",
+		StopHeadsign:     "", // empty — should be omitted
+		ArrivalEnabled:   true,
+		DepartureEnabled: false,
+	}
+
+	jsonData, err := json.Marshal(sf)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	err = json.Unmarshal(jsonData, &raw)
+	require.NoError(t, err)
+
+	// stopHeadsign should be omitted when empty
+	assert.NotContains(t, raw, "stopHeadsign")
+
+	// Other fields should still be present
+	assert.Contains(t, raw, "arrivalEnabled")
+	assert.Contains(t, raw, "departureEnabled")
 }
