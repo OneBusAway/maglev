@@ -292,76 +292,125 @@ func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Tri
 		return metrics, nil
 	}
 
-	staticTrips, err := manager.GtfsDB.Queries.GetTripsByIDs(ctx, collectTripIDs(trips))
+	tripRouteByID, tripBlockByID, err := manager.staticTripLookups(ctx, trips)
 	if err != nil {
 		return feedMetrics{}, err
 	}
-	tripRouteByID := make(map[string]string, len(staticTrips))
-	tripBlockByID := make(map[string]string, len(staticTrips))
-	for _, staticTrip := range staticTrips {
-		tripRouteByID[staticTrip.ID] = staticTrip.RouteID
-		if staticTrip.BlockID.Valid && staticTrip.BlockID.String != "" {
-			tripBlockByID[staticTrip.ID] = staticTrip.BlockID.String
-		}
+
+	staticStopIDs, err := manager.staticStopIDsForTrips(ctx, trips)
+	if err != nil {
+		return feedMetrics{}, err
 	}
 
 	tripGroups := groupTripsByBlock(trips, tripBlockByID)
 	metrics.recordsTotal = len(tripGroups)
+	metrics.tripsMatched = countMatchedGroups(tripGroups, tripRouteByID, now)
 
-	staticStops, err := manager.GtfsDB.Queries.GetStopsByIDs(ctx, collectStopIDs(trips))
-	if err != nil {
-		return feedMetrics{}, err
-	}
-	staticStopIDs := make(map[string]bool, len(staticStops))
-	for _, staticStop := range staticStops {
-		staticStopIDs[staticStop.ID] = true
-	}
+	classification := classifyTrips(trips, tripRouteByID, staticStopIDs)
+	metrics.tripsUnmatched = len(classification.unmatchedTripIDs)
+	metrics.tripIDsUnmatched = sortedKeys(classification.unmatchedTripIDs)
+	metrics.stopsMatched = len(classification.matchedStopIDs)
+	metrics.stopsUnmatched = len(classification.unmatchedStopIDs)
+	metrics.stopIDsUnmatched = sortedKeys(classification.unmatchedStopIDs)
 
-	routeIDs := make(map[string]bool, len(tripRouteByID))
-	unmatchedTripIDs := make(map[string]bool)
-	matchedStopIDs := make(map[string]bool)
-	unmatchedStopIDs := make(map[string]bool)
-
-	for _, trip := range trips {
-		if routeID, matched := tripRouteByID[trip.ID.ID]; matched {
-			routeIDs[routeID] = true
-		} else {
-			unmatchedTripIDs[trip.ID.ID] = true
-		}
-
-		for _, stopTimeUpdate := range trip.StopTimeUpdates {
-			if stopTimeUpdate.StopID == nil {
-				continue
-			}
-			if staticStopIDs[*stopTimeUpdate.StopID] {
-				matchedStopIDs[*stopTimeUpdate.StopID] = true
-			} else {
-				unmatchedStopIDs[*stopTimeUpdate.StopID] = true
-			}
-		}
-	}
-
-	for _, group := range tripGroups {
-		if !groupHasStaticMatch(group, tripRouteByID) {
-			continue
-		}
-		if isCombinedRecordActive(group, now) {
-			metrics.tripsMatched++
-		}
-	}
-	metrics.tripsUnmatched = len(unmatchedTripIDs)
-	metrics.tripIDsUnmatched = sortedKeys(unmatchedTripIDs)
-	metrics.stopsMatched = len(matchedStopIDs)
-	metrics.stopsUnmatched = len(unmatchedStopIDs)
-	metrics.stopIDsUnmatched = sortedKeys(unmatchedStopIDs)
-
-	resolvedAgencyIDs, err := manager.agencyIDsForRoutes(ctx, routeIDs)
+	resolvedAgencyIDs, err := manager.agencyIDsForRoutes(ctx, classification.routeIDs)
 	if err != nil {
 		return feedMetrics{}, err
 	}
 	metrics.resolvedAgencyIDs = resolvedAgencyIDs
 
 	return metrics, nil
+}
+
+// staticTripLookups resolves a feed poll's trip IDs against the static
+// schedule, returning each matched trip's route and (if present) block ID.
+func (manager *Manager) staticTripLookups(ctx context.Context, trips []gtfs.Trip) (tripRouteByID, tripBlockByID map[string]string, err error) {
+	staticTrips, err := manager.GtfsDB.Queries.GetTripsByIDs(ctx, collectTripIDs(trips))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tripRouteByID = make(map[string]string, len(staticTrips))
+	tripBlockByID = make(map[string]string, len(staticTrips))
+	for _, staticTrip := range staticTrips {
+		tripRouteByID[staticTrip.ID] = staticTrip.RouteID
+		if staticTrip.BlockID.Valid && staticTrip.BlockID.String != "" {
+			tripBlockByID[staticTrip.ID] = staticTrip.BlockID.String
+		}
+	}
+	return tripRouteByID, tripBlockByID, nil
+}
+
+// staticStopIDsForTrips resolves the stop IDs referenced by a feed poll's
+// stop_time_updates against the static schedule.
+func (manager *Manager) staticStopIDsForTrips(ctx context.Context, trips []gtfs.Trip) (map[string]bool, error) {
+	staticStops, err := manager.GtfsDB.Queries.GetStopsByIDs(ctx, collectStopIDs(trips))
+	if err != nil {
+		return nil, err
+	}
+
+	staticStopIDs := make(map[string]bool, len(staticStops))
+	for _, staticStop := range staticStops {
+		staticStopIDs[staticStop.ID] = true
+	}
+	return staticStopIDs, nil
+}
+
+// tripClassification is the per-trip breakdown computeFeedMetrics needs:
+// which routes were referenced (for agency attribution), which trip IDs
+// didn't resolve statically, and which referenced stop IDs did/didn't.
+type tripClassification struct {
+	routeIDs         map[string]bool
+	unmatchedTripIDs map[string]bool
+	matchedStopIDs   map[string]bool
+	unmatchedStopIDs map[string]bool
+}
+
+func classifyTrips(trips []gtfs.Trip, tripRouteByID map[string]string, staticStopIDs map[string]bool) tripClassification {
+	result := tripClassification{
+		routeIDs:         make(map[string]bool, len(tripRouteByID)),
+		unmatchedTripIDs: make(map[string]bool),
+		matchedStopIDs:   make(map[string]bool),
+		unmatchedStopIDs: make(map[string]bool),
+	}
+
+	for _, trip := range trips {
+		if routeID, matched := tripRouteByID[trip.ID.ID]; matched {
+			result.routeIDs[routeID] = true
+		} else {
+			result.unmatchedTripIDs[trip.ID.ID] = true
+		}
+		classifyStopTimeUpdates(trip.StopTimeUpdates, staticStopIDs, result.matchedStopIDs, result.unmatchedStopIDs)
+	}
+
+	return result
+}
+
+func classifyStopTimeUpdates(updates []gtfs.StopTimeUpdate, staticStopIDs, matchedStopIDs, unmatchedStopIDs map[string]bool) {
+	for _, stopTimeUpdate := range updates {
+		if stopTimeUpdate.StopID == nil {
+			continue
+		}
+		if staticStopIDs[*stopTimeUpdate.StopID] {
+			matchedStopIDs[*stopTimeUpdate.StopID] = true
+		} else {
+			unmatchedStopIDs[*stopTimeUpdate.StopID] = true
+		}
+	}
+}
+
+// countMatchedGroups counts the block-grouped records that resolve
+// statically and are currently active; see isCombinedRecordActive for why
+// a resolved but not-currently-active block counts toward neither matched
+// nor unmatched.
+func countMatchedGroups(tripGroups map[string][]gtfs.Trip, tripRouteByID map[string]string, now time.Time) int {
+	matched := 0
+	for _, group := range tripGroups {
+		if groupHasStaticMatch(group, tripRouteByID) && isCombinedRecordActive(group, now) {
+			matched++
+		}
+	}
+	return matched
 }
 
 // groupTripsByBlock groups a feed poll's trip updates by their static block
