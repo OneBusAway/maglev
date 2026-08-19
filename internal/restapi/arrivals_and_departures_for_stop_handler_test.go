@@ -94,6 +94,61 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Stops)
 }
 
+// TestArrivalsAndDeparturesForStopHandler_RouteAlertReferences verifies that a
+// route-level alert appears on the affected arrival and that its situation ID
+// resolves in references.situations.
+func TestArrivalsAndDeparturesForStopHandler_RouteAlertReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}})
+	_, initial := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.NotEmpty(t, initial.Data.Entry.ArrivalsAndDepartures,
+		"fixture stop should have an arrival in the test window")
+
+	target := initial.Data.Entry.ArrivalsAndDepartures[0]
+	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(target.RouteID)
+	require.NoError(t, err)
+
+	const alertID = "plural-arrivals-route-alert"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+		Header:           []gtfs.AlertText{{Text: "Plural arrivals route alert", Language: "en"}},
+	})
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	var affectedArrival *models.ArrivalAndDeparture
+	for i := range model.Data.Entry.ArrivalsAndDepartures {
+		arrival := &model.Data.Entry.ArrivalsAndDepartures[i]
+		if arrival.RouteID == target.RouteID {
+			affectedArrival = arrival
+			break
+		}
+	}
+	require.NotNil(t, affectedArrival, "expected an arrival on the alerted route")
+	require.NotNil(t, affectedArrival.TripStatus)
+	assert.Equal(t, affectedArrival.TripStatus.SituationIDs, affectedArrival.SituationIDs,
+		"arrival situationIds must be the ones BuildTripStatus resolved, not a second lookup")
+	assert.Contains(t, affectedArrival.SituationIDs, wantSituationID,
+		"an arrival must include its route-level alert")
+
+	var referenced bool
+	for _, situation := range model.Data.References.Situations {
+		if situation.ID == wantSituationID {
+			referenced = true
+			break
+		}
+	}
+	assert.True(t, referenced,
+		"arrival situationId %q must resolve in references.situations", wantSituationID)
+}
+
 func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()

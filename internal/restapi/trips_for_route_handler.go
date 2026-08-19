@@ -771,15 +771,31 @@ type tripReferenceParams struct {
 
 func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenceParams) models.ReferencesModel {
 	sets := newTripReferenceSets()
+
 	sets.collectPreFetchedTrips(params.PreFetchedTrips)
 	sets.collectTripIDsFromEntries(params.Trips)
 	api.fillMissingTrips(ctx, sets)
-	api.fillRoutesAndAgencies(ctx, sets)
 
 	references := models.NewEmptyReferences()
+	var routeIDsByStopID map[string][]string
+	references.Stops, routeIDsByStopID = api.stopReferences(ctx, params.Stops, params.StopIDMap)
+
+	for _, combinedRouteIDs := range routeIDsByStopID {
+		for _, combinedID := range combinedRouteIDs {
+			rawID, err := utils.ExtractCodeID(combinedID)
+			if err != nil {
+				continue
+			}
+			if _, exists := sets.routes[rawID]; !exists {
+				sets.routes[rawID] = models.Route{}
+			}
+		}
+	}
+
+	api.fillRoutesAndAgencies(ctx, sets)
+
 	references.Agencies = utils.MapValues(sets.agencies)
 	references.Routes = sets.routeList()
-	references.Stops, _ = api.stopReferences(ctx, params.Stops, params.StopIDMap)
 	references.Trips = sets.tripReferenceList(params.IncludeTrip)
 	references.Situations = api.situationReferences(params.Situations)
 	return *references
@@ -814,7 +830,7 @@ func (api *RestAPI) tripSituationRefs(
 // to, keyed by bare ID so each is emitted once.
 type tripReferenceSets struct {
 	trips    map[string]models.Trip
-	routes   map[string]models.Route
+	routes   map[string]models.Route // maps raw route ids to models.Route
 	agencies map[string]models.AgencyReference
 	// missing holds the trips the response refers to — entry tripIds,
 	// schedule.nextTripId/previousTripId, status.activeTripId — whose full

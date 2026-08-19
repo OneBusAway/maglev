@@ -553,15 +553,23 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 			direction = models.UnknownValue
 		}
 
+		parentID := ""
+		if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+			agencyID, err := utils.ExtractAgencyID(idsByBareID[stop.ID])
+			if err == nil {
+				parentID = utils.FormCombinedID(agencyID, parentStation)
+			}
+		}
+
 		stopList = append(stopList, models.Stop{
 			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
 			ID:                 idsByBareID[stop.ID],
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
-			LocationType:       0,
+			LocationType:       int(nulls.Int64OrDefault(stop.LocationType, 0)),
 			Name:               nulls.StringOrEmpty(stop.Name),
-			Parent:             "",
+			Parent:             parentID,
 			RouteIDs:           routeIDs,
 			StaticRouteIDs:     routeIDs,
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
