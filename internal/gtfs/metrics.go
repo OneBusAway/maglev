@@ -9,6 +9,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // MetricsSnapshot captures a point-in-time view of agency coverage, scheduled
@@ -228,6 +229,9 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *MetricsSnapshot) error {
 	now := time.Now()
 
+	unmatchedTripIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
+	unmatchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
+
 	for _, feed := range manager.snapshotRealtimeFeedState() {
 		metrics, err := manager.computeFeedMetrics(ctx, feed.trips, now)
 		if err != nil {
@@ -246,6 +250,8 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 
 		for agencyID := range agencyIDs {
 			applyFeedMetrics(snapshot, agencyID, metrics, feed.hasUpdate, staleness)
+			addToAgencySet(unmatchedTripIDsByAgency, agencyID, metrics.tripIDsUnmatched)
+			addToAgencySet(unmatchedStopIDsByAgency, agencyID, metrics.stopIDsUnmatched)
 		}
 	}
 
@@ -253,9 +259,27 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 		if _, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]; !tracked {
 			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
 		}
+		snapshot.RealtimeTripCountsUnmatched[agencyID] = len(unmatchedTripIDsByAgency[agencyID])
+		snapshot.RealtimeTripIDsUnmatched[agencyID] = sortedKeys(unmatchedTripIDsByAgency[agencyID])
+		snapshot.StopIDsUnmatchedCount[agencyID] = len(unmatchedStopIDsByAgency[agencyID])
+		snapshot.StopIDsUnmatched[agencyID] = sortedKeys(unmatchedStopIDsByAgency[agencyID])
 	}
 
 	return nil
+}
+
+// addToAgencySet merges ids into agencyID's set within sets, so an ID that's
+// unmatched by more than one feed covering the same agency is only counted
+// once in the final snapshot.
+func addToAgencySet(sets map[string]map[string]bool, agencyID string, ids []string) {
+	set, ok := sets[agencyID]
+	if !ok {
+		set = make(map[string]bool, len(ids))
+		sets[agencyID] = set
+	}
+	for _, id := range ids {
+		set[id] = true
+	}
 }
 
 // feedMetrics is the matched/unmatched breakdown computed for a single feed.
@@ -334,8 +358,8 @@ func (manager *Manager) staticTripLookups(ctx context.Context, trips []gtfs.Trip
 	tripBlockByID = make(map[string]string, len(staticTrips))
 	for _, staticTrip := range staticTrips {
 		tripRouteByID[staticTrip.ID] = staticTrip.RouteID
-		if staticTrip.BlockID.Valid && staticTrip.BlockID.String != "" {
-			tripBlockByID[staticTrip.ID] = staticTrip.BlockID.String
+		if blockID := nulls.StringOrEmpty(staticTrip.BlockID); blockID != "" {
+			tripBlockByID[staticTrip.ID] = blockID
 		}
 	}
 	return tripRouteByID, tripBlockByID, nil
@@ -558,14 +582,14 @@ func (manager *Manager) agencyIDsForRoutes(ctx context.Context, routeIDs map[str
 	return agencyIDs, nil
 }
 
+// applyFeedMetrics accumulates a feed's per-agency totals into snapshot.
+// Unmatched trip/stop IDs are handled separately by populateRealtimeMetrics
+// (via addToAgencySet), since they need deduplicating across feeds that
+// cover the same agency rather than summed directly.
 func applyFeedMetrics(snapshot *MetricsSnapshot, agencyID string, metrics feedMetrics, hasUpdate bool, staleness int64) {
 	snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
 	snapshot.RealtimeTripCountsMatched[agencyID] += metrics.tripsMatched
-	snapshot.RealtimeTripCountsUnmatched[agencyID] += metrics.tripsUnmatched
-	snapshot.RealtimeTripIDsUnmatched[agencyID] = append(snapshot.RealtimeTripIDsUnmatched[agencyID], metrics.tripIDsUnmatched...)
 	snapshot.StopIDsMatchedCount[agencyID] += metrics.stopsMatched
-	snapshot.StopIDsUnmatchedCount[agencyID] += metrics.stopsUnmatched
-	snapshot.StopIDsUnmatched[agencyID] = append(snapshot.StopIDsUnmatched[agencyID], metrics.stopIDsUnmatched...)
 
 	if hasUpdate {
 		existing, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]
