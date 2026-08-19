@@ -119,11 +119,11 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		for _, trip := range result {
 			tripSchedulesAndStatuses = append(tripSchedulesAndStatuses, tripScheduleAndStatus{
+				status:   trip.Status,
 				schedule: trip.Schedule,
-				status: trip.Status,
 			})
 		}
-		
+
 		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
 		if stopsErr != nil {
 			api.serverErrorResponse(w, r, stopsErr)

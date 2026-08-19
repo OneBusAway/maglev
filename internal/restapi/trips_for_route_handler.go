@@ -507,10 +507,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		for _, trip := range result {
 			tripSchedulesAndStatuses = append(tripSchedulesAndStatuses, tripScheduleAndStatus{
 				schedule: trip.Schedule,
-				status: trip.Status,
+				status:   trip.Status,
 			})
 		}
-		
+
 		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
 		if stopsErr != nil {
 			api.serverErrorResponse(w, r, stopsErr)

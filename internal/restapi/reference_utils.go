@@ -769,7 +769,7 @@ func (api *RestAPI) tripSituationsFor(ctx context.Context, tripID string, extras
 
 type tripScheduleAndStatus struct {
 	schedule *models.TripsSchedule
-	status *models.TripStatus
+	status   *models.TripStatus
 }
 
 // stopsReferencedBySchedulesAndStatuses fetches the stops the response refers to:
