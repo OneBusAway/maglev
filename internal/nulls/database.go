@@ -33,6 +33,17 @@ func Int64OrDefault(ni sql.NullInt64, defaultValue int64) int64 {
 	return defaultValue
 }
 
+// ValidInt64Count returns the number of non-null values.
+func ValidInt64Count(values ...sql.NullInt64) int {
+	count := 0
+	for _, value := range values {
+		if value.Valid {
+			count++
+		}
+	}
+	return count
+}
+
 // WheelchairBoardingOrUnknown returns the wheelchair boarding value if valid, otherwise returns NotSpecified
 func WheelchairBoardingOrUnknown(ni sql.NullInt64) gtfs.WheelchairBoarding {
 	if ni.Valid {
