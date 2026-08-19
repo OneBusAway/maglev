@@ -34,6 +34,39 @@ func TestRoutesForLocationHandlerEndToEnd(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
+func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
+	const baseURL = "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966"
+
+	tests := []struct {
+		name           string
+		params         string
+		wantReferences bool
+	}{
+		{"includeReferences=false suppresses references", "&includeReferences=false", false},
+		{"includeReferences=true populates references", "&includeReferences=true", true},
+		{"includeReferences absent defaults to populated", "", true},
+		{"includeReferences unparseable defaults to populated", "&includeReferences=notabool", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+
+			resp, model := callAPIHandler[RoutesResponse](t, api, baseURL+tt.params)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.ElementsMatch(t, []models.Route{testdata.Route19}, model.Data.List, "list must be unaffected by includeReferences")
+
+			if tt.wantReferences {
+				assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+			} else {
+				assert.Empty(t, model.Data.References.Agencies)
+				assert.Empty(t, model.Data.References.Situations)
+			}
+		})
+	}
+}
+
 func TestRoutesForLocationQuery(t *testing.T) {
 	api := createTestApi(t)
 
