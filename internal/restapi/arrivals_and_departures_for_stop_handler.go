@@ -442,8 +442,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
-		tripAlerts := api.GtfsManager.GetAlertsForTrip(r.Context(), st.TripID)
-		situationIDs := situations.add(tripAlerts, route.AgencyID)
+		// BuildTripStatus already resolved this trip's situations. Reuse those
+		// references so each arrival does not repeat the alert lookup and its
+		// situationIds are guaranteed to match references.situations.
+		situationIDs := situations.addRefs(statusExtras.situations)
 
 		if alertAgencyID == "" && route.AgencyID != "" {
 			alertAgencyID = route.AgencyID
