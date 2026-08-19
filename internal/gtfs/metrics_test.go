@@ -54,34 +54,32 @@ func mustCreateCalendar(t *testing.T, manager *Manager, serviceID string) {
 	require.NoError(t, err)
 }
 
+// defaultTestServiceID is the calendar service shared by mustCreateTrip and
+// mustCreateInactiveTrip.
+const defaultTestServiceID = "service-1"
+
+// ensureDefaultCalendar creates defaultTestServiceID if it doesn't already
+// exist, so tests can call mustCreateTrip/mustCreateInactiveTrip any number
+// of times without colliding on the calendar row.
+func ensureDefaultCalendar(t *testing.T, manager *Manager) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := manager.GtfsDB.Queries.GetCalendarByServiceID(ctx, defaultTestServiceID); err != nil {
+		mustCreateCalendar(t, manager, defaultTestServiceID)
+	}
+}
+
 // mustCreateTrip inserts a static trip that is active all day, every day,
 // so it counts as "currently active" for any `now` passed to GetMetrics.
 // Creates its referenced calendar service if it doesn't already exist.
 func mustCreateTrip(t *testing.T, manager *Manager, tripID, routeID string) {
 	t.Helper()
-	ctx := context.Background()
+	ensureDefaultCalendar(t, manager)
 
-	const serviceID = "service-1"
-	if _, err := manager.GtfsDB.Queries.GetCalendarByServiceID(ctx, serviceID); err != nil {
-		_, err := manager.GtfsDB.Queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
-			ID:        serviceID,
-			Monday:    1,
-			Tuesday:   1,
-			Wednesday: 1,
-			Thursday:  1,
-			Friday:    1,
-			Saturday:  1,
-			Sunday:    1,
-			StartDate: "20240101",
-			EndDate:   "20291231",
-		})
-		require.NoError(t, err)
-	}
-
-	_, err := manager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+	_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
 		ID:               tripID,
 		RouteID:          routeID,
-		ServiceID:        serviceID,
+		ServiceID:        defaultTestServiceID,
 		MinArrivalTime:   sql.NullInt64{Int64: 0, Valid: true},
 		MaxDepartureTime: sql.NullInt64{Int64: (24 * time.Hour).Nanoseconds(), Valid: true},
 	})
@@ -93,31 +91,14 @@ func mustCreateTrip(t *testing.T, manager *Manager, tripID, routeID string) {
 // excluded from the active-trip count.
 func mustCreateInactiveTrip(t *testing.T, manager *Manager, tripID, routeID string) {
 	t.Helper()
-	ctx := context.Background()
-
-	const serviceID = "service-1"
-	if _, err := manager.GtfsDB.Queries.GetCalendarByServiceID(ctx, serviceID); err != nil {
-		_, err := manager.GtfsDB.Queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
-			ID:        serviceID,
-			Monday:    1,
-			Tuesday:   1,
-			Wednesday: 1,
-			Thursday:  1,
-			Friday:    1,
-			Saturday:  1,
-			Sunday:    1,
-			StartDate: "20240101",
-			EndDate:   "20291231",
-		})
-		require.NoError(t, err)
-	}
+	ensureDefaultCalendar(t, manager)
 
 	// A short window early this morning, hours before metricsTestNow (12:00),
 	// well outside the running-late/running-early tolerance.
-	_, err := manager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+	_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
 		ID:               tripID,
 		RouteID:          routeID,
-		ServiceID:        serviceID,
+		ServiceID:        defaultTestServiceID,
 		MinArrivalTime:   sql.NullInt64{Int64: (1 * time.Hour).Nanoseconds(), Valid: true},
 		MaxDepartureTime: sql.NullInt64{Int64: (2 * time.Hour).Nanoseconds(), Valid: true},
 	})
