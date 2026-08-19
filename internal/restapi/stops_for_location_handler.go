@@ -25,6 +25,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
 	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
+	includeReferences := ShouldIncludeReferences(r)
 
 	var routeTypes []int
 	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
@@ -223,41 +224,44 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		isLimitExceeded = true
 	}
 
-	// References describe the returned stops, so they are collected after capping.
-	for _, stopID := range resultRawStopIDs {
-		for _, routeID := range stopRouteIDs[stopID] {
-			agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				continue
-			}
-			agencyIDs[agencyID] = true
-			routeIDs[routeID] = true
-		}
-	}
-
 	// Spec: results are ordered lexicographically by combined stop ID.
 	slices.SortStableFunc(results, func(a, b models.Stop) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
 
-	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
-	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
-
-	if agencies == nil {
-		agencies = []models.AgencyReference{}
-	}
-	if routes == nil {
-		routes = []models.Route{}
-	}
-
-	// Populate situation references for alerts affecting the returned stops
-	alerts := api.collectAlertsForStops(resultRawStopIDs)
-	situations := api.BuildSituationReferences(alerts)
-
 	references := models.NewEmptyReferences()
-	references.Agencies = agencies
-	references.Routes = routes
-	references.Situations = situations
+
+	// When includeReferences=false the references block is present but empty.
+	if includeReferences {
+		// References describe the returned stops, so they are collected after capping.
+		for _, stopID := range resultRawStopIDs {
+			for _, routeID := range stopRouteIDs[stopID] {
+				agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
+				if err != nil {
+					continue
+				}
+				agencyIDs[agencyID] = true
+				routeIDs[routeID] = true
+			}
+		}
+
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
+		routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+
+		if agencies == nil {
+			agencies = []models.AgencyReference{}
+		}
+		if routes == nil {
+			routes = []models.Route{}
+		}
+
+		// Populate situation references for alerts affecting the returned stops
+		alerts := api.collectAlertsForStops(resultRawStopIDs)
+
+		references.Agencies = agencies
+		references.Routes = routes
+		references.Situations = api.BuildSituationReferences(alerts)
+	}
 
 	response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
