@@ -502,14 +502,16 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var references models.ReferencesModel
 	if includeReferences {
-		schedules := make([]*models.TripsSchedule, 0, len(result))
-		statuses := make([]*models.TripStatus, 0, len(result))
+		tripSchedulesAndStatuses := make([]tripScheduleAndStatus, 0, len(result))
 
 		for _, trip := range result {
-			schedules = append(schedules, trip.Schedule)
-			statuses = append(statuses, trip.Status)
+			tripSchedulesAndStatuses = append(tripSchedulesAndStatuses, tripScheduleAndStatus{
+				schedule: trip.Schedule,
+				status: trip.Status,
+			})
 		}
-		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedByEntries(ctx, schedules, statuses)
+		
+		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
 		if stopsErr != nil {
 			api.serverErrorResponse(w, r, stopsErr)
 			return
