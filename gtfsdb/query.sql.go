@@ -834,6 +834,62 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 	return i, err
 }
 
+const getActiveLayoverBlockIDsForAgency = `-- name: GetActiveLayoverBlockIDsForAgency :many
+SELECT DISTINCT block_layover.block_id
+FROM
+    block_layover
+    JOIN routes ON block_layover.route_id = routes.id
+WHERE
+    routes.agency_id = ?1
+    AND block_layover.layover_start <= ?2
+    AND block_layover.layover_end >= ?2
+    AND block_layover.service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetActiveLayoverBlockIDsForAgencyParams struct {
+	AgencyID   string
+	At         int64
+	ServiceIds []string
+}
+
+// Returns the distinct block IDs laying over between trips at the given
+// instant for one agency, among the given active service IDs. See
+// GetActiveTripBlockIDsForAgency.
+func (q *Queries) GetActiveLayoverBlockIDsForAgency(ctx context.Context, arg GetActiveLayoverBlockIDsForAgencyParams) ([]string, error) {
+	query := getActiveLayoverBlockIDsForAgency
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.AgencyID)
+	queryParams = append(queryParams, arg.At)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var block_id string
+		if err := rows.Scan(&block_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getActiveLayoverBlockIDsForRoute = `-- name: GetActiveLayoverBlockIDsForRoute :many
 SELECT DISTINCT block_id
 FROM block_layover
@@ -1052,6 +1108,73 @@ func (q *Queries) GetActiveStops(ctx context.Context) ([]Stop, error) {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getActiveTripBlockIDsForAgency = `-- name: GetActiveTripBlockIDsForAgency :many
+SELECT DISTINCT COALESCE(trips.block_id, trips.id) AS block_id
+FROM
+    trips
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    routes.agency_id = ?1
+    AND trips.max_departure_time >= ?2
+    AND trips.min_arrival_time <= ?2
+    AND trips.service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetActiveTripBlockIDsForAgencyParams struct {
+	AgencyID   string
+	At         sql.NullInt64
+	ServiceIds []string
+}
+
+// Returns the distinct block IDs with a trip in progress at the given instant
+// for one agency, among the given active service IDs. block_id is optional in
+// GTFS, so trips.id is substituted for trips with no block_id, matching them
+// 1:1 to their own "block" rather than dropping them. Union with
+// GetActiveLayoverBlockIDsForAgency's result to get all active blocks: the
+// scheduledTripsCount metric counts active blocks, matching upstream's
+// BlockStatusServiceImpl#getActiveBlocksForAgency (timeFrom == timeTo == now,
+// no running-late/running-early tolerance, and a block counts as active
+// while laying over between trips too). Callers run this once for today's
+// service (at the current time-of-day) and once for yesterday's service (the
+// same instant shifted +24h) to catch after-midnight trips, mirroring the
+// today/yesterday pattern in trips_for_route_handler.go.
+// Slice param is last so non-slice param numbering stays contiguous (?1, ?2, ?3),
+// matching the convention documented on GetActiveLayoverBlockIDsForRoute.
+func (q *Queries) GetActiveTripBlockIDsForAgency(ctx context.Context, arg GetActiveTripBlockIDsForAgencyParams) ([]string, error) {
+	query := getActiveTripBlockIDsForAgency
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.AgencyID)
+	queryParams = append(queryParams, arg.At)
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var block_id string
+		if err := rows.Scan(&block_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
