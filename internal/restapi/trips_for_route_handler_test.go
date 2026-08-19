@@ -788,9 +788,9 @@ func TestTripsForRouteHandler_ReferencesInclusion_EmptyList(t *testing.T) {
 	}
 }
 
-// TestTripsForRouteHandler_StatusStopsAreReferenced tests for when includeSchedule=false
-// in this scenario, there are no stop times on schedule to resolve on references.stops
-// so closestStop and nextStop on statuses are the whole of whatreferences.stops has to resolve.
+// TestTripsForRouteHandler_StatusStopsAreReferenced tests for when includeSchedule=false.
+// In this scenario, there are no stop times on schedule to resolve on references.stops,
+// so closestStop and nextStop on statuses are the whole of what references.stops has to resolve.
 func TestTripsForRouteHandler_StatusStopsAreReferenced(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
