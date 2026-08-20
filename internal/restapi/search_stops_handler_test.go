@@ -650,11 +650,14 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	// Test 0 routes exclusion. zero_route_stop has no stop_times, so it is now excluded by
-	// the SQL revenue filter before it ever reaches Go's zero-route check.
+	// Test exclusion of a stop with no stop_times. zero_route_stop is dropped by the SQL
+	// revenue filter, which is now what excludes a routeless stop in practice: routes are
+	// derived through stop_times, so a stop with none has no routes either. The handler's
+	// own len(routeIDs) == 0 guard is unreachable behind this filter while foreign keys are
+	// enforced, since a revenue stop time implies a trip implies an existing route.
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ghost"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List, "Expected Ghost Stop to be excluded (0 routes)")
+	assert.Empty(t, stopsResp.Data.List, "Expected Ghost Stop to be excluded (no stop_times, so no revenue service)")
 
 	// Test School bus exclusion
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Single Special"}}))
