@@ -467,7 +467,8 @@ func TestFetchStopCoordsForStopTimes_DedupesAndReturnsMap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stopTimes)
 
-	coords := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	require.NoError(t, err)
 	require.NotNil(t, coords)
 	for _, st := range stopTimes {
 		stop, ok := coords[st.StopID]
@@ -481,7 +482,24 @@ func TestFetchStopCoordsForStopTimes_EmptyInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	coords := api.fetchStopCoordsForStopTimes(context.Background(), nil)
+	coords, err := api.fetchStopCoordsForStopTimes(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Nil(t, coords)
+}
+
+// TestFetchStopCoordsForStopTimes_PropagatesError guards against the lookup
+// failure turning into a silent nil map: a request-path caller
+// (scheduledTripIDsInBounds) must see the error and return a 500 rather than
+// a plausible-looking short list.
+func TestFetchStopCoordsForStopTimes_PropagatesError(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	coords, err := api.fetchStopCoordsForStopTimes(ctx, []gtfsdb.StopTime{{StopID: "any-stop"}})
+	require.Error(t, err)
 	assert.Nil(t, coords)
 }
 
@@ -508,7 +526,8 @@ func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
 	require.Greater(t, len(stopTimes), idsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
-	coords := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	require.NoError(t, err)
 	require.NotNil(t, coords)
 	for _, stop := range stops {
 		_, ok := coords[stop.ID]
@@ -706,7 +725,8 @@ func TestProjectStopsInSequence_MonotonicAlongShape(t *testing.T) {
 	td := data[0]
 	require.GreaterOrEqual(t, len(td.stopTimes), 2)
 
-	stopByID := api.fetchStopCoordsForStopTimes(ctx, td.stopTimes)
+	stopByID, err := api.fetchStopCoordsForStopTimes(ctx, td.stopTimes)
+	require.NoError(t, err)
 	require.NotNil(t, stopByID)
 
 	distances := projectStopsInSequence(td.stopTimes, stopByID, td.shapePoints, td.cumDistances)

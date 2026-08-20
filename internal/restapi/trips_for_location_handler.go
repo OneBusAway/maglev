@@ -289,7 +289,10 @@ func (api *RestAPI) scheduledTripIDsInBounds(
 	}
 	// One lookup for the union of every candidate's stops. Fetching per trip
 	// would be a query per candidate, and the candidate set runs to hundreds.
-	stopsByID := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes(stopTimesByTrip))
+	stopsByID, err := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes(stopTimesByTrip))
+	if err != nil {
+		return nil, err
+	}
 
 	visible := make([]string, 0, len(trips))
 	for _, trip := range trips {

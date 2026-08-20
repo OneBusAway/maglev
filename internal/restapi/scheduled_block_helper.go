@@ -307,7 +307,9 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 	for _, t := range trips {
 		unionStopTimes = append(unionStopTimes, t.stopTimes...)
 	}
-	stopByID := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes)
+	// Block metrics degrade to zero distances rather than failing the
+	// snapshot; the helper logs the cause.
+	stopByID, _ := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes)
 
 	var cumulativeBlockDist float64
 	var blockSeq int
@@ -402,7 +404,9 @@ func (api *RestAPI) applyScheduledTripPositionToStatus(
 	if len(stopTimes) == 0 || len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
 		return
 	}
-	stopByID := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	// Block metrics degrade to zero distances rather than failing the
+	// snapshot; the helper logs the cause.
+	stopByID, _ := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
 	pos, orient, dist := scheduledTripPosition(
 		stopTimes, stopByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
 	status.ScheduledDistanceAlongTrip = dist
@@ -603,12 +607,14 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 
 // fetchStopCoordsForStopTimes fetches the unique stops in stopTimes, batching
 // the lookup so an unbounded caller — the scheduled-position candidate set
-// among them — cannot overflow the bind variable limit. Returns nil on error;
-// callers fall back to zero distance.
+// among them — cannot overflow the bind variable limit. Returns the error on
+// failure; a request-path caller should propagate it rather than degrade
+// silently. Block-snapshot callers that intentionally tolerate a degraded
+// result discard the error explicitly at the call site.
 func (api *RestAPI) fetchStopCoordsForStopTimes(
 	ctx context.Context,
 	stopTimes []gtfsdb.StopTime,
-) map[string]gtfsdb.Stop {
+) (map[string]gtfsdb.Stop, error) {
 	seen := make(map[string]struct{}, len(stopTimes))
 	ids := make([]string, 0, len(stopTimes))
 	for _, st := range stopTimes {
@@ -619,23 +625,19 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 		ids = append(ids, st.StopID)
 	}
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	stops, err := queryInBatches(ctx, ids, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
-		// Returning nil here causes projectStopsInSequence to write 0 for
-		// every geometric-projection stop, silently corrupting downstream
-		// DistanceAlongTrip. Surface the error in logs so operators see
-		// infrastructure issues; the snapshot still proceeds in degraded mode.
-		slog.Warn("fetchStopCoordsForStopTimes: GetStopsByIDs failed, projection distances will be zero",
+		slog.Warn("fetchStopCoordsForStopTimes: GetStopsByIDs failed",
 			slog.Int("stop_count", len(ids)), slog.String("error", err.Error()))
-		return nil
+		return nil, err
 	}
 	byID := make(map[string]gtfsdb.Stop, len(stops))
 	for _, s := range stops {
 		byID[s.ID] = s
 	}
-	return byID
+	return byID, nil
 }
 
 // projectStopsInSequence returns each stop's distance-along-trip in metres,
