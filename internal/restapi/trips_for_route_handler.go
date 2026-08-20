@@ -323,6 +323,22 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]string)
 
+	// Batch-fetch frequencies; success seeds nil to skip fallback queries.
+	// Post-batch trips (interlined, DUPLICATED) fall back per-trip.
+	freqMap := make(map[string][]gtfsdb.Frequency)
+	if len(fetchedTrips) > 0 {
+		tripIDsForFreq := make([]string, 0, len(fetchedTrips))
+		for _, trip := range fetchedTrips {
+			tripIDsForFreq = append(tripIDsForFreq, trip.ID)
+		}
+		var freqErr error
+		freqMap, freqErr = api.fetchFrequenciesForTrips(ctx, tripIDsForFreq)
+		if freqErr != nil {
+			api.serverErrorResponse(w, r, freqErr)
+			return
+		}
+	}
+
 	blockTripForRoute, err := api.buildBlockTripForRoute(ctx, fetchedTrips, routeID, serviceIDs, prevServiceIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -391,7 +407,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var schedule *models.TripsSchedule
 		if includeSchedule {
 			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, currentTime, currentLocation)
+			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, currentTime, currentLocation, freqMap)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
@@ -405,15 +421,21 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, todayMidnight, currentTime, freqMap)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
 			}
 		}
 
+		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, entryTripID, todayMidnight, currentTime)
+		if freqErr != nil {
+			api.serverErrorResponse(w, r, freqErr)
+			return
+		}
+
 		entry := models.TripsForRouteListEntry{
-			Frequency:    nil,
+			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),
@@ -471,7 +493,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var schedule *models.TripsSchedule
 		if includeSchedule {
 			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, baseTripID, agencyID, currentTime, currentLocation)
+			schedule, schedErr = api.buildScheduleForTrip(ctx, baseTripID, agencyID, currentTime, currentLocation, freqMap)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
@@ -482,15 +504,21 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime)
+			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, todayMidnight, currentTime, freqMap)
 			if statusErr != nil {
 				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
 			}
 		}
 
+		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, baseTripID, todayMidnight, currentTime)
+		if freqErr != nil {
+			api.serverErrorResponse(w, r, freqErr)
+			return
+		}
+
 		entry := models.TripsForRouteListEntry{
-			Frequency:    nil,
+			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  todayMidnight.UnixMilli(),

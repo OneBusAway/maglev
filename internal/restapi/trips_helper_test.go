@@ -363,7 +363,7 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 		},
 	})
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -403,7 +403,7 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	api.GtfsManager.MockAddRoute(routeID, agencyID, routeID)
 	api.GtfsManager.MockAddTrip(tripID, agencyID, routeID)
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -430,7 +430,7 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	currentTime := serviceDate.Add(8 * time.Hour)
 
 	// No vehicle, no trip updates — purely scheduled
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -509,7 +509,7 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 		},
 	})
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -596,7 +596,7 @@ func TestBuildTripStatus_ShapeData_ProjectionFailureFallsBackToScheduled(t *test
 		},
 	})
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -630,7 +630,7 @@ func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
 	ctx := context.Background()
 
 	currentTime := time.Now()
-	model, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, currentTime, currentTime)
+	model, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, currentTime, currentTime, nil)
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, model)
@@ -1001,7 +1001,7 @@ func TestBuildTripStatus_VehicleWithStopID_FindsStops(t *testing.T) {
 		CurrentStatus: &stoppedAt,
 	})
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -1069,7 +1069,7 @@ func TestBuildTripStatus_PreResolvedVehicle(t *testing.T) {
 	arrivalSeconds := utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime)
 	currentTime := serviceDate.Add(time.Duration(arrivalSeconds) * time.Second)
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -1113,7 +1113,7 @@ func TestBuildTripStatus_CanceledTrip(t *testing.T) {
 		},
 	}
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 
@@ -1199,7 +1199,7 @@ func TestBuildTripStatus_CanceledTrip_BlockTripSequence(t *testing.T) {
 		},
 	}
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime)
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 	require.Equal(t, "CANCELED", status.Status)
@@ -2171,4 +2171,91 @@ func testTripIDs(trips []gtfsdb.Trip) []string {
 		ids[i] = t.ID
 	}
 	return ids
+}
+
+// TestFrequencyForEntry_FallbackQueryAndCaching verifies that a trip missing
+// from freqMap is resolved with a per-trip query whose result is then cached,
+// so repeat lookups hit the map instead of the database.
+func TestFrequencyForEntry_FallbackQueryAndCaching(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	ctx := context.Background()
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	freqMap := make(map[string][]gtfsdb.Frequency)
+
+	freq, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate, serviceDate)
+	require.NoError(t, err)
+	require.NotNil(t, freq, "freq-trip has a frequency entry in the fixture")
+	assert.Equal(t, time.Date(2025, 6, 12, 6, 0, 0, 0, time.UTC), freq.StartTime.Time, "earliest start_time row is selected")
+	assert.Equal(t, time.Duration(600)*time.Second, freq.Headway.Duration)
+
+	require.Contains(t, freqMap, freqTripID, "fallback query result must be cached")
+
+	cached, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate, serviceDate)
+	require.NoError(t, err)
+	require.NotNil(t, cached)
+	assert.Equal(t, freq, cached, "repeat lookup must reuse the cached row")
+}
+
+// TestFrequencyForEntry_NoFrequencyRowsCachedAsEmpty verifies that trips
+// without any frequency entry are cached as empty so later lookups skip the
+// per-trip query and still return a nil frequency.
+func TestFrequencyForEntry_NoFrequencyRowsCachedAsEmpty(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	ctx := context.Background()
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	freqMap := make(map[string][]gtfsdb.Frequency)
+
+	freq, err := api.frequencyForEntry(ctx, freqMap, freqNormalTripD, serviceDate, serviceDate)
+	require.NoError(t, err)
+	assert.Nil(t, freq, "trip without a frequency entry yields nil")
+
+	require.Contains(t, freqMap, freqNormalTripD, "empty result must be cached as empty")
+	assert.Empty(t, freqMap[freqNormalTripD])
+}
+
+// TestFrequencyForEntry_NilFreqMapSkipsCaching verifies that a nil freqMap
+// falls back to the per-trip query without attempting to cache the result.
+func TestFrequencyForEntry_NilFreqMapSkipsCaching(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	ctx := context.Background()
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	freq, err := api.frequencyForEntry(ctx, nil, freqTripID, serviceDate, serviceDate)
+	require.NoError(t, err)
+	require.NotNil(t, freq)
+}
+
+// TestFrequencyForEntry_DBErrorPropagates verifies that a failed per-trip
+// query bubbles the error up instead of swallowing it.
+func TestFrequencyForEntry_DBErrorPropagates(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	ctx := context.Background()
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.Close(), "closing the fixture DB simulates a query failure")
+
+	freqMap := make(map[string][]gtfsdb.Frequency)
+	freq, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate, serviceDate)
+	require.Error(t, err, "a closed database must surface the query error")
+	assert.Nil(t, freq)
+	assert.NotContains(t, freqMap, freqTripID, "failed lookups must not be cached")
+}
+
+// TestSelectFrequency verifies window-based selection with fallback to the
+// first row.
+func TestSelectFrequency(t *testing.T) {
+	freqs := []gtfsdb.Frequency{
+		{TripID: "t", StartTime: int64(6 * time.Hour), EndTime: int64(9 * time.Hour), HeadwaySecs: 600},
+		{TripID: "t", StartTime: int64(9 * time.Hour), EndTime: int64(12 * time.Hour), HeadwaySecs: 900},
+	}
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	assert.Equal(t, &freqs[1], selectFrequency(freqs, serviceDate, serviceDate.Add(10*time.Hour)),
+		"the window containing the effective time wins")
+	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(12*time.Hour)),
+		"end_time is exclusive; no match falls back to the first row")
+	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(3*time.Hour)),
+		"a time before all windows falls back to the first row")
 }

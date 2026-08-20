@@ -485,6 +485,72 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 	}
 }
 
+// TestTripsForRouteWithFrequency verifies active trips in the list carry
+// their frequency window (both exact_times variants), on the entry and on the
+// schedule, while non-frequency trips leave the field null.
+func TestTripsForRouteWithFrequency(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	defer api.Shutdown()
+
+	combinedRouteID := utils.FormCombinedID(freqAgencyID, freqRouteID)
+
+	// Query at 06:05 UTC: active window [05:35, 06:15] surfaces exactly the
+	// two frequency trips (06:00-06:10 and 06:00-06:15); freq-normal-trip
+	// departs 08:00 and is outside the window.
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+		combinedRouteID, time.Date(2025, 6, 12, 6, 5, 0, 0, time.UTC).UnixMilli())
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 2, "window [05:35, 06:15] should surface exactly the two frequency trips")
+
+	for _, entry := range model.Data.List {
+		_, entryTripID, err := utils.ExtractAgencyIDAndCodeID(entry.TripId)
+		require.NoError(t, err)
+
+		require.NotNil(t, entry.Frequency, "frequency trip %q must carry frequency data", entryTripID)
+
+		exactTimes := 0
+		headway := 600 * time.Second
+		if entryTripID == freqExactTripID {
+			exactTimes = 1
+			headway = 1800 * time.Second
+		}
+		assert.Equal(t, exactTimes, entry.Frequency.ExactTimes)
+		assert.Equal(t, headway, entry.Frequency.Headway.Duration)
+
+		// Fixture windows span 06:00-09:00 UTC on the 2025-06-12 service date;
+		// compare instants (millis) because ModelTime round-trips in time.Local.
+		assert.Equal(t, time.Date(2025, 6, 12, 6, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.StartTime.UnixMilli())
+		assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.EndTime.UnixMilli())
+
+		require.NotNil(t, entry.Schedule, "schedule should be present when includeSchedule=true")
+		require.NotNil(t, entry.Schedule.Frequency, "schedule for frequency trip %q must carry frequency data", entryTripID)
+		assert.Equal(t, entry.Frequency.StartTime.UnixMilli(), entry.Schedule.Frequency.StartTime.UnixMilli())
+		assert.Equal(t, entry.Frequency.EndTime.UnixMilli(), entry.Schedule.Frequency.EndTime.UnixMilli())
+	}
+
+	// Query at 08:05 UTC: active window [07:35, 08:15] surfaces only
+	// freq-normal-trip, which must keep frequency null on both entry and
+	// schedule.
+	url = fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+		combinedRouteID, time.Date(2025, 6, 12, 8, 5, 0, 0, time.UTC).UnixMilli())
+	resp, model = callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1, "window [07:35, 08:15] should surface only freq-normal-trip")
+
+	entry := model.Data.List[0]
+	_, entryTripID, err := utils.ExtractAgencyIDAndCodeID(entry.TripId)
+	require.NoError(t, err)
+	assert.Equal(t, freqNormalTripD, entryTripID)
+	assert.Nil(t, entry.Frequency, "non-frequency trip must not carry frequency data")
+	require.NotNil(t, entry.Schedule)
+	assert.Nil(t, entry.Schedule.Frequency, "schedule for non-frequency trip must not carry frequency data")
+}
+
 // TestTripsForRouteHandler_TimeOmitted verifies that omitting the time parameter
 // correctly falls back to the injected api.Clock to resolve active trips.
 func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {

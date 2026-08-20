@@ -69,16 +69,21 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
+	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	freqMap := map[string][]gtfsdb.Frequency{tripID: freqRows}
+
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, freqMap)
 		if statusErr != nil {
-			api.Logger.Warn("failed to build trip status",
-				"tripID", tripID,
-				"agencyID", agencyID,
-				"error", statusErr)
+			api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 			status = nil
 		}
 	}
@@ -105,10 +110,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		var scheduleErr error
 		schedule, scheduleErr = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, loc)
 		if scheduleErr != nil {
-			api.Logger.Warn("failed to build trip schedule",
-				"tripID", tripID,
-				"agencyID", agencyID,
-				"error", scheduleErr)
+			api.serverErrorResponse(w, r, scheduleErr)
+			return
 		}
 	}
 
@@ -116,10 +119,17 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	// built its situations are this trip's and are reused here.
 	situationIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
+	var frequency *models.Frequency
+	if len(freqRows) > 0 {
+		// TripDetails has one frequency field; take the window-matched row.
+		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, currentTime), serviceDate)
+		frequency = &converted
+	}
+
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
 		ServiceDate:  models.NewModelTime(midnight),
-		Frequency:    nil,
+		Frequency:    frequency,
 		Status:       status,
 		Schedule:     schedule,
 		SituationIDs: situationIDs,

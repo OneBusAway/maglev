@@ -287,6 +287,18 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 	}
 
+	// Batch-fetch frequencies; success seeds nil to skip fallback queries. The
+	// arrival's frequency uses the row whose window contains the request time.
+	freqMap := make(map[string][]gtfsdb.Frequency)
+	if len(uniqueTripIDs) > 0 {
+		var freqErr error
+		freqMap, freqErr = api.fetchFrequenciesForTrips(ctx, uniqueTripIDs)
+		if freqErr != nil {
+			api.serverErrorResponse(w, r, freqErr)
+			return
+		}
+	}
+
 	for _, ast := range allActiveStopTimes {
 		st := ast.GetStopTimesForStopInWindowRow
 
@@ -364,8 +376,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 
 		// Always built — Java attaches a BlockLocation (real-time or scheduled) to
-		// every arrival, so tripStatus is always non-null.
-		status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
+		// every arrival, so tripStatus is always non-null. Pass freqMap to avoid
+		// per-arrival frequency queries.
+		status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time, freqMap)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed for arrival",
 				"tripID", st.TripID, "error", statusErr)
@@ -480,6 +493,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			tripStatus,                                      // tripStatus
 			situationIDs,                                    // situationIDs
 		)
+
+		if freqs, ok := freqMap[st.TripID]; ok && len(freqs) > 0 {
+			converted := models.NewFrequencyFromDB(*selectFrequency(freqs, serviceMidnight, params.Time), serviceMidnight)
+			arrival.Frequency = &converted
+		}
 
 		arrivals = append(arrivals, *arrival)
 	}

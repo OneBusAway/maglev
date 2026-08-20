@@ -154,6 +154,74 @@ func TestTripsForLocationHandler_UsesEachTripAgencyTimezone(t *testing.T) {
 	}
 }
 
+// TestTripsForLocationWithFrequency verifies active trips near a location
+// carry their frequency window (on the entry and the schedule) while
+// non-frequency trips keep the field null. Both trips are found via
+// real-time vehicles positioned inside the query bounds; the fixture stops
+// sit at (37.7749, -122.4194) and (37.7849, -122.4094).
+func TestTripsForLocationWithFrequency(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	defer api.Shutdown()
+
+	latitude := float32(37.78)
+	longitude := float32(-122.415)
+	clockTime := frequencyFixtureClock
+	combinedRouteID := utils.FormCombinedID(freqAgencyID, freqRouteID)
+
+	api.GtfsManager.MockAddVehicleWithOptions("freq-vehicle", freqTripID, combinedRouteID,
+		internalgtfs.MockVehicleOptions{
+			Timestamp: &clockTime,
+			Position: &gtfs.Position{
+				Latitude:  &latitude,
+				Longitude: &longitude,
+			},
+		})
+	api.GtfsManager.MockAddVehicleWithOptions("normal-vehicle", freqNormalTripD, combinedRouteID,
+		internalgtfs.MockVehicleOptions{
+			Timestamp: &clockTime,
+			Position: &gtfs.Position{
+				Latitude:  &latitude,
+				Longitude: &longitude,
+			},
+		})
+
+	url := fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&latSpan=%f&lonSpan=%f&includeSchedule=true&time=%d",
+		37.78, -122.415, 0.1, 0.1, clockTime.UnixMilli())
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 2, "both mock vehicles are inside the bounds")
+
+	for _, entry := range model.Data.List {
+		_, entryTripID, err := utils.ExtractAgencyIDAndCodeID(entry.TripId)
+		require.NoError(t, err)
+
+		require.NotNil(t, entry.Schedule, "schedule should be present when includeSchedule=true")
+
+		if entryTripID == freqNormalTripD {
+			assert.Nil(t, entry.Frequency, "non-frequency trip must not carry frequency data")
+			assert.Nil(t, entry.Schedule.Frequency, "schedule for non-frequency trip must not carry frequency data")
+			continue
+		}
+
+		assert.Equal(t, freqTripID, entryTripID)
+		require.NotNil(t, entry.Frequency, "frequency trip %q must carry frequency data", entryTripID)
+		assert.Equal(t, 0, entry.Frequency.ExactTimes)
+		assert.Equal(t, 600*time.Second, entry.Frequency.Headway.Duration)
+
+		// Fixture windows span 06:00-09:00 UTC on the 2025-06-12 service date
+		// (the fixture clock); compare instants (millis) because ModelTime
+		// round-trips through JSON in time.Local.
+		assert.Equal(t, time.Date(2025, 6, 12, 6, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.StartTime.UnixMilli())
+		assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.EndTime.UnixMilli())
+
+		require.NotNil(t, entry.Schedule.Frequency, "schedule for frequency trip %q must carry frequency data", entryTripID)
+		assert.Equal(t, entry.Frequency.StartTime.UnixMilli(), entry.Schedule.Frequency.StartTime.UnixMilli())
+		assert.Equal(t, entry.Frequency.EndTime.UnixMilli(), entry.Schedule.Frequency.EndTime.UnixMilli())
+	}
+}
+
 func multiTimezoneTripsForLocationFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +

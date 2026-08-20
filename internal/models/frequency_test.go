@@ -134,6 +134,68 @@ func TestFrequencyJSON_NilPointer(t *testing.T) {
 	assert.Contains(t, string(jsonData), `"frequency":null`)
 }
 
+func TestNewScheduleFrequencyFromDB(t *testing.T) {
+	// Use a non-UTC timezone to verify start-of-day is computed in the
+	// agency's local timezone.
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, loc)
+
+	dbFreq := gtfsdb.Frequency{
+		TripID:      "trip_1",
+		StartTime:   int64(6 * time.Hour),
+		EndTime:     int64(9 * time.Hour),
+		HeadwaySecs: 600, // 10 minutes
+		ExactTimes:  1,
+	}
+
+	sf := NewScheduleFrequencyFromDB(
+		dbFreq,
+		serviceDate,
+		"service_1",         // serviceID
+		"15_trip_1",         // tripID (combined form)
+		"Downtown Terminal", // stopHeadsign
+		true,                // arrivalEnabled
+		false,               // departureEnabled
+	)
+
+	expectedStart := time.Date(2024, 1, 15, 6, 0, 0, 0, loc)
+	expectedEnd := time.Date(2024, 1, 15, 9, 0, 0, 0, loc)
+
+	assert.Equal(t, expectedStart, sf.StartTime.Time)
+	assert.Equal(t, expectedEnd, sf.EndTime.Time)
+	assert.Equal(t, 600*time.Second, sf.Headway.Duration)
+	assert.Equal(t, serviceDate, sf.ServiceDate.Time)
+	assert.Equal(t, "service_1", sf.ServiceID)
+	assert.Equal(t, "15_trip_1", sf.TripID)
+	assert.Equal(t, "Downtown Terminal", sf.StopHeadsign)
+	assert.True(t, sf.ArrivalEnabled)
+	assert.False(t, sf.DepartureEnabled)
+}
+
+func TestNewScheduleFrequencyFromDB_OverMidnight(t *testing.T) {
+	serviceDate := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	dbFreq := gtfsdb.Frequency{
+		TripID:      "trip_late",
+		StartTime:   int64(25 * time.Hour),
+		EndTime:     int64(27 * time.Hour),
+		HeadwaySecs: 1800,
+		ExactTimes:  0,
+	}
+
+	sf := NewScheduleFrequencyFromDB(dbFreq, serviceDate, "service_1", "15_trip_late", "Uptown", true, true)
+
+	// Should resolve to Jan 16 at 1:00 AM and 3:00 AM
+	expectedStart := time.Date(2024, 1, 16, 1, 0, 0, 0, time.UTC)
+	expectedEnd := time.Date(2024, 1, 16, 3, 0, 0, 0, time.UTC)
+
+	assert.Equal(t, expectedStart, sf.StartTime.Time)
+	assert.Equal(t, expectedEnd, sf.EndTime.Time)
+	assert.Equal(t, serviceDate, sf.ServiceDate.Time)
+}
+
 func TestScheduleFrequencyJSON(t *testing.T) {
 	sf := ScheduleFrequency{
 		FrequencyWindow: FrequencyWindow{
