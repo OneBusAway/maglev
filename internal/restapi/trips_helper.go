@@ -1266,16 +1266,8 @@ type serviceIDsByDay struct {
 	PreviousDay []string
 }
 
-// newServiceDateResolver loads the services active on the query day and the day
-// before it. A lookup failure is not fatal — the resolver then reports the
-// query day for every trip, which is what callers did before it existed.
-func (api *RestAPI) newServiceDateResolver(ctx context.Context, queryDayMidnight, currentTime time.Time) *serviceDateResolver {
-	return newServiceDateResolverFor(queryDayMidnight, currentTime, api.serviceIDsForDays(ctx, queryDayMidnight))
-}
-
-// newServiceDateResolverFor builds a resolver from service IDs the caller has
-// already fetched, so a handler that selected trips by service day does not run
-// the same two lookups again.
+// newServiceDateResolverFor builds a resolver from the service IDs the caller
+// already fetched for the query day and the day before it.
 func newServiceDateResolverFor(queryDayMidnight, currentTime time.Time, services serviceIDsByDay) *serviceDateResolver {
 	return &serviceDateResolver{
 		queryDayMidnight:    queryDayMidnight,
