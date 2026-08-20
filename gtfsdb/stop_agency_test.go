@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/appconf"
 )
 
 func TestBuildStopAgencyIndex_PopulatesTable(t *testing.T) {
@@ -51,6 +52,31 @@ func TestBuildStopAgencyIndex_PopulatesTable(t *testing.T) {
 	`).Scan(&mismatched)
 	require.NoError(t, err)
 	assert.Zero(t, mismatched, "indexed agency should be the lowest agency serving the stop")
+}
+
+func TestBackfillStopAgencyIndex_FillsEmptyIndex(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := context.Background()
+
+	// Stand in for a database imported before stop_agencies existed: the feed is loaded
+	// but the index is empty, and the unchanged feed hash means no import will rebuild it.
+	_, err := client.DB.ExecContext(ctx, "DELETE FROM stop_agencies")
+	require.NoError(t, err)
+
+	require.NoError(t, client.backfillStopAgencyIndex(ctx))
+
+	var indexed int
+	err = client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stop_agencies").Scan(&indexed)
+	require.NoError(t, err)
+	assert.Greater(t, indexed, 0, "backfill should populate an empty index")
+}
+
+func TestBackfillStopAgencyIndex_SkipsEmptyFeed(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.NoError(t, client.backfillStopAgencyIndex(context.Background()))
 }
 
 func TestBuildStopAgencyIndex_RebuildsFromScratch(t *testing.T) {
