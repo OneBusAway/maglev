@@ -71,6 +71,12 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 // TestRoutesForLocationHandlerSituationReferences verifies that a route-scoped
 // alert surfaces as a situation reference — the alert-collection branch feeding
 // data.references.situations had no coverage before this test.
+//
+// This is current maglev behavior, not the documented spec: the routes-for-location
+// wiki page states that references.situations is present but empty for this endpoint,
+// and its Implementation Decisions section has no entry recording a deviation. The
+// population comes from commit 4e09c1c, which added it across all non-trip handlers
+// (route, route-search, stops-search) rather than specifically for this endpoint.
 func TestRoutesForLocationHandlerSituationReferences(t *testing.T) {
 	api := createTestApi(t)
 
@@ -146,7 +152,8 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 		},
 		{
 			// Only one span is unusable, so the default radius still applies — and it must
-			// stay the 10km query radius, not the 600m no-query one. Both routes matching
+			// stay the 10km query radius, not the current no-query default (600m; see
+			// TestRoutesForLocationDefaultRadiusMatchesCurrentConstant). Both routes matching
 			// "3" sit outside 600m of denseCentre but inside 10km, so a regression to the
 			// no-query radius empties the list. 25_24 matches on its long name
 			// ("Route 99X/Amtrak Thruway Route 3"), not its short name.
@@ -179,12 +186,17 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 	}
 }
 
-// TestRoutesForLocationDefaultRadiusMatches600Meters pins the no-query default
-// radius (600m) by equivalence rather than a hardcoded distance: this RABA stop
-// has a neighboring stop whose routes only enter the box between 500m and 600m,
-// so a request with no radius/span must match radius=600 exactly and return
-// strictly more routes than radius=500.
-func TestRoutesForLocationDefaultRadiusMatches600Meters(t *testing.T) {
+// TestRoutesForLocationDefaultRadiusMatchesCurrentConstant pins the no-query default
+// radius against models.DefaultSearchRadiusInMeters (currently 600m) by equivalence
+// rather than a hardcoded distance: this RABA stop has a neighboring stop whose routes
+// only enter the box between 500m and 600m, so a request with no radius/span must match
+// radius=600 exactly and return strictly more routes than radius=500.
+//
+// 600m is current behavior, not the spec: the routes-for-location wiki page and the
+// hosted Java API both give 500m as the no-query default. This test's literals must
+// change if/when models.DefaultSearchRadiusInMeters is corrected to 500 — see
+// https://github.com/OneBusAway/maglev/issues/1227.
+func TestRoutesForLocationDefaultRadiusMatchesCurrentConstant(t *testing.T) {
 	const lat, lon = 40.618458, -122.37598
 
 	routeIDsFor := func(t *testing.T, params string) []string {
