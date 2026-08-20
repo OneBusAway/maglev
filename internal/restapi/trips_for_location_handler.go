@@ -47,8 +47,9 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// service days in the query's own zone. Each entry's reported service date is
 	// settled per agency once the entries are built.
 	queryZone := parsedReq.CurrentTime.Location()
-	serviceDates := api.newServiceDateResolver(ctx,
-		serviceDateMidnight(parsedReq.CurrentTime, queryZone), parsedReq.CurrentTime)
+	queryDayMidnight := serviceDateMidnight(parsedReq.CurrentTime, queryZone)
+	serviceDates := newServiceDateResolverFor(queryDayMidnight, parsedReq.CurrentTime,
+		api.serviceIDsForDays(ctx, queryDayMidnight))
 	activeTrips := api.getActiveTrips(candidateTripIDs, api.GtfsManager.GetRealTimeVehicles())
 
 	bounds := internalgtfs.BoundsFromParams(parsedReq.LocationParams, true)
