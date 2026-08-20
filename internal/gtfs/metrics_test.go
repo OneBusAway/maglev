@@ -397,6 +397,107 @@ func TestGetMetrics_TimeSinceLastRealtimeUpdate(t *testing.T) {
 	assert.InDelta(t, 30, snapshot.TimeSinceLastRealtimeUpdate["A"], 5)
 }
 
+// TestGetMetrics_ClearedFeedReportsUnknownFreshness guards a discrepancy
+// found reviewing this endpoint: clearFeedData deletes feedLastUpdate once a
+// feed has been failing for staleFeedThreshold, but its feedTrips key (and
+// its feedAgencyFilter entry) survive. Previously that made staleness
+// untracked, which the backfill loop read as 0 — the endpoint reported a
+// feed as "just updated" at the exact moment it was declared dead. It must
+// report realtimeUpdateUnknown instead, since the agency is still covered by
+// a configured feed, just one whose freshness is currently unknown.
+func TestGetMetrics_ClearedFeedReportsUnknownFreshness(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+
+	manager.feedTrips["feed-1"] = []gtfs.Trip{}
+	manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true}
+	manager.SetFeedUpdateTimeForTest("feed-1", time.Now())
+
+	manager.clearFeedData("feed-1")
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate["A"])
+}
+
+// TestGetMetrics_FeedWithoutTripDataIsStillVisible guards the other half of
+// the same discrepancy: a feed configured with only a vehicle-positions-url
+// never gets a feedTrips entry (see updateFeedRealtime's trip-updates
+// guard), so enumerating feeds from feedTrips alone made it invisible here
+// and its agencies reported 0 forever, regardless of whether the feed was
+// actually alive.
+func TestGetMetrics_FeedWithoutTripDataIsStillVisible(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+
+	manager.feedVehicles["feed-vp"] = []gtfs.Vehicle{}
+	manager.feedAgencyFilter["feed-vp"] = map[string]bool{"A": true}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate["A"],
+		"the feed has never updated, so its covered agency should report unknown, not the fresh-looking 0")
+}
+
+// TestGetMetrics_StalenessUsesMostStaleFeed guards the fix for
+// applyFeedMetrics taking the minimum staleness across feeds covering an
+// agency: a healthy feed would mask a dead sibling. The maximum (most stale)
+// is the correct choice for a monitoring signal.
+func TestGetMetrics_StalenessUsesMostStaleFeed(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+
+	manager.feedTrips["feed-fresh"] = []gtfs.Trip{}
+	manager.feedAgencyFilter["feed-fresh"] = map[string]bool{"A": true}
+	manager.SetFeedUpdateTimeForTest("feed-fresh", time.Now())
+
+	manager.feedTrips["feed-stale"] = []gtfs.Trip{}
+	manager.feedAgencyFilter["feed-stale"] = map[string]bool{"A": true}
+	manager.SetFeedUpdateTimeForTest("feed-stale", time.Now().Add(-10*time.Minute))
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.GreaterOrEqual(t, snapshot.TimeSinceLastRealtimeUpdate["A"], int64(590),
+		"the most-stale covering feed should determine the reported staleness, not the freshest")
+}
+
+// TestGetMetrics_MatchedStopIDsDeduplicatedAcrossFeeds guards the same
+// cross-feed dedup fix applied to matched stop IDs: StopIDsMatchedCount
+// previously summed per feed while StopIDsUnmatchedCount deduplicated,
+// so a stop seen by two feeds covering the same agency counted twice on one
+// side and once on the other.
+func TestGetMetrics_MatchedStopIDsDeduplicatedAcrossFeeds(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	mustCreateTrip(t, manager, "T1", "R1")
+	mustCreateTrip(t, manager, "T2", "R1")
+	mustCreateStop(t, manager, "SHARED_STOP")
+
+	knownStop := "SHARED_STOP"
+	manager.feedTrips["feed-a"] = []gtfs.Trip{
+		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}, StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &knownStop}}},
+	}
+	manager.feedTrips["feed-b"] = []gtfs.Trip{
+		{ID: gtfs.TripID{ID: "T2", RouteID: "R1"}, StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &knownStop}}},
+	}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, snapshot.StopIDsMatchedCount["A"])
+}
+
 func TestGetMetrics_MultipleFeedsIsolateAgencies(t *testing.T) {
 	routes := map[string]*gtfs.Route{
 		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},

@@ -23,7 +23,7 @@ import (
 // RealtimeTripCountsMatched will typically be higher here than in Java for
 // the same feed. Record counting and matched/unmatched ID deduplication,
 // however, are intentionally kept in step with Java's semantics: see
-// countCombinedRecords and computeFeedMetrics.
+// countMatchedGroups and computeFeedMetrics.
 type MetricsSnapshot struct {
 	AgencyIDs                   []string
 	ScheduledTripsCount         map[string]int
@@ -34,8 +34,19 @@ type MetricsSnapshot struct {
 	StopIDsMatchedCount         map[string]int
 	StopIDsUnmatchedCount       map[string]int
 	StopIDsUnmatched            map[string][]string
+	// TimeSinceLastRealtimeUpdate is seconds since the freshest feed covering
+	// the agency last updated successfully. It is realtimeUpdateUnknown (-1)
+	// when the agency is covered by a configured feed that has never
+	// successfully updated (or was cleared as stale — see clearFeedData), and
+	// 0 only when no configured feed covers the agency at all: a real 0 would
+	// misread as "just updated" for a feed that's actually dead.
 	TimeSinceLastRealtimeUpdate map[string]int64
 }
+
+// realtimeUpdateUnknown marks an agency that's covered by a configured
+// real-time feed whose freshness can't currently be determined, as distinct
+// from an agency with no covering feed at all (which reports 0).
+const realtimeUpdateUnknown int64 = -1
 
 // GetMetrics computes an aggregate health snapshot: currently-active trip
 // counts per agency, plus GTFS-RT matching status (records received,
@@ -96,8 +107,8 @@ func newMetricsSnapshot(agencyIDs []string) MetricsSnapshot {
 		// accumulation tracks the freshest feed per agency by checking whether
 		// an entry exists yet, so a pre-seeded 0 would look like "already
 		// fresh" and block any real value from ever being recorded. Backfilled
-		// to 0 for agencies with no covering feed at the end of
-		// populateRealtimeMetrics.
+		// to realtimeUpdateUnknown or 0 at the end of populateRealtimeMetrics,
+		// depending on whether the agency has a covering feed at all.
 	}
 	return snapshot
 }
@@ -198,16 +209,36 @@ type realtimeFeedState struct {
 	hasUpdate    bool
 }
 
+// snapshotRealtimeFeedState enumerates every feed the manager currently
+// knows about. Feed IDs are collected from feedTrips, feedVehicles,
+// feedAlerts, and feedLastUpdate together, not feedTrips alone: a feed
+// configured with only a vehicle-positions-url never gets a feedTrips entry
+// (see the trip-updates guard in updateFeedRealtime), so relying on
+// feedTrips alone would make it invisible to metrics entirely.
 func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
 
-	states := make([]realtimeFeedState, 0, len(manager.feedTrips))
-	for feedID, trips := range manager.feedTrips {
+	feedIDs := make(map[string]bool, len(manager.feedTrips))
+	for feedID := range manager.feedTrips {
+		feedIDs[feedID] = true
+	}
+	for feedID := range manager.feedVehicles {
+		feedIDs[feedID] = true
+	}
+	for feedID := range manager.feedAlerts {
+		feedIDs[feedID] = true
+	}
+	for feedID := range manager.feedLastUpdate {
+		feedIDs[feedID] = true
+	}
+
+	states := make([]realtimeFeedState, 0, len(feedIDs))
+	for feedID := range feedIDs {
 		lastUpdate, hasUpdate := manager.feedLastUpdate[feedID]
 		states = append(states, realtimeFeedState{
 			feedID:       feedID,
-			trips:        trips,
+			trips:        manager.feedTrips[feedID],
 			agencyFilter: manager.feedAgencyFilter[feedID],
 			lastUpdate:   lastUpdate,
 			hasUpdate:    hasUpdate,
@@ -230,7 +261,9 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 	now := time.Now()
 
 	unmatchedTripIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
+	matchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
 	unmatchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
+	coveredAgencies := make(map[string]bool, len(snapshot.AgencyIDs))
 
 	for _, feed := range manager.snapshotRealtimeFeedState() {
 		metrics, err := manager.computeFeedMetrics(ctx, feed.trips, now)
@@ -249,18 +282,25 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 		}
 
 		for agencyID := range agencyIDs {
+			coveredAgencies[agencyID] = true
 			applyFeedMetrics(snapshot, agencyID, metrics, feed.hasUpdate, staleness)
 			addToAgencySet(unmatchedTripIDsByAgency, agencyID, metrics.tripIDsUnmatched)
+			addToAgencySet(matchedStopIDsByAgency, agencyID, metrics.stopIDsMatched)
 			addToAgencySet(unmatchedStopIDsByAgency, agencyID, metrics.stopIDsUnmatched)
 		}
 	}
 
 	for _, agencyID := range snapshot.AgencyIDs {
 		if _, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]; !tracked {
-			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
+			if coveredAgencies[agencyID] {
+				snapshot.TimeSinceLastRealtimeUpdate[agencyID] = realtimeUpdateUnknown
+			} else {
+				snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
+			}
 		}
 		snapshot.RealtimeTripCountsUnmatched[agencyID] = len(unmatchedTripIDsByAgency[agencyID])
 		snapshot.RealtimeTripIDsUnmatched[agencyID] = sortedKeys(unmatchedTripIDsByAgency[agencyID])
+		snapshot.StopIDsMatchedCount[agencyID] = len(matchedStopIDsByAgency[agencyID])
 		snapshot.StopIDsUnmatchedCount[agencyID] = len(unmatchedStopIDsByAgency[agencyID])
 		snapshot.StopIDsUnmatched[agencyID] = sortedKeys(unmatchedStopIDsByAgency[agencyID])
 	}
@@ -286,10 +326,8 @@ func addToAgencySet(sets map[string]map[string]bool, agencyID string, ids []stri
 type feedMetrics struct {
 	recordsTotal      int
 	tripsMatched      int
-	tripsUnmatched    int
 	tripIDsUnmatched  []string
-	stopsMatched      int
-	stopsUnmatched    int
+	stopIDsMatched    []string
 	stopIDsUnmatched  []string
 	resolvedAgencyIDs map[string]bool
 }
@@ -331,10 +369,8 @@ func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Tri
 	metrics.tripsMatched = countMatchedGroups(tripGroups, tripRouteByID, now)
 
 	classification := classifyTrips(trips, tripRouteByID, staticStopIDs)
-	metrics.tripsUnmatched = len(classification.unmatchedTripIDs)
 	metrics.tripIDsUnmatched = sortedKeys(classification.unmatchedTripIDs)
-	metrics.stopsMatched = len(classification.matchedStopIDs)
-	metrics.stopsUnmatched = len(classification.unmatchedStopIDs)
+	metrics.stopIDsMatched = sortedKeys(classification.matchedStopIDs)
 	metrics.stopIDsUnmatched = sortedKeys(classification.unmatchedStopIDs)
 
 	resolvedAgencyIDs, err := manager.agencyIDsForRoutes(ctx, classification.routeIDs)
@@ -583,17 +619,20 @@ func (manager *Manager) agencyIDsForRoutes(ctx context.Context, routeIDs map[str
 }
 
 // applyFeedMetrics accumulates a feed's per-agency totals into snapshot.
-// Unmatched trip/stop IDs are handled separately by populateRealtimeMetrics
-// (via addToAgencySet), since they need deduplicating across feeds that
-// cover the same agency rather than summed directly.
+// Matched/unmatched trip and stop IDs are handled separately by
+// populateRealtimeMetrics (via addToAgencySet), since they need
+// deduplicating across feeds that cover the same agency rather than summed
+// directly.
 func applyFeedMetrics(snapshot *MetricsSnapshot, agencyID string, metrics feedMetrics, hasUpdate bool, staleness int64) {
 	snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
 	snapshot.RealtimeTripCountsMatched[agencyID] += metrics.tripsMatched
-	snapshot.StopIDsMatchedCount[agencyID] += metrics.stopsMatched
 
 	if hasUpdate {
+		// The most-stale covering feed determines the agency's reported
+		// staleness, not the freshest: a monitoring signal should surface the
+		// worst case, not let one healthy feed mask a dead sibling.
 		existing, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]
-		if !tracked || staleness < existing {
+		if !tracked || staleness > existing {
 			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = staleness
 		}
 	}
