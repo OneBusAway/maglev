@@ -175,7 +175,9 @@ SET
 WHERE min_arrival_time IS NULL OR max_departure_time IS NULL;
 
 -- name: ClearStopAgencies :exec
-DELETE FROM stop_agencies;
+-- WHERE TRUE is redundant to SQLite but keeps static analysis from reading this as an
+-- accidentally unbounded DELETE. The table is a derived index and is always cleared whole.
+DELETE FROM stop_agencies WHERE TRUE;
 
 -- name: BuildStopAgencies :exec
 INSERT INTO

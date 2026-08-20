@@ -125,9 +125,11 @@ func (q *Queries) ClearShapes(ctx context.Context) error {
 }
 
 const clearStopAgencies = `-- name: ClearStopAgencies :exec
-DELETE FROM stop_agencies
+DELETE FROM stop_agencies WHERE TRUE
 `
 
+// WHERE TRUE is redundant to SQLite but keeps static analysis from reading this as an
+// accidentally unbounded DELETE. The table is a derived index and is always cleared whole.
 func (q *Queries) ClearStopAgencies(ctx context.Context) error {
 	_, err := q.exec(ctx, q.clearStopAgenciesStmt, clearStopAgencies)
 	return err
