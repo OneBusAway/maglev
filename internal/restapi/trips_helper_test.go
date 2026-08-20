@@ -2183,7 +2183,7 @@ func TestFrequencyForEntry_FallbackQueryAndCaching(t *testing.T) {
 
 	freqMap := make(map[string][]gtfsdb.Frequency)
 
-	freq, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate)
+	freq, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate, serviceDate)
 	require.NoError(t, err)
 	require.NotNil(t, freq, "freq-trip has a frequency entry in the fixture")
 	assert.Equal(t, time.Date(2025, 6, 12, 6, 0, 0, 0, time.UTC), freq.StartTime.Time, "earliest start_time row is selected")
@@ -2191,7 +2191,7 @@ func TestFrequencyForEntry_FallbackQueryAndCaching(t *testing.T) {
 
 	require.Contains(t, freqMap, freqTripID, "fallback query result must be cached")
 
-	cached, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate)
+	cached, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate, serviceDate)
 	require.NoError(t, err)
 	require.NotNil(t, cached)
 	assert.Equal(t, freq, cached, "repeat lookup must reuse the cached row")
@@ -2207,7 +2207,7 @@ func TestFrequencyForEntry_NoFrequencyRowsCachedAsEmpty(t *testing.T) {
 
 	freqMap := make(map[string][]gtfsdb.Frequency)
 
-	freq, err := api.frequencyForEntry(ctx, freqMap, freqNormalTripD, serviceDate)
+	freq, err := api.frequencyForEntry(ctx, freqMap, freqNormalTripD, serviceDate, serviceDate)
 	require.NoError(t, err)
 	assert.Nil(t, freq, "trip without a frequency entry yields nil")
 
@@ -2222,7 +2222,7 @@ func TestFrequencyForEntry_NilFreqMapSkipsCaching(t *testing.T) {
 	ctx := context.Background()
 	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
 
-	freq, err := api.frequencyForEntry(ctx, nil, freqTripID, serviceDate)
+	freq, err := api.frequencyForEntry(ctx, nil, freqTripID, serviceDate, serviceDate)
 	require.NoError(t, err)
 	require.NotNil(t, freq)
 }
@@ -2237,8 +2237,25 @@ func TestFrequencyForEntry_DBErrorPropagates(t *testing.T) {
 	require.NoError(t, api.GtfsManager.GtfsDB.DB.Close(), "closing the fixture DB simulates a query failure")
 
 	freqMap := make(map[string][]gtfsdb.Frequency)
-	freq, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate)
+	freq, err := api.frequencyForEntry(ctx, freqMap, freqTripID, serviceDate, serviceDate)
 	require.Error(t, err, "a closed database must surface the query error")
 	assert.Nil(t, freq)
 	assert.NotContains(t, freqMap, freqTripID, "failed lookups must not be cached")
+}
+
+// TestSelectFrequency verifies window-based selection with fallback to the
+// first row.
+func TestSelectFrequency(t *testing.T) {
+	freqs := []gtfsdb.Frequency{
+		{TripID: "t", StartTime: int64(6 * time.Hour), EndTime: int64(9 * time.Hour), HeadwaySecs: 600},
+		{TripID: "t", StartTime: int64(9 * time.Hour), EndTime: int64(12 * time.Hour), HeadwaySecs: 900},
+	}
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	assert.Equal(t, &freqs[1], selectFrequency(freqs, serviceDate, serviceDate.Add(10*time.Hour)),
+		"the window containing the effective time wins")
+	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(12*time.Hour)),
+		"end_time is exclusive; no match falls back to the first row")
+	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(3*time.Hour)),
+		"a time before all windows falls back to the first row")
 }

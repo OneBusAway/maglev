@@ -96,16 +96,8 @@ func (api *RestAPI) BuildTripStatus(
 	}
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status, currentTime)
 
-	// CANCELED trips are no longer running there is no active position or schedule
-	// to report. Return immediately with the cancellation status and skip all stop-time
-	// and shape calculations, which are meaningless for a trip that is not operating.
-	// Predicted is true because the cancellation itself is real-time information.
-	if status.Status == "CANCELED" {
-		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
-		status.Scheduled = !status.Predicted
-		return status, extras, nil
-	}
-
+	// Frequencies are reported even for CANCELED trips, so resolve the DB
+	// trip ID before the early-return.
 	_, activeTripRawID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 	if err != nil {
 		return status, extras, err
@@ -126,6 +118,24 @@ func (api *RestAPI) BuildTripStatus(
 			}
 			dbTripID = tripID
 		}
+	}
+
+	// Reuse the batch-fetched frequencies when supplied; single-entry handlers
+	// fall back to a per-trip query.
+	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, dbTripID, serviceDate, currentTime)
+	if freqErr != nil {
+		return status, extras, freqErr
+	}
+	status.Frequency = frequency
+
+	// CANCELED trips are no longer running there is no active position or schedule
+	// to report. Return immediately with the cancellation status and skip all stop-time
+	// and shape calculations, which are meaningless for a trip that is not operating.
+	// Predicted is true because the cancellation itself is real-time information.
+	if status.Status == "CANCELED" {
+		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
+		status.Scheduled = !status.Predicted
+		return status, extras, nil
 	}
 
 	// Mirror Java's applyTripUpdatesToRecord: iterate all block trips in
@@ -155,14 +165,6 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
 	}
-
-	// Reuse the batch-fetched frequencies when supplied; single-entry handlers
-	// fall back to a per-trip query.
-	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, dbTripID, serviceDate)
-	if freqErr != nil {
-		return status, extras, freqErr
-	}
-	status.Frequency = frequency
 
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
@@ -378,10 +380,10 @@ func (api *RestAPI) BuildTripStatus(
 	return status, extras, nil
 }
 
-// frequencyForEntry returns the first (earliest start_time) frequency row for
-// the trip, from the batch-fetched freqMap or a per-trip fallback query. Empty
-// results yield nil; DB errors propagate. A nil freqMap skips caching.
-func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceDate time.Time) (*models.Frequency, error) {
+// frequencyForEntry returns the frequency row whose window contains
+// currentTime (earliest when none matches), from freqMap or a per-trip
+// fallback query. Empty results yield nil; DB errors propagate.
+func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceDate, currentTime time.Time) (*models.Frequency, error) {
 	freqs, ok := freqMap[tripID]
 	if !ok {
 		rows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
@@ -396,8 +398,41 @@ func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]
 	if len(freqs) == 0 {
 		return nil, nil
 	}
-	converted := models.NewFrequencyFromDB(freqs[0], serviceDate)
+	converted := models.NewFrequencyFromDB(*selectFrequency(freqs, serviceDate, currentTime), serviceDate)
 	return &converted, nil
+}
+
+// selectFrequency returns the row whose [start_time, end_time) window
+// contains effectiveTime, falling back to freqs[0].
+func selectFrequency(freqs []gtfsdb.Frequency, serviceDate, effectiveTime time.Time) *gtfsdb.Frequency {
+	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
+		0, 0, 0, 0, serviceDate.Location())
+	for i := range freqs {
+		start := midnight.Add(time.Duration(freqs[i].StartTime))
+		end := midnight.Add(time.Duration(freqs[i].EndTime))
+		if !effectiveTime.Before(start) && effectiveTime.Before(end) {
+			return &freqs[i]
+		}
+	}
+	return &freqs[0]
+}
+
+// fetchFrequenciesForTrips batch-fetches frequency rows for tripIDs, batching
+// under SQLite's bind-variable limit. Seeds the map only after the query
+// succeeds; errors propagate.
+func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.Frequency, error) {
+	freqMap := make(map[string][]gtfsdb.Frequency, len(tripIDs))
+	allFreqs, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
+	if err != nil {
+		return nil, err
+	}
+	for _, tripID := range tripIDs {
+		freqMap[tripID] = nil
+	}
+	for _, f := range allFreqs {
+		freqMap[f.TripID] = append(freqMap[f.TripID], f)
+	}
+	return freqMap, nil
 }
 
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
@@ -443,7 +478,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, freqErr
 	}
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, serviceDate), serviceDate)
 		scheduleFrequency = &converted
 	}
 

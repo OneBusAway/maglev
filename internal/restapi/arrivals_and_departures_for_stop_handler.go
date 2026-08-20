@@ -287,21 +287,15 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		}
 	}
 
-	// Batch-fetch frequencies; seeding nil prevents BuildTripStatus from
-	// falling back to a per-arrival query. First row (earliest start_time)
-	// becomes the arrival's frequency field.
-	freqMap := make(map[string][]gtfsdb.Frequency, len(uniqueTripIDs))
+	// Batch-fetch frequencies; success seeds nil to skip fallback queries. The
+	// arrival's frequency uses the row whose window contains the request time.
+	freqMap := make(map[string][]gtfsdb.Frequency)
 	if len(uniqueTripIDs) > 0 {
-		for _, tripID := range uniqueTripIDs {
-			freqMap[tripID] = nil
-		}
-		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, uniqueTripIDs)
+		var freqErr error
+		freqMap, freqErr = api.fetchFrequenciesForTrips(ctx, uniqueTripIDs)
 		if freqErr != nil {
-			api.Logger.Warn("failed to batch fetch frequencies for trips", slog.Any("error", freqErr))
-		} else {
-			for _, f := range allFreqs {
-				freqMap[f.TripID] = append(freqMap[f.TripID], f)
-			}
+			api.serverErrorResponse(w, r, freqErr)
+			return
 		}
 	}
 
@@ -501,7 +495,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		)
 
 		if freqs, ok := freqMap[st.TripID]; ok && len(freqs) > 0 {
-			converted := models.NewFrequencyFromDB(freqs[0], serviceMidnight)
+			converted := models.NewFrequencyFromDB(*selectFrequency(freqs, serviceMidnight, params.Time), serviceMidnight)
 			arrival.Frequency = &converted
 		}
 

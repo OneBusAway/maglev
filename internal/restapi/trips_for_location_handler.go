@@ -430,20 +430,14 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 	}
 
-	// Batch-fetch frequencies; seeding nil avoids a fallback query for
-	// trips without any.
-	freqMap := make(map[string][]gtfsdb.Frequency, len(validVehicleTrips))
+	// Batch-fetch frequencies; success seeds nil to skip fallback queries.
+	freqMap := make(map[string][]gtfsdb.Frequency)
 	if len(validVehicleTrips) > 0 {
-		for _, tripID := range validVehicleTrips {
-			freqMap[tripID] = nil
-		}
-		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, validVehicleTrips)
+		var freqErr error
+		freqMap, freqErr = api.fetchFrequenciesForTrips(ctx, validVehicleTrips)
 		if freqErr != nil {
-			api.Logger.Warn("failed to batch fetch frequencies for trips", "error", freqErr)
-		} else {
-			for _, f := range allFreqs {
-				freqMap[f.TripID] = append(freqMap[f.TripID], f)
-			}
+			api.serverErrorResponse(w, r, freqErr)
+			return nil, nil
 		}
 	}
 
@@ -467,7 +461,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			continue
 		}
 		tripMidnight := serviceDateMidnight(request.CurrentTime, agencyLocation)
-		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, tripID, tripMidnight)
+		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, tripID, tripMidnight, request.CurrentTime)
 		if freqErr != nil {
 			api.serverErrorResponse(w, r, freqErr)
 			return nil, nil
@@ -564,7 +558,7 @@ func (api *RestAPI) buildScheduleForTrip(
 
 	stopTimesList := buildStopTimesList(api, ctx, stopTimes, shapePoints, agencyID)
 
-	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, tripID, serviceDate)
+	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, tripID, serviceDate, serviceDate)
 	if freqErr != nil {
 		return nil, freqErr
 	}

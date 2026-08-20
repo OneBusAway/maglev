@@ -323,25 +323,19 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	stopIDsMap := make(map[string]string)
 
-	// Batch-fetch frequencies; seeding nil avoids a fallback query for trips
-	// without any. Post-batch trips (interlined, DUPLICATED) fall back
-	// per-trip.
-	freqMap := make(map[string][]gtfsdb.Frequency, len(fetchedTrips))
+	// Batch-fetch frequencies; success seeds nil to skip fallback queries.
+	// Post-batch trips (interlined, DUPLICATED) fall back per-trip.
+	freqMap := make(map[string][]gtfsdb.Frequency)
 	if len(fetchedTrips) > 0 {
 		tripIDsForFreq := make([]string, 0, len(fetchedTrips))
 		for _, trip := range fetchedTrips {
 			tripIDsForFreq = append(tripIDsForFreq, trip.ID)
 		}
-		for _, tripID := range tripIDsForFreq {
-			freqMap[tripID] = nil
-		}
-		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, tripIDsForFreq)
+		var freqErr error
+		freqMap, freqErr = api.fetchFrequenciesForTrips(ctx, tripIDsForFreq)
 		if freqErr != nil {
-			api.Logger.Warn("trips-for-route: failed to batch fetch frequencies", "route_id", routeID, "error", freqErr)
-		} else {
-			for _, f := range allFreqs {
-				freqMap[f.TripID] = append(freqMap[f.TripID], f)
-			}
+			api.serverErrorResponse(w, r, freqErr)
+			return
 		}
 	}
 
@@ -434,7 +428,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, entryTripID, todayMidnight)
+		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, entryTripID, todayMidnight, currentTime)
 		if freqErr != nil {
 			api.serverErrorResponse(w, r, freqErr)
 			return
@@ -517,7 +511,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, baseTripID, todayMidnight)
+		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, baseTripID, todayMidnight, currentTime)
 		if freqErr != nil {
 			api.serverErrorResponse(w, r, freqErr)
 			return

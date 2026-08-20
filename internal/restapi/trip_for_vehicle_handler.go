@@ -69,14 +69,22 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
+	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	freqMap := map[string][]gtfsdb.Frequency{tripID: freqRows}
+
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, freqMap)
 		if statusErr != nil {
-			api.serverErrorResponse(w, r, statusErr)
-			return
+			api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
+			status = nil
 		}
 	}
 
@@ -111,18 +119,10 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	// built its situations are this trip's and are reused here.
 	situationIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
 	var frequency *models.Frequency
 	if len(freqRows) > 0 {
-		// TripDetails has only one frequency field, but the query can return
-		// multiple rows when there are multiple frequency entries for the same
-		// trip; take the first (earliest start_time) per the API contract.
-		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		// TripDetails has one frequency field; take the window-matched row.
+		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, currentTime), serviceDate)
 		frequency = &converted
 	}
 

@@ -167,13 +167,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		for tripID := range tripIDSet {
 			tripIDs = append(tripIDs, tripID)
 		}
-		allFreqs, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, tripIDs)
+		var freqErr error
+		freqMap, freqErr = api.fetchFrequenciesForTrips(ctx, tripIDs)
 		if freqErr != nil {
 			api.serverErrorResponse(w, r, freqErr)
 			return
-		}
-		for _, f := range allFreqs {
-			freqMap[f.TripID] = append(freqMap[f.TripID], f)
 		}
 	}
 
@@ -224,7 +222,11 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 				return cmp.Compare(a.StartTime.UnixMilli(), b.StartTime.UnixMilli())
 			})
 
-			directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, directionMap[dirID], frequencies)
+			stopTimes := directionMap[dirID]
+			if stopTimes == nil {
+				stopTimes = []models.ScheduleStopTime{}
+			}
+			directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, frequencies)
 			directionSchedules = append(directionSchedules, directionSchedule)
 		}
 
@@ -592,7 +594,15 @@ func expandExactTimesStopTimes(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfs
 	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
 
 	expanded := make([]models.ScheduleStopTime, 0)
+	const maxExpandedStopTimes = 1000
 	for offset := int64(0); freq.StartTime+offset < freq.EndTime; offset += headwayNs {
+		if len(expanded) >= maxExpandedStopTimes {
+			if rowCtx.logger != nil {
+				rowCtx.logger.Warn("schedule-for-stop: frequency expansion capped",
+					"trip_id", row.TripID, "limit", maxExpandedStopTimes)
+			}
+			break
+		}
 		arrivalMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
 		departureMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
 

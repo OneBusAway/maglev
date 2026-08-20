@@ -353,11 +353,19 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predicted = true
 	}
 
+	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr != nil {
+		api.serverErrorResponse(w, r, freqErr)
+		return
+	}
+	freqMap := map[string][]gtfsdb.Frequency{tripID: freqRows}
+
 	// Use serviceMidnight (not the raw user-supplied serviceDate, which may
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime, nil)
+	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime, freqMap)
 	if statusErr != nil {
 		api.Logger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -430,11 +438,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		situationIDs,                                   // situationIds
 	)
 
-	// Populate frequency for the arrival's trip. The singular handler serves
-	// one trip per request, so a per-trip query is appropriate here.
-	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
-	if freqErr == nil && len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(freqRows[0], serviceMidnight)
+	// The arrival's frequency uses the window-matched row fetched above.
+	if len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceMidnight, currentTime), serviceMidnight)
 		arrival.Frequency = &converted
 	}
 
