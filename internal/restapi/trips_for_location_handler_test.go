@@ -988,8 +988,10 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 }
 
 // TestCandidateTripIDsForStops_BatchesLargeStopSets covers the uncapped stop
-// set exceeding one query's bind variable budget: the batches together must
-// return what a single query would.
+// set exceeding one batch: the batches together must return what a single
+// query would, proving concatenation rather than bind-limit avoidance —
+// modern SQLite's default bind limit (32766) is well above what this test
+// exercises.
 func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
@@ -1157,8 +1159,8 @@ func seedShapedAndShapelessTrips(t *testing.T, api *RestAPI, clockTime time.Time
 
 // TestInServiceTripIDs_BatchesLargeStopSets guards against an unbatched
 // regression: the in-bounds stop set inServiceTripIDs is called with is
-// uncapped, and SQLite rejects a statement carrying more bind variables than
-// it allows rather than truncating it.
+// uncapped, and the batches must concatenate correctly rather than silently
+// dropping rows from any but the first.
 func TestInServiceTripIDs_BatchesLargeStopSets(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

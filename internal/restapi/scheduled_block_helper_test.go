@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -505,9 +506,16 @@ func TestFetchStopCoordsForStopTimes_PropagatesError(t *testing.T) {
 
 // TestFetchStopCoordsForStopTimes_BatchesLargeStopSets guards against an
 // unbatched regression: an unbounded caller — the scheduled-position
-// candidate set among stop_times — can push the unique stop count past
-// SQLite's bind variable limit, which the query rejects rather than
-// truncates.
+// candidate set among stop_times — can push the unique stop count past a
+// batch boundary, and the batches must concatenate correctly rather than
+// silently dropping rows from any but the first.
+//
+// RABA's fixture has only 375 unique stops, well under idsPerBatchedQuery, so
+// the unique ID set is padded with synthetic stop IDs that don't exist in the
+// DB (GetStopsByIDs simply returns fewer rows for those). Real stop IDs are
+// interleaved before and after the synthetic block so some land in the first
+// batch and some in the last — proving concatenation, not just that the loop
+// ran once.
 func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -517,14 +525,27 @@ func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stops)
 
-	stopTimes := make([]gtfsdb.StopTime, 0, idsPerBatchedQuery+len(stops))
-	for len(stopTimes) <= idsPerBatchedQuery {
-		for _, stop := range stops {
-			stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: stop.ID})
-		}
+	half := len(stops) / 2
+	var stopTimes []gtfsdb.StopTime
+	for _, stop := range stops[:half] {
+		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: stop.ID})
 	}
-	require.Greater(t, len(stopTimes), idsPerBatchedQuery,
-		"the input must span more than one batch for this test to mean anything")
+
+	syntheticCount := idsPerBatchedQuery + 100
+	for i := 0; i < syntheticCount; i++ {
+		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: fmt.Sprintf("synthetic-stop-%d", i)})
+	}
+
+	for _, stop := range stops[half:] {
+		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: stop.ID})
+	}
+
+	uniqueIDs := make(map[string]struct{}, len(stopTimes))
+	for _, st := range stopTimes {
+		uniqueIDs[st.StopID] = struct{}{}
+	}
+	require.Greater(t, len(uniqueIDs), idsPerBatchedQuery,
+		"the deduped ID set must span more than one batch for this test to mean anything")
 
 	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
 	require.NoError(t, err)
@@ -533,6 +554,8 @@ func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
 		_, ok := coords[stop.ID]
 		assert.True(t, ok, "stop %q should be in coord map", stop.ID)
 	}
+	_, ok := coords["synthetic-stop-0"]
+	assert.False(t, ok, "synthetic stop IDs don't exist in the DB and should not appear")
 }
 
 func TestComputeScheduledBlockSnapshot_BasicShape(t *testing.T) {
