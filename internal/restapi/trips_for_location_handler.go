@@ -115,7 +115,16 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
-		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedByEntries(ctx, result)
+		tripSchedulesAndStatuses := make([]tripScheduleAndStatus, 0, len(result))
+
+		for _, trip := range result {
+			tripSchedulesAndStatuses = append(tripSchedulesAndStatuses, tripScheduleAndStatus{
+				status:   trip.Status,
+				schedule: trip.Schedule,
+			})
+		}
+
+		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
 		if stopsErr != nil {
 			api.serverErrorResponse(w, r, stopsErr)
 			return
@@ -229,43 +238,6 @@ func mergeFieldErrors(dst, src map[string][]string) map[string][]string {
 		dst[k] = append(dst[k], v...)
 	}
 	return dst
-}
-
-// stopsReferencedByEntries fetches the stops the response actually refers to:
-// those on each entry's schedule, plus the closest and next stops on its status.
-// The in-bounds stop set is deliberately not included — it is a candidate-trip
-// selection detail, and stops on it that no returned trip serves have nothing in
-// the response pointing at them.
-func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []models.TripsForLocationListEntry) ([]gtfsdb.Stop, map[string]string, error) {
-	stopIDsByBareID := make(map[string]string)
-
-	for _, entry := range entries {
-		collectStopIDsFromSchedule(entry.Schedule, stopIDsByBareID)
-		if entry.Status == nil {
-			continue
-		}
-		for _, combinedID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
-			_, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
-			if err != nil {
-				continue
-			}
-			if _, exists := stopIDsByBareID[bareID]; !exists {
-				stopIDsByBareID[bareID] = combinedID
-			}
-		}
-	}
-
-	if len(stopIDsByBareID) == 0 {
-		return nil, nil, nil
-	}
-
-	bareIDs := make([]string, 0, len(stopIDsByBareID))
-	for bareID := range stopIDsByBareID {
-		bareIDs = append(bareIDs, bareID)
-	}
-
-	stops, err := queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
-	return stops, stopIDsByBareID, err
 }
 
 // candidateTripIDsForStops returns the IDs of the trips serving any of these

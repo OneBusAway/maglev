@@ -766,3 +766,43 @@ func (api *RestAPI) tripSituationsFor(ctx context.Context, tripID string, extras
 	}
 	return api.situationsFromRefs(extras.situations)
 }
+
+type tripScheduleAndStatus struct {
+	schedule *models.TripsSchedule
+	status   *models.TripStatus
+}
+
+// stopsReferencedBySchedulesAndStatuses fetches the stops the response refers to:
+// those on each trip's schedule, plus the closest and next stops on the trip's status.
+func (api *RestAPI) stopsReferencedBySchedulesAndStatuses(ctx context.Context, schedulesAndStatuses []tripScheduleAndStatus) ([]gtfsdb.Stop, map[string]string, error) {
+	stopIDsByBareID := make(map[string]string)
+
+	for _, entry := range schedulesAndStatuses {
+		collectStopIDsFromSchedule(entry.schedule, stopIDsByBareID)
+
+		if entry.status == nil {
+			continue
+		}
+		for _, combinedID := range []string{entry.status.ClosestStop, entry.status.NextStop} {
+			_, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+			if err != nil {
+				continue
+			}
+			if _, exists := stopIDsByBareID[bareID]; !exists {
+				stopIDsByBareID[bareID] = combinedID
+			}
+		}
+	}
+
+	if len(stopIDsByBareID) == 0 {
+		return nil, nil, nil
+	}
+
+	bareIDs := make([]string, 0, len(stopIDsByBareID))
+	for bareID := range stopIDsByBareID {
+		bareIDs = append(bareIDs, bareID)
+	}
+
+	stops, err := queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	return stops, stopIDsByBareID, err
+}

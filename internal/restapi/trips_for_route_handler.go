@@ -321,7 +321,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	stopIDsMap := make(map[string]string)
 
 	blockTripForRoute, err := api.buildBlockTripForRoute(ctx, fetchedTrips, routeID, serviceIDs, prevServiceIDs)
 	if err != nil {
@@ -396,8 +395,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				api.serverErrorResponse(w, r, schedErr)
 				return
 			}
-
-			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
 		// Build status from the active trip (tripID). Per spec,
@@ -476,7 +473,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				api.serverErrorResponse(w, r, schedErr)
 				return
 			}
-			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
 		var status *models.TripStatus
@@ -506,24 +502,25 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var references models.ReferencesModel
 	if includeReferences {
-		var stops []gtfsdb.Stop
-		if len(stopIDsMap) > 0 {
-			bareIDs := make([]string, 0, len(stopIDsMap))
-			for bareID := range stopIDsMap {
-				bareIDs = append(bareIDs, bareID)
-			}
-			var err error
-			stops, err = queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
-			if err != nil {
-				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
-				stops = []gtfsdb.Stop{}
-			}
+		tripSchedulesAndStatuses := make([]tripScheduleAndStatus, 0, len(result))
+
+		for _, trip := range result {
+			tripSchedulesAndStatuses = append(tripSchedulesAndStatuses, tripScheduleAndStatus{
+				schedule: trip.Schedule,
+				status:   trip.Status,
+			})
+		}
+
+		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
+		if stopsErr != nil {
+			api.serverErrorResponse(w, r, stopsErr)
+			return
 		}
 
 		references = api.buildTripReferences(ctx, tripReferenceParams{
 			IncludeTrip:     includeTrip,
 			Trips:           result,
-			Stops:           stops,
+			Stops:           stopsReferenced,
 			PreFetchedTrips: fetchedTrips,
 			StopIDMap:       stopIDsMap,
 			Situations:      situations.refs,
