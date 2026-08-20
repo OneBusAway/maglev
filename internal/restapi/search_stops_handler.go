@@ -200,10 +200,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// GetRoutesForStops orders by (agency_id, route_id) as TEXT (lexicographic, not
-		// numeric), so the first route yields the lexicographically lowest agency ID
-		// serving this stop - a stable, if not numeric-minimal, choice for multi-agency stops.
-		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDs[0])
+		agencyID := agencyIDForSearchedStop(s, routeIDs)
 
 		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routeIDs))
 		keptStopIDs = append(keptStopIDs, s.ID)
@@ -251,6 +248,23 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
+}
+
+// agencyIDForSearchedStop returns the agency whose prefix the stop's combined ID carries:
+// the lexicographically lowest agency serving it - a stable, if not numeric-minimal,
+// choice for multi-agency stops.
+//
+// The search query resolves this from the precomputed index, and reusing that value keeps
+// each stop's combined ID identical to the key the results were sorted by. A stop added
+// since the last import has no index entry yet, so fall back to its serving routes, which
+// GetRoutesForStops has already ordered by agency ID.
+func agencyIDForSearchedStop(stop gtfsdb.SearchStopsByNameRow, combinedRouteIDs []string) string {
+	if indexed := nulls.StringOrEmpty(stop.AgencyID); indexed != "" {
+		return indexed
+	}
+
+	agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(combinedRouteIDs[0])
+	return agencyID
 }
 
 // stopFromSearchRow converts a full-text search result row into the stop record the
