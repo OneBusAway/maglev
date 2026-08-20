@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -11,6 +12,9 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -156,6 +160,89 @@ func TestBuildStopReferencesAndRouteIDsForStops(t *testing.T) {
 			assert.True(t, ok, "route %q referenced by stop should be present in routeMap", rid)
 		}
 	}
+}
+
+func TestQueryInBatches(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("An empty ID set runs no query", func(t *testing.T) {
+		queried := false
+		results, err := queryInBatches(ctx, nil, func(context.Context, []string) ([]string, error) {
+			queried = true
+			return nil, nil
+		})
+
+		require.NoError(t, err)
+		assert.Empty(t, results)
+		assert.False(t, queried, "there is nothing to look up")
+	})
+
+	t.Run("A failing batch stops the run", func(t *testing.T) {
+		batches := 0
+		_, err := queryInBatches(ctx, make([]string, idsPerBatchedQuery+1),
+			func(context.Context, []string) ([]string, error) {
+				batches++
+				return nil, errors.New("query failed")
+			})
+
+		require.Error(t, err)
+		assert.Equal(t, 1, batches, "the remaining batches must not run once one fails")
+	})
+}
+
+func TestStopReferences(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	servedStopID := firstRabaStopIDs(t, api, 1)[0]
+	servedStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, servedStopID)
+	require.NoError(t, err)
+
+	// No stop_times point at this stop, so no route resolves for it.
+	routelessStop := gtfsdb.Stop{
+		ID:            "stop-served-by-no-route",
+		Lat:           40.5,
+		Lon:           -122.3,
+		LocationType:  nulls.Int64(1),
+		ParentStation: nulls.String("parent-station"),
+	}
+	defaultStop := gtfsdb.Stop{ID: "default-stop", Lat: 40.6, Lon: -122.4}
+	malformedReferenceStop := gtfsdb.Stop{
+		ID:            "malformed-reference-stop",
+		Lat:           40.7,
+		Lon:           -122.5,
+		ParentStation: nulls.String("parent-station"),
+	}
+
+	referringIDs := map[string]string{
+		servedStopID:              utils.FormCombinedID("referring-agency", servedStopID),
+		routelessStop.ID:          utils.FormCombinedID("referring-agency", routelessStop.ID),
+		defaultStop.ID:            utils.FormCombinedID("referring-agency", defaultStop.ID),
+		malformedReferenceStop.ID: "malformed-reference-id",
+	}
+
+	refs, routeIDsByStop := api.stopReferences(ctx,
+		[]gtfsdb.Stop{servedStop, routelessStop, defaultStop, malformedReferenceStop}, referringIDs)
+	require.Len(t, refs, 4, "a stop with no resolvable routes still gets a reference")
+
+	assert.Equal(t, referringIDs[servedStopID], refs[0].ID, "the referring entry's ID labels the reference")
+	assert.NotEmpty(t, refs[0].RouteIDs)
+	assert.Equal(t, routeIDsByStop[servedStopID], refs[0].RouteIDs)
+
+	assert.Equal(t, referringIDs[routelessStop.ID], refs[1].ID)
+	assert.Equal(t, 1, refs[1].LocationType)
+	assert.Equal(t, utils.FormCombinedID("referring-agency", "parent-station"), refs[1].Parent)
+	assert.Empty(t, refs[1].RouteIDs)
+	assert.NotNil(t, refs[1].RouteIDs, "an unresolved route list is empty, not null")
+	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
+	// No stop_times and no shape, so nothing supports a direction.
+	assert.Equal(t, models.UnknownValue, refs[1].Direction)
+
+	assert.Equal(t, 0, refs[2].LocationType)
+	assert.Empty(t, refs[2].Parent)
+
+	assert.Equal(t, 0, refs[3].LocationType)
+	assert.Empty(t, refs[3].Parent)
 }
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {

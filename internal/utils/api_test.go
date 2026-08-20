@@ -11,6 +11,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -448,8 +449,9 @@ func TestParseTimeParameter(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
-	// Get current time for testing
-	now := time.Now().In(loc)
+	// Use a fixed time for deterministic testing
+	now := time.Date(2025, 6, 12, 12, 0, 0, 0, loc)
+	testClock := clock.NewMockClock(now)
 	todayFormatted := now.Format("20060102")
 
 	// Calculate yesterday
@@ -562,7 +564,7 @@ func TestParseTimeParameter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(tt.timeParam, loc)
+			dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(tt.timeParam, loc, testClock)
 
 			if tt.expectError {
 				assert.False(t, valid)
@@ -590,7 +592,7 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		todayMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 		todayDateStr := todayMidnight.Format("2006-01-02")
 
-		dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(todayDateStr, loc)
+		dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(todayDateStr, loc, clock.RealClock{})
 
 		assert.True(t, valid)
 		assert.Nil(t, fieldErrors)
@@ -601,7 +603,7 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("Malformed YYYY-MM-DD", func(t *testing.T) {
-		_, _, fieldErrors, valid := ParseTimeParameter("2024-13-45", loc)
+		_, _, fieldErrors, valid := ParseTimeParameter("2024-13-45", loc, clock.RealClock{})
 
 		assert.False(t, valid)
 		assert.NotNil(t, fieldErrors)
@@ -609,7 +611,7 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("Non-numeric epoch", func(t *testing.T) {
-		_, _, fieldErrors, valid := ParseTimeParameter("not-a-number", loc)
+		_, _, fieldErrors, valid := ParseTimeParameter("not-a-number", loc, clock.RealClock{})
 
 		assert.False(t, valid)
 		assert.NotNil(t, fieldErrors)
@@ -621,7 +623,7 @@ func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
-	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12", loc)
+	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12", loc, clock.RealClock{})
 
 	require.True(t, valid)
 	require.Nil(t, fieldErrors)
@@ -1154,4 +1156,59 @@ func TestParseDate(t *testing.T) {
 func TestClampRadius(t *testing.T) {
 	assert.Equal(t, 5000.0, ClampRadius(5000.0))
 	assert.Equal(t, float64(models.MaxSearchRadiusInMeters), ClampRadius(models.MaxSearchRadiusInMeters+10000.0))
+}
+
+func TestParseBoolParam(t *testing.T) {
+	tests := []struct {
+		name          string
+		params        url.Values
+		fallback      bool
+		expectedValue bool
+		expectError   bool
+	}{
+		{
+			name:          "Explicit true overrides the fallback",
+			params:        url.Values{"includeTrip": []string{"true"}},
+			fallback:      false,
+			expectedValue: true,
+		},
+		{
+			name:          "Explicit false overrides the fallback",
+			params:        url.Values{"includeTrip": []string{"false"}},
+			fallback:      true,
+			expectedValue: false,
+		},
+		{
+			name:          "Missing parameter takes the fallback",
+			params:        url.Values{},
+			fallback:      true,
+			expectedValue: true,
+		},
+		{
+			name:          "Empty value takes the fallback",
+			params:        url.Values{"includeTrip": []string{""}},
+			fallback:      true,
+			expectedValue: true,
+		},
+		{
+			name:          "Non-boolean value errors and keeps the fallback",
+			params:        url.Values{"includeTrip": []string{"maybe"}},
+			fallback:      true,
+			expectedValue: true,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, fieldErrors := ParseBoolParam(tt.params, "includeTrip", tt.fallback, nil)
+
+			assert.Equal(t, tt.expectedValue, value)
+			if tt.expectError {
+				assert.Contains(t, fieldErrors, "includeTrip")
+			} else {
+				assert.Empty(t, fieldErrors)
+			}
+		})
+	}
 }

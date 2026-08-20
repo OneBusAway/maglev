@@ -24,9 +24,14 @@ const (
 )
 
 const (
-	DefaultMaxCountForRoutes = 50
-	DefaultMaxCountForStops  = 100
-	MaxAllowedCount          = 250
+	DefaultMaxCountForStops = 100
+	MaxAllowedCount         = 250
+	// DefaultMaxCountForRoutesForLocation is the routes-for-location default when the
+	// caller omits maxCount; MaxCountForRoutesForLocation is the ceiling it is clamped to.
+	DefaultMaxCountForRoutesForLocation = 10
+	// MaxCountForRoutesForLocation is the routes-for-location ceiling; the endpoint
+	// silently clamps larger requests instead of rejecting them.
+	MaxCountForRoutesForLocation = 50
 )
 
 // RangeSearchBufferMeters provides a 50m tolerance for GPS inaccuracy and curve approximation.

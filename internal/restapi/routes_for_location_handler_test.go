@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net/http"
@@ -33,6 +34,39 @@ func TestRoutesForLocationHandlerEndToEnd(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
+func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
+	const baseURL = "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966"
+
+	tests := []struct {
+		name           string
+		params         string
+		wantReferences bool
+	}{
+		{"includeReferences=false suppresses references", "&includeReferences=false", false},
+		{"includeReferences=true populates references", "&includeReferences=true", true},
+		{"includeReferences absent defaults to populated", "", true},
+		{"includeReferences unparseable defaults to populated", "&includeReferences=notabool", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+
+			resp, model := callAPIHandler[RoutesResponse](t, api, baseURL+tt.params)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.ElementsMatch(t, []models.Route{testdata.Route19}, model.Data.List, "list must be unaffected by includeReferences")
+
+			if tt.wantReferences {
+				assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+			} else {
+				assert.Empty(t, model.Data.References.Agencies)
+				assert.Empty(t, model.Data.References.Situations)
+			}
+		})
+	}
+}
+
 func TestRoutesForLocationQuery(t *testing.T) {
 	api := createTestApi(t)
 
@@ -61,8 +95,11 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 		expectedRouteIDs []string
 	}{
 		{
+			// maxCount is set explicitly above the RABA fixture's route count so this
+			// case stays about box sizing; the endpoint's default maxCount (10) would
+			// otherwise randomly truncate these 13 matches on every run.
 			name:             "spans widen the box beyond the default radius",
-			params:           denseCentre + "&latSpan=0.1&lonSpan=0.1",
+			params:           denseCentre + "&latSpan=0.1&lonSpan=0.1&maxCount=50",
 			expectedRouteIDs: []string{"25_15", "25_151", "25_153", "25_154", "25_157", "25_159", "25_160", "25_161", "25_1885", "25_24", "25_3779", "25_44X", "25_6446"},
 		},
 		{
@@ -77,11 +114,13 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 		},
 		{
 			// Only one span is unusable, so the default radius still applies — and it must
-			// stay the 10km query radius, not the 600m no-query one. Route 3 sits outside
-			// 600m of denseCentre but inside 10km.
+			// stay the 10km query radius, not the 600m no-query one. Both routes matching
+			// "3" sit outside 600m of denseCentre but inside 10km, so a regression to the
+			// no-query radius empties the list. 25_24 matches on its long name
+			// ("Route 99X/Amtrak Thruway Route 3"), not its short name.
 			name:             "one span alone falls back to the query default radius",
 			params:           denseCentre + "&latSpan=0.1&query=3",
-			expectedRouteIDs: []string{"25_153"},
+			expectedRouteIDs: []string{"25_153", "25_24"},
 		},
 	}
 
@@ -156,6 +195,84 @@ func TestRoutesForLocationWildcardQueryDoesNotMatch(t *testing.T) {
 	assert.Empty(t, model.Data.List)
 }
 
+func TestRoutesForLocationQueryMatchesRouteText(t *testing.T) {
+	// lat/lon are for stop 2000, which is served by both Route44X and Route17.
+	// Query mode defaults to a 10km radius, so any RABA route is reachable from here.
+	const stop2000 = "lat=40.583170&lon=-122.392586"
+
+	tests := []struct {
+		name       string
+		url        string
+		wantRoutes []models.Route
+	}{
+		{
+			name:       "matches long name only",
+			url:        "query=Shasta&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route17},
+		},
+		{
+			name:       "matches a long-name prefix token",
+			url:        "query=Chur&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route15},
+		},
+		{
+			name:       "multiple terms both matching one route",
+			url:        "query=Shasta+College&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route17},
+		},
+		{
+			name:       "terms are ORed so either may match",
+			url:        "query=Shasta+Airport&" + stop2000,
+			wantRoutes: []models.Route{testdata.Route17, testdata.Route15},
+		},
+		{
+			name:       "no route text matches the query",
+			url:        "query=zzzz&" + stop2000,
+			wantRoutes: []models.Route{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&"+tt.url)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.False(t, model.Data.LimitExceeded)
+			assert.ElementsMatch(t, tt.wantRoutes, model.Data.List)
+		})
+	}
+}
+
+func TestRoutesForLocationQueryCandidatesAreCappedAtMaxCountPlusOne(t *testing.T) {
+	// Ten RABA routes have a long name starting with "Route ", far more than
+	// maxCount+1 candidates. With maxCount=1, only the top-ranked text-search
+	// candidates are considered, so the result must be truncated and flagged.
+	api := createTestApi(t)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=Route&maxCount=1")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Len(t, model.Data.List, 1)
+	assert.True(t, model.Data.LimitExceeded)
+}
+
+func TestRoutesForLocationQueryMatchIgnoredWhenOutOfBounds(t *testing.T) {
+	// "Shasta" matches Route17's long name, but a tiny explicit radius far from
+	// any RABA stop must still drop it: text-index candidates are filtered by
+	// location, not returned unconditionally.
+	api := createTestApi(t)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=0.0&lon=0.0&radius=100&query=Shasta")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Empty(t, model.Data.List)
+	assert.False(t, model.Data.LimitExceeded)
+}
+
 func TestRoutesForLocationHandlerValidatesParameters(t *testing.T) {
 	api := createTestApi(t)
 	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=invalid&lon=-121.74")
@@ -223,6 +340,103 @@ func TestRoutesForLocationHandlerLimitExceeded(t *testing.T) {
 	// Ordering matters! Routes should still be sorted by ID after truncation.
 	assert.True(t, model.Data.List[0].ID < model.Data.List[1].ID)
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
+}
+
+// seedRoutesNearLocation inserts count synthetic routes that all serve the stop
+// nearest to (lat, lon), so that route-count caps above the RABA fixture's 13
+// routes become observable. Rows are removed via t.Cleanup.
+func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count int) {
+	t.Helper()
+	ctx := context.Background()
+	db := api.GtfsManager.GtfsDB.DB
+
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies, "test data should contain at least one agency")
+	agencyID := agencies[0].ID
+
+	var serviceID string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT id FROM calendar LIMIT 1`).Scan(&serviceID))
+
+	var stopID string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT id FROM stops ORDER BY (lat-?)*(lat-?)+(lon-?)*(lon-?) LIMIT 1`,
+		lat, lat, lon, lon,
+	).Scan(&stopID))
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id LIKE 'clamp-test-%'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id LIKE 'clamp-test-%'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id LIKE 'clamp-test-%'`)
+	})
+
+	for i := range count {
+		id := fmt.Sprintf("clamp-test-%d", i)
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO routes (id, agency_id, short_name, type) VALUES (?, ?, ?, 3)`,
+			id, agencyID, id)
+		require.NoError(t, err)
+
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO trips (id, route_id, service_id) VALUES (?, ?, ?)`,
+			id, id, serviceID)
+		require.NoError(t, err)
+
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 0)`,
+			id, stopID)
+		require.NoError(t, err)
+	}
+}
+
+func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
+	const lat, lon = 40.583321, -122.362535
+
+	tests := []struct {
+		name        string
+		maxCount    string
+		wantLen     int
+		wantExceeds bool
+	}{
+		{"below endpoint cap", "10", 10, true},
+		{"at endpoint cap", "50", 50, true},
+		{"just above endpoint cap", "51", 50, true},
+		{"at global ceiling", "250", 50, true},
+		{"above global ceiling", "300", 50, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			// Seed enough routes near the query point that the endpoint's 50 cap
+			// (and the fact it's 50, not 250) is actually observable - RABA alone
+			// only has 13 routes total.
+			seedRoutesNearLocation(t, api, lat, lon, 60)
+
+			resp, model := callAPIHandler[RoutesResponse](t, api,
+				fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=5000&maxCount=%s", lat, lon, tt.maxCount))
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.Len(t, model.Data.List, tt.wantLen)
+			assert.Equal(t, tt.wantExceeds, model.Data.LimitExceeded)
+		})
+	}
+}
+
+func TestRoutesForLocationHandlerDefaultsMaxCountToTen(t *testing.T) {
+	const lat, lon = 40.583321, -122.362535
+	api := createTestApi(t)
+	// Seed past 10 in-bounds routes so the spec default (10, not the endpoint's
+	// 50 clamp ceiling) is actually observable.
+	seedRoutesNearLocation(t, api, lat, lon, 15)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&radius=5000", lat, lon))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Len(t, model.Data.List, 10)
+	assert.True(t, model.Data.LimitExceeded)
 }
 
 // routesForLocationShuffleIterations bounds the flake probability of
