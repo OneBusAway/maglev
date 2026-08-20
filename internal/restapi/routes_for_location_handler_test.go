@@ -543,38 +543,49 @@ func TestRoutesForLocationHandlerLimitExceededIsRandomized(t *testing.T) {
 	assert.ElementsMatch(t, []string{testdata.Route15.ID, testdata.Route11.ID, testdata.Route14.ID}, slices.Collect(maps.Keys(seen)))
 }
 
-func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
-	api := createTestApi(t)
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=invalid")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
-}
+// maxCountFieldErrors extracts the fieldErrors["maxCount"] list from a validation
+// error response body.
+func maxCountFieldErrors(t *testing.T, data any) []any {
+	t.Helper()
 
-func TestRoutesForLocationHandlerMaxCountLessThanOrEqualZero(t *testing.T) {
-	api := createTestApi(t)
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=0")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
-}
-
-// TestRoutesForLocationHandlerMaxCountZeroFieldErrorMessage pins the exact
-// fieldErrors message the spec quotes for maxCount <= 0, not just the status code.
-func TestRoutesForLocationHandlerMaxCountZeroFieldErrorMessage(t *testing.T) {
-	api := createTestApi(t)
-	resp, model := callAPIHandler[models.ResponseModel](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=0")
-
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-
-	data, ok := model.Data.(map[string]any)
+	body, ok := data.(map[string]any)
 	require.True(t, ok, "response data should be a map")
 
-	fieldErrors, ok := data["fieldErrors"].(map[string]any)
+	fieldErrors, ok := body["fieldErrors"].(map[string]any)
 	require.True(t, ok, "data should contain fieldErrors map")
 
 	maxCountErrors, ok := fieldErrors["maxCount"].([]any)
 	require.True(t, ok, "fieldErrors should contain maxCount errors list")
 
-	assert.Contains(t, maxCountErrors, "must be greater than zero")
+	return maxCountErrors
+}
+
+// TestRoutesForLocationHandlerInvalidMaxCount pins the exact fieldErrors message for
+// each invalid maxCount case, not just the status code. The wiki page's extension 1a
+// quotes "must be greater than zero" for maxCount <= 0; the message itself is defined
+// in internal/utils/api.go.
+func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxCount    string
+		wantMessage string
+	}{
+		{"zero", "0", "must be greater than zero"},
+		{"negative", "-5", "must be greater than zero"},
+		{"unparseable", "invalid", `Invalid field value for field "maxCount".`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			resp, model := callAPIHandler[models.ResponseModel](t, api,
+				"/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount="+tt.maxCount)
+
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
+			assert.Contains(t, maxCountFieldErrors(t, model.Data), tt.wantMessage)
+		})
+	}
 }
 
 func TestRoutesForLocationHandlerInRangeWithNoResults(t *testing.T) {
