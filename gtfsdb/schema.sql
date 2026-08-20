@@ -164,6 +164,19 @@ CREATE TABLE
     ) STRICT;
 
 -- migrate
+-- Precomputed agency for each stop: the lowest agency ID among the routes serving it.
+-- GTFS gives stops no agency of their own, so resolving one means aggregating stop_times
+-- through trips and routes. At feed scale that costs seconds per query, which is too slow
+-- to do while serving a request. Rebuilt from scratch on every import.
+CREATE TABLE
+    IF NOT EXISTS stop_agencies (
+        stop_id TEXT PRIMARY KEY,
+        agency_id TEXT NOT NULL,
+        FOREIGN KEY (stop_id) REFERENCES stops (id),
+        FOREIGN KEY (agency_id) REFERENCES agencies (id)
+    ) STRICT;
+
+-- migrate
 CREATE VIRTUAL TABLE IF NOT EXISTS stops_rtree USING rtree (
     id, -- Integer primary key for the R*Tree
     min_lat,

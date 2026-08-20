@@ -174,6 +174,22 @@ SET
     max_departure_time = (SELECT MAX(departure_time) FROM stop_times WHERE trip_id = trips.id)
 WHERE min_arrival_time IS NULL OR max_departure_time IS NULL;
 
+-- name: ClearStopAgencies :exec
+DELETE FROM stop_agencies;
+
+-- name: BuildStopAgencies :exec
+INSERT INTO
+    stop_agencies (stop_id, agency_id)
+SELECT
+    stop_times.stop_id,
+    MIN(routes.agency_id)
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+GROUP BY
+    stop_times.stop_id;
+
 -- name: CreateCalendarDate :one
 INSERT
 OR REPLACE INTO calendar_dates (service_id, date, exception_type)
