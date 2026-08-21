@@ -371,4 +371,22 @@ func TestBuildRouteReferences_MultiAgencyScopingAndCollision(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, routes, 2, "Duplicate route references across multiple stops must be deduplicated")
 	})
+
+	t.Run("Handles route ID without underscore", func(t *testing.T) {
+		// Mock a route in the DB without an underscore in its ID
+		_, err := api.GtfsManager.GtfsDB.DB.Exec("INSERT INTO routes (id, agency_id, short_name, type) VALUES ('r999', 'A1', '999', 3)")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM routes WHERE id = 'r999'")
+		})
+
+		stops := []models.Stop{{ID: "A1_s1", StaticRouteIDs: []string{"r999"}}}
+		routes, err := api.BuildRouteReferences(ctx, "A1", stops)
+		require.NoError(t, err)
+		require.Len(t, routes, 1)
+		// Expected: A1_r999 because buildRouteModels prepends agencyID for routes
+		assert.Equal(t, "A1_r999", routes[0].ID)
+	})
+
 }
+
