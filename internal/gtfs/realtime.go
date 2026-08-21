@@ -10,12 +10,14 @@ import (
 	"math/rand"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // alertIndex holds pre-built maps for O(1) alert lookups, keyed by trip, route, agency, and stop IDs.
@@ -202,7 +204,8 @@ func (manager *Manager) GetAlertsForStop(stopID string) []gtfs.Alert {
 }
 
 // GetAllAlerts returns all deduplicated realtime alerts across all feeds.
-// Deduplication is by alert ID, preserving first-seen order by sorted feed ID.
+// Deduplication is by agency-qualified alert ID, preserving first-seen order
+// by sorted feed ID, so two agencies publishing the same raw ID both survive.
 func (manager *Manager) GetAllAlerts() []gtfs.Alert {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
@@ -220,15 +223,32 @@ func (manager *Manager) GetAllAlerts() []gtfs.Alert {
 			if alert.ID == "" {
 				continue
 			}
-			if _, exists := seen[alert.ID]; exists {
+			key := qualifiedAlertID(alert)
+			if _, exists := seen[key]; exists {
 				continue
 			}
-			seen[alert.ID] = struct{}{}
+			seen[key] = struct{}{}
 			alerts = append(alerts, alert)
 		}
 	}
 
 	return alerts
+}
+
+// qualifiedAlertID is the agency-and-id form used as the GetAllAlerts dedup
+// key. It matches restapi.situationID(alert.ID, agencyIDForAlert(alert, "")).
+func qualifiedAlertID(alert gtfs.Alert) string {
+	agencyID := ""
+	for _, entity := range alert.InformedEntities {
+		if entity.AgencyID != nil && *entity.AgencyID != "" {
+			agencyID = *entity.AgencyID
+			break
+		}
+	}
+	if agencyID == "" || strings.HasPrefix(alert.ID, agencyID+"_") {
+		return alert.ID
+	}
+	return utils.FormCombinedID(agencyID, alert.ID)
 }
 
 // Fetches GTFS-RT data from a URL with per-feed headers.

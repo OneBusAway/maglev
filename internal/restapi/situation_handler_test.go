@@ -19,23 +19,58 @@ func TestSituationHandlerRequiresValidAPIKey(t *testing.T) {
 	assert.Equal(t, "permission denied", model.Text)
 }
 
-func TestSituationHandlerNotFound(t *testing.T) {
+func TestSituationHandlerErrors(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/nonexistent-alert.json?key=TEST")
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "resource not found", model.Text)
+	tests := []struct {
+		name           string
+		pathID         string
+		expectedStatus int
+		expectedText   string
+	}{
+		{
+			name:           "unknown but well-formed ID",
+			pathID:         "25_nonexistent-alert",
+			expectedStatus: http.StatusNotFound,
+			expectedText:   "resource not found",
+		},
+		{
+			name:           "malformed ID without agency separator",
+			pathID:         "nonexistent-alert",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "invalid characters",
+			pathID:         "bad*id",
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/"+tt.pathID+".json?key=TEST")
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, model.Code)
+			if tt.expectedText != "" {
+				assert.Equal(t, tt.expectedText, model.Text)
+			}
+		})
+	}
 }
 
 func TestSituationHandlerWithSituation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	const alertID = "situation-handler-alert"
+	agencyID := "25"
+	const rawAlertID = "situation-handler-alert"
+	qualifiedID := "25_situation-handler-alert"
 	alert := gtfs.Alert{
-		ID: alertID,
+		ID: rawAlertID,
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{AgencyID: &agencyID},
+		},
 		Header: []gtfs.AlertText{
 			{Text: "Service disruption", Language: "en"},
 		},
@@ -45,7 +80,7 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 	}
 	api.GtfsManager.AddAlertForTest(alert)
 
-	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/"+alertID+".json?key=TEST")
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/"+qualifiedID+".json?key=TEST")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
@@ -56,7 +91,7 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 
 	entry, ok := data["entry"].(map[string]interface{})
 	require.True(t, ok, "response should include data.entry object")
-	assert.Equal(t, alertID, entry["id"])
+	assert.Equal(t, qualifiedID, entry["id"])
 	assert.Equal(t, "UNKNOWN_CAUSE", entry["reason"])
 	assert.Equal(t, "noImpact", entry["severity"])
 
@@ -84,4 +119,26 @@ func TestSituationHandlerWithSituation(t *testing.T) {
 	stops, ok := references["stops"].([]interface{})
 	require.True(t, ok)
 	assert.Len(t, stops, 0)
+}
+
+func TestSituationHandlerMatchesPrefixedAlertID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	const prefixedID = "40_situation-handler-prefixed"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID: prefixedID,
+		Header: []gtfs.AlertText{
+			{Text: "Already prefixed", Language: "en"},
+		},
+	})
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/situation/"+prefixedID+".json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]interface{})
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, prefixedID, entry["id"])
 }
