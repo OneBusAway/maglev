@@ -26,6 +26,7 @@ func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
 
 func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
 	routeIDSet := make(map[string]bool)
+	expectedCombinedIDs := make(map[string]bool)
 	originalRouteIDs := make([]string, 0)
 
 	for _, stop := range stops {
@@ -34,10 +35,14 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		}
 
 		for _, routeID := range stop.StaticRouteIDs {
-			_, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
+			routeAgencyID, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
 			if err != nil {
-				continue
+				originalRouteID = routeID
+				routeAgencyID = agencyID
 			}
+
+			combinedID := utils.FormCombinedID(routeAgencyID, originalRouteID)
+			expectedCombinedIDs[combinedID] = true
 
 			if !routeIDSet[originalRouteID] {
 				routeIDSet[originalRouteID] = true
@@ -55,7 +60,21 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		return nil, err
 	}
 
-	return buildRouteModels(ctx, agencyID, routes)
+	filteredRoutes := make([]gtfsdb.Route, 0, len(routes))
+	seenCombinedIDs := make(map[string]bool)
+	for _, route := range routes {
+		targetAgencyID := route.AgencyID
+		if targetAgencyID == "" {
+			targetAgencyID = agencyID
+		}
+		combinedID := utils.FormCombinedID(targetAgencyID, route.ID)
+		if expectedCombinedIDs[combinedID] && !seenCombinedIDs[combinedID] {
+			seenCombinedIDs[combinedID] = true
+			filteredRoutes = append(filteredRoutes, route)
+		}
+	}
+
+	return buildRouteModels(ctx, agencyID, filteredRoutes)
 }
 
 // buildRouteModels converts a slice of database routes into model routes.
@@ -67,18 +86,23 @@ func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Rout
 			return nil, ctx.Err()
 		}
 
-		combinedID := utils.FormCombinedID(agencyID, route.ID)
+		targetAgencyID := route.AgencyID
+		if targetAgencyID == "" {
+			targetAgencyID = agencyID
+		}
+
+		combinedID := utils.FormCombinedID(targetAgencyID, route.ID)
 
 		routeModel := models.NewRoute(
 			combinedID,
-			agencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			targetAgencyID,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String,
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor),
 		)
 		modelRoutes = append(modelRoutes, routeModel)
 	}
