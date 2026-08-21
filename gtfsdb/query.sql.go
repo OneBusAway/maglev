@@ -11,6 +11,25 @@ import (
 	"strings"
 )
 
+const buildStopAgencies = `-- name: BuildStopAgencies :exec
+INSERT INTO
+    stop_agencies (stop_id, agency_id)
+SELECT
+    stop_times.stop_id,
+    MIN(routes.agency_id)
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+GROUP BY
+    stop_times.stop_id
+`
+
+func (q *Queries) BuildStopAgencies(ctx context.Context) error {
+	_, err := q.exec(ctx, q.buildStopAgenciesStmt, buildStopAgencies)
+	return err
+}
+
 const bulkUpdateTripTimeBounds = `-- name: BulkUpdateTripTimeBounds :exec
 UPDATE trips
 SET
@@ -102,6 +121,17 @@ DELETE FROM shapes
 
 func (q *Queries) ClearShapes(ctx context.Context) error {
 	_, err := q.exec(ctx, q.clearShapesStmt, clearShapes)
+	return err
+}
+
+const clearStopAgencies = `-- name: ClearStopAgencies :exec
+DELETE FROM stop_agencies WHERE TRUE
+`
+
+// WHERE TRUE is redundant to SQLite but keeps static analysis from reading this as an
+// accidentally unbounded DELETE. The table is a derived index and is always cleared whole.
+func (q *Queries) ClearStopAgencies(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearStopAgenciesStmt, clearStopAgencies)
 	return err
 }
 
