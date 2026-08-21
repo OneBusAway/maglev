@@ -95,6 +95,34 @@ FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid
 WHERE fts.stop_name MATCH ?
+  -- A stop qualifies only if some stop time permits unrestricted pick-up or
+  -- drop-off (pickup_type/drop_off_type == 0), matching the legacy
+  -- stopHasRevenueService predicate. Types 2 (phone agency) and 3 (coordinate
+  -- with driver) are restricted and intentionally do not qualify.
+  --
+  -- The COALESCE exists because toNullInt64 (gtfsdb/helpers.go) persists a
+  -- parsed 0 as NULL, so NULL and 0 both mean unrestricted here.
+  --
+  -- This predicate is written for the storage chain GTFS specifies, not the one
+  -- we currently have. GTFS leaves pickup_type/drop_off_type optional and
+  -- defines an empty value as 0, but the pinned go-gtfs v1.1.1 does not:
+  -- parsePickupDropOffPolicy (enums.go) falls through to PickupDropOffPolicy_No
+  -- for anything that is not "0", "2" or "3", so a blank or absent column is
+  -- parsed as 1 and stored as 1. On a feed that omits those columns this EXISTS
+  -- matches nothing and the search returns no stops. See
+  -- https://github.com/OneBusAway/go-gtfs/pull/5 for the parser fix; once that
+  -- is released and go.mod is bumped, blank and absent parse to 0 and this
+  -- comment should be rewritten to describe the fixed chain.
+  -- TestImportedStopTimesOmittingPickupColumns fails until then.
+  AND EXISTS (
+      SELECT 1
+      FROM stop_times st
+      WHERE st.stop_id = s.id
+        AND (
+            COALESCE(st.pickup_type, 0) = 0
+            OR COALESCE(st.drop_off_type, 0) = 0
+        )
+  )
 ORDER BY s.id
 LIMIT ?
 `
