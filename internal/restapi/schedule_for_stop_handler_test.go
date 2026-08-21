@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -373,44 +374,72 @@ func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 	})
 }
 
+// referenceIDs pulls the id out of each record in a references list, for comparing a
+// response's references against the set the fixture says it should contain.
+func referenceIDs(t testing.TB, referenceList any) []string {
+	t.Helper()
+
+	records, ok := referenceList.([]any)
+	require.True(t, ok, "reference list should be an array")
+
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		id, ok := record.(map[string]any)["id"].(string)
+		require.True(t, ok, "every reference record should carry a string id")
+		ids = append(ids, id)
+	}
+
+	return ids
+}
+
 func TestScheduleForStopHandlerReferencesWithoutSchedule(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
 	agencyID := mustGetAgencies(t, api)[0].ID
 	routelessStopID := utils.FormCombinedID(agencyID, mustGetStopWithoutRoutes(t, api))
-	servedStopID := utils.FormCombinedID(agencyID, mustGetStop(t, api).ID)
+
+	// The served stop's own routes are the reference set the handler is expected to
+	// return, whatever the queried date, so derive both expectations from them.
+	servedStop := mustGetStop(t, api)
+	servingRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(context.Background(), servedStop.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, servingRoutes, "the served stop should have routes to reference")
+
+	wantRouteIDs := make([]string, 0, len(servingRoutes))
+	wantAgencyIDs := make([]string, 0, len(servingRoutes))
+	for _, route := range servingRoutes {
+		wantRouteIDs = append(wantRouteIDs, utils.FormCombinedID(agencyID, route.ID))
+		if !slices.Contains(wantAgencyIDs, route.AgencyID) {
+			wantAgencyIDs = append(wantAgencyIDs, route.AgencyID)
+		}
+	}
 
 	tests := []struct {
-		name              string
-		endpoint          string
-		wantStopRef       bool
-		wantRoutesEmpty   bool
-		wantAgenciesEmpty bool
+		name          string
+		endpoint      string
+		wantStopRef   bool
+		wantRouteIDs  []string
+		wantAgencyIDs []string
 	}{
 		{
 			// The stop still has to be resolvable from entry.stopId even though
 			// it has nothing scheduled.
-			name:              "stop with no routes still references the stop",
-			endpoint:          "/api/where/schedule-for-stop/" + routelessStopID + ".json?key=org.onebusaway.iphone",
-			wantStopRef:       true,
-			wantRoutesEmpty:   true,
-			wantAgenciesEmpty: true,
+			name:        "stop with no routes still references the stop",
+			endpoint:    "/api/where/schedule-for-stop/" + routelessStopID + ".json?key=org.onebusaway.iphone",
+			wantStopRef: true,
 		},
 		{
-			name:              "stop with no routes honors includeReferences=false",
-			endpoint:          "/api/where/schedule-for-stop/" + routelessStopID + ".json?key=org.onebusaway.iphone&includeReferences=false",
-			wantStopRef:       false,
-			wantRoutesEmpty:   true,
-			wantAgenciesEmpty: true,
+			name:     "stop with no routes honors includeReferences=false",
+			endpoint: "/api/where/schedule-for-stop/" + routelessStopID + ".json?key=org.onebusaway.iphone&includeReferences=false",
 		},
 		{
 			// NOTE: Hardcoded date falls outside the GTFS data's validity period.
-			name:              "routes stay referenced on a date with no service",
-			endpoint:          "/api/where/schedule-for-stop/" + servedStopID + ".json?key=org.onebusaway.iphone&date=2030-01-01",
-			wantStopRef:       true,
-			wantRoutesEmpty:   false,
-			wantAgenciesEmpty: false,
+			name:          "routes stay referenced on a date with no service",
+			endpoint:      "/api/where/schedule-for-stop/" + utils.FormCombinedID(agencyID, servedStop.ID) + ".json?key=org.onebusaway.iphone&date=2030-01-01",
+			wantStopRef:   true,
+			wantRouteIDs:  wantRouteIDs,
+			wantAgencyIDs: wantAgencyIDs,
 		},
 	}
 
@@ -439,17 +468,8 @@ func TestScheduleForStopHandlerReferencesWithoutSchedule(t *testing.T) {
 				assert.Empty(t, stops)
 			}
 
-			if tt.wantRoutesEmpty {
-				assert.Empty(t, references["routes"])
-			} else {
-				assert.NotEmpty(t, references["routes"])
-			}
-
-			if tt.wantAgenciesEmpty {
-				assert.Empty(t, references["agencies"])
-			} else {
-				assert.NotEmpty(t, references["agencies"])
-			}
+			assert.ElementsMatch(t, tt.wantRouteIDs, referenceIDs(t, references["routes"]))
+			assert.ElementsMatch(t, tt.wantAgencyIDs, referenceIDs(t, references["agencies"]))
 		})
 	}
 }
