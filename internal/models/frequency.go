@@ -38,15 +38,22 @@ type ScheduleFrequency struct {
 // The DB stores start_time / end_time as nanoseconds since midnight (time.Duration).
 // The resulting StartTime/EndTime are Unix epoch milliseconds.
 func NewFrequencyFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Frequency {
+	return Frequency{
+		FrequencyWindow: NewFrequencyWindowFromDB(dbFreq, serviceDate),
+		ExactTimes:      int(dbFreq.ExactTimes),
+	}
+}
+
+// NewFrequencyWindowFromDB converts a database Frequency row's window into absolute times,
+// for the frequency shapes that carry a window but no exactTimes field. See
+// NewFrequencyFromDB for the unit conventions involved.
+func NewFrequencyWindowFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) FrequencyWindow {
 	// Correctly compute start of day in the agency's local timezone
 	startOfDay := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, serviceDate.Location())
 
-	return Frequency{
-		FrequencyWindow: FrequencyWindow{
-			StartTime: NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
-			EndTime:   NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
-			Headway:   NewModelDuration(time.Duration(dbFreq.HeadwaySecs) * time.Second),
-		},
-		ExactTimes: int(dbFreq.ExactTimes),
+	return FrequencyWindow{
+		StartTime: NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
+		EndTime:   NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
+		Headway:   NewModelDuration(time.Duration(dbFreq.HeadwaySecs) * time.Second),
 	}
 }

@@ -891,18 +891,18 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		routeGroups, ok := schedules["1_10"]
 		assert.True(t, ok, "expected a group for route 1_10")
 		assert.Len(t, routeGroups, 2, "expected two distinct direction buckets")
 
-		assert.Len(t, routeGroups["0"], 1)
-		assert.Equal(t, "1_trip-out", routeGroups["0"][0].TripID)
+		assert.Len(t, routeGroups["0"].stopTimes, 1)
+		assert.Equal(t, "1_trip-out", routeGroups["0"].stopTimes[0].TripID)
 
-		assert.Len(t, routeGroups["1"], 1)
-		assert.Equal(t, "1_trip-in", routeGroups["1"][0].TripID)
+		assert.Len(t, routeGroups["1"].stopTimes, 1)
+		assert.Equal(t, "1_trip-in", routeGroups["1"].stopTimes[0].TripID)
 	})
 
 	t.Run("groups rows on the same route and direction together", func(t *testing.T) {
@@ -911,12 +911,12 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-b", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		schedules, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1, "expected a single direction bucket")
-		assert.Len(t, schedules["1_10"]["0"], 2, "expected both stop times grouped together")
-		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
+		assert.Len(t, schedules["1_10"]["0"].stopTimes, 2, "expected both stop times grouped together")
+		assert.Equal(t, 2, schedules["1_10"]["0"].headsignVotes["Downtown"])
 	})
 
 	t.Run("defaults a missing direction_id to bucket 0", func(t *testing.T) {
@@ -924,12 +924,12 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Valid: false}, "Downtown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1)
 		assert.Contains(t, schedules["1_10"], "0")
-		assert.Len(t, schedules["1_10"]["0"], 1)
+		assert.Len(t, schedules["1_10"]["0"].stopTimes, 1)
 	})
 
 	t.Run("tracks headsign votes separately per direction", func(t *testing.T) {
@@ -939,12 +939,47 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in-1", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		_, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
-		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
-		assert.Equal(t, 1, headsignCounts["1_10"]["1"]["Uptown"])
-		assert.Equal(t, 0, headsignCounts["1_10"]["1"]["Downtown"], "direction 1 should not see direction 0's headsign votes")
+		assert.Equal(t, 2, schedules["1_10"]["0"].headsignVotes["Downtown"])
+		assert.Equal(t, "Downtown", schedules["1_10"]["0"].representativeHeadsign())
+		assert.Equal(t, 1, schedules["1_10"]["1"].headsignVotes["Uptown"])
+		assert.Equal(t, 0, schedules["1_10"]["1"].headsignVotes["Downtown"], "direction 1 should not see direction 0's headsign votes")
+	})
+
+	t.Run("reports frequency-based trips as frequencies, not stop times", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-freq", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+			makeRow("trip-fixed", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+		}
+
+		frequencyCtx := rowCtx
+		frequencyCtx.frequenciesByTrip = map[string][]gtfsdb.Frequency{
+			"trip-freq": {
+				// 16:00-19:00 every 15 minutes, listed before the earlier window to
+				// prove the output is sorted rather than merely passed through.
+				{TripID: "trip-freq", StartTime: int64(16 * time.Hour), EndTime: int64(19 * time.Hour), HeadwaySecs: 900},
+				{TripID: "trip-freq", StartTime: int64(6 * time.Hour), EndTime: int64(9 * time.Hour), HeadwaySecs: 600},
+			},
+		}
+
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, frequencyCtx)
+		assert.NoError(t, err)
+
+		group := schedules["1_10"]["0"]
+		assert.Len(t, group.stopTimes, 1, "only the fixed-schedule trip belongs in stop times")
+		assert.Equal(t, "1_trip-fixed", group.stopTimes[0].TripID)
+
+		assert.Len(t, group.frequencies, 2, "one entry per frequency window")
+		assert.Equal(t, "1_trip-freq", group.frequencies[0].TripID)
+		assert.True(t, group.frequencies[0].StartTime.Time.Before(group.frequencies[1].StartTime.Time),
+			"frequency windows must be sorted by start time")
+		assert.Equal(t, startOfDay.Add(6*time.Hour), group.frequencies[0].StartTime.Time.In(startOfDay.Location()))
+		assert.Equal(t, 600, int(group.frequencies[0].Headway.Duration.Seconds()))
+
+		// 18 morning runs + 12 evening runs for the frequency trip, 1 for the fixed one.
+		assert.Equal(t, 31, group.headsignVotes["Downtown"])
 	})
 
 	t.Run("returns an error when the context is already canceled", func(t *testing.T) {
@@ -955,7 +990,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		_, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
+		_, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
