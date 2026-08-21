@@ -204,6 +204,18 @@ func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
 	return stops
 }
 
+// mustGetStopWithoutRoutes returns the ID of a stop no trip calls at, which is
+// therefore served by no routes. The RABA fixture has 21 of them.
+func mustGetStopWithoutRoutes(t testing.TB, api *RestAPI) string {
+	t.Helper()
+	var stopID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+		`SELECT id FROM stops WHERE id NOT IN (SELECT DISTINCT stop_id FROM stop_times) LIMIT 1`,
+	).Scan(&stopID)
+	require.NoError(t, err, "test data should contain at least one stop with no stop times")
+	return stopID
+}
+
 // mustGetStop return an active stop from the DB (stop with stop times)
 func mustGetStop(t testing.TB, api *RestAPI) gtfsdb.Stop {
 	t.Helper()
