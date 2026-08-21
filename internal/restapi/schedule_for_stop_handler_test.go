@@ -347,6 +347,68 @@ func TestScheduleForStopHandlerInvalidDateFormat(t *testing.T) {
 	}
 }
 
+func TestScheduleForStopHandlerDateValidationPrecedesLookup(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	knownStopID := utils.FormCombinedID(mustGetAgencies(t, api)[0].ID, mustGetStop(t, api).ID)
+
+	tests := []struct {
+		name             string
+		stopID           string
+		date             string
+		expectedStatus   int
+		expectFieldError bool
+	}{
+		{
+			name:             "unknown agency with an invalid date",
+			stopID:           "99_1001",
+			date:             "garbage",
+			expectedStatus:   http.StatusBadRequest,
+			expectFieldError: true,
+		},
+		{
+			name:             "known agency with an invalid date",
+			stopID:           knownStopID,
+			date:             "garbage",
+			expectedStatus:   http.StatusBadRequest,
+			expectFieldError: true,
+		},
+		{
+			name:           "unknown agency with a valid date",
+			stopID:         "99_1001",
+			date:           "2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "unknown stop with a valid date",
+			stopID:         "25_9999999",
+			date:           "2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint := "/api/where/schedule-for-stop/" + tt.stopID + ".json?key=org.onebusaway.iphone&date=" + tt.date
+			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, model.Code)
+
+			if !tt.expectFieldError {
+				return
+			}
+
+			data, ok := model.Data.(map[string]any)
+			require.True(t, ok)
+			fieldErrors, ok := data["fieldErrors"].(map[string]any)
+			require.True(t, ok)
+			assert.NotEmpty(t, fieldErrors["date"])
+		})
+	}
+}
+
 func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
