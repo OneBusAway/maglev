@@ -400,13 +400,31 @@ func groupScheduleRowsByRouteAndDirection(
 			continue
 		}
 
-		group.frequencies = append(group.frequencies, buildScheduleFrequencies(row, frequencies, rowCtx)...)
+		headwayWindows, exactWindows := partitionByExactTimes(frequencies)
+		group.frequencies = append(group.frequencies, buildScheduleFrequencies(row, headwayWindows, rowCtx)...)
+		group.stopTimes = append(group.stopTimes, expandExactTimesStopTimes(row, exactWindows, rowCtx)...)
 		group.recordHeadsignVote(row.TripHeadsign, estimatedRunCount(frequencies))
 	}
 
-	sortFrequenciesByStartTime(routeDirectionScheduleMap)
+	sortDirectionGroups(routeDirectionScheduleMap)
 
 	return routeDirectionScheduleMap, nil
+}
+
+// partitionByExactTimes splits a trip's frequency windows by their exact_times value.
+// exact_times=0 windows describe an approximate headway and are reported as-is;
+// exact_times=1 windows are a compact encoding of a fixed timetable and get expanded into
+// individual stop times, which is where Maglev deliberately departs from legacy Java.
+func partitionByExactTimes(frequencies []gtfsdb.Frequency) (headwayWindows, exactWindows []gtfsdb.Frequency) {
+	for _, frequency := range frequencies {
+		if frequency.ExactTimes == 1 {
+			exactWindows = append(exactWindows, frequency)
+			continue
+		}
+		headwayWindows = append(headwayWindows, frequency)
+	}
+
+	return headwayWindows, exactWindows
 }
 
 // directionGroupFor returns the accumulator for one route's direction, creating the
@@ -427,12 +445,15 @@ func directionGroupFor(
 	return routeDirectionScheduleMap[combinedRouteID][directionID]
 }
 
-// sortFrequenciesByStartTime orders every direction group's frequency windows by start
-// time, per spec step 8. Fixed-schedule stop times arrive already ordered by departure
-// time from the query.
-func sortFrequenciesByStartTime(routeDirectionScheduleMap map[string]map[string]*directionScheduleGroup) {
+// sortDirectionGroups orders every direction group's stop times by departure time and its
+// frequency windows by start time, per spec step 8. The query already returns stop times in
+// departure order, but stop times expanded from exact_times=1 windows are appended after it.
+func sortDirectionGroups(routeDirectionScheduleMap map[string]map[string]*directionScheduleGroup) {
 	for _, directionMap := range routeDirectionScheduleMap {
 		for _, group := range directionMap {
+			slices.SortStableFunc(group.stopTimes, func(a, b models.ScheduleStopTime) int {
+				return cmp.Compare(a.DepartureTime, b.DepartureTime)
+			})
 			slices.SortStableFunc(group.frequencies, func(a, b models.ScheduleFrequency) int {
 				return a.StartTime.Time.Compare(b.StartTime.Time)
 			})
@@ -574,4 +595,39 @@ func buildScheduleFrequencies(
 	}
 
 	return scheduleFrequencies
+}
+
+// expandExactTimesStopTimes turns a trip's exact_times=1 windows into the individual stop
+// times they stand for: one per headway interval from the window's start up to, but not
+// including, its end. Each run repeats the template trip's timings, so this stop keeps its
+// offset from the trip's first arrival.
+//
+// The schema guarantees headway_secs > 0 and start_time < end_time, which is what bounds
+// the loop below.
+func expandExactTimesStopTimes(
+	row gtfsdb.GetScheduleForStopOnDateRow,
+	frequencies []gtfsdb.Frequency,
+	rowCtx scheduleRowContext,
+) []models.ScheduleStopTime {
+	if len(frequencies) == 0 {
+		return nil
+	}
+
+	template := buildScheduleStopTime(row, rowCtx)
+	tripStart := time.Duration(nulls.Int64OrDefault(row.MinArrivalTime, row.ArrivalTime))
+	arrivalOffset := time.Duration(row.ArrivalTime) - tripStart
+	departureOffset := time.Duration(row.DepartureTime) - tripStart
+
+	var stopTimes []models.ScheduleStopTime
+	for _, frequency := range frequencies {
+		headway := time.Duration(frequency.HeadwaySecs) * time.Second
+		for start := time.Duration(frequency.StartTime); start < time.Duration(frequency.EndTime); start += headway {
+			run := template
+			run.ArrivalTime = rowCtx.startOfDay.Add(start + arrivalOffset).UnixMilli()
+			run.DepartureTime = rowCtx.startOfDay.Add(start + departureOffset).UnixMilli()
+			stopTimes = append(stopTimes, run)
+		}
+	}
+
+	return stopTimes
 }
