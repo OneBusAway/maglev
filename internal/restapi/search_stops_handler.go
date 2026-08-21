@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -56,9 +55,7 @@ func extractFTS5Terms(sanitizedQuery string) []string {
 	rawTerms := strings.Fields(sanitizedQuery)
 	terms := make([]string, 0, len(rawTerms))
 	for _, term := range rawTerms {
-		if strings.ContainsFunc(term, func(r rune) bool {
-			return unicode.IsLetter(r) || unicode.IsDigit(r)
-		}) {
+		if utils.ContainsLetterOrDigit(term) {
 			terms = append(terms, term)
 		}
 	}

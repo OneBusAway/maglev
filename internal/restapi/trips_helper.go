@@ -19,6 +19,16 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+// tripStatusExtras carries what BuildTripStatus resolved on the way to the
+// status, so a caller needing the same values does not query for them again.
+//
+// snapshot may be nil (no live vehicle, no in-range block, etc.); callers
+// should handle that case.
+type tripStatusExtras struct {
+	snapshot   *scheduledBlockSnapshot
+	situations []situationRef
+}
+
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
@@ -28,22 +38,19 @@ import (
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
 // trip ID so the correct schedule data is used.
-// BuildTripStatus returns the trip status and the snapshot it built along
-// the way. Callers that also need per-stop block metrics (distanceFromStop,
-// numberOfStopsAway) should reuse the returned snapshot instead of calling
-// computeScheduledBlockSnapshot a second time — the amplification matters
-// for the plural arrivals-and-departures endpoint which is called
-// per-arrival-row across wide time windows.
 //
-// Snapshot may be nil (no live vehicle, no in-range block, etc.); callers
-// should handle that case.
+// It also returns the intermediate results it built along the way. Callers
+// needing per-stop block metrics (distanceFromStop, numberOfStopsAway) or the
+// trip's situations should reuse those instead of resolving them a second time —
+// the amplification matters for the plural arrivals-and-departures endpoint
+// which is called per-arrival-row across wide time windows.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
 	vehicle *gtfs.Vehicle,
 	serviceDate time.Time,
 	currentTime time.Time,
-) (*models.TripStatus, *scheduledBlockSnapshot, error) {
+) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
 		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 	}
@@ -53,7 +60,8 @@ func (api *RestAPI) BuildTripStatus(
 	status := models.NewTripStatus()
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	status.ServiceDate = models.NewModelTime(sdMidnight)
-	status.SituationIDs = api.GetSituationIDsForTrip(ctx, tripID)
+	extras := &tripStatusExtras{situations: api.situationRefsForTrip(ctx, tripID)}
+	status.SituationIDs = situationIDsFromRefs(extras.situations)
 	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
 	// Computed up front (independent of vehicle/stop-time/shape data below) so
@@ -92,12 +100,12 @@ func (api *RestAPI) BuildTripStatus(
 	if status.Status == "CANCELED" {
 		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 		status.Scheduled = !status.Predicted
-		return status, nil, nil
+		return status, extras, nil
 	}
 
 	_, activeTripRawID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 	if err != nil {
-		return status, nil, err
+		return status, extras, err
 	}
 
 	// Determine which trip ID to use for DB lookups (stop times, shapes, etc.).
@@ -354,7 +362,8 @@ func (api *RestAPI) BuildTripStatus(
 		}
 	}
 
-	return status, snap, nil
+	extras.snapshot = snap
+	return status, extras, nil
 }
 
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
@@ -818,7 +827,10 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 	return d, r
 }
 
-func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) []string {
+// situationRefsForTrip resolves the alerts affecting a trip and pairs each with
+// the situation ID that refers to it, so a caller needing both the entry IDs and
+// the situation references gets them from one lookup.
+func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []situationRef {
 	var routeID string
 	var agencyID string
 
@@ -844,21 +856,7 @@ func (api *RestAPI) GetSituationIDsForTrip(ctx context.Context, tripID string) [
 		}
 	}
 
-	alerts := api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID)
-
-	situationIDs := []string{}
-	for _, alert := range alerts {
-		if alert.ID == "" {
-			continue
-		}
-		if agencyID != "" {
-			situationIDs = append(situationIDs, utils.FormCombinedID(agencyID, alert.ID))
-		} else {
-			situationIDs = append(situationIDs, alert.ID)
-		}
-	}
-
-	return situationIDs
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID), agencyID)
 }
 
 func (api *RestAPI) calculateOffsetForStop(
@@ -1234,4 +1232,114 @@ func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 		})
 	}
 	return groups
+}
+
+// Match Java OBA: a trip counts as running now if it started up to
+// runningLateWindow ago or starts within runningEarlyWindow. Trip selection and
+// service-date resolution must use the same window, or a trip can be selected
+// and then classified as not running.
+//
+// Java OBA makes these configurable; maglev hard-codes its defaults, tracked in
+// https://github.com/OneBusAway/maglev/issues/800
+// source:https://groups.google.com/g/onebusaway-developers/c/j-G-1UyfbXI/m/J-Su3BArKW0J
+const (
+	runningLate  = 30 * time.Minute // runningLateWindow
+	runningEarly = 10 * time.Minute // runningEarlyWindow
+)
+
+// serviceDateResolver picks the service date a trip instance belongs to at one
+// moment in time. GTFS stop times may run past 24:00:00, so a trip still
+// running just after midnight belongs to the previous day's service; reporting
+// the query day would put serviceDate and the trip's stop-time offsets a day
+// apart.
+type serviceDateResolver struct {
+	queryDayMidnight    time.Time
+	sinceMidnightNs     int64
+	queryDayServices    map[string]struct{}
+	previousDayServices map[string]struct{}
+}
+
+// serviceIDsByDay carries the service IDs active on the query day and the day
+// before it, for callers that already loaded them.
+type serviceIDsByDay struct {
+	QueryDay    []string
+	PreviousDay []string
+}
+
+// newServiceDateResolverFor builds a resolver from the service IDs the caller
+// already fetched for the query day and the day before it.
+func newServiceDateResolverFor(queryDayMidnight, currentTime time.Time, services serviceIDsByDay) *serviceDateResolver {
+	return &serviceDateResolver{
+		queryDayMidnight:    queryDayMidnight,
+		sinceMidnightNs:     wallClockSinceMidnightNs(currentTime),
+		queryDayServices:    serviceIDSet(services.QueryDay),
+		previousDayServices: serviceIDSet(services.PreviousDay),
+	}
+}
+
+func serviceIDSet(serviceIDs []string) map[string]struct{} {
+	if len(serviceIDs) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		set[serviceID] = struct{}{}
+	}
+	return set
+}
+
+// serviceIDsForDays fetches the service IDs active on queryDayMidnight and the
+// day before it, for a caller that wants both days' raw IDs — e.g. to also run
+// a second query with the same service-ID list, the way the block lookup in
+// trips-for-location does. A lookup failure is not fatal — that day comes back
+// empty.
+func (api *RestAPI) serviceIDsForDays(ctx context.Context, queryDayMidnight time.Time) serviceIDsByDay {
+	return serviceIDsByDay{
+		QueryDay:    api.activeServiceIDsForDate(ctx, queryDayMidnight),
+		PreviousDay: api.activeServiceIDsForDate(ctx, queryDayMidnight.AddDate(0, 0, -1)),
+	}
+}
+
+func (api *RestAPI) activeServiceIDsForDate(ctx context.Context, day time.Time) []string {
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, day.Format("20060102"))
+	if err != nil {
+		api.Logger.Warn("failed to fetch active service IDs for service date resolution",
+			"date", day.Format("20060102"), "error", err)
+		return nil
+	}
+
+	return serviceIDs
+}
+
+// Resolve returns midnight of the service date trip belongs to.
+func (r *serviceDateResolver) Resolve(trip gtfsdb.Trip) time.Time {
+	if r.runsOn(r.queryDayServices, trip, r.sinceMidnightNs) {
+		return r.queryDayMidnight
+	}
+	if r.runsOn(r.previousDayServices, trip, r.sinceMidnightNs+int64(24*time.Hour)) {
+		return r.queryDayMidnight.AddDate(0, 0, -1)
+	}
+	return r.queryDayMidnight
+}
+
+// runsOn reports whether trip's service is active in services and its scheduled
+// span overlaps the running window [sinceMidnightNs-runningLate,
+// sinceMidnightNs+runningEarly], measured from that service day's midnight.
+//
+// Overlap rather than containment: requiring the span to contain sinceMidnightNs
+// would classify a just-ended previous-day trip as not running and report it
+// against the wrong service date — putting its position and schedule deviation
+// a day out. The window matches trips-for-route's own selection window; other
+// callers may select trips by a different window and still need this overlap
+// check to resolve their service date correctly.
+func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.Trip, sinceMidnightNs int64) bool {
+	if _, active := services[trip.ServiceID]; !active {
+		return false
+	}
+	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+		return false
+	}
+	startsBeforeWindowEnds := trip.MinArrivalTime.Int64 <= sinceMidnightNs+int64(runningEarly)
+	endsAfterWindowStarts := trip.MaxDepartureTime.Int64 >= sinceMidnightNs-int64(runningLate)
+	return startsBeforeWindowEnds && endsAfterWindowStarts
 }
