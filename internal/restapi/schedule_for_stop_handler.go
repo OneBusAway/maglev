@@ -95,15 +95,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		routeIDs = append(routeIDs, rt.ID)
 	}
 
-	if len(routeIDs) == 0 {
-		api.sendResponse(w, r, models.NewEntryResponse(
-			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), responseDate, nil),
-			*models.NewEmptyReferences(),
-			api.Clock,
-		))
-		return
-	}
-
+	// A stop with no routes falls through the normal path: GetScheduleForStopOnDate
+	// expands an empty route ID slice to IN (NULL) and returns no rows.
 	params := gtfsdb.GetScheduleForStopOnDateParams{
 		StopID:     stopID,
 		TargetDate: targetDate,
