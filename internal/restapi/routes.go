@@ -96,6 +96,7 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 
 	// Real-time simple ID endpoints (no ETag)
 	mux.Handle("GET /api/where/vehicles-for-agency/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.vehiclesForAgencyHandler)))
+	mux.Handle("GET /api/where/situation/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.situationHandler)))
 
 	// --- Routes with combined ID validation (agency_id_code format) ---
 	mux.Handle("GET /api/where/trip/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.tripHandler))))

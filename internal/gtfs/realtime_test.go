@@ -71,6 +71,44 @@ func TestGetAlertsForStop(t *testing.T) {
 	assert.Equal(t, "alert1", alerts[0].ID)
 }
 
+func TestGetAllAlerts(t *testing.T) {
+	agency1 := "1"
+	agency40 := "40"
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-b": {
+				{
+					ID:               "shared-raw",
+					InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency1}},
+					Header:           []gtfs.AlertText{{Text: "from-b"}},
+				},
+				{ID: ""},
+			},
+			"feed-a": {
+				{
+					ID:               "shared-raw",
+					InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency1}},
+					Header:           []gtfs.AlertText{{Text: "from-a"}},
+				},
+				{ID: "shared-raw", InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency40}}},
+			},
+		},
+	}
+
+	alerts := manager.GetAllAlerts()
+
+	require.Len(t, alerts, 2)
+	assert.Equal(t, "shared-raw", alerts[0].ID)
+	require.NotNil(t, alerts[0].InformedEntities[0].AgencyID)
+	assert.Equal(t, "1", *alerts[0].InformedEntities[0].AgencyID)
+	require.NotEmpty(t, alerts[0].Header)
+	assert.Equal(t, "from-a", alerts[0].Header[0].Text)
+	assert.Equal(t, "shared-raw", alerts[1].ID)
+	require.NotNil(t, alerts[1].InformedEntities[0].AgencyID)
+	assert.Equal(t, "40", *alerts[1].InformedEntities[0].AgencyID)
+}
+
 func TestRebuildRealTimeTripLookup(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
