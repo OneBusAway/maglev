@@ -508,28 +508,6 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
-// idsPerBatchedQuery bounds how many IDs go into one IN (...) list. SQLite
-// rejects a statement carrying more bind variables than it allows rather than
-// truncating it, and these ID sets are only bounded by how much the request
-// matched. Kept well under the oldest limit (999) so the batch size does not
-// depend on which SQLite the build links against.
-const idsPerBatchedQuery = 900
-
-// queryInBatches runs query over ids in batches small enough to stay under the
-// bind variable limit, concatenating the results.
-func queryInBatches[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
-	results := make([]T, 0, len(ids))
-	for start := 0; start < len(ids); start += idsPerBatchedQuery {
-		end := min(start+idsPerBatchedQuery, len(ids))
-		batch, err := query(ctx, ids[start:end])
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, batch...)
-	}
-	return results, nil
-}
-
 // stopReferences builds the stop reference block for a set of list entries,
 // labelling each stop with the combined ID the entries actually referred to it
 // by — the referring trip's agency need not own the stop's first route. A stop
@@ -590,7 +568,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 		stopIDs[i] = stop.ID
 	}
 
-	rows, err := queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
+	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
 	if err != nil {
 		logging.LogError(api.Logger, "failed to fetch routes for stop references", err)
 		return routeIDsByStop

@@ -1202,6 +1202,28 @@ func encodeVehicleFeed(createdAt time.Time, positions []*gtfsrt.VehiclePosition)
 	return b
 }
 
+// encodeTripFeed constructs a GTFS-RT protobuf payload containing the provided
+// trip updates. Used to assert that trip entities are actually stored.
+func encodeTripFeed(createdAt time.Time, updates []*gtfsrt.TripUpdate) []byte {
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(createdAt.Unix())),
+		},
+	}
+	for i, tu := range updates {
+		feed.Entity = append(feed.Entity, &gtfsrt.FeedEntity{
+			Id:         proto.String(fmt.Sprintf("t%d", i)),
+			TripUpdate: tu,
+		})
+	}
+	b, err := proto.Marshal(feed)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal trip-update feed: %s", err))
+	}
+	return b
+}
+
 // ptr is a helper function to create a pointer to a time.Time value.
 func ptr(t time.Time) *time.Time {
 	return &t
@@ -1337,9 +1359,13 @@ func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *test
 	}))
 	defer vehicleServer.Close()
 
+	const tripID = "mixed-success-trip"
+	tripPayload := encodeTripFeed(time.Now(), []*gtfsrt.TripUpdate{
+		{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(tripID), RouteId: proto.String("R1")}},
+	})
 	tripServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-protobuf")
-		_, _ = w.Write(encodeVehicleFeed(time.Now(), nil))
+		_, _ = w.Write(tripPayload)
 	}))
 	defer tripServer.Close()
 
@@ -1360,9 +1386,13 @@ func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *test
 
 	first := manager.updateFeedRealtime(context.Background(), cfg)
 	assert.True(t, first, "first poll should apply trips and vehicles")
+	require.Len(t, manager.GetRealTimeTrips(), 1)
+	assert.Equal(t, tripID, manager.GetRealTimeTrips()[0].ID.ID)
 
 	second := manager.updateFeedRealtime(context.Background(), cfg)
 	assert.True(t, second, "trip updates applied even if vehicles are stale")
+	require.Len(t, manager.GetRealTimeTrips(), 1)
+	assert.Equal(t, tripID, manager.GetRealTimeTrips()[0].ID.ID)
 }
 
 func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {

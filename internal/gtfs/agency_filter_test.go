@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,10 +13,13 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // newTestManagerWithRoutes creates a test manager with an in-memory DB
@@ -68,6 +72,17 @@ func newTestManagerWithRoutes(routes map[string]*gtfs.Route) *Manager {
 // helper to make a *string from a literal
 func strPtr(s string) *string { return &s }
 
+func mustRouteAgencyMap(t *testing.T, manager *Manager, trips []gtfs.Trip, vehicles []gtfs.Vehicle, alerts []gtfs.Alert) map[string]string {
+	t.Helper()
+	ids := make(map[string]struct{})
+	collectTripRouteIDs(ids, trips)
+	collectVehicleRouteIDs(ids, vehicles)
+	collectAlertRouteIDs(ids, alerts)
+	routeAgencyMap, err := manager.buildRouteAgencyMap(context.Background(), ids)
+	require.NoError(t, err)
+	return routeAgencyMap
+}
+
 func TestFilterTripsByAgency(t *testing.T) {
 	routes := map[string]*gtfs.Route{
 		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "agency-A"}},
@@ -84,7 +99,7 @@ func TestFilterTripsByAgency(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := manager.filterTripsByAgency(trips, allowed)
+	filtered := filterTripsByAgency(trips, allowed, mustRouteAgencyMap(t, manager, trips, nil, nil))
 
 	assert.Len(t, filtered, 2, "should keep only agency-A trips")
 	assert.Equal(t, "T1", filtered[0].ID.ID)
@@ -114,7 +129,7 @@ func TestFilterVehiclesByAgency(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := manager.filterVehiclesByAgency(vehicles, allowed)
+	filtered := filterVehiclesByAgency(vehicles, allowed, mustRouteAgencyMap(t, manager, nil, vehicles, nil))
 
 	assert.Len(t, filtered, 1, "only V1 (agency-A) should remain")
 	assert.Equal(t, "V1", filtered[0].ID.ID)
@@ -127,7 +142,7 @@ func TestAgencyFilterNilTrip(t *testing.T) {
 		{ID: &gtfs.VehicleID{ID: "V1"}}, // nil Trip
 	}
 	allowed := map[string]bool{"any": true}
-	assert.Empty(t, manager.filterVehiclesByAgency(vehicles, allowed))
+	assert.Empty(t, filterVehiclesByAgency(vehicles, allowed, mustRouteAgencyMap(t, manager, nil, vehicles, nil)))
 }
 
 // TestAlertMatchesAgency is a table-driven test for the alertMatchesAgency helper.
@@ -213,9 +228,12 @@ func TestAlertMatchesAgency(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
-	routeIDSet := map[string]struct{}{"R1": {}, "R2": {}, "R999": {}}
-	routeAgencyMap := manager.buildRouteAgencyMap(ctx, routeIDSet)
+	routeIDSet := make(map[string]struct{})
+	for _, tt := range tests {
+		collectAlertRouteIDs(routeIDSet, []gtfs.Alert{tt.alert})
+	}
+	routeAgencyMap, err := manager.buildRouteAgencyMap(context.Background(), routeIDSet)
+	require.NoError(t, err)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := alertMatchesAgency(tt.alert, tt.allowed, routeAgencyMap)
@@ -288,8 +306,8 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 		{ID: gtfs.TripID{ID: "T5", RouteID: "R2"}}, // agency-B ✓
 	}
 
-	filteredA := manager.filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"])
-	filteredB := manager.filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"])
+	filteredA := filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"], mustRouteAgencyMap(t, manager, tripsA, nil, nil))
+	filteredB := filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"], mustRouteAgencyMap(t, manager, tripsB, nil, nil))
 
 	manager.realTimeMutex.Lock()
 	manager.feedTrips["feed-a"] = filteredA
@@ -476,6 +494,56 @@ func TestAgencyFilterIntegration_TripUpdates(t *testing.T) {
 			"filtering should reduce trip count when multiple routes exist")
 	}
 	assert.NotEmpty(t, filteredTrips, "at least one trip should match the target agency")
+}
+
+func TestUpdateFeedRealtime_RouteLookupErrorLeavesFeedUnchanged(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "agency-A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	manager.feedAgencyFilter["feed"] = map[string]bool{"agency-A": true}
+
+	seed := []gtfs.Trip{{ID: gtfs.TripID{ID: "seed", RouteID: "R1"}}}
+	manager.realTimeMutex.Lock()
+	manager.feedTrips["feed"] = seed
+	manager.rebuildMergedRealtimeLocked()
+	manager.realTimeMutex.Unlock()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(encodeTripFeed(time.Now(), []*gtfsrt.TripUpdate{
+			{Trip: &gtfsrt.TripDescriptor{TripId: proto.String("incoming"), RouteId: proto.String("R1")}},
+		}))
+	}))
+	defer server.Close()
+
+	require.NoError(t, manager.GtfsDB.DB.Close())
+
+	ok := manager.updateFeedRealtime(context.Background(), RTFeedConfig{
+		ID:             "feed",
+		TripUpdatesURL: server.URL,
+	})
+	assert.False(t, ok, "a route lookup failure must not count as a successful update")
+
+	trips := manager.GetRealTimeTrips()
+	require.Len(t, trips, 1)
+	assert.Equal(t, "seed", trips[0].ID.ID, "previous entities must remain when the lookup fails")
+}
+
+func TestBuildRouteAgencyMap_BatchesLargeIDSets(t *testing.T) {
+	manager := newTestManagerWithRoutes(map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "agency-A"}},
+	})
+
+	ids := make(map[string]struct{}, utils.IDsPerBatchedQuery+1)
+	ids["R1"] = struct{}{}
+	for i := 0; i < utils.IDsPerBatchedQuery; i++ {
+		ids[fmt.Sprintf("missing-%d", i)] = struct{}{}
+	}
+
+	routeAgencyMap, err := manager.buildRouteAgencyMap(context.Background(), ids)
+	require.NoError(t, err)
+	assert.Equal(t, "agency-A", routeAgencyMap["R1"])
 }
 
 // TestFeedVehicleRetentionWithAgencyFilter ensures that the stale vehicle
