@@ -17,6 +17,7 @@ type StopGroup struct {
 	Name      StopGroupName `json:"name"`
 	StopIds   []string      `json:"stopIds"`
 	Polylines []Polyline    `json:"polylines"`
+	SubGroups []StopGroup   `json:"subGroups"`
 }
 
 type StopGrouping struct {
