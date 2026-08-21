@@ -53,6 +53,9 @@ const (
 	tripsForRouteStop1ID  = "tfr-stop1"
 	tripsForRouteStop2ID  = "tfr-stop2"
 	tripsForRouteHeadsign = "Test Headsign"
+	orphanRouteAgencyID   = "tfr-agency-x"
+	orphanRouteID         = "tfr-route-x"
+	orphanTripID          = "tfr-trip-x"
 )
 
 // createTestApiWithGTFSFixture builds a RestAPI backed by an in-memory GTFS
@@ -322,6 +325,37 @@ func blockSequenceFiles() map[string]string {
 			"tfr-trip-2,10:05:00,10:05:00," + tripsForRouteStop2ID + ",2\n" +
 			"tfr-trip-3,10:10:00,10:10:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-trip-3,10:40:00,10:40:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+// orphanStopRouteFiles models a stop served by a route no returned trip runs
+// on: tfr-trip (the queried route, tfr-agency) is active at the pinned clock,
+// while orphanTripID (orphanRouteID, owned by a second agency) served the same
+// stops hours earlier and shares no block, so neither it, its route, nor its
+// agency appears among the entries or their trips. The stop references still
+// name orphanRouteID in their routeIds, so both that route and its agency must
+// resolve in the references block.
+func orphanStopRouteFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n" +
+			orphanRouteAgencyID + ",Other Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			orphanRouteID + "," + orphanRouteAgencyID + ",XR,Orphan Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc," + tripsForRouteTripID + "," + tripsForRouteHeadsign + ",0,tfr-block\n" +
+			orphanRouteID + ",tfr-svc," + orphanTripID + ",Orphan Headsign,0,tfr-block-x\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			tripsForRouteTripID + ",11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			tripsForRouteTripID + ",12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n" +
+			orphanTripID + ",08:00:00,08:00:00," + tripsForRouteStop1ID + ",1\n" +
+			orphanTripID + ",08:10:00,08:10:00," + tripsForRouteStop2ID + ",2\n",
 	}
 }
 
@@ -1228,7 +1262,7 @@ func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
 	// handler's window explicitly. Midday Pacific on a weekday inside the RABA
 	// fixture's calendar range, when its trips are running.
 	queryTime := time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
-	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=true&time=%d",
+	url := fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
 		queryTime.UnixMilli())
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
@@ -1252,6 +1286,74 @@ func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
 	// the handler resolved the route under.
 	require.Contains(t, emitted, "25_test-alert-trips-for-route",
 		"expected the seeded alert to surface as a situationId")
+
+	// The resolved date is handed to BuildTripStatus as well as stamped on the
+	// entry, so the two must never disagree.
+	for _, entry := range model.Data.List {
+		if entry.Status == nil {
+			continue
+		}
+		assert.Equal(t, entry.ServiceDate, entry.Status.ServiceDate.UnixMilli(),
+			"entry %q reports a different serviceDate than its status", entry.TripId)
+	}
+}
+
+// TestResolveDuplicatedBaseTrip covers the IDs a DUPLICATED real-time trip can
+// arrive under, including the one that used to hand a nonexistent trip ID to
+// the schedule and status builders.
+func TestResolveDuplicatedBaseTrip(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	trips, err := api.GtfsManager.GtfsDB.Queries.ListTrips(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips, "fixture must contain trips")
+	staticTripID := trips[0].ID
+
+	tests := []struct {
+		name        string
+		dupTripID   string
+		wantTripID  string
+		wantMatched bool
+	}{
+		{
+			name:        "Feed reuses the static trip ID",
+			dupTripID:   staticTripID,
+			wantTripID:  staticTripID,
+			wantMatched: true,
+		},
+		{
+			name:        "Feed appends a numeric suffix to the static trip ID",
+			dupTripID:   staticTripID + ".00060",
+			wantTripID:  staticTripID,
+			wantMatched: true,
+		},
+		{
+			name:        "Neither the suffixed nor the stripped ID resolves",
+			dupTripID:   "no-such-trip.00060",
+			wantTripID:  "no-such-trip.00060",
+			wantMatched: false,
+		},
+		{
+			name:        "Synthetic ID with nothing to strip",
+			dupTripID:   "no-such-trip",
+			wantTripID:  "no-such-trip",
+			wantMatched: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseTripID, baseTrip := api.resolveDuplicatedBaseTrip(ctx, tt.dupTripID)
+
+			assert.Equal(t, tt.wantTripID, baseTripID)
+			if tt.wantMatched {
+				assert.Equal(t, tt.wantTripID, baseTrip.ID, "the returned trip must be the one the ID names")
+			} else {
+				assert.Empty(t, baseTrip.ID, "an unresolved trip must come back zeroed")
+			}
+		})
+	}
 }
 
 // TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences verifies that
@@ -1416,4 +1518,61 @@ func TestTripsForRouteHandler_ReferenceLookupFailureDegradesGracefully(t *testin
 		"the pre-fetched entry trip must still be referenced despite the lookup failure")
 	require.NotContains(t, refTrips, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1"),
 		"the unfetchable adjacent trip must not appear in references")
+}
+
+// TestTripsForRouteHandler_StopRoutesResolveInReferences verifies that every route referenced by a stop
+// (including routes no returned trip runs on) resolve to a route on references.routes and that these
+// route agencies resolve in references.agencies.
+func TestTripsForRouteHandler_StopRoutesResolveInReferences(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock),
+		"trips-for-route-orphan-stop-route.zip", orphanStopRouteFiles())
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+		combinedRouteID, tripsForRouteTestClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1, "only the queried route's trip should be active at the pinned clock")
+
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	assert.Equal(t, expectedTripID, model.Data.List[0].TripId,
+		"the single returned trip must be the queried route's, not the orphan route's")
+
+	refs := model.Data.References
+
+	referenceRouteIDs := make(map[string]bool, len(refs.Routes))
+	for _, route := range refs.Routes {
+		referenceRouteIDs[route.ID] = true
+	}
+	referenceAgencyIDs := make(map[string]bool, len(refs.Agencies))
+	for _, agency := range refs.Agencies {
+		referenceAgencyIDs[agency.ID] = true
+	}
+
+	combinedOrphanRouteID := utils.FormCombinedID(orphanRouteAgencyID, orphanRouteID)
+	require.Len(t, refs.Stops, 2, "references.stops should reference both fixture stops when includeSchedule=true")
+	for _, stop := range refs.Stops {
+		assert.Contains(t, stop.RouteIDs, combinedOrphanRouteID,
+			"stop %s should name the orphan route from the other agency", stop.ID)
+	}
+
+	for _, stop := range refs.Stops {
+		for _, routeID := range stop.RouteIDs {
+			assert.True(t, referenceRouteIDs[routeID],
+				"stop %s emits routeId %s, which must resolve in references.routes", stop.ID, routeID)
+		}
+		for _, routeID := range stop.StaticRouteIDs {
+			assert.True(t, referenceRouteIDs[routeID],
+				"stop %s emits staticRouteId %s, which must resolve in references.routes", stop.ID, routeID)
+		}
+	}
+
+	assert.Contains(t, referenceAgencyIDs, orphanRouteAgencyID,
+		"references.agencies should contain agency: %s for orphaned route: %s", orphanRouteAgencyID, orphanRouteID)
+	for _, route := range refs.Routes {
+		assert.True(t, referenceAgencyIDs[route.AgencyID],
+			"references.routes entry %s has agencyId %s, which must resolve in references.agencies", route.ID, route.AgencyID)
+	}
 }
