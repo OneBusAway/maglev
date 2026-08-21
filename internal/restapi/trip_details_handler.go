@@ -24,100 +24,99 @@ type TripParams struct {
 	VehicleID       string
 }
 
-// parseTripParams parses and validates the common trip query params
-// includeScheduleDefault controls the default value of IncludeSchedule when the
-// parameter is not present in the request (true for trip-details, false for trip-for-vehicle).
-func (api *RestAPI) parseTripParams(r *http.Request, includeScheduleDefault bool, loc ...*time.Location) (TripParams, map[string][]string) {
+// TripParamDefaults holds the values the include* params take when the request
+// omits them. They differ per endpoint: trip-details defaults includeTrip and
+// includeSchedule to true, trip-for-vehicle defaults both to false.
+type TripParamDefaults struct {
+	IncludeTrip     bool
+	IncludeSchedule bool
+}
+
+// Layouts accepted by the serviceDate and time params, alongside Unix millis.
+const (
+	serviceDateLayout = "2006-01-02"          // e.g. "2024-06-15"
+	tripTimeLayout    = "2006-01-02_15-04-05" // e.g. "2024-06-15_14-30-00"
+)
+
+// parseEpochOrLayoutTime parses a param accepting either a Unix timestamp in
+// milliseconds or a timestamp in the given layout. A missing param yields a nil
+// time and no error; ok is false only when a supplied value matches neither form.
+func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *time.Time, ok bool) {
+	if value == "" {
+		return nil, true
+	}
+
+	if epochMillis, err := strconv.ParseInt(value, 10, 64); err == nil {
+		fromEpoch := time.UnixMilli(epochMillis)
+		return &fromEpoch, true
+	}
+
+	fromLayout, err := time.ParseInLocation(layout, value, loc)
+	if err != nil {
+		return nil, false
+	}
+
+	return &fromLayout, true
+}
+
+// localizeTripTimes re-expresses the parsed times in loc, so that downstream
+// Year()/Month()/Day()/Format() calls extract the agency's calendar date rather
+// than UTC's — time.Unix() alone would land those endpoints a day out for
+// agencies at a positive UTC offset.
+func localizeTripTimes(params *TripParams, loc *time.Location) {
+	if params.ServiceDate != nil {
+		localized := params.ServiceDate.In(loc)
+		params.ServiceDate = &localized
+	}
+	if params.Time != nil {
+		localized := params.Time.In(loc)
+		params.Time = &localized
+	}
+}
+
+// parseTripParams parses and validates the common trip query params, applying
+// the caller's per-endpoint defaults to any include* param the request omits.
+func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults, loc ...*time.Location) (TripParams, map[string][]string) {
+	query := r.URL.Query()
+
+	// Timestamps without an explicit offset are read in the agency's timezone when
+	// the caller supplies one, and in UTC otherwise.
+	parseLoc := time.UTC
+	if len(loc) > 0 && loc[0] != nil {
+		parseLoc = loc[0]
+	}
+
 	params := TripParams{
-		IncludeTrip:     true,
-		IncludeSchedule: includeScheduleDefault,
+		IncludeTrip:     defaults.IncludeTrip,
+		IncludeSchedule: defaults.IncludeSchedule,
 		IncludeStatus:   true,
+		VehicleID:       query.Get("vehicleId"),
 	}
 
 	fieldErrors := make(map[string][]string)
 
-	// Validate serviceDate — accepts either a Unix timestamp in milliseconds
-	// (e.g. "1718409600000") or a calendar date in yyyy-MM-dd format (e.g. "2024-06-15").
-	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
-		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
-			serviceDate := time.Unix(serviceDateMs/1000, 0)
-			params.ServiceDate = &serviceDate
-		} else {
-			dateLoc := time.UTC
-			if len(loc) > 0 && loc[0] != nil {
-				dateLoc = loc[0]
-			}
-			if serviceDate, err := time.ParseInLocation("2006-01-02", serviceDateStr, dateLoc); err == nil {
-				params.ServiceDate = &serviceDate
-			} else {
-				fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"}
-			}
-		}
+	if serviceDate, ok := parseEpochOrLayoutTime(query.Get("serviceDate"), serviceDateLayout, parseLoc); ok {
+		params.ServiceDate = serviceDate
+	} else {
+		fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"}
 	}
 
-	if includeTripStr := r.URL.Query().Get("includeTrip"); includeTripStr != "" {
-		if val, err := strconv.ParseBool(includeTripStr); err == nil {
-			params.IncludeTrip = val
-		} else {
-			fieldErrors["includeTrip"] = []string{"must be a boolean value (true/false)"}
-		}
+	if timeParam, ok := parseEpochOrLayoutTime(query.Get("time"), tripTimeLayout, parseLoc); ok {
+		params.Time = timeParam
+	} else {
+		fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
 	}
 
-	if includeScheduleStr := r.URL.Query().Get("includeSchedule"); includeScheduleStr != "" {
-		if val, err := strconv.ParseBool(includeScheduleStr); err == nil {
-			params.IncludeSchedule = val
-		} else {
-			fieldErrors["includeSchedule"] = []string{"must be a boolean value (true/false)"}
-		}
-	}
-
-	if includeStatusStr := r.URL.Query().Get("includeStatus"); includeStatusStr != "" {
-		if val, err := strconv.ParseBool(includeStatusStr); err == nil {
-			params.IncludeStatus = val
-		} else {
-			fieldErrors["includeStatus"] = []string{"must be a boolean value (true/false)"}
-		}
-	}
-
-	// Validate time — accepts either a Unix timestamp in milliseconds
-	// (e.g. "1718459400000") or a datetime in yyyy-MM-dd_HH-mm-ss format (e.g. "2024-06-15_14-30-00").
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
-			timeParam := time.Unix(timeMs/1000, 0)
-			params.Time = &timeParam
-		} else {
-			timeLoc := time.UTC
-			if len(loc) > 0 && loc[0] != nil {
-				timeLoc = loc[0]
-			}
-			if timeParam, err := time.ParseInLocation("2006-01-02_15-04-05", timeStr, timeLoc); err == nil {
-				params.Time = &timeParam
-			} else {
-				fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
-			}
-		}
-	}
-
-	params.VehicleID = r.URL.Query().Get("vehicleId")
+	params.IncludeTrip, fieldErrors = utils.ParseBoolParam(query, "includeTrip", params.IncludeTrip, fieldErrors)
+	params.IncludeSchedule, fieldErrors = utils.ParseBoolParam(query, "includeSchedule", params.IncludeSchedule, fieldErrors)
+	params.IncludeStatus, fieldErrors = utils.ParseBoolParam(query, "includeStatus", params.IncludeStatus, fieldErrors)
 
 	if len(fieldErrors) > 0 {
 		return params, fieldErrors
 	}
 
-	// If a timezone location was provided, localize serviceDate and time so that
-	// callers receive times in the agency's timezone by default. This prevents the
-	// bug where time.Unix(ms/1000, 0) creates a UTC time and downstream
-	// Year()/Month()/Day()/Format() calls extract the wrong calendar date for
-	// agencies in positive UTC offsets.
 	if len(loc) > 0 && loc[0] != nil {
-		if params.ServiceDate != nil {
-			localized := params.ServiceDate.In(loc[0])
-			params.ServiceDate = &localized
-		}
-		if params.Time != nil {
-			localized := params.Time.In(loc[0])
-			params.Time = &localized
-		}
+		localizeTripTimes(&params, loc[0])
 	}
 
 	return params, nil
@@ -159,7 +158,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query params with the agency's timezone so that serviceDate and time
 	// are localized at parse time, preventing UTC date-extraction bugs.
-	params, fieldErrors := api.parseTripParams(r, true, loc)
+	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
+	params, fieldErrors := api.parseTripParams(r, defaults, loc)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -226,10 +226,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var schedule *models.Schedule
 	var status *models.TripStatus
+	var statusExtras *tripStatusExtras
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, _, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
 		if statusErr != nil {
 			api.Logger.Warn("BuildTripStatus failed",
 				"trip_id", trip.ID,
@@ -254,12 +255,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var situationsIDs []string
-	if status != nil && len(status.SituationIDs) > 0 {
-		situationsIDs = status.SituationIDs
-	} else {
-		situationsIDs = api.GetSituationIDsForTrip(r.Context(), tripID)
-	}
+	// trip is looked up by tripID and BuildTripStatus was given trip.ID, so when
+	// the status was built its situations are this trip's and are reused here.
+	situationsIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
@@ -275,9 +273,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
 		// we take the first row which gives us the frequency with the earliest start_time
 		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
-		converted.ServiceDate = models.NewModelTime(midnight)
-		converted.ServiceID = utils.FormCombinedID(agencyID, trip.ServiceID)
-		converted.TripID = utils.FormCombinedID(agencyID, trip.ID)
 		frequency = &converted
 	}
 
@@ -334,13 +329,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		agencyModel := models.AgencyReferenceFromDatabase(&agency)
 		references.Agencies = append(references.Agencies, agencyModel)
 
-		if len(situationsIDs) > 0 {
-			alerts := api.GtfsManager.GetAlertsForTrip(r.Context(), tripID)
-			if len(alerts) > 0 {
-				situations := api.BuildSituationReferences(alerts)
-				references.Situations = append(references.Situations, situations...)
-			}
-		}
+		references.Situations = append(references.Situations, situationRefs...)
 
 		if params.IncludeSchedule && schedule != nil {
 			stopIDs := make([]string, 0, len(schedule.StopTimes))

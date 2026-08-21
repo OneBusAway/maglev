@@ -11,9 +11,11 @@ import (
 func TestNewSchedule(t *testing.T) {
 	date := time.Date(2024, 6, 15, 8, 0, 0, 0, time.UTC)
 	freq := &Frequency{
-		StartTime:  NewModelTime(date),
-		EndTime:    NewModelTime(date.Add(time.Hour)),
-		Headway:    NewModelDuration(300 * time.Second),
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(date),
+			EndTime:   NewModelTime(date.Add(time.Hour)),
+			Headway:   NewModelDuration(300 * time.Second),
+		},
 		ExactTimes: 0,
 	}
 	nextTripID := "next_trip_123"

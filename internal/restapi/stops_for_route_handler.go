@@ -48,7 +48,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var serviceIDs []string
 	if filterByDate {
-		formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation)
+		formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
 		if !success {
 			api.validationErrorResponse(w, r, fieldErrors)
 			return
