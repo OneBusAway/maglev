@@ -347,6 +347,68 @@ func TestScheduleForStopHandlerInvalidDateFormat(t *testing.T) {
 	}
 }
 
+func TestScheduleForStopHandlerDateValidationPrecedesLookup(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	knownStopID := utils.FormCombinedID(mustGetAgencies(t, api)[0].ID, mustGetStop(t, api).ID)
+
+	tests := []struct {
+		name             string
+		stopID           string
+		date             string
+		expectedStatus   int
+		expectFieldError bool
+	}{
+		{
+			name:             "unknown agency with an invalid date",
+			stopID:           "99_1001",
+			date:             "garbage",
+			expectedStatus:   http.StatusBadRequest,
+			expectFieldError: true,
+		},
+		{
+			name:             "known agency with an invalid date",
+			stopID:           knownStopID,
+			date:             "garbage",
+			expectedStatus:   http.StatusBadRequest,
+			expectFieldError: true,
+		},
+		{
+			name:           "unknown agency with a valid date",
+			stopID:         "99_1001",
+			date:           "2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "unknown stop with a valid date",
+			stopID:         "25_9999999",
+			date:           "2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint := "/api/where/schedule-for-stop/" + tt.stopID + ".json?key=org.onebusaway.iphone&date=" + tt.date
+			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, model.Code)
+
+			if !tt.expectFieldError {
+				return
+			}
+
+			data, ok := model.Data.(map[string]any)
+			require.True(t, ok)
+			fieldErrors, ok := data["fieldErrors"].(map[string]any)
+			require.True(t, ok)
+			assert.NotEmpty(t, fieldErrors["date"])
+		})
+	}
+}
+
 func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -805,6 +867,95 @@ func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
 	})
 }
 
+// TestScheduleForStopHandlerSpecShape covers the response guarantees that the other tests
+// in this file assert only indirectly: the envelope's shape, which reference lists the
+// endpoint populates, the field shape of a stop time, and departure-time ordering within a
+// direction group.
+func TestScheduleForStopHandlerSpecShape(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencyID := mustGetAgencies(t, api)[0].ID
+	stopID := utils.FormCombinedID(agencyID, mustGetStop(t, api).ID)
+
+	// NOTE: Hardcoded date matches GTFS data validity
+	endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=org.onebusaway.iphone&date=2025-06-12"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]any)
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]any)
+	require.True(t, ok)
+	references, ok := data["references"].(map[string]any)
+	require.True(t, ok)
+
+	t.Run("envelope carries the documented fields", func(t *testing.T) {
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.Equal(t, "OK", model.Text)
+		assert.Equal(t, 2, model.Version)
+		assert.NotZero(t, model.CurrentTime)
+	})
+
+	t.Run("every reference list is present", func(t *testing.T) {
+		for _, list := range []string{"agencies", "routes", "stops", "trips", "situations", "stopTimes"} {
+			_, ok := references[list].([]any)
+			assert.True(t, ok, "references.%s should be an array", list)
+		}
+
+		// Stop times carry trip IDs, but the endpoint does not resolve them into records.
+		assert.Empty(t, references["trips"], "trips are referenced by ID only")
+		assert.Empty(t, references["stopTimes"])
+		assert.Empty(t, references["situations"])
+	})
+
+	t.Run("every route in the entry has a reference record", func(t *testing.T) {
+		referencedRouteIDs := make(map[string]bool)
+		for _, routeRef := range references["routes"].([]any) {
+			referencedRouteIDs[routeRef.(map[string]any)["id"].(string)] = true
+		}
+
+		routeSchedules, ok := entry["stopRouteSchedules"].([]any)
+		require.True(t, ok)
+		require.NotEmpty(t, routeSchedules, "the queried stop should have service on this date")
+
+		for _, routeSchedule := range routeSchedules {
+			routeID := routeSchedule.(map[string]any)["routeId"].(string)
+			assert.True(t, referencedRouteIDs[routeID], "route %s appears in the entry but not in references", routeID)
+		}
+	})
+
+	t.Run("stop times are sorted by departure time and carry combined IDs", func(t *testing.T) {
+		assertedAnyStopTime := false
+
+		for _, routeSchedule := range entry["stopRouteSchedules"].([]any) {
+			for _, directionSchedule := range routeSchedule.(map[string]any)["stopRouteDirectionSchedules"].([]any) {
+				stopTimes, ok := directionSchedule.(map[string]any)["scheduleStopTimes"].([]any)
+				require.True(t, ok)
+
+				for i, stopTimeAny := range stopTimes {
+					stopTime := stopTimeAny.(map[string]any)
+					assertedAnyStopTime = true
+
+					assert.Regexp(t, "^"+agencyID+"_", stopTime["tripId"], "tripId should be a combined ID")
+					assert.Regexp(t, "^"+agencyID+"_", stopTime["serviceId"], "serviceId should be a combined ID")
+					assert.Contains(t, stopTime, "stopHeadsign")
+					assert.IsType(t, float64(0), stopTime["arrivalTime"])
+					assert.IsType(t, float64(0), stopTime["departureTime"])
+
+					if i > 0 {
+						previous := stopTimes[i-1].(map[string]any)
+						assert.LessOrEqual(t, previous["departureTime"], stopTime["departureTime"],
+							"stop times must be sorted by departure time")
+					}
+				}
+			}
+		}
+
+		assert.True(t, assertedAnyStopTime, "expected at least one stop time to assert against")
+	})
+}
+
 func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 	startOfDay := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
 	agencyID := "1"
@@ -829,18 +980,18 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		routeGroups, ok := schedules["1_10"]
 		assert.True(t, ok, "expected a group for route 1_10")
 		assert.Len(t, routeGroups, 2, "expected two distinct direction buckets")
 
-		assert.Len(t, routeGroups["0"], 1)
-		assert.Equal(t, "1_trip-out", routeGroups["0"][0].TripID)
+		assert.Len(t, routeGroups["0"].stopTimes, 1)
+		assert.Equal(t, "1_trip-out", routeGroups["0"].stopTimes[0].TripID)
 
-		assert.Len(t, routeGroups["1"], 1)
-		assert.Equal(t, "1_trip-in", routeGroups["1"][0].TripID)
+		assert.Len(t, routeGroups["1"].stopTimes, 1)
+		assert.Equal(t, "1_trip-in", routeGroups["1"].stopTimes[0].TripID)
 	})
 
 	t.Run("groups rows on the same route and direction together", func(t *testing.T) {
@@ -849,12 +1000,12 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-b", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		schedules, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1, "expected a single direction bucket")
-		assert.Len(t, schedules["1_10"]["0"], 2, "expected both stop times grouped together")
-		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
+		assert.Len(t, schedules["1_10"]["0"].stopTimes, 2, "expected both stop times grouped together")
+		assert.Equal(t, 2, schedules["1_10"]["0"].headsignVotes["Downtown"])
 	})
 
 	t.Run("defaults a missing direction_id to bucket 0", func(t *testing.T) {
@@ -862,12 +1013,12 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Valid: false}, "Downtown"),
 		}
 
-		schedules, _, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
 		assert.Len(t, schedules["1_10"], 1)
 		assert.Contains(t, schedules["1_10"], "0")
-		assert.Len(t, schedules["1_10"]["0"], 1)
+		assert.Len(t, schedules["1_10"]["0"].stopTimes, 1)
 	})
 
 	t.Run("tracks headsign votes separately per direction", func(t *testing.T) {
@@ -877,12 +1028,47 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-in-1", "10", sql.NullInt64{Int64: 1, Valid: true}, "Uptown"),
 		}
 
-		_, headsignCounts, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, rowCtx)
 		assert.NoError(t, err)
 
-		assert.Equal(t, 2, headsignCounts["1_10"]["0"]["Downtown"])
-		assert.Equal(t, 1, headsignCounts["1_10"]["1"]["Uptown"])
-		assert.Equal(t, 0, headsignCounts["1_10"]["1"]["Downtown"], "direction 1 should not see direction 0's headsign votes")
+		assert.Equal(t, 2, schedules["1_10"]["0"].headsignVotes["Downtown"])
+		assert.Equal(t, "Downtown", schedules["1_10"]["0"].representativeHeadsign())
+		assert.Equal(t, 1, schedules["1_10"]["1"].headsignVotes["Uptown"])
+		assert.Equal(t, 0, schedules["1_10"]["1"].headsignVotes["Downtown"], "direction 1 should not see direction 0's headsign votes")
+	})
+
+	t.Run("reports frequency-based trips as frequencies, not stop times", func(t *testing.T) {
+		rows := []gtfsdb.GetScheduleForStopOnDateRow{
+			makeRow("trip-freq", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+			makeRow("trip-fixed", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
+		}
+
+		frequencyCtx := rowCtx
+		frequencyCtx.frequenciesByTrip = map[string][]gtfsdb.Frequency{
+			"trip-freq": {
+				// 16:00-19:00 every 15 minutes, listed before the earlier window to
+				// prove the output is sorted rather than merely passed through.
+				{TripID: "trip-freq", StartTime: int64(16 * time.Hour), EndTime: int64(19 * time.Hour), HeadwaySecs: 900},
+				{TripID: "trip-freq", StartTime: int64(6 * time.Hour), EndTime: int64(9 * time.Hour), HeadwaySecs: 600},
+			},
+		}
+
+		schedules, err := groupScheduleRowsByRouteAndDirection(context.Background(), rows, frequencyCtx)
+		assert.NoError(t, err)
+
+		group := schedules["1_10"]["0"]
+		assert.Len(t, group.stopTimes, 1, "only the fixed-schedule trip belongs in stop times")
+		assert.Equal(t, "1_trip-fixed", group.stopTimes[0].TripID)
+
+		assert.Len(t, group.frequencies, 2, "one entry per frequency window")
+		assert.Equal(t, "1_trip-freq", group.frequencies[0].TripID)
+		assert.True(t, group.frequencies[0].StartTime.Time.Before(group.frequencies[1].StartTime.Time),
+			"frequency windows must be sorted by start time")
+		assert.Equal(t, startOfDay.Add(6*time.Hour), group.frequencies[0].StartTime.Time.In(startOfDay.Location()))
+		assert.Equal(t, 600, int(group.frequencies[0].Headway.Duration.Seconds()))
+
+		// 18 morning runs + 12 evening runs for the frequency trip, 1 for the fixed one.
+		assert.Equal(t, 31, group.headsignVotes["Downtown"])
 	})
 
 	t.Run("returns an error when the context is already canceled", func(t *testing.T) {
@@ -893,7 +1079,7 @@ func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 			makeRow("trip-a", "10", sql.NullInt64{Int64: 0, Valid: true}, "Downtown"),
 		}
 
-		_, _, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
+		_, err := groupScheduleRowsByRouteAndDirection(ctx, rows, rowCtx)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
