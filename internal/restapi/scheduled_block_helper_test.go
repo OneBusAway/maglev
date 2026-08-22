@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -467,7 +468,8 @@ func TestFetchStopCoordsForStopTimes_DedupesAndReturnsMap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stopTimes)
 
-	coords := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	require.NoError(t, err)
 	require.NotNil(t, coords)
 	for _, st := range stopTimes {
 		stop, ok := coords[st.StopID]
@@ -481,8 +483,79 @@ func TestFetchStopCoordsForStopTimes_EmptyInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	coords := api.fetchStopCoordsForStopTimes(context.Background(), nil)
+	coords, err := api.fetchStopCoordsForStopTimes(context.Background(), nil)
+	require.NoError(t, err)
 	assert.Nil(t, coords)
+}
+
+// TestFetchStopCoordsForStopTimes_PropagatesError guards against the lookup
+// failure turning into a silent nil map: a request-path caller
+// (scheduledTripIDsInBounds) must see the error and return a 500 rather than
+// a plausible-looking short list.
+func TestFetchStopCoordsForStopTimes_PropagatesError(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	coords, err := api.fetchStopCoordsForStopTimes(ctx, []gtfsdb.StopTime{{StopID: "any-stop"}})
+	require.Error(t, err)
+	assert.Nil(t, coords)
+}
+
+// TestFetchStopCoordsForStopTimes_BatchesLargeStopSets guards against an
+// unbatched regression: an unbounded caller — the scheduled-position
+// candidate set among stop_times — can push the unique stop count past a
+// batch boundary, and the batches must concatenate correctly rather than
+// silently dropping rows from any but the first.
+//
+// RABA's fixture has only 375 unique stops, well under idsPerBatchedQuery, so
+// the unique ID set is padded with synthetic stop IDs that don't exist in the
+// DB (GetStopsByIDs simply returns fewer rows for those). Real stop IDs are
+// interleaved before and after the synthetic block so some land in the first
+// batch and some in the last — proving concatenation, not just that the loop
+// ran once.
+func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	half := len(stops) / 2
+	var stopTimes []gtfsdb.StopTime
+	for _, stop := range stops[:half] {
+		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: stop.ID})
+	}
+
+	syntheticCount := idsPerBatchedQuery + 100
+	for i := 0; i < syntheticCount; i++ {
+		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: fmt.Sprintf("synthetic-stop-%d", i)})
+	}
+
+	for _, stop := range stops[half:] {
+		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: stop.ID})
+	}
+
+	uniqueIDs := make(map[string]struct{}, len(stopTimes))
+	for _, st := range stopTimes {
+		uniqueIDs[st.StopID] = struct{}{}
+	}
+	require.Greater(t, len(uniqueIDs), idsPerBatchedQuery,
+		"the deduped ID set must span more than one batch for this test to mean anything")
+
+	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	require.NoError(t, err)
+	require.NotNil(t, coords)
+	for _, stop := range stops {
+		_, ok := coords[stop.ID]
+		assert.True(t, ok, "stop %q should be in coord map", stop.ID)
+	}
+	_, ok := coords["synthetic-stop-0"]
+	assert.False(t, ok, "synthetic stop IDs don't exist in the DB and should not appear")
 }
 
 func TestComputeScheduledBlockSnapshot_BasicShape(t *testing.T) {
@@ -675,7 +748,8 @@ func TestProjectStopsInSequence_MonotonicAlongShape(t *testing.T) {
 	td := data[0]
 	require.GreaterOrEqual(t, len(td.stopTimes), 2)
 
-	stopByID := api.fetchStopCoordsForStopTimes(ctx, td.stopTimes)
+	stopByID, err := api.fetchStopCoordsForStopTimes(ctx, td.stopTimes)
+	require.NoError(t, err)
 	require.NotNil(t, stopByID)
 
 	distances := projectStopsInSequence(td.stopTimes, stopByID, td.shapePoints, td.cumDistances)

@@ -2,9 +2,11 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -153,6 +156,48 @@ func TestTripsForLocationHandler_UsesEachTripAgencyTimezone(t *testing.T) {
 		require.NotNil(t, entry.Status)
 		assert.Equal(t, expectedMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli())
 	}
+}
+
+// TestTripsForLocationHandler_LiveVehicleWithoutPositionStillScheduled verifies
+// that a trip with a live vehicle reporting no position still falls through to
+// the scheduled pass: only an actual reported position outranks the schedule,
+// not merely the vehicle's existence. Without this, the trip is excluded from
+// both the live path (no position to place it) and the scheduled path (deemed
+// already covered by the live vehicle) and never appears at all.
+func TestTripsForLocationHandler_LiveVehicleWithoutPositionStillScheduled(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
+	defer api.Shutdown()
+
+	require.Empty(t, api.GtfsManager.GetRealTimeVehicles(),
+		"the baseline fetch below must reflect the schedule alone")
+
+	url := tripsForLocationURL(2.0, 3.0)
+	baselineResp, baseline := callAPIHandler[TripsForLocationResponse](t, api, url)
+	require.Equal(t, http.StatusOK, baselineResp.StatusCode)
+	require.NotEmpty(t, baseline.Data.List, "expected scheduled trips with no live vehicles")
+
+	target := baseline.Data.List[0]
+	_, tripID, err := utils.ExtractAgencyIDAndCodeID(target.TripId)
+	require.NoError(t, err)
+
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+	require.NoError(t, err)
+
+	api.GtfsManager.MockAddVehicleWithOptions("vehicle-"+tripID, tripID, trip.RouteID,
+		internalgtfs.MockVehicleOptions{Timestamp: &tripsForLocationServiceDayClock})
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	found := false
+	for _, entry := range model.Data.List {
+		if entry.TripId == target.TripId {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "a live vehicle with no reported position must not suppress the scheduled trip")
 }
 
 func multiTimezoneTripsForLocationFiles() map[string]string {
@@ -1001,8 +1046,10 @@ func findTripServingOnlyLateStop(
 }
 
 // TestCandidateTripIDsForStops_BatchesLargeStopSets covers the uncapped stop
-// set exceeding one query's bind variable budget: the batches together must
-// return what a single query would.
+// set exceeding one batch: the batches together must return what a single
+// query would, proving concatenation rather than bind-limit avoidance —
+// modern SQLite's default bind limit (32766) is well above what this test
+// exercises.
 func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
@@ -1040,4 +1087,197 @@ func uniqueStrings(values []string) []string {
 		unique = append(unique, value)
 	}
 	return unique
+}
+
+// tripsForLocationServiceDayClock is noon Pacific on a Wednesday inside the
+// RABA fixture's calendar range, when scheduled trips are actually running.
+var tripsForLocationServiceDayClock = time.Date(2025, 6, 11, 19, 0, 0, 0, time.UTC)
+
+// TestTripsForLocationHandler_ScheduledTripsWithoutVehicles verifies that trips
+// in service at the query time are returned from the schedule alone, with no
+// real-time feed configured.
+func TestTripsForLocationHandler_ScheduledTripsWithoutVehicles(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
+	defer api.Shutdown()
+
+	require.Empty(t, api.GtfsManager.GetRealTimeVehicles(),
+		"this test covers the static-only path, so there must be no live vehicles")
+
+	shapedTripID, shapelessTripID := seedShapedAndShapelessTrips(t, api, tripsForLocationServiceDayClock)
+
+	url := tripsForLocationURL(2.0, 3.0, "includeStatus=true")
+
+	resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List,
+		"scheduled trips must be returned even with no real-time feed")
+
+	seenTripIDs := make(map[string]bool, len(model.Data.List))
+	for _, entry := range model.Data.List {
+		assert.NotEmpty(t, entry.TripId)
+		if assert.NotNil(t, entry.Status, "includeStatus=true should populate the status") {
+			assert.False(t, entry.Status.Predicted,
+				"a schedule-derived position is not a prediction")
+		}
+		seenTripIDs[entry.TripId] = true
+	}
+
+	assert.True(t, seenTripIDs[utils.FormCombinedID(mustGetAgencies(t, api)[0].ID, shapedTripID)],
+		"a scheduled trip with a shape must be positioned and returned")
+	assert.False(t, seenTripIDs[utils.FormCombinedID(mustGetAgencies(t, api)[0].ID, shapelessTripID)],
+		"a scheduled trip with no shape has no position to bounds-test and must be omitted, not errored")
+}
+
+// seedShapedAndShapelessTrips inserts two otherwise-identical scheduled trips
+// serving the same stop as a real trip already in service on clockTime — one
+// with that trip's shape, one without — so the shapeless branch in
+// scheduledTripIDsInBounds / scheduledPositionAtTime is covered by something
+// other than "the list is non-empty." Both run all day, so their in-service
+// window does not depend on the query clock's exact offset. Rows are removed
+// via t.Cleanup.
+func seedShapedAndShapelessTrips(t *testing.T, api *RestAPI, clockTime time.Time) (shapedTripID, shapelessTripID string) {
+	t.Helper()
+	ctx := context.Background()
+	db := api.GtfsManager.GtfsDB.DB
+
+	agencyID := mustGetAgencies(t, api)[0].ID
+
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, clockTime.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs, "the fixture must have service running on this test's clock")
+
+	// Clone the service, shape, and stop from a real in-service trip, rather
+	// than combining an arbitrary shape with an arbitrary nearby stop: an
+	// unrelated pairing can project outside the search box even though both
+	// individually sit inside it, which would make the shaped half of this
+	// fixture flaky for reasons unrelated to what it's testing. Matching
+	// against every active service ID rather than assuming the first one has
+	// a shaped trip keeps this independent of GetActiveServiceIDsForDate's
+	// row order.
+	placeholders := make([]string, len(serviceIDs))
+	args := make([]any, len(serviceIDs))
+	for i, id := range serviceIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	var serviceID, stopID string
+	var shapeID sql.NullString
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT t.service_id, st.stop_id, t.shape_id
+		 FROM trips t JOIN stop_times st ON st.trip_id = t.id
+		 WHERE t.service_id IN (`+strings.Join(placeholders, ",")+`) AND t.shape_id IS NOT NULL
+		 LIMIT 1`,
+		args...,
+	).Scan(&serviceID, &stopID, &shapeID))
+	require.True(t, shapeID.Valid, "the fixture must have a shaped trip in service on this test's clock")
+
+	shapedTripID = "test-shaped-trip"
+	shapelessTripID = "test-shapeless-trip"
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN (?, ?)`, shapedTripID, shapelessTripID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id IN (?, ?)`, shapedTripID, shapelessTripID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id = 'test-shape-coverage-route'`)
+	})
+
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO routes (id, agency_id, short_name, type) VALUES ('test-shape-coverage-route', ?, 'test-shape-coverage-route', 3)`,
+		agencyID)
+	require.NoError(t, err)
+
+	// The whole service day in nanoseconds since midnight, matching how
+	// stop_times/trips.{arrival,departure,min_arrival,max_departure}_time are
+	// stored, so in-service filtering never excludes these trips regardless
+	// of exactly when the test clock falls.
+	const dayStartNs, dayEndNs = 0, int64(23*time.Hour + 59*time.Minute)
+
+	for _, trip := range []struct {
+		id      string
+		shapeID sql.NullString
+	}{
+		{id: shapedTripID, shapeID: shapeID},
+		{id: shapelessTripID, shapeID: sql.NullString{}},
+	} {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO trips (id, route_id, service_id, shape_id, min_arrival_time, max_departure_time)
+			 VALUES (?, 'test-shape-coverage-route', ?, ?, ?, ?)`,
+			trip.id, serviceID, trip.shapeID, dayStartNs, dayEndNs)
+		require.NoError(t, err)
+
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence)
+			 VALUES (?, ?, ?, ?, 0)`,
+			trip.id, dayStartNs, dayEndNs, stopID)
+		require.NoError(t, err)
+	}
+
+	return shapedTripID, shapelessTripID
+}
+
+// TestInServiceTripIDs_BatchesLargeStopSets guards against an unbatched
+// regression: the in-bounds stop set inServiceTripIDs is called with is
+// uncapped, and the batches must concatenate correctly rather than silently
+// dropping rows from any but the first.
+func TestInServiceTripIDs_BatchesLargeStopSets(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	currentTime := tripsForLocationServiceDayClock
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentTime.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs, "the fixture must have service running on this test's clock")
+
+	queryDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(),
+		0, 0, 0, 0, currentTime.Location())
+	// PreviousDay is left empty so inServiceTripIDs' second service-day layer is
+	// skipped, isolating this test to the one query being batched.
+	resolver := newServiceDateResolverFor(queryDayMidnight, currentTime, serviceIDsByDay{QueryDay: serviceIDs})
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= idsPerBatchedQuery {
+		for _, stop := range stops {
+			stopIDs = append(stopIDs, stop.ID)
+		}
+	}
+	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+		"the input must span more than one batch for this test to mean anything")
+
+	batched, err := api.inServiceTripIDs(ctx, stopIDs, resolver, map[string]struct{}{})
+	require.NoError(t, err)
+
+	singleQuery, err := api.GtfsManager.GtfsDB.Queries.GetInServiceTripIDsForStops(ctx, gtfsdb.GetInServiceTripIDsForStopsParams{
+		StopIds:       stopIDs[:len(stops)],
+		ServiceIds:    serviceIDs,
+		SinceMidnight: nulls.Int64(wallClockSinceMidnightNs(currentTime)),
+	})
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, singleQuery, batched)
+}
+
+// TestTripsForLocationHandler_ScheduledTripsHonorTimeParameter verifies that the
+// time parameter selects which trips are in service, not just how their status
+// is calculated.
+func TestTripsForLocationHandler_ScheduledTripsHonorTimeParameter(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
+	defer api.Shutdown()
+
+	middayURL := tripsForLocationURL(2.0, 3.0, "time=2025-06-11_12-00-00")
+	deadOfNightURL := tripsForLocationURL(2.0, 3.0, "time=2025-06-11_03-00-00")
+
+	middayResp, midday := callAPIHandler[TripsForLocationResponse](t, api, middayURL)
+	nightResp, night := callAPIHandler[TripsForLocationResponse](t, api, deadOfNightURL)
+
+	require.Equal(t, http.StatusOK, middayResp.StatusCode)
+	require.Equal(t, http.StatusOK, nightResp.StatusCode)
+
+	require.NotEmpty(t, midday.Data.List, "midday should have trips in service")
+	assert.Less(t, len(night.Data.List), len(midday.Data.List),
+		"fewer trips run at 3am than at midday, so time must drive selection")
 }
