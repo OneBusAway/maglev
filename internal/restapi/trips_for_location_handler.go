@@ -264,14 +264,14 @@ func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []mode
 		bareIDs = append(bareIDs, bareID)
 	}
 
-	stops, err := queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	stops, err := utils.QueryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	return stops, stopIDsByBareID, err
 }
 
 // candidateTripIDsForStops returns the IDs of the trips serving any of these
 // stops. IDs may repeat across batches; the caller sets them.
 func (api *RestAPI) candidateTripIDsForStops(ctx context.Context, stopIDs []string) ([]string, error) {
-	return queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops)
+	return utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops)
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {

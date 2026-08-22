@@ -1011,13 +1011,13 @@ func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stops)
 
-	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
-	for len(stopIDs) <= idsPerBatchedQuery {
+	stopIDs := make([]string, 0, utils.IDsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= utils.IDsPerBatchedQuery {
 		for _, stop := range stops {
 			stopIDs = append(stopIDs, stop.ID)
 		}
 	}
-	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+	require.Greater(t, len(stopIDs), utils.IDsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
 	batched, err := api.candidateTripIDsForStops(ctx, stopIDs)

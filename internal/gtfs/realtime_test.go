@@ -388,7 +388,8 @@ func TestStaleFeedRejected(t *testing.T) {
 
 	// Second poll: attempt to update with same feed URL (same data, same timestamp)
 	// This should be rejected because the stored timestamp is in the future
-	manager.updateFeedRealtime(ctx, feed)
+	hasNewData := manager.updateFeedRealtime(ctx, feed)
+	assert.False(t, hasNewData, "skipped stale vehicle feed should not count as success")
 
 	// Verify vehicles from first poll are preserved (not overwritten)
 	secondPoll := manager.GetRealTimeVehicles()
@@ -1201,6 +1202,28 @@ func encodeVehicleFeed(createdAt time.Time, positions []*gtfsrt.VehiclePosition)
 	return b
 }
 
+// encodeTripFeed constructs a GTFS-RT protobuf payload containing the provided
+// trip updates. Used to assert that trip entities are actually stored.
+func encodeTripFeed(createdAt time.Time, updates []*gtfsrt.TripUpdate) []byte {
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(createdAt.Unix())),
+		},
+	}
+	for i, tu := range updates {
+		feed.Entity = append(feed.Entity, &gtfsrt.FeedEntity{
+			Id:         proto.String(fmt.Sprintf("t%d", i)),
+			TripUpdate: tu,
+		})
+	}
+	b, err := proto.Marshal(feed)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal trip-update feed: %s", err))
+	}
+	return b
+}
+
 // ptr is a helper function to create a pointer to a time.Time value.
 func ptr(t time.Time) *time.Time {
 	return &t
@@ -1295,6 +1318,81 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 
 	hasNewDataSuccess := manager.updateFeedRealtime(context.Background(), cfgSuccess)
 	assert.True(t, hasNewDataSuccess, "OR check should return true when ALL sub-feeds succeed")
+}
+
+func TestUpdateFeedRealtime_StaleVehicleFeedDoesNotCountAsSuccess(t *testing.T) {
+	createdAt := time.Now()
+	payload := encodeVehicleFeed(createdAt, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manager := &Manager{
+		realTimeMutex:        sync.RWMutex{},
+		feedTrips:            make(map[string][]gtfs.Trip),
+		feedVehicles:         make(map[string][]gtfs.Vehicle),
+		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedVehicleTimestamp: make(map[string]uint64),
+		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+	}
+
+	cfg := RTFeedConfig{
+		ID:                  "stale-vehicle-feed",
+		VehiclePositionsURL: server.URL,
+	}
+
+	first := manager.updateFeedRealtime(context.Background(), cfg)
+	assert.True(t, first, "first poll should apply vehicle data")
+
+	second := manager.updateFeedRealtime(context.Background(), cfg)
+	assert.False(t, second, "skipped stale vehicle feed should not count as success")
+}
+
+func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *testing.T) {
+	createdAt := time.Now()
+	payload := encodeVehicleFeed(createdAt, nil)
+	vehicleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer vehicleServer.Close()
+
+	const tripID = "mixed-success-trip"
+	tripPayload := encodeTripFeed(time.Now(), []*gtfsrt.TripUpdate{
+		{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(tripID), RouteId: proto.String("R1")}},
+	})
+	tripServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(tripPayload)
+	}))
+	defer tripServer.Close()
+
+	manager := &Manager{
+		realTimeMutex:        sync.RWMutex{},
+		feedTrips:            make(map[string][]gtfs.Trip),
+		feedVehicles:         make(map[string][]gtfs.Vehicle),
+		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedVehicleTimestamp: make(map[string]uint64),
+		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+	}
+
+	cfg := RTFeedConfig{
+		ID:                  "mixed-stale-vehicles",
+		TripUpdatesURL:      tripServer.URL,
+		VehiclePositionsURL: vehicleServer.URL,
+	}
+
+	first := manager.updateFeedRealtime(context.Background(), cfg)
+	assert.True(t, first, "first poll should apply trips and vehicles")
+	require.Len(t, manager.GetRealTimeTrips(), 1)
+	assert.Equal(t, tripID, manager.GetRealTimeTrips()[0].ID.ID)
+
+	second := manager.updateFeedRealtime(context.Background(), cfg)
+	assert.True(t, second, "trip updates applied even if vehicles are stale")
+	require.Len(t, manager.GetRealTimeTrips(), 1)
+	assert.Equal(t, tripID, manager.GetRealTimeTrips()[0].ID.ID)
 }
 
 func TestGetDuplicatedVehiclesForRoute_MatchesWithRouteID(t *testing.T) {
