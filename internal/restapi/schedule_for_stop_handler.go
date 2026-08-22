@@ -29,6 +29,16 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Get the date parameter or use current date
 	dateParam := r.URL.Query().Get("date")
 
+	// An unparseable date is a field error even when the ID resolves to nothing, so it has
+	// to be caught before the agency lookup below. Resolving the date to a service date
+	// needs that agency's timezone, so the parse itself stays where it is.
+	if dateParam != "" {
+		if err := utils.ValidateServiceDate(dateParam); err != nil {
+			api.validationErrorResponse(w, r, map[string][]string{"date": {err.Error()}})
+			return
+		}
+	}
+
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		api.sendNotFound(w, r)
@@ -46,12 +56,10 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	if dateParam != "" {
 		var err error
+		// The format was validated above, so this only fails on an unusable agency timezone.
 		startOfDay, err = utils.ParseDate(dateParam, loc)
 		if err != nil {
-			fieldErrors := map[string][]string{
-				"date": {err.Error()},
-			}
-			api.validationErrorResponse(w, r, fieldErrors)
+			api.serverErrorResponse(w, r, err)
 			return
 		}
 
