@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.buildStopAgenciesStmt, err = db.PrepareContext(ctx, buildStopAgencies); err != nil {
+		return nil, fmt.Errorf("error preparing query BuildStopAgencies: %w", err)
+	}
 	if q.bulkUpdateTripTimeBoundsStmt, err = db.PrepareContext(ctx, bulkUpdateTripTimeBounds); err != nil {
 		return nil, fmt.Errorf("error preparing query BulkUpdateTripTimeBounds: %w", err)
 	}
@@ -53,6 +56,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.clearShapesStmt, err = db.PrepareContext(ctx, clearShapes); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearShapes: %w", err)
+	}
+	if q.clearStopAgenciesStmt, err = db.PrepareContext(ctx, clearStopAgencies); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearStopAgencies: %w", err)
 	}
 	if q.clearStopTimesStmt, err = db.PrepareContext(ctx, clearStopTimes); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearStopTimes: %w", err)
@@ -404,6 +410,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.buildStopAgenciesStmt != nil {
+		if cerr := q.buildStopAgenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing buildStopAgenciesStmt: %w", cerr)
+		}
+	}
 	if q.bulkUpdateTripTimeBoundsStmt != nil {
 		if cerr := q.bulkUpdateTripTimeBoundsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing bulkUpdateTripTimeBoundsStmt: %w", cerr)
@@ -452,6 +463,11 @@ func (q *Queries) Close() error {
 	if q.clearShapesStmt != nil {
 		if cerr := q.clearShapesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearShapesStmt: %w", cerr)
+		}
+	}
+	if q.clearStopAgenciesStmt != nil {
+		if cerr := q.clearStopAgenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearStopAgenciesStmt: %w", cerr)
 		}
 	}
 	if q.clearStopTimesStmt != nil {
@@ -1068,6 +1084,7 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                            DBTX
 	tx                                            *sql.Tx
+	buildStopAgenciesStmt                         *sql.Stmt
 	bulkUpdateTripTimeBoundsStmt                  *sql.Stmt
 	clearAgenciesStmt                             *sql.Stmt
 	clearBlockLayoversStmt                        *sql.Stmt
@@ -1078,6 +1095,7 @@ type Queries struct {
 	clearFrequenciesStmt                          *sql.Stmt
 	clearRoutesStmt                               *sql.Stmt
 	clearShapesStmt                               *sql.Stmt
+	clearStopAgenciesStmt                         *sql.Stmt
 	clearStopTimesStmt                            *sql.Stmt
 	clearStopsStmt                                *sql.Stmt
 	clearTripsStmt                                *sql.Stmt
@@ -1199,6 +1217,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                                            tx,
 		tx:                                            tx,
+		buildStopAgenciesStmt:                         q.buildStopAgenciesStmt,
 		bulkUpdateTripTimeBoundsStmt:                  q.bulkUpdateTripTimeBoundsStmt,
 		clearAgenciesStmt:                             q.clearAgenciesStmt,
 		clearBlockLayoversStmt:                        q.clearBlockLayoversStmt,
@@ -1209,6 +1228,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		clearFrequenciesStmt:                          q.clearFrequenciesStmt,
 		clearRoutesStmt:                               q.clearRoutesStmt,
 		clearShapesStmt:                               q.clearShapesStmt,
+		clearStopAgenciesStmt:                         q.clearStopAgenciesStmt,
 		clearStopTimesStmt:                            q.clearStopTimesStmt,
 		clearStopsStmt:                                q.clearStopsStmt,
 		clearTripsStmt:                                q.clearTripsStmt,
