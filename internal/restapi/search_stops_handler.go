@@ -230,7 +230,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		references.Agencies = agencyReferencesForStops(keptAgencyRows)
-		utils.SortAgencyReferencesByID(references.Agencies)
 
 		// Populate situation references for alerts affecting the returned stops
 		alerts := api.collectAlertsForStops(keptStopIDs)
@@ -244,6 +243,19 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		utils.SortModelStopsByID(references.Stops)
+
+		// Append missing agencies from parent routes to references.Agencies
+		existingAgencies := make(map[string]bool)
+		for _, agency := range references.Agencies {
+			existingAgencies[agency.ID] = true
+		}
+		for _, row := range parentRoutes {
+			if !existingAgencies[row.AgencyID] {
+				api.appendRouteAgencyReference(ctx, references, row.AgencyID, "")
+				existingAgencies[row.AgencyID] = true
+			}
+		}
+		utils.SortAgencyReferencesByID(references.Agencies)
 
 		references.Routes = mergeParentRouteReferences(routeReferencesForStops(keptRoutesRows), parentRoutes)
 		utils.SortModelRoutesByName(references.Routes)
