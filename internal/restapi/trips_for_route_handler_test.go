@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gogtfs "github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1344,7 +1345,7 @@ func TestResolveDuplicatedBaseTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			baseTripID, baseTrip := api.resolveDuplicatedBaseTrip(ctx, tt.dupTripID)
+			baseTripID, baseTrip, _ := api.resolveDuplicatedBaseTrip(ctx, tt.dupTripID)
 
 			assert.Equal(t, tt.wantTripID, baseTripID)
 			if tt.wantMatched {
@@ -1575,4 +1576,115 @@ func TestTripsForRouteHandler_StopRoutesResolveInReferences(t *testing.T) {
 		assert.True(t, referenceAgencyIDs[route.AgencyID],
 			"references.routes entry %s has agencyId %s, which must resolve in references.agencies", route.ID, route.AgencyID)
 	}
+}
+
+// duplicatedTripLookupFailDB wraps DBTX and forces a database error on GetTrip queries
+// where the requested trip ID matches specific test values.
+type duplicatedTripLookupFailDB struct {
+	gtfsdb.DBTX
+}
+
+func (f *duplicatedTripLookupFailDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if strings.Contains(query, "GetTrip") && len(args) > 0 {
+		tripID, ok := args[0].(string)
+		if ok {
+			if tripID == "fail-direct" || tripID == "fail-stripped" {
+				return f.DBTX.QueryRowContext(ctx, "SELECT syntax error")
+			}
+		}
+	}
+	return f.DBTX.QueryRowContext(ctx, query, args...)
+}
+
+func TestTripsForRouteHandler_DuplicatedTripLookupFailures(t *testing.T) {
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	t.Run("direct lookup database error", func(t *testing.T) {
+		api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
+		api.GtfsManager.MockResetRealTimeData()
+
+		api.GtfsManager.MockAddDuplicatedVehicle(tripsForRouteRouteID, gogtfs.Vehicle{
+			ID: &gogtfs.VehicleID{ID: "vehicle-fail-direct"},
+			Trip: &gogtfs.Trip{
+				ID: gogtfs.TripID{
+					ID:                   "fail-direct",
+					RouteID:              tripsForRouteRouteID,
+					ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+				},
+			},
+		})
+
+		originalQueries := api.GtfsManager.GtfsDB.Queries
+		api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&duplicatedTripLookupFailDB{
+			DBTX: api.GtfsManager.GtfsDB.DB,
+		})
+		t.Cleanup(func() {
+			api.GtfsManager.GtfsDB.Queries = originalQueries
+		})
+
+		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.UnixMilli())
+		resp, _ := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	})
+
+	t.Run("fallback lookup database error", func(t *testing.T) {
+		api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
+		api.GtfsManager.MockResetRealTimeData()
+
+		api.GtfsManager.MockAddDuplicatedVehicle(tripsForRouteRouteID, gogtfs.Vehicle{
+			ID: &gogtfs.VehicleID{ID: "vehicle-fail-stripped"},
+			Trip: &gogtfs.Trip{
+				ID: gogtfs.TripID{
+					ID:                   "fail-stripped.00060",
+					RouteID:              tripsForRouteRouteID,
+					ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+				},
+			},
+		})
+
+		originalQueries := api.GtfsManager.GtfsDB.Queries
+		api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&duplicatedTripLookupFailDB{
+			DBTX: api.GtfsManager.GtfsDB.DB,
+		})
+		t.Cleanup(func() {
+			api.GtfsManager.GtfsDB.Queries = originalQueries
+		})
+
+		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.UnixMilli())
+		resp, _ := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	})
+
+	t.Run("legitimate fallback success", func(t *testing.T) {
+		api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
+		api.GtfsManager.MockResetRealTimeData()
+
+		api.GtfsManager.MockAddDuplicatedVehicle(tripsForRouteRouteID, gogtfs.Vehicle{
+			ID: &gogtfs.VehicleID{ID: "vehicle-fallback-success"},
+			Trip: &gogtfs.Trip{
+				ID: gogtfs.TripID{
+					ID:                   "tfr-trip.00060",
+					RouteID:              tripsForRouteRouteID,
+					ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+				},
+			},
+		})
+
+		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.UnixMilli())
+		resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, model.Code)
+
+		found := false
+		for _, entry := range model.Data.List {
+			if entry.TripId == utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip.00060") {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "duplicated trip entry should be present in response list")
+	})
 }

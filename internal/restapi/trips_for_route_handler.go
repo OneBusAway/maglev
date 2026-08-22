@@ -440,7 +440,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 		dupTripID := vehicle.Trip.ID.ID
 
-		baseTripID, baseTrip := api.resolveDuplicatedBaseTrip(ctx, dupTripID)
+		baseTripID, baseTrip, baseTripErr := api.resolveDuplicatedBaseTrip(ctx, dupTripID)
+		if baseTripErr != nil {
+			api.serverErrorResponse(w, r, baseTripErr)
+			return
+		}
 
 		// A DUPLICATED trip with no static counterpart leaves baseTrip zeroed,
 		// which the resolver reports as the query day.
@@ -974,30 +978,28 @@ func newTripReference(trip gtfsdb.Trip) models.Trip {
 // worse than keeping the unresolvable one the feed sent. When neither resolves,
 // the trip comes back zeroed, which the service date resolver reports as the
 // query day.
-func (api *RestAPI) resolveDuplicatedBaseTrip(ctx context.Context, dupTripID string) (string, gtfsdb.Trip) {
+func (api *RestAPI) resolveDuplicatedBaseTrip(ctx context.Context, dupTripID string) (string, gtfsdb.Trip, error) {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
 	if err == nil {
-		return dupTripID, trip
+		return dupTripID, trip, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
-			"dup_trip_id", dupTripID, "error", err)
+		return "", gtfsdb.Trip{}, err
 	}
 
 	stripped := stripNumericSuffix(dupTripID)
 	if stripped == dupTripID {
-		return dupTripID, gtfsdb.Trip{}
+		return dupTripID, gtfsdb.Trip{}, nil
 	}
 
 	strippedTrip, strippedErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, stripped)
 	if strippedErr != nil {
 		if !errors.Is(strippedErr, sql.ErrNoRows) {
-			api.Logger.Warn("trips-for-route: failed to resolve stripped DUPLICATED trip ID",
-				"dup_trip_id", dupTripID, "stripped_trip_id", stripped, "error", strippedErr)
+			return "", gtfsdb.Trip{}, strippedErr
 		}
-		return dupTripID, gtfsdb.Trip{}
+		return dupTripID, gtfsdb.Trip{}, nil
 	}
-	return stripped, strippedTrip
+	return stripped, strippedTrip, nil
 }
 
 // stripNumericSuffix removes a trailing ".<digits>" from a trip ID.
