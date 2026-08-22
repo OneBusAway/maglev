@@ -95,15 +95,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		routeIDs = append(routeIDs, rt.ID)
 	}
 
-	if len(routeIDs) == 0 {
-		api.sendResponse(w, r, models.NewEntryResponse(
-			models.NewScheduleForStopEntry(utils.FormCombinedID(agencyID, stopID), responseDate, nil),
-			*models.NewEmptyReferences(),
-			api.Clock,
-		))
-		return
-	}
-
+	// A stop with no routes falls through the normal path: GetScheduleForStopOnDate
+	// expands an empty route ID slice to IN (NULL) and returns no rows.
 	params := gtfsdb.GetScheduleForStopOnDateParams{
 		StopID:     stopID,
 		TargetDate: targetDate,
@@ -218,7 +211,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	references := models.NewEmptyReferences()
 	if ShouldIncludeReferences(r) {
-		references, err = api.buildScheduleForStopReferences(ctx, agencyID, agency, stop, scheduleRows, routeIDs)
+		references, err = api.buildScheduleForStopReferences(ctx, agencyID, stop, routesForStop, routeIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -232,22 +225,18 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 // buildScheduleForStopReferences builds the agency, route, and stop references
 // for the schedule-for-stop entry. Only called when includeReferences=true.
+// References describe the routes serving the stop, not just the ones running on
+// the queried date, so they stay populated on dates with no active service.
 func (api *RestAPI) buildScheduleForStopReferences(
 	ctx context.Context,
 	agencyID string,
-	agency gtfsdb.Agency,
 	stop gtfsdb.Stop,
-	scheduleRows []gtfsdb.GetScheduleForStopOnDateRow,
+	routesForStop []gtfsdb.GetRoutesForStopRow,
 	routeIDs []string,
 ) (*models.ReferencesModel, error) {
-	routeIDsToFetch, agencyIDsToFetch := collectRouteAndAgencyIDs(scheduleRows)
+	routeRefs, agencyIDs := buildRouteRefs(agencyID, routesForStop)
 
-	routeRefs, err := api.fetchRouteRefs(ctx, agencyID, routeIDsToFetch)
-	if err != nil {
-		return nil, err
-	}
-
-	agencyRefs, err := api.fetchAgencyRefs(ctx, agency, agencyIDsToFetch)
+	agencyRefs, err := api.fetchAgencyRefs(ctx, agencyIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -260,65 +249,42 @@ func (api *RestAPI) buildScheduleForStopReferences(
 	return references, nil
 }
 
-// collectRouteAndAgencyIDs collects the distinct route and agency IDs referenced
-// across a stop's schedule rows, for batch fetching.
-func collectRouteAndAgencyIDs(scheduleRows []gtfsdb.GetScheduleForStopOnDateRow) (routeIDs, agencyIDs []string) {
-	uniqueRouteIDs := make(map[string]bool)
-	uniqueAgencyIDs := make(map[string]bool)
+// buildRouteRefs converts the stop's routes into a combined-ID-keyed reference map,
+// alongside the distinct agency IDs those routes belong to.
+func buildRouteRefs(agencyID string, routesForStop []gtfsdb.GetRoutesForStopRow) (map[string]models.Route, []string) {
+	routeRefs := make(map[string]models.Route, len(routesForStop))
+	agencyIDs := make([]string, 0, len(routesForStop))
+	seenAgencies := make(map[string]bool, len(routesForStop))
 
-	for _, row := range scheduleRows {
-		uniqueRouteIDs[row.RouteID] = true
-		uniqueAgencyIDs[row.AgencyID] = true
-	}
-
-	routeIDs = make([]string, 0, len(uniqueRouteIDs))
-	for id := range uniqueRouteIDs {
-		routeIDs = append(routeIDs, id)
-	}
-
-	agencyIDs = make([]string, 0, len(uniqueAgencyIDs))
-	for id := range uniqueAgencyIDs {
-		agencyIDs = append(agencyIDs, id)
-	}
-
-	return routeIDs, agencyIDs
-}
-
-// fetchRouteRefs batch-fetches routes by ID and builds their
-// combined-ID-keyed reference map.
-func (api *RestAPI) fetchRouteRefs(ctx context.Context, agencyID string, routeIDs []string) (map[string]models.Route, error) {
-	routeRefs := make(map[string]models.Route)
-	if len(routeIDs) == 0 {
-		return routeRefs, nil
-	}
-
-	fetchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, route := range fetchedRoutes {
+	for _, route := range routesForStop {
 		combinedRouteID := utils.FormCombinedID(agencyID, route.ID)
 		routeRefs[combinedRouteID] = models.NewRoute(
 			combinedRouteID,
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor))
+
+		if !seenAgencies[route.AgencyID] {
+			seenAgencies[route.AgencyID] = true
+			agencyIDs = append(agencyIDs, route.AgencyID)
+		}
 	}
 
-	return routeRefs, nil
+	return routeRefs, agencyIDs
 }
 
 // fetchAgencyRefs batch-fetches agencies by ID and builds their
-// ID-keyed reference map, seeded with the stop's own already-fetched agency.
-func (api *RestAPI) fetchAgencyRefs(ctx context.Context, seedAgency gtfsdb.Agency, agencyIDs []string) (map[string]models.AgencyReference, error) {
-	agencyRefs := make(map[string]models.AgencyReference)
-	agencyRefs[seedAgency.ID] = models.AgencyReferenceFromDatabase(&seedAgency)
+// ID-keyed reference map.
+func (api *RestAPI) fetchAgencyRefs(ctx context.Context, agencyIDs []string) (map[string]models.AgencyReference, error) {
+	agencyRefs := make(map[string]models.AgencyReference, len(agencyIDs))
+	if len(agencyIDs) == 0 {
+		return agencyRefs, nil
+	}
 
 	fetchedAgencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDs)
 	if err != nil {
@@ -326,9 +292,7 @@ func (api *RestAPI) fetchAgencyRefs(ctx context.Context, seedAgency gtfsdb.Agenc
 	}
 
 	for _, a := range fetchedAgencies {
-		if _, exists := agencyRefs[a.ID]; !exists {
-			agencyRefs[a.ID] = models.AgencyReferenceFromDatabase(&a)
-		}
+		agencyRefs[a.ID] = models.AgencyReferenceFromDatabase(&a)
 	}
 
 	return agencyRefs, nil
