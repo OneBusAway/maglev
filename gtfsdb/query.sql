@@ -920,6 +920,45 @@ SELECT COUNT(*) FROM stops;
 -- name: CountTrips :one
 SELECT COUNT(*) FROM trips;
 
+-- name: GetActiveTripBlockIDsForAgency :many
+-- Returns the distinct block IDs with a trip in progress at the given instant
+-- for one agency, among the given active service IDs. block_id is optional in
+-- GTFS, so trips.id is substituted for trips with no block_id, matching them
+-- 1:1 to their own "block" rather than dropping them. Union with
+-- GetActiveLayoverBlockIDsForAgency's result to get all active blocks: the
+-- scheduledTripsCount metric counts active blocks, matching upstream's
+-- BlockStatusServiceImpl#getActiveBlocksForAgency (timeFrom == timeTo == now,
+-- no running-late/running-early tolerance, and a block counts as active
+-- while laying over between trips too). Callers run this once for today's
+-- service (at the current time-of-day) and once for yesterday's service (the
+-- same instant shifted +24h) to catch after-midnight trips, mirroring the
+-- today/yesterday pattern in trips_for_route_handler.go.
+-- Slice param is last so non-slice param numbering stays contiguous (?1, ?2, ?3),
+-- matching the convention documented on GetActiveLayoverBlockIDsForRoute.
+SELECT DISTINCT COALESCE(trips.block_id, trips.id) AS block_id
+FROM
+    trips
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    routes.agency_id = sqlc.arg('agency_id')
+    AND trips.max_departure_time >= sqlc.arg('at')
+    AND trips.min_arrival_time <= sqlc.arg('at')
+    AND trips.service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetActiveLayoverBlockIDsForAgency :many
+-- Returns the distinct block IDs laying over between trips at the given
+-- instant for one agency, among the given active service IDs. See
+-- GetActiveTripBlockIDsForAgency.
+SELECT DISTINCT block_layover.block_id
+FROM
+    block_layover
+    JOIN routes ON block_layover.route_id = routes.id
+WHERE
+    routes.agency_id = sqlc.arg('agency_id')
+    AND block_layover.layover_start <= sqlc.arg('at')
+    AND block_layover.layover_end >= sqlc.arg('at')
+    AND block_layover.service_id IN (sqlc.slice('service_ids'));
+
 -- name: GetArrivalsAndDeparturesForStop :many
 SELECT
     st.trip_id,
