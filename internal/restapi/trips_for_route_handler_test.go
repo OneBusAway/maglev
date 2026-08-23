@@ -1298,6 +1298,74 @@ func TestTripsForRouteHandler_SituationReferences(t *testing.T) {
 	}
 }
 
+// TestTripsForRouteHandler_RealTimeStatusFields verifies fields whose zero
+// values are valid JSON but violate the API contract when omitted or null.
+func TestTripsForRouteHandler_RealTimeStatusFields(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(vehiclesRealTimeDataClock))
+	defer cleanup()
+
+	// The manager starts polling its local GTFS-RT fixture asynchronously.
+	// Wait for a vehicle with all fields needed to exercise a live status.
+	var vehicle *gogtfs.Vehicle
+	require.Eventually(t, func() bool {
+		for _, candidate := range api.GtfsManager.GetRealTimeVehicles() {
+			if candidate.ID == nil || candidate.ID.ID == "" || candidate.Trip == nil || candidate.Trip.ID.ID == "" ||
+				candidate.Position == nil || candidate.Position.Latitude == nil || candidate.Position.Longitude == nil {
+				continue
+			}
+			vehicle = &candidate
+			return true
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "real-time vehicle with a position never loaded")
+
+	ctx := context.Background()
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, vehicle.Trip.ID.ID)
+	require.NoError(t, err)
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	require.NoError(t, err)
+
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		utils.FormCombinedID(route.AgencyID, route.ID), vehiclesRealTimeDataClock.UnixMilli())
+	resp, model := callAPIHandler[models.ResponseModel](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	data, ok := model.Data.(map[string]any)
+	require.True(t, ok, "response data should be an object")
+	list, ok := data["list"].([]any)
+	require.True(t, ok, "response data.list should be an array")
+
+	wantVehicleID := utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
+	var status map[string]any
+	for _, item := range list {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		candidate, ok := entry["status"].(map[string]any)
+		if ok && candidate["vehicleId"] == wantVehicleID {
+			status = candidate
+			break
+		}
+	}
+	require.NotNil(t, status, "expected the live vehicle's trip to be returned with status")
+
+	blockTripSequence, ok := status["blockTripSequence"].(float64)
+	require.True(t, ok, "status.blockTripSequence should be an integer")
+	assert.GreaterOrEqual(t, blockTripSequence, float64(0))
+
+	position, ok := status["position"].(map[string]any)
+	require.True(t, ok, "status.position should be an object")
+	_, hasLat := position["lat"].(float64)
+	_, hasLon := position["lon"].(float64)
+	assert.True(t, hasLat, "status.position.lat should be present")
+	assert.True(t, hasLon, "status.position.lon should be present")
+
+	assert.Equal(t, float64(-1), status["occupancyCount"], "status.occupancyCount should use -1 when unavailable")
+	assert.IsType(t, []any{}, status["situationIds"], "status.situationIds should be an array, never null")
+	assert.IsType(t, []any{}, status["vehicleFeatures"], "status.vehicleFeatures should be an array, never null")
+}
+
 // TestResolveDuplicatedBaseTrip covers the IDs a DUPLICATED real-time trip can
 // arrive under, including the one that used to hand a nonexistent trip ID to
 // the schedule and status builders.
