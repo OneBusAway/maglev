@@ -399,12 +399,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				blockIDsNull = append(blockIDsNull, nulls.String(id))
 			}
 
-			params := gtfsdb.GetTripsByBlockIDsParams{
-				BlockIds:   blockIDsNull,
-				ServiceIds: services[agencyID].QueryDay,
-			}
-
-			blockTripsRaw, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, params)
+			blockTripsRaw, err := api.tripsByBlockIDs(ctx, blockIDsNull, services[agencyID].QueryDay)
 			if err == nil {
 				missingRouteIDs := make([]string, 0)
 				for _, bt := range blockTripsRaw {

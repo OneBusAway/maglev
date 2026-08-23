@@ -188,6 +188,36 @@ func TestQueryInBatches(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, 1, batches, "the remaining batches must not run once one fails")
 	})
+
+	t.Run("Reserves binds used by another slice", func(t *testing.T) {
+		// A 900-ID batch plus 99 service IDs and one fixed bind would exceed
+		// SQLite's oldest supported limit of 999. The first ID batch must
+		// therefore be 899.
+		ids := make([]string, idsPerBatchedQuery)
+		batchSizes := make([]int, 0, 2)
+		const extraBinds = 99 + 1
+		results, err := queryInBatchesWithExtraBinds(ctx, ids, extraBinds,
+			func(_ context.Context, batch []string) ([]string, error) {
+				batchSizes = append(batchSizes, len(batch))
+				if len(batch)+extraBinds > sqliteBindVariableLimit {
+					return nil, errors.New("SQLite bind variable limit exceeded")
+				}
+				return batch, nil
+			})
+
+		require.NoError(t, err)
+		assert.Equal(t, []int{899, 1}, batchSizes)
+		assert.Len(t, results, len(ids))
+	})
+
+	t.Run("Rejects too many non-batched binds", func(t *testing.T) {
+		_, err := queryInBatchesWithExtraBinds(ctx, []string{"id"}, sqliteBindVariableLimit,
+			func(context.Context, []string) ([]string, error) {
+				return nil, nil
+			})
+
+		require.Error(t, err)
+	})
 }
 
 func TestStopReferences(t *testing.T) {

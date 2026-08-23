@@ -566,10 +566,7 @@ func (api *RestAPI) buildBlockTripForRoute(
 		allServiceIDs = append(allServiceIDs, prevServiceIDs...)
 	}
 
-	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
-		BlockIds:   interlinedBlockIDs,
-		ServiceIds: allServiceIDs,
-	})
+	blockTrips, err := api.tripsByBlockIDs(ctx, interlinedBlockIDs, allServiceIDs)
 	if err != nil {
 		return nil, err
 	}

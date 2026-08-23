@@ -133,10 +133,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if len(activeServiceIDs) > 0 {
-			blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
-				BlockIds:   uniqueBlockIDs,
-				ServiceIds: activeServiceIDs,
-			})
+			blockTrips, err := api.tripsByBlockIDs(ctx, uniqueBlockIDs, activeServiceIDs)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return

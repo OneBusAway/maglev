@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -508,19 +509,45 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
-// idsPerBatchedQuery bounds how many IDs go into one IN (...) list. SQLite
-// rejects a statement carrying more bind variables than it allows rather than
-// truncating it, and these ID sets are only bounded by how much the request
-// matched. Kept well under the oldest limit (999) so the batch size does not
-// depend on which SQLite the build links against.
+// sqliteBindVariableLimit is the oldest SQLite bind variable limit that Maglev
+// supports. Some builds allow more variables, but batching must be portable.
+const sqliteBindVariableLimit = 999
+
+// idsPerBatchedQuery is the largest batch used by a query with no other bind
+// variables. It is deliberately kept below sqliteBindVariableLimit.
 const idsPerBatchedQuery = 900
 
 // queryInBatches runs query over ids in batches small enough to stay under the
 // bind variable limit, concatenating the results.
 func queryInBatches[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	return queryInBatchesWithExtraBinds(ctx, ids, 0, query)
+}
+
+// queryInBatchesWithExtraBinds runs query over ids while reserving bind
+// variables used elsewhere in the statement, such as another sqlc.slice.
+// SQLite counts every bind in a statement, not only the list being batched.
+func queryInBatchesWithExtraBinds[ID any, T any](
+	ctx context.Context,
+	ids []ID,
+	extraBinds int,
+	query func(context.Context, []ID) ([]T, error),
+) ([]T, error) {
 	results := make([]T, 0, len(ids))
-	for start := 0; start < len(ids); start += idsPerBatchedQuery {
-		end := min(start+idsPerBatchedQuery, len(ids))
+	if len(ids) == 0 {
+		return results, nil
+	}
+
+	if extraBinds < 0 {
+		return nil, fmt.Errorf("extra bind count cannot be negative: %d", extraBinds)
+	}
+
+	batchSize := min(idsPerBatchedQuery, sqliteBindVariableLimit-extraBinds)
+	if batchSize <= 0 {
+		return nil, fmt.Errorf("query uses %d non-batched bind variables, exceeding SQLite's limit of %d", extraBinds, sqliteBindVariableLimit)
+	}
+
+	for start := 0; start < len(ids); start += batchSize {
+		end := min(start+batchSize, len(ids))
 		batch, err := query(ctx, ids[start:end])
 		if err != nil {
 			return nil, err
@@ -528,6 +555,23 @@ func queryInBatches[T any](ctx context.Context, ids []string, query func(context
 		results = append(results, batch...)
 	}
 	return results, nil
+}
+
+// tripsByBlockIDs loads trips in batches sized for both block IDs and service
+// IDs. GetTripsByBlockIDs has one sqlc.slice for each, so passing a full block
+// batch without reserving the service-ID binds can exceed SQLite's limit.
+func (api *RestAPI) tripsByBlockIDs(
+	ctx context.Context,
+	blockIDs []sql.NullString,
+	serviceIDs []string,
+) ([]gtfsdb.GetTripsByBlockIDsRow, error) {
+	return queryInBatchesWithExtraBinds(ctx, blockIDs, len(serviceIDs),
+		func(ctx context.Context, batch []sql.NullString) ([]gtfsdb.GetTripsByBlockIDsRow, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+				BlockIds:   batch,
+				ServiceIds: serviceIDs,
+			})
+		})
 }
 
 // stopReferences builds the stop reference block for a set of list entries,

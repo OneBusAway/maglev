@@ -316,10 +316,13 @@ func (api *RestAPI) routeIDsByStop(
 		return byStop, nil
 	}
 
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
-		StopIds:    stopIDs,
-		ServiceIds: activeServiceIDs,
-	})
+	rows, err := queryInBatchesWithExtraBinds(ctx, stopIDs, len(activeServiceIDs),
+		func(ctx context.Context, batch []string) ([]gtfsdb.GetActiveRouteIDsForStopsOnDateRow, error) {
+			return api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
+				StopIds:    batch,
+				ServiceIds: activeServiceIDs,
+			})
+		})
 	if err != nil {
 		return nil, err
 	}
