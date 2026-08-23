@@ -565,9 +565,29 @@ func (api *RestAPI) tripsByBlockIDs(
 	blockIDs []sql.NullString,
 	serviceIDs []string,
 ) ([]gtfsdb.GetTripsByBlockIDsRow, error) {
-	return queryInBatchesWithExtraBinds(ctx, blockIDs, len(serviceIDs),
+	return queryTripsByBlockIDs(ctx, blockIDs, serviceIDs,
+		api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs)
+}
+
+func queryTripsByBlockIDs(
+	ctx context.Context,
+	blockIDs []sql.NullString,
+	serviceIDs []string,
+	query func(context.Context, gtfsdb.GetTripsByBlockIDsParams) ([]gtfsdb.GetTripsByBlockIDsRow, error),
+) ([]gtfsdb.GetTripsByBlockIDsRow, error) {
+	uniqueBlockIDs := make([]sql.NullString, 0, len(blockIDs))
+	seen := make(map[sql.NullString]struct{}, len(blockIDs))
+	for _, blockID := range blockIDs {
+		if _, exists := seen[blockID]; exists {
+			continue
+		}
+		seen[blockID] = struct{}{}
+		uniqueBlockIDs = append(uniqueBlockIDs, blockID)
+	}
+
+	return queryInBatchesWithExtraBinds(ctx, uniqueBlockIDs, len(serviceIDs),
 		func(ctx context.Context, batch []sql.NullString) ([]gtfsdb.GetTripsByBlockIDsRow, error) {
-			return api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+			return query(ctx, gtfsdb.GetTripsByBlockIDsParams{
 				BlockIds:   batch,
 				ServiceIds: serviceIDs,
 			})

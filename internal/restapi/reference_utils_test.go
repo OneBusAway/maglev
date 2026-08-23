@@ -2,7 +2,9 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -218,6 +220,50 @@ func TestQueryInBatches(t *testing.T) {
 
 		require.Error(t, err)
 	})
+
+	t.Run("Rejects a negative extra bind count without querying", func(t *testing.T) {
+		queried := false
+		_, err := queryInBatchesWithExtraBinds(ctx, []string{"id"}, -1,
+			func(context.Context, []string) ([]string, error) {
+				queried = true
+				return nil, nil
+			})
+
+		require.Error(t, err)
+		assert.False(t, queried)
+	})
+}
+
+func TestQueryTripsByBlockIDs(t *testing.T) {
+	ctx := context.Background()
+	blockIDs := make([]sql.NullString, 0, idsPerBatchedQuery+1)
+	for i := 0; i < idsPerBatchedQuery; i++ {
+		blockIDs = append(blockIDs, sql.NullString{String: fmt.Sprintf("block-%d", i), Valid: true})
+	}
+	blockIDs = append(blockIDs, blockIDs[0]) // Repeated across the input batch boundary.
+
+	batchSizes := make([]int, 0, 2)
+	rows, err := queryTripsByBlockIDs(ctx, blockIDs, make([]string, 100),
+		func(_ context.Context, params gtfsdb.GetTripsByBlockIDsParams) ([]gtfsdb.GetTripsByBlockIDsRow, error) {
+			batchSizes = append(batchSizes, len(params.BlockIds))
+			rows := make([]gtfsdb.GetTripsByBlockIDsRow, 0, len(params.BlockIds))
+			for _, blockID := range params.BlockIds {
+				rows = append(rows, gtfsdb.GetTripsByBlockIDsRow{ID: blockID.String})
+			}
+			return rows, nil
+		})
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{899, 1}, batchSizes)
+	assert.Len(t, rows, idsPerBatchedQuery)
+	returnedIDs := make(map[string]int, len(rows))
+	for _, row := range rows {
+		returnedIDs[row.ID]++
+	}
+	assert.Len(t, returnedIDs, idsPerBatchedQuery)
+	for _, count := range returnedIDs {
+		assert.Equal(t, 1, count)
+	}
 }
 
 func TestStopReferences(t *testing.T) {
