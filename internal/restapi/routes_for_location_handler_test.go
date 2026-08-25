@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/gtfs"
@@ -67,6 +68,43 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 	}
 }
 
+// TestRoutesForLocationHandlerSituationReferences verifies that a route-scoped
+// alert surfaces as a situation reference — the alert-collection branch feeding
+// data.references.situations had no coverage before this test.
+//
+// This is current maglev behavior, not the documented spec: the routes-for-location
+// wiki page states that references.situations is present but empty for this endpoint,
+// and its Implementation Decisions section has no entry recording a deviation. The
+// population comes from commit 4e09c1c, which added it across all non-trip handlers
+// (route, route-search, stops-search) rather than specifically for this endpoint.
+func TestRoutesForLocationHandlerSituationReferences(t *testing.T) {
+	api := createTestApi(t)
+
+	// testdata.Route19's combined ID is "25_3779"; GetAlertsForRoute matches on
+	// the raw (un-prefixed) route ID, and BuildSituationReferences keys the
+	// resulting situation by the alert's own ID, not the combined form.
+	rawRouteID := "3779"
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "test-alert-routes-for-location",
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &rawRouteID}},
+		Header:           []gogtfs.AlertText{{Text: "Test Route Alert", Language: "en"}},
+	})
+
+	const baseURL = "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966"
+
+	_, model := callAPIHandler[RoutesResponse](t, api, baseURL)
+
+	situationIDs := make([]string, 0, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		situationIDs = append(situationIDs, situation.ID)
+	}
+	assert.Contains(t, situationIDs, "test-alert-routes-for-location")
+
+	// With an alert actually present, includeReferences=false must still suppress it.
+	_, suppressedModel := callAPIHandler[RoutesResponse](t, api, baseURL+"&includeReferences=false")
+	assert.Empty(t, suppressedModel.Data.References.Situations)
+}
+
 func TestRoutesForLocationQuery(t *testing.T) {
 	api := createTestApi(t)
 
@@ -114,7 +152,8 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 		},
 		{
 			// Only one span is unusable, so the default radius still applies — and it must
-			// stay the 10km query radius, not the 600m no-query one. Both routes matching
+			// stay the 10km query radius, not the current no-query default (600m; see
+			// TestRoutesForLocationDefaultRadiusMatchesCurrentConstant). Both routes matching
 			// "3" sit outside 600m of denseCentre but inside 10km, so a regression to the
 			// no-query radius empties the list. 25_24 matches on its long name
 			// ("Route 99X/Amtrak Thruway Route 3"), not its short name.
@@ -145,6 +184,40 @@ func TestRoutesForLocationBoundingBoxSizing(t *testing.T) {
 			assert.ElementsMatch(t, tt.expectedRouteIDs, routeIDs)
 		})
 	}
+}
+
+// TestRoutesForLocationDefaultRadiusMatchesCurrentConstant pins the no-query default
+// radius against models.DefaultSearchRadiusInMeters (currently 600m) by equivalence
+// rather than a hardcoded distance: this RABA stop has a neighboring stop whose routes
+// only enter the box between 500m and 600m, so a request with no radius/span must match
+// radius=600 exactly and return strictly more routes than radius=500.
+//
+// 600m is current behavior, not the spec: the routes-for-location wiki page and the
+// hosted Java API both give 500m as the no-query default. This test's literals must
+// change if/when models.DefaultSearchRadiusInMeters is corrected to 500 — see
+// https://github.com/OneBusAway/maglev/issues/1227.
+func TestRoutesForLocationDefaultRadiusMatchesCurrentConstant(t *testing.T) {
+	const lat, lon = 40.618458, -122.37598
+
+	routeIDsFor := func(t *testing.T, params string) []string {
+		t.Helper()
+		api := createTestApi(t)
+		_, model := callAPIHandler[RoutesResponse](t, api,
+			fmt.Sprintf("/api/where/routes-for-location.json?key=TEST&lat=%v&lon=%v&maxCount=50%s", lat, lon, params))
+		ids := make([]string, 0, len(model.Data.List))
+		for _, route := range model.Data.List {
+			ids = append(ids, route.ID)
+		}
+		return ids
+	}
+
+	defaultIDs := routeIDsFor(t, "")
+	radius500IDs := routeIDsFor(t, "&radius=500")
+	radius600IDs := routeIDsFor(t, "&radius=600")
+
+	assert.ElementsMatch(t, radius600IDs, defaultIDs, "no radius/span must match radius=600 exactly")
+	assert.Subset(t, defaultIDs, radius500IDs, "every radius=500 route must still be within the default radius")
+	assert.Greater(t, len(defaultIDs), len(radius500IDs), "the default radius must include routes radius=500 misses")
 }
 
 func TestRoutesForLocationRadius(t *testing.T) {
@@ -470,18 +543,49 @@ func TestRoutesForLocationHandlerLimitExceededIsRandomized(t *testing.T) {
 	assert.ElementsMatch(t, []string{testdata.Route15.ID, testdata.Route11.ID, testdata.Route14.ID}, slices.Collect(maps.Keys(seen)))
 }
 
-func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
-	api := createTestApi(t)
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=invalid")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+// maxCountFieldErrors extracts the fieldErrors["maxCount"] list from a validation
+// error response body.
+func maxCountFieldErrors(t *testing.T, data any) []any {
+	t.Helper()
+
+	body, ok := data.(map[string]any)
+	require.True(t, ok, "response data should be a map")
+
+	fieldErrors, ok := body["fieldErrors"].(map[string]any)
+	require.True(t, ok, "data should contain fieldErrors map")
+
+	maxCountErrors, ok := fieldErrors["maxCount"].([]any)
+	require.True(t, ok, "fieldErrors should contain maxCount errors list")
+
+	return maxCountErrors
 }
 
-func TestRoutesForLocationHandlerMaxCountLessThanOrEqualZero(t *testing.T) {
-	api := createTestApi(t)
-	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount=0")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+// TestRoutesForLocationHandlerInvalidMaxCount pins the exact fieldErrors message for
+// each invalid maxCount case, not just the status code. The wiki page's extension 1a
+// quotes "must be greater than zero" for maxCount <= 0; the message itself is defined
+// in internal/utils/api.go.
+func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxCount    string
+		wantMessage string
+	}{
+		{"zero", "0", "must be greater than zero"},
+		{"negative", "-5", "must be greater than zero"},
+		{"unparseable", "invalid", `Invalid field value for field "maxCount".`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			resp, model := callAPIHandler[models.ResponseModel](t, api,
+				"/api/where/routes-for-location.json?key=TEST&lat=40.621&lon=-122.571&maxCount="+tt.maxCount)
+
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
+			assert.Contains(t, maxCountFieldErrors(t, model.Data), tt.wantMessage)
+		})
+	}
 }
 
 func TestRoutesForLocationHandlerInRangeWithNoResults(t *testing.T) {

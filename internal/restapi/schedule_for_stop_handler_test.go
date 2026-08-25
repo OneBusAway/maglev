@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
@@ -372,30 +374,104 @@ func TestScheduleForStopHandlerScheduleContent(t *testing.T) {
 	})
 }
 
-func TestScheduleForStopHandlerEmptyRoutes(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2025, 12, 26, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, clk)
+// referenceIDs pulls the id out of each record in a references list, for comparing a
+// response's references against the set the fixture says it should contain.
+func referenceIDs(t testing.TB, referenceList any) []string {
+	t.Helper()
+
+	records, ok := referenceList.([]any)
+	require.True(t, ok, "reference list should be an array")
+
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		id, ok := record.(map[string]any)["id"].(string)
+		require.True(t, ok, "every reference record should carry a string id")
+		ids = append(ids, id)
+	}
+
+	return ids
+}
+
+func TestScheduleForStopHandlerReferencesWithoutSchedule(t *testing.T) {
+	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := mustGetAgencies(t, api)
-	stops := mustGetStops(t, api)
+	agencyID := mustGetAgencies(t, api)[0].ID
+	routelessStopID := utils.FormCombinedID(agencyID, mustGetStopWithoutRoutes(t, api))
 
-	t.Run("Stop with no routes returns empty schedule", func(t *testing.T) {
-		stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
-		// NOTE: Hardcoded date matches GTFS data validity
-		endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=TEST&date=2025-06-12"
-		resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	// The served stop's own routes are the reference set the handler is expected to
+	// return, whatever the queried date, so derive both expectations from them.
+	servedStop := mustGetStop(t, api)
+	servingRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(context.Background(), servedStop.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, servingRoutes, "the served stop should have routes to reference")
 
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	wantRouteIDs := make([]string, 0, len(servingRoutes))
+	wantAgencyIDs := make([]string, 0, len(servingRoutes))
+	for _, route := range servingRoutes {
+		wantRouteIDs = append(wantRouteIDs, utils.FormCombinedID(agencyID, route.ID))
+		if !slices.Contains(wantAgencyIDs, route.AgencyID) {
+			wantAgencyIDs = append(wantAgencyIDs, route.AgencyID)
+		}
+	}
 
-		data, ok := model.Data.(map[string]any)
-		assert.True(t, ok)
+	tests := []struct {
+		name          string
+		endpoint      string
+		wantStopRef   bool
+		wantRouteIDs  []string
+		wantAgencyIDs []string
+	}{
+		{
+			// The stop still has to be resolvable from entry.stopId even though
+			// it has nothing scheduled.
+			name:        "stop with no routes still references the stop",
+			endpoint:    "/api/where/schedule-for-stop/" + routelessStopID + ".json?key=org.onebusaway.iphone",
+			wantStopRef: true,
+		},
+		{
+			name:     "stop with no routes honors includeReferences=false",
+			endpoint: "/api/where/schedule-for-stop/" + routelessStopID + ".json?key=org.onebusaway.iphone&includeReferences=false",
+		},
+		{
+			// NOTE: Hardcoded date falls outside the GTFS data's validity period.
+			name:          "routes stay referenced on a date with no service",
+			endpoint:      "/api/where/schedule-for-stop/" + utils.FormCombinedID(agencyID, servedStop.ID) + ".json?key=org.onebusaway.iphone&date=2030-01-01",
+			wantStopRef:   true,
+			wantRouteIDs:  wantRouteIDs,
+			wantAgencyIDs: wantAgencyIDs,
+		},
+	}
 
-		entry, ok := data["entry"].(map[string]any)
-		assert.True(t, ok)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := serveApiAndRetrieveEndpoint(t, api, tt.endpoint)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		assert.NotNil(t, entry["stopRouteSchedules"])
-	})
+			data, ok := model.Data.(map[string]any)
+			require.True(t, ok)
+
+			entry, ok := data["entry"].(map[string]any)
+			require.True(t, ok)
+			assert.Empty(t, entry["stopRouteSchedules"])
+
+			references, ok := data["references"].(map[string]any)
+			require.True(t, ok)
+
+			stops, _ := references["stops"].([]any)
+			if tt.wantStopRef {
+				require.Len(t, stops, 1)
+				stopRef, ok := stops[0].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, entry["stopId"], stopRef["id"])
+			} else {
+				assert.Empty(t, stops)
+			}
+
+			assert.ElementsMatch(t, tt.wantRouteIDs, referenceIDs(t, references["routes"]))
+			assert.ElementsMatch(t, tt.wantAgencyIDs, referenceIDs(t, references["agencies"]))
+		})
+	}
 }
 
 // TestScheduleForStopQueryValidation verifies the SQL query logic

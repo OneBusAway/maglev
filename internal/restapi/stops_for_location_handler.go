@@ -62,17 +62,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	queryTime := api.Clock.Now()
-
-	if timeStr := queryParams.Get("time"); timeStr != "" {
-		var timeMs int64
-		if _, err := fmt.Sscanf(timeStr, "%d", &timeMs); err == nil {
-			// Bin to 15 minutes
-			binnedMs := timeMs - (timeMs % 900000)
-			queryTime = time.UnixMilli(binnedMs)
-		}
-	}
-
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -142,8 +131,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get active service IDs for the requested queryTime
-	currentDate := queryTime.Format("20060102")
+	currentDate := api.queryTimeForStops(queryParams.Get("time"), allAgencies).Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -265,6 +253,30 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
+}
+
+// queryTimeForStops resolves the time that selects which service date's routes are
+// considered active. A service date is a local calendar date, so both an explicit
+// time parameter and the current-time fallback are read in the agency's timezone,
+// as in trips-for-location. A value that does not parse falls back to the current
+// time rather than failing the request, which is what legacy does with one.
+func (api *RestAPI) queryTimeForStops(timeParam string, agencies []gtfsdb.Agency) time.Time {
+	if len(agencies) == 0 {
+		return api.Clock.Now()
+	}
+
+	location, err := loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
+	if err != nil {
+		api.Logger.Warn("failed to load agency timezone for time parameter",
+			"agencyID", agencies[0].ID, "error", err)
+		return api.Clock.Now()
+	}
+
+	_, parsedTime, _, ok := utils.ParseTimeParameter(timeParam, location, api.Clock)
+	if !ok {
+		return api.Clock.Now().In(location)
+	}
+	return parsedTime
 }
 
 // routeIDsByStop maps each stop to the routes serving it. Stop-code queries report every

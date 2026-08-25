@@ -11,6 +11,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
@@ -880,7 +881,11 @@ func TestTripsForLocationHandler_UnreferencedStopsAreOmitted(t *testing.T) {
 
 // TestTripsForLocationHandler_CandidateStopsAreNotCapped verifies that the
 // candidate stop set is not truncated, which previously dropped trips serving
-// only stops beyond the cap.
+// only stops beyond the cap. The RABA fixture's own vehicles all happen to
+// serve stops early in the in-bounds ordering, so a mock vehicle is placed on
+// a trip that serves only a stop past the old cap: if the cap ever returns,
+// that stop drops out of the candidate set and this trip disappears from the
+// response.
 func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
 	defer cleanup()
@@ -891,6 +896,7 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 		return len(api.GtfsManager.GetRealTimeVehicles()) > 0
 	}, 10*time.Second, 20*time.Millisecond, "real-time vehicles never loaded")
 
+	ctx := context.Background()
 	params := &internalgtfs.LocationParams{
 		Lat:     tripsForLocationLat,
 		Lon:     tripsForLocationLon,
@@ -898,9 +904,23 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 		LonSpan: 3.0,
 	}
 
-	uncapped := api.GtfsManager.GetStopsInBounds(context.Background(), params, 0, true)
+	uncapped := api.GtfsManager.GetStopsInBounds(ctx, params, 0, true)
 	require.Greater(t, len(uncapped), models.DefaultMaxCountForStops,
 		"fixture must hold more in-bounds stops than the old cap for this test to mean anything")
+
+	cappedStopIDs := make(map[string]bool, models.DefaultMaxCountForStops)
+	for _, stop := range uncapped[:models.DefaultMaxCountForStops] {
+		cappedStopIDs[stop.ID] = true
+	}
+
+	lateStop, lateTripID, lateTripRouteID := findTripServingOnlyLateStop(
+		t, ctx, api, uncapped[models.DefaultMaxCountForStops:], cappedStopIDs)
+
+	lat, lon := float32(lateStop.Lat), float32(lateStop.Lon)
+	api.GtfsManager.MockAddVehicleWithOptions("cap-regression-vehicle", lateTripID, lateTripRouteID,
+		internalgtfs.MockVehicleOptions{
+			Position: &gtfs.Position{Latitude: &lat, Longitude: &lon},
+		})
 
 	bounds := internalgtfs.BoundsFromParams(params, true)
 
@@ -914,11 +934,11 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 		returned[tripID] = true
 	}
 
+	assert.True(t, returned[lateTripID],
+		"trip %q serves only stop %q, which lies beyond the old %d-stop cap, and must still be returned",
+		lateTripID, lateStop.ID, models.DefaultMaxCountForStops)
+
 	// Every real-time vehicle positioned inside the bounds must be represented.
-	// The RABA fixture's vehicles all happen to serve stops early in the
-	// in-bounds ordering, so this guards the invariant rather than reproducing
-	// a truncation the fixture cannot produce.
-	assertedAnyVehicle := false
 	for _, vehicle := range api.GtfsManager.GetRealTimeVehicles() {
 		if vehicle.Trip == nil || vehicle.Position == nil ||
 			vehicle.Position.Latitude == nil || vehicle.Position.Longitude == nil {
@@ -930,15 +950,54 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 		}
 
 		tripID := vehicle.Trip.ID.ID
-		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), tripID)
+		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 		if err != nil || len(stopTimes) == 0 {
 			continue
 		}
 
-		assertedAnyVehicle = true
 		assert.True(t, returned[tripID], "in-bounds vehicle's trip %q must be returned", tripID)
 	}
-	require.True(t, assertedAnyVehicle, "expected at least one in-bounds vehicle to assert against")
+}
+
+// findTripServingOnlyLateStop returns a stop past the old cap together with a
+// trip that serves it but serves none of the stops within the old cap, so the
+// trip is only discoverable through the uncapped candidate stop set.
+func findTripServingOnlyLateStop(
+	t *testing.T,
+	ctx context.Context,
+	api *RestAPI,
+	lateStops []gtfsdb.Stop,
+	cappedStopIDs map[string]bool,
+) (stop gtfsdb.Stop, tripID string, routeID string) {
+	t.Helper()
+
+	for _, stop := range lateStops {
+		tripIDs, err := api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops(ctx, []string{stop.ID})
+		require.NoError(t, err)
+
+		for _, candidateTripID := range tripIDs {
+			stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, candidateTripID)
+			require.NoError(t, err)
+
+			servesCappedStop := false
+			for _, stopTime := range stopTimes {
+				if cappedStopIDs[stopTime.StopID] {
+					servesCappedStop = true
+					break
+				}
+			}
+			if servesCappedStop {
+				continue
+			}
+
+			trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, candidateTripID)
+			require.NoError(t, err)
+			return stop, candidateTripID, trip.RouteID
+		}
+	}
+
+	require.Fail(t, "no trip in the fixture serves only stops beyond the old cap")
+	return gtfsdb.Stop{}, "", ""
 }
 
 // TestCandidateTripIDsForStops_BatchesLargeStopSets covers the uncapped stop
