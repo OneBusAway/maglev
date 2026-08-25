@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -49,8 +50,8 @@ func (manager *Manager) SearchRoutes(ctx context.Context, input string, maxCount
 		return []gtfsdb.Route{}, nil
 	}
 
-	logger := slog.Default().With(slog.String("component", "route_search"))
-	logger.Debug("route search", slog.String("input", input), slog.String("query", query), slog.Int("limit", limit))
+	reqLogger := logging.ForComponent(ctx, "route_search")
+	reqLogger.Info("route search", slog.String("input", input), slog.String("query", query), slog.Int("limit", limit))
 
 	routes, err := manager.GtfsDB.Queries.SearchRoutesByFullText(ctx, gtfsdb.SearchRoutesByFullTextParams{
 		Query: query,

@@ -242,7 +242,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 // It updates the per-feed sub-maps and then calls rebuildMergedRealtimeLocked.
 // Returns true if new data was successfully fetched and processed.
 func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) bool {
-	logger := logging.FromContext(ctx).With(slog.String("component", "gtfs_realtime"))
+	logger := logging.ForComponent(ctx, "gtfs_realtime")
 	feedID := feedCfg.ID
 
 	var wg sync.WaitGroup
@@ -746,7 +746,7 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 	logging.LogOperation(logger, "started_realtime_feed_poller",
 		slog.String("feed", feedCfg.ID),
-		slog.Duration("interval", baseInterval),
+		slog.Float64("interval_ms", float64(baseInterval.Nanoseconds())/1e6),
 		slog.String("tripUpdatesURL", feedCfg.TripUpdatesURL),
 		slog.String("vehiclePositionsURL", feedCfg.VehiclePositionsURL),
 		slog.String("serviceAlertsURL", feedCfg.ServiceAlertsURL),
@@ -803,7 +803,7 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 						if !feedCleared { // Only clear once per extended outage
 							logger.Warn("feed data is stale due to consecutive failures, clearing",
 								slog.String("feed", feedCfg.ID),
-								slog.Duration("staleness", time.Since(lastSuccessfulFetch)))
+								slog.Float64("staleness_ms", float64(time.Since(lastSuccessfulFetch).Nanoseconds())/1e6))
 							manager.clearFeedData(feedCfg.ID)
 							feedCleared = true
 						}
@@ -815,7 +815,7 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 					logger.Warn("feed update failed, applying backoff",
 						slog.String("feed", feedCfg.ID),
 						slog.Int("consecutive_errors", consecutiveErrors),
-						slog.Duration("next_interval", nextInterval))
+						slog.Float64("next_interval_ms", float64(nextInterval.Nanoseconds())/1e6))
 
 					timer.Reset(nextInterval)
 				}

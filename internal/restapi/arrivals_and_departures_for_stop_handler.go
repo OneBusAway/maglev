@@ -12,6 +12,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -86,6 +87,7 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 }
 
 func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	stopAgencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -172,7 +174,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				api.serverErrorResponse(w, r, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err))
 				return
 			}
-			api.Logger.Warn("failed to query active service IDs for window-spillover day, skipping",
+			reqLogger.Warn("failed to query active service IDs for window-spillover day, skipping",
 				slog.String("date", serviceDateStr),
 				slog.Int("day_offset", dayOffset),
 				slog.Any("error", err))
@@ -199,7 +201,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			WindowEndNanos:   endOffset.Nanoseconds(),
 		})
 		if err != nil {
-			api.Logger.Warn("failed to query stop times in window",
+			reqLogger.Warn("failed to query stop times in window",
 				slog.String("stopID", stopCode),
 				slog.Any("error", err))
 			continue
@@ -279,7 +281,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	if len(uniqueTripIDs) > 0 {
 		allStopTimesForTrips, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, uniqueTripIDs)
 		if err != nil {
-			api.Logger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
+			reqLogger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
 		} else {
 			for _, st := range allStopTimesForTrips {
 				tripStopCountMap[st.TripID]++
@@ -298,7 +300,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		route, routeExists := routesLookup[st.RouteID]
 		if !routeExists {
-			api.Logger.Debug("skipping stop time: route not found in batch fetch",
+			reqLogger.Debug("skipping stop time: route not found in batch fetch",
 				slog.String("routeID", st.RouteID),
 				slog.String("tripID", st.TripID))
 			continue
@@ -306,7 +308,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		trip, tripExists := tripsLookup[st.TripID]
 		if !tripExists {
-			api.Logger.Debug("skipping stop time: trip not found in batch fetch",
+			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
 				slog.String("tripID", st.TripID),
 				slog.String("routeID", st.RouteID))
 			continue
@@ -340,7 +342,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			if vehicle.ID != nil {
 				vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
 			} else {
-				api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", st.TripID)
+				reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", st.TripID)
 			}
 		}
 
@@ -367,7 +369,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		// every arrival, so tripStatus is always non-null.
 		status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, st.TripID, nil, serviceMidnight, params.Time)
 		if statusErr != nil {
-			api.Logger.Warn("BuildTripStatus failed for arrival",
+			reqLogger.Warn("BuildTripStatus failed for arrival",
 				"tripID", st.TripID, "error", statusErr)
 		}
 		if status != nil {
@@ -406,7 +408,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 					if _, exists := tripIDSet[activeTripID]; !exists {
 						activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
 						if err != nil {
-							api.Logger.Debug("skipping active trip reference: trip not found",
+							reqLogger.Debug("skipping active trip reference: trip not found",
 								slog.String("activeTripID", activeTripID),
 								slog.String("scheduledTripID", st.TripID),
 								slog.Any("error", err))
@@ -416,7 +418,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 							if err == nil {
 								routeIDSet[activeRoute.ID] = &activeRoute
 							} else {
-								api.Logger.Warn("failed to fetch route for active trip reference",
+								reqLogger.Warn("failed to fetch route for active trip reference",
 									"tripID", activeTripID, "routeID", activeTrip.RouteID, "error", err)
 							}
 						}
@@ -499,7 +501,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				routeAgencyID = route.AgencyID
 				routeIDSet[trip.RouteID] = route
 			} else {
-				api.Logger.Warn("failed to fetch route for trip reference", "tripID", trip.ID, "routeID", trip.RouteID, "error", err)
+				reqLogger.Warn("failed to fetch route for trip reference", "tripID", trip.ID, "routeID", trip.RouteID, "error", err)
 				continue // Skip instead of falling back to stopAgencyID
 			}
 		}
@@ -525,13 +527,13 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	batchStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
 	if err != nil {
-		api.Logger.Warn("failed to batch fetch stop references", slog.Any("error", err))
+		reqLogger.Warn("failed to batch fetch stop references", slog.Any("error", err))
 		batchStops = nil
 	}
 
 	batchRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
 	if err != nil {
-		api.Logger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
+		reqLogger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
 		batchRoutesForStops = nil
 	}
 
@@ -553,7 +555,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 		stopData, ok := stopsMap[stopID]
 		if !ok {
-			api.Logger.Debug("skipping stop reference: stop not found", slog.String("stopID", stopID))
+			reqLogger.Debug("skipping stop reference: stop not found", slog.String("stopID", stopID))
 			continue
 		}
 
@@ -615,7 +617,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 				references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&routeAgency))
 				addedAgencyIDs[route.AgencyID] = true
 			} else {
-				api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
+				reqLogger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
 			}
 		}
 	}
@@ -667,7 +669,7 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 	stopAgencyMap := make(map[string]string, len(candidateIDs))
 	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, candidateIDs)
 	if err != nil {
-		api.Logger.Warn("failed to resolve agencies for nearby stops, using fallback",
+		logging.FromContext(ctx).Warn("failed to resolve agencies for nearby stops, using fallback",
 			"error", err, "fallbackAgencyID", fallbackAgencyID)
 	} else {
 		for _, row := range agencyRows {

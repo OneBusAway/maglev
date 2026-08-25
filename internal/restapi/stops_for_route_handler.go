@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -426,6 +427,7 @@ func makeEdge(p, q coordPoint) edgeKey {
 // begins, de-overlapping shared track. Each line is floor-encoded via
 // utils.EncodePolyline with length = the merged line's point count.
 func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []string) ([]models.Polyline, error) {
+	reqLogger := logging.FromContext(ctx)
 	merger := newPolylineMerger()
 	for _, shapeID := range shapeIDs {
 		if ctx.Err() != nil {
@@ -436,7 +438,7 @@ func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []st
 			return nil, err
 		}
 		if len(points) == 0 {
-			api.Logger.Warn("no shape points for shape", "shape_id", shapeID)
+			reqLogger.Warn("no shape points for shape", "shape_id", shapeID)
 			continue
 		}
 		merger.addShape(points)

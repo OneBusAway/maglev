@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"encoding/json"
-	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -71,7 +70,7 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 		}
 
 		if !rl.limiter.Allow() {
-			rl.sendRateLimitExceeded(w)
+			rl.sendRateLimitExceeded(w, r)
 			return
 		}
 
@@ -89,7 +88,7 @@ func (rl *RateLimitMiddleware) rateLimitHandler(next http.Handler) http.Handler 
 }
 
 // sendRateLimitExceeded sends a 429 Too Many Requests response
-func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter) {
+func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *http.Request) {
 	var retryAfter time.Duration
 	switch rl.rateLimit {
 	case 0:
@@ -124,7 +123,7 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter) {
 	}
 
 	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
-		logger := slog.Default().With(slog.String("component", "rate_limit_middleware"))
-		logging.LogError(logger, "failed to encode rate limit response", err)
+		reqLogger := logging.ForComponent(r.Context(), "rate_limit_middleware")
+		logging.LogError(reqLogger, "failed to encode rate limit response", err)
 	}
 }

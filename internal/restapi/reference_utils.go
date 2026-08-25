@@ -158,9 +158,10 @@ func (api *RestAPI) appendRouteAgencyReference(ctx context.Context, references *
 		return
 	}
 
+	reqLogger := logging.FromContext(ctx)
 	routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, routeAgencyID)
 	if err != nil {
-		api.Logger.Warn("failed to fetch route agency for reference",
+		reqLogger.Warn("failed to fetch route agency for reference",
 			"agencyID", routeAgencyID, "error", err)
 		return
 	}
@@ -585,6 +586,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 		return routeIDsByStop
 	}
 
+	reqLogger := logging.FromContext(ctx)
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
 		stopIDs[i] = stop.ID
@@ -592,7 +594,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 
 	rows, err := queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to fetch routes for stop references", err)
+		reqLogger.Error("failed to fetch routes for stop references", "error", err)
 		return routeIDsByStop
 	}
 	for _, row := range rows {
@@ -706,7 +708,7 @@ func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation 
 	if len(situations) != len(refs) {
 		// The ID stamping below pairs by position, so a length change in
 		// BuildSituationReferences would silently mislabel every situation.
-		logging.LogError(api.Logger, "situation reference count does not match the alerts it was built from",
+		api.Logger.Error("situation reference count does not match the alerts it was built from", "error",
 			fmt.Errorf("built %d situations from %d alerts", len(situations), len(refs)))
 		return situations
 	}

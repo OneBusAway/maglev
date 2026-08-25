@@ -90,3 +90,8 @@ func FromContext(ctx context.Context) *slog.Logger {
 	// Return a default logger if none is found
 	return slog.Default()
 }
+
+// ForComponent retrieves a logger from context and decorates it with the component name
+func ForComponent(ctx context.Context, component string) *slog.Logger {
+	return FromContext(ctx).With(slog.String("component", component))
+}

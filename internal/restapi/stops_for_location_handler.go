@@ -11,6 +11,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -131,7 +132,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	currentDate := api.queryTimeForStops(queryParams.Get("time"), allAgencies).Format("20060102")
+	currentDate := api.queryTimeForStops(ctx, queryParams.Get("time"), allAgencies).Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -260,14 +261,15 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 // time parameter and the current-time fallback are read in the agency's timezone,
 // as in trips-for-location. A value that does not parse falls back to the current
 // time rather than failing the request, which is what legacy does with one.
-func (api *RestAPI) queryTimeForStops(timeParam string, agencies []gtfsdb.Agency) time.Time {
+func (api *RestAPI) queryTimeForStops(ctx context.Context, timeParam string, agencies []gtfsdb.Agency) time.Time {
 	if len(agencies) == 0 {
 		return api.Clock.Now()
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	location, err := loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
 	if err != nil {
-		api.Logger.Warn("failed to load agency timezone for time parameter",
+		reqLogger.Warn("failed to load agency timezone for time parameter",
 			"agencyID", agencies[0].ID, "error", err)
 		return api.Clock.Now()
 	}
@@ -288,11 +290,12 @@ func (api *RestAPI) routeIDsByStop(
 	stopCodeQuery string,
 	activeServiceIDs []string,
 ) (map[string][]string, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	byStop := make(map[string][]string)
 	collect := func(stopID string, routeID interface{}) {
 		routeIDStr, ok := routeID.(string)
 		if !ok {
-			api.Logger.Warn("unexpected RouteID type", "stopID", stopID, "routeID", routeID)
+			reqLogger.Warn("unexpected RouteID type", "stopID", stopID, "routeID", routeID)
 			return
 		}
 		if _, _, err := utils.ExtractAgencyIDAndCodeID(routeIDStr); err != nil {

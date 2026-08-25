@@ -9,6 +9,7 @@ import (
 
 	gtfs "github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -125,6 +126,7 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 // tripDetailsHandler returns extended information for a trip, including its schedule,
 // real-time status, and optionally the full stop time sequence.
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.FromContext(r.Context())
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -232,7 +234,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		var statusErr error
 		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
 		if statusErr != nil {
-			api.Logger.Warn("BuildTripStatus failed",
+			reqLogger.Warn("BuildTripStatus failed",
 				"trip_id", trip.ID,
 				"error", statusErr.Error())
 			status = nil
@@ -248,7 +250,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if params.IncludeSchedule {
 		schedule, err = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, loc)
 		if err != nil {
-			api.Logger.Warn("BuildTripSchedule failed",
+			reqLogger.Warn("BuildTripSchedule failed",
 				"trip_id", trip.ID,
 				"error", err.Error())
 			schedule = nil
@@ -261,7 +263,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
-		api.Logger.Warn("GetFrequenciesForTrip failed",
+		reqLogger.Warn("GetFrequenciesForTrip failed",
 			"trip_id", tripID,
 			"error", err.Error())
 		freqRows = nil

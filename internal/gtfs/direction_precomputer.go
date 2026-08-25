@@ -237,7 +237,7 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 
 	duration := time.Since(startTime)
 	logging.LogOperation(dp.logger, "precomputing_stop_directions_completed",
-		slog.Duration("duration", duration),
+		slog.Float64("duration_ms", float64(duration.Nanoseconds())/1e6),
 		slog.Int("total_stops", len(stops)),
 		slog.Int("successful", successCount),
 		slog.Int("skipped", skippedCount),

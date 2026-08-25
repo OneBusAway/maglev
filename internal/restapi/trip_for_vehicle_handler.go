@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 // tripForVehicleHandler returns trip details for the trip currently being served by a given vehicle.
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.FromContext(r.Context())
 	agencyID, vehicleID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -30,7 +32,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)
 	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
-		api.Logger.Debug("vehicle has no current trip (idle)",
+		reqLogger.Debug("vehicle has no current trip (idle)",
 			"vehicleID", vehicleID, "agencyID", agencyID)
 		api.sendNotFound(w, r)
 		return
@@ -75,7 +77,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		var statusErr error
 		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
 		if statusErr != nil {
-			api.Logger.Warn("failed to build trip status",
+			reqLogger.Warn("failed to build trip status",
 				"tripID", tripID,
 				"agencyID", agencyID,
 				"error", statusErr)
@@ -87,12 +89,12 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
 		if errors.Is(err, sql.ErrNoRows) {
-			api.Logger.Warn("vehicle references non-existent trip",
+			reqLogger.Warn("vehicle references non-existent trip",
 				"vehicleID", vehicleID, "tripID", tripID, "agencyID", agencyID)
 			api.sendNotFound(w, r)
 			return
 		}
-		api.Logger.Error("database error fetching trip",
+		reqLogger.Error("database error fetching trip",
 			"error", err,
 			"tripID", tripID,
 			"agencyID", agencyID)
@@ -105,7 +107,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		var scheduleErr error
 		schedule, scheduleErr = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, loc)
 		if scheduleErr != nil {
-			api.Logger.Warn("failed to build trip schedule",
+			reqLogger.Warn("failed to build trip schedule",
 				"tripID", tripID,
 				"agencyID", agencyID,
 				"error", scheduleErr)
@@ -146,7 +148,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 // scheduled trip record.
 func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID string, agency gtfsdb.Agency, trip gtfsdb.Trip, status *models.TripStatus, schedule *models.Schedule, includeTrip bool) (*models.ReferencesModel, error) {
 	references := models.NewEmptyReferences()
-
+	reqLogger := logging.FromContext(ctx)
 	stopIDs, err := referencedStopIDs(status, schedule)
 	if err != nil {
 		return nil, err
@@ -180,7 +182,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			// vehicle and its trip both resolved, and the batch reference builders
 			// likewise omit rows they cannot resolve rather than failing. With no row
 			// to read an agency from, the routeId keeps the vehicle's prefix.
-			api.Logger.Warn("trip references non-existent route",
+			reqLogger.Warn("trip references non-existent route",
 				"tripID", trip.ID, "routeID", trip.RouteID, "agencyID", agencyID)
 		case err != nil:
 			return nil, err
