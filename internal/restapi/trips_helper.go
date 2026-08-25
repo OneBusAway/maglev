@@ -14,6 +14,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -916,6 +917,7 @@ func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []s
 	var routeID string
 	var agencyID string
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	if api.GtfsManager.GtfsDB != nil {
 		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 		if err == nil {
@@ -924,14 +926,14 @@ func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []s
 			if err == nil {
 				agencyID = route.AgencyID
 			} else if !errors.Is(err, sql.ErrNoRows) {
-				api.Logger.Warn("Failed to fetch route for alerts; degrading to trip+route matching only",
+				reqLogger.Warn("Failed to fetch route for alerts; degrading to trip+route matching only",
 					slog.String("trip_id", tripID),
 					slog.String("route_id", routeID),
 					slog.Any("error", err),
 				)
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			api.Logger.Warn("Failed to fetch trip for alerts; degrading to trip matching only",
+			reqLogger.Warn("Failed to fetch trip for alerts; degrading to trip matching only",
 				slog.String("trip_id", tripID),
 				slog.Any("error", err),
 			)

@@ -13,6 +13,7 @@ import (
 // reportProblemWithTripHandler accepts a user-submitted problem report for a specific trip
 // and persists it to the database.
 func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.ForComponent(r.Context(), "problem_reporting")
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -22,7 +23,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
-		api.Logger.Error("report problem with trip failed: GTFS DB not initialized")
+		reqLogger.Error("report problem with trip failed: GTFS DB not initialized")
 		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
@@ -41,8 +42,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	userLocationAccuracy := utils.ValidateNumericParam(query.Get("userLocationAccuracy"))
 
 	// Log the problem report for observability
-	logger := logging.FromContext(r.Context()).With("component", "problem_reporting")
-	logger.Info("problem_report_received_for_trip",
+	reqLogger.Info("problem_report_received_for_trip",
 		"trip_id", tripID,
 		"composite_id", compositeID,
 		"code", code,
@@ -70,7 +70,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 
 	err := api.GtfsManager.GtfsDB.Queries.CreateProblemReportTrip(r.Context(), params)
 	if err != nil {
-		logger.Error("failed to store problem report", "error", err,
+		reqLogger.Error("failed to store problem report", "error", err,
 			"trip_id", tripID)
 		http.Error(w, `{"code":500, "text":"failed to store problem report"}`, http.StatusInternalServerError)
 		return

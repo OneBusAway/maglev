@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -23,6 +22,8 @@ import (
 // status, schedule, and vehicle positions when available.
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -77,7 +78,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	prevFormattedDate := prevDay.Format("20060102")
 	prevServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, prevFormattedDate)
 	if err != nil {
-		api.Logger.Warn("trips-for-route: failed to fetch previous-day service IDs", "date", prevFormattedDate, "error", err)
+		reqLogger.Warn("trips-for-route: failed to fetch previous-day service IDs", "date", prevFormattedDate, "error", err)
 		prevServiceIDs = nil
 	}
 	// I'm confused by adding 24 hours to get the previous day here, but that's the existing behavior.
@@ -103,7 +104,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		TimeRangeEnd:   timeRangeEnd.Nanoseconds(),
 	})
 	if err != nil {
-		api.Logger.Warn("trips-for-route: failed to fetch layover blocks", "route_id", routeID, "error", err)
+		reqLogger.Warn("trips-for-route: failed to fetch layover blocks", "route_id", routeID, "error", err)
 		layoverBlocks = nil
 	}
 
@@ -139,7 +140,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			ServiceIds: prevServiceIDs,
 		})
 		if err != nil {
-			api.Logger.Warn("trips-for-route: failed to fetch previous-day block index IDs", "error", err)
+			reqLogger.Warn("trips-for-route: failed to fetch previous-day block index IDs", "error", err)
 		} else if len(prevIndexIDs) > 0 {
 			prevFromTime := prevDaySinceMidnight + timeRangeStart - currentSinceMidnight
 			prevToTime := prevDaySinceMidnight + timeRangeEnd - currentSinceMidnight
@@ -150,7 +151,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				ServiceIds: prevServiceIDs,
 			})
 			if err != nil {
-				api.Logger.Warn("trips-for-route: failed to fetch previous-day blocks", "error", err)
+				reqLogger.Warn("trips-for-route: failed to fetch previous-day blocks", "error", err)
 			} else {
 				for _, b := range prevBlocks {
 					if b.Valid {
@@ -168,7 +169,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		TimeRangeEnd:   sql.NullInt64{Int64: timeRangeEnd.Nanoseconds(), Valid: true},
 	})
 	if err != nil {
-		api.Logger.Warn("trips-for-route: failed to fetch null-block trips", "route_id", routeID, "error", err)
+		reqLogger.Warn("trips-for-route: failed to fetch null-block trips", "route_id", routeID, "error", err)
 		nullBlockTrips = nil
 	}
 
@@ -180,7 +181,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			TimeRangeEnd:   sql.NullInt64{Int64: (prevDaySinceMidnight + timeRangeEnd - currentSinceMidnight).Nanoseconds(), Valid: true},
 		})
 		if err != nil {
-			api.Logger.Warn("trips-for-route: failed to fetch previous-day null-block trips", "error", err)
+			reqLogger.Warn("trips-for-route: failed to fetch previous-day null-block trips", "error", err)
 		} else {
 			nullBlockTrips = append(nullBlockTrips, prevNullBlockTrips...)
 		}
@@ -228,7 +229,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				ServiceIds: sd.serviceIDs,
 			})
 			if err != nil {
-				api.Logger.Warn("trips-for-route: failed to fetch trips in block", "block_id", blockID, "error", err)
+				reqLogger.Warn("trips-for-route: failed to fetch trips in block", "block_id", blockID, "error", err)
 				continue
 			}
 			if len(tripsInBlock) == 0 {
@@ -240,7 +241,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				ServiceIds:  sd.serviceIDs,
 				CurrentTime: sql.NullInt64{Int64: sd.sinceMidnight.Nanoseconds(), Valid: true}})
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				api.Logger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
+				reqLogger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
 				continue
 			}
 			if errors.Is(err, sql.ErrNoRows) {
@@ -337,7 +338,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			for _, a := range agencies {
 				loc, err := loadAgencyLocation(a.ID, a.Timezone)
 				if err != nil {
-					api.Logger.Warn("trips-for-route: invalid agency timezone", "agency_id", a.ID, "error", err)
+					reqLogger.Warn("trips-for-route: invalid agency timezone", "agency_id", a.ID, "error", err)
 					continue
 				}
 				agencyLocations[a.ID] = loc
@@ -440,7 +441,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// vehicle's block" — both relative to the entry's trip identity.
 		activeResolver, ok := serviceDatesByAgency[activeAgencyID]
 		if !ok {
-			api.Logger.Warn("trips-for-route: missing service date resolver for active agency", "agency_id", activeAgencyID)
+			reqLogger.Warn("trips-for-route: missing service date resolver for active agency", "agency_id", activeAgencyID)
 			continue
 		}
 		activeMidnight := activeResolver.Resolve(fetchedTrip)
@@ -453,7 +454,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		if entryTrip, ok := tripsByID[entryTripID]; ok {
 			entryResolver, ok := serviceDatesByAgency[entryAgencyID]
 			if !ok {
-				api.Logger.Warn("trips-for-route: missing service date resolver for entry agency", "agency_id", entryAgencyID)
+				reqLogger.Warn("trips-for-route: missing service date resolver for entry agency", "agency_id", entryAgencyID)
 				continue
 			}
 			entryMidnight = entryResolver.Resolve(entryTrip)
@@ -478,7 +479,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			var statusErr error
 			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, activeMidnight, currentTime, freqMap)
 			if statusErr != nil {
-				api.Logger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
+				reqLogger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
 			}
 		}
@@ -562,7 +563,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			var statusErr error
 			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, baseTripID, &vehicle, dupMidnight, currentTime, freqMap)
 			if statusErr != nil {
-				api.Logger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
+				reqLogger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
 			}
 		}
@@ -599,7 +600,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			var err error
 			stops, err = queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 			if err != nil {
-				api.Logger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
+				reqLogger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
 				stops = []gtfsdb.Stop{}
 			}
 		}
@@ -858,7 +859,7 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	references.Agencies = utils.MapValues(sets.agencies)
 	references.Routes = sets.routeList()
 	references.Trips = sets.tripReferenceList(params.IncludeTrip)
-	references.Situations = api.situationReferences(params.Situations)
+	references.Situations = api.situationReferences(ctx, params.Situations)
 	return *references
 }
 
@@ -953,6 +954,7 @@ func (api *RestAPI) fillMissingTrips(ctx context.Context, sets *tripReferenceSet
 		return
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	missingIDs := make([]string, 0, len(sets.missing))
 	for id := range sets.missing {
 		missingIDs = append(missingIDs, id)
@@ -960,7 +962,7 @@ func (api *RestAPI) fillMissingTrips(ctx context.Context, sets *tripReferenceSet
 
 	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, missingIDs)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to fetch trips for references", err)
+		logging.LogError(reqLogger, "failed to fetch trips for references", err)
 		return
 	}
 
@@ -970,6 +972,7 @@ func (api *RestAPI) fillMissingTrips(ctx context.Context, sets *tripReferenceSet
 // fillRoutesAndAgencies loads every route the collected trips belong to, plus
 // the agency owning each of those routes.
 func (api *RestAPI) fillRoutesAndAgencies(ctx context.Context, sets *tripReferenceSets) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	routeIDs := make([]string, 0, len(sets.routes))
 	for id := range sets.routes {
 		routeIDs = append(routeIDs, id)
@@ -980,7 +983,7 @@ func (api *RestAPI) fillRoutesAndAgencies(ctx context.Context, sets *tripReferen
 
 	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to fetch routes for references", err)
+		logging.LogError(reqLogger, "failed to fetch routes for references", err)
 		return
 	}
 
@@ -1004,10 +1007,10 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 	if _, exists := sets.agencies[agencyID]; exists {
 		return
 	}
-
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	agency, err := api.GtfsManager.FindAgency(ctx, agencyID)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to fetch agency for references", err, slog.String("agency", agencyID))
+		reqLogger.Error("failed to fetch agency for references", "error", err, "agency", agencyID)
 		return
 	}
 	if agency != nil {
