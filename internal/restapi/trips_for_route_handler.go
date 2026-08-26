@@ -753,7 +753,7 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	references.Agencies = utils.MapValues(sets.agencies)
 	references.Routes = sets.routeList()
 	references.Trips = sets.tripReferenceList(params.IncludeTrip)
-	references.Situations = api.situationReferences(params.Situations)
+	references.Situations = api.situationReferences(ctx, params.Situations)
 	return *references
 }
 

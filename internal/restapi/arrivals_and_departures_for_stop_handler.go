@@ -624,7 +624,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	situations.add(api.GtfsManager.GetAlertsForStop(stopCode), alertAgencyID)
 
-	references.Situations = append(references.Situations, api.situationReferences(situations.refs)...)
+	references.Situations = append(references.Situations, api.situationReferences(ctx, situations.refs)...)
 
 	// The top-level list covers every alert reachable from this stop, whether it
 	// was matched through an arrival's trip or through the stop itself.

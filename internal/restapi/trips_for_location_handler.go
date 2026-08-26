@@ -620,7 +620,7 @@ func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx c
 		return models.ReferencesModel{}
 	}
 
-	return refs.toReferencesModel()
+	return refs.toReferencesModel(r.Context())
 }
 
 type referenceBuilder struct {
@@ -827,7 +827,7 @@ func (rb *referenceBuilder) createTripReference(trip models.Trip, currentAgency 
 	}
 }
 
-func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
+func (rb *referenceBuilder) toReferencesModel(ctx context.Context) models.ReferencesModel {
 	trips := rb.tripsRefList
 	if trips == nil {
 		trips = []models.Trip{}
@@ -842,13 +842,13 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 	references.Routes = rb.getRoutesList()
 	references.Stops = stops
 	references.Trips = trips
-	references.Situations = rb.getSituationsList()
+	references.Situations = rb.getSituationsList(ctx)
 
 	return *references
 }
 
-func (rb *referenceBuilder) getSituationsList() []models.Situation {
-	return rb.api.situationReferences(rb.situations)
+func (rb *referenceBuilder) getSituationsList(ctx context.Context) []models.Situation {
+	return rb.api.situationReferences(ctx, rb.situations)
 }
 
 // buildScheduleFromMemory constructs a TripsSchedule from pre-fetched stop times, shape points, and block trips.

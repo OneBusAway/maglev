@@ -694,7 +694,7 @@ func (c *situationCollector) addRefs(refs []situationRef) []string {
 // situationReferences converts collected alerts into situation references,
 // stamping the same IDs the list entries use. BuildSituationReferences emits raw
 // alert IDs and preserves input order one-for-one.
-func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation {
+func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef) []models.Situation {
 	if len(refs) == 0 {
 		return []models.Situation{}
 	}
@@ -704,11 +704,12 @@ func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation 
 		alerts = append(alerts, ref.Alert)
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	situations := api.BuildSituationReferences(alerts)
 	if len(situations) != len(refs) {
 		// The ID stamping below pairs by position, so a length change in
 		// BuildSituationReferences would silently mislabel every situation.
-		api.Logger.Error("situation reference count does not match the alerts it was built from", "error",
+		reqLogger.Error("situation reference count does not match the alerts it was built from", "error",
 			fmt.Errorf("built %d situations from %d alerts", len(situations), len(refs)))
 		return situations
 	}
@@ -750,13 +751,13 @@ func situationIDsFromRefs(refs []situationRef) []string {
 // TripSituations returns a trip's situation IDs together with the matching
 // situation references, so an entry's situationIds always resolve.
 func (api *RestAPI) TripSituations(ctx context.Context, tripID string) ([]string, []models.Situation) {
-	return api.situationsFromRefs(api.situationRefsForTrip(ctx, tripID))
+	return api.situationsFromRefs(ctx, api.situationRefsForTrip(ctx, tripID))
 }
 
 // situationsFromRefs splits already-resolved references into the entry IDs and
 // the reference block built from the same lookup.
-func (api *RestAPI) situationsFromRefs(refs []situationRef) ([]string, []models.Situation) {
-	return situationIDsFromRefs(refs), api.situationReferences(refs)
+func (api *RestAPI) situationsFromRefs(ctx context.Context, refs []situationRef) ([]string, []models.Situation) {
+	return situationIDsFromRefs(refs), api.situationReferences(ctx, refs)
 }
 
 // tripSituationsFor returns a trip's situations, reusing the references
@@ -766,5 +767,5 @@ func (api *RestAPI) tripSituationsFor(ctx context.Context, tripID string, extras
 	if extras == nil {
 		return api.TripSituations(ctx, tripID)
 	}
-	return api.situationsFromRefs(extras.situations)
+	return api.situationsFromRefs(ctx, extras.situations)
 }
