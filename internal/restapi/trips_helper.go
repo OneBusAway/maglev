@@ -835,7 +835,7 @@ func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []s
 	var routeID string
 	var agencyID string
 
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	if api.GtfsManager.GtfsDB != nil {
 		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 		if err == nil {
@@ -1303,7 +1303,7 @@ func (api *RestAPI) serviceIDsForDays(ctx context.Context, queryDayMidnight time
 }
 
 func (api *RestAPI) activeServiceIDsForDate(ctx context.Context, day time.Time) []string {
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, day.Format("20060102"))
 	if err != nil {
 		reqLogger.Warn("failed to fetch active service IDs for service date resolution",

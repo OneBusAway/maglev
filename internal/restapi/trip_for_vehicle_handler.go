@@ -16,7 +16,7 @@ import (
 
 // tripForVehicleHandler returns trip details for the trip currently being served by a given vehicle.
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
-	reqLogger := logging.FromContext(r.Context())
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	agencyID, vehicleID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -148,7 +148,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 // scheduled trip record.
 func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID string, agency gtfsdb.Agency, trip gtfsdb.Trip, status *models.TripStatus, schedule *models.Schedule, includeTrip bool) (*models.ReferencesModel, error) {
 	references := models.NewEmptyReferences()
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	stopIDs, err := referencedStopIDs(status, schedule)
 	if err != nil {
 		return nil, err

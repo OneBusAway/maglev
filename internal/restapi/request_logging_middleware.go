@@ -50,7 +50,7 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 				r.Method,
 				r.URL.Path,
 				wrapped.statusCode,
-				float64(duration.Nanoseconds())/1e6,
+				float64(duration)/float64(time.Millisecond),
 			)
 		})
 	}

@@ -313,7 +313,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		return []models.TripsForLocationListEntry{}, nil
 	}
 
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	tripsMap := make(map[string]gtfsdb.Trip)
 	var shapeIDs []string
@@ -570,7 +570,7 @@ func (api *RestAPI) buildScheduleForTrip(
 
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {
 
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	// Batch-fetch all stop coordinates at once
 	stopIDs := make([]string, len(stopTimes))
 	for i, st := range stopTimes {
@@ -708,7 +708,7 @@ func (rb *referenceBuilder) enrichTripsData() {
 		return
 	}
 
-	reqLogger := logging.FromContext(rb.ctx)
+	reqLogger := logging.ForComponent(rb.ctx, "http_server")
 	trips, err := rb.api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(rb.ctx, tripIDs)
 	if err != nil {
 		reqLogger.Error("failed to batch fetch trips for references", "error", err)

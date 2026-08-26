@@ -172,7 +172,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 			logging.LogError(logger, "Failed to load GTFS data, retrying", reloadErr,
 				slog.Int("attempt", attempt),
 				slog.Int("max_attempts", maxAttempts),
-				slog.Float64("retry_delay_ms", float64(delay.Nanoseconds())/1e6),
+				slog.Float64("retry_delay_ms", float64(delay)/float64(time.Millisecond)),
 			)
 			select {
 			case <-ctx.Done():

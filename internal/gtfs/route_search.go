@@ -51,7 +51,7 @@ func (manager *Manager) SearchRoutes(ctx context.Context, input string, maxCount
 	}
 
 	reqLogger := logging.ForComponent(ctx, "route_search")
-	reqLogger.Info("route search", slog.String("input", input), slog.String("query", query), slog.Int("limit", limit))
+	reqLogger.Debug("route search", slog.String("input", input), slog.String("query", query), slog.Int("limit", limit))
 
 	routes, err := manager.GtfsDB.Queries.SearchRoutesByFullText(ctx, gtfsdb.SearchRoutesByFullTextParams{
 		Query: query,

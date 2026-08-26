@@ -427,7 +427,7 @@ func makeEdge(p, q coordPoint) edgeKey {
 // begins, de-overlapping shared track. Each line is floor-encoded via
 // utils.EncodePolyline with length = the merged line's point count.
 func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []string) ([]models.Polyline, error) {
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	merger := newPolylineMerger()
 	for _, shapeID := range shapeIDs {
 		if ctx.Err() != nil {

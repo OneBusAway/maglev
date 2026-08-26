@@ -746,7 +746,7 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 	logging.LogOperation(logger, "started_realtime_feed_poller",
 		slog.String("feed", feedCfg.ID),
-		slog.Float64("interval_ms", float64(baseInterval.Nanoseconds())/1e6),
+		slog.Float64("interval_ms", float64(baseInterval)/float64(time.Millisecond)),
 		slog.String("tripUpdatesURL", feedCfg.TripUpdatesURL),
 		slog.String("vehiclePositionsURL", feedCfg.VehiclePositionsURL),
 		slog.String("serviceAlertsURL", feedCfg.ServiceAlertsURL),
@@ -803,7 +803,7 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 						if !feedCleared { // Only clear once per extended outage
 							logger.Warn("feed data is stale due to consecutive failures, clearing",
 								slog.String("feed", feedCfg.ID),
-								slog.Float64("staleness_ms", float64(time.Since(lastSuccessfulFetch).Nanoseconds())/1e6))
+								slog.Float64("staleness_ms", float64(time.Since(lastSuccessfulFetch))/float64(time.Millisecond)))
 							manager.clearFeedData(feedCfg.ID)
 							feedCleared = true
 						}
@@ -815,7 +815,7 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 					logger.Warn("feed update failed, applying backoff",
 						slog.String("feed", feedCfg.ID),
 						slog.Int("consecutive_errors", consecutiveErrors),
-						slog.Float64("next_interval_ms", float64(nextInterval.Nanoseconds())/1e6))
+						slog.Float64("next_interval_ms", float64(nextInterval)/float64(time.Millisecond)))
 
 					timer.Reset(nextInterval)
 				}

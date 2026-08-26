@@ -126,7 +126,7 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 // tripDetailsHandler returns extended information for a trip, including its schedule,
 // real-time status, and optionally the full stop time sequence.
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	reqLogger := logging.FromContext(r.Context())
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return

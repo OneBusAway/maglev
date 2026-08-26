@@ -22,7 +22,7 @@ import (
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -844,7 +844,7 @@ func (s *tripReferenceSets) collectTripIDsFromEntries(entries []models.TripsForR
 
 // fillMissingTrips loads the trips that were noted by ID but never fetched.
 func (api *RestAPI) fillMissingTrips(ctx context.Context, sets *tripReferenceSets) {
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	if len(sets.missing) == 0 {
 		return
 	}
@@ -866,7 +866,7 @@ func (api *RestAPI) fillMissingTrips(ctx context.Context, sets *tripReferenceSet
 // fillRoutesAndAgencies loads every route the collected trips belong to, plus
 // the agency owning each of those routes.
 func (api *RestAPI) fillRoutesAndAgencies(ctx context.Context, sets *tripReferenceSets) {
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	routeIDs := make([]string, 0, len(sets.routes))
 	for id := range sets.routes {
 		routeIDs = append(routeIDs, id)
@@ -901,7 +901,7 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 	if _, exists := sets.agencies[agencyID]; exists {
 		return
 	}
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	agency, err := api.GtfsManager.FindAgency(ctx, agencyID)
 	if err != nil {
 		reqLogger.Error("failed to fetch agency for references", "error", err, "agency", agencyID)
@@ -982,7 +982,7 @@ func (api *RestAPI) resolveDuplicatedBaseTrip(ctx context.Context, dupTripID str
 	if err == nil {
 		return dupTripID, trip
 	}
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	if !errors.Is(err, sql.ErrNoRows) {
 		reqLogger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
 			"dup_trip_id", dupTripID, "error", err)

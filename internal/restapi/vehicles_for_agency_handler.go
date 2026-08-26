@@ -14,7 +14,7 @@ import (
 
 // vehiclesForAgencyHandler returns real-time vehicle positions for all vehicles operated by a given agency.
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
-	reqLogger := logging.FromContext(r.Context())
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
 		return

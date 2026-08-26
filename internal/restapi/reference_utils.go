@@ -158,7 +158,7 @@ func (api *RestAPI) appendRouteAgencyReference(ctx context.Context, references *
 		return
 	}
 
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, routeAgencyID)
 	if err != nil {
 		reqLogger.Warn("failed to fetch route agency for reference",
@@ -586,7 +586,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 		return routeIDsByStop
 	}
 
-	reqLogger := logging.FromContext(ctx)
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
 		stopIDs[i] = stop.ID

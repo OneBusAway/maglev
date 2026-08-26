@@ -32,7 +32,7 @@ func (rw *recoveryResponseWriter) Write(b []byte) (int, error) {
 
 // NewRecoveryMiddleware returns middleware that recovers from panics in handlers,
 // logs the panic with stack trace, and returns HTTP 500 (JSON) if no response was sent.
-func NewRecoveryMiddleware(_ *slog.Logger, c clock.Clock) func(http.Handler) http.Handler {
+func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rw := &recoveryResponseWriter{ResponseWriter: w}
@@ -45,7 +45,12 @@ func NewRecoveryMiddleware(_ *slog.Logger, c clock.Clock) func(http.Handler) htt
 					} else {
 						err = fmt.Errorf("%v", rec)
 					}
+					// try to get the request logger from the context. If it doesn't exist, fall back
+					// to the configured logger.
 					reqLogger := logging.ForComponent(r.Context(), "http_server")
+					if reqLogger == nil {
+						reqLogger = logger
+					}
 					logging.LogError(reqLogger, "handler panic recovered", err,
 						slog.String("path", r.URL.Path),
 						slog.String("method", r.Method),

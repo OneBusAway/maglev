@@ -664,12 +664,13 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		return nil
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	// Batch-resolve the owning agency for each nearby stop so that
 	// multi-agency feeds produce correct combined IDs.
 	stopAgencyMap := make(map[string]string, len(candidateIDs))
 	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, candidateIDs)
 	if err != nil {
-		logging.FromContext(ctx).Warn("failed to resolve agencies for nearby stops, using fallback",
+		reqLogger.Warn("failed to resolve agencies for nearby stops, using fallback",
 			"error", err, "fallbackAgencyID", fallbackAgencyID)
 	} else {
 		for _, row := range agencyRows {
