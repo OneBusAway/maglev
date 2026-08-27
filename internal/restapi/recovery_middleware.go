@@ -45,13 +45,13 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 					} else {
 						err = fmt.Errorf("%v", rec)
 					}
-					// try to get the request logger from the context. If it doesn't exist, fall back
-					// to the configured logger.
+					// try to get the request logger from the context. If exists, use it, otherwise, use
+					// the configured logger.
 					reqLogger := logging.ForComponent(r.Context(), "http_server")
-					if reqLogger == nil {
-						reqLogger = logger
+					if reqLogger != nil {
+						logger = reqLogger
 					}
-					logging.LogError(reqLogger, "handler panic recovered", err,
+					logging.LogError(logger, "handler panic recovered", err,
 						slog.String("path", r.URL.Path),
 						slog.String("method", r.Method),
 						slog.String("stack", string(stack)))
