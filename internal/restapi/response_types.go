@@ -43,6 +43,7 @@ type EmptyResponse struct {
 type CoverageResponse ListResponse[models.AgencyCoverage]
 type RoutesResponse ListResponse[models.Route]
 type StopsResponse ListResponse[models.Stop]
+type StopsForTripResponse ListResponse[models.Stop]
 type RouteIDsForAgencyResponse ListResponse[string]
 type StopIDsForAgencyResponse ListResponse[string]
 type AgencyEntryResponse EntryResponse[models.AgencyReference]
