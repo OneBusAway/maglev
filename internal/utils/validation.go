@@ -107,6 +107,14 @@ func ValidateDate(date string) error {
 	return nil
 }
 
+// ValidateServiceDate reports whether a service date parameter is parseable, in either
+// of the forms ParseDate accepts. Handlers use it to reject a malformed date before
+// looking up the agency whose timezone ParseDate then resolves the date against.
+func ValidateServiceDate(date string) error {
+	_, err := ParseDate(date, time.UTC)
+	return err
+}
+
 // SanitizeInput removes HTML tags and other potentially dangerous content
 func SanitizeInput(input string) string {
 	// Remove HTML tags
