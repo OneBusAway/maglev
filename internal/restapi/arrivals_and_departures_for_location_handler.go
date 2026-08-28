@@ -60,37 +60,82 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	acc := newArrivalsAccumulator("")
 	arrivals, err := api.collectArrivalsForStops(ctx, stops, agencies, params, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
 	}
 
-	stopIDs := make([]string, 0, len(stops))
-	for _, stop := range stops {
-		stopIDs = append(stopIDs, utils.FormCombinedID(agencies.agencyIDFor(stop.ID), stop.ID))
-	}
-
-	nearby := api.nearbyStopsForLocation(ctx, stops, agencies, params)
-
 	sortArrivalsByTime(arrivals)
+	lists := truncateLocationLists(locationLists{
+		stopIDs:  combinedStopIDs(stops, agencies),
+		arrivals: arrivals,
+		nearby:   api.nearbyStopsForLocation(ctx, stops, agencies, params),
+	}, params.MaxCount)
 
-	// Java trims all three lists against the single maxCount and reports one
-	// flag if any of them was truncated.
-	limitExceeded := false
-	stopIDs, limitExceeded = truncateSlice(stopIDs, params.MaxCount, limitExceeded)
-	arrivals, limitExceeded = truncateSlice(arrivals, params.MaxCount, limitExceeded)
-	nearby, limitExceeded = truncateSlice(nearby, params.MaxCount, limitExceeded)
-
-	if len(arrivals) == 0 && len(stopIDs) == 0 {
+	if len(lists.arrivals) == 0 && len(lists.stopIDs) == 0 {
 		api.sendEmptyArrivalsForLocation(w, r, params)
 		return
 	}
 
-	// Every stop the response names must resolve in references.stops, including
-	// the nearby ones (Java's BeanFactoryV2 adds them alongside the arrivals').
+	registerReferencedStops(acc, stops, lists.nearby)
+
+	references, err := api.locationReferences(ctx, r, agencies, acc)
+	if err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
+		return
+	}
+
+	api.sendResponse(w, r, models.NewArrivalsAndDeparturesForLocationResponse(
+		lists.arrivals,
+		*references,
+		lists.stopIDs,
+		lists.nearby,
+		situationIDsFromRefs(acc.situations.refs),
+		lists.limitExceeded,
+		api.Clock,
+	))
+}
+
+// sendArrivalsForLocationError distinguishes the client hanging up from a
+// genuine server-side failure, so a cancelled request is not reported as a 500.
+func (api *RestAPI) sendArrivalsForLocationError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		api.clientCanceledResponse(w, r, ctx.Err())
+		return
+	}
+	api.serverErrorResponse(w, r, err)
+}
+
+// locationLists are the three response lists that share a single maxCount.
+type locationLists struct {
+	stopIDs       []string
+	arrivals      []models.ArrivalAndDeparture
+	nearby        []models.StopWithDistance
+	limitExceeded bool
+}
+
+// truncateLocationLists trims each list to maxCount independently, reporting a
+// single flag if any of them was shortened — matching how Java caps this
+// endpoint.
+func truncateLocationLists(lists locationLists, maxCount int) locationLists {
+	lists.stopIDs, lists.limitExceeded = truncateSlice(lists.stopIDs, maxCount, lists.limitExceeded)
+	lists.arrivals, lists.limitExceeded = truncateSlice(lists.arrivals, maxCount, lists.limitExceeded)
+	lists.nearby, lists.limitExceeded = truncateSlice(lists.nearby, maxCount, lists.limitExceeded)
+	return lists
+}
+
+// combinedStopIDs renders the searched stops as {agency}_{code} IDs.
+func combinedStopIDs(stops []gtfsdb.Stop, agencies *stopAgencyIndex) []string {
+	stopIDs := make([]string, 0, len(stops))
+	for _, stop := range stops {
+		stopIDs = append(stopIDs, utils.FormCombinedID(agencies.agencyIDFor(stop.ID), stop.ID))
+	}
+	return stopIDs
+}
+
+// registerReferencedStops marks every stop the response names so it reaches
+// references.stops, including the nearby ones (Java's BeanFactoryV2 adds those
+// alongside the arrivals').
+func registerReferencedStops(acc *arrivalsAccumulator, stops []gtfsdb.Stop, nearby []models.StopWithDistance) {
 	for _, stop := range stops {
 		acc.stopIDs[stop.ID] = true
 	}
@@ -99,34 +144,30 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 			acc.stopIDs[bareID] = true
 		}
 	}
+}
 
-	references := models.NewEmptyReferences()
-	if ShouldIncludeReferences(r) {
-		references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
-			fallbackAgencyID: agencies.fallbackAgencyID,
-			stopAgencies:     agencies.byStopID,
-		}, acc)
-		if err != nil {
-			if ctx.Err() != nil {
-				api.clientCanceledResponse(w, r, ctx.Err())
-			} else {
-				api.serverErrorResponse(w, r, err)
-			}
-			return
-		}
-		references.Situations = append(references.Situations, api.situationReferences(acc.situations.refs)...)
+// locationReferences builds the references block, or an empty one when the
+// caller opted out with includeReferences=false.
+func (api *RestAPI) locationReferences(
+	ctx context.Context,
+	r *http.Request,
+	agencies *stopAgencyIndex,
+	acc *arrivalsAccumulator,
+) (*models.ReferencesModel, error) {
+	if !ShouldIncludeReferences(r) {
+		return models.NewEmptyReferences(), nil
 	}
 
-	response := models.NewArrivalsAndDeparturesForLocationResponse(
-		arrivals,
-		*references,
-		stopIDs,
-		nearby,
-		situationIDsFromRefs(acc.situations.refs),
-		limitExceeded,
-		api.Clock,
-	)
-	api.sendResponse(w, r, response)
+	references, err := api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
+		fallbackAgencyID: agencies.fallbackAgencyID,
+		stopAgencies:     agencies.byStopID,
+	}, acc)
+	if err != nil {
+		return nil, err
+	}
+
+	references.Situations = append(references.Situations, api.situationReferences(acc.situations.refs)...)
+	return references, nil
 }
 
 // sendEmptyArrivalsForLocation answers a query that matched nothing. Unlike the
@@ -338,27 +379,40 @@ func (api *RestAPI) agenciesForStops(ctx context.Context, stops []gtfsdb.Stop) (
 		counts[row.ID]++
 
 		if _, exists := index.locations[row.ID]; !exists {
-			loc, locErr := loadAgencyLocation(row.ID, row.Timezone)
-			if locErr != nil {
-				api.Logger.Warn("failed to load agency timezone, falling back to UTC",
-					"agencyID", row.ID, "error", locErr)
-				loc = time.UTC
-			}
-			index.locations[row.ID] = loc
+			index.locations[row.ID] = api.agencyLocationOrUTC(row.ID, row.Timezone)
 		}
 	}
 
-	for agencyID, count := range counts {
-		best := counts[index.fallbackAgencyID]
-		if count > best || (count == best && agencyID < index.fallbackAgencyID) {
-			index.fallbackAgencyID = agencyID
-		}
-	}
+	index.fallbackAgencyID = mostCommonAgency(counts)
 	if loc, ok := index.locations[index.fallbackAgencyID]; ok && loc != nil {
 		index.fallbackLocation = loc
 	}
 
 	return index, nil
+}
+
+// agencyLocationOrUTC resolves an agency's timezone, degrading to UTC rather
+// than failing the request over one unparseable timezone string.
+func (api *RestAPI) agencyLocationOrUTC(agencyID, timezone string) *time.Location {
+	loc, err := loadAgencyLocation(agencyID, timezone)
+	if err != nil {
+		api.Logger.Warn("failed to load agency timezone, falling back to UTC",
+			"agencyID", agencyID, "error", err)
+		return time.UTC
+	}
+	return loc
+}
+
+// mostCommonAgency picks the agency serving the most stops, breaking ties on
+// ID so the choice does not depend on map iteration order.
+func mostCommonAgency(counts map[string]int) string {
+	best := ""
+	for agencyID, count := range counts {
+		if count > counts[best] || (count == counts[best] && agencyID < best) {
+			best = agencyID
+		}
+	}
+	return best
 }
 
 func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsForLocationParams, map[string][]string) {
@@ -379,9 +433,23 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 		fieldErrors[field] = append(fieldErrors[field], msg)
 	}
 
-	// parseLocationParams treats lat and lon as optional; this endpoint's spec
-	// marks them required, and defaulting them to 0 would silently search the
-	// Gulf of Guinea.
+	params.Location = api.parseRequiredLocation(r, addError)
+	params.Before = parseMinutesParam(queryParams, "minutesBefore", params.Before, addError)
+	params.After = parseMinutesParam(queryParams, "minutesAfter", params.After, addError)
+	params.QueryTime = parseEpochMillisParam(queryParams, "time", params.QueryTime, addError)
+	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
+	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
+	params.EmptyReturnsNotFound = parseOptionalBoolParam(queryParams, "emptyReturnsNotFound", addError)
+
+	return params, fieldErrors
+}
+
+// parseRequiredLocation parses the spatial parameters, additionally enforcing
+// lat and lon. parseLocationParams treats them as optional; this endpoint's
+// spec marks them required, and defaulting them to 0 would silently search the
+// Gulf of Guinea.
+func (api *RestAPI) parseRequiredLocation(r *http.Request, addError func(string, string)) *internalgtfs.LocationParams {
+	queryParams := r.URL.Query()
 	for _, key := range []string{"lat", "lon"} {
 		if queryParams.Get(key) == "" {
 			addError(key, "required")
@@ -389,44 +457,55 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 	}
 
 	location, locationErrors := api.parseLocationParams(r, nil)
-	for field, msgs := range locationErrors {
+	forwardFieldErrors(locationErrors, addError)
+	return location
+}
+
+// forwardFieldErrors funnels a shared parser's field errors into the caller's
+// collector.
+func forwardFieldErrors(src map[string][]string, addError func(string, string)) {
+	for field, msgs := range src {
 		for _, msg := range msgs {
 			addError(field, msg)
 		}
 	}
-	params.Location = location
+}
 
-	params.Before = parseMinutesParam(queryParams, "minutesBefore", params.Before, addError)
-	params.After = parseMinutesParam(queryParams, "minutesAfter", params.After, addError)
-
-	if val := queryParams.Get("time"); val != "" {
-		if timeMs, err := strconv.ParseInt(val, 10, 64); err == nil {
-			params.QueryTime = time.UnixMilli(timeMs)
-		} else {
-			addError("time", "must be a valid Unix timestamp in milliseconds")
-		}
-	}
-
-	maxCount, maxCountErrors := utils.ParseMaxCountClampedTo(
+func parseArrivalsForLocationMaxCount(queryParams map[string][]string, addError func(string, string)) int {
+	maxCount, fieldErrors := utils.ParseMaxCountClampedTo(
 		queryParams, models.DefaultMaxCountForArrivalsForLocation, models.MaxCountForArrivalsForLocation, nil)
-	for field, msgs := range maxCountErrors {
-		for _, msg := range msgs {
-			addError(field, msg)
-		}
-	}
-	params.MaxCount = maxCount
+	forwardFieldErrors(fieldErrors, addError)
+	return maxCount
+}
 
-	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
-
-	if val := queryParams.Get("emptyReturnsNotFound"); val != "" {
-		emptyReturnsNotFound, err := strconv.ParseBool(val)
-		if err != nil {
-			addError("emptyReturnsNotFound", "must be a valid boolean")
-		}
-		params.EmptyReturnsNotFound = emptyReturnsNotFound
+// parseEpochMillisParam reads a time expressed as Unix milliseconds.
+func parseEpochMillisParam(queryParams map[string][]string, key string, fallback time.Time, addError func(string, string)) time.Time {
+	values, ok := queryParams[key]
+	if !ok || len(values) == 0 || values[0] == "" {
+		return fallback
 	}
 
-	return params, fieldErrors
+	timeMs, err := strconv.ParseInt(values[0], 10, 64)
+	if err != nil {
+		addError(key, "must be a valid Unix timestamp in milliseconds")
+		return fallback
+	}
+	return time.UnixMilli(timeMs)
+}
+
+// parseOptionalBoolParam reads a boolean flag, defaulting to false when absent.
+func parseOptionalBoolParam(queryParams map[string][]string, key string, addError func(string, string)) bool {
+	values, ok := queryParams[key]
+	if !ok || len(values) == 0 || values[0] == "" {
+		return false
+	}
+
+	parsed, err := strconv.ParseBool(values[0])
+	if err != nil {
+		addError(key, "must be a valid boolean")
+		return false
+	}
+	return parsed
 }
 
 // parseMinutesParam reads a minute-valued window parameter, capping it at one
