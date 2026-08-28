@@ -340,6 +340,11 @@ func TestOpenAPIConformance_LocationEndpoints(t *testing.T) {
 			specPath: "/api/where/routes-for-location.json",
 		},
 		{
+			name:     "arrivals-and-departures-for-location",
+			endpoint: "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=40.58&lon=-122.39&radius=5000",
+			specPath: "/api/where/arrivals-and-departures-for-location.json",
+		},
+		{
 			name:     "trips-for-location",
 			endpoint: "/api/where/trips-for-location.json?key=TEST&lat=40.58&lon=-122.39&latSpan=0.1&lonSpan=0.1",
 			specPath: "/api/where/trips-for-location.json",
