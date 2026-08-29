@@ -234,7 +234,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Populate situation references for alerts affecting the returned stops
 		alerts := api.collectAlertsForStops(keptStopIDs)
-		situations := api.BuildSituationReferences(alerts)
+		situations := api.situationReferencesForAlerts(alerts, "")
 		references.Situations = append(references.Situations, situations...)
 
 		var parentRoutes map[string]gtfsdb.GetRoutesForStopsRow

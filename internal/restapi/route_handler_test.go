@@ -129,7 +129,10 @@ func TestRouteHandlerWithSituations(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Len(t, model.Data.References.Situations, 1,
 		"expected exactly one situation matching the seeded alert")
-	assert.Equal(t, alertID, model.Data.References.Situations[0].ID)
+	// The alert names no agency of its own, so the situation ID carries the
+	// prefix of the agency whose route was requested, matching trip-details.
+	assert.Equal(t, utils.FormCombinedID(testdata.Route1.AgencyID, alertID),
+		model.Data.References.Situations[0].ID)
 }
 
 // TestRouteHandler_IncludeReferencesFalse verifies that when includeReferences=false,

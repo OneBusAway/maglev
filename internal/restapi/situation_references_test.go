@@ -288,6 +288,56 @@ func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
 	}
 }
 
+// TestSituationReferencesForAlertsNoFallbackAgency covers the endpoints whose
+// result set spans agencies and therefore pass no fallback: an alert naming its
+// own agency is still prefixed, and only an alert naming none keeps its raw ID.
+func TestSituationReferencesForAlertsNoFallbackAgency(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	informedAgencyID := "1"
+	stopID := "10190"
+
+	tests := []struct {
+		name   string
+		alert  gogtfs.Alert
+		wantID string
+	}{
+		{
+			name: "The alert's own agency is used even with no fallback",
+			alert: gogtfs.Alert{
+				ID:               "86736",
+				InformedEntities: []gogtfs.AlertInformedEntity{{AgencyID: &informedAgencyID}},
+			},
+			wantID: "1_86736",
+		},
+		{
+			name: "An alert naming no agency keeps the raw feed ID",
+			alert: gogtfs.Alert{
+				ID:               "86736",
+				InformedEntities: []gogtfs.AlertInformedEntity{{StopID: &stopID}},
+			},
+			wantID: "86736",
+		},
+		{
+			name: "A self-prefixed feed ID is not prefixed twice",
+			alert: gogtfs.Alert{
+				ID:               "1_86736",
+				InformedEntities: []gogtfs.AlertInformedEntity{{AgencyID: &informedAgencyID}},
+			},
+			wantID: "1_86736",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			situations := api.situationReferencesForAlerts([]gogtfs.Alert{tt.alert}, "")
+			require.Len(t, situations, 1)
+			assert.Equal(t, tt.wantID, situations[0].ID)
+		})
+	}
+}
+
 func TestSituationID(t *testing.T) {
 	tests := []struct {
 		name     string

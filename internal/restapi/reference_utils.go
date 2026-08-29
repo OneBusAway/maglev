@@ -717,6 +717,18 @@ func (api *RestAPI) situationReferences(refs []situationRef) []models.Situation 
 	return situations
 }
 
+// situationReferencesForAlerts builds a situation reference block carrying the
+// agency-prefixed IDs that trip-details and trip-for-vehicle already publish,
+// rather than the raw feed IDs BuildSituationReferences stamps.
+//
+// fallbackAgencyID is consulted only for an alert that names no agency of its
+// own. Callers whose result set spans agencies pass "", because there is no
+// single agency the alert can honestly be scoped to; such an alert keeps its
+// raw ID, as it did before.
+func (api *RestAPI) situationReferencesForAlerts(alerts []gtfs.Alert, fallbackAgencyID string) []models.Situation {
+	return api.situationReferences(situationRefsFromAlerts(alerts, fallbackAgencyID))
+}
+
 func (rb *referenceBuilder) getAgenciesList() []models.AgencyReference {
 	agencies := make([]models.AgencyReference, 0, len(rb.presentAgencies))
 	for _, agency := range rb.presentAgencies {

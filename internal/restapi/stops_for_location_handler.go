@@ -248,7 +248,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		references.Agencies = agencies
 		references.Routes = routes
-		references.Situations = api.BuildSituationReferences(alerts)
+		references.Situations = api.situationReferencesForAlerts(alerts, "")
 	}
 
 	response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, isLimitExceeded)

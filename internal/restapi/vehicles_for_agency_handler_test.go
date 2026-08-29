@@ -25,6 +25,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // vehiclesForAgencyURL builds the /vehicles-for-agency URL with key=TEST baked in.
@@ -199,14 +200,17 @@ func TestVehiclesForAgencyHandler_SituationsPopulatedInReferences(t *testing.T) 
 
 	require.NotEmpty(t, model.Data.List, "mock vehicle not returned by VehiclesForAgencyID")
 	require.NotEmpty(t, model.Data.References.Situations, "expected at least one situation in references")
+	// The alert names only a route, so the ID falls back to the agency the
+	// request asked about.
+	wantID := utils.FormCombinedID(testdata.Raba.ID, alertID)
 	found := false
 	for _, sit := range model.Data.References.Situations {
-		if sit.ID == alertID {
+		if sit.ID == wantID {
 			found = true
 			break
 		}
 	}
-	assert.True(t, found, "expected situation with id %q in references.situations", alertID)
+	assert.True(t, found, "expected situation with id %q in references.situations", wantID)
 }
 
 // TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences verifies that
@@ -232,14 +236,16 @@ func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testi
 
 	require.NotEmpty(t, model.Data.List, "mock vehicle not returned by VehiclesForAgencyID")
 	require.NotEmpty(t, model.Data.References.Situations, "expected agency-wide alert in references.situations")
+	// The alert names the agency itself, so that is the prefix it carries.
+	wantID := utils.FormCombinedID(agencyID, alertID)
 	found := false
 	for _, sit := range model.Data.References.Situations {
-		if sit.ID == alertID {
+		if sit.ID == wantID {
 			found = true
 			break
 		}
 	}
-	assert.True(t, found, "expected situation with id %q in references.situations", alertID)
+	assert.True(t, found, "expected situation with id %q in references.situations", wantID)
 }
 
 func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
