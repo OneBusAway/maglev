@@ -90,11 +90,10 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 		GtfsURL:      testDataPath,
 	}
 
-	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, slog.New(slog.DiscardHandler))
 
 	require.NoError(t, err, "BuildApplication should not return an error")
 	assert.NotNil(t, coreApp, "Application should not be nil")
-	assert.NotNil(t, coreApp.Logger, "Logger should be initialized")
 	assert.Equal(t, cfg, coreApp.Config, "Config should match input")
 
 	// BuildApplication injects the metrics client into the config.
@@ -127,7 +126,7 @@ func TestBuildApplicationWithTestData(t *testing.T) {
 		GtfsURL:      testDataPath,
 	}
 
-	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, slog.New(slog.DiscardHandler))
 
 	require.NoError(t, err, "BuildApplication should not return an error with test data")
 	assert.NotNil(t, coreApp, "Application should not be nil")
@@ -185,10 +184,11 @@ func TestCreateServer(t *testing.T) {
 				GTFSDataPath: ":memory:",
 				GtfsURL:      testDataPath,
 			}
-			coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+			logger := slog.New(slog.DiscardHandler)
+			coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
 			require.NoError(t, err, "BuildApplication should not fail")
 
-			srv, api := CreateServer(coreApp, cfg)
+			srv, api := CreateServer(coreApp, cfg, logger)
 			defer api.Shutdown()
 
 			assert.NotNil(t, srv, "Server should not be nil")
@@ -225,10 +225,11 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 		GtfsURL:      testDataPath,
 	}
 
-	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+	logger := slog.New(slog.DiscardHandler)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
 	require.NoError(t, err, "BuildApplication should not fail")
 
-	srv, api := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg, logger)
 	defer api.Shutdown()
 
 	// Test that the handler responds to requests. note: i am intentionally not testing
@@ -270,7 +271,8 @@ func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 		GtfsURL:      testDataPath,
 	}
 
-	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+	logger := slog.New(slog.DiscardHandler)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
 	require.NoError(t, err, "BuildApplication should not fail")
 
 	// Create a test server that we can control
@@ -280,7 +282,7 @@ func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 	defer testServer.Close()
 
 	// Test that we can create an HTTP server with proper configuration
-	srv, api := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg, logger)
 	defer api.Shutdown()
 	assert.NotNil(t, srv, "Server should be created")
 
@@ -355,10 +357,11 @@ func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 		GtfsURL:      testDataPath,
 	}
 
-	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+	logger := slog.New(slog.DiscardHandler)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
 	require.NoError(t, err)
 
-	srv, api := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg, logger)
 	defer api.Shutdown()
 
 	// Run the server in a goroutine
@@ -408,7 +411,7 @@ func TestBuildApplicationErrorHandling(t *testing.T) {
 			GtfsURL:      "/nonexistent/path/to/gtfs.zip",
 		}
 
-		_, err := BuildApplication(ctx, cfg, gtfsCfg)
+		_, err := BuildApplication(ctx, cfg, gtfsCfg, slog.New(slog.DiscardHandler))
 		assert.Error(t, err, "Should return error for invalid GTFS path")
 		assert.Contains(t, err.Error(), "failed to initialize GTFS manager")
 	})
@@ -524,10 +527,9 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
 		gtfsCfg := gtfsConfigFromData(gtfsCfgData)
 
 		// Build application
-		coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+		coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
 		assert.NotNil(t, coreApp)
-		assert.NotNil(t, coreApp.Logger)
 		assert.NotNil(t, coreApp.GtfsManager)
 		assert.Equal(t, 5000, coreApp.Config.Port)
 		assert.Equal(t, appconf.Test, coreApp.Config.Env)
@@ -539,10 +541,7 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
 func TestRun_GracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	coreApp := &app.Application{
-		Logger: logger,
-	}
+	coreApp := &app.Application{}
 
 	srv := &http.Server{
 		Addr: "127.0.0.1:0",
@@ -554,7 +553,7 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- Run(ctx, srv, coreApp, nil)
+		errCh <- Run(ctx, srv, coreApp, nil, slog.New(slog.DiscardHandler))
 	}()
 
 	// Small delay so ListenAndServe starts
