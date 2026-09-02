@@ -36,7 +36,6 @@ func tripForVehicleURL(vehicleID string, params ...url.Values) string {
 func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID string) {
 	t.Helper()
 	api = createTestApi(t)
-	//api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	t.Cleanup(api.Shutdown)
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 

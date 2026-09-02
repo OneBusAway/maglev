@@ -328,7 +328,6 @@ func createTestApiWithNullDirectionID(t *testing.T) *RestAPI {
 	}
 
 	api := NewRestAPI(application)
-	//api.Logger = logging.NewStructuredLogger(os.Stdout, slog.LevelDebug)
 	t.Cleanup(api.Shutdown)
 
 	return api
