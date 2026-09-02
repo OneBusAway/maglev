@@ -1,5 +1,5 @@
-# Source: https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
-# Fetched: 2026-07-13
+# Source: https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml
+# Fetched: 2026-08-27
 openapi: 3.0.0
 info:
   title: OneBusAway
@@ -34,7 +34,7 @@ paths:
   /api/where/agency/{agencyID}.json:
     get:
       summary: Retrieve info for a specific transit agency identified by ID
-      description: Retrieve information for a specific transit agency identified by its unique ID.
+      description: Retrieve information for a specific transit agency identified by its ID.
       parameters:
         - name: agencyID
           in: path

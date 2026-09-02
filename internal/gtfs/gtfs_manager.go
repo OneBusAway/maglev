@@ -410,9 +410,7 @@ func (manager *Manager) stopsMatchingCode(
 	bounds := BoundsFromParams(CodeQueryLocation(loc))
 	within := make([]gtfsdb.Stop, 0, len(candidates))
 	for _, stop := range candidates {
-		inBounds := stop.Lat >= bounds.MinLat && stop.Lat <= bounds.MaxLat &&
-			stop.Lon >= bounds.MinLon && stop.Lon <= bounds.MaxLon
-		if inBounds {
+		if utils.BoundsContain(bounds, stop.Lat, stop.Lon) {
 			within = append(within, stop)
 		}
 	}
@@ -866,6 +864,16 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 	defer manager.realTimeMutex.Unlock()
 
 	manager.feedTrips["_test"] = trips
+	manager.rebuildMergedRealtimeLocked()
+}
+
+// SetRealTimeVehiclesForTest injects real-time vehicles under the synthetic
+// feed ID "_test" so real feed updates do not discard them.
+func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle) {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	manager.feedVehicles["_test"] = vehicles
 	manager.rebuildMergedRealtimeLocked()
 }
 

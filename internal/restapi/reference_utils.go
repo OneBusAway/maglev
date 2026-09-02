@@ -509,19 +509,38 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
-// idsPerBatchedQuery bounds how many IDs go into one IN (...) list. SQLite
-// rejects a statement carrying more bind variables than it allows rather than
+// idsPerBatchedQuery bounds how many IDs go into one IN (...) list, assuming
+// the batched slice is the only bind the statement carries. SQLite rejects a
+// statement carrying more bind variables than it allows rather than
 // truncating it, and these ID sets are only bounded by how much the request
 // matched. Kept well under the oldest limit (999) so the batch size does not
-// depend on which SQLite the build links against.
+// depend on which SQLite the build links against. A statement binding
+// anything besides the batched slice needs queryInBatchesReserving instead,
+// so that budget also accounts for those binds.
 const idsPerBatchedQuery = 900
 
 // queryInBatches runs query over ids in batches small enough to stay under the
 // bind variable limit, concatenating the results.
 func queryInBatches[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	return queryInBatchesReserving(ctx, ids, 0, query)
+}
+
+// queryInBatchesReserving is queryInBatches with reserved slots subtracted
+// from the batch size, for a statement that binds something besides the
+// batched slice — a second IN (...) list, a scalar. Without this, sizing the
+// batch at idsPerBatchedQuery silently assumes the batched slice is the whole
+// statement, and the untracked binds can push the total over the limit.
+//
+// ponytail: assumes the reserved binds themselves fit in one statement. A
+// second dimension large enough on its own to need batching (hundreds of
+// active service IDs on one day, say) would still overflow; batch that
+// dimension too if a feed ever gets there.
+func queryInBatchesReserving[T any](ctx context.Context, ids []string, reserved int,
+	query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	batchSize := max(1, idsPerBatchedQuery-reserved)
 	results := make([]T, 0, len(ids))
-	for start := 0; start < len(ids); start += idsPerBatchedQuery {
-		end := min(start+idsPerBatchedQuery, len(ids))
+	for start := 0; start < len(ids); start += batchSize {
+		end := min(start+batchSize, len(ids))
 		batch, err := query(ctx, ids[start:end])
 		if err != nil {
 			return nil, err

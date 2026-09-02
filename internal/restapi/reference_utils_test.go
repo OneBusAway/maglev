@@ -190,6 +190,45 @@ func TestQueryInBatches(t *testing.T) {
 	})
 }
 
+func TestQueryInBatchesReserving(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("reserved binds shrink the batch size", func(t *testing.T) {
+		// Sized to fit under idsPerBatchedQuery on its own, but not once 200
+		// reserved binds are subtracted from the budget.
+		ids := make([]string, idsPerBatchedQuery-100)
+
+		var batchSizes []int
+		results, err := queryInBatchesReserving(ctx, ids, 200,
+			func(_ context.Context, batch []string) ([]string, error) {
+				batchSizes = append(batchSizes, len(batch))
+				return batch, nil
+			})
+
+		require.NoError(t, err)
+		assert.Len(t, results, len(ids), "batches must still concatenate to the full input")
+		assert.Greater(t, len(batchSizes), 1,
+			"the reserved binds must force more than one batch for this test to mean anything")
+		for _, size := range batchSizes {
+			assert.LessOrEqual(t, size, idsPerBatchedQuery-200,
+				"no batch may exceed the budget left after reserving")
+		}
+	})
+
+	t.Run("zero reserved matches queryInBatches", func(t *testing.T) {
+		ids := make([]string, idsPerBatchedQuery+1)
+		batches := 0
+		_, err := queryInBatchesReserving(ctx, ids, 0,
+			func(context.Context, []string) ([]string, error) {
+				batches++
+				return nil, nil
+			})
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, batches)
+	})
+}
+
 func TestStopReferences(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
