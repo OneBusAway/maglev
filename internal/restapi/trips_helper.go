@@ -613,31 +613,45 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 	}
 }
 
+// delayedStopTimeSeconds returns the scheduled stop-time in seconds since
+// service-date midnight, shifted by whatever real-time delay applies to that
+// stop visit. It reports false when the stop-time carries neither an arrival
+// nor a departure, which both callers skip.
+//
+// NOTE: Intentionally prefers DepartureTime over ArrivalTime, unlike
+// utils.EffectiveStopTimeSeconds which prefers arrival. When per-stop delays
+// are available (from GTFS-RT StopTimeUpdates), departure delays are the more
+// relevant metric for predicting when the vehicle leaves a stop.
+func delayedStopTimeSeconds(st *gtfsdb.StopTime, stopDelays StopDelays) (int64, bool) {
+	var stopTimeSeconds int64
+	switch {
+	case st.DepartureTime > 0:
+		stopTimeSeconds = utils.NanosToSeconds(st.DepartureTime)
+	case st.ArrivalTime > 0:
+		stopTimeSeconds = utils.NanosToSeconds(st.ArrivalTime)
+	default:
+		return 0, false
+	}
+
+	if delayInfo, exists := stopDelays.For(st.StopID, st.StopSequence); exists {
+		if st.DepartureTime > 0 && delayInfo.DepartureDelay != 0 {
+			stopTimeSeconds += delayInfo.DepartureDelay
+		} else if delayInfo.ArrivalDelay != 0 {
+			stopTimeSeconds += delayInfo.ArrivalDelay
+		}
+	}
+	return stopTimeSeconds, true
+}
+
 func findClosestStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, stopTimes []*gtfsdb.StopTime, stopDelays StopDelays) (stopID string, offset int) {
 	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 	var minTimeDiff int64 = math.MaxInt64
 	var closestStopTimeSeconds int64
 
 	for _, st := range stopTimes {
-		// NOTE: Intentionally prefers DepartureTime over ArrivalTime, unlike
-		// EffectiveStopTimeSeconds which prefers arrival. When per-stop delays
-		// are available (from GTFS-RT StopTimeUpdates), departure delays are the
-		// more relevant metric for predicting when the vehicle leaves a stop.
-		var stopTimeSeconds int64
-		if st.DepartureTime > 0 {
-			stopTimeSeconds = utils.NanosToSeconds(st.DepartureTime)
-		} else if st.ArrivalTime > 0 {
-			stopTimeSeconds = utils.NanosToSeconds(st.ArrivalTime)
-		} else {
+		stopTimeSeconds, usable := delayedStopTimeSeconds(st, stopDelays)
+		if !usable {
 			continue
-		}
-
-		if delayInfo, exists := stopDelays.For(st.StopID, st.StopSequence); exists {
-			if st.DepartureTime > 0 && delayInfo.DepartureDelay != 0 {
-				stopTimeSeconds += delayInfo.DepartureDelay
-			} else if delayInfo.ArrivalDelay != 0 {
-				stopTimeSeconds += delayInfo.ArrivalDelay
-			}
 		}
 
 		timeDiff := int64(math.Abs(float64(currentTimeSeconds - stopTimeSeconds)))
@@ -661,24 +675,9 @@ func findNextStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, 
 	var nextStopTimeSeconds int64
 
 	for _, st := range stopTimes {
-		// NOTE: Intentionally prefers DepartureTime over ArrivalTime, unlike
-		// EffectiveStopTimeSeconds which prefers arrival. See comment in
-		// findClosestStopByTimeWithDelays for rationale.
-		var stopTimeSeconds int64
-		if st.DepartureTime > 0 {
-			stopTimeSeconds = utils.NanosToSeconds(st.DepartureTime)
-		} else if st.ArrivalTime > 0 {
-			stopTimeSeconds = utils.NanosToSeconds(st.ArrivalTime)
-		} else {
+		stopTimeSeconds, usable := delayedStopTimeSeconds(st, stopDelays)
+		if !usable {
 			continue
-		}
-
-		if delayInfo, exists := stopDelays.For(st.StopID, st.StopSequence); exists {
-			if st.DepartureTime > 0 && delayInfo.DepartureDelay != 0 {
-				stopTimeSeconds += delayInfo.DepartureDelay
-			} else if delayInfo.ArrivalDelay != 0 {
-				stopTimeSeconds += delayInfo.ArrivalDelay
-			}
 		}
 
 		if stopTimeSeconds > currentTimeSeconds {
