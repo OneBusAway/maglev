@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 )
 
 // loggerKey is used to store the logger in context
@@ -45,7 +46,7 @@ func LogOperation(logger *slog.Logger, operation string, attrs ...slog.Attr) {
 	args := make([]any, 0, len(attrs))
 	for _, attr := range attrs {
 		// Skip zero-value durations to avoid cluttering logs with meaningless timing data
-		if attr.Key == "duration" && attr.Value.Duration() == 0 {
+		if strings.HasPrefix(attr.Key, "duration") && attr.Value.Duration() == 0 {
 			continue
 		}
 		args = append(args, attr)

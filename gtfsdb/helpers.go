@@ -208,10 +208,10 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	defer func() {
 		endTime := time.Now()
 
-		c.importRuntime = time.Duration(endTime.Sub(startTime))
+		c.importRuntime = endTime.Sub(startTime)
 
 		logging.LogOperation(logger, "gtfs_data_import_completed",
-			slog.Float64("duration_ms", float64(c.importRuntime)/float64(time.Millisecond)),
+			slog.Duration("duration_ms", c.importRuntime/time.Millisecond),
 			slog.String("source", data.Source))
 	}()
 
