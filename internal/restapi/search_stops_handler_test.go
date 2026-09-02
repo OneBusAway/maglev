@@ -638,18 +638,26 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'two_school_routes_stop', 2, 28800, 28800);
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_2', 'two_school_routes_stop', 1, 28800, 28800);
 
-		-- Stops for maxCount filtering test
+		-- Stops for maxCount filtering test. The ghosts carry a revenue-passing stop time on
+		-- the school-bus route so they survive the SQL revenue filter and reach the maxCount
+		-- truncation, then get dropped by the Go route-type filter (single route, type 712).
 		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_ghost_1', 'Limit Test Ghost 1', 40.0, -120.0, 0);
 		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_ghost_2', 'Limit Test Ghost 2', 40.0, -120.0, 0);
 		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('limit_valid_3', 'Limit Test Valid 3', 40.0, -120.0, 0);
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'limit_ghost_1', 3, 28800, 28800);
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('school_trip_1', 'limit_ghost_2', 4, 28800, 28800);
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('valid_trip_1', 'limit_valid_3', 2, 28800, 28800);
 	`)
 	require.NoError(t, err)
 
-	// Test 0 routes exclusion
+	// Test exclusion of a stop with no stop_times. zero_route_stop is dropped by the SQL
+	// revenue filter, which is now what excludes a routeless stop in practice: routes are
+	// derived through stop_times, so a stop with none has no routes either. The handler's
+	// own len(routeIDs) == 0 guard is unreachable behind this filter while foreign keys are
+	// enforced, since a revenue stop time implies a trip implies an existing route.
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ghost"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List, "Expected Ghost Stop to be excluded (0 routes)")
+	assert.Empty(t, stopsResp.Data.List, "Expected Ghost Stop to be excluded (no stop_times, so no revenue service)")
 
 	// Test School bus exclusion
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Single Special"}}))
@@ -675,7 +683,80 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, stopsResp.Data.LimitExceeded, "Expected LimitExceeded to be true because FTS query matched 3 limits")
 	// SearchStopsByName orders by stop ID, so the 3 matches are fetched as limit_ghost_1,
-	// limit_ghost_2, limit_valid_3; truncating to maxCount=2 leaves the two zero-route
-	// ghosts, both of which the filter drops.
+	// limit_ghost_2, limit_valid_3; truncating to maxCount=2 leaves the two single-route
+	// school-bus ghosts, both of which the route-type filter drops.
 	assert.Empty(t, stopsResp.Data.List, "Expected no items after filtering truncated results")
+}
+
+func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	db := api.GtfsManager.GtfsDB.DB
+
+	registerFixtureCleanup(t, db,
+		`DELETE FROM stop_times WHERE trip_id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
+		`DELETE FROM trips WHERE id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
+		`DELETE FROM routes WHERE id = 'revenue_route_1'`,
+		`DELETE FROM stops WHERE id IN ('revenue_both_restricted', 'revenue_pickup_only', 'revenue_dropoff_only', 'revenue_phone_agency', 'revenue_coordinate_driver', 'revenue_null_columns')`,
+	)
+
+	// Every fixture stop is served by the same single type-3 (Bus) route, so the route-type
+	// filter cannot confound the result - only the revenue filter is under test.
+	_, err := db.Exec(`
+		INSERT OR IGNORE INTO agencies (id, name, url, timezone) VALUES ('RABA', 'RABA', 'http://raba.com', 'America/Los_Angeles');
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20230101', '20251231');
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('revenue_route_1', 'RABA', 'Revenue Route', 3);
+
+		-- Both pickup and drop-off restricted: excluded. A stored 1 only ever comes from a
+		-- literal 1 in the feed, never from an omitted or blank column, so this is an
+		-- unambiguous "no boarding here".
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_both_restricted', 'Revenue Test Both Restricted', 40.0, -120.0, 0);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_1', 'revenue_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_1', 'revenue_both_restricted', 1, 28800, 28800, 1, 1);
+
+		-- Unrestricted pickup only: included.
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_pickup_only', 'Revenue Test Pickup Only', 40.0, -120.0, 0);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_2', 'revenue_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_2', 'revenue_pickup_only', 1, 28800, 28800, 0, 1);
+
+		-- Unrestricted drop-off only: included.
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_dropoff_only', 'Revenue Test Dropoff Only', 40.0, -120.0, 0);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_3', 'revenue_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_3', 'revenue_dropoff_only', 1, 28800, 28800, 1, 0);
+
+		-- Phone-agency pickup and drop-off (type 2): excluded. Pins the "== 0" rule against a "!= 1" regression.
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_phone_agency', 'Revenue Test Phone Agency', 40.0, -120.0, 0);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_4', 'revenue_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_4', 'revenue_phone_agency', 1, 28800, 28800, 2, 2);
+
+		-- Coordinate-with-driver pickup and drop-off (type 3): excluded, same as type 2.
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_coordinate_driver', 'Revenue Test Coordinate Driver', 40.0, -120.0, 0);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_6', 'revenue_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time, pickup_type, drop_off_type) VALUES ('revenue_trip_6', 'revenue_coordinate_driver', 1, 28800, 28800, 3, 3);
+
+		-- pickup_type/drop_off_type omitted (NULL in storage): included. Import reaches this
+		-- shape from either an explicit 0 or an absent/blank column, both of which GTFS
+		-- defines as unrestricted; toNullInt64 then stores that 0 as NULL. Covered against
+		-- the importer in gtfsdb.TestImportedStopTimesOmittingPickupColumns.
+		INSERT INTO stops (id, name, lat, lon, location_type) VALUES ('revenue_null_columns', 'Revenue Test Null Columns', 40.0, -120.0, 0);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('revenue_trip_5', 'revenue_route_1', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('revenue_trip_5', 'revenue_null_columns', 1, 28800, 28800);
+	`)
+	require.NoError(t, err)
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Revenue Test"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	names := make([]string, 0, len(stopsResp.Data.List))
+	for _, stop := range stopsResp.Data.List {
+		names = append(names, stop.Name)
+	}
+
+	assert.NotContains(t, names, "Revenue Test Both Restricted", "stop with no unrestricted pickup/drop-off must be excluded")
+	assert.NotContains(t, names, "Revenue Test Phone Agency", "phone-agency-only pickup/drop-off (type 2) must be excluded, not just type 1")
+	assert.NotContains(t, names, "Revenue Test Coordinate Driver", "coordinate-with-driver-only pickup/drop-off (type 3) must be excluded, not just type 1")
+	assert.Contains(t, names, "Revenue Test Pickup Only")
+	assert.Contains(t, names, "Revenue Test Dropoff Only")
+	assert.Contains(t, names, "Revenue Test Null Columns", "NULL pickup_type/drop_off_type must be treated as unrestricted (type 0)")
 }
