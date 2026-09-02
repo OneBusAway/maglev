@@ -49,6 +49,7 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 					logging.LogError(logger, "handler panic recovered", err,
 						slog.String("path", r.URL.Path),
 						slog.String("method", r.Method),
+						slog.String("request_id", reqID),
 						slog.String("stack", string(stack)))
 					if !rw.wroteHeader {
 						w.Header().Set("Content-Type", "application/json")
