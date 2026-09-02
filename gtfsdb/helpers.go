@@ -211,7 +211,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		c.importRuntime = endTime.Sub(startTime)
 
 		logging.LogOperation(logger, "gtfs_data_import_completed",
-			slog.Duration("duration_ms", c.importRuntime/time.Millisecond),
+			slog.Duration("duration_ms", c.importRuntime),
 			slog.String("source", data.Source))
 	}()
 
