@@ -338,7 +338,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			for _, a := range agencies {
 				loc, err := loadAgencyLocation(a.ID, a.Timezone)
 				if err != nil {
-					api.Logger.Warn("trips-for-route: invalid agency timezone", "agency_id", a.ID, "error", err)
+					reqLogger.Warn("trips-for-route: invalid agency timezone", "agency_id", a.ID, "error", err)
 					continue
 				}
 				agencyLocations[a.ID] = loc
@@ -441,7 +441,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// vehicle's block" — both relative to the entry's trip identity.
 		activeResolver, ok := serviceDatesByAgency[activeAgencyID]
 		if !ok {
-			api.Logger.Warn("trips-for-route: missing service date resolver for active agency", "agency_id", activeAgencyID)
+			reqLogger.Warn("trips-for-route: missing service date resolver for active agency", "agency_id", activeAgencyID)
 			continue
 		}
 		activeMidnight := activeResolver.Resolve(fetchedTrip)
@@ -454,7 +454,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		if entryTrip, ok := tripsByID[entryTripID]; ok {
 			entryResolver, ok := serviceDatesByAgency[entryAgencyID]
 			if !ok {
-				api.Logger.Warn("trips-for-route: missing service date resolver for entry agency", "agency_id", entryAgencyID)
+				reqLogger.Warn("trips-for-route: missing service date resolver for entry agency", "agency_id", entryAgencyID)
 				continue
 			}
 			entryMidnight = entryResolver.Resolve(entryTrip)

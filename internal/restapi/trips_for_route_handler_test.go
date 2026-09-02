@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -104,7 +103,6 @@ func createTestApiWithGTFSFixture(t *testing.T, c clock.Clock, zipName string, f
 	}
 
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	t.Cleanup(api.Shutdown)
 	return api
 }

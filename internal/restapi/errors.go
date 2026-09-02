@@ -13,7 +13,7 @@ import (
 
 // invalidAPIKeyResponse sends a 401 Unauthorized response with the required format
 // for invalid API key errors
-func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter) {
+func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter, r *http.Request) {
 	// Create response with the specific format required
 	response := struct {
 		Code        int    `json:"code"`
@@ -27,11 +27,12 @@ func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter) {
 		Version:     models.APIVersion,
 	}
 
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to encode invalid API key response", err)
+		logging.LogError(reqLogger, "failed to encode invalid API key response", err)
 	}
 }
 
