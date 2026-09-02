@@ -950,11 +950,11 @@ func (s *tripReferenceSets) collectTripIDsFromEntries(entries []models.TripsForR
 
 // fillMissingTrips loads the trips that were noted by ID but never fetched.
 func (api *RestAPI) fillMissingTrips(ctx context.Context, sets *tripReferenceSets) {
-	reqLogger := logging.ForComponent(ctx, "http_server")
 	if len(sets.missing) == 0 {
 		return
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	missingIDs := make([]string, 0, len(sets.missing))
 	for id := range sets.missing {
 		missingIDs = append(missingIDs, id)
