@@ -679,3 +679,71 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	// ghosts, both of which the filter drops.
 	assert.Empty(t, stopsResp.Data.List, "Expected no items after filtering truncated results")
 }
+
+func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	db := api.GtfsManager.GtfsDB.DB
+
+	registerFixtureCleanup(t, db,
+		`DELETE FROM stop_times WHERE trip_id IN ('child_trip', 'parent_trip')`,
+		`DELETE FROM trips WHERE id IN ('child_trip', 'parent_trip')`,
+		`DELETE FROM routes WHERE id IN ('child_route', 'parent_route')`,
+		`DELETE FROM stops WHERE id IN ('child_stop_cross', 'parent_station_cross')`,
+		`DELETE FROM agencies WHERE id IN ('888', '999')`,
+	)
+
+	// Insert mock data for cross-agency verification
+	_, err := db.Exec(`
+		INSERT INTO agencies (id, name, url, timezone) VALUES ('888', 'Agency 888', 'http://agency888.com', 'America/Los_Angeles');
+		INSERT INTO agencies (id, name, url, timezone) VALUES ('999', 'Agency 999', 'http://agency999.com', 'America/Los_Angeles');
+
+		-- Child stop belonging to Agency 888, with parent station
+		INSERT INTO stops (id, name, lat, lon, location_type, parent_station)
+		VALUES ('child_stop_cross', 'Child Stop Cross Agency', 40.0, -120.0, 0, 'parent_station_cross');
+
+		-- Parent station
+		INSERT INTO stops (id, name, lat, lon, location_type)
+		VALUES ('parent_station_cross', 'Parent Station Cross Agency', 40.0, -120.0, 1);
+
+		-- Route serving child stop (Agency 888)
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('child_route', '888', 'Child Route', 3);
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20230101', '20251231');
+		INSERT INTO trips (id, route_id, service_id) VALUES ('child_trip', 'child_route', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('child_trip', 'child_stop_cross', 1, 28800, 28800);
+
+		-- Route serving parent station (Agency 999)
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('parent_route', '999', 'Parent Route', 3);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('parent_trip', 'parent_route', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('parent_trip', 'parent_station_cross', 1, 29000, 29000);
+	`)
+	require.NoError(t, err)
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop Cross"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, stopsResp.Data.List, 1)
+
+	// Verify references.routes contains the parent route (999_parent_route)
+	var foundParentRoute bool
+	for _, route := range stopsResp.Data.References.Routes {
+		if route.ID == "999_parent_route" {
+			foundParentRoute = true
+			break
+		}
+	}
+	assert.True(t, foundParentRoute, "Expected 999_parent_route in references.routes")
+
+	// Verify references.agencies contains Agency 999 (the parent route's agency)
+	var foundParentAgency bool
+	for _, agency := range stopsResp.Data.References.Agencies {
+		if agency.ID == "999" {
+			foundParentAgency = true
+			break
+		}
+	}
+	assert.True(t, foundParentAgency, "Expected Agency 999 in references.agencies")
+}
