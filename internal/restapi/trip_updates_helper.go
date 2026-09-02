@@ -477,11 +477,44 @@ func (api *RestAPI) blockShiftTripIDsSortedByStartTime(ctx context.Context, targ
 	return out
 }
 
-// GetStopDelaysFromTripUpdates returns a map of stop ID → per-stop delay information
-// (arrival and departure delays in seconds) derived from the GTFS-RT StopTimeUpdates
-// for the given trip. Returns an empty map when no real-time data is available.
-func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopDelayInfo {
-	delays := make(map[string]StopDelayInfo)
+// StopDelays holds the per-stop-visit delays from a TripUpdate. Entries are
+// keyed by stop_sequence when the feed provides it, because stop_id alone
+// cannot tell two visits to the same stop apart on a loop trip. The stop_id
+// map is the fallback for feeds that omit stop_sequence, matching the order
+// matchScheduleEntry uses for the same problem.
+type StopDelays struct {
+	bySequence map[int64]StopDelayInfo
+	byStopID   map[string]StopDelayInfo
+}
+
+// For returns the delay for one scheduled stop-time, trying stop_sequence
+// before stop_id. The zero value is safe to query and reports nothing.
+func (d StopDelays) For(stopID string, stopSequence int64) (StopDelayInfo, bool) {
+	if info, ok := d.bySequence[stopSequence]; ok {
+		return info, true
+	}
+	info, ok := d.byStopID[stopID]
+	return info, ok
+}
+
+// Len reports how many StopTimeUpdates contributed an entry.
+func (d StopDelays) Len() int {
+	if len(d.bySequence) > len(d.byStopID) {
+		return len(d.bySequence)
+	}
+	return len(d.byStopID)
+}
+
+// GetStopDelaysFromTripUpdates returns the per-stop delay information (arrival
+// and departure delays in seconds) derived from the GTFS-RT StopTimeUpdates for
+// the given trip. A StopTimeUpdate needs either stop_sequence or stop_id to be
+// usable; one with neither is skipped. Returns an empty value when no real-time
+// data is available.
+func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) StopDelays {
+	delays := StopDelays{
+		bySequence: make(map[int64]StopDelayInfo),
+		byStopID:   make(map[string]StopDelayInfo),
+	}
 
 	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
 	if len(tripUpdates) == 0 {
@@ -489,7 +522,7 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopD
 	}
 
 	for _, stu := range tripUpdates[0].StopTimeUpdates {
-		if stu.StopID == nil {
+		if stu.StopID == nil && stu.StopSequence == nil {
 			continue
 		}
 
@@ -501,7 +534,12 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopD
 			info.DepartureDelay = int64(stu.Departure.Delay.Seconds())
 		}
 
-		delays[*stu.StopID] = info
+		if stu.StopSequence != nil {
+			delays.bySequence[int64(*stu.StopSequence)] = info
+		}
+		if stu.StopID != nil {
+			delays.byStopID[*stu.StopID] = info
+		}
 	}
 
 	return delays

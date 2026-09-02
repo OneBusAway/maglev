@@ -613,7 +613,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 	}
 }
 
-func findClosestStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, stopTimes []*gtfsdb.StopTime, stopDelays map[string]StopDelayInfo) (stopID string, offset int) {
+func findClosestStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, stopTimes []*gtfsdb.StopTime, stopDelays StopDelays) (stopID string, offset int) {
 	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 	var minTimeDiff int64 = math.MaxInt64
 	var closestStopTimeSeconds int64
@@ -632,13 +632,11 @@ func findClosestStopByTimeWithDelays(currentTime time.Time, serviceDate time.Tim
 			continue
 		}
 
-		if stopDelays != nil {
-			if delayInfo, exists := stopDelays[st.StopID]; exists {
-				if st.DepartureTime > 0 && delayInfo.DepartureDelay != 0 {
-					stopTimeSeconds += delayInfo.DepartureDelay
-				} else if delayInfo.ArrivalDelay != 0 {
-					stopTimeSeconds += delayInfo.ArrivalDelay
-				}
+		if delayInfo, exists := stopDelays.For(st.StopID, st.StopSequence); exists {
+			if st.DepartureTime > 0 && delayInfo.DepartureDelay != 0 {
+				stopTimeSeconds += delayInfo.DepartureDelay
+			} else if delayInfo.ArrivalDelay != 0 {
+				stopTimeSeconds += delayInfo.ArrivalDelay
 			}
 		}
 
@@ -657,7 +655,7 @@ func findClosestStopByTimeWithDelays(currentTime time.Time, serviceDate time.Tim
 	return
 }
 
-func findNextStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, stopTimes []*gtfsdb.StopTime, stopDelays map[string]StopDelayInfo) (stopID string, offset int) {
+func findNextStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, stopTimes []*gtfsdb.StopTime, stopDelays StopDelays) (stopID string, offset int) {
 	currentTimeSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 	var minTimeDiff int64 = math.MaxInt64
 	var nextStopTimeSeconds int64
@@ -675,13 +673,11 @@ func findNextStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, 
 			continue
 		}
 
-		if stopDelays != nil {
-			if delayInfo, exists := stopDelays[st.StopID]; exists {
-				if st.DepartureTime > 0 && delayInfo.DepartureDelay != 0 {
-					stopTimeSeconds += delayInfo.DepartureDelay
-				} else if delayInfo.ArrivalDelay != 0 {
-					stopTimeSeconds += delayInfo.ArrivalDelay
-				}
+		if delayInfo, exists := stopDelays.For(st.StopID, st.StopSequence); exists {
+			if st.DepartureTime > 0 && delayInfo.DepartureDelay != 0 {
+				stopTimeSeconds += delayInfo.DepartureDelay
+			} else if delayInfo.ArrivalDelay != 0 {
+				stopTimeSeconds += delayInfo.ArrivalDelay
 			}
 		}
 
