@@ -245,15 +245,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		var statusErr error
 		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, nil)
 		if statusErr != nil {
-<<<<<<< HEAD
-			reqLogger.Warn("BuildTripStatus failed",
-				"trip_id", trip.ID,
-				"error", statusErr.Error())
-			status = nil
-=======
 			api.serverErrorResponse(w, r, statusErr)
 			return
->>>>>>> main
 		}
 
 		// Extension 4e: Explicitly nil out the status if there is no actual tracking record.
