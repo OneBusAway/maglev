@@ -199,15 +199,12 @@ func TestRealTimeDataConsistency(t *testing.T) {
 // newTestManager creates a minimal Manager for tests that only exercise realtime code
 func newTestManager() *Manager {
 	return &Manager{
-		realTimeMutex:                  sync.RWMutex{},
-		realTimeTripLookup:             make(map[string]int),
-		realTimeVehicleLookupByTrip:    make(map[string]int),
-		realTimeVehicleLookupByVehicle: make(map[string]int),
-		feedTrips:                      make(map[string][]gtfs.Trip),
-		feedVehicles:                   make(map[string][]gtfs.Vehicle),
-		feedAlerts:                     make(map[string][]gtfs.Alert),
-		feedAgencyFilter:               make(map[string]map[string]bool),
-		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
-		feedVehicleTimestamp:           make(map[string]uint64),
+		realTimeMutex:        sync.RWMutex{},
+		feedTrips:            make(map[string][]gtfs.Trip),
+		feedVehicles:         make(map[string][]gtfs.Vehicle),
+		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedAgencyFilter:     make(map[string]map[string]bool),
+		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleTimestamp: make(map[string]uint64),
 	}
 }

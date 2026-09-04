@@ -306,15 +306,21 @@ The GTFS Manager (`internal/gtfs/gtfs_manager.go`) maintains:
 - `feedAlerts` - `map[string][]gtfs.Alert` — alerts per feed
 - `feedVehicleLastSeen` - `map[string]map[string]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
 
-*Derived merged view* (rebuilt by `rebuildMergedRealtimeLocked` after each feed update):
-- `realTimeTrips` - Concatenation of all `feedTrips` values
-- `realTimeVehicles` - Concatenation of all `feedVehicles` values
-- `realTimeAlerts` - Concatenation of all `feedAlerts` values
-- `realTimeTripLookup` - Map of trip ID → index for O(1) lookup
-- `realTimeVehicleLookupByTrip` - Map of trip ID → vehicle index
-- `realTimeVehicleLookupByVehicle` - Map of vehicle ID → vehicle index
+*Derived merged view*, published by `rebuildMergedRealtimeLocked` after each feed
+update as one immutable `mergedRealtime` snapshot held in `merged
+atomic.Pointer[mergedRealtime]`. Read it with `manager.mergedRealtime()`, which
+needs **no lock**. Never mutate what it returns:
+- `trips` - Concatenation of all `feedTrips` values
+- `vehicles` - Concatenation of all `feedVehicles` values
+- `tripLookup` - Map of trip ID → index for O(1) lookup
+- `vehicleLookupByTrip` - Map of trip ID → vehicle index
+- `vehicleLookupByVehicle` - Map of vehicle ID → vehicle index
+- `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
+- `alerts` - `alertIndex` of alerts by trip, route, agency and stop
 
-When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. The merged slices are then rebuilt from all sub-maps.
+When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
+
+`realTimeMutex` still guards the per-feed maps above, and writers hold it across the rebuild. It no longer protects the merged view, so no read path acquires it.
 
 **Direction Calculator** (shape-based direction inference):
 - `DirectionCalculator` - Precomputed stop directions from shape geometry

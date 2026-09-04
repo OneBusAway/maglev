@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"net/http"
 	"slices"
@@ -25,6 +26,80 @@ type alertIndex struct {
 	byRoute  map[string][]gtfs.Alert
 	byAgency map[string][]gtfs.Alert
 	byStop   map[string][]gtfs.Alert
+}
+
+// mergedRealtime is the merged view of every realtime feed, published as a
+// single immutable value.
+//
+// INVARIANT: nothing reachable from a mergedRealtime is mutated after it is
+// stored. rebuildMergedRealtimeLocked always builds a fresh one, and the mock
+// helpers copy before they write. That is what lets readers load it without
+// holding realTimeMutex.
+type mergedRealtime struct {
+	trips                    []gtfs.Trip
+	vehicles                 []gtfs.Vehicle
+	tripLookup               map[string]int
+	vehicleLookupByTrip      map[string]int
+	vehicleLookupByVehicle   map[string]int
+	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
+	alerts                   alertIndex
+}
+
+// emptyMergedRealtime is returned before the first publish so a zero-value
+// Manager, which several tests construct, reads as empty rather than panicking.
+var emptyMergedRealtime = &mergedRealtime{
+	tripLookup:               map[string]int{},
+	vehicleLookupByTrip:      map[string]int{},
+	vehicleLookupByVehicle:   map[string]int{},
+	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
+	alerts: alertIndex{
+		byTrip:   map[string][]gtfs.Alert{},
+		byRoute:  map[string][]gtfs.Alert{},
+		byAgency: map[string][]gtfs.Alert{},
+		byStop:   map[string][]gtfs.Alert{},
+	},
+}
+
+// mergedRealtime loads the current snapshot. Lock-free: callers must not hold
+// realTimeMutex for this and must not mutate what they get back.
+func (manager *Manager) mergedRealtime() *mergedRealtime {
+	if m := manager.merged.Load(); m != nil {
+		return m
+	}
+	return emptyMergedRealtime
+}
+
+// clone returns a shallow copy whose maps and slices can be mutated without
+// touching the published snapshot. Used only by the Mock* helpers, which build
+// the merged view directly instead of going through the feed maps.
+func (m *mergedRealtime) clone() *mergedRealtime {
+	out := &mergedRealtime{
+		trips:                    slices.Clone(m.trips),
+		vehicles:                 slices.Clone(m.vehicles),
+		tripLookup:               maps.Clone(m.tripLookup),
+		vehicleLookupByTrip:      maps.Clone(m.vehicleLookupByTrip),
+		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
+		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
+		alerts: alertIndex{
+			byTrip:   maps.Clone(m.alerts.byTrip),
+			byRoute:  maps.Clone(m.alerts.byRoute),
+			byAgency: maps.Clone(m.alerts.byAgency),
+			byStop:   maps.Clone(m.alerts.byStop),
+		},
+	}
+	if out.tripLookup == nil {
+		out.tripLookup = map[string]int{}
+	}
+	if out.vehicleLookupByTrip == nil {
+		out.vehicleLookupByTrip = map[string]int{}
+	}
+	if out.vehicleLookupByVehicle == nil {
+		out.vehicleLookupByVehicle = map[string]int{}
+	}
+	if out.duplicatedVehicleByRoute == nil {
+		out.duplicatedVehicleByRoute = map[string][]gtfs.Vehicle{}
+	}
+	return out
 }
 
 // staleVehicleTimeout is the duration after which a vehicle is considered stale
@@ -108,21 +183,15 @@ func (manager *Manager) cleanupExpiredVehicles(feedID string) {
 }
 
 func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-	return manager.realTimeTrips
+	return manager.mergedRealtime().trips
 }
 
 func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-	return manager.realTimeVehicles
+	return manager.mergedRealtime().vehicles
 }
 
-// It acquires the realTimeMutex internally; callers must NOT hold it.
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
+	idx := manager.mergedRealtime().alerts
 
 	seen := make(map[string]struct{})
 	var alerts []gtfs.Alert
@@ -138,13 +207,13 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 	}
 
 	if tripID != "" {
-		addUnique(manager.alertIdx.byTrip[tripID])
+		addUnique(idx.byTrip[tripID])
 	}
 	if routeID != "" {
-		addUnique(manager.alertIdx.byRoute[routeID])
+		addUnique(idx.byRoute[routeID])
 	}
 	if agencyID != "" {
-		addUnique(manager.alertIdx.byAgency[agencyID])
+		addUnique(idx.byAgency[agencyID])
 	}
 	return alerts
 }
@@ -184,9 +253,7 @@ func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []g
 // Deduplication by alert ID is done internally so callers never receive
 // duplicate entries even when the same alert ID appears in multiple feeds.
 func (manager *Manager) GetAlertsForStop(stopID string) []gtfs.Alert {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-	src := manager.alertIdx.byStop[stopID]
+	src := manager.mergedRealtime().alerts.byStop[stopID]
 	if len(src) == 0 {
 		return nil
 	}
@@ -696,13 +763,15 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 
-	manager.realTimeTrips = allTrips
-	manager.realTimeVehicles = allVehicles
-	manager.realTimeTripLookup = tripLookup
-	manager.realTimeVehicleLookupByTrip = vehicleLookupByTrip
-	manager.realTimeVehicleLookupByVehicle = vehicleLookupByVehicle
-	manager.duplicatedVehicleByRoute = duplicatedVehicleByRoute
-	manager.alertIdx = idx
+	manager.merged.Store(&mergedRealtime{
+		trips:                    allTrips,
+		vehicles:                 allVehicles,
+		tripLookup:               tripLookup,
+		vehicleLookupByTrip:      vehicleLookupByTrip,
+		vehicleLookupByVehicle:   vehicleLookupByVehicle,
+		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
+		alerts:                   idx,
+	})
 }
 
 // calculateBackoff computes the next polling interval using exponential backoff with jitter
