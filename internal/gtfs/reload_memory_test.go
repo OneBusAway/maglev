@@ -125,7 +125,7 @@ func TestReloadMemory_LargeAgency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize GTFS Manager with large agency data: %v", err)
 	}
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	// Force GC after init to stabilize
 	runtime.GC()
@@ -350,7 +350,7 @@ func TestReloadMemory_SmallAgencyBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	runtime.GC()
 	debug.FreeOSMemory()
@@ -415,7 +415,7 @@ func BenchmarkReloadMemory_LargeAgency(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to init: %v", err)
 	}
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	// Warm up
 	runtime.GC()

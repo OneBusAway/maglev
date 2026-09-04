@@ -261,17 +261,39 @@ func (manager *Manager) SetGtfsURL(url string) {
 }
 
 // Shutdown gracefully shuts down the manager and its background goroutines
-func (manager *Manager) Shutdown() {
+// Shutdown stops background workers and closes the database. It waits for the
+// workers to finish, but only until ctx is done: a real-time feed fetch that
+// never returns would otherwise block the caller forever. On timeout it logs,
+// returns the context error, and still closes the database.
+func (manager *Manager) Shutdown(ctx context.Context) error {
+	var err error
 	manager.shutdownOnce.Do(func() {
 		close(manager.shutdownChan)
-		manager.wg.Wait()
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+
+		done := make(chan struct{})
+		go func() {
+			manager.wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-ctx.Done():
+			err = fmt.Errorf("waiting for background workers: %w", ctx.Err())
+			logging.LogError(logger, "shutdown timed out, closing database anyway", err)
+		}
+
 		if manager.GtfsDB != nil {
-			if err := manager.GtfsDB.Close(); err != nil {
-				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-				logging.LogError(logger, "failed to close GTFS database", err)
+			if closeErr := manager.GtfsDB.Close(); closeErr != nil {
+				logging.LogError(logger, "failed to close GTFS database", closeErr)
+				if err == nil {
+					err = closeErr
+				}
 			}
 		}
 	})
+	return err
 }
 
 // GetAgencies returns all agencies from the database.
