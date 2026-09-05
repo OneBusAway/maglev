@@ -1418,6 +1418,11 @@ func TestTripsForRouteHandler_OvernightInterlinedBlock(t *testing.T) {
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
 	assert.Equal(t, expectedServiceDate, entry.Status.ServiceDate.UnixMilli())
+
+	// The schedule must be resolved on the trip's service day (yesterday)
+	// so that adjacent trips (like tfr-yest-b) are found.
+	require.NotNil(t, entry.Schedule)
+	assert.Equal(t, expectedActiveTripID, entry.Schedule.NextTripId)
 }
 
 // TestTripsForRouteHandler_LoopingRouteBlock verifies that when a block visits

@@ -416,10 +416,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			// per-active-block guarantee rather than dropping the entry.
 		}
 
+		// Resolve service date from the active trip (keyed in tripServiceDay).
+		// All trips in a block share the same service day.
+		serviceDate := serviceDateFor(tripServiceDay, tripID, todayMidnight)
+
 		var schedule *models.TripsSchedule
 		if includeSchedule {
 			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, currentTime, currentLocation, freqMap)
+			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, serviceDate, currentLocation, freqMap)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
@@ -428,14 +432,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
-		// Per spec, serviceDate is "Unix millisecond timestamp of midnight at
-		// the start of the service day for this trip." A trip running past
-		// midnight was matched via the previous service day, so its service day
-		// starts at yesterday's midnight, not today's.
-		serviceDate := serviceDateFor(tripServiceDay, tripID, todayMidnight)
-
-		// Build status from the active trip (tripID). Per spec,
-		// status.activeTripId is "the trip the vehicle is currently executing."
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
@@ -507,25 +503,24 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		var schedule *models.TripsSchedule
-		if includeSchedule {
-			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, baseTripID, agencyID, currentTime, currentLocation, freqMap)
-			if schedErr != nil {
-				api.serverErrorResponse(w, r, schedErr)
-				return
-			}
-			collectStopIDsFromSchedule(schedule, stopIDsMap)
-		}
-
 		serviceDate := serviceDateFor(tripServiceDay, baseTripID, todayMidnight)
-		// DUPLICATED trips skip the discovery windows: if the base trip's
-		// window overlaps the previous day's window, the run is yesterday's.
+		// If the base trip's window overlaps yesterday's range, use yesterday.
 		if serviceDate == todayMidnight && baseTripErr == nil &&
 			tripWindowOverlapsRange(baseTrip,
 				prevDaySinceMidnight+timeRangeStart-currentSinceMidnight,
 				prevDaySinceMidnight+timeRangeEnd-currentSinceMidnight) {
 			serviceDate = prevDayMidnight
+		}
+
+		var schedule *models.TripsSchedule
+		if includeSchedule {
+			var schedErr error
+			schedule, schedErr = api.buildScheduleForTrip(ctx, baseTripID, agencyID, serviceDate, currentLocation, freqMap)
+			if schedErr != nil {
+				api.serverErrorResponse(w, r, schedErr)
+				return
+			}
+			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
 		var status *models.TripStatus
