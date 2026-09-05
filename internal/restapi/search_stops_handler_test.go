@@ -449,6 +449,8 @@ func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
 	assert.True(t, capped.Data.LimitExceeded)
 }
 
+// TestSearchStopsHandlerParentStationReferences verifies that parent stations,
+// routes, and agencies resolve across agencies without adding ambient situations.
 func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

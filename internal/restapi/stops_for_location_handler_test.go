@@ -552,6 +552,8 @@ func TestStopsForLocationMissingBothLatAndLon(t *testing.T) {
 	assert.Empty(t, model.Data.List)
 }
 
+// TestStopsForLocationHandlerOmitsAmbientSituations verifies that a matching stop
+// alert leaves situation references empty while preserving the stop and references.
 func TestStopsForLocationHandlerOmitsAmbientSituations(t *testing.T) {
 	// Setup Mock Clock
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
@@ -583,7 +585,8 @@ func TestStopsForLocationHandlerOmitsAmbientSituations(t *testing.T) {
 	assert.Equal(t, []models.Situation{}, refs.Situations)
 }
 
-// Spec extension 8a: includeReferences=false leaves the references block present but empty.
+// TestStopsForLocationHonorsIncludeReferences verifies that includeReferences
+// controls agency and route references while situation references remain empty.
 func TestStopsForLocationHonorsIncludeReferences(t *testing.T) {
 	tests := []struct {
 		name             string

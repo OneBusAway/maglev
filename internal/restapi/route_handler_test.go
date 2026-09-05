@@ -105,7 +105,8 @@ func TestRouteHandler_EntityIDWithUnderscores(t *testing.T) {
 	}
 }
 
-// Route responses have no situationIds, even when a matching alert exists.
+// TestRouteHandlerOmitsAmbientSituations verifies that matching alerts do not
+// populate situation references and the owning agency remains referenced.
 func TestRouteHandlerOmitsAmbientSituations(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

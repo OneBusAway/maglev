@@ -269,6 +269,8 @@ func TestRouteSearchHandlerContextCancellation(t *testing.T) {
 	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
 }
 
+// TestRouteSearchHandlerOmitsAmbientSituations verifies that matching route alerts
+// leave situation references empty while preserving route results and agencies.
 func TestRouteSearchHandlerOmitsAmbientSituations(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
