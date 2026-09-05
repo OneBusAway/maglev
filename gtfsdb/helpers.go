@@ -137,7 +137,7 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("test database must use in-memory storage, got path: %s", config.DBPath)
 	}
 
-	db, err := sql.Open(DriverName, config.DBPath)
+	db, err := sql.Open(DriverName, DSN(config.DBPath))
 	if err != nil {
 		return nil, err
 	}
@@ -146,11 +146,13 @@ func createDB(config Config) (*sql.DB, error) {
 	ctx := context.Background()
 	err = configureSQLitePerformance(ctx, db)
 	if err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("error configuring SQLite performance: %w", err)
 	}
 
 	err = performDatabaseMigration(ctx, db)
 	if err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("error performing database migration: %w", err)
 	}
 
@@ -533,6 +535,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
+	logging.LogOperation(logger, "building_stop_agency_index")
+	if err := buildStopAgencyIndex(ctx, qtx); err != nil {
+		logging.LogError(logger, "Unable to build stop agency index", err)
+		return false, err
+	}
+	logging.LogOperation(logger, "stop_agency_index_built")
+
 	logging.LogOperation(logger, "building_block_layover_index")
 	if err := c.buildBlockLayoverIndex(ctx, data.Static, tx); err != nil {
 		logging.LogError(logger, "Unable to build block layover index", err)
@@ -566,6 +575,19 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 // calendar / calendar_dates, parses it, and persists feed_expires_at to
 // import_metadata. Intended to be called from within the StoreGtfsData
 // transaction so the value is atomic with the calendar data it was derived from.
+// buildStopAgencyIndex repopulates stop_agencies from the routes currently serving each
+// stop. The table is rebuilt rather than updated in place because an import replaces the
+// whole feed, and a stop can change agency or lose its routes between feed versions.
+func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
+	if err := qtx.ClearStopAgencies(ctx); err != nil {
+		return fmt.Errorf("failed to clear stop agencies: %w", err)
+	}
+	if err := qtx.BuildStopAgencies(ctx); err != nil {
+		return fmt.Errorf("failed to build stop agencies: %w", err)
+	}
+	return nil
+}
+
 func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	val, err := qtx.GetFeedEndDate(ctx)
 	if err != nil {
@@ -604,6 +626,9 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
 // Delete order respects foreign key constraints.
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
+	if err := q.ClearStopAgencies(ctx); err != nil {
+		return fmt.Errorf("error clearing stop_agencies: %w", err)
+	}
 	if err := q.ClearBlockLayovers(ctx); err != nil {
 		return fmt.Errorf("error clearing block_layover: %w", err)
 	}

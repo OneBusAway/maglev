@@ -25,6 +25,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
 	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
+	includeReferences := ShouldIncludeReferences(r)
 
 	var routeTypes []int
 	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
@@ -58,17 +59,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 					}
 				}
 			}
-		}
-	}
-
-	queryTime := api.Clock.Now()
-
-	if timeStr := queryParams.Get("time"); timeStr != "" {
-		var timeMs int64
-		if _, err := fmt.Sscanf(timeStr, "%d", &timeMs); err == nil {
-			// Bin to 15 minutes
-			binnedMs := timeMs - (timeMs % 900000)
-			queryTime = time.UnixMilli(binnedMs)
 		}
 	}
 
@@ -141,8 +131,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get active service IDs for the requested queryTime
-	currentDate := queryTime.Format("20060102")
+	currentDate := api.queryTimeForStops(queryParams.Get("time"), allAgencies).Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -223,44 +212,71 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		isLimitExceeded = true
 	}
 
-	// References describe the returned stops, so they are collected after capping.
-	for _, stopID := range resultRawStopIDs {
-		for _, routeID := range stopRouteIDs[stopID] {
-			agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				continue
-			}
-			agencyIDs[agencyID] = true
-			routeIDs[routeID] = true
-		}
-	}
-
 	// Spec: results are ordered lexicographically by combined stop ID.
 	slices.SortStableFunc(results, func(a, b models.Stop) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
 
-	agencies := utils.FilterAgencies(allAgencies, agencyIDs)
-	routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
-
-	if agencies == nil {
-		agencies = []models.AgencyReference{}
-	}
-	if routes == nil {
-		routes = []models.Route{}
-	}
-
-	// Populate situation references for alerts affecting the returned stops
-	alerts := api.collectAlertsForStops(resultRawStopIDs)
-	situations := api.BuildSituationReferences(alerts)
-
 	references := models.NewEmptyReferences()
-	references.Agencies = agencies
-	references.Routes = routes
-	references.Situations = situations
+
+	// When includeReferences=false the references block is present but empty.
+	if includeReferences {
+		// References describe the returned stops, so they are collected after capping.
+		for _, stopID := range resultRawStopIDs {
+			for _, routeID := range stopRouteIDs[stopID] {
+				agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
+				if err != nil {
+					continue
+				}
+				agencyIDs[agencyID] = true
+				routeIDs[routeID] = true
+			}
+		}
+
+		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
+		routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+
+		if agencies == nil {
+			agencies = []models.AgencyReference{}
+		}
+		if routes == nil {
+			routes = []models.Route{}
+		}
+
+		// Populate situation references for alerts affecting the returned stops
+		alerts := api.collectAlertsForStops(resultRawStopIDs)
+
+		references.Agencies = agencies
+		references.Routes = routes
+		references.Situations = api.BuildSituationReferences(alerts)
+	}
 
 	response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
+}
+
+// queryTimeForStops resolves the time that selects which service date's routes are
+// considered active. A service date is a local calendar date, so both an explicit
+// time parameter and the current-time fallback are read in the agency's timezone,
+// as in trips-for-location. A value that does not parse falls back to the current
+// time rather than failing the request, which is what legacy does with one.
+func (api *RestAPI) queryTimeForStops(timeParam string, agencies []gtfsdb.Agency) time.Time {
+	if len(agencies) == 0 {
+		return api.Clock.Now()
+	}
+
+	location, err := loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
+	if err != nil {
+		api.Logger.Warn("failed to load agency timezone for time parameter",
+			"agencyID", agencies[0].ID, "error", err)
+		return api.Clock.Now()
+	}
+
+	_, parsedTime, _, ok := utils.ParseTimeParameter(timeParam, location, api.Clock)
+	if !ok {
+		return api.Clock.Now().In(location)
+	}
+	return parsedTime
 }
 
 // routeIDsByStop maps each stop to the routes serving it. Stop-code queries report every

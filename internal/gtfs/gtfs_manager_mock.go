@@ -172,6 +172,13 @@ func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, op
 		},
 	}
 	m.realTimeVehicles = append(m.realTimeVehicles, v)
+	idx := len(m.realTimeVehicles) - 1
+	if vehicleID != "" {
+		m.realTimeVehicleLookupByVehicle[vehicleID] = idx
+	}
+	if tripID != "" {
+		m.realTimeVehicleLookupByTrip[tripID] = idx
+	}
 	if m.duplicatedVehicleByRoute == nil {
 		m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
 	}
@@ -218,4 +225,15 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeTripLookup = make(map[string]int)
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	m.rebuildMergedRealtimeLocked()
+}
+
+// MockAddDuplicatedVehicleDirect adds a vehicle directly to the duplicatedVehicleByRoute map for testing.
+func (m *Manager) MockAddDuplicatedVehicleDirect(routeID string, vehicle gtfs.Vehicle) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	if m.duplicatedVehicleByRoute == nil {
+		m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
+	}
+	m.duplicatedVehicleByRoute[routeID] = append(m.duplicatedVehicleByRoute[routeID], vehicle)
 }
