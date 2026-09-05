@@ -123,6 +123,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			routes = []models.Route{}
 		}
 
+		// This response has no situationIds, so situation references remain empty.
 		references := models.NewEmptyReferences()
 		references.Agencies = agencies
 		references.Routes = routes
@@ -217,6 +218,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return cmp.Compare(a.ID, b.ID)
 	})
 
+	// This response has no situationIds, so situation references remain empty.
 	references := models.NewEmptyReferences()
 
 	// When includeReferences=false the references block is present but empty.
@@ -243,12 +245,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			routes = []models.Route{}
 		}
 
-		// Populate situation references for alerts affecting the returned stops
-		alerts := api.collectAlertsForStops(resultRawStopIDs)
-
 		references.Agencies = agencies
 		references.Routes = routes
-		references.Situations = api.BuildSituationReferences(alerts)
 	}
 
 	response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, isLimitExceeded)

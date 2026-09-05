@@ -101,7 +101,7 @@ func TestStopsForLocationQuery(t *testing.T) {
 	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Len(t, model.Data.List, 1)
+	require.Len(t, model.Data.List, 1)
 	assert.Equal(t, "2042", model.Data.List[0].Code)
 	assert.Equal(t, "Buenaventura Blvd at Eureka Way", model.Data.List[0].Name)
 }
@@ -552,7 +552,7 @@ func TestStopsForLocationMissingBothLatAndLon(t *testing.T) {
 	assert.Empty(t, model.Data.List)
 }
 
-func TestStopsForLocationHandlerWithSituations(t *testing.T) {
+func TestStopsForLocationHandlerOmitsAmbientSituations(t *testing.T) {
 	// Setup Mock Clock
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
@@ -576,20 +576,11 @@ func TestStopsForLocationHandlerWithSituations(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Len(t, model.Data.List, 1)
 
-	// Verify references contain the situation we added
+	assert.Equal(t, "25_2042", model.Data.List[0].ID)
 	refs := model.Data.References
-	require.NotEmpty(t, refs.Situations, "Expected at least one situation to be returned for Stop 2042")
-
-	// Find our specific test alert in the returned situations
-	foundOurAlert := false
-	for _, sit := range refs.Situations {
-		if sit.Description != nil && strings.Contains(sit.Description.Value, "Stop 2042 is closed today") {
-			foundOurAlert = true
-			break
-		}
-	}
-
-	assert.True(t, foundOurAlert, "Expected to find our mock alert in the references.situations")
+	assert.NotEmpty(t, refs.Agencies)
+	assert.NotEmpty(t, refs.Routes)
+	assert.Equal(t, []models.Situation{}, refs.Situations)
 }
 
 // Spec extension 8a: includeReferences=false leaves the references block present but empty.
@@ -626,7 +617,7 @@ func TestStopsForLocationHonorsIncludeReferences(t *testing.T) {
 			if tt.expectReferences {
 				assert.NotEmpty(t, refs.Agencies)
 				assert.NotEmpty(t, refs.Routes)
-				assert.NotEmpty(t, refs.Situations)
+				assert.Equal(t, []models.Situation{}, refs.Situations)
 			} else {
 				assert.Empty(t, refs.Agencies)
 				assert.Empty(t, refs.Routes)

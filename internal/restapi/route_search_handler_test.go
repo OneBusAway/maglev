@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
@@ -266,4 +267,26 @@ func TestRouteSearchHandlerContextCancellation(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
+}
+
+func TestRouteSearchHandlerOmitsAmbientSituations(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	routeID := "151"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               "route-search-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+	})
+
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		routeSearchURL(url.Values{"input": {testdata.Route1.ShortName}}))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var routeIDs []string
+	for _, route := range model.Data.List {
+		routeIDs = append(routeIDs, route.ID)
+	}
+	assert.Contains(t, routeIDs, testdata.Route1.ID)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+	assert.Equal(t, []models.Situation{}, model.Data.References.Situations)
 }
