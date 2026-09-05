@@ -481,3 +481,43 @@ func TestGetStopDelaysFromTripUpdates_FallsBackToStopIDWithoutSequence(t *testin
 	assert.True(t, ok)
 	assert.Equal(t, int64(30), info.ArrivalDelay)
 }
+
+// TestGetScheduleDeviation_SequenceOnlySTUReachesScheduleMatch regresses the
+// closest-in-time picker dropping updates that carry stop_sequence but no
+// stop_id. The schedule lookup is keyed by stop_id, so such an update
+// contributed a zero scheduled time and picker.consider discarded it.
+//
+// The update sets Arrival.Time rather than Arrival.Delay on purpose: the
+// Tier-3 pickFirstAvailableSTUDelay fallback only reads Delay, so with Time
+// the assertion can only be satisfied by the schedule-matching path.
+func TestGetScheduleDeviation_SequenceOnlySTUReachesScheduleMatch(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+
+	var tripID string
+	var stopSequence, arrivalNanos int64
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+		`SELECT trip_id, stop_sequence, arrival_time FROM stop_times WHERE arrival_time > 0 LIMIT 1`,
+	).Scan(&tripID, &stopSequence, &arrivalNanos)
+	require.NoError(t, err, "test data should contain at least one scheduled stop time")
+
+	scheduledSeconds := arrivalNanos / int64(time.Second)
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	const lateBySeconds = 120
+
+	seq := uint32(stopSequence)
+	predictedArrival := serviceDate.Add(time.Duration(scheduledSeconds+lateBySeconds) * time.Second)
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq, StopID: nil, Arrival: &gtfs.StopTimeEvent{Time: &predictedArrival}},
+	}
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, updates)
+
+	currentTime := serviceDate.Add(time.Duration(scheduledSeconds) * time.Second)
+	deviation, hasData := api.GetScheduleDeviationForBlock(ctx, []string{tripID}, serviceDate, currentTime)
+
+	assert.True(t, hasData, "an update with stop_sequence but no stop_id must still reach schedule matching")
+	assert.Equal(t, lateBySeconds, deviation)
+}

@@ -163,6 +163,23 @@ func (api *RestAPI) loadScheduledForTrips(ctx context.Context, tripIDs []string)
 	return out
 }
 
+// matchScheduleEntryBySequence resolves the scheduled arrival and departure for
+// a StopTimeUpdate that carries a stop_sequence but no stop_id. The caller's
+// map is keyed by stop_id, so the sequence has to be found by scanning. Stop
+// sequences are unique within a trip, so at most one entry can match and the
+// map's iteration order does not affect the result. Returns zeroes when the
+// sequence is not in the static schedule, which the caller treats as no data.
+func matchScheduleEntryBySequence(entries map[string][]schedEntry, stuSeq uint32) (schedArr, schedDep int64) {
+	for _, stopEntries := range entries {
+		for _, e := range stopEntries {
+			if e.seq == int64(stuSeq) {
+				return e.arr, e.dep
+			}
+		}
+	}
+	return 0, 0
+}
+
 // matchScheduleEntry resolves the right scheduled (arr, dep) for an STU
 // against a stop_id's entries. Mirrors Java's getBlockStopTimeForStopTimeUpdate
 // (GtfsRealtimeTripLibrary.java:1125-1188):
@@ -273,9 +290,16 @@ func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []t
 		schedMap := scheduled[t.tripID]
 		for _, stu := range t.tu.StopTimeUpdates {
 			var schedArr, schedDep int64
-			if stu.StopID != nil {
+			switch {
+			case stu.StopID != nil:
 				refTime := stuReferenceTime(stu, serviceDate, currentTime)
 				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence, refTime)
+			case stu.StopSequence != nil:
+				// stop_id is optional in GTFS-RT when stop_sequence is given.
+				// schedMap is keyed by stop_id, so such an update has no key to
+				// look under and would otherwise contribute a zero scheduled
+				// time, which picker.consider discards.
+				schedArr, schedDep = matchScheduleEntryBySequence(schedMap, *stu.StopSequence)
 			}
 			picker.consider(schedArr, stuPredictedFromEvent(stu.Arrival, schedArr, serviceDate))
 			picker.consider(schedDep, stuPredictedFromEvent(stu.Departure, schedDep, serviceDate))
