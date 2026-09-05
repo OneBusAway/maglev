@@ -639,33 +639,27 @@ func (api *RestAPI) getPredictedTimes(
 	var closestPriorSequence int64 = -1
 	var foundTarget bool
 
-	for _, stu := range realTimeTrip.StopTimeUpdates {
+	// A stop_id can be visited more than once on a loop trip, so matching on
+	// stop_id alone can bind an update belonging to a different visit. Prefer
+	// the update whose stop_sequence matches the requested one, and fall back
+	// to stop_id only for updates that carry no sequence at all. An update
+	// with some other sequence is positively identifying a different visit,
+	// so it is not a candidate for this one.
+	var target, stopIDFallback *gtfs.StopTimeUpdate
+
+	for i := range realTimeTrip.StopTimeUpdates {
+		stu := &realTimeTrip.StopTimeUpdates[i]
 		seq := int64(-1)
 		if stu.StopSequence != nil {
 			seq = int64(*stu.StopSequence)
 		}
 
-		if (stu.StopID != nil && *stu.StopID == stopCode) || (seq != -1 && seq == targetStopSequence) {
-			foundTarget = true
-			if stu.Arrival != nil {
-				if stu.Arrival.Time != nil {
-					offset := stu.Arrival.Time.Sub(scheduledArrivalTime)
-					arrivalOffset = &offset
-				} else if stu.Arrival.Delay != nil {
-					offset := *stu.Arrival.Delay
-					arrivalOffset = &offset
-				}
+		if seq != -1 {
+			if seq == targetStopSequence && target == nil {
+				target = stu
 			}
-			if stu.Departure != nil {
-				if stu.Departure.Time != nil {
-					offset := stu.Departure.Time.Sub(scheduledDepartureTime)
-					departureOffset = &offset
-				} else if stu.Departure.Delay != nil {
-					offset := *stu.Departure.Delay
-					departureOffset = &offset
-				}
-			}
-			break
+		} else if stopIDFallback == nil && stu.StopID != nil && *stu.StopID == stopCode {
+			stopIDFallback = stu
 		}
 
 		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
@@ -675,6 +669,31 @@ func (api *RestAPI) getPredictedTimes(
 				propagatedDelay = *stu.Departure.Delay
 			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
 				propagatedDelay = *stu.Arrival.Delay
+			}
+		}
+	}
+
+	if target == nil {
+		target = stopIDFallback
+	}
+	if target != nil {
+		foundTarget = true
+		if target.Arrival != nil {
+			if target.Arrival.Time != nil {
+				offset := target.Arrival.Time.Sub(scheduledArrivalTime)
+				arrivalOffset = &offset
+			} else if target.Arrival.Delay != nil {
+				offset := *target.Arrival.Delay
+				arrivalOffset = &offset
+			}
+		}
+		if target.Departure != nil {
+			if target.Departure.Time != nil {
+				offset := target.Departure.Time.Sub(scheduledDepartureTime)
+				departureOffset = &offset
+			} else if target.Departure.Delay != nil {
+				offset := *target.Departure.Delay
+				departureOffset = &offset
 			}
 		}
 	}

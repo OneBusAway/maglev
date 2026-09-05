@@ -1186,3 +1186,62 @@ func TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics(t *testing
 		"schedule-only snapshot with no shape data yields distanceFromStop=0 "+
 			"via the arithmetic path, not via the metricsForStop-skipped default")
 }
+
+// TestGetPredictedTimes_LoopTripPrefersMatchingSequence regresses the case
+// where a loop trip visits the same stop_id at more than one stop_sequence.
+// Matching on stop_id alone bound the first update whose stop_id happened to
+// match, so a request for the later visit was served the earlier visit's
+// prediction.
+func TestGetPredictedTimes_LoopTripPrefersMatchingSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopA, stopB := "STOP_A", "STOP_B"
+	seq1, seq2, seq3 := uint32(1), uint32(2), uint32(3)
+	firstVisit := 60 * time.Second
+	onTime := 0 * time.Second
+	secondVisit := 600 * time.Second
+
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq1, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &firstVisit}},
+		{StopSequence: &seq2, StopID: &stopB, Arrival: &gtfs.StopTimeEvent{Delay: &onTime}},
+		{StopSequence: &seq3, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &secondVisit}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-loop-predicted", nil, updates)
+
+	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	arr, dep, predicted := api.getPredictedTimes("trip-loop-predicted", stopA, 3, scheduled, scheduled)
+	require.True(t, predicted)
+	assert.Equal(t, scheduled.Add(secondVisit), arr, "sequence 3 must use its own update, not sequence 1's")
+	assert.Equal(t, scheduled.Add(secondVisit), dep)
+
+	arr, dep, predicted = api.getPredictedTimes("trip-loop-predicted", stopA, 1, scheduled, scheduled)
+	require.True(t, predicted)
+	assert.Equal(t, scheduled.Add(firstVisit), arr, "sequence 1 keeps its own update")
+	assert.Equal(t, scheduled.Add(firstVisit), dep)
+}
+
+// TestGetPredictedTimes_FallsBackToStopIDWithoutSequence pins the other half
+// of the rule: an update carrying no stop_sequence at all is still matched on
+// stop_id, so feeds that omit sequences keep working.
+func TestGetPredictedTimes_FallsBackToStopIDWithoutSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopC := "STOP_C"
+	delay := 45 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopID: &stopC, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-id-only-predicted", nil, updates)
+
+	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// The scheduled stop-time has a sequence the feed never mentioned.
+	arr, _, predicted := api.getPredictedTimes("trip-id-only-predicted", stopC, 7, scheduled, scheduled)
+	require.True(t, predicted)
+	assert.Equal(t, scheduled.Add(delay), arr)
+}
