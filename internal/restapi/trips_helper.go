@@ -44,12 +44,15 @@ type tripStatusExtras struct {
 // trip's situations should reuse those instead of resolving them a second time —
 // the amplification matters for the plural arrivals-and-departures endpoint
 // which is called per-arrival-row across wide time windows.
+//
+// freqMap supplies batch-fetched frequency rows, avoiding a per-call query.
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
 	vehicle *gtfs.Vehicle,
 	serviceDate time.Time,
 	currentTime time.Time,
+	freqMap map[string][]gtfsdb.Frequency,
 ) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
 		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
@@ -93,16 +96,8 @@ func (api *RestAPI) BuildTripStatus(
 	}
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status, currentTime)
 
-	// CANCELED trips are no longer running there is no active position or schedule
-	// to report. Return immediately with the cancellation status and skip all stop-time
-	// and shape calculations, which are meaningless for a trip that is not operating.
-	// Predicted is true because the cancellation itself is real-time information.
-	if status.Status == "CANCELED" {
-		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
-		status.Scheduled = !status.Predicted
-		return status, extras, nil
-	}
-
+	// Frequencies are reported even for CANCELED trips, so resolve the DB
+	// trip ID before the early-return.
 	_, activeTripRawID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
 	if err != nil {
 		return status, extras, err
@@ -123,6 +118,24 @@ func (api *RestAPI) BuildTripStatus(
 			}
 			dbTripID = tripID
 		}
+	}
+
+	// Reuse the batch-fetched frequencies when supplied; single-entry handlers
+	// fall back to a per-trip query.
+	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, dbTripID, serviceDate, currentTime)
+	if freqErr != nil {
+		return status, extras, freqErr
+	}
+	status.Frequency = frequency
+
+	// CANCELED trips are no longer running there is no active position or schedule
+	// to report. Return immediately with the cancellation status and skip all stop-time
+	// and shape calculations, which are meaningless for a trip that is not operating.
+	// Predicted is true because the cancellation itself is real-time information.
+	if status.Status == "CANCELED" {
+		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
+		status.Scheduled = !status.Predicted
+		return status, extras, nil
 	}
 
 	// Mirror Java's applyTripUpdatesToRecord: iterate all block trips in
@@ -152,6 +165,7 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
 	}
+
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
@@ -366,6 +380,63 @@ func (api *RestAPI) BuildTripStatus(
 	return status, extras, nil
 }
 
+// frequencyForEntry returns the frequency row whose window contains
+// currentTime (earliest when none matches), from freqMap or a per-trip
+// fallback query. Empty results yield nil; DB errors propagate.
+func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceDate, currentTime time.Time) (*models.Frequency, error) {
+	freqs, ok := freqMap[tripID]
+	if !ok {
+		rows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+		if err != nil {
+			return nil, err
+		}
+		freqs = rows
+		if freqMap != nil {
+			freqMap[tripID] = rows
+		}
+	}
+	if len(freqs) == 0 {
+		return nil, nil
+	}
+	converted := models.NewFrequencyFromDB(*selectFrequency(freqs, serviceDate, currentTime), serviceDate)
+	return &converted, nil
+}
+
+// selectFrequency returns the row whose [start_time, end_time) window
+// contains effectiveTime, falling back to freqs[0].
+func selectFrequency(freqs []gtfsdb.Frequency, serviceDate, effectiveTime time.Time) *gtfsdb.Frequency {
+	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
+		0, 0, 0, 0, serviceDate.Location())
+	for i := range freqs {
+		start := midnight.Add(time.Duration(freqs[i].StartTime))
+		end := midnight.Add(time.Duration(freqs[i].EndTime))
+		if !effectiveTime.Before(start) && effectiveTime.Before(end) {
+			return &freqs[i]
+		}
+	}
+	return &freqs[0]
+}
+
+// fetchFrequenciesForTrips batch-fetches frequency rows for tripIDs, batching
+// under SQLite's bind-variable limit. Seeds the map only after the query
+// succeeds; errors propagate.
+func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.Frequency, error) {
+	freqMap := make(map[string][]gtfsdb.Frequency, len(tripIDs))
+	allFreqs, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
+	if err != nil {
+		return nil, err
+	}
+	for _, tripID := range tripIDs {
+		freqMap[tripID] = nil
+	}
+	for _, f := range allFreqs {
+		freqMap[f.TripID] = append(freqMap[f.TripID], f)
+	}
+	return freqMap, nil
+}
+
+// BuildTripSchedule returns the trip's schedule (stop times, block
+// neighbors, frequency) resolved around serviceDate in the agency's timezone.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
@@ -402,10 +473,21 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
 
+	// Populate frequency data for the schedule sub-object.
+	var scheduleFrequency *models.Frequency
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, trip.ID)
+	if freqErr != nil {
+		return nil, freqErr
+	}
+	if len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, serviceDate), serviceDate)
+		scheduleFrequency = &converted
+	}
+
 	return &models.Schedule{
 		StopTimes:      stopTimesVals,
 		TimeZone:       loc.String(),
-		Frequency:      nil,
+		Frequency:      scheduleFrequency,
 		NextTripID:     nextTripID,
 		PreviousTripID: previousTripID,
 	}, nil
@@ -1293,22 +1375,27 @@ func serviceIDSet(serviceIDs []string) map[string]struct{} {
 // a second query with the same service-ID list, the way the block lookup in
 // trips-for-location does. A lookup failure is not fatal — that day comes back
 // empty.
-func (api *RestAPI) serviceIDsForDays(ctx context.Context, queryDayMidnight time.Time) serviceIDsByDay {
-	return serviceIDsByDay{
-		QueryDay:    api.activeServiceIDsForDate(ctx, queryDayMidnight),
-		PreviousDay: api.activeServiceIDsForDate(ctx, queryDayMidnight.AddDate(0, 0, -1)),
+func (api *RestAPI) serviceIDsForDays(ctx context.Context, queryDayMidnight time.Time) (serviceIDsByDay, error) {
+	queryDay, err := api.activeServiceIDsForDate(ctx, queryDayMidnight)
+	if err != nil {
+		return serviceIDsByDay{}, err
 	}
+	prevDay, err := api.activeServiceIDsForDate(ctx, queryDayMidnight.AddDate(0, 0, -1))
+	if err != nil {
+		return serviceIDsByDay{}, err
+	}
+	return serviceIDsByDay{
+		QueryDay:    queryDay,
+		PreviousDay: prevDay,
+	}, nil
 }
 
-func (api *RestAPI) activeServiceIDsForDate(ctx context.Context, day time.Time) []string {
+func (api *RestAPI) activeServiceIDsForDate(ctx context.Context, day time.Time) ([]string, error) {
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, day.Format("20060102"))
 	if err != nil {
-		api.Logger.Warn("failed to fetch active service IDs for service date resolution",
-			"date", day.Format("20060102"), "error", err)
-		return nil
+		return nil, err
 	}
-
-	return serviceIDs
+	return serviceIDs, nil
 }
 
 // Resolve returns midnight of the service date trip belongs to.
@@ -1342,4 +1429,61 @@ func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.T
 	startsBeforeWindowEnds := trip.MinArrivalTime.Int64 <= sinceMidnightNs+int64(runningEarly)
 	endsAfterWindowStarts := trip.MaxDepartureTime.Int64 >= sinceMidnightNs-int64(runningLate)
 	return startsBeforeWindowEnds && endsAfterWindowStarts
+}
+
+// serviceDay pairs the services active on one day with the time-since-midnight
+// offset a trip's scheduled span is measured against for that day.
+type serviceDay struct {
+	serviceIDs      []string
+	sinceMidnightNs int64
+}
+
+// ServiceDays returns the query day and the day before it. A trip belonging to
+// the previous service day is matched against the query moment offset by +24h,
+// since GTFS expresses its stop times relative to its own service date.
+func (r *serviceDateResolver) ServiceDays() []serviceDay {
+	return []serviceDay{
+		{serviceIDs: serviceIDSlice(r.queryDayServices), sinceMidnightNs: r.sinceMidnightNs},
+		{serviceIDs: serviceIDSlice(r.previousDayServices), sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour)},
+	}
+}
+
+func serviceIDSlice(services map[string]struct{}) []string {
+	ids := make([]string, 0, len(services))
+	for id := range services {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// scheduledPositionAtTime interpolates where a trip is along its shape at
+// currentTime using its schedule alone. This is the no-real-time-vehicle
+// equivalent of a GTFS-RT position; it returns nil when the trip has no usable
+// shape or stop times, or when stopsByID is missing any stop the trip serves.
+//
+// Failing closed on a missing stop matters here specifically: this result
+// feeds a bounds-membership test deciding whether a trip is included in the
+// response. projectStopsInSequence defaults a missing stop's distance to 0,
+// which would place the trip at the start of its shape and risk a false
+// positive rather than simply a wrong displayed position.
+func (api *RestAPI) scheduledPositionAtTime(
+	stopTimes []gtfsdb.StopTime,
+	shapePoints []gtfs.ShapePoint,
+	stopsByID map[string]gtfsdb.Stop,
+	currentTime time.Time,
+	serviceDate time.Time,
+) *models.Location {
+	if len(stopTimes) == 0 || len(shapePoints) < 2 {
+		return nil
+	}
+	for _, st := range stopTimes {
+		if _, ok := stopsByID[st.StopID]; !ok {
+			return nil
+		}
+	}
+
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	position, _, _ := scheduledTripPosition(
+		stopTimes, stopsByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
+	return position
 }

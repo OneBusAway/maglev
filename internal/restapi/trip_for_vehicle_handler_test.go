@@ -116,6 +116,60 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	}
 }
 
+// TestTripForVehicleWithFrequency verifies the TripDetails entry carries the
+// trip's frequency data when the vehicle's trip is frequency-based, and that a
+// non-frequency trip keeps the frequency field absent.
+func TestTripForVehicleWithFrequency(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const mockVehicleID = "FREQ_VEHICLE_1"
+	combinedRouteID := utils.FormCombinedID(freqAgencyID, freqRouteID)
+
+	api.GtfsManager.MockAddAgency(freqAgencyID, "frequency-agency")
+	api.GtfsManager.MockAddRoute(combinedRouteID, freqAgencyID, combinedRouteID)
+	api.GtfsManager.MockAddTrip(freqTripID, freqAgencyID, combinedRouteID)
+	api.GtfsManager.MockAddVehicle(mockVehicleID, freqTripID, combinedRouteID)
+
+	vehicleID := utils.FormCombinedID(freqAgencyID, mockVehicleID)
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(vehicleID))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	entry := model.Data.Entry
+	require.NotNil(t, entry.Frequency, "frequency should be populated for a frequency-based trip")
+	assert.Equal(t, 0, entry.Frequency.ExactTimes)
+	assert.Equal(t, 600*time.Second, entry.Frequency.Headway.Duration)
+	// Clock at 2025-06-12 08:00 UTC → default serviceDate is 2025-06-12;
+	// the fixture window spans 06:00–09:00 UTC. Compare instants (millis):
+	// ModelTime round-trips through JSON in time.Local.
+	assert.Equal(t, time.Date(2025, 6, 12, 6, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.StartTime.UnixMilli())
+	assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.EndTime.UnixMilli())
+}
+
+// TestTripForVehicle_NonFrequencyTripNoFrequency verifies a vehicle whose trip
+// has no frequency entry still yields a nil frequency field (no regression).
+func TestTripForVehicle_NonFrequencyTripNoFrequency(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const mockVehicleID = "FREQ_VEHICLE_2"
+	combinedRouteID := utils.FormCombinedID(freqAgencyID, freqRouteID)
+
+	api.GtfsManager.MockAddAgency(freqAgencyID, "frequency-agency")
+	api.GtfsManager.MockAddRoute(combinedRouteID, freqAgencyID, combinedRouteID)
+	api.GtfsManager.MockAddTrip(freqNormalTripD, freqAgencyID, combinedRouteID)
+	api.GtfsManager.MockAddVehicle(mockVehicleID, freqNormalTripD, combinedRouteID)
+
+	vehicleID := utils.FormCombinedID(freqAgencyID, mockVehicleID)
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(vehicleID))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	assert.Nil(t, model.Data.Entry.Frequency, "non-frequency trips must not carry frequency data")
+}
+
 // TestTripForVehicleHandler_NotFoundCases verifies that 404 is returned for
 // vehicle IDs that resolve to no live trip — unknown vehicle, idle vehicle
 // (Trip.ID == ""), vehicle referencing a non-existent trip, and a vehicle

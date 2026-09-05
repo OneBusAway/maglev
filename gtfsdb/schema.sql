@@ -1,3 +1,7 @@
+-- foreign_keys is connection-scoped, so this PRAGMA only enforces on the one connection
+-- that runs migrations. Pool-wide enforcement actually comes from the DSN built by
+-- gtfsdb.DSN (see driver_cgo.go / driver_pure.go); this line is kept because it's free
+-- and documents the intent at the schema level.
 PRAGMA foreign_keys = ON;
 
 -- migrate
@@ -162,6 +166,29 @@ CREATE TABLE
         -- Add DEFERRABLE so that we don't get constraint violations during bulk inserts.
         FOREIGN KEY (parent_station) REFERENCES stops (id) DEFERRABLE INITIALLY DEFERRED
     ) STRICT;
+
+-- migrate
+-- Precomputed agency membership for each stop: one row per (stop, agency) pair, for every
+-- agency whose routes serve the stop. GTFS gives stops no agency of their own, so resolving
+-- one means aggregating stop_times through trips and routes. At feed scale that costs seconds
+-- per query, which is too slow to do while serving a request. Rebuilt from scratch on every
+-- import. A caller wanting a single agency per stop takes MIN(agency_id) GROUP BY stop_id.
+-- IF NOT EXISTS cannot reshape a table created under an earlier, single-column-PK version
+-- of this schema; Client.hasLegacyStopAgenciesTable detects that case at startup and
+-- Client.recreateStopAgenciesTable rebuilds it.
+CREATE TABLE
+    IF NOT EXISTS stop_agencies (
+        stop_id TEXT NOT NULL,
+        agency_id TEXT NOT NULL,
+        PRIMARY KEY (stop_id, agency_id),
+        FOREIGN KEY (stop_id) REFERENCES stops (id),
+        FOREIGN KEY (agency_id) REFERENCES agencies (id)
+    ) STRICT;
+
+-- migrate
+-- Covering index for the agency -> stops direction: the composite primary key only serves
+-- lookups that lead with stop_id, and GetStopIDsForAgency seeks on agency_id alone.
+CREATE INDEX IF NOT EXISTS idx_stop_agencies_agency ON stop_agencies (agency_id, stop_id);
 
 -- migrate
 CREATE VIRTUAL TABLE IF NOT EXISTS stops_rtree USING rtree (

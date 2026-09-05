@@ -182,3 +182,14 @@ func (m *Manager) MockResetRealTimeData() {
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	m.rebuildMergedRealtimeLocked()
 }
+
+// MockAddDuplicatedVehicle adds a vehicle directly to the duplicatedVehicleByRoute map for testing.
+func (m *Manager) MockAddDuplicatedVehicle(routeID string, vehicle gtfs.Vehicle) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	if m.duplicatedVehicleByRoute == nil {
+		m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
+	}
+	m.duplicatedVehicleByRoute[routeID] = append(m.duplicatedVehicleByRoute[routeID], vehicle)
+}

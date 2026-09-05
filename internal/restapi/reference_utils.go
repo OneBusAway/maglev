@@ -24,28 +24,15 @@ func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
 	return refs
 }
 
+// BuildRouteReferences resolves the route references for the given stops,
+// scoped to the requested agency. Only routes whose combined ID matches one
+// of the stop's StaticRouteIDs are returned, each carrying its own agency
+// rather than being overwritten with the caller's.
 func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
-	routeIDSet := make(map[string]bool)
-	originalRouteIDs := make([]string, 0)
-
-	for _, stop := range stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		for _, routeID := range stop.StaticRouteIDs {
-			_, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				continue
-			}
-
-			if !routeIDSet[originalRouteID] {
-				routeIDSet[originalRouteID] = true
-				originalRouteIDs = append(originalRouteIDs, originalRouteID)
-			}
-		}
+	expectedCombinedIDs, originalRouteIDs, err := expectedRouteIDsForStops(ctx, stops, agencyID)
+	if err != nil {
+		return nil, err
 	}
-
 	if len(originalRouteIDs) == 0 {
 		return []models.Route{}, nil
 	}
@@ -55,7 +42,65 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		return nil, err
 	}
 
-	return buildRouteModels(ctx, agencyID, routes)
+	filteredRoutes := filterRoutesByExpectedCombinedID(routes, expectedCombinedIDs, agencyID)
+	return buildRouteModels(ctx, agencyID, filteredRoutes)
+}
+
+// expectedRouteIDsForStops walks every stop's StaticRouteIDs and returns the
+// set of agency-combined IDs a route must match to be a legitimate reference,
+// plus the deduplicated bare route IDs to query the database for. A
+// cancelled context aborts the walk and surfaces ctx.Err() to the caller.
+func expectedRouteIDsForStops(ctx context.Context, stops []models.Stop, agencyID string) (map[string]bool, []string, error) {
+	routeIDSet := make(map[string]bool)
+	expectedCombinedIDs := make(map[string]bool)
+	originalRouteIDs := make([]string, 0)
+
+	for _, stop := range stops {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+
+		for _, routeID := range stop.StaticRouteIDs {
+			routeAgencyID, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
+			if err != nil {
+				originalRouteID = routeID
+				routeAgencyID = agencyID
+			}
+
+			expectedCombinedIDs[utils.FormCombinedID(routeAgencyID, originalRouteID)] = true
+
+			if !routeIDSet[originalRouteID] {
+				routeIDSet[originalRouteID] = true
+				originalRouteIDs = append(originalRouteIDs, originalRouteID)
+			}
+		}
+	}
+
+	return expectedCombinedIDs, originalRouteIDs, nil
+}
+
+// filterRoutesByExpectedCombinedID keeps only the routes whose real,
+// agency-qualified ID (not the caller's agency) was actually requested by a
+// stop, deduplicating by that combined ID. This is what discards a route
+// that only matched by a bare-ID collision with an unrelated agency.
+func filterRoutesByExpectedCombinedID(routes []gtfsdb.Route, expectedCombinedIDs map[string]bool, agencyID string) []gtfsdb.Route {
+	filtered := make([]gtfsdb.Route, 0, len(routes))
+	seenCombinedIDs := make(map[string]bool)
+	for _, route := range routes {
+		targetAgencyID := route.AgencyID
+		if targetAgencyID == "" {
+			targetAgencyID = agencyID
+		}
+
+		combinedID := utils.FormCombinedID(targetAgencyID, route.ID)
+		if !expectedCombinedIDs[combinedID] || seenCombinedIDs[combinedID] {
+			continue
+		}
+
+		seenCombinedIDs[combinedID] = true
+		filtered = append(filtered, route)
+	}
+	return filtered
 }
 
 // buildRouteModels converts a slice of database routes into model routes.
@@ -67,18 +112,23 @@ func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Rout
 			return nil, ctx.Err()
 		}
 
-		combinedID := utils.FormCombinedID(agencyID, route.ID)
+		targetAgencyID := route.AgencyID
+		if targetAgencyID == "" {
+			targetAgencyID = agencyID
+		}
+
+		combinedID := utils.FormCombinedID(targetAgencyID, route.ID)
 
 		routeModel := models.NewRoute(
 			combinedID,
-			agencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			targetAgencyID,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String,
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor),
 		)
 		modelRoutes = append(modelRoutes, routeModel)
 	}
@@ -152,10 +202,17 @@ func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, s
 // appendRouteAgencyReference adds a route's own agency to references when it is not
 // the agency the request was scoped to, so the agencyId a cross-agency route
 // reference carries resolves against references.agencies. A lookup that fails costs
-// the reference rather than the response, as with the route itself.
+// the reference rather than the response, as with the route itself. Safe to call once
+// per route even when several routes share the same foreign agency — an agency
+// already present in references is never added twice.
 func (api *RestAPI) appendRouteAgencyReference(ctx context.Context, references *models.ReferencesModel, routeAgencyID, requestAgencyID string) {
 	if routeAgencyID == requestAgencyID {
 		return
+	}
+	for _, existing := range references.Agencies {
+		if existing.ID == routeAgencyID {
+			return
+		}
 	}
 
 	routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, routeAgencyID)
@@ -508,19 +565,38 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
-// idsPerBatchedQuery bounds how many IDs go into one IN (...) list. SQLite
-// rejects a statement carrying more bind variables than it allows rather than
+// idsPerBatchedQuery bounds how many IDs go into one IN (...) list, assuming
+// the batched slice is the only bind the statement carries. SQLite rejects a
+// statement carrying more bind variables than it allows rather than
 // truncating it, and these ID sets are only bounded by how much the request
 // matched. Kept well under the oldest limit (999) so the batch size does not
-// depend on which SQLite the build links against.
+// depend on which SQLite the build links against. A statement binding
+// anything besides the batched slice needs queryInBatchesReserving instead,
+// so that budget also accounts for those binds.
 const idsPerBatchedQuery = 900
 
 // queryInBatches runs query over ids in batches small enough to stay under the
 // bind variable limit, concatenating the results.
 func queryInBatches[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	return queryInBatchesReserving(ctx, ids, 0, query)
+}
+
+// queryInBatchesReserving is queryInBatches with reserved slots subtracted
+// from the batch size, for a statement that binds something besides the
+// batched slice — a second IN (...) list, a scalar. Without this, sizing the
+// batch at idsPerBatchedQuery silently assumes the batched slice is the whole
+// statement, and the untracked binds can push the total over the limit.
+//
+// ponytail: assumes the reserved binds themselves fit in one statement. A
+// second dimension large enough on its own to need batching (hundreds of
+// active service IDs on one day, say) would still overflow; batch that
+// dimension too if a feed ever gets there.
+func queryInBatchesReserving[T any](ctx context.Context, ids []string, reserved int,
+	query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	batchSize := max(1, idsPerBatchedQuery-reserved)
 	results := make([]T, 0, len(ids))
-	for start := 0; start < len(ids); start += idsPerBatchedQuery {
-		end := min(start+idsPerBatchedQuery, len(ids))
+	for start := 0; start < len(ids); start += batchSize {
+		end := min(start+batchSize, len(ids))
 		batch, err := query(ctx, ids[start:end])
 		if err != nil {
 			return nil, err

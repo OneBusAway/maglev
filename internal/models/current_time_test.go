@@ -118,7 +118,8 @@ func TestNewCurrentTimeData(t *testing.T) {
 			// Verify the time fields
 			expectedMillis := tc.testTime.UnixMilli()
 			assert.Equal(t, expectedMillis, result.Entry.Time.UnixMilli())
-			expectedReadable := tc.testTime.Format(time.RFC3339)
+			// NewCurrentTimeData formats in UTC regardless of the input location.
+			expectedReadable := tc.testTime.UTC().Format(time.RFC3339)
 			assert.Equal(t, expectedReadable, result.Entry.ReadableTime)
 
 			// Verify that references is initialized

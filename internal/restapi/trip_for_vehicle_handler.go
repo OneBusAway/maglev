@@ -20,25 +20,12 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
-
-	if err != nil {
-		api.sendNotFound(w, r)
-		return
-	}
-
-	// Return 404 when vehicle has no associated trip (idle vehicle)
-	// or when the trip ID is empty (avoiding a futile DB lookup)
-	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
-		api.Logger.Debug("vehicle has no current trip (idle)",
-			"vehicleID", vehicleID, "agencyID", agencyID)
-		api.sendNotFound(w, r)
+	tripID, ok := api.getVehicleTripIDOr404(w, r, agencyID, vehicleID)
+	if !ok {
 		return
 	}
 
 	ctx := r.Context()
-
-	tripID := vehicle.Trip.ID.ID
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -69,34 +56,27 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
+	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	freqMap := map[string][]gtfsdb.Frequency{tripID: freqRows}
+
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, freqMap)
 		if statusErr != nil {
-			api.Logger.Warn("failed to build trip status",
-				"tripID", tripID,
-				"agencyID", agencyID,
-				"error", statusErr)
+			api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 			status = nil
 		}
 	}
 
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
-	if err != nil {
-		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
-		if errors.Is(err, sql.ErrNoRows) {
-			api.Logger.Warn("vehicle references non-existent trip",
-				"vehicleID", vehicleID, "tripID", tripID, "agencyID", agencyID)
-			api.sendNotFound(w, r)
-			return
-		}
-		api.Logger.Error("database error fetching trip",
-			"error", err,
-			"tripID", tripID,
-			"agencyID", agencyID)
-		api.serverErrorResponse(w, r, err)
+	trip, ok := api.getTripOr404(ctx, w, r, agencyID, vehicleID, tripID)
+	if !ok {
 		return
 	}
 
@@ -105,10 +85,8 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		var scheduleErr error
 		schedule, scheduleErr = api.BuildTripSchedule(ctx, agencyID, serviceDate, &trip, loc)
 		if scheduleErr != nil {
-			api.Logger.Warn("failed to build trip schedule",
-				"tripID", tripID,
-				"agencyID", agencyID,
-				"error", scheduleErr)
+			api.serverErrorResponse(w, r, scheduleErr)
+			return
 		}
 	}
 
@@ -116,10 +94,17 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	// built its situations are this trip's and are reused here.
 	situationIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
+	var frequency *models.Frequency
+	if len(freqRows) > 0 {
+		// TripDetails has one frequency field; take the window-matched row.
+		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, currentTime), serviceDate)
+		frequency = &converted
+	}
+
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
 		ServiceDate:  models.NewModelTime(midnight),
-		Frequency:    nil,
+		Frequency:    frequency,
 		Status:       status,
 		Schedule:     schedule,
 		SituationIDs: situationIDs,
@@ -238,4 +223,42 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 	}
 
 	return stopIDs, nil
+}
+
+func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, bool) {
+	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
+	if err != nil {
+		api.sendNotFound(w, r)
+		return "", false
+	}
+
+	// Return 404 when vehicle has no associated trip (idle vehicle)
+	// or when the trip ID is empty (avoiding a futile DB lookup)
+	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
+		api.Logger.Debug("vehicle has no current trip (idle)",
+			"vehicleID", vehicleID, "agencyID", agencyID)
+		api.sendNotFound(w, r)
+		return "", false
+	}
+	return vehicle.Trip.ID.ID, true
+}
+
+func (api *RestAPI) getTripOr404(ctx context.Context, w http.ResponseWriter, r *http.Request, agencyID, vehicleID, tripID string) (gtfsdb.Trip, bool) {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil {
+		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
+		if errors.Is(err, sql.ErrNoRows) {
+			api.Logger.Warn("vehicle references non-existent trip",
+				"vehicleID", vehicleID, "tripID", tripID, "agencyID", agencyID)
+			api.sendNotFound(w, r)
+			return gtfsdb.Trip{}, false
+		}
+		api.Logger.Error("database error fetching trip",
+			"error", err,
+			"tripID", tripID,
+			"agencyID", agencyID)
+		api.serverErrorResponse(w, r, err)
+		return gtfsdb.Trip{}, false
+	}
+	return trip, true
 }
