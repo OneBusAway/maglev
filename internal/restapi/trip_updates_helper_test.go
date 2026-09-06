@@ -521,3 +521,30 @@ func TestGetScheduleDeviation_SequenceOnlySTUReachesScheduleMatch(t *testing.T) 
 	assert.True(t, hasData, "an update with stop_sequence but no stop_id must still reach schedule matching")
 	assert.Equal(t, lateBySeconds, deviation)
 }
+
+// TestGetStopDelaysFromTripUpdates_SequencedUpdateDoesNotSeedStopIDFallback
+// pins that an update carrying a stop_sequence stays out of the stop_id
+// fallback. A loop trip with an update only for the second visit must not
+// serve that delay to a lookup for the first visit.
+func TestGetStopDelaysFromTripUpdates_SequencedUpdateDoesNotSeedStopIDFallback(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopA := "stop-A"
+	seq3 := uint32(3)
+	late := 600 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq3, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &late}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-seq-no-fallback", nil, updates)
+
+	delays := api.GetStopDelaysFromTripUpdates("trip-seq-no-fallback")
+
+	_, ok := delays.For("stop-A", 1)
+	assert.False(t, ok, "sequence 1 has no update and must not inherit sequence 3's delay")
+
+	info, ok := delays.For("stop-A", 3)
+	assert.True(t, ok)
+	assert.Equal(t, int64(600), info.ArrivalDelay)
+}

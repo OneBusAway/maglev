@@ -523,10 +523,8 @@ func (d StopDelays) For(stopID string, stopSequence int64) (StopDelayInfo, bool)
 
 // Len reports how many StopTimeUpdates contributed an entry.
 func (d StopDelays) Len() int {
-	if len(d.bySequence) > len(d.byStopID) {
-		return len(d.bySequence)
-	}
-	return len(d.byStopID)
+	// The two maps hold disjoint entries, so the total is their sum.
+	return len(d.bySequence) + len(d.byStopID)
 }
 
 // GetStopDelaysFromTripUpdates returns the per-stop delay information (arrival
@@ -558,10 +556,12 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) StopDelays {
 			info.DepartureDelay = int64(stu.Departure.Delay.Seconds())
 		}
 
+		// An update carrying a stop_sequence identifies one specific visit, so it
+		// must not also seed the stop_id fallback: a later lookup for a different
+		// sequence at the same stop would otherwise read this visit's delay.
 		if stu.StopSequence != nil {
 			delays.bySequence[int64(*stu.StopSequence)] = info
-		}
-		if stu.StopID != nil {
+		} else if stu.StopID != nil {
 			delays.byStopID[*stu.StopID] = info
 		}
 	}
