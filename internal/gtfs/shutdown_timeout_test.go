@@ -70,3 +70,37 @@ func TestShutdownIsIdempotent(t *testing.T) {
 		t.Errorf("second Shutdown returned %v, want nil", err)
 	}
 }
+
+// The first call's failure has to survive. shutdownOnce means later calls skip
+// the work, so an error held in a per-call local was reported once and then
+// silently became nil for every caller after it.
+func TestShutdownRepeatsTheFirstError(t *testing.T) {
+	manager := &Manager{shutdownChan: make(chan struct{})}
+
+	blocked := make(chan struct{})
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		<-blocked
+	}()
+	t.Cleanup(func() { close(blocked) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	first := manager.Shutdown(ctx)
+	if first == nil {
+		t.Fatal("first Shutdown returned nil, want a context error")
+	}
+
+	second := manager.Shutdown(context.Background())
+	if second == nil {
+		t.Fatal("second Shutdown returned nil, want the first call's error")
+	}
+	if !errors.Is(second, context.DeadlineExceeded) {
+		t.Errorf("second Shutdown error = %v, want it to wrap context.DeadlineExceeded", second)
+	}
+	if first.Error() != second.Error() {
+		t.Errorf("second Shutdown error = %q, want the same as the first %q", second, first)
+	}
+}

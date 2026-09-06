@@ -54,6 +54,7 @@ type Manager struct {
 	shutdownChan                   chan struct{}
 	wg                             sync.WaitGroup
 	shutdownOnce                   sync.Once
+	shutdownErr                    error
 	isReady                        atomic.Bool // Tracks whether initial data loading is complete
 
 	staticMutex  sync.RWMutex
@@ -266,8 +267,8 @@ func (manager *Manager) SetGtfsURL(url string) {
 // never returns would otherwise block the caller forever. On timeout it logs,
 // returns the context error, and still closes the database.
 func (manager *Manager) Shutdown(ctx context.Context) error {
-	var err error
 	manager.shutdownOnce.Do(func() {
+		var err error
 		close(manager.shutdownChan)
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 
@@ -285,15 +286,29 @@ func (manager *Manager) Shutdown(ctx context.Context) error {
 		}
 
 		if manager.GtfsDB != nil {
-			if closeErr := manager.GtfsDB.Close(); closeErr != nil {
-				logging.LogError(logger, "failed to close GTFS database", closeErr)
+			// sql.DB.Close waits for in-flight queries, so a stuck query would
+			// push Shutdown past ctx on the very path that is meant to bound it.
+			closed := make(chan error, 1)
+			go func() { closed <- manager.GtfsDB.Close() }()
+			select {
+			case closeErr := <-closed:
+				if closeErr != nil {
+					logging.LogError(logger, "failed to close GTFS database", closeErr)
+					if err == nil {
+						err = closeErr
+					}
+				}
+			case <-ctx.Done():
+				logging.LogError(logger, "gave up waiting for the GTFS database to close", ctx.Err())
 				if err == nil {
-					err = closeErr
+					err = fmt.Errorf("closing GTFS database: %w", ctx.Err())
 				}
 			}
 		}
+
+		manager.shutdownErr = err
 	})
-	return err
+	return manager.shutdownErr
 }
 
 // GetAgencies returns all agencies from the database.
