@@ -93,6 +93,16 @@ func TestConcurrentReadsDuringRebuild(t *testing.T) {
 	var stop atomic.Bool
 	var wg sync.WaitGroup
 
+	// require calls FailNow, which Go only allows on the test goroutine, so the
+	// workers report the first mismatch back instead of asserting in place.
+	mismatch := make(chan error, 1)
+	report := func(err error) {
+		select {
+		case mismatch <- err:
+		default:
+		}
+	}
+
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
@@ -102,8 +112,14 @@ func TestConcurrentReadsDuringRebuild(t *testing.T) {
 				// Every index in the lookup must be valid for the same
 				// snapshot's slice. A torn read would break this.
 				for id, idx := range merged.tripLookup {
-					require.Less(t, idx, len(merged.trips))
-					require.Equal(t, id, merged.trips[idx].ID.ID)
+					if idx >= len(merged.trips) {
+						report(fmt.Errorf("tripLookup[%s] = %d, out of range for %d trips", id, idx, len(merged.trips)))
+						return
+					}
+					if got := merged.trips[idx].ID.ID; got != id {
+						report(fmt.Errorf("tripLookup[%s] points at trip %q", id, got))
+						return
+					}
 				}
 			}
 		}()
@@ -118,6 +134,12 @@ func TestConcurrentReadsDuringRebuild(t *testing.T) {
 
 	stop.Store(true)
 	wg.Wait()
+
+	select {
+	case err := <-mismatch:
+		require.NoError(t, err)
+	default:
+	}
 }
 
 // BenchmarkRealtimeReadDuringRebuild measures a reader while rebuilds run in the
@@ -151,4 +173,43 @@ func BenchmarkRealtimeReadDuringRebuild(b *testing.B) {
 			<-done
 		})
 	}
+}
+
+// The exported getters hand back snapshot-owned data. Under the read-only
+// contract that is safe while rebuilds run; this pins it at the public API
+// rather than only at mergedRealtime. Run with -race.
+func TestConcurrentGetterReadsDuringRebuild(t *testing.T) {
+	manager := snapshotTestManager()
+	seedSnapshotFeed(manager, "feed-a", 200)
+	manager.rebuildMergedRealtimeLocked()
+
+	var stop atomic.Bool
+	var wg sync.WaitGroup
+
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !stop.Load() {
+				for _, tr := range manager.GetRealTimeTrips() {
+					_ = tr.ID.ID
+				}
+				for _, v := range manager.GetRealTimeVehicles() {
+					_ = v.ID
+				}
+				_ = manager.GetAlertsByIDs("trip-1", "route-1", "agency-1")
+				_ = manager.GetDuplicatedVehiclesForRoute("route-1")
+			}
+		}()
+	}
+
+	for i := 0; i < 40; i++ {
+		manager.realTimeMutex.Lock()
+		seedSnapshotFeed(manager, fmt.Sprintf("feed-%d", i), 50)
+		manager.rebuildMergedRealtimeLocked()
+		manager.realTimeMutex.Unlock()
+	}
+
+	stop.Store(true)
+	wg.Wait()
 }

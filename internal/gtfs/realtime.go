@@ -182,10 +182,15 @@ func (manager *Manager) cleanupExpiredVehicles(feedID string) {
 	manager.feedVehicles[feedID] = validVehicles
 }
 
+// GetRealTimeTrips returns the current snapshot's trips. The result is shared
+// with every other reader and must not be modified; copy anything you intend to
+// change.
 func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
 	return manager.mergedRealtime().trips
 }
 
+// GetRealTimeVehicles returns the current snapshot's vehicles under the same
+// read-only contract as GetRealTimeTrips.
 func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 	return manager.mergedRealtime().vehicles
 }
