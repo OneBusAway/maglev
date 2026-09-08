@@ -14,7 +14,7 @@ type MetricsModel struct {
 	StopIDsMatchedCount         map[string]int      `json:"stopIDsMatchedCount"`
 	StopIDsUnmatchedCount       map[string]int      `json:"stopIDsUnmatchedCount"`
 	StopIDsUnmatched            map[string][]string `json:"stopIDsUnmatched"`
-	// TimeSinceLastRealtimeUpdate is seconds since the freshest covering feed
+	// TimeSinceLastRealtimeUpdate is seconds since the most-stale covering feed
 	// last updated. -1 means the agency has a configured feed that hasn't
 	// updated yet (or was cleared as stale); 0 means no feed covers the
 	// agency at all.
