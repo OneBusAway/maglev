@@ -676,3 +676,62 @@ func TestGetMetrics_ScheduledTripsCountIncludesLayoverBlocks(t *testing.T) {
 	assert.Equal(t, 1, snapshot.ScheduledTripsCount["A"],
 		"a block laying over between trips at metricsTestNow should count as active")
 }
+
+// TestGetMetrics_BlockWithFinishedAndActiveTripCountsAsActive guards the
+// isCombinedRecordActive fix: previously it selected the trip with the
+// earliest first-stop prediction as "representative", which chose a
+// just-finished trip over an active sibling leg in the same block, causing
+// the block to be missed.
+func TestGetMetrics_BlockWithFinishedAndActiveTripCountsAsActive(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	ensureDefaultCalendar(t, manager)
+
+	ctx := context.Background()
+	_, err := manager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "FINISHED_LEG",
+		RouteID:          "R1",
+		ServiceID:        defaultTestServiceID,
+		BlockID:          sql.NullString{String: "BLOCK1", Valid: true},
+		MinArrivalTime:   sql.NullInt64{Int64: 0, Valid: true},
+		MaxDepartureTime: sql.NullInt64{Int64: (24 * time.Hour).Nanoseconds(), Valid: true},
+	})
+	require.NoError(t, err)
+	_, err = manager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "ACTIVE_LEG",
+		RouteID:          "R1",
+		ServiceID:        defaultTestServiceID,
+		BlockID:          sql.NullString{String: "BLOCK1", Valid: true},
+		MinArrivalTime:   sql.NullInt64{Int64: 0, Valid: true},
+		MaxDepartureTime: sql.NullInt64{Int64: (24 * time.Hour).Nanoseconds(), Valid: true},
+	})
+	require.NoError(t, err)
+
+	longFinished := time.Now().Add(-2 * time.Hour)
+	activeArrival := time.Now().Add(-5 * time.Minute)
+	activeDeparture := time.Now().Add(30 * time.Minute)
+	manager.feedTrips["feed-1"] = []gtfs.Trip{
+		{
+			ID: gtfs.TripID{ID: "FINISHED_LEG", RouteID: "R1"},
+			StopTimeUpdates: []gtfs.StopTimeUpdate{
+				{Arrival: &gtfs.StopTimeEvent{Time: &longFinished}, Departure: &gtfs.StopTimeEvent{Time: &longFinished}},
+			},
+		},
+		{
+			ID: gtfs.TripID{ID: "ACTIVE_LEG", RouteID: "R1"},
+			StopTimeUpdates: []gtfs.StopTimeUpdate{
+				{Arrival: &gtfs.StopTimeEvent{Time: &activeArrival}, Departure: &gtfs.StopTimeEvent{Time: &activeDeparture}},
+			},
+		},
+	}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, snapshot.RealtimeRecordsTotal["A"],
+		"both legs share BLOCK1, so they collapse to one record")
+	assert.Equal(t, 1, snapshot.RealtimeTripCountsMatched["A"],
+		"the active leg must make the block count as matched even though the finished leg sorts first by prediction time")
+}
