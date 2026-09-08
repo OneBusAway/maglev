@@ -622,7 +622,7 @@ func (api *RestAPI) tripsForRouteBlockSpans(
 	ctx context.Context,
 	sd tripsForRouteServiceDay,
 ) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
-	return queryInBatchesReserving(ctx, sd.blockIDs, len(sd.serviceIDs),
+	return utils.QueryInBatchesReserving(ctx, sd.blockIDs, len(sd.serviceIDs),
 		func(ctx context.Context, batch []string) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
 			nullableBatch := make([]sql.NullString, len(batch))
 			for i, blockID := range batch {
