@@ -264,10 +264,14 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *MetricsSnapshot) error {
 	now := time.Now()
 
+	knownAgencies := make(map[string]bool, len(snapshot.AgencyIDs))
+	for _, agencyID := range snapshot.AgencyIDs {
+		knownAgencies[agencyID] = true
+	}
+
 	unmatchedTripIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
 	matchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
 	unmatchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
-	coveredAgencies := make(map[string]bool, len(snapshot.AgencyIDs))
 
 	for _, feed := range manager.snapshotRealtimeFeedState() {
 		metrics, err := manager.computeFeedMetrics(ctx, feed.trips, now)
@@ -280,14 +284,22 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 			agencyIDs = metrics.resolvedAgencyIDs
 		}
 
-		var staleness int64
+		// A feed that has never successfully updated is the worst possible
+		// staleness: use realtimeUpdateUnknown so it propagates correctly
+		// through the max-staleness-wins comparison even when a sibling feed
+		// covering the same agency is healthy.
+		staleness := realtimeUpdateUnknown
 		if feed.hasUpdate {
 			staleness = int64(now.Sub(feed.lastUpdate).Seconds())
 		}
 
 		for agencyID := range agencyIDs {
-			coveredAgencies[agencyID] = true
-			applyFeedMetrics(snapshot, agencyID, metrics, feed.hasUpdate, staleness)
+			if !knownAgencies[agencyID] {
+				// Skip agencies absent from static GTFS — a stale or
+				// misspelled agency-ids entry must not create orphan keys.
+				continue
+			}
+			applyFeedMetrics(snapshot, agencyID, metrics, staleness)
 			addToAgencySet(unmatchedTripIDsByAgency, agencyID, metrics.tripIDsUnmatched)
 			addToAgencySet(matchedStopIDsByAgency, agencyID, metrics.stopIDsMatched)
 			addToAgencySet(unmatchedStopIDsByAgency, agencyID, metrics.stopIDsUnmatched)
@@ -296,11 +308,7 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 
 	for _, agencyID := range snapshot.AgencyIDs {
 		if _, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]; !tracked {
-			if coveredAgencies[agencyID] {
-				snapshot.TimeSinceLastRealtimeUpdate[agencyID] = realtimeUpdateUnknown
-			} else {
-				snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
-			}
+			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
 		}
 		snapshot.RealtimeTripCountsUnmatched[agencyID] = len(unmatchedTripIDsByAgency[agencyID])
 		snapshot.RealtimeTripIDsUnmatched[agencyID] = sortedKeys(unmatchedTripIDsByAgency[agencyID])
@@ -607,19 +615,32 @@ func (manager *Manager) agencyIDsForRoutes(ctx context.Context, routeIDs map[str
 // populateRealtimeMetrics (via addToAgencySet), since they need
 // deduplicating across feeds that cover the same agency rather than summed
 // directly.
-func applyFeedMetrics(snapshot *MetricsSnapshot, agencyID string, metrics feedMetrics, hasUpdate bool, staleness int64) {
+//
+// staleness is either a non-negative seconds value (feed has updated) or
+// realtimeUpdateUnknown (-1, feed has never updated). isStalerThan treats
+// realtimeUpdateUnknown as worse than any non-negative value, so a
+// never-updated sibling feed always wins over a healthy one.
+func applyFeedMetrics(snapshot *MetricsSnapshot, agencyID string, metrics feedMetrics, staleness int64) {
 	snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
 	snapshot.RealtimeTripCountsMatched[agencyID] += metrics.tripsMatched
 
-	if hasUpdate {
-		// The most-stale covering feed determines the agency's reported
-		// staleness, not the freshest: a monitoring signal should surface the
-		// worst case, not let one healthy feed mask a dead sibling.
-		existing, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]
-		if !tracked || staleness > existing {
-			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = staleness
-		}
+	existing, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]
+	if !tracked || isStalerThan(staleness, existing) {
+		snapshot.TimeSinceLastRealtimeUpdate[agencyID] = staleness
 	}
+}
+
+// isStalerThan reports whether candidate represents a worse freshness state
+// than existing. realtimeUpdateUnknown (-1) is treated as worse than any
+// non-negative value; among non-negative values, larger (older) wins.
+func isStalerThan(candidate, existing int64) bool {
+	if candidate == realtimeUpdateUnknown {
+		return existing != realtimeUpdateUnknown
+	}
+	if existing == realtimeUpdateUnknown {
+		return false
+	}
+	return candidate > existing
 }
 
 func collectTripIDs(trips []gtfs.Trip) []string {

@@ -735,3 +735,54 @@ func TestGetMetrics_BlockWithFinishedAndActiveTripCountsAsActive(t *testing.T) {
 	assert.Equal(t, 1, snapshot.RealtimeTripCountsMatched["A"],
 		"the active leg must make the block count as matched even though the finished leg sorts first by prediction time")
 }
+
+// TestGetMetrics_NeverUpdatedFeedMasksHealthyStaleness guards the freshness
+// propagation fix: a feed that has never successfully updated must propagate
+// realtimeUpdateUnknown even when a healthy sibling feed covering the same
+// agency has already set a positive staleness. The worst-case feed must win,
+// not be masked by the healthy one.
+func TestGetMetrics_NeverUpdatedFeedMasksHealthyStaleness(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+
+	manager.feedTrips["feed-healthy"] = []gtfs.Trip{}
+	manager.feedAgencyFilter["feed-healthy"] = map[string]bool{"A": true}
+	manager.SetFeedUpdateTimeForTest("feed-healthy", time.Now().Add(-5*time.Second))
+
+	// feed-never has never updated: hasUpdate=false, no feedLastUpdate entry.
+	manager.feedTrips["feed-never"] = []gtfs.Trip{}
+	manager.feedAgencyFilter["feed-never"] = map[string]bool{"A": true}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate["A"],
+		"the never-updated feed must win over the healthy feed's positive staleness")
+}
+
+// TestGetMetrics_StaleAgencyFilterEntryExcluded guards the orphan-key fix: a
+// feed with an agency-ids entry that no longer exists in the static GTFS must
+// not create orphan keys in the per-agency response maps.
+func TestGetMetrics_StaleAgencyFilterEntryExcluded(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+
+	manager.feedTrips["feed-1"] = []gtfs.Trip{}
+	manager.feedAgencyFilter["feed-1"] = map[string]bool{
+		"A":       true,
+		"REMOVED": true, // agency no longer in static GTFS
+	}
+	manager.SetFeedUpdateTimeForTest("feed-1", time.Now())
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, []string{"A"}, snapshot.AgencyIDs,
+		"agencyIDs must only list agencies present in the static schedule")
+	_, hasOrphan := snapshot.RealtimeRecordsTotal["REMOVED"]
+	assert.False(t, hasOrphan, "stale agency-ids entry must not create an orphan key in the response maps")
+}
