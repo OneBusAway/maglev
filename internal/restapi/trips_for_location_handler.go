@@ -93,7 +93,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		visibleTripIDs = append(visibleTripIDs, tripID)
 	}
 
-	trips, err := queryInBatches(ctx, visibleTripIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
+	trips, err := utils.QueryInBatches(ctx, visibleTripIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -108,7 +108,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	var routes []gtfsdb.Route
 	if len(routeIDs) > 0 {
-		routes, err = queryInBatches(ctx, routeIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+		routes, err = utils.QueryInBatches(ctx, routeIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -311,7 +311,7 @@ func (api *RestAPI) blocklessScheduledTripIDsInBounds(
 		return nil, err
 	}
 
-	trips, err := queryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
+	trips, err := utils.QueryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -391,11 +391,11 @@ func (api *RestAPI) inServiceTripIDs(
 		windowStart := day.sinceMidnightNs - int64(runningLate)
 		windowEnd := day.sinceMidnightNs + int64(runningEarly)
 		// Reserve room for the two window scalars and the ServiceIds slice this
-		// statement also binds — queryInBatches alone would size the StopIds
+		// statement also binds — utils.QueryInBatches alone would size the StopIds
 		// batch as if it were the only bind, and a day with enough active
 		// service IDs could still push the statement over the limit.
 		reserved := len(day.serviceIDs) + 2
-		tripIDs, err := queryInBatchesReserving(ctx, stopIDs, reserved, func(ctx context.Context, batch []string) ([]string, error) {
+		tripIDs, err := utils.QueryInBatchesReserving(ctx, stopIDs, reserved, func(ctx context.Context, batch []string) ([]string, error) {
 			return api.GtfsManager.GtfsDB.Queries.GetInServiceTripIDsForStops(ctx, gtfsdb.GetInServiceTripIDsForStopsParams{
 				StopIds:     batch,
 				ServiceIds:  day.serviceIDs,
@@ -582,7 +582,7 @@ func (api *RestAPI) tripSpansForBlocksServingStops(
 	stopIDs []string,
 	day serviceDay,
 ) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
-	blockIDs, err := queryInBatchesReserving(ctx, stopIDs, len(day.serviceIDs),
+	blockIDs, err := utils.QueryInBatchesReserving(ctx, stopIDs, len(day.serviceIDs),
 		func(ctx context.Context, batch []string) ([]sql.NullString, error) {
 			return api.GtfsManager.GtfsDB.Queries.GetBlockIDsForStops(ctx, gtfsdb.GetBlockIDsForStopsParams{
 				StopIds:    batch,
@@ -598,7 +598,7 @@ func (api *RestAPI) tripSpansForBlocksServingStops(
 		blockIDStrings[i] = blockID.String
 	}
 
-	return queryInBatchesReserving(ctx, blockIDStrings, len(day.serviceIDs),
+	return utils.QueryInBatchesReserving(ctx, blockIDStrings, len(day.serviceIDs),
 		func(ctx context.Context, batch []string) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
 			nullableBatch := make([]sql.NullString, len(batch))
 			for i, blockID := range batch {
@@ -641,7 +641,7 @@ func (api *RestAPI) activeTripInBoundsForAnchor(
 }
 
 func (api *RestAPI) stopTimesByTrip(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.StopTime, error) {
-	stopTimes, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs)
+	stopTimes, err := utils.QueryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -672,7 +672,7 @@ func (api *RestAPI) shapePointsForTrips(ctx context.Context, trips []gtfsdb.Trip
 		return byID, nil
 	}
 
-	shapePoints, err := queryInBatches(ctx, shapeIDs, api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs)
+	shapePoints, err := utils.QueryInBatches(ctx, shapeIDs, api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -718,14 +718,14 @@ func (api *RestAPI) stopsReferencedByEntries(ctx context.Context, entries []mode
 		bareIDs = append(bareIDs, bareID)
 	}
 
-	stops, err := queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	stops, err := utils.QueryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	return stops, stopIDsByBareID, err
 }
 
 // candidateTripIDsForStops returns the IDs of the trips serving any of these
 // stops. IDs may repeat across batches; the caller sets them.
 func (api *RestAPI) candidateTripIDsForStops(ctx context.Context, stopIDs []string) ([]string, error) {
-	return queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops)
+	return utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops)
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {

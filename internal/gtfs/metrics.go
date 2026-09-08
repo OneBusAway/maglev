@@ -10,6 +10,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // MetricsSnapshot captures a point-in-time view of agency coverage, scheduled
@@ -385,7 +386,7 @@ func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Tri
 // staticTripLookups resolves a feed poll's trip IDs against the static
 // schedule, returning each matched trip's route and (if present) block ID.
 func (manager *Manager) staticTripLookups(ctx context.Context, trips []gtfs.Trip) (tripRouteByID, tripBlockByID map[string]string, err error) {
-	staticTrips, err := manager.GtfsDB.Queries.GetTripsByIDs(ctx, collectTripIDs(trips))
+	staticTrips, err := utils.QueryInBatches(ctx, collectTripIDs(trips), manager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -404,7 +405,7 @@ func (manager *Manager) staticTripLookups(ctx context.Context, trips []gtfs.Trip
 // staticStopIDsForTrips resolves the stop IDs referenced by a feed poll's
 // stop_time_updates against the static schedule.
 func (manager *Manager) staticStopIDsForTrips(ctx context.Context, trips []gtfs.Trip) (map[string]bool, error) {
-	staticStops, err := manager.GtfsDB.Queries.GetStopsByIDs(ctx, collectStopIDs(trips))
+	staticStops, err := utils.QueryInBatches(ctx, collectStopIDs(trips), manager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
 		return nil, err
 	}

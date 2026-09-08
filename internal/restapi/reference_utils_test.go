@@ -168,7 +168,7 @@ func TestQueryInBatches(t *testing.T) {
 
 	t.Run("An empty ID set runs no query", func(t *testing.T) {
 		queried := false
-		results, err := queryInBatches(ctx, nil, func(context.Context, []string) ([]string, error) {
+		results, err := utils.QueryInBatches(ctx, nil, func(context.Context, []string) ([]string, error) {
 			queried = true
 			return nil, nil
 		})
@@ -180,7 +180,7 @@ func TestQueryInBatches(t *testing.T) {
 
 	t.Run("A failing batch stops the run", func(t *testing.T) {
 		batches := 0
-		_, err := queryInBatches(ctx, make([]string, idsPerBatchedQuery+1),
+		_, err := utils.QueryInBatches(ctx, make([]string, utils.IDsPerBatchedQuery+1),
 			func(context.Context, []string) ([]string, error) {
 				batches++
 				return nil, errors.New("query failed")
@@ -195,12 +195,12 @@ func TestQueryInBatchesReserving(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("reserved binds shrink the batch size", func(t *testing.T) {
-		// Sized to fit under idsPerBatchedQuery on its own, but not once 200
+		// Sized to fit under utils.IDsPerBatchedQuery on its own, but not once 200
 		// reserved binds are subtracted from the budget.
-		ids := make([]string, idsPerBatchedQuery-100)
+		ids := make([]string, utils.IDsPerBatchedQuery-100)
 
 		var batchSizes []int
-		results, err := queryInBatchesReserving(ctx, ids, 200,
+		results, err := utils.QueryInBatchesReserving(ctx, ids, 200,
 			func(_ context.Context, batch []string) ([]string, error) {
 				batchSizes = append(batchSizes, len(batch))
 				return batch, nil
@@ -211,15 +211,15 @@ func TestQueryInBatchesReserving(t *testing.T) {
 		assert.Greater(t, len(batchSizes), 1,
 			"the reserved binds must force more than one batch for this test to mean anything")
 		for _, size := range batchSizes {
-			assert.LessOrEqual(t, size, idsPerBatchedQuery-200,
+			assert.LessOrEqual(t, size, utils.IDsPerBatchedQuery-200,
 				"no batch may exceed the budget left after reserving")
 		}
 	})
 
-	t.Run("zero reserved matches queryInBatches", func(t *testing.T) {
-		ids := make([]string, idsPerBatchedQuery+1)
+	t.Run("zero reserved matches utils.QueryInBatches", func(t *testing.T) {
+		ids := make([]string, utils.IDsPerBatchedQuery+1)
 		batches := 0
-		_, err := queryInBatchesReserving(ctx, ids, 0,
+		_, err := utils.QueryInBatchesReserving(ctx, ids, 0,
 			func(context.Context, []string) ([]string, error) {
 				batches++
 				return nil, nil
