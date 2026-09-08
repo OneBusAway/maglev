@@ -178,13 +178,13 @@ func TestGetMetrics_RecordsTotalGroupsTripUpdatesByBlock(t *testing.T) {
 		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
 	}
 	manager := newTestManagerWithRoutes(routes)
-	mustCreateCalendar(t, manager, "service-1")
+	ensureDefaultCalendar(t, manager)
 
 	ctx := context.Background()
 	_, err := manager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID:               "CURRENT_LEG",
 		RouteID:          "R1",
-		ServiceID:        "service-1",
+		ServiceID:        defaultTestServiceID,
 		BlockID:          sql.NullString{String: "BLOCK1", Valid: true},
 		MinArrivalTime:   sql.NullInt64{Int64: 0, Valid: true},
 		MaxDepartureTime: sql.NullInt64{Int64: (24 * time.Hour).Nanoseconds(), Valid: true},
@@ -193,7 +193,7 @@ func TestGetMetrics_RecordsTotalGroupsTripUpdatesByBlock(t *testing.T) {
 	_, err = manager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID:               "NEXT_LEG",
 		RouteID:          "R1",
-		ServiceID:        "service-1",
+		ServiceID:        defaultTestServiceID,
 		BlockID:          sql.NullString{String: "BLOCK1", Valid: true},
 		MinArrivalTime:   sql.NullInt64{Int64: 0, Valid: true},
 		MaxDepartureTime: sql.NullInt64{Int64: (24 * time.Hour).Nanoseconds(), Valid: true},
@@ -224,30 +224,59 @@ func TestGetMetrics_RecordsTotalGroupsTripUpdatesByBlock(t *testing.T) {
 // matched regardless of whether its predictions were current, running far
 // higher than Java for the same feed.
 func TestGetMetrics_MatchedTripsRequireActivePrediction(t *testing.T) {
-	routes := map[string]*gtfs.Route{
-		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
-	}
-	manager := newTestManagerWithRoutes(routes)
-	mustCreateTrip(t, manager, "T1", "R1")
-
-	longFinished := time.Now().Add(-2 * time.Hour)
-	manager.feedTrips["feed-1"] = []gtfs.Trip{
+	// isTripActive is measured against time.Now(), not metricsTestNow, so
+	// predictions are anchored to real wall time here (see activeStopTimeUpdates).
+	tests := []struct {
+		name          string
+		firstOffset   time.Duration
+		lastOffset    time.Duration
+		wantMatched   int
+		wantUnmatched int
+	}{
 		{
-			ID: gtfs.TripID{ID: "T1", RouteID: "R1"},
-			StopTimeUpdates: []gtfs.StopTimeUpdate{
-				{Arrival: &gtfs.StopTimeEvent{Time: &longFinished}, Departure: &gtfs.StopTimeEvent{Time: &longFinished}},
-			},
+			name:          "already finished",
+			firstOffset:   -2 * time.Hour,
+			lastOffset:    -2 * time.Hour,
+			wantMatched:   0,
+			wantUnmatched: 0,
+		},
+		{
+			name:          "first prediction beyond activeRecordLookahead",
+			firstOffset:   activeRecordLookahead + time.Minute,
+			lastOffset:    activeRecordLookahead + 2*time.Hour,
+			wantMatched:   0,
+			wantUnmatched: 0,
 		},
 	}
 
-	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
-	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			routes := map[string]*gtfs.Route{
+				"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+			}
+			manager := newTestManagerWithRoutes(routes)
+			mustCreateTrip(t, manager, "T1", "R1")
 
-	assert.Equal(t, 1, snapshot.RealtimeRecordsTotal["A"],
-		"the record still exists and is resolvable, so it counts toward recordsTotal")
-	assert.Equal(t, 0, snapshot.RealtimeTripCountsMatched["A"],
-		"a resolved trip whose predictions already finished counts toward neither matched nor unmatched")
-	assert.Equal(t, 0, snapshot.RealtimeTripCountsUnmatched["A"])
+			first := time.Now().Add(tc.firstOffset)
+			last := time.Now().Add(tc.lastOffset)
+			manager.feedTrips["feed-1"] = []gtfs.Trip{
+				{
+					ID: gtfs.TripID{ID: "T1", RouteID: "R1"},
+					StopTimeUpdates: []gtfs.StopTimeUpdate{
+						{Arrival: &gtfs.StopTimeEvent{Time: &first}, Departure: &gtfs.StopTimeEvent{Time: &last}},
+					},
+				},
+			}
+
+			snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, snapshot.RealtimeRecordsTotal["A"],
+				"the record still exists and is resolvable, so it counts toward recordsTotal")
+			assert.Equal(t, tc.wantMatched, snapshot.RealtimeTripCountsMatched["A"])
+			assert.Equal(t, tc.wantUnmatched, snapshot.RealtimeTripCountsUnmatched["A"])
+		})
+	}
 }
 
 // TestGetMetrics_RecordsTotalTreatsBlocklessTripsAsStandaloneRecords covers
@@ -541,11 +570,27 @@ func TestGetMetrics_ScheduledTripsCountOnlyCountsActiveTrips(t *testing.T) {
 	mustCreateTrip(t, manager, "ACTIVE1", "R1")
 	mustCreateInactiveTrip(t, manager, "INACTIVE1", "R1")
 
+	// A past-midnight trip: scheduled on the previous day's service with GTFS
+	// times > 24:00:00 that are still running at metricsTestNow. The
+	// active-trips query checks yesterday's service at sinceMidnight+24h to
+	// capture these (see activeTripsForAgency). The all-day ACTIVE1 window
+	// (0–24h) does not reach at=36h, so it must not be double-counted.
+	overnightStart := metricsTestNowSinceMidnight + 22*time.Hour // 34h since yesterday's midnight
+	overnightEnd := metricsTestNowSinceMidnight + 26*time.Hour   // 38h since yesterday's midnight
+	_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
+		ID:               "OVERNIGHT",
+		RouteID:          "R1",
+		ServiceID:        defaultTestServiceID,
+		MinArrivalTime:   sql.NullInt64{Int64: overnightStart.Nanoseconds(), Valid: true},
+		MaxDepartureTime: sql.NullInt64{Int64: overnightEnd.Nanoseconds(), Valid: true},
+	})
+	require.NoError(t, err)
+
 	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, snapshot.ScheduledTripsCount["A"],
-		"only the trip whose window covers metricsTestNow should count")
+	assert.Equal(t, 2, snapshot.ScheduledTripsCount["A"],
+		"ACTIVE1 (today query) and OVERNIGHT (yesterday+24h query) should both count; INACTIVE1 and ACTIVE1 must not be double-counted")
 }
 
 // TestGetMetrics_ScheduledTripsCountHasNoRunningLateEarlyTolerance guards
@@ -559,16 +604,14 @@ func TestGetMetrics_ScheduledTripsCountHasNoRunningLateEarlyTolerance(t *testing
 		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
 	}
 	manager := newTestManagerWithRoutes(routes)
-
-	const serviceID = "service-1"
-	mustCreateCalendar(t, manager, serviceID)
+	ensureDefaultCalendar(t, manager)
 
 	// Ended 15 minutes before metricsTestNow: within the old 30-minute
 	// running-late buffer, but not currently active.
 	_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
 		ID:               "RECENTLY_ENDED",
 		RouteID:          "R1",
-		ServiceID:        serviceID,
+		ServiceID:        defaultTestServiceID,
 		MinArrivalTime:   sql.NullInt64{Int64: (metricsTestNowSinceMidnight - time.Hour).Nanoseconds(), Valid: true},
 		MaxDepartureTime: sql.NullInt64{Int64: (metricsTestNowSinceMidnight - 15*time.Minute).Nanoseconds(), Valid: true},
 	})
@@ -579,7 +622,7 @@ func TestGetMetrics_ScheduledTripsCountHasNoRunningLateEarlyTolerance(t *testing
 	_, err = manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
 		ID:               "STARTS_SOON",
 		RouteID:          "R1",
-		ServiceID:        serviceID,
+		ServiceID:        defaultTestServiceID,
 		MinArrivalTime:   sql.NullInt64{Int64: (metricsTestNowSinceMidnight + 5*time.Minute).Nanoseconds(), Valid: true},
 		MaxDepartureTime: sql.NullInt64{Int64: (metricsTestNowSinceMidnight + time.Hour).Nanoseconds(), Valid: true},
 	})
@@ -601,9 +644,7 @@ func TestGetMetrics_ScheduledTripsCountIncludesLayoverBlocks(t *testing.T) {
 		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
 	}
 	manager := newTestManagerWithRoutes(routes)
-
-	const serviceID = "service-1"
-	mustCreateCalendar(t, manager, serviceID)
+	ensureDefaultCalendar(t, manager)
 	mustCreateStop(t, manager, "LAYOVER_STOP")
 
 	// The block's next trip departs an hour after metricsTestNow, so no trip
@@ -611,7 +652,7 @@ func TestGetMetrics_ScheduledTripsCountIncludesLayoverBlocks(t *testing.T) {
 	_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
 		ID:               "NEXT_LEG",
 		RouteID:          "R1",
-		ServiceID:        serviceID,
+		ServiceID:        defaultTestServiceID,
 		BlockID:          sql.NullString{String: "BLOCK1", Valid: true},
 		MinArrivalTime:   sql.NullInt64{Int64: (metricsTestNowSinceMidnight + time.Hour).Nanoseconds(), Valid: true},
 		MaxDepartureTime: sql.NullInt64{Int64: (metricsTestNowSinceMidnight + 2*time.Hour).Nanoseconds(), Valid: true},
@@ -620,7 +661,7 @@ func TestGetMetrics_ScheduledTripsCountIncludesLayoverBlocks(t *testing.T) {
 
 	err = manager.GtfsDB.Queries.CreateBlockLayover(context.Background(), gtfsdb.CreateBlockLayoverParams{
 		BlockID:       "BLOCK1",
-		ServiceID:     serviceID,
+		ServiceID:     defaultTestServiceID,
 		RouteID:       "R1",
 		LayoverStopID: "LAYOVER_STOP",
 		LayoverStart:  (metricsTestNowSinceMidnight - 10*time.Minute).Nanoseconds(),
