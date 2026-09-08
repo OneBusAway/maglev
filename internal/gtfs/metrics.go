@@ -140,8 +140,11 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 		loc = time.UTC
 	}
 	localNow := now.In(loc)
-	midnight := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
-	sinceMidnight := max(localNow.Sub(midnight), 0)
+	// Wall-clock math matches GTFS seconds-since-midnight semantics:
+	// time.Sub diverges by 3600s during the DST fall-back ambiguous hour
+	// (see CalculateSecondsSinceServiceDate for the full explanation).
+	h, m, s := localNow.Clock()
+	sinceMidnight := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
 
 	today, err := manager.countActiveBlocksAt(ctx, agency.ID, localNow, sinceMidnight)
 	if err != nil {
