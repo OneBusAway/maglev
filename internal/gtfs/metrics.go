@@ -35,7 +35,7 @@ type MetricsSnapshot struct {
 	StopIDsMatchedCount         map[string]int
 	StopIDsUnmatchedCount       map[string]int
 	StopIDsUnmatched            map[string][]string
-	// TimeSinceLastRealtimeUpdate is seconds since the freshest feed covering
+	// TimeSinceLastRealtimeUpdate is seconds since the most-stale feed covering
 	// the agency last updated successfully. It is realtimeUpdateUnknown (-1)
 	// when the agency is covered by a configured feed that has never
 	// successfully updated (or was cleared as stale — see clearFeedData), and
@@ -441,21 +441,21 @@ func classifyTrips(trips []gtfs.Trip, tripRouteByID map[string]string, staticSto
 		} else {
 			result.unmatchedTripIDs[trip.ID.ID] = true
 		}
-		classifyStopTimeUpdates(trip.StopTimeUpdates, staticStopIDs, result.matchedStopIDs, result.unmatchedStopIDs)
+		classifyStopTimeUpdates(trip.StopTimeUpdates, staticStopIDs, &result)
 	}
 
 	return result
 }
 
-func classifyStopTimeUpdates(updates []gtfs.StopTimeUpdate, staticStopIDs, matchedStopIDs, unmatchedStopIDs map[string]bool) {
+func classifyStopTimeUpdates(updates []gtfs.StopTimeUpdate, staticStopIDs map[string]bool, result *tripClassification) {
 	for _, stopTimeUpdate := range updates {
 		if stopTimeUpdate.StopID == nil {
 			continue
 		}
 		if staticStopIDs[*stopTimeUpdate.StopID] {
-			matchedStopIDs[*stopTimeUpdate.StopID] = true
+			result.matchedStopIDs[*stopTimeUpdate.StopID] = true
 		} else {
-			unmatchedStopIDs[*stopTimeUpdate.StopID] = true
+			result.unmatchedStopIDs[*stopTimeUpdate.StopID] = true
 		}
 	}
 }
