@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
@@ -218,6 +219,44 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
+}
+
+func TestBlockHandlerCrossConfigurationDistanceReset(t *testing.T) {
+	// Construct a synthetic block with 2 distinct service IDs
+	rows := []gtfsdb.GetBlockDetailsRow{
+		{
+			ServiceID: "weekday", TripID: "trip1", StopSequence: 1, StopID: "stopA",
+			Lat: 0.0, Lon: 0.0,
+		},
+		{
+			ServiceID: "weekday", TripID: "trip1", StopSequence: 2, StopID: "stopB",
+			Lat: 1.0, Lon: 0.0,
+		},
+		{
+			ServiceID: "weekend", TripID: "trip2", StopSequence: 1, StopID: "stopC",
+			Lat: 0.0, Lon: 0.0,
+		},
+		{
+			ServiceID: "weekend", TripID: "trip2", StopSequence: 2, StopID: "stopD",
+			Lat: 1.0, Lon: 0.0,
+		},
+	}
+
+	entry := transformBlockToEntry(rows, "block_1", "agency")
+
+	require.Len(t, entry.Configurations, 2, "expected exactly 2 configurations")
+
+	config0 := entry.Configurations[0]
+	require.NotEmpty(t, config0.Trips)
+	require.NotEmpty(t, config0.Trips[0].BlockStopTimes)
+	assert.Equal(t, 0.0, config0.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "Configuration 0 first stop should be 0")
+	assert.Greater(t, config0.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 0 distance should accumulate")
+
+	config1 := entry.Configurations[1]
+	require.NotEmpty(t, config1.Trips)
+	require.NotEmpty(t, config1.Trips[0].BlockStopTimes)
+	assert.Equal(t, 0.0, config1.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "Configuration 1 first stop should be 0")
+	assert.Greater(t, config1.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 1 distance should accumulate normally")
 }
 
 func BenchmarkBlockHandler(b *testing.B) {
