@@ -519,39 +519,19 @@ const activeRecordLookahead = time.Hour
 // trip update's first predicted stop time is no more than an hour away and
 // its last predicted stop time hasn't passed yet — a resolved but
 // not-yet-started-soon or already-finished record is silently excluded from
-// both matched and unmatched. The representative trip is the one with the
-// earliest first-stop prediction in the group: Maglev's parsed trip data
-// doesn't preserve GTFS-RT feed entity order the way Java's does, so this
-// approximates "the currently active leg" when a block also has a
-// vehicle-less look-ahead trip for its next leg. Verified directly against a
-// live feed: this reproduced Java's matched count within 1 of 57.
+// both matched and unmatched.
+//
+// Any trip in the group being active is sufficient: picking a single
+// "representative trip" by earliest first-stop prediction would select a
+// just-finished trip over an active sibling leg, causing the block to be
+// missed even when a genuine active leg exists in the same poll.
 func isCombinedRecordActive(group []gtfs.Trip, now time.Time) bool {
-	trip, ok := representativeTrip(group)
-	if !ok {
-		return false
-	}
-	return isTripActive(trip, now)
-}
-
-func representativeTrip(group []gtfs.Trip) (gtfs.Trip, bool) {
-	var best gtfs.Trip
-	var bestPrediction time.Time
-	found := false
 	for _, trip := range group {
-		if len(trip.StopTimeUpdates) == 0 {
-			continue
-		}
-		prediction := firstPredictionTime(trip.StopTimeUpdates[0])
-		if prediction == nil {
-			continue
-		}
-		if !found || prediction.Before(bestPrediction) {
-			best = trip
-			bestPrediction = *prediction
-			found = true
+		if isTripActive(trip, now) {
+			return true
 		}
 	}
-	return best, found
+	return false
 }
 
 func isTripActive(trip gtfs.Trip, now time.Time) bool {
