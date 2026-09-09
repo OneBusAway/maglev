@@ -222,41 +222,28 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 }
 
 func TestBlockHandlerCrossConfigurationDistanceReset(t *testing.T) {
-	// Construct a synthetic block with 2 distinct service IDs
-	rows := []gtfsdb.GetBlockDetailsRow{
-		{
-			ServiceID: "weekday", TripID: "trip1", StopSequence: 1, StopID: "stopA",
-			Lat: 0.0, Lon: 0.0,
-		},
-		{
-			ServiceID: "weekday", TripID: "trip1", StopSequence: 2, StopID: "stopB",
-			Lat: 1.0, Lon: 0.0,
-		},
-		{
-			ServiceID: "weekend", TripID: "trip2", StopSequence: 1, StopID: "stopC",
-			Lat: 0.0, Lon: 0.0,
-		},
-		{
-			ServiceID: "weekend", TripID: "trip2", StopSequence: 2, StopID: "stopD",
-			Lat: 1.0, Lon: 0.0,
-		},
-	}
+	api := createTestApi(t)
+	defer api.Shutdown()
 
-	entry := transformBlockToEntry(rows, "block_1", "agency")
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
 
-	require.Len(t, entry.Configurations, 2, "expected exactly 2 configurations")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.GreaterOrEqual(t, len(entry.Configurations), 2, "expected at least 2 configurations")
 
 	config0 := entry.Configurations[0]
 	require.NotEmpty(t, config0.Trips)
-	require.NotEmpty(t, config0.Trips[0].BlockStopTimes)
+	require.GreaterOrEqual(t, len(config0.Trips[0].BlockStopTimes), 2, "expected at least 2 BlockStopTimes for config0")
 	assert.Equal(t, 0.0, config0.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "Configuration 0 first stop should be 0")
-	assert.Greater(t, config0.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 0 distance should accumulate")
+	assert.Greater(t, config0.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 0 second stop should be > 0")
 
 	config1 := entry.Configurations[1]
 	require.NotEmpty(t, config1.Trips)
-	require.NotEmpty(t, config1.Trips[0].BlockStopTimes)
+	require.GreaterOrEqual(t, len(config1.Trips[0].BlockStopTimes), 2, "expected at least 2 BlockStopTimes for config1")
+	// On the merge base, this incorrectly returned 433750.77 instead of 0.0
 	assert.Equal(t, 0.0, config1.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "Configuration 1 first stop should be 0")
-	assert.Greater(t, config1.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 1 distance should accumulate normally")
+	assert.Greater(t, config1.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 1 second stop should be > 0")
 }
 
 func BenchmarkBlockHandler(b *testing.B) {
