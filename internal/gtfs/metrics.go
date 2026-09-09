@@ -598,7 +598,7 @@ func (manager *Manager) agencyIDsForRoutes(ctx context.Context, routeIDs map[str
 		ids = append(ids, routeID)
 	}
 
-	routes, err := manager.GtfsDB.Queries.GetRoutesByIDs(ctx, ids)
+	routes, err := utils.QueryInBatches(ctx, ids, manager.GtfsDB.Queries.GetRoutesByIDs)
 	if err != nil {
 		return nil, err
 	}
