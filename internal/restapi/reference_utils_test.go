@@ -228,6 +228,31 @@ func TestQueryInBatchesReserving(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, batches)
 	})
+
+	t.Run("reserved at or above the limit rejects non-empty ids", func(t *testing.T) {
+		batches := 0
+		_, err := utils.QueryInBatchesReserving(ctx, []string{"only-one"}, utils.IDsPerBatchedQuery,
+			func(context.Context, []string) ([]string, error) {
+				batches++
+				return nil, nil
+			})
+
+		require.Error(t, err, "reserved leaving no batch capacity must fail loudly, not silently oversize the statement")
+		assert.Equal(t, 0, batches, "the query must not run when the batch has no room")
+	})
+
+	t.Run("reserved at or above the limit still allows empty ids", func(t *testing.T) {
+		batches := 0
+		results, err := utils.QueryInBatchesReserving(ctx, nil, utils.IDsPerBatchedQuery+50,
+			func(context.Context, []string) ([]string, error) {
+				batches++
+				return nil, nil
+			})
+
+		require.NoError(t, err)
+		assert.Empty(t, results)
+		assert.Equal(t, 0, batches)
+	})
 }
 
 func TestStopReferences(t *testing.T) {
