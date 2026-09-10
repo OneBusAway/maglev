@@ -213,12 +213,10 @@ type realtimeFeedState struct {
 	hasUpdate    bool
 }
 
-// snapshotRealtimeFeedState enumerates every feed the manager currently
-// knows about. Feed IDs are collected from feedTrips, feedVehicles,
-// feedAlerts, and feedLastUpdate together, not feedTrips alone: a feed
-// configured with only a vehicle-positions-url never gets a feedTrips entry
-// (see the trip-updates guard in updateFeedRealtime), so relying on
-// feedTrips alone would make it invisible to metrics entirely.
+// snapshotRealtimeFeedState enumerates every feed the manager knows about.
+// The union of all five per-feed maps is needed: any one alone can miss a
+// vehicle-positions-only feed (no feedTrips entry) or a configured feed
+// that has never fetched (only feedAgencyFilter entry).
 func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
@@ -234,6 +232,9 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 		feedIDs[feedID] = true
 	}
 	for feedID := range manager.feedLastUpdate {
+		feedIDs[feedID] = true
+	}
+	for feedID := range manager.feedAgencyFilter {
 		feedIDs[feedID] = true
 	}
 
@@ -303,6 +304,14 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 			addToAgencySet(unmatchedTripIDsByAgency, agencyID, metrics.tripIDsUnmatched)
 			addToAgencySet(matchedStopIDsByAgency, agencyID, metrics.stopIDsMatched)
 			addToAgencySet(unmatchedStopIDsByAgency, agencyID, metrics.stopIDsUnmatched)
+		}
+
+		// Unfiltered feed with no resolvable trips: freshness spreads to every
+		// static agency so a broken configured feed does not read as 0.
+		if len(feed.agencyFilter) == 0 && len(metrics.resolvedAgencyIDs) == 0 {
+			for _, agencyID := range snapshot.AgencyIDs {
+				updateStaleness(snapshot, agencyID, staleness)
+			}
 		}
 	}
 
@@ -623,7 +632,13 @@ func (manager *Manager) agencyIDsForRoutes(ctx context.Context, routeIDs map[str
 func applyFeedMetrics(snapshot *MetricsSnapshot, agencyID string, metrics feedMetrics, staleness int64) {
 	snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
 	snapshot.RealtimeTripCountsMatched[agencyID] += metrics.tripsMatched
+	updateStaleness(snapshot, agencyID, staleness)
+}
 
+// updateStaleness keeps the worst staleness value across feeds covering the
+// same agency. Split from applyFeedMetrics so the unattributable-feed
+// fallback can update freshness without re-accumulating match counts.
+func updateStaleness(snapshot *MetricsSnapshot, agencyID string, staleness int64) {
 	existing, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]
 	if !tracked || isStalerThan(staleness, existing) {
 		snapshot.TimeSinceLastRealtimeUpdate[agencyID] = staleness
