@@ -200,6 +200,13 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 		references.Agencies = []models.AgencyReference{agencyRef}
 		references.Routes = routes
 		references.Stops = stopsList
+
+		// A route in routes can belong to a different agency than the one
+		// queried here (a stop can be served by more than one agency's routes).
+		// Every such route's agencyId must resolve against references.agencies too.
+		for _, route := range routes {
+			api.appendRouteAgencyReference(ctx, references, route.AgencyID, currentAgency.ID)
+		}
 	}
 
 	response := models.NewEntryResponse(result, *references, api.Clock)

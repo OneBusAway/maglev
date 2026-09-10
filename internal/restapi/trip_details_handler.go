@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -36,6 +37,11 @@ type TripParamDefaults struct {
 const (
 	serviceDateLayout = "2006-01-02"          // e.g. "2024-06-15"
 	tripTimeLayout    = "2006-01-02_15-04-05" // e.g. "2024-06-15_14-30-00"
+)
+
+const (
+	errInvalidServiceDate = "must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"
+	errInvalidTime        = "must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"
 )
 
 // parseEpochOrLayoutTime parses a param accepting either a Unix timestamp in
@@ -74,6 +80,25 @@ func localizeTripTimes(params *TripParams, loc *time.Location) {
 	}
 }
 
+// resolveLocation returns the caller-supplied timezone, or UTC when absent.
+func resolveLocation(loc ...*time.Location) *time.Location {
+	if len(loc) > 0 && loc[0] != nil {
+		return loc[0]
+	}
+	return time.UTC
+}
+
+// parseTimeField parses the time-valued query param key into a timestamp,
+// recording a field error when it matches neither Unix millis nor layout.
+func parseTimeField(query url.Values, key, layout, errMsg string, loc *time.Location, fieldErrors map[string][]string) *time.Time {
+	parsed, ok := parseEpochOrLayoutTime(query.Get(key), layout, loc)
+	if !ok {
+		fieldErrors[key] = []string{errMsg}
+		return nil
+	}
+	return parsed
+}
+
 // parseTripParams parses and validates the common trip query params, applying
 // the caller's per-endpoint defaults to any include* param the request omits.
 func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults, loc ...*time.Location) (TripParams, map[string][]string) {
@@ -81,10 +106,7 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 
 	// Timestamps without an explicit offset are read in the agency's timezone when
 	// the caller supplies one, and in UTC otherwise.
-	parseLoc := time.UTC
-	if len(loc) > 0 && loc[0] != nil {
-		parseLoc = loc[0]
-	}
+	parseLoc := resolveLocation(loc...)
 
 	params := TripParams{
 		IncludeTrip:     defaults.IncludeTrip,
@@ -95,17 +117,8 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 
 	fieldErrors := make(map[string][]string)
 
-	if serviceDate, ok := parseEpochOrLayoutTime(query.Get("serviceDate"), serviceDateLayout, parseLoc); ok {
-		params.ServiceDate = serviceDate
-	} else {
-		fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds or a date in yyyy-MM-dd format"}
-	}
-
-	if timeParam, ok := parseEpochOrLayoutTime(query.Get("time"), tripTimeLayout, parseLoc); ok {
-		params.Time = timeParam
-	} else {
-		fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds or a datetime in yyyy-MM-dd_HH-mm-ss format"}
-	}
+	params.ServiceDate = parseTimeField(query, "serviceDate", serviceDateLayout, errInvalidServiceDate, parseLoc, fieldErrors)
+	params.Time = parseTimeField(query, "time", tripTimeLayout, errInvalidTime, parseLoc, fieldErrors)
 
 	params.IncludeTrip, fieldErrors = utils.ParseBoolParam(query, "includeTrip", params.IncludeTrip, fieldErrors)
 	params.IncludeSchedule, fieldErrors = utils.ParseBoolParam(query, "includeSchedule", params.IncludeSchedule, fieldErrors)
@@ -115,9 +128,7 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 		return params, fieldErrors
 	}
 
-	if len(loc) > 0 && loc[0] != nil {
-		localizeTripTimes(&params, loc[0])
-	}
+	localizeTripTimes(&params, parseLoc)
 
 	return params, nil
 }
@@ -230,12 +241,10 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, nil)
 		if statusErr != nil {
-			api.Logger.Warn("BuildTripStatus failed",
-				"trip_id", trip.ID,
-				"error", statusErr.Error())
-			status = nil
+			api.serverErrorResponse(w, r, statusErr)
+			return
 		}
 
 		// Extension 4e: Explicitly nil out the status if there is no actual tracking record.

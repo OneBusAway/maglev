@@ -591,3 +591,145 @@ func TestStopsForLocationHandlerWithSituations(t *testing.T) {
 
 	assert.True(t, foundOurAlert, "Expected to find our mock alert in the references.situations")
 }
+
+// Spec extension 8a: includeReferences=false leaves the references block present but empty.
+func TestStopsForLocationHonorsIncludeReferences(t *testing.T) {
+	tests := []struct {
+		name             string
+		param            string
+		expectReferences bool
+	}{
+		{name: "omitted", param: "", expectReferences: true},
+		{name: "true", param: "&includeReferences=true", expectReferences: true},
+		{name: "false", param: "&includeReferences=false", expectReferences: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 14, 0, 0, 0, time.UTC))
+			api := createTestApiWithClock(t, mockClock)
+
+			stopID := "2042"
+			api.GtfsManager.AddAlertForTest(gtfs.Alert{
+				ID:               "test-alert-stop-2042",
+				InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+				Description:      []gtfs.AlertText{{Text: "Stop 2042 is closed today", Language: "en"}},
+			})
+
+			resp, model := callAPIHandler[StopsResponse](t, api,
+				"/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&query=2042"+tt.param)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Len(t, model.Data.List, 1, "the stop itself is returned either way")
+
+			refs := model.Data.References
+			if tt.expectReferences {
+				assert.NotEmpty(t, refs.Agencies)
+				assert.NotEmpty(t, refs.Routes)
+				assert.NotEmpty(t, refs.Situations)
+			} else {
+				assert.Empty(t, refs.Agencies)
+				assert.Empty(t, refs.Routes)
+				assert.Empty(t, refs.Situations)
+			}
+		})
+	}
+}
+
+// The time parameter also accepts yyyy-MM-dd_HH-mm-ss, which was previously read as
+// epoch millis and silently resolved to 1970.
+func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
+	// 2025-06-13 14:00:00 in RABA's timezone, a date the fixture has service on.
+	const serviceDateEpochMs = "1749848400000"
+
+	tests := []struct {
+		name        string
+		timeParam   string
+		expectStops bool
+	}{
+		{name: "epoch millis", timeParam: serviceDateEpochMs, expectStops: true},
+		{name: "date and time", timeParam: "2025-06-13_14-00-00", expectStops: true},
+		{name: "date only", timeParam: "2025-06-13", expectStops: true},
+		{name: "malformed", timeParam: "garbage", expectStops: false},
+		{name: "absent", timeParam: "", expectStops: false},
+	}
+
+	var epochStopIDs []string
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A clock outside the fixture's service dates returns nothing, so a time
+			// that parses shows up as a non-empty result rather than a shifted count.
+			futureClock := clock.NewMockClock(time.Date(2031, 1, 1, 12, 0, 0, 0, time.UTC))
+			api := createTestApiWithClock(t, futureClock)
+
+			endpoint := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500"
+			if tt.timeParam != "" {
+				endpoint += "&time=" + tt.timeParam
+			}
+			resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode, "an unparseable time is served, not rejected")
+
+			stopIDs := make([]string, 0, len(model.Data.List))
+			for _, stop := range model.Data.List {
+				stopIDs = append(stopIDs, stop.ID)
+			}
+
+			if !tt.expectStops {
+				assert.Empty(t, stopIDs, "no service is active at the clock's date")
+				return
+			}
+
+			require.NotEmpty(t, stopIDs)
+			if epochStopIDs == nil {
+				epochStopIDs = stopIDs
+				return
+			}
+			assert.Equal(t, epochStopIDs, stopIDs, "every accepted form of the same date selects the same stops")
+		})
+	}
+}
+
+// A service date is a local calendar date, so the date is taken in the agency's
+// timezone even when the server clock's own date has already rolled over.
+func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
+	// Both instants are Friday 2025-06-13 in RABA's America/Los_Angeles, but the
+	// second has already rolled over to the 14th in UTC.
+	middayLocal := clock.NewMockClock(time.Date(2025, 6, 13, 20, 0, 0, 0, time.UTC))
+	lateEveningLocal := clock.NewMockClock(time.Date(2025, 6, 14, 5, 0, 0, 0, time.UTC))
+
+	stopIDsAt := func(c clock.Clock, timeParam string) []string {
+		api := createTestApiWithClock(t, c)
+		endpoint := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500"
+		if timeParam != "" {
+			endpoint += "&time=" + timeParam
+		}
+		resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		stopIDs := make([]string, 0, len(model.Data.List))
+		for _, stop := range model.Data.List {
+			stopIDs = append(stopIDs, stop.ID)
+		}
+		return stopIDs
+	}
+
+	// Both routes to the fallback have to land on the agency's date.
+	tests := []struct {
+		name      string
+		timeParam string
+	}{
+		{name: "absent", timeParam: ""},
+		{name: "malformed", timeParam: "garbage"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := stopIDsAt(middayLocal, tt.timeParam)
+			require.NotEmpty(t, expected)
+			assert.Equal(t, expected, stopIDsAt(lateEveningLocal, tt.timeParam),
+				"the same local service date must select the same stops on both sides of UTC midnight")
+		})
+	}
+}

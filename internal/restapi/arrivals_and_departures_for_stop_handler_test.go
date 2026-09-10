@@ -94,6 +94,61 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Stops)
 }
 
+// TestArrivalsAndDeparturesForStopHandler_RouteAlertReferences verifies that a
+// route-level alert appears on the affected arrival and that its situation ID
+// resolves in references.situations.
+func TestArrivalsAndDeparturesForStopHandler_RouteAlertReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}})
+	_, initial := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.NotEmpty(t, initial.Data.Entry.ArrivalsAndDepartures,
+		"fixture stop should have an arrival in the test window")
+
+	target := initial.Data.Entry.ArrivalsAndDepartures[0]
+	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(target.RouteID)
+	require.NoError(t, err)
+
+	const alertID = "plural-arrivals-route-alert"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+		Header:           []gtfs.AlertText{{Text: "Plural arrivals route alert", Language: "en"}},
+	})
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	var affectedArrival *models.ArrivalAndDeparture
+	for i := range model.Data.Entry.ArrivalsAndDepartures {
+		arrival := &model.Data.Entry.ArrivalsAndDepartures[i]
+		if arrival.RouteID == target.RouteID {
+			affectedArrival = arrival
+			break
+		}
+	}
+	require.NotNil(t, affectedArrival, "expected an arrival on the alerted route")
+	require.NotNil(t, affectedArrival.TripStatus)
+	assert.Equal(t, affectedArrival.TripStatus.SituationIDs, affectedArrival.SituationIDs,
+		"arrival situationIds must be the ones BuildTripStatus resolved, not a second lookup")
+	assert.Contains(t, affectedArrival.SituationIDs, wantSituationID,
+		"an arrival must include its route-level alert")
+
+	var referenced bool
+	for _, situation := range model.Data.References.Situations {
+		if situation.ID == wantSituationID {
+			referenced = true
+			break
+		}
+	}
+	assert.True(t, referenced,
+		"arrival situationId %q must resolve in references.situations", wantSituationID)
+}
+
 func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
@@ -116,6 +171,82 @@ func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 			assert.Equal(t, http.StatusOK, model.Code)
 			assert.Equal(t, arrivalsTestStopID, model.Data.Entry.StopID)
 			assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+		})
+	}
+}
+
+// TestArrivalsAndDeparturesWithFrequency verifies the batch-fetched frequency
+// data lands on each ArrivalAndDeparture row in the plural handler:
+// frequency-based trips (both exact_times variants) carry their window, and
+// non-frequency trips keep the field null.
+func TestArrivalsAndDeparturesWithFrequency(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	defer api.Shutdown()
+
+	combinedStopID := utils.FormCombinedID(freqAgencyID, freqStopAID)
+	// The fixture serves stop A with freq-trip (06:00) and freq-exact-trip
+	// (06:00) from their 06:00-09:00 windows, and freq-normal-trip at 08:00.
+	// Querying at 06:05 (default window 06:00-06:40) surfaces only the two
+	// frequency-based arrivals; querying at 08:05 surfaces only the normal one.
+	windowRequests := []struct {
+		name        string
+		timeMs      int64
+		wantTripIDs []string
+		wantFreq    bool
+	}{
+		{
+			name:        "frequency-based arrivals carry their window",
+			timeMs:      time.Date(2025, 6, 12, 6, 5, 0, 0, time.UTC).UnixMilli(),
+			wantTripIDs: []string{freqTripID, freqExactTripID},
+			wantFreq:    true,
+		},
+		{
+			name:        "non-frequency arrival keeps frequency null",
+			timeMs:      time.Date(2025, 6, 12, 8, 5, 0, 0, time.UTC).UnixMilli(),
+			wantTripIDs: []string{freqNormalTripD},
+			wantFreq:    false,
+		},
+	}
+
+	for _, tc := range windowRequests {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint := arrivalsAndDeparturesURL(combinedStopID, url.Values{
+				"time": {fmt.Sprintf("%d", tc.timeMs)},
+			})
+			resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, http.StatusOK, model.Code)
+
+			arrivals := model.Data.Entry.ArrivalsAndDepartures
+			require.Len(t, arrivals, len(tc.wantTripIDs), "window should surface exactly the expected arrivals")
+
+			for _, a := range arrivals {
+				_, aTripID, err := utils.ExtractAgencyIDAndCodeID(a.TripID)
+				require.NoError(t, err)
+				assert.Contains(t, tc.wantTripIDs, aTripID)
+
+				if !tc.wantFreq {
+					assert.Nil(t, a.Frequency, "non-frequency trip %q must not carry frequency data", aTripID)
+					continue
+				}
+
+				require.NotNil(t, a.Frequency, "frequency-based trip %q must carry frequency data", aTripID)
+				// Fixture windows span 06:00-09:00 UTC on the 2025-06-12
+				// service date. Compare instants (millis): ModelTime round-trips
+				// through JSON in time.Local.
+				assert.Equal(t, time.Date(2025, 6, 12, 6, 0, 0, 0, time.UTC).UnixMilli(), a.Frequency.StartTime.UnixMilli())
+				assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), a.Frequency.EndTime.UnixMilli())
+
+				switch aTripID {
+				case freqTripID:
+					assert.Equal(t, 0, a.Frequency.ExactTimes)
+					assert.Equal(t, 600*time.Second, a.Frequency.Headway.Duration)
+				case freqExactTripID:
+					assert.Equal(t, 1, a.Frequency.ExactTimes)
+					assert.Equal(t, 1800*time.Second, a.Frequency.Headway.Duration)
+				}
+			}
 		})
 	}
 }

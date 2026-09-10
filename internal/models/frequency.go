@@ -50,3 +50,31 @@ func NewFrequencyFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Frequenc
 		ExactTimes: int(dbFreq.ExactTimes),
 	}
 }
+
+// NewScheduleFrequencyFromDB converts a database Frequency row into a
+// ScheduleFrequency for use in schedule-for-stop responses.
+// serviceDate is the start-of-day in the agency's local timezone.
+// serviceID and tripID must already be combined (agencyID_rawID) form.
+func NewScheduleFrequencyFromDB(
+	dbFreq gtfsdb.Frequency,
+	serviceDate time.Time,
+	serviceID, tripID, stopHeadsign string,
+	arrivalEnabled, departureEnabled bool,
+) ScheduleFrequency {
+	startOfDay := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
+		0, 0, 0, 0, serviceDate.Location())
+
+	return ScheduleFrequency{
+		FrequencyWindow: FrequencyWindow{
+			StartTime: NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
+			EndTime:   NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
+			Headway:   NewModelDuration(time.Duration(dbFreq.HeadwaySecs) * time.Second),
+		},
+		ServiceDate:      NewModelTime(startOfDay),
+		ServiceID:        serviceID,
+		TripID:           tripID,
+		StopHeadsign:     stopHeadsign,
+		ArrivalEnabled:   arrivalEnabled,
+		DepartureEnabled: departureEnabled,
+	}
+}

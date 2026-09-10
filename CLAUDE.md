@@ -36,7 +36,7 @@ All commands are managed through the Makefile:
 
 **Build tags**: When running `go` commands directly (not via Makefile), you must pass `-tags "sqlite_fts5 sqlite_math_functions"` for CGO builds or `-tags "purego"` for pure Go builds.
 
-**OpenAPI spec**: CI checks that `testdata/openapi.yml` is in sync with [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml) on every push and PR. If upstream has changed, CI fails — run `make update-openapi` locally and commit the updated file.
+**OpenAPI spec**: CI checks that `testdata/openapi.yml` is in sync with [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml) on every push and PR. If upstream has changed, CI fails — run `make update-openapi` locally and commit the updated file.
 
 ## Load Testing and Profiling
 
@@ -549,6 +549,6 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
 
 The official REST API documentation is available at: https://developer.onebusaway.org/api/where/methods
 
-The Open API specification is located at https://github.com/OneBusAway/sdk-config/blob/main/openapi.yml
+The Open API specification is located at https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml
 
 **All API endpoints MUST behave identically to what is defined in this OpenAPI spec.** This is the single source of truth for request parameters, response schemas, field names, types, and status codes. Always fetch the latest version of this spec before implementing new endpoints or modifying existing ones. If the codebase diverges from the spec, the spec wins.
