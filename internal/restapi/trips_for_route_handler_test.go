@@ -59,9 +59,13 @@ const (
 	tripsForRouteStop1ID  = "tfr-stop1"
 	tripsForRouteStop2ID  = "tfr-stop2"
 	tripsForRouteHeadsign = "Test Headsign"
-	orphanRouteAgencyID   = "tfr-agency-x"
-	orphanRouteID         = "tfr-route-x"
-	orphanTripID          = "tfr-trip-x"
+	// Vehicle GPS position injected via the real-time feed, distinct from the
+	// fixture stops so status.position reflects the vehicle, not a stop.
+	tripsForRouteRealtimeLat = 37.7885
+	tripsForRouteRealtimeLon = -122.3962
+	orphanRouteAgencyID      = "tfr-agency-x"
+	orphanRouteID            = "tfr-route-x"
+	orphanTripID             = "tfr-trip-x"
 )
 
 // createTestApiWithGTFSFixture builds a RestAPI backed by an in-memory GTFS
@@ -444,6 +448,29 @@ func createTestApiWithTripsForRouteAndRealtime(t *testing.T, c clock.Clock) *Res
 	return api
 }
 
+// createTestApiWithScheduledRealtimePosition builds a RestAPI from the
+// trips-for-route fixture plus a SCHEDULED real-time vehicle with a GPS
+// position, injected through the MockAddVehicleWithOptions helper.
+func createTestApiWithScheduledRealtimePosition(t *testing.T, c clock.Clock) *RestAPI {
+	t.Helper()
+
+	api := createTestApiWithGTFSFixture(t, c, "trips-for-route.zip", basicTripsForRouteFiles())
+
+	vehicleTime := c.Now()
+	lat := float32(tripsForRouteRealtimeLat)
+	lon := float32(tripsForRouteRealtimeLon)
+	api.GtfsManager.MockAddVehicleWithOptions("tfr-veh-1", tripsForRouteTripID, tripsForRouteRouteID,
+		internalgtfs.MockVehicleOptions{
+			Position: &gogtfs.Position{
+				Latitude:  &lat,
+				Longitude: &lon,
+			},
+			Timestamp: &vehicleTime,
+		})
+
+	return api
+}
+
 // TestTripsForRouteHandler_DuplicatedRealtimeTrip verifies that a DUPLICATED
 // real-time trip resolves its inactive base trip via the stripNumericSuffix
 // fallback and surfaces it with schedule, status, and reference data.
@@ -506,6 +533,49 @@ func TestTripsForRouteHandler_DuplicatedRealtimeTrip(t *testing.T) {
 	assert.Equal(t, combinedRouteID, baseTripRef.RouteID)
 	assert.Equal(t, tripsForRouteHeadsign, baseTripRef.TripHeadsign)
 	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-block"), baseTripRef.BlockID)
+}
+
+// TestTripsForRouteHandler_StatusFields verifies the real-time status sub-object
+// fields: vehicle position, the -1 occupancy sentinel, and non-null empty
+// situationIds/vehicleFeatures slices.
+func TestTripsForRouteHandler_StatusFields(t *testing.T) {
+	api := createTestApiWithScheduledRealtimePosition(t, clock.NewMockClock(tripsForRouteTestClock))
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+		combinedRouteID, tripsForRouteTestClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+	require.Len(t, model.Data.List, 1, "the single fixture trip should be returned")
+	entry := model.Data.List[0]
+	assert.Equal(t, expectedTripID, entry.TripId)
+
+	require.NotNil(t, entry.Status, "entry should carry a real-time status")
+
+	assert.Equal(t, 0, entry.Status.BlockTripSequence,
+		"blockTripSequence should be exactly 0 for this deterministic fixture")
+
+	// GTFS-RT stores coordinates as float32, so compare against the round-tripped value.
+	assert.Equal(t, float64(float32(tripsForRouteRealtimeLat)), entry.Status.Position.Lat)
+	assert.Equal(t, float64(float32(tripsForRouteRealtimeLon)), entry.Status.Position.Lon)
+
+	assert.Equal(t, -1, entry.Status.OccupancyCount,
+		"occupancyCount should reflect the -1 constructor default of NewTripStatus")
+
+	require.NotNil(t, entry.Status.SituationIDs, "situationIds must be a non-null slice")
+	assert.Empty(t, entry.Status.SituationIDs, "situationIds should be exactly [] with no situations")
+
+	require.NotNil(t, entry.Status.VehicleFeatures, "vehicleFeatures must be a non-null slice")
+	assert.Empty(t, entry.Status.VehicleFeatures, "vehicleFeatures should be exactly [] with no data")
+
+	// SCHEDULED vehicle; Java OBA sets phase "in_progress" on any vehicle fix.
+	assert.Equal(t, "SCHEDULED", entry.Status.Status)
+	assert.Equal(t, "in_progress", entry.Status.Phase)
 }
 
 // blockSequenceFiles models three trips in one block: tfr-trip-1
