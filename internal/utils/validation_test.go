@@ -415,4 +415,3 @@ func TestSanitizeInput(t *testing.T) {
 		})
 	}
 }
-
