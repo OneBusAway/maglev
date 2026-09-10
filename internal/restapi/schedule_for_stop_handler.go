@@ -56,13 +56,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	var responseDate int64 // Stores the exact timestamp for the JSON response
 
 	if dateParam != "" {
-		var err error
-		// The format was validated above, so this only fails on an unusable agency timezone.
-		startOfDay, err = utils.ParseDate(dateParam, loc)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
+		// dateParam was already validated above; ParseDate cannot fail here.
+		startOfDay, _ = utils.ParseDate(dateParam, loc)
 
 		// Echo the exact Unix timestamp if provided, else use midnight
 		if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {

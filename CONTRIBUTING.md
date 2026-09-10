@@ -66,7 +66,7 @@ Use `createTestApi(t)` together with `callAPIHandler`/`serveApiAndRetrieveEndpoi
 Before writing new logic, check whether it already exists — this is the single most common category of review comment. The codebase organizes shared helpers by category rather than by handler:
 
 - **Parameter parsing** (`internal/utils/api.go`) — functions named `Parse*`, returning a parsed value plus field errors (e.g. `ParseFloatParam`, `ParseTimeParameter`, `ParseDate`).
-- **Validation** (`internal/utils/validation.go`) — functions named `Validate*`, returning just an error (e.g. `ValidateLatitude`, `ValidateDate`). Something that parses *and* returns a value belongs in `api.go`; something that only checks validity belongs in `validation.go`.
+- **Validation** (`internal/utils/validation.go`) — functions named `Validate*`, returning just an error (e.g. `ValidateLatitude`, `ValidateServiceDate`). Something that parses *and* returns a value belongs in `api.go`; something that only checks validity belongs in `validation.go`.
 - **Handler-level ID/location extraction** (`internal/restapi/id_helpers.go`, `location_params.go`) — pulling and validating IDs or lat/lon/radius straight off `*http.Request`.
 - **Reference building** (`internal/restapi/reference_utils.go`) — building the `Agency`/`Route`/`Situation` reference blocks used in list/entry responses, plus `ShouldIncludeReferences`.
 - **Sorting and comparison** (`internal/utils/sort.go`, `string_utils.go`) — e.g. `NaturalCompare`.
