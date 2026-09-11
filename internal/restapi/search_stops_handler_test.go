@@ -105,8 +105,8 @@ func TestSearchStopsHandlerNoResults(t *testing.T) {
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"NonExistentStopName12345"}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
 }
 
 func TestSearchStopsHandlerMaxCount(t *testing.T) {
@@ -125,8 +125,8 @@ func TestSearchStopsHandlerWhitespaceOnlyInput(t *testing.T) {
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"    "}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
 }
 
 func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
@@ -135,8 +135,8 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {`*()"`}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
 }
 
 func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
@@ -181,8 +181,8 @@ func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {`test" OR "1"="1`}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.LessOrEqual(t, len(stopsResp.Data.List), 20)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
 }
 
 func TestSanitizeFTS5Query(t *testing.T) {
@@ -252,9 +252,8 @@ func TestSearchStopsHandlerIgnoredPunctuation(t *testing.T) {
 	// since it lacks alphanumeric characters. This triggers the empty-query path.
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"-"}}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, stopsResp.Code)
-	assert.Empty(t, stopsResp.Data.List)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, stopsResp.Code)
 }
 
 func TestSearchStopsHandlerOperatorWordInput(t *testing.T) {
@@ -278,12 +277,14 @@ func TestSearchStopsHandlerOperatorWordInput(t *testing.T) {
 
 			resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {tt.input}}))
 
-			require.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.Equal(t, http.StatusOK, stopsResp.Code)
-
 			if tt.expectedStop == "" {
+				require.Equal(t, http.StatusNotFound, resp.StatusCode)
+				assert.Equal(t, http.StatusNotFound, stopsResp.Code)
 				return
 			}
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, stopsResp.Code)
 
 			ids := make([]string, 0, len(stopsResp.Data.List))
 			for _, stop := range stopsResp.Data.List {
