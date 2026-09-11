@@ -223,6 +223,8 @@ func (m *Manager) MockResetRealTimeData() {
 	m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
 	m.realTimeTrips = nil
 	m.realTimeTripLookup = make(map[string]int)
+	delete(m.feedTrips, "_test")
+	delete(m.feedVehicles, "_test")
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	m.rebuildMergedRealtimeLocked()
 }
