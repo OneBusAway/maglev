@@ -15,8 +15,9 @@ import (
 // returns its path. The RABA fixture has no frequencies.txt, so frequency behaviour needs
 // a feed of its own.
 //
-// At stop_1 on a weekday, route_1 runs headway-based service in both directions, and
-// route_2 mixes a headway-based trip with a fixed-schedule one in the same direction.
+// At stop_1 on a weekday, route_1 runs headway-based service in both directions,
+// route_2 mixes frequency and fixed trips where the frequency headsign wins, and
+// route_3 mixes frequency and fixed trips where the fixed-trip headsign wins.
 func writeFrequencyFeed(t testing.TB) string {
 	t.Helper()
 
@@ -26,7 +27,8 @@ func writeFrequencyFeed(t testing.TB) string {
 
 		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
 			"route_1,1,R1,Route One,3\n" +
-			"route_2,1,R2,Route Two,3\n",
+			"route_2,1,R2,Route Two,3\n" +
+			"route_3,1,R3,Route Three,3\n",
 
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"service_1,1,1,1,1,1,0,0,20240101,20251231\n",
@@ -38,8 +40,12 @@ func writeFrequencyFeed(t testing.TB) string {
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
 			"route_1,service_1,trip_freq_out,Downtown via Freq,0\n" +
 			"route_1,service_1,trip_freq_in,Uptown via Freq,1\n" +
-			"route_2,service_1,trip_freq_mixed,Express,0\n" +
-			"route_2,service_1,trip_fixed,Express,0\n",
+			"route_2,service_1,trip_freq_mixed,Frequent Express,0\n" +
+			"route_2,service_1,trip_fixed,Local Express,0\n" +
+			"route_2,service_1,trip_fixed_later,Local Express,0\n" +
+			"route_3,service_1,trip_freq_sparse,Sparse Shuttle,0\n" +
+			"route_3,service_1,trip_fixed_major_a,Scheduled Trunk,0\n" +
+			"route_3,service_1,trip_fixed_major_b,Scheduled Trunk,0\n",
 
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"trip_freq_out,06:00:00,06:00:00,stop_1,1\n" +
@@ -49,7 +55,15 @@ func writeFrequencyFeed(t testing.TB) string {
 			"trip_freq_mixed,06:00:00,06:00:00,stop_1,1\n" +
 			"trip_freq_mixed,06:20:00,06:20:00,stop_2,2\n" +
 			"trip_fixed,08:00:00,08:00:00,stop_1,1\n" +
-			"trip_fixed,08:20:00,08:20:00,stop_2,2\n",
+			"trip_fixed,08:20:00,08:20:00,stop_2,2\n" +
+			"trip_fixed_later,08:30:00,08:30:00,stop_1,1\n" +
+			"trip_fixed_later,08:50:00,08:50:00,stop_2,2\n" +
+			"trip_freq_sparse,06:00:00,06:00:00,stop_1,1\n" +
+			"trip_freq_sparse,06:30:00,06:30:00,stop_2,2\n" +
+			"trip_fixed_major_a,07:00:00,07:00:00,stop_1,1\n" +
+			"trip_fixed_major_a,07:30:00,07:30:00,stop_2,2\n" +
+			"trip_fixed_major_b,07:20:00,07:20:00,stop_1,1\n" +
+			"trip_fixed_major_b,07:50:00,07:50:00,stop_2,2\n",
 
 		// trip_freq_out runs every 10 minutes in the morning and every 15 in the evening;
 		// the evening window is listed first so the response's ordering is load-bearing.
@@ -57,7 +71,8 @@ func writeFrequencyFeed(t testing.TB) string {
 			"trip_freq_out,16:00:00,19:00:00,900,0\n" +
 			"trip_freq_out,06:00:00,09:00:00,600,0\n" +
 			"trip_freq_in,07:00:00,10:00:00,720,0\n" +
-			"trip_freq_mixed,06:00:00,09:00:00,1800,0\n",
+			"trip_freq_mixed,06:00:00,09:00:00,1800,0\n" +
+			"trip_freq_sparse,06:00:00,06:30:00,1800,0\n",
 	}
 
 	feedPath := filepath.Join(t.TempDir(), "frequencies.zip")
@@ -142,9 +157,10 @@ func TestScheduleForStopHandlerFrequencies(t *testing.T) {
 		assert.Equal(t, serviceDate, entry["date"], "serviceDate is the queried service day")
 	})
 
-	t.Run("both kinds of service coexist in one direction group", func(t *testing.T) {
-		mixed, ok := groups["Express"]
-		require.True(t, ok, "expected a direction group for route_2")
+	t.Run("frequency headsign wins when expected runs outnumber fixed trips", func(t *testing.T) {
+		mixed, ok := groups["Frequent Express"]
+		require.True(t, ok, "expected route_2's frequency headsign to win the direction group")
+		assert.NotContains(t, groups, "Local Express", "two fixed trips should not outvote six expected frequency runs")
 
 		frequencies, ok := mixed["scheduleFrequencies"].([]any)
 		require.True(t, ok)
@@ -153,8 +169,26 @@ func TestScheduleForStopHandlerFrequencies(t *testing.T) {
 
 		stopTimes, ok := mixed["scheduleStopTimes"].([]any)
 		require.True(t, ok)
-		require.Len(t, stopTimes, 1, "the fixed-schedule trip stays in stop times")
+		require.Len(t, stopTimes, 2, "the fixed-schedule trips stay in stop times")
 		assert.Equal(t, "1_trip_fixed", stopTimes[0].(map[string]any)["tripId"])
+		assert.Equal(t, "1_trip_fixed_later", stopTimes[1].(map[string]any)["tripId"])
+	})
+
+	t.Run("fixed headsign wins when fixed trips outnumber expected frequency runs", func(t *testing.T) {
+		mixed, ok := groups["Scheduled Trunk"]
+		require.True(t, ok, "expected route_3's fixed-trip headsign to win the direction group")
+		assert.NotContains(t, groups, "Sparse Shuttle", "one expected frequency run should not outvote two fixed trips")
+
+		frequencies, ok := mixed["scheduleFrequencies"].([]any)
+		require.True(t, ok)
+		require.Len(t, frequencies, 1)
+		assert.Equal(t, "1_trip_freq_sparse", frequencies[0].(map[string]any)["tripId"])
+
+		stopTimes, ok := mixed["scheduleStopTimes"].([]any)
+		require.True(t, ok)
+		require.Len(t, stopTimes, 2, "the fixed-schedule trips stay in stop times")
+		assert.Equal(t, "1_trip_fixed_major_a", stopTimes[0].(map[string]any)["tripId"])
+		assert.Equal(t, "1_trip_fixed_major_b", stopTimes[1].(map[string]any)["tripId"])
 	})
 
 	t.Run("the opposite direction keeps its own frequencies", func(t *testing.T) {
