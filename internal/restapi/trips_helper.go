@@ -422,7 +422,7 @@ func selectFrequency(freqs []gtfsdb.Frequency, serviceDate, effectiveTime time.T
 // succeeds; errors propagate.
 func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.Frequency, error) {
 	freqMap := make(map[string][]gtfsdb.Frequency, len(tripIDs))
-	allFreqs, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
+	allFreqs, err := utils.QueryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
 	if err != nil {
 		return nil, err
 	}
