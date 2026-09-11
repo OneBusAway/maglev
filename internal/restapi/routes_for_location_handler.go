@@ -51,11 +51,9 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	var results []models.Route
-	routeIDs := map[string]bool{}
 	agencyIDs := map[string]bool{}
 	for _, route := range routes {
 		agencyIDs[route.AgencyID] = true
-		routeIDs[route.ID] = true
 		results = append(results, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
 			route.AgencyID,
@@ -69,6 +67,8 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	references := models.NewEmptyReferences()
+	// Only agencies are referenced here: route beans carry no situation IDs, so
+	// references.situations stays empty even when alerts affect the returned routes.
 	// When includeReferences=false the references block is present but empty.
 	if ShouldIncludeReferences(r) {
 		agencyIDList := slices.Collect(maps.Keys(agencyIDs))
@@ -78,10 +78,6 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		references.Agencies = buildAgencyReferences(agencies)
-
-		// Populate situation references for alerts affecting the returned routes
-		alerts := api.collectAlertsForRoutes(slices.Collect(maps.Keys(routeIDs)))
-		references.Situations = api.BuildSituationReferences(alerts)
 	}
 
 	// Results must be sorted by ID after maxCount limit is applied.

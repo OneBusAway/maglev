@@ -4,7 +4,7 @@ package gtfsdb
 // sqlc cannot handle queries that use FTS5-specific syntax (MATCH operator,
 // bm25() function), so these are maintained manually instead of in query.sql.
 //
-// IMPORTANT: If the 'routes', 'stops', 'routes_fts', or 'stops_fts' table schemas change,
+// IMPORTANT: If the 'routes', 'stops', 'stop_agencies', 'routes_fts', or 'stops_fts' table schemas change,
 // the SQL and Go types in this file must be updated manually to match.
 // Running 'make models' will NOT update this file.
 
@@ -80,6 +80,14 @@ func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesBy
 	return items, nil
 }
 
+// searchStopsByName orders results by the combined {agency_id}_{stop_id} ID callers see
+// rather than by the raw stop ID. The sort key has to be built here, before LIMIT, or the
+// wrong set of stops would be truncated away.
+//
+// stop_agencies holds one row per (stop, agency) pair, so a stop served by more than one
+// agency is resolved with MIN() to the single agency whose prefix its combined ID carries -
+// otherwise the join would fan out into one result row per agency. A stop no route serves
+// has no row at all and therefore no combined ID; those sort last, by raw stop ID.
 const searchStopsByName = `
 SELECT
     s.id,
@@ -90,12 +98,17 @@ SELECT
     s.location_type,
     s.wheelchair_boarding,
     s.direction,
-    s.parent_station
+    s.parent_station,
+    (
+        SELECT MIN(sa.agency_id)
+        FROM stop_agencies sa
+        WHERE sa.stop_id = s.id
+    ) AS agency_id
 FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid
 WHERE fts.stop_name MATCH ?
-ORDER BY s.id
+ORDER BY agency_id IS NULL, agency_id || '_' || s.id, s.id
 LIMIT ?
 `
 
@@ -114,6 +127,9 @@ type SearchStopsByNameRow struct {
 	WheelchairBoarding sql.NullInt64
 	Direction          sql.NullString
 	ParentStation      sql.NullString
+	// AgencyID is the lowest agency ID among the routes serving the stop, and is null
+	// when no route serves it.
+	AgencyID sql.NullString
 }
 
 func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNameParams) ([]SearchStopsByNameRow, error) {
@@ -136,6 +152,7 @@ func (q *Queries) SearchStopsByName(ctx context.Context, arg SearchStopsByNamePa
 			&i.WheelchairBoarding,
 			&i.Direction,
 			&i.ParentStation,
+			&i.AgencyID,
 		); err != nil {
 			return nil, err
 		}

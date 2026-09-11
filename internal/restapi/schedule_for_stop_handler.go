@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -55,13 +56,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	var responseDate int64 // Stores the exact timestamp for the JSON response
 
 	if dateParam != "" {
-		var err error
-		// The format was validated above, so this only fails on an unusable agency timezone.
-		startOfDay, err = utils.ParseDate(dateParam, loc)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
+		// dateParam was already validated above; ParseDate cannot fail here.
+		startOfDay, _ = utils.ParseDate(dateParam, loc)
 
 		// Echo the exact Unix timestamp if provided, else use midnight
 		if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
@@ -156,19 +152,34 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	frequenciesByTrip, err := api.fetchFrequenciesForScheduleRows(ctx, scheduleRows)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
+	// Batch-fetch frequencies for trips in this schedule (avoid N+1).
+	freqMap := make(map[string][]gtfsdb.Frequency)
+	if len(scheduleRows) > 0 {
+		tripIDSet := make(map[string]bool, len(scheduleRows))
+		for _, row := range scheduleRows {
+			tripIDSet[row.TripID] = true
+		}
+		tripIDs := make([]string, 0, len(tripIDSet))
+		for tripID := range tripIDSet {
+			tripIDs = append(tripIDs, tripID)
+		}
+		var freqErr error
+		freqMap, freqErr = api.fetchFrequenciesForTrips(ctx, tripIDs)
+		if freqErr != nil {
+			api.serverErrorResponse(w, r, freqErr)
+			return
+		}
 	}
 
-	// Group schedule data by route -> direction, per spec steps 6-7.
-	routeDirectionScheduleMap, err := groupScheduleRowsByRouteAndDirection(
+	// Group schedule data by route -> direction -> slice of stop times, and track
+	// per-direction headsign vote counts, per spec steps 6-7.
+	routeDirectionScheduleMap, routeDirectionFrequencyMap, routeDirectionHeadsignCounts, err := groupScheduleRowsByRouteAndDirection(
 		ctx, scheduleRows, scheduleRowContext{
 			agencyID:                   agencyID,
 			startOfDay:                 startOfDay,
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
-			frequenciesByTrip:          frequenciesByTrip,
+			freqMap:                    freqMap,
+			logger:                     api.Logger,
 		},
 	)
 	if err != nil {
@@ -181,16 +192,37 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	var routeSchedules []models.StopRouteSchedule
 	for _, rt := range routesForStop {
 		combinedRouteID := utils.FormCombinedID(agencyID, rt.ID)
-		directionMap, hasSchedule := routeDirectionScheduleMap[combinedRouteID]
-		if !hasSchedule {
+		directionMap, hasStopTimes := routeDirectionScheduleMap[combinedRouteID]
+		frequencyMap, hasFrequencies := routeDirectionFrequencyMap[combinedRouteID]
+		if !hasStopTimes && !hasFrequencies {
 			continue
+		}
+
+		// Iterate the union of direction IDs: frequency-only directions still need a group.
+		dirIDs := make(map[string]bool, len(directionMap)+len(frequencyMap))
+		for dirID := range directionMap {
+			dirIDs[dirID] = true
+		}
+		for dirID := range frequencyMap {
+			dirIDs[dirID] = true
 		}
 
 		var directionSchedules []models.StopRouteDirectionSchedule
 
-		for _, group := range directionMap {
-			directionSchedule := models.NewStopRouteDirectionSchedule(
-				group.representativeHeadsign(), group.stopTimes, group.frequencies)
+		for dirID := range dirIDs {
+			tripHeadsign := pluralityHeadsign(routeDirectionHeadsignCounts, combinedRouteID, dirID)
+
+			frequencies := frequencyMap[dirID]
+			// Java OBA orders scheduleFrequencies by start time (FrequencyBeanComparator).
+			slices.SortStableFunc(frequencies, func(a, b models.ScheduleFrequency) int {
+				return cmp.Compare(a.StartTime.UnixMilli(), b.StartTime.UnixMilli())
+			})
+
+			stopTimes := directionMap[dirID]
+			if stopTimes == nil {
+				stopTimes = []models.ScheduleStopTime{}
+			}
+			directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, frequencies)
 			directionSchedules = append(directionSchedules, directionSchedule)
 		}
 
@@ -232,7 +264,7 @@ func (api *RestAPI) buildScheduleForStopReferences(
 	routesForStop []gtfsdb.GetRoutesForStopRow,
 	routeIDs []string,
 ) (*models.ReferencesModel, error) {
-	routeRefs, agencyIDs := buildRouteRefs(agencyID, routesForStop)
+	routeRefs, agencyIDs := buildRouteRefs(routesForStop)
 
 	agencyRefs, err := api.fetchAgencyRefs(ctx, agencyIDs)
 	if err != nil {
@@ -249,13 +281,13 @@ func (api *RestAPI) buildScheduleForStopReferences(
 
 // buildRouteRefs converts the stop's routes into a combined-ID-keyed reference map,
 // alongside the distinct agency IDs those routes belong to.
-func buildRouteRefs(agencyID string, routesForStop []gtfsdb.GetRoutesForStopRow) (map[string]models.Route, []string) {
+func buildRouteRefs(routesForStop []gtfsdb.GetRoutesForStopRow) (map[string]models.Route, []string) {
 	routeRefs := make(map[string]models.Route, len(routesForStop))
 	agencyIDs := make([]string, 0, len(routesForStop))
 	seenAgencies := make(map[string]bool, len(routesForStop))
 
 	for _, route := range routesForStop {
-		combinedRouteID := utils.FormCombinedID(agencyID, route.ID)
+		combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
 		routeRefs[combinedRouteID] = models.NewRoute(
 			combinedRouteID,
 			route.AgencyID,
@@ -329,128 +361,98 @@ type scheduleRowContext struct {
 	// load-bearing: blockBoundaries's first/last-in-block comparisons are only correct
 	// against a map pre-filtered this way.
 	activeServiceBlockTripsMap map[string][]gtfsdb.GetTripsByBlockIDsRow
-	// frequenciesByTrip maps trip ID to that trip's frequency windows. A trip listed here
-	// runs on a headway rather than a fixed timetable, so its stop times are reported as
-	// scheduleFrequencies instead of scheduleStopTimes.
-	frequenciesByTrip map[string][]gtfsdb.Frequency
+	// freqMap maps trip ID to its frequency rows: exact_times=0 trips emit
+	// scheduleFrequencies; exact_times=1 trips expand into stop times.
+	freqMap map[string][]gtfsdb.Frequency
+	// logger reports malformed GTFS data; nil in tests.
+	logger *slog.Logger
 }
 
-// directionScheduleGroup accumulates one direction's service at the stop: fixed-schedule
-// stop times, headway-based frequency windows, and the headsign votes that decide the
-// group's representative tripHeadsign.
-type directionScheduleGroup struct {
-	stopTimes     []models.ScheduleStopTime
-	frequencies   []models.ScheduleFrequency
-	headsignVotes map[string]int
+// routeDirection keys per-route, per-direction output buckets.
+type routeDirection struct {
+	combinedRouteID string
+	directionID     string
 }
 
-// recordHeadsignVote adds weight votes for headsign. A fixed-schedule stop time casts one
-// vote; a frequency window casts one per run it is expected to make, per spec step 7.
-// Blank or absent headsigns cast no vote.
-func (g *directionScheduleGroup) recordHeadsignVote(headsign sql.NullString, weight int) {
-	if !headsign.Valid || headsign.String == "" || weight <= 0 {
-		return
-	}
-	g.headsignVotes[headsign.String] += weight
+// routeDirectionAccumulators holds the per-route, per-direction output buckets
+// built from schedule rows: stop times, frequencies, and headsign votes.
+type routeDirectionAccumulators struct {
+	stopTimes      map[string]map[string][]models.ScheduleStopTime
+	frequencies    map[string]map[string][]models.ScheduleFrequency
+	headsignCounts map[string]map[string]map[string]int
 }
 
-// representativeHeadsign returns the group's plurality headsign, breaking ties in favour
-// of the alphabetically first one so the response stays stable across requests.
-func (g *directionScheduleGroup) representativeHeadsign() string {
-	headsigns := make([]string, 0, len(g.headsignVotes))
-	for headsign := range g.headsignVotes {
-		headsigns = append(headsigns, headsign)
-	}
-	slices.Sort(headsigns)
-
-	representative := ""
-	maxVotes := 0
-	for _, headsign := range headsigns {
-		if votes := g.headsignVotes[headsign]; votes > maxVotes {
-			maxVotes = votes
-			representative = headsign
-		}
-	}
-
-	return representative
-}
-
-// groupScheduleRowsByRouteAndDirection partitions schedule rows first by route, then by
-// GTFS direction_id (defaulting to "0" when absent), per spec steps 6-7. Returns a
-// non-nil error only if ctx is canceled mid-computation.
+// groupScheduleRowsByRouteAndDirection partitions schedule rows by route, then direction
+// (defaulting to "0"), per spec steps 6-7. exact_times=0 trips go to the frequency map;
+// exact_times=1 trips expand into stop times.
+// Returns a non-nil error only if ctx is canceled.
 func groupScheduleRowsByRouteAndDirection(
 	ctx context.Context,
 	scheduleRows []gtfsdb.GetScheduleForStopOnDateRow,
 	rowCtx scheduleRowContext,
-) (map[string]map[string]*directionScheduleGroup, error) {
-	routeDirectionScheduleMap := make(map[string]map[string]*directionScheduleGroup)
+) (
+	routeDirectionScheduleMap map[string]map[string][]models.ScheduleStopTime,
+	routeDirectionFrequencyMap map[string]map[string][]models.ScheduleFrequency,
+	routeDirectionHeadsignCounts map[string]map[string]map[string]int,
+	err error,
+) {
+	acc := &routeDirectionAccumulators{
+		stopTimes:      make(map[string]map[string][]models.ScheduleStopTime),
+		frequencies:    make(map[string]map[string][]models.ScheduleFrequency),
+		headsignCounts: make(map[string]map[string]map[string]int),
+	}
 
 	for _, row := range scheduleRows {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, nil, nil, ctx.Err()
 		}
 
-		combinedRouteID := utils.FormCombinedID(rowCtx.agencyID, row.RouteID)
-		group := directionGroupFor(routeDirectionScheduleMap, combinedRouteID, directionIDForRow(row))
+		directionID := directionIDForRow(row)
+		dir := routeDirection{
+			combinedRouteID: utils.FormCombinedID(rowCtx.agencyID, row.RouteID),
+			directionID:     directionID,
+		}
 
-		frequencies := rowCtx.frequenciesByTrip[row.TripID]
-		if len(frequencies) == 0 {
-			group.stopTimes = append(group.stopTimes, buildScheduleStopTime(row, rowCtx))
-			group.recordHeadsignVote(row.TripHeadsign, 1)
+		freqs, isFrequencyTrip := rowCtx.freqMap[row.TripID]
+		if isFrequencyTrip && len(freqs) > 0 {
+			processFrequencyTrip(row, freqs, rowCtx, acc, dir)
 			continue
 		}
 
-		group.frequencies = append(group.frequencies, buildScheduleFrequencies(row, frequencies, rowCtx)...)
-		group.recordHeadsignVote(row.TripHeadsign, estimatedRunCount(frequencies))
+		stopTime := buildScheduleStopTime(row, rowCtx)
+		addStopTimeToDirectionGroup(acc, dir, stopTime)
+		recordHeadsignVote(acc, dir, row.TripHeadsign, 1)
 	}
 
-	sortFrequenciesByStartTime(routeDirectionScheduleMap)
-
-	return routeDirectionScheduleMap, nil
+	return acc.stopTimes, acc.frequencies, acc.headsignCounts, nil
 }
 
-// directionGroupFor returns the accumulator for one route's direction, creating the
-// intermediate map and group on first use.
-func directionGroupFor(
-	routeDirectionScheduleMap map[string]map[string]*directionScheduleGroup,
-	combinedRouteID, directionID string,
-) *directionScheduleGroup {
-	if routeDirectionScheduleMap[combinedRouteID] == nil {
-		routeDirectionScheduleMap[combinedRouteID] = make(map[string]*directionScheduleGroup)
-	}
-	if routeDirectionScheduleMap[combinedRouteID][directionID] == nil {
-		routeDirectionScheduleMap[combinedRouteID][directionID] = &directionScheduleGroup{
-			headsignVotes: make(map[string]int),
+// processFrequencyTrip routes a frequency trip's rows: exact_times=0 rows
+// become schedule frequencies weighted by trips in the window, exact_times=1
+// rows expand into discrete stop times (Java OBA).
+func processFrequencyTrip(
+	row gtfsdb.GetScheduleForStopOnDateRow,
+	freqs []gtfsdb.Frequency,
+	rowCtx scheduleRowContext,
+	acc *routeDirectionAccumulators,
+	dir routeDirection,
+) {
+	for _, freq := range freqs {
+		if freq.ExactTimes != 0 {
+			expanded := expandExactTimesStopTimes(row, freq, rowCtx)
+			for _, st := range expanded {
+				addStopTimeToDirectionGroup(acc, dir, st)
+			}
+			if len(expanded) > 0 {
+				recordHeadsignVote(acc, dir, row.TripHeadsign, len(expanded))
+			}
+			continue
 		}
+		scheduleFreq := buildScheduleFrequency(row, freq, rowCtx)
+		addFrequencyToDirectionGroup(acc, dir, scheduleFreq)
+		// Weight frequency headsign votes by trips in the window (Java OBA).
+		recordHeadsignVote(acc, dir, row.TripHeadsign, frequencyVoteWeight(freq))
 	}
-
-	return routeDirectionScheduleMap[combinedRouteID][directionID]
-}
-
-// sortFrequenciesByStartTime orders every direction group's frequency windows by start
-// time, per spec step 8. Fixed-schedule stop times arrive already ordered by departure
-// time from the query.
-func sortFrequenciesByStartTime(routeDirectionScheduleMap map[string]map[string]*directionScheduleGroup) {
-	for _, directionMap := range routeDirectionScheduleMap {
-		for _, group := range directionMap {
-			slices.SortStableFunc(group.frequencies, func(a, b models.ScheduleFrequency) int {
-				return a.StartTime.Time.Compare(b.StartTime.Time)
-			})
-		}
-	}
-}
-
-// estimatedRunCount is how many times a trip is expected to serve the stop across its
-// frequency windows, used to weight its headsign vote against fixed-schedule trips.
-func estimatedRunCount(frequencies []gtfsdb.Frequency) int {
-	runs := 0
-	for _, frequency := range frequencies {
-		headway := time.Duration(frequency.HeadwaySecs) * time.Second
-		window := time.Duration(frequency.EndTime - frequency.StartTime)
-		runs += int(window / headway)
-	}
-
-	return runs
 }
 
 // directionIDForRow returns the row's GTFS direction_id as a string, defaulting to "0"
@@ -462,32 +464,37 @@ func directionIDForRow(row gtfsdb.GetScheduleForStopOnDateRow) string {
 	return "0"
 }
 
-// buildScheduleStopTime converts a schedule row into a ScheduleStopTime, converting GTFS
-// times (nanoseconds since midnight) to Unix millisecond timestamps and disabling the
-// arrival/departure flags at the boundaries of the vehicle's block for the service day.
-func buildScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx scheduleRowContext) models.ScheduleStopTime {
-	arrivalTimeMs := rowCtx.startOfDay.Add(time.Duration(row.ArrivalTime)).UnixMilli()
-	departureTimeMs := rowCtx.startOfDay.Add(time.Duration(row.DepartureTime)).UnixMilli()
-
+// newScheduleStopTime builds a ScheduleStopTime for the row, disabling the
+// arrival/departure flags at the boundaries of its vehicle's block.
+func newScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx scheduleRowContext, arrivalMs, departureMs int64, isFirstInBlock, isLastInBlock bool) models.ScheduleStopTime {
 	stopTime := models.NewScheduleStopTime(
-		arrivalTimeMs,
-		departureTimeMs,
+		arrivalMs,
+		departureMs,
 		utils.FormCombinedID(rowCtx.agencyID, row.ServiceID),
 		row.StopHeadsign.String,
 		utils.FormCombinedID(rowCtx.agencyID, row.TripID),
 	)
 
-	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
-	// Disable arrivals for the first stop of a block (vehicle starts service here).
+	// Blocks start with an arrival.
 	if isFirstInBlock {
 		stopTime.ArrivalEnabled = false
 	}
-	// Disable departures for the last stop of a block (vehicle ends service here).
+	// Blocks end with a departure.
 	if isLastInBlock {
 		stopTime.DepartureEnabled = false
 	}
 
 	return stopTime
+}
+
+// buildScheduleStopTime converts a schedule row into a ScheduleStopTime, converting GTFS
+// times (nanoseconds since midnight) to Unix millisecond timestamps.
+func buildScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx scheduleRowContext) models.ScheduleStopTime {
+	arrivalTimeMs := rowCtx.startOfDay.Add(time.Duration(row.ArrivalTime)).UnixMilli()
+	departureTimeMs := rowCtx.startOfDay.Add(time.Duration(row.DepartureTime)).UnixMilli()
+
+	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
+	return newScheduleStopTime(row, rowCtx, arrivalTimeMs, departureTimeMs, isFirstInBlock, isLastInBlock)
 }
 
 // blockBoundaries reports whether this stop time is the first (or last) stop time in the
@@ -518,60 +525,141 @@ func blockBoundaries(
 	return isFirstInBlock, isLastInBlock
 }
 
-// fetchFrequenciesForScheduleRows batch-fetches the frequency windows of every trip in the
-// schedule, keyed by trip ID. Trips absent from the result run on a fixed timetable.
-func (api *RestAPI) fetchFrequenciesForScheduleRows(
-	ctx context.Context,
-	scheduleRows []gtfsdb.GetScheduleForStopOnDateRow,
-) (map[string][]gtfsdb.Frequency, error) {
-	tripIDs := make([]string, 0, len(scheduleRows))
-	seenTrips := make(map[string]bool, len(scheduleRows))
-	for _, row := range scheduleRows {
-		if !seenTrips[row.TripID] {
-			seenTrips[row.TripID] = true
-			tripIDs = append(tripIDs, row.TripID)
-		}
+// addStopTimeToDirectionGroup appends stopTime to the route's direction bucket, creating
+// the intermediate map when this is the route's first stop time seen so far.
+func addStopTimeToDirectionGroup(acc *routeDirectionAccumulators, dir routeDirection, stopTime models.ScheduleStopTime) {
+	if acc.stopTimes[dir.combinedRouteID] == nil {
+		acc.stopTimes[dir.combinedRouteID] = make(map[string][]models.ScheduleStopTime)
 	}
-
-	if len(tripIDs) == 0 {
-		return nil, nil
-	}
-
-	frequencyRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips(ctx, tripIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	frequenciesByTrip := make(map[string][]gtfsdb.Frequency)
-	for _, frequency := range frequencyRows {
-		frequenciesByTrip[frequency.TripID] = append(frequenciesByTrip[frequency.TripID], frequency)
-	}
-
-	return frequenciesByTrip, nil
+	acc.stopTimes[dir.combinedRouteID][dir.directionID] = append(acc.stopTimes[dir.combinedRouteID][dir.directionID], stopTime)
 }
 
-// buildScheduleFrequencies converts a headway-based trip's frequency windows into
-// scheduleFrequencies entries for the stop the row belongs to. A trip may declare several
-// windows in a day (a morning headway and an evening one, say), each becoming its own entry.
-func buildScheduleFrequencies(
-	row gtfsdb.GetScheduleForStopOnDateRow,
-	frequencies []gtfsdb.Frequency,
-	rowCtx scheduleRowContext,
-) []models.ScheduleFrequency {
-	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
-
-	scheduleFrequencies := make([]models.ScheduleFrequency, 0, len(frequencies))
-	for _, frequency := range frequencies {
-		scheduleFrequencies = append(scheduleFrequencies, models.ScheduleFrequency{
-			FrequencyWindow:  models.NewFrequencyWindowFromDB(frequency, rowCtx.startOfDay),
-			ServiceDate:      models.NewModelTime(rowCtx.startOfDay),
-			ServiceID:        utils.FormCombinedID(rowCtx.agencyID, row.ServiceID),
-			TripID:           utils.FormCombinedID(rowCtx.agencyID, row.TripID),
-			StopHeadsign:     nulls.StringOrEmpty(row.StopHeadsign),
-			ArrivalEnabled:   !isFirstInBlock,
-			DepartureEnabled: !isLastInBlock,
-		})
+// expandExactTimesStopTimes expands an exact_times=1 trip's template stop time
+// into one ScheduleStopTime per headway offset within its frequency window,
+// matching Java OBA. An invalid (non-positive) headway yields nil.
+func expandExactTimesStopTimes(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfsdb.Frequency, rowCtx scheduleRowContext) []models.ScheduleStopTime {
+	headwayNs := int64(freq.HeadwaySecs) * int64(time.Second)
+	if headwayNs <= 0 {
+		if rowCtx.logger != nil {
+			rowCtx.logger.Warn("schedule-for-stop: skipping frequency trip with invalid headway",
+				"trip_id", row.TripID, "headway_secs", freq.HeadwaySecs)
+		}
+		return nil
 	}
 
-	return scheduleFrequencies
+	// First stop time of the trip, falling back to this row's arrival.
+	var firstStopTime int64
+	if row.MinArrivalTime.Valid {
+		firstStopTime = row.MinArrivalTime.Int64
+	} else {
+		firstStopTime = row.ArrivalTime
+	}
+
+	arrivalOffset := row.ArrivalTime - firstStopTime
+	departureOffset := row.DepartureTime - firstStopTime
+
+	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
+
+	expanded := make([]models.ScheduleStopTime, 0)
+	const maxExpandedStopTimes = 1000
+	for offset := int64(0); freq.StartTime+offset < freq.EndTime; offset += headwayNs {
+		if len(expanded) >= maxExpandedStopTimes {
+			if rowCtx.logger != nil {
+				rowCtx.logger.Warn("schedule-for-stop: frequency expansion capped",
+					"trip_id", row.TripID, "limit", maxExpandedStopTimes)
+			}
+			break
+		}
+		arrivalMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
+		departureMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
+
+		stopTime := newScheduleStopTime(row, rowCtx, arrivalMs, departureMs, isFirstInBlock, isLastInBlock)
+		expanded = append(expanded, stopTime)
+	}
+
+	return expanded
+}
+
+// buildScheduleFrequency converts a trip's schedule row and frequency row into a
+// ScheduleFrequency, deriving the arrival/departure flags from block position.
+func buildScheduleFrequency(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfsdb.Frequency, rowCtx scheduleRowContext) models.ScheduleFrequency {
+	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
+
+	// Java OBA leaves frequency stopHeadsign null.
+	return models.NewScheduleFrequencyFromDB(
+		freq,
+		rowCtx.startOfDay,
+		utils.FormCombinedID(rowCtx.agencyID, row.ServiceID),
+		utils.FormCombinedID(rowCtx.agencyID, row.TripID),
+		"",
+		!isFirstInBlock,
+		!isLastInBlock,
+	)
+}
+
+// addFrequencyToDirectionGroup appends scheduleFreq to the route's direction bucket.
+func addFrequencyToDirectionGroup(acc *routeDirectionAccumulators, dir routeDirection, scheduleFreq models.ScheduleFrequency) {
+	if acc.frequencies[dir.combinedRouteID] == nil {
+		acc.frequencies[dir.combinedRouteID] = make(map[string][]models.ScheduleFrequency)
+	}
+	acc.frequencies[dir.combinedRouteID][dir.directionID] = append(acc.frequencies[dir.combinedRouteID][dir.directionID], scheduleFreq)
+}
+
+// frequencyVoteWeight returns headsign votes per frequency row: estimated departures in
+// its window (range / headway), per Java OBA, falling back to 1 for bad headways.
+func frequencyVoteWeight(freq gtfsdb.Frequency) int {
+	if freq.HeadwaySecs <= 0 {
+		return 1
+	}
+	durationSecs := (freq.EndTime - freq.StartTime) / int64(time.Second)
+	weight := (durationSecs + freq.HeadwaySecs - 1) / freq.HeadwaySecs
+	if weight <= 0 {
+		return 1
+	}
+	return int(weight)
+}
+
+// pluralityHeadsign picks the direction's representative tripHeadsign: vote plurality,
+// with ties resolved by the alphabetically first headsign.
+func pluralityHeadsign(
+	routeDirectionHeadsignCounts map[string]map[string]map[string]int,
+	combinedRouteID, directionID string,
+) string {
+	tripHeadsign := ""
+	maxCount := 0
+	if dirHeadsigns, exists := routeDirectionHeadsignCounts[combinedRouteID][directionID]; exists {
+		headsigns := make([]string, 0, len(dirHeadsigns))
+		for headsign := range dirHeadsigns {
+			headsigns = append(headsigns, headsign)
+		}
+		slices.Sort(headsigns)
+		for _, headsign := range headsigns {
+			count := dirHeadsigns[headsign]
+			if count > maxCount {
+				maxCount = count
+				tripHeadsign = headsign
+			}
+		}
+	}
+	return tripHeadsign
+}
+
+// recordHeadsignVote tallies weight votes for a headsign under the route's direction
+// bucket; blank headsigns cast no vote.
+func recordHeadsignVote(acc *routeDirectionAccumulators, dir routeDirection, headsign sql.NullString, weight int) {
+	if !headsign.Valid || headsign.String == "" {
+		return
+	}
+
+	if weight < 1 {
+		weight = 1
+	}
+
+	if acc.headsignCounts[dir.combinedRouteID] == nil {
+		acc.headsignCounts[dir.combinedRouteID] = make(map[string]map[string]int)
+	}
+	if acc.headsignCounts[dir.combinedRouteID][dir.directionID] == nil {
+		acc.headsignCounts[dir.combinedRouteID][dir.directionID] = make(map[string]int)
+	}
+	acc.headsignCounts[dir.combinedRouteID][dir.directionID][headsign.String] += weight
 }

@@ -159,6 +159,11 @@ type Stop struct {
 	ParentStation      sql.NullString
 }
 
+type StopAgency struct {
+	StopID   string
+	AgencyID string
+}
+
 type StopTime struct {
 	TripID            string
 	ArrivalTime       int64

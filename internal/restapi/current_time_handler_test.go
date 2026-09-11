@@ -1,11 +1,17 @@
 package restapi
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -85,7 +91,64 @@ func TestCurrentTimeHandler_DeterministicTime(t *testing.T) {
 	entry := responseData["entry"].(map[string]any)
 	assert.Equal(t, float64(expectedMs), entry["time"], "Entry time should equal mock clock time")
 
-	// Readable time should match
-	expectedReadable := fixedTime.Format(time.RFC3339)
-	assert.Equal(t, expectedReadable, entry["readableTime"], "Readable time should match mock clock")
+	// readableTime must be formatted in the agency's local timezone (America/Los_Angeles).
+	agencyLoc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	expectedReadable := fixedTime.In(agencyLoc).Format(time.RFC3339)
+	assert.Equal(t, expectedReadable, entry["readableTime"], "readableTime should use agency timezone")
+}
+
+func TestAgencyTimezone_EmptyAgencies(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+
+	application := &app.Application{
+		GtfsManager: manager,
+		Clock:       clock.RealClock{},
+	}
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	loc := agencyTimezone(api, req)
+	assert.Equal(t, time.UTC, loc)
+}
+
+func TestAgencyTimezone_InvalidTimezone(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+
+	_, err := manager.GtfsDB.DB.ExecContext(context.Background(),
+		`INSERT INTO agencies (id, name, url, timezone) VALUES (?, ?, ?, ?)`,
+		"test-agency", "Test Agency", "http://example.com", "Not/AReal_Timezone",
+	)
+	require.NoError(t, err)
+
+	application := &app.Application{
+		GtfsManager: manager,
+		Clock:       clock.RealClock{},
+	}
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	loc := agencyTimezone(api, req)
+	assert.Equal(t, time.UTC, loc)
+}
+
+func TestAgencyTimezone_DBError(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+	require.NoError(t, manager.GtfsDB.Close())
+
+	application := &app.Application{
+		GtfsManager: manager,
+		Clock:       clock.RealClock{},
+	}
+	api := NewRestAPI(application)
+	api.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	loc := agencyTimezone(api, req)
+	assert.Equal(t, time.UTC, loc)
 }
