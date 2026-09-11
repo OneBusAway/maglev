@@ -98,6 +98,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Maps to build references
 	routeRefs := make(map[string]models.Route)
 	tripRefs := make(map[string]models.Trip)
+	situations := newSituationCollector()
 
 	for _, vehicle := range vehiclesForAgency {
 		if ctx.Err() != nil {
@@ -187,6 +188,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				vehicleStatus.OccupancyStatus = occupancy
 			}
 
+			tripStatus.SituationIDs = situations.addRefs(api.situationRefsForTrip(ctx, activeTripID))
 			vehicleStatus.TripStatus = tripStatus
 
 			// Add trip to references (basic trip reference)
@@ -245,6 +247,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 		references.Routes = routeRefList
 		references.Trips = tripRefList
+		references.Situations = api.situationReferences(situations.refs)
 	}
 
 	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.

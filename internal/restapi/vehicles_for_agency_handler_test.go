@@ -25,6 +25,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // vehiclesForAgencyURL builds the /vehicles-for-agency URL with key=TEST baked in.
@@ -173,7 +174,9 @@ func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
 	}
 }
 
-func TestVehiclesForAgencyHandler_OmitsAmbientRouteSituations(t *testing.T) {
+// TestVehiclesForAgencyHandler_SituationsPopulatedInReferences verifies that route-level
+// alerts are reflected in references.situations for vehicles serving that route.
+func TestVehiclesForAgencyHandler_SituationsPopulatedInReferences(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -183,6 +186,7 @@ func TestVehiclesForAgencyHandler_OmitsAmbientRouteSituations(t *testing.T) {
 	rawRouteID := trip.RouteID
 
 	const alertID = "alert-vehicles-test"
+	situationID := utils.FormCombinedID(testdata.Raba.ID, alertID)
 	// MockAddAlert must precede MockAddVehicleWithOptions: it triggers rebuildMergedRealtimeLocked,
 	// which rebuilds realTimeVehicles from feedVehicles (empty), wiping any vehicle added first.
 	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
@@ -193,13 +197,33 @@ func TestVehiclesForAgencyHandler_OmitsAmbientRouteSituations(t *testing.T) {
 	})
 	api.GtfsManager.MockAddVehicleWithOptions("v_situation_test", rawTripID, rawRouteID, gtfs.MockVehicleOptions{})
 
+	require.NotEmpty(t, api.GtfsManager.GetAlertsForRoute(rawRouteID), "seeded alert is not visible for the route")
+
 	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
 
 	require.NotEmpty(t, model.Data.List, "mock vehicle not returned by VehiclesForAgencyID")
-	assert.Equal(t, []models.Situation{}, model.Data.References.Situations)
+	require.NotEmpty(t, model.Data.References.Situations, "expected at least one situation in references")
+	found := false
+	for _, sit := range model.Data.References.Situations {
+		if sit.ID == situationID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected situation with id %q in references.situations", situationID)
+
+	var situationIDs []string
+	for _, v := range model.Data.List {
+		if v.TripStatus != nil {
+			situationIDs = append(situationIDs, v.TripStatus.SituationIDs...)
+		}
+	}
+	assert.Contains(t, situationIDs, situationID)
 }
 
-func TestVehiclesForAgencyHandler_OmitsAmbientAgencySituations(t *testing.T) {
+// TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences verifies that
+// agency-wide alerts are reflected in references.situations.
+func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -208,6 +232,7 @@ func TestVehiclesForAgencyHandler_OmitsAmbientAgencySituations(t *testing.T) {
 	agencyID := testdata.Raba.ID
 
 	const alertID = "alert-agency-wide-test"
+	situationID := utils.FormCombinedID(agencyID, alertID)
 	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
 		ID: alertID,
 		InformedEntities: []gogtfs.AlertInformedEntity{
@@ -216,10 +241,28 @@ func TestVehiclesForAgencyHandler_OmitsAmbientAgencySituations(t *testing.T) {
 	})
 	api.GtfsManager.MockAddVehicleWithOptions("v_agency_alert_test", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
 
+	require.NotEmpty(t, api.GtfsManager.GetAlertsByIDs("", "", agencyID), "seeded alert is not visible for the agency")
+
 	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(agencyID))
 
 	require.NotEmpty(t, model.Data.List, "mock vehicle not returned by VehiclesForAgencyID")
-	assert.Equal(t, []models.Situation{}, model.Data.References.Situations)
+	require.NotEmpty(t, model.Data.References.Situations, "expected agency-wide alert in references.situations")
+	found := false
+	for _, sit := range model.Data.References.Situations {
+		if sit.ID == situationID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected situation with id %q in references.situations", situationID)
+
+	var situationIDs []string
+	for _, v := range model.Data.List {
+		if v.TripStatus != nil {
+			situationIDs = append(situationIDs, v.TripStatus.SituationIDs...)
+		}
+	}
+	assert.Contains(t, situationIDs, situationID)
 }
 
 func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
