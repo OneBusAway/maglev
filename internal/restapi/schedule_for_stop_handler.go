@@ -264,7 +264,7 @@ func (api *RestAPI) buildScheduleForStopReferences(
 	routesForStop []gtfsdb.GetRoutesForStopRow,
 	routeIDs []string,
 ) (*models.ReferencesModel, error) {
-	routeRefs, agencyIDs := buildRouteRefs(agencyID, routesForStop)
+	routeRefs, agencyIDs := buildRouteRefs(routesForStop)
 
 	agencyRefs, err := api.fetchAgencyRefs(ctx, agencyIDs)
 	if err != nil {
@@ -281,13 +281,13 @@ func (api *RestAPI) buildScheduleForStopReferences(
 
 // buildRouteRefs converts the stop's routes into a combined-ID-keyed reference map,
 // alongside the distinct agency IDs those routes belong to.
-func buildRouteRefs(agencyID string, routesForStop []gtfsdb.GetRoutesForStopRow) (map[string]models.Route, []string) {
+func buildRouteRefs(routesForStop []gtfsdb.GetRoutesForStopRow) (map[string]models.Route, []string) {
 	routeRefs := make(map[string]models.Route, len(routesForStop))
 	agencyIDs := make([]string, 0, len(routesForStop))
 	seenAgencies := make(map[string]bool, len(routesForStop))
 
 	for _, route := range routesForStop {
-		combinedRouteID := utils.FormCombinedID(agencyID, route.ID)
+		combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
 		routeRefs[combinedRouteID] = models.NewRoute(
 			combinedRouteID,
 			route.AgencyID,
