@@ -173,9 +173,7 @@ func TestVehiclesForAgencyHandler_VehicleWithNilID(t *testing.T) {
 	}
 }
 
-// TestVehiclesForAgencyHandler_SituationsPopulatedInReferences verifies that route-level
-// alerts are reflected in references.situations for vehicles serving that route.
-func TestVehiclesForAgencyHandler_SituationsPopulatedInReferences(t *testing.T) {
+func TestVehiclesForAgencyHandler_OmitsAmbientRouteSituations(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -198,20 +196,10 @@ func TestVehiclesForAgencyHandler_SituationsPopulatedInReferences(t *testing.T) 
 	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
 
 	require.NotEmpty(t, model.Data.List, "mock vehicle not returned by VehiclesForAgencyID")
-	require.NotEmpty(t, model.Data.References.Situations, "expected at least one situation in references")
-	found := false
-	for _, sit := range model.Data.References.Situations {
-		if sit.ID == alertID {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "expected situation with id %q in references.situations", alertID)
+	assert.Equal(t, []models.Situation{}, model.Data.References.Situations)
 }
 
-// TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences verifies that
-// agency-wide alerts are reflected in references.situations.
-func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testing.T) {
+func TestVehiclesForAgencyHandler_OmitsAmbientAgencySituations(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -231,15 +219,7 @@ func TestVehiclesForAgencyHandler_AgencySituationsPopulatedInReferences(t *testi
 	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(agencyID))
 
 	require.NotEmpty(t, model.Data.List, "mock vehicle not returned by VehiclesForAgencyID")
-	require.NotEmpty(t, model.Data.References.Situations, "expected agency-wide alert in references.situations")
-	found := false
-	for _, sit := range model.Data.References.Situations {
-		if sit.ID == alertID {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "expected situation with id %q in references.situations", alertID)
+	assert.Equal(t, []models.Situation{}, model.Data.References.Situations)
 }
 
 func TestVehiclesForAgencyHandler_RouteIDUsesCombinedID(t *testing.T) {
