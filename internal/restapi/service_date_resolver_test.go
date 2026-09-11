@@ -63,6 +63,19 @@ func TestServiceDateResolver_Resolve(t *testing.T) {
 			want: queryDay,
 		},
 		{
+			// max_departure lands exactly on sinceMidnight-runningLate, which
+			// the inclusive bound still counts as running.
+			name: "Previous-day trip ending exactly at the late window edge is yesterday's",
+			trip: tripWithWindow("weekday", 23, 24),
+			want: previousDay,
+		},
+		{
+			// min_arrival lands exactly on sinceMidnight+runningEarly.
+			name: "Previous-day trip starting exactly at the early window edge is yesterday's",
+			trip: tripWithWindow("weekday", 24+40.0/60, 26),
+			want: previousDay,
+		},
+		{
 			name: "Trip not running at this moment falls back to the query day",
 			trip: tripWithWindow("weekday", 6, 7),
 			want: queryDay,

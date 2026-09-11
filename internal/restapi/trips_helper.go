@@ -1430,3 +1430,60 @@ func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.T
 	endsAfterWindowStarts := trip.MaxDepartureTime.Int64 >= sinceMidnightNs-int64(runningLate)
 	return startsBeforeWindowEnds && endsAfterWindowStarts
 }
+
+// serviceDay pairs the services active on one day with the time-since-midnight
+// offset a trip's scheduled span is measured against for that day.
+type serviceDay struct {
+	serviceIDs      []string
+	sinceMidnightNs int64
+}
+
+// ServiceDays returns the query day and the day before it. A trip belonging to
+// the previous service day is matched against the query moment offset by +24h,
+// since GTFS expresses its stop times relative to its own service date.
+func (r *serviceDateResolver) ServiceDays() []serviceDay {
+	return []serviceDay{
+		{serviceIDs: serviceIDSlice(r.queryDayServices), sinceMidnightNs: r.sinceMidnightNs},
+		{serviceIDs: serviceIDSlice(r.previousDayServices), sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour)},
+	}
+}
+
+func serviceIDSlice(services map[string]struct{}) []string {
+	ids := make([]string, 0, len(services))
+	for id := range services {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// scheduledPositionAtTime interpolates where a trip is along its shape at
+// currentTime using its schedule alone. This is the no-real-time-vehicle
+// equivalent of a GTFS-RT position; it returns nil when the trip has no usable
+// shape or stop times, or when stopsByID is missing any stop the trip serves.
+//
+// Failing closed on a missing stop matters here specifically: this result
+// feeds a bounds-membership test deciding whether a trip is included in the
+// response. projectStopsInSequence defaults a missing stop's distance to 0,
+// which would place the trip at the start of its shape and risk a false
+// positive rather than simply a wrong displayed position.
+func (api *RestAPI) scheduledPositionAtTime(
+	stopTimes []gtfsdb.StopTime,
+	shapePoints []gtfs.ShapePoint,
+	stopsByID map[string]gtfsdb.Stop,
+	currentTime time.Time,
+	serviceDate time.Time,
+) *models.Location {
+	if len(stopTimes) == 0 || len(shapePoints) < 2 {
+		return nil
+	}
+	for _, st := range stopTimes {
+		if _, ok := stopsByID[st.StopID]; !ok {
+			return nil
+		}
+	}
+
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	position, _, _ := scheduledTripPosition(
+		stopTimes, stopsByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
+	return position
+}
