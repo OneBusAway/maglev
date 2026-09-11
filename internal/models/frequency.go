@@ -72,11 +72,7 @@ func NewScheduleFrequencyFromDB(
 		0, 0, 0, 0, serviceDate.Location())
 
 	return ScheduleFrequency{
-		FrequencyWindow: FrequencyWindow{
-			StartTime: NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
-			EndTime:   NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
-			Headway:   NewModelDuration(time.Duration(dbFreq.HeadwaySecs) * time.Second),
-		},
+		FrequencyWindow:  NewFrequencyWindowFromDB(dbFreq, serviceDate),
 		ServiceDate:      NewModelTime(startOfDay),
 		ServiceID:        serviceID,
 		TripID:           tripID,
