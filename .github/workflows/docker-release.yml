@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   # Push to Docker Hub on published releases (non-prerelease only)
