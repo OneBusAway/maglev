@@ -231,6 +231,8 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
 
+	delete(m.feedTrips, "_test")
+	delete(m.feedVehicles, "_test")
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	// rebuild republishes an empty snapshot from the (empty) feed maps, which
 	// also clears anything the Mock* helpers injected directly.
