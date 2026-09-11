@@ -224,16 +224,22 @@ const (
 // It accepts a default value and enforces models.MaxAllowedCount as the ceiling.
 // Returns an error in fieldErrors if the value is <= 0 or above the ceiling.
 func ParseMaxCount(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
-	return parseMaxCount(queryParams, defaultCount, rejectAboveMax, fieldErrors)
+	return parseMaxCount(queryParams, defaultCount, models.MaxAllowedCount, rejectAboveMax, fieldErrors)
 }
 
 // ParseMaxCountClamped silently clamps values above models.MaxAllowedCount
 // instead of rejecting them. Values <= 0 are still field errors.
 func ParseMaxCountClamped(queryParams url.Values, defaultCount int, fieldErrors map[string][]string) (int, map[string][]string) {
-	return parseMaxCount(queryParams, defaultCount, clampAboveMax, fieldErrors)
+	return parseMaxCount(queryParams, defaultCount, models.MaxAllowedCount, clampAboveMax, fieldErrors)
 }
 
-func parseMaxCount(queryParams url.Values, defaultCount int, overflow maxCountOverflow, fieldErrors map[string][]string) (int, map[string][]string) {
+// ParseMaxCountClampedTo is ParseMaxCountClamped for endpoints whose ceiling
+// differs from models.MaxAllowedCount.
+func ParseMaxCountClampedTo(queryParams url.Values, defaultCount, ceiling int, fieldErrors map[string][]string) (int, map[string][]string) {
+	return parseMaxCount(queryParams, defaultCount, ceiling, clampAboveMax, fieldErrors)
+}
+
+func parseMaxCount(queryParams url.Values, defaultCount, ceiling int, overflow maxCountOverflow, fieldErrors map[string][]string) (int, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
 	}
@@ -246,11 +252,11 @@ func parseMaxCount(queryParams url.Values, defaultCount int, overflow maxCountOv
 			if maxCount <= 0 {
 				fieldErrors["maxCount"] = []string{"must be greater than zero"}
 				maxCount = defaultCount
-			} else if maxCount > models.MaxAllowedCount {
+			} else if maxCount > ceiling {
 				if overflow == clampAboveMax {
-					maxCount = models.MaxAllowedCount
+					maxCount = ceiling
 				} else {
-					fieldErrors["maxCount"] = []string{fmt.Sprintf("must not exceed %d", models.MaxAllowedCount)}
+					fieldErrors["maxCount"] = []string{fmt.Sprintf("must not exceed %d", ceiling)}
 					maxCount = defaultCount
 				}
 			}

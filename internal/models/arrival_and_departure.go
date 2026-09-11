@@ -41,6 +41,16 @@ type ArrivalAndDeparture struct {
 	VehicleID                  string      `json:"vehicleId"`
 }
 
+// ArrivalsAndDeparturesForLocationEntry is the entry payload of
+// arrivals-and-departures-for-location.
+type ArrivalsAndDeparturesForLocationEntry struct {
+	ArrivalsAndDepartures []ArrivalAndDeparture `json:"arrivalsAndDepartures"`
+	LimitExceeded         bool                  `json:"limitExceeded"`
+	NearbyStopIDs         []StopWithDistance    `json:"nearbyStopIds"`
+	SituationIDs          []string              `json:"situationIds"`
+	StopIDs               []string              `json:"stopIds"`
+}
+
 type ArrivalsAndDeparturesEntry struct {
 	ArrivalsAndDepartures []ArrivalAndDeparture `json:"arrivalsAndDepartures"`
 	NearbyStopIDs         []string              `json:"nearbyStopIds"`

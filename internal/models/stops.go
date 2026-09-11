@@ -34,3 +34,10 @@ type StopsResponse struct {
 	List       []Stop `json:"list"`
 	OutOfRange bool   `json:"outOfRange"`
 }
+
+// StopWithDistance is a stop paired with how far it sits from the point a
+// location query was centred on, in meters.
+type StopWithDistance struct {
+	StopID            string  `json:"stopId"`
+	DistanceFromQuery float64 `json:"distanceFromQuery"`
+}

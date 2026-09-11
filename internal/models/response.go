@@ -59,6 +59,46 @@ func NewArrivalsAndDepartureResponse(arrivalsAndDepartures any, references Refer
 	return NewOKResponse(data, c)
 }
 
+// NewArrivalsAndDeparturesForLocationResponse builds the entry envelope for
+// arrivals-and-departures-for-location. Nil slices are emitted as empty JSON
+// arrays because the OpenAPI schema marks stopIds, arrivalsAndDepartures,
+// nearbyStopIds and limitExceeded as required.
+func NewArrivalsAndDeparturesForLocationResponse(
+	arrivalsAndDepartures []ArrivalAndDeparture,
+	references ReferencesModel,
+	stopIds []string,
+	nearbyStopIds []StopWithDistance,
+	situationIds []string,
+	limitExceeded bool,
+	c clock.Clock,
+) ResponseModel {
+	if arrivalsAndDepartures == nil {
+		arrivalsAndDepartures = []ArrivalAndDeparture{}
+	}
+	if stopIds == nil {
+		stopIds = []string{}
+	}
+	if nearbyStopIds == nil {
+		nearbyStopIds = []StopWithDistance{}
+	}
+	if situationIds == nil {
+		situationIds = []string{}
+	}
+
+	entryData := map[string]any{
+		"arrivalsAndDepartures": arrivalsAndDepartures,
+		"limitExceeded":         limitExceeded,
+		"nearbyStopIds":         nearbyStopIds,
+		"situationIds":          situationIds,
+		"stopIds":               stopIds,
+	}
+	data := map[string]any{
+		"entry":      entryData,
+		"references": references,
+	}
+	return NewOKResponse(data, c)
+}
+
 // NewResponse creates a standard response using the provided clock.
 func NewResponse(code int, data any, text string, c clock.Clock) ResponseModel {
 	return ResponseModel{
