@@ -90,7 +90,7 @@ func createTestApiWithGTFSFixture(t *testing.T, c clock.Clock, zipName string, f
 	gtfsConfig := internalgtfs.Config{GtfsURL: zipPath, GTFSDataPath: ":memory:"}
 	gtfsManager, err := internalgtfs.InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	t.Cleanup(gtfsManager.Shutdown)
+	t.Cleanup(func() { _ = gtfsManager.Shutdown(context.Background()) })
 
 	dirCalc := internalgtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries)
 

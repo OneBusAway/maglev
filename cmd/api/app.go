@@ -26,6 +26,10 @@ import (
 	"maglev.onebusaway.org/internal/webui"
 )
 
+// gtfsShutdownTimeout bounds how long we wait for GTFS background workers
+// during shutdown before closing the database anyway.
+const gtfsShutdownTimeout = 30 * time.Second
+
 func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	gtfsCfg := gtfs.Config{
 		GtfsURL:               gtfsCfgData.GtfsURL,
@@ -272,7 +276,11 @@ func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *r
 
 	// Then shutdown GTFS manager (stops data fetching - the lowest-level dependency)
 	if coreApp.GtfsManager != nil {
-		coreApp.GtfsManager.Shutdown()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), gtfsShutdownTimeout)
+		if err := coreApp.GtfsManager.Shutdown(shutdownCtx); err != nil {
+			logger.Error("GTFS manager shutdown did not complete cleanly", "error", err)
+		}
+		cancel()
 	}
 
 	logger.Info("server exited")

@@ -35,7 +35,7 @@ func TestManagerShutdown(t *testing.T) {
 	// Test shutdown
 	done := make(chan struct{})
 	go func() {
-		manager.Shutdown()
+		manager.Shutdown(context.Background())
 		close(done)
 	}()
 
@@ -79,7 +79,7 @@ func TestManagerShutdownWithRealtime(t *testing.T) {
 	// Test shutdown
 	done := make(chan struct{})
 	go func() {
-		manager.Shutdown()
+		manager.Shutdown(context.Background())
 		close(done)
 	}()
 
@@ -108,6 +108,6 @@ func TestManagerShutdownIdempotent(t *testing.T) {
 	require.NoError(t, err, "Failed to initialize GTFS manager")
 
 	// Call shutdown multiple times - should not panic or hang
-	manager.Shutdown()
-	manager.Shutdown() // Second call should be safe
+	manager.Shutdown(context.Background())
+	manager.Shutdown(context.Background()) // Second call should be safe
 }

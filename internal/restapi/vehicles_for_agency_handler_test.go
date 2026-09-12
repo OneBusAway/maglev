@@ -901,7 +901,7 @@ func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func(
 	cleanup := func() {
 		api.Shutdown()
 		server.Close()
-		gtfsManager.Shutdown()
+		gtfsManager.Shutdown(context.Background())
 	}
 	return api, cleanup
 }
