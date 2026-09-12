@@ -248,7 +248,7 @@ func TestGetStopDelaysFromTripUpdates_NoUpdates(t *testing.T) {
 	defer api.Shutdown()
 
 	delays := api.GetStopDelaysFromTripUpdates("no-such-trip")
-	assert.Empty(t, delays)
+	assert.Equal(t, 0, delays.Len())
 }
 
 func TestGetStopDelaysFromTripUpdates_WithArrivalDelay(t *testing.T) {
@@ -265,9 +265,9 @@ func TestGetStopDelaysFromTripUpdates_WithArrivalDelay(t *testing.T) {
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-arrival", nil, updates)
 
 	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-arrival")
-	assert.Len(t, delays, 1)
-	assert.Equal(t, int64(45), delays["stop-A"].ArrivalDelay)
-	assert.Equal(t, int64(0), delays["stop-A"].DepartureDelay)
+	assert.Equal(t, 1, delays.Len())
+	assert.Equal(t, int64(45), delayFor(delays, "stop-A").ArrivalDelay)
+	assert.Equal(t, int64(0), delayFor(delays, "stop-A").DepartureDelay)
 }
 
 func TestGetStopDelaysFromTripUpdates_WithDepartureDelay(t *testing.T) {
@@ -284,9 +284,9 @@ func TestGetStopDelaysFromTripUpdates_WithDepartureDelay(t *testing.T) {
 	api.GtfsManager.MockAddTripUpdate("trip-stop-delays-departure", nil, updates)
 
 	delays := api.GetStopDelaysFromTripUpdates("trip-stop-delays-departure")
-	assert.Len(t, delays, 1)
-	assert.Equal(t, int64(0), delays["stop-B"].ArrivalDelay)
-	assert.Equal(t, int64(75), delays["stop-B"].DepartureDelay)
+	assert.Equal(t, 1, delays.Len())
+	assert.Equal(t, int64(0), delayFor(delays, "stop-B").ArrivalDelay)
+	assert.Equal(t, int64(75), delayFor(delays, "stop-B").DepartureDelay)
 }
 
 func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopID(t *testing.T) {
@@ -302,7 +302,7 @@ func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopID(t *testing.T) {
 	api.GtfsManager.MockAddTripUpdate("trip-nil-stopid", nil, updates)
 
 	delays := api.GetStopDelaysFromTripUpdates("trip-nil-stopid")
-	assert.Empty(t, delays, "stop updates without StopID should be skipped")
+	assert.Equal(t, 0, delays.Len(), "stop updates without StopID should be skipped")
 }
 
 func TestGetStopDelaysFromTripUpdates_IncludesStopWithZeroDelays(t *testing.T) {
@@ -319,9 +319,10 @@ func TestGetStopDelaysFromTripUpdates_IncludesStopWithZeroDelays(t *testing.T) {
 	api.GtfsManager.MockAddTripUpdate("trip-zero-delays", nil, updates)
 
 	delays := api.GetStopDelaysFromTripUpdates("trip-zero-delays")
-	assert.Len(t, delays, 1, "stops with zero delays should be included")
-	assert.Contains(t, delays, "stop-C")
-	assert.Equal(t, int64(0), delays["stop-C"].ArrivalDelay)
+	assert.Equal(t, 1, delays.Len(), "stops with zero delays should be included")
+	_, hasC := delays.For("stop-C", 0)
+	assert.True(t, hasC)
+	assert.Equal(t, int64(0), delayFor(delays, "stop-C").ArrivalDelay)
 }
 
 // TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule
@@ -397,10 +398,153 @@ func TestGetStopDelaysFromTripUpdates_MultipleStops(t *testing.T) {
 	api.GtfsManager.MockAddTripUpdate("trip-multi-stops", nil, updates)
 
 	delays := api.GetStopDelaysFromTripUpdates("trip-multi-stops")
-	assert.Len(t, delays, 3, "all stops with StopID should be included")
-	assert.Equal(t, int64(30), delays["stop-A"].ArrivalDelay)
-	assert.Equal(t, int64(60), delays["stop-B"].DepartureDelay)
-	assert.Contains(t, delays, "stop-C")
-	assert.Equal(t, int64(0), delays["stop-C"].ArrivalDelay)
-	assert.Equal(t, int64(0), delays["stop-C"].DepartureDelay)
+	assert.Equal(t, 3, delays.Len(), "all stops with StopID should be included")
+	assert.Equal(t, int64(30), delayFor(delays, "stop-A").ArrivalDelay)
+	assert.Equal(t, int64(60), delayFor(delays, "stop-B").DepartureDelay)
+	_, hasC := delays.For("stop-C", 0)
+	assert.True(t, hasC)
+	assert.Equal(t, int64(0), delayFor(delays, "stop-C").ArrivalDelay)
+	assert.Equal(t, int64(0), delayFor(delays, "stop-C").DepartureDelay)
+}
+
+// delayFor reads a stop_id-keyed entry the way the pre-stop_sequence tests did.
+func delayFor(d StopDelays, stopID string) StopDelayInfo {
+	info, _ := d.For(stopID, 0)
+	return info
+}
+
+func TestGetStopDelaysFromTripUpdates_LoopTripKeyedBySequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// A loop trip visits stop-A at sequence 1 and again at sequence 3. The
+	// feed reports different delays for the two visits.
+	stopA := "stop-A"
+	stopB := "stop-B"
+	seq1, seq2, seq3 := uint32(1), uint32(2), uint32(3)
+	onTime := 0 * time.Second
+	late := 600 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq1, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &onTime}},
+		{StopSequence: &seq2, StopID: &stopB, Arrival: &gtfs.StopTimeEvent{Delay: &onTime}},
+		{StopSequence: &seq3, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &late}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-loop", nil, updates)
+
+	delays := api.GetStopDelaysFromTripUpdates("trip-loop")
+
+	first, ok := delays.For("stop-A", 1)
+	assert.True(t, ok)
+	assert.Equal(t, int64(0), first.ArrivalDelay, "sequence 1 keeps its own delay")
+
+	second, ok := delays.For("stop-A", 3)
+	assert.True(t, ok)
+	assert.Equal(t, int64(600), second.ArrivalDelay, "sequence 3 must not collapse into sequence 1")
+}
+
+func TestGetStopDelaysFromTripUpdates_SequenceOnlyUpdateIsKept(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// GTFS-RT allows a StopTimeUpdate to carry stop_sequence with no stop_id.
+	seq := uint32(4)
+	delay := 120 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq, StopID: nil, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-seq-only", nil, updates)
+
+	delays := api.GetStopDelaysFromTripUpdates("trip-seq-only")
+	info, ok := delays.For("any-stop", 4)
+	assert.True(t, ok, "an update with stop_sequence but no stop_id must not be dropped")
+	assert.Equal(t, int64(120), info.DepartureDelay)
+}
+
+func TestGetStopDelaysFromTripUpdates_FallsBackToStopIDWithoutSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopID := "stop-C"
+	delay := 30 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-id-only", nil, updates)
+
+	delays := api.GetStopDelaysFromTripUpdates("trip-id-only")
+	// The scheduled stop-time has a sequence the feed never mentioned, so the
+	// lookup must fall through to stop_id.
+	info, ok := delays.For("stop-C", 7)
+	assert.True(t, ok)
+	assert.Equal(t, int64(30), info.ArrivalDelay)
+}
+
+// TestGetScheduleDeviation_SequenceOnlySTUReachesScheduleMatch regresses the
+// closest-in-time picker dropping updates that carry stop_sequence but no
+// stop_id. The schedule lookup is keyed by stop_id, so such an update
+// contributed a zero scheduled time and picker.consider discarded it.
+//
+// The update sets Arrival.Time rather than Arrival.Delay on purpose: the
+// Tier-3 pickFirstAvailableSTUDelay fallback only reads Delay, so with Time
+// the assertion can only be satisfied by the schedule-matching path.
+func TestGetScheduleDeviation_SequenceOnlySTUReachesScheduleMatch(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+
+	var tripID string
+	var stopSequence, arrivalNanos int64
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+		`SELECT trip_id, stop_sequence, arrival_time FROM stop_times WHERE arrival_time > 0 LIMIT 1`,
+	).Scan(&tripID, &stopSequence, &arrivalNanos)
+	require.NoError(t, err, "test data should contain at least one scheduled stop time")
+
+	scheduledSeconds := arrivalNanos / int64(time.Second)
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	const lateBySeconds = 120
+
+	seq := uint32(stopSequence)
+	predictedArrival := serviceDate.Add(time.Duration(scheduledSeconds+lateBySeconds) * time.Second)
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq, StopID: nil, Arrival: &gtfs.StopTimeEvent{Time: &predictedArrival}},
+	}
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, updates)
+
+	currentTime := serviceDate.Add(time.Duration(scheduledSeconds) * time.Second)
+	deviation, hasData := api.GetScheduleDeviationForBlock(ctx, []string{tripID}, serviceDate, currentTime)
+
+	assert.True(t, hasData, "an update with stop_sequence but no stop_id must still reach schedule matching")
+	assert.Equal(t, lateBySeconds, deviation)
+}
+
+// TestGetStopDelaysFromTripUpdates_SequencedUpdateDoesNotSeedStopIDFallback
+// pins that an update carrying a stop_sequence stays out of the stop_id
+// fallback. A loop trip with an update only for the second visit must not
+// serve that delay to a lookup for the first visit.
+func TestGetStopDelaysFromTripUpdates_SequencedUpdateDoesNotSeedStopIDFallback(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopA := "stop-A"
+	seq3 := uint32(3)
+	late := 600 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq3, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &late}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-seq-no-fallback", nil, updates)
+
+	delays := api.GetStopDelaysFromTripUpdates("trip-seq-no-fallback")
+
+	_, ok := delays.For("stop-A", 1)
+	assert.False(t, ok, "sequence 1 has no update and must not inherit sequence 3's delay")
+
+	info, ok := delays.For("stop-A", 3)
+	assert.True(t, ok)
+	assert.Equal(t, int64(600), info.ArrivalDelay)
 }

@@ -163,6 +163,23 @@ func (api *RestAPI) loadScheduledForTrips(ctx context.Context, tripIDs []string)
 	return out
 }
 
+// matchScheduleEntryBySequence resolves the scheduled arrival and departure for
+// a StopTimeUpdate that carries a stop_sequence but no stop_id. The caller's
+// map is keyed by stop_id, so the sequence has to be found by scanning. Stop
+// sequences are unique within a trip, so at most one entry can match and the
+// map's iteration order does not affect the result. Returns zeroes when the
+// sequence is not in the static schedule, which the caller treats as no data.
+func matchScheduleEntryBySequence(entries map[string][]schedEntry, stuSeq uint32) (schedArr, schedDep int64) {
+	for _, stopEntries := range entries {
+		for _, e := range stopEntries {
+			if e.seq == int64(stuSeq) {
+				return e.arr, e.dep
+			}
+		}
+	}
+	return 0, 0
+}
+
 // matchScheduleEntry resolves the right scheduled (arr, dep) for an STU
 // against a stop_id's entries. Mirrors Java's getBlockStopTimeForStopTimeUpdate
 // (GtfsRealtimeTripLibrary.java:1125-1188):
@@ -273,9 +290,16 @@ func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []t
 		schedMap := scheduled[t.tripID]
 		for _, stu := range t.tu.StopTimeUpdates {
 			var schedArr, schedDep int64
-			if stu.StopID != nil {
+			switch {
+			case stu.StopID != nil:
 				refTime := stuReferenceTime(stu, serviceDate, currentTime)
 				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence, refTime)
+			case stu.StopSequence != nil:
+				// stop_id is optional in GTFS-RT when stop_sequence is given.
+				// schedMap is keyed by stop_id, so such an update has no key to
+				// look under and would otherwise contribute a zero scheduled
+				// time, which picker.consider discards.
+				schedArr, schedDep = matchScheduleEntryBySequence(schedMap, *stu.StopSequence)
 			}
 			picker.consider(schedArr, stuPredictedFromEvent(stu.Arrival, schedArr, serviceDate))
 			picker.consider(schedDep, stuPredictedFromEvent(stu.Departure, schedDep, serviceDate))
@@ -477,11 +501,42 @@ func (api *RestAPI) blockShiftTripIDsSortedByStartTime(ctx context.Context, targ
 	return out
 }
 
-// GetStopDelaysFromTripUpdates returns a map of stop ID → per-stop delay information
-// (arrival and departure delays in seconds) derived from the GTFS-RT StopTimeUpdates
-// for the given trip. Returns an empty map when no real-time data is available.
-func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopDelayInfo {
-	delays := make(map[string]StopDelayInfo)
+// StopDelays holds the per-stop-visit delays from a TripUpdate. Entries are
+// keyed by stop_sequence when the feed provides it, because stop_id alone
+// cannot tell two visits to the same stop apart on a loop trip. The stop_id
+// map is the fallback for feeds that omit stop_sequence, matching the order
+// matchScheduleEntry uses for the same problem.
+type StopDelays struct {
+	bySequence map[int64]StopDelayInfo
+	byStopID   map[string]StopDelayInfo
+}
+
+// For returns the delay for one scheduled stop-time, trying stop_sequence
+// before stop_id. The zero value is safe to query and reports nothing.
+func (d StopDelays) For(stopID string, stopSequence int64) (StopDelayInfo, bool) {
+	if info, ok := d.bySequence[stopSequence]; ok {
+		return info, true
+	}
+	info, ok := d.byStopID[stopID]
+	return info, ok
+}
+
+// Len reports how many StopTimeUpdates contributed an entry.
+func (d StopDelays) Len() int {
+	// The two maps hold disjoint entries, so the total is their sum.
+	return len(d.bySequence) + len(d.byStopID)
+}
+
+// GetStopDelaysFromTripUpdates returns the per-stop delay information (arrival
+// and departure delays in seconds) derived from the GTFS-RT StopTimeUpdates for
+// the given trip. A StopTimeUpdate needs either stop_sequence or stop_id to be
+// usable; one with neither is skipped. Returns an empty value when no real-time
+// data is available.
+func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) StopDelays {
+	delays := StopDelays{
+		bySequence: make(map[int64]StopDelayInfo),
+		byStopID:   make(map[string]StopDelayInfo),
+	}
 
 	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
 	if len(tripUpdates) == 0 {
@@ -489,7 +544,7 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopD
 	}
 
 	for _, stu := range tripUpdates[0].StopTimeUpdates {
-		if stu.StopID == nil {
+		if stu.StopID == nil && stu.StopSequence == nil {
 			continue
 		}
 
@@ -501,7 +556,14 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) map[string]StopD
 			info.DepartureDelay = int64(stu.Departure.Delay.Seconds())
 		}
 
-		delays[*stu.StopID] = info
+		// An update carrying a stop_sequence identifies one specific visit, so it
+		// must not also seed the stop_id fallback: a later lookup for a different
+		// sequence at the same stop would otherwise read this visit's delay.
+		if stu.StopSequence != nil {
+			delays.bySequence[int64(*stu.StopSequence)] = info
+		} else if stu.StopID != nil {
+			delays.byStopID[*stu.StopID] = info
+		}
 	}
 
 	return delays
