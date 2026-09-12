@@ -190,9 +190,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				vehicleStatus.OccupancyStatus = occupancy
 			}
 
-			tripStatus.SituationIDs = situations.addRefs(
-				api.vehicleSituationRefs(ctx, vehicle.Trip.ID.ID, activeTripID, vehicle.Trip.ID.RouteID, routeByID),
-			)
 			vehicleStatus.TripStatus = tripStatus
 
 			// Add trip to references (basic trip reference)
@@ -206,9 +203,14 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				addRouteReference(routeRefs, route)
 			}
 
+			// An interlined vehicle executes a trip that can belong to another
+			// route, and that route is only known once the trip below resolves.
+			activeRouteID := vehicle.Trip.ID.RouteID
+
 			// For interlining, also add the active trip and its route to references.
 			if activeTripID != vehicle.Trip.ID.ID {
 				if activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID); err == nil {
+					activeRouteID = activeTrip.RouteID
 					tripRefs[activeTripID] = models.Trip{
 						ID:      utils.FormCombinedID(id, activeTripID),
 						RouteID: utils.FormCombinedID(id, activeTrip.RouteID),
@@ -217,6 +219,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					if !ok {
 						if fetched, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID); err == nil {
 							activeRoute, ok = fetched, true
+							// Cache it so the situation lookup below stays free of queries.
+							routeByID[activeTrip.RouteID] = fetched
 						}
 					}
 					if ok {
@@ -224,6 +228,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					}
 				}
 			}
+
+			tripStatus.SituationIDs = situations.addRefs(api.vehicleSituationRefs(ctx,
+				tripRouteRef{tripID: activeTripID, routeID: activeRouteID},
+				tripRouteRef{tripID: vehicle.Trip.ID.ID, routeID: vehicle.Trip.ID.RouteID},
+				routeByID,
+			))
 		} else {
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
