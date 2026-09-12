@@ -137,7 +137,7 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("test database must use in-memory storage, got path: %s", config.DBPath)
 	}
 
-	db, err := sql.Open(DriverName, config.DBPath)
+	db, err := sql.Open(DriverName, DSN(config.DBPath))
 	if err != nil {
 		return nil, err
 	}
@@ -146,11 +146,13 @@ func createDB(config Config) (*sql.DB, error) {
 	ctx := context.Background()
 	err = configureSQLitePerformance(ctx, db)
 	if err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("error configuring SQLite performance: %w", err)
 	}
 
 	err = performDatabaseMigration(ctx, db)
 	if err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("error performing database migration: %w", err)
 	}
 

@@ -32,6 +32,16 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Get the date parameter or use current date
 	dateParam := r.URL.Query().Get("date")
 
+	// An unparseable date is a field error even when the ID resolves to nothing, so it has
+	// to be caught before the agency lookup below. Resolving the date to a service date
+	// needs that agency's timezone, so the parse itself stays where it is.
+	if dateParam != "" {
+		if err := utils.ValidateServiceDate(dateParam); err != nil {
+			api.validationErrorResponse(w, r, map[string][]string{"date": {err.Error()}})
+			return
+		}
+	}
+
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		api.sendNotFound(w, r)
@@ -48,15 +58,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	var responseDate int64 // Stores the exact timestamp for the JSON response
 
 	if dateParam != "" {
-		var err error
-		startOfDay, err = utils.ParseDate(dateParam, loc)
-		if err != nil {
-			fieldErrors := map[string][]string{
-				"date": {err.Error()},
-			}
-			api.validationErrorResponse(w, r, fieldErrors)
-			return
-		}
+		// dateParam was already validated above; ParseDate cannot fail here.
+		startOfDay, _ = utils.ParseDate(dateParam, loc)
 
 		// Echo the exact Unix timestamp if provided, else use midnight
 		if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
@@ -263,7 +266,7 @@ func (api *RestAPI) buildScheduleForStopReferences(
 	routesForStop []gtfsdb.GetRoutesForStopRow,
 	routeIDs []string,
 ) (*models.ReferencesModel, error) {
-	routeRefs, agencyIDs := buildRouteRefs(agencyID, routesForStop)
+	routeRefs, agencyIDs := buildRouteRefs(routesForStop)
 
 	agencyRefs, err := api.fetchAgencyRefs(ctx, agencyIDs)
 	if err != nil {
@@ -280,13 +283,13 @@ func (api *RestAPI) buildScheduleForStopReferences(
 
 // buildRouteRefs converts the stop's routes into a combined-ID-keyed reference map,
 // alongside the distinct agency IDs those routes belong to.
-func buildRouteRefs(agencyID string, routesForStop []gtfsdb.GetRoutesForStopRow) (map[string]models.Route, []string) {
+func buildRouteRefs(routesForStop []gtfsdb.GetRoutesForStopRow) (map[string]models.Route, []string) {
 	routeRefs := make(map[string]models.Route, len(routesForStop))
 	agencyIDs := make([]string, 0, len(routesForStop))
 	seenAgencies := make(map[string]bool, len(routesForStop))
 
 	for _, route := range routesForStop {
-		combinedRouteID := utils.FormCombinedID(agencyID, route.ID)
+		combinedRouteID := utils.FormCombinedID(route.AgencyID, route.ID)
 		routeRefs[combinedRouteID] = models.NewRoute(
 			combinedRouteID,
 			route.AgencyID,

@@ -202,10 +202,9 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// GetRoutesForStops orders by (agency_id, route_id) as TEXT (lexicographic, not
-		// numeric), so the first route yields the lexicographically lowest agency ID
-		// serving this stop - a stable, if not numeric-minimal, choice for multi-agency stops.
-		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDs[0])
+		// The search query resolves this from the precomputed index, so the stop's combined
+		// ID here matches the key the results were sorted by.
+		agencyID := nulls.StringOrEmpty(s.AgencyID)
 
 		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routeIDs))
 		keptStopIDs = append(keptStopIDs, s.ID)

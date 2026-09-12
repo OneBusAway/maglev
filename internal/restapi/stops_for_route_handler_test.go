@@ -436,3 +436,48 @@ func TestDisambiguateGroupNamesCollidesWithUniqueName(t *testing.T) {
 	disambiguateGroupNames(reversed)
 	assertResolved(t, reversed)
 }
+
+// TestStopsForRouteIncludesCrossAgencyRouteOwner covers the same
+// response-level invariant as TestStopsForAgencyIncludesCrossAgencyRouteOwner
+// (stops_for_agency_handler_test.go), for the stops-for-route endpoint: a
+// stop served by more than one agency's routes must have every one of those
+// agencies present in references.agencies, not just the queried route's own.
+func TestStopsForRouteIncludesCrossAgencyRouteOwner(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A1,Agency One,http://agency1.com,America/Los_Angeles\n" +
+			"A2,Agency Two,http://agency2.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r100,A1,100-A1,Route 100 For Agency 1,3\n" +
+			"r300,A2,300-A2,Route 300 For Agency 2,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Shared Stop,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"r100,svc1,t1,A1 Headsign,0\n" +
+			"r300,svc1,t2,A2 Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t2,09:00:00,09:00:00,s1,1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-stops-for-route.zip", files)
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/A1_r100.json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	agencyIDs := make(map[string]bool)
+	for _, a := range model.Data.References.Agencies {
+		agencyIDs[a.ID] = true
+	}
+	assert.True(t, agencyIDs["A1"], "references.agencies must include the queried route's own agency")
+	assert.True(t, agencyIDs["A2"], "references.agencies must include A2, which owns a route also serving the shared stop")
+
+	require.NotEmpty(t, model.Data.References.Routes, "expected route references for the shared stop")
+	for _, route := range model.Data.References.Routes {
+		assert.True(t, agencyIDs[route.AgencyID],
+			"route %s has agencyId %s which is not present in references.agencies", route.ID, route.AgencyID)
+	}
+}
