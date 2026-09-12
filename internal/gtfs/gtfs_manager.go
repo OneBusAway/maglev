@@ -172,7 +172,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 			logging.LogError(logger, "Failed to load GTFS data, retrying", reloadErr,
 				slog.Int("attempt", attempt),
 				slog.Int("max_attempts", maxAttempts),
-				slog.Duration("retry_delay", delay),
+				slog.Float64("retry_delay_ms", float64(delay)/float64(time.Millisecond)),
 			)
 			select {
 			case <-ctx.Done():
@@ -337,8 +337,8 @@ func (manager *Manager) GetStopsForLocation(
 
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
-		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-		logging.LogError(logger, "could not query stops within bounds", err)
+		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
+		logging.LogError(reqLogger, "could not query stops within bounds", err)
 		return []gtfsdb.Stop{}, false
 	}
 
@@ -399,8 +399,8 @@ func (manager *Manager) stopsMatchingCode(
 ) ([]gtfsdb.Stop, bool) {
 	candidates, err := manager.GtfsDB.Queries.GetStopsByCode(ctx, nulls.String(stopCode))
 	if err != nil {
-		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-		logging.LogError(logger, "could not query stops by code", err)
+		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
+		logging.LogError(reqLogger, "could not query stops by code", err)
 		return nil, false
 	}
 	if len(candidates) == 0 {
@@ -466,8 +466,8 @@ func (manager *Manager) GetStopsInBounds(
 	bounds := BoundsFromParams(loc, clamp...)
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
-		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-		logging.LogError(logger, "could not query stops within bounds", err)
+		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
+		logging.LogError(reqLogger, "could not query stops within bounds", err)
 		return nil
 	}
 	if maxCount > 0 && len(stops) > maxCount {
@@ -490,8 +490,8 @@ func (manager *Manager) GetStopIDsWithinBounds(
 		MaxLon: bounds.MaxLon,
 	})
 	if err != nil {
-		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-		logging.LogError(logger, "could not query stop IDs within bounds", err)
+		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
+		logging.LogError(reqLogger, "could not query stop IDs within bounds", err)
 		return nil
 	}
 	if maxCount > 0 && len(ids) > maxCount {
@@ -526,14 +526,14 @@ func (manager *Manager) GetRoutesForLocation(
 	query string,
 	maxCount int,
 ) ([]gtfsdb.Route, bool) {
-	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
 	var candidateRouteIDs []string
 	if query != "" {
 		// Spec: at most maxCount+1 text-index candidates are considered, then filtered by location.
 		candidates, err := manager.SearchRoutes(ctx, query, maxCount+1)
 		if err != nil {
-			logging.LogError(logger, "route text search failed", err)
+			logging.LogError(reqLogger, "route text search failed", err)
 			return []gtfsdb.Route{}, false
 		}
 		// An empty candidate set must short-circuit here: an empty RouteIDs slice means
@@ -550,7 +550,7 @@ func (manager *Manager) GetRoutesForLocation(
 	bounds := BoundsFromParams(loc)
 	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, loc.Lat, loc.Lon, maxCount, candidateRouteIDs)
 	if err != nil {
-		logging.LogError(logger, "could not query routes within bounds", err)
+		logging.LogError(reqLogger, "could not query routes within bounds", err)
 		return []gtfsdb.Route{}, false
 	}
 
@@ -665,17 +665,17 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
 	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		logging.LogError(logger, "could not get trip", err,
+		logging.LogError(reqLogger, "could not get trip", err,
 			slog.String("trip_id", tripID))
 		return nil
 	}
 
 	if !requestedTrip.BlockID.Valid {
-		logger.Debug("trip has no block ID, cannot find vehicle by block",
+		reqLogger.Debug("trip has no block ID, cannot find vehicle by block",
 			slog.String("trip_id", tripID))
 		return nil
 	}
@@ -684,7 +684,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
-		logging.LogError(logger, "could not get trips for block", err,
+		logging.LogError(reqLogger, "could not get trips for block", err,
 			slog.String("block_id", requestedBlockID))
 		return nil
 	}

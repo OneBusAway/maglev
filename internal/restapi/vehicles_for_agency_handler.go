@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -13,6 +14,7 @@ import (
 
 // vehiclesForAgencyHandler returns real-time vehicle positions for all vehicles operated by a given agency.
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
 		return
@@ -107,7 +109,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		if vehicle.ID == nil {
-			api.Logger.Warn("skipping vehicle with nil ID descriptor", "agencyID", id)
+			reqLogger.Warn("skipping vehicle with nil ID descriptor", "agencyID", id)
 			continue
 		}
 		vid := vehicle.ID.ID
@@ -249,7 +251,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 		references.Routes = routeRefList
 		references.Trips = tripRefList
-		references.Situations = api.situationReferences(situations.refs)
+		references.Situations = api.situationReferences(ctx, situations.refs)
 	}
 
 	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
