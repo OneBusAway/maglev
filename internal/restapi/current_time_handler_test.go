@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -107,7 +105,6 @@ func TestAgencyTimezone_EmptyAgencies(t *testing.T) {
 		Clock:       clock.RealClock{},
 	}
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	loc := agencyTimezone(api, req)
@@ -129,7 +126,6 @@ func TestAgencyTimezone_InvalidTimezone(t *testing.T) {
 		Clock:       clock.RealClock{},
 	}
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	loc := agencyTimezone(api, req)
@@ -146,7 +142,6 @@ func TestAgencyTimezone_DBError(t *testing.T) {
 		Clock:       clock.RealClock{},
 	}
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	loc := agencyTimezone(api, req)
