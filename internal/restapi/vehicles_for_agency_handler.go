@@ -189,7 +189,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			}
 
 			tripStatus.SituationIDs = situations.addRefs(
-				api.vehicleSituationRefs(ctx, activeTripID, vehicle.Trip.ID.RouteID, routeByID),
+				api.vehicleSituationRefs(ctx, vehicle.Trip.ID.ID, activeTripID, vehicle.Trip.ID.RouteID, routeByID),
 			)
 			vehicleStatus.TripStatus = tripStatus
 

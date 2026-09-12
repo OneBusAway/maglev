@@ -302,15 +302,28 @@ func projectVehicleDistanceOnShape(
 	return cumulativeDistances[bestIdx] + bestRatio*segLen, true
 }
 
-// vehicleSituationRefs resolves the alerts affecting one vehicle's trip, taking
-// the route and agency from the routes already batch-fetched for the response so
-// the per-vehicle path issues no lookups of its own. A route absent from that
-// batch falls back to resolving the trip's route directly.
-func (api *RestAPI) vehicleSituationRefs(ctx context.Context, tripID, routeID string, routeByID map[string]gtfsdb.Route) []situationRef {
-	route, indexed := routeByID[routeID]
-	if !indexed {
-		return api.situationRefsForTrip(ctx, tripID)
+// vehicleSituationRefs resolves the alerts affecting one vehicle, taking the
+// route and agency from the routes already batch-fetched for the response so the
+// per-vehicle path issues no lookups of its own. A route absent from that batch
+// falls back to resolving the trip's route directly.
+//
+// Interlining puts the vehicle on a trip other than the one it reports, and the
+// response still carries the nominal trip and its route, so alerts informed
+// about either trip belong on the entry.
+func (api *RestAPI) vehicleSituationRefs(ctx context.Context, nominalTripID, activeTripID, routeID string, routeByID map[string]gtfsdb.Route) []situationRef {
+	refsForTrip := func(tripID string) []situationRef {
+		route, indexed := routeByID[routeID]
+		if !indexed {
+			return api.situationRefsForTrip(ctx, tripID)
+		}
+
+		return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, route.AgencyID), route.AgencyID)
 	}
 
-	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, route.AgencyID), route.AgencyID)
+	refs := refsForTrip(activeTripID)
+	if nominalTripID == activeTripID {
+		return refs
+	}
+
+	return dedupeSituationRefs(append(refs, refsForTrip(nominalTripID)...))
 }

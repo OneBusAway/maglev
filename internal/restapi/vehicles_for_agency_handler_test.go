@@ -929,16 +929,13 @@ func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func(
 	return api, cleanup
 }
 
-// TestVehiclesForAgencyHandler_InterliningActiveTrip verifies that when a vehicle's
-// nominal trip differs from the trip executing at the reference time (interlining),
-// tripStatus.activeTripId reflects the executing trip and both trips appear in
-// references.trips.
-func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
+// findInterliningScenario returns a nominal trip, the trip executing at the
+// returned reference time, and that reference time, for a block in the fixture
+// where the two trips differ. It prefers a cross-route scenario so route-level
+// behaviour is exercised, falling back to any interlining.
+func findInterliningScenario(t *testing.T, api *RestAPI) (string, string, time.Time) {
+	t.Helper()
 	ctx := context.Background()
-
-	api := createTestApi(t)
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	// The handler resolves reference time in the agency's timezone, so the test
 	// must build reference times in the same location for the windows to line up.
@@ -952,10 +949,6 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 	trips, err := api.GtfsManager.GetTrips(ctx, 200)
 	require.NoError(t, err)
 
-	// Find a (nominal trip, reference time) pair where the trip executing at that
-	// time differs from the nominal trip — i.e. interlining is actually exercised.
-	// Prefer a cross-route scenario (active trip on a different route) so the
-	// active-route reference is meaningfully tested; fall back to any interlining.
 	var nominalID, resolvedActiveID string
 	var refTime time.Time
 	var crossRoute bool
@@ -1002,6 +995,22 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, resolvedActiveID, "need an interlining scenario in test data")
+
+	return nominalID, resolvedActiveID, refTime
+}
+
+// TestVehiclesForAgencyHandler_InterliningActiveTrip verifies that when a vehicle's
+// nominal trip differs from the trip executing at the reference time (interlining),
+// tripStatus.activeTripId reflects the executing trip and both trips appear in
+// references.trips.
+func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
+	ctx := context.Background()
+
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	nominalID, resolvedActiveID, refTime := findInterliningScenario(t, api)
 
 	api.Clock = clock.NewMockClock(refTime)
 
@@ -1063,6 +1072,60 @@ func TestVehiclesForAgencyHandler_InterliningActiveTrip(t *testing.T) {
 	}
 	assert.True(t, refRouteIDs[expectedNominalRoute], "nominal route must be in references.routes")
 	assert.True(t, refRouteIDs[expectedActiveRoute], "active route must be in references.routes")
+}
+
+// TestVehiclesForAgencyHandler_InterliningKeepsNominalTripSituations verifies that
+// an alert informed about the nominal trip still reaches the entry when the vehicle
+// is interlined onto another trip. The response reports the nominal trip as tripId,
+// so a rider tracking it would otherwise lose the alert that applies to it.
+func TestVehiclesForAgencyHandler_InterliningKeepsNominalTripSituations(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	nominalID, resolvedActiveID, refTime := findInterliningScenario(t, api)
+	api.Clock = clock.NewMockClock(refTime)
+
+	nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), nominalID)
+	require.NoError(t, err)
+
+	const alertID = "alert-nominal-trip-interlining"
+	situationID := utils.FormCombinedID(testdata.Raba.ID, alertID)
+	// MockAddAlert must precede MockAddVehicleWithOptions: it triggers rebuildMergedRealtimeLocked,
+	// which rebuilds realTimeVehicles from feedVehicles (empty), wiping any vehicle added first.
+	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gogtfs.AlertInformedEntity{
+			{TripID: &gogtfs.TripID{ID: nominalID}},
+		},
+	})
+
+	const vehicleID = "v_interlining_situation"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, nominalID, nominalRow.RouteID, gtfs.MockVehicleOptions{})
+
+	// The alert is scoped to the nominal trip alone, so resolving from the active
+	// trip cannot reach it and the assertions below pin the nominal path itself.
+	require.NotEmpty(t, api.GtfsManager.GetAlertsByIDs(nominalID, "", ""),
+		"seeded alert is not visible for the nominal trip")
+	require.Empty(t, api.GtfsManager.GetAlertsByIDs(resolvedActiveID, "", ""),
+		"seeded alert must not be reachable from the active trip")
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	require.NotEqual(t, entry.TripID, entry.TripStatus.ActiveTripID,
+		"interlining: activeTripId must differ from the outer tripId")
+
+	assert.Contains(t, entry.TripStatus.SituationIDs, situationID,
+		"nominal trip's alert must stay on the entry when interlined")
+
+	situationIDs := make([]string, 0, len(model.Data.References.Situations))
+	for _, situation := range model.Data.References.Situations {
+		situationIDs = append(situationIDs, situation.ID)
+	}
+	assert.Contains(t, situationIDs, situationID,
+		"nominal trip's alert must appear in references.situations")
 }
 
 // TestAddRouteReference verifies a gtfsdb.Route is keyed by its combined

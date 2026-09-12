@@ -704,6 +704,22 @@ func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRe
 	return refs
 }
 
+// dedupeSituationRefs returns the refs with each situation ID kept once, in the
+// order they first appear. Resolving one entry from more than one trip reaches
+// the same alert through each of them.
+func dedupeSituationRefs(refs []situationRef) []situationRef {
+	seen := make(map[string]struct{}, len(refs))
+	unique := make([]situationRef, 0, len(refs))
+	for _, ref := range refs {
+		if _, ok := seen[ref.ID]; ok {
+			continue
+		}
+		seen[ref.ID] = struct{}{}
+		unique = append(unique, ref)
+	}
+	return unique
+}
+
 // agencyIDForAlert returns the agency whose prefix an alert's situation ID
 // carries, preferring the alert's own informed entity over the caller's agency.
 //
