@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -26,6 +27,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	ctx := r.Context()
+	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	// Get the date parameter or use current date
 	dateParam := r.URL.Query().Get("date")
@@ -179,7 +181,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			startOfDay:                 startOfDay,
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
 			freqMap:                    freqMap,
-			logger:                     api.Logger,
+			logger:                     reqLogger,
 		},
 	)
 	if err != nil {
