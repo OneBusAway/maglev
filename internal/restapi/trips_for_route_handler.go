@@ -483,7 +483,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		baseTrip, baseTripErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
 		if baseTripErr != nil {
 			if !errors.Is(baseTripErr, sql.ErrNoRows) {
-				api.Logger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
+				reqLogger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
 					"dup_trip_id", dupTripID, "error", baseTripErr)
 			}
 			stripped := stripNumericSuffix(dupTripID)
