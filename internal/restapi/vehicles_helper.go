@@ -301,3 +301,16 @@ func projectVehicleDistanceOnShape(
 	segLen := cumulativeDistances[bestIdx+1] - cumulativeDistances[bestIdx]
 	return cumulativeDistances[bestIdx] + bestRatio*segLen, true
 }
+
+// vehicleSituationRefs resolves the alerts affecting one vehicle's trip, taking
+// the route and agency from the routes already batch-fetched for the response so
+// the per-vehicle path issues no lookups of its own. A route absent from that
+// batch falls back to resolving the trip's route directly.
+func (api *RestAPI) vehicleSituationRefs(ctx context.Context, tripID, routeID string, routeByID map[string]gtfsdb.Route) []situationRef {
+	route, indexed := routeByID[routeID]
+	if !indexed {
+		return api.situationRefsForTrip(ctx, tripID)
+	}
+
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, route.AgencyID), route.AgencyID)
+}
