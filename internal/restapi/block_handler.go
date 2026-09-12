@@ -94,18 +94,31 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 			tripStops[stop.TripID] = append(tripStops[stop.TripID], stop)
 		}
 
+		for _, stops := range tripStops {
+			slices.SortFunc(stops, func(a, b gtfsdb.GetBlockDetailsRow) int {
+				return cmp.Compare(a.StopSequence, b.StopSequence)
+			})
+		}
+
 		tripIDs := make([]string, 0, len(tripStops))
 		for tripID := range tripStops {
 			tripIDs = append(tripIDs, tripID)
 		}
-		slices.Sort(tripIDs)
+		slices.SortFunc(tripIDs, func(a, b string) int {
+			stopsA := tripStops[a]
+			stopsB := tripStops[b]
+
+			if c := cmp.Compare(stopsA[0].DepartureTime, stopsB[0].DepartureTime); c != 0 {
+				return c
+			}
+			if c := cmp.Compare(stopsA[0].ArrivalTime, stopsB[0].ArrivalTime); c != 0 {
+				return c
+			}
+			return cmp.Compare(a, b)
+		})
 
 		for _, tripID := range tripIDs {
 			stops := tripStops[tripID]
-
-			slices.SortFunc(stops, func(a, b gtfsdb.GetBlockDetailsRow) int {
-				return cmp.Compare(a.StopSequence, b.StopSequence)
-			})
 
 			var blockStopTimes []models.BlockStopTime
 			tripStartDistance := blockDistance
