@@ -330,6 +330,100 @@ func TestBlockHandlerChronologicalTripOrdering(t *testing.T) {
 	}
 }
 
+func TestBlockHandlerComparatorTieBreakers(t *testing.T) {
+	const agencyID = "test-agency"
+
+	tests := []struct {
+		name            string
+		blockID         string
+		expectedTripIDs []string
+	}{
+		{
+			name:    "Case A: ArrivalTime tie-breaker when departure times are equal",
+			blockID: "b_arrival_tie",
+			expectedTripIDs: []string{
+				utils.FormCombinedID(agencyID, "trip_Z_early_arrival"),
+				utils.FormCombinedID(agencyID, "trip_A_late_arrival"),
+			},
+		},
+		{
+			name:    "Case B: Trip ID tie-breaker when departure and arrival times are equal",
+			blockID: "b_trip_id_tie",
+			expectedTripIDs: []string{
+				utils.FormCombinedID(agencyID, "trip_A_first"),
+				utils.FormCombinedID(agencyID, "trip_B_second"),
+				utils.FormCombinedID(agencyID, "trip_C_third"),
+				utils.FormCombinedID(agencyID, "trip_D_fourth"),
+			},
+		},
+	}
+
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			agencyID + ",Test Agency,http://example.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r1," + agencyID + ",1,Route 1,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"s1,1,1,1,1,1,1,1,20250101,20251231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"stop1,Stop 1,40.0,-122.0\n" +
+			"stop2,Stop 2,40.1,-122.0\n",
+		"trips.txt": "trip_id,route_id,service_id,block_id\n" +
+			// Block A: ArrivalTime tie-breaker trips
+			"trip_Z_early_arrival,r1,s1,b_arrival_tie\n" +
+			"trip_A_late_arrival,r1,s1,b_arrival_tie\n" +
+			// Block B: Trip ID tie-breaker trips (shuffled order in fixture)
+			"trip_C_third,r1,s1,b_trip_id_tie\n" +
+			"trip_A_first,r1,s1,b_trip_id_tie\n" +
+			"trip_D_fourth,r1,s1,b_trip_id_tie\n" +
+			"trip_B_second,r1,s1,b_trip_id_tie\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			// Block A: Both trips have identical first-stop DepartureTime (08:10:00).
+			// trip_Z_early_arrival arrives at 08:00:00, trip_A_late_arrival arrives at 08:05:00.
+			// Deliberately adversarial IDs: lexical ID order (trip_A < trip_Z) and SQL order disagree with arrival order.
+			"trip_A_late_arrival,08:05:00,08:10:00,stop1,1\n" +
+			"trip_A_late_arrival,08:30:00,08:30:00,stop2,2\n" +
+			"trip_Z_early_arrival,08:00:00,08:10:00,stop1,1\n" +
+			"trip_Z_early_arrival,08:25:00,08:25:00,stop2,2\n" +
+			// Block B: All trips have identical first-stop DepartureTime (08:10:00) and ArrivalTime (08:00:00).
+			// Exercises deterministic tie-breaking by trip ID across multiple trips.
+			"trip_C_third,08:00:00,08:10:00,stop1,1\n" +
+			"trip_C_third,08:30:00,08:30:00,stop2,2\n" +
+			"trip_A_first,08:00:00,08:10:00,stop1,1\n" +
+			"trip_A_first,08:30:00,08:30:00,stop2,2\n" +
+			"trip_D_fourth,08:00:00,08:10:00,stop1,1\n" +
+			"trip_D_fourth,08:30:00,08:30:00,stop2,2\n" +
+			"trip_B_second,08:00:00,08:10:00,stop1,1\n" +
+			"trip_B_second,08:30:00,08:30:00,stop2,2\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "test_block_tie_breakers.zip", files)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			blockCombinedID := utils.FormCombinedID(agencyID, tc.blockID)
+			endpoint := "/api/where/block/" + blockCombinedID + ".json?key=TEST"
+
+			// Because tripIDs originate from Go map iteration, multiple iterations sample
+			// different initial key permutations, increasing the likelihood of exposing a
+			// missing or non-deterministic tie-breaker.
+			for iter := 0; iter < 20; iter++ {
+				resp, model := callAPIHandler[BlockEntryResponse](t, api, endpoint)
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				require.NotEmpty(t, model.Data.Entry.Configurations)
+				config := model.Data.Entry.Configurations[0]
+				require.Len(t, config.Trips, len(tc.expectedTripIDs))
+
+				actualTripIDs := make([]string, len(config.Trips))
+				for i, tr := range config.Trips {
+					actualTripIDs[i] = tr.TripId
+				}
+				assert.Equal(t, tc.expectedTripIDs, actualTripIDs)
+			}
+		})
+	}
+}
+
 func BenchmarkBlockHandler(b *testing.B) {
 	api := createTestApi(b)
 	defer api.Shutdown()
