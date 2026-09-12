@@ -25,8 +25,13 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
+			reqID, _ := r.Context().Value(RequestIDKey).(string)
+			reqLogger := logger
+			if reqID != "" {
+				reqLogger = logger.With(slog.String("request_id", reqID))
+			}
 			// Add logger to context for downstream handlers
-			ctx := logging.WithLogger(r.Context(), logger)
+			ctx := logging.WithLogger(r.Context(), reqLogger)
 			r = r.WithContext(ctx)
 
 			// Wrap response writer to capture status code
@@ -41,15 +46,12 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 			// Log the request
 			duration := time.Since(start)
 
-			reqID, _ := r.Context().Value(RequestIDKey).(string)
-
-			logging.LogHTTPRequest(logger,
+			logging.LogHTTPRequest(logging.ForComponent(ctx, "http_server"),
 				r.Method,
 				r.URL.Path,
 				wrapped.statusCode,
-				float64(duration.Nanoseconds())/1e6,
-				slog.String("request_id", reqID),
-				slog.String("component", "http_server"))
+				float64(duration)/float64(time.Millisecond),
+			)
 		})
 	}
 }
