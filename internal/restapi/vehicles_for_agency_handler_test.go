@@ -1128,6 +1128,91 @@ func TestVehiclesForAgencyHandler_InterliningKeepsNominalTripSituations(t *testi
 		"nominal trip's alert must appear in references.situations")
 }
 
+// TestVehiclesForAgencyHandler_InterlinedAcrossRoutes drives an interlining
+// scenario whose two trips run on different routes. No block in the RABA
+// fixture spans two routes, so findInterliningScenario always settles for a
+// same-route block, which leaves the nominal and active route identical and
+// every route-level assertion in TestVehiclesForAgencyHandler_InterliningActiveTrip
+// satisfied by one entry. The block here is synthetic so the routes really differ.
+func TestVehiclesForAgencyHandler_InterlinedAcrossRoutes(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := t.Context()
+
+	routes := mustGetRoutes(t, api)
+	require.GreaterOrEqual(t, len(routes), 2, "need two routes in the fixture")
+	nominalRouteID, activeRouteID := routes[0].ID, routes[1].ID
+	require.NotEqual(t, nominalRouteID, activeRouteID,
+		"the two trips must run on different routes or this test proves nothing")
+
+	loc, err := time.LoadLocation(testdata.Raba.Timezone)
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs, "need an active RABA service on the chosen date")
+
+	blockID := nulls.String("xroute-block")
+	_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "xroute-nominal",
+		RouteID:          nominalRouteID,
+		ServiceID:        serviceIDs[0],
+		BlockID:          blockID,
+		MinArrivalTime:   nulls.Int64(8 * int64(time.Hour)),
+		MaxDepartureTime: nulls.Int64(8*int64(time.Hour) + int64(30*time.Minute)),
+	})
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:               "xroute-active",
+		RouteID:          activeRouteID,
+		ServiceID:        serviceIDs[0],
+		BlockID:          blockID,
+		MinArrivalTime:   nulls.Int64(10 * int64(time.Hour)),
+		MaxDepartureTime: nulls.Int64(10*int64(time.Hour) + int64(30*time.Minute)),
+	})
+	require.NoError(t, err)
+
+	refTime := time.Date(2024, 11, 4, 10, 15, 0, 0, loc)
+	api.Clock = clock.NewMockClock(refTime)
+
+	const alertID = "alert-active-route-xroute"
+	situationID := utils.FormCombinedID(testdata.Raba.ID, alertID)
+	informedRoute := activeRouteID
+	// MockAddAlert must precede MockAddVehicleWithOptions: it triggers rebuildMergedRealtimeLocked,
+	// which rebuilds realTimeVehicles from feedVehicles (empty), wiping any vehicle added first.
+	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gogtfs.AlertInformedEntity{
+			{RouteID: &informedRoute},
+		},
+	})
+
+	const vehicleID = "v_xroute"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, "xroute-nominal", nominalRouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	require.Equal(t, utils.FormCombinedID(testdata.Raba.ID, "xroute-active"), entry.TripStatus.ActiveTripID,
+		"the block's later trip runs at the reference time, so it is the active one")
+
+	refRouteIDs := make(map[string]bool, len(model.Data.References.Routes))
+	for _, route := range model.Data.References.Routes {
+		refRouteIDs[route.ID] = true
+	}
+	assert.True(t, refRouteIDs[utils.FormCombinedID(testdata.Raba.ID, nominalRouteID)],
+		"the nominal route must be in references.routes")
+	assert.True(t, refRouteIDs[utils.FormCombinedID(testdata.Raba.ID, activeRouteID)],
+		"the active trip's own route must be in references.routes")
+
+	assert.Contains(t, entry.TripStatus.SituationIDs, situationID,
+		"an alert on the active trip's route must reach the entry")
+}
+
 // TestAddRouteReference verifies a gtfsdb.Route is keyed by its combined
 // agencyID_routeID and its nullable fields are mapped through.
 func TestAddRouteReference(t *testing.T) {
