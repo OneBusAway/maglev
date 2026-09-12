@@ -13,3 +13,9 @@ The profiling data confirms significant contention on the `realTimeMutex` within
 **Copy-On-Write (COW) with `atomic.Value`**
 Refactor `internal/gtfs/realtime.go` to store the merged view in an `atomic.Value`. Readers will access it lock-free, while the 30s updater will swap in a new pre-computed version.
 
+**Status:** the reader half is done. The merged view lives in a `mergedRealtime`
+snapshot published through `atomic.Pointer`, and no API read path takes
+`realTimeMutex` any more. Writers still hold it to serialise the per-feed maps
+while they rebuild, so writer hold time is unchanged; making the rebuild itself
+concurrent is tracked separately as per-feed locking.
+
