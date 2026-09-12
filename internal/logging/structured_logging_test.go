@@ -91,7 +91,7 @@ func TestLoggerHelpers(t *testing.T) {
 		LogOperation(logger, "gtfs_data_imported",
 			slog.String("source", "file.zip"),
 			slog.Int("stops_count", 150),
-			slog.Duration("duration", 0)) // Will be ignored if zero
+			slog.Duration("duration_ms", 0)) // Will be ignored if zero
 
 		output := buf.String()
 		assert.Contains(t, output, `"level":"DEBUG"`)
@@ -107,7 +107,7 @@ func TestLoggerHelpers(t *testing.T) {
 		LogOperation(logger, "gtfs_data_imported",
 			slog.String("source", "file.zip"),
 			slog.Int("stops_count", 150),
-			slog.Duration("duration", 30*time.Second))
+			slog.Duration("duration_ms", 30*time.Second))
 
 		output := buf.String()
 		assert.Contains(t, output, `"level":"DEBUG"`)

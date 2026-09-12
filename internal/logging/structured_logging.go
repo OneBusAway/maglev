@@ -46,7 +46,7 @@ func LogOperation(logger *slog.Logger, operation string, attrs ...slog.Attr) {
 	args := make([]any, 0, len(attrs))
 	for _, attr := range attrs {
 		// Skip zero-value durations to avoid cluttering logs with meaningless timing data
-		if attr.Key == "duration" || attr.Key == "duration_ms" {
+		if attr.Key == "duration_ms" && attr.Value.Kind() == slog.KindDuration {
 			if attr.Value.Duration() == 0 {
 				continue
 			}
