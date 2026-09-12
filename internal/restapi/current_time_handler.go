@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -25,13 +26,14 @@ func (api *RestAPI) currentTimeHandler(w http.ResponseWriter, r *http.Request) {
 // agencyTimezone returns the primary agency's IANA timezone location.
 // Falls back to UTC if the timezone cannot be loaded.
 func agencyTimezone(api *RestAPI, r *http.Request) *time.Location {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	agencies, err := api.GtfsManager.GetAgencies(r.Context())
 	if err != nil || len(agencies) == 0 {
 		return time.UTC
 	}
 	loc, err := loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
 	if err != nil {
-		api.Logger.Warn("failed to load agency timezone", "agencyID", agencies[0].ID, "error", err)
+		reqLogger.Warn("failed to load agency timezone", "agencyID", agencies[0].ID, "error", err)
 		return time.UTC
 	}
 	return loc

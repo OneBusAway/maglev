@@ -49,9 +49,10 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	// 3. Connectivity Check: Is the database actually reachable?
 	if err := api.GtfsManager.GtfsDB.DB.PingContext(r.Context()); err != nil {
-		logging.LogError(api.Logger, "GTFS DB ping failed", err)
+		logging.LogError(reqLogger, "GTFS DB ping failed", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(HealthResponse{
 			Status: "unavailable",
