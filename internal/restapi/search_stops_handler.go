@@ -183,7 +183,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	// 6. Construct Stop Models
 	stopModels := make([]models.Stop, 0, len(stops))
 	parentIDsByAgency := make(map[string][]string)
-	keptStopIDs := make([]string, 0, len(stops))
 	keptStopsSet := make(map[string]bool)
 
 	for _, s := range stops {
@@ -207,7 +206,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		agencyID := nulls.StringOrEmpty(s.AgencyID)
 
 		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routeIDs))
-		keptStopIDs = append(keptStopIDs, s.ID)
 		keptStopsSet[s.ID] = true
 
 		if parentID := nulls.StringOrEmpty(s.ParentStation); parentID != "" {
@@ -216,6 +214,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 7. Build References
+	// This response has no situationIds, so situation references remain empty.
 	references := models.NewEmptyReferences()
 	if includeReferences {
 		keptRoutesRows := make([]gtfsdb.GetRoutesForStopsRow, 0, len(routesRows))
@@ -231,11 +230,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		references.Agencies = agencyReferencesForStops(keptAgencyRows)
-
-		// Populate situation references for alerts affecting the returned stops
-		alerts := api.collectAlertsForStops(keptStopIDs)
-		situations := api.BuildSituationReferences(alerts)
-		references.Situations = append(references.Situations, situations...)
 
 		var parentRoutes map[string]gtfsdb.GetRoutesForStopsRow
 		references.Stops, parentRoutes, err = api.buildSearchParentStationReferences(ctx, parentIDsByAgency)

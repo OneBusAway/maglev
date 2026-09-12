@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
@@ -448,6 +449,8 @@ func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
 	assert.True(t, capped.Data.LimitExceeded)
 }
 
+// TestSearchStopsHandlerParentStationReferences verifies that parent stations,
+// routes, and agencies resolve across agencies without adding ambient situations.
 func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -594,7 +597,15 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 
 	rebuildStopAgencyIndex(t, api)
 
+	// Alerts must not add unreferenced situations or disturb parent/route/agency references.
+	stopID := "child_stop_1"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               "search-stop-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+	})
+
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
+	assert.Equal(t, []models.Situation{}, stopsResp.Data.References.Situations)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
 
