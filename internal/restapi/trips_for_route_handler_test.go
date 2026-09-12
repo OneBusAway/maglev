@@ -2127,6 +2127,41 @@ func (f *duplicatedTripLookupFailDB) QueryRowContext(ctx context.Context, query 
 	return f.DBTX.QueryRowContext(ctx, query, args...)
 }
 
+func TestTripsForRouteHandler_DuplicatedTripKeepsUnresolvedFeedID(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
+	api.GtfsManager.MockResetRealTimeData()
+
+	api.GtfsManager.MockAddDuplicatedVehicleDirect(tripsForRouteRouteID, gogtfs.Vehicle{
+		ID: &gogtfs.VehicleID{ID: "vehicle-unresolved"},
+		Trip: &gogtfs.Trip{
+			ID: gogtfs.TripID{
+				ID:                   "no-such-trip.00060",
+				RouteID:              tripsForRouteRouteID,
+				ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+			},
+		},
+	})
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
+		combinedRouteID, tripsForRouteTestClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	dupTripID := utils.FormCombinedID(tripsForRouteAgencyID, "no-such-trip.00060")
+	var dupEntry *models.TripsForRouteListEntry
+	for i := range model.Data.List {
+		if model.Data.List[i].TripId == dupTripID {
+			dupEntry = &model.Data.List[i]
+			break
+		}
+	}
+	require.NotNil(t, dupEntry)
+	require.NotNil(t, dupEntry.Status)
+	assert.Equal(t, dupTripID, dupEntry.Status.ActiveTripID)
+}
+
 func TestTripsForRouteHandler_DuplicatedTripLookupFailures(t *testing.T) {
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 

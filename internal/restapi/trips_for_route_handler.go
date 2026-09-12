@@ -479,24 +479,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		// Fetch the base trip once; its stop-time window drives the
 		// service-date resolution below.
-		baseTripID := dupTripID
-		baseTrip, baseTripErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, dupTripID)
-		if baseTripErr != nil {
-			if !errors.Is(baseTripErr, sql.ErrNoRows) {
-				reqLogger.Warn("trips-for-route: failed to resolve DUPLICATED trip ID",
-					"dup_trip_id", dupTripID, "error", baseTripErr)
-			}
-			stripped := stripNumericSuffix(dupTripID)
-			if stripped != dupTripID {
-				baseTripID = stripped
-				baseTrip, baseTripErr = api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, baseTripID)
-			}
+		baseTripID, baseTrip, err := api.resolveDuplicatedBaseTrip(ctx, dupTripID)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
 		}
+		resolved := baseTrip.ID != ""
 
 		// Index the base trip before the situation lookup below: an unindexed
 		// trip sends tripSituationRefs back to the database for the record
 		// already in hand, the same reuse the interlined path above relies on.
-		if baseTripErr == nil {
+		if resolved {
 			tripsByID[baseTrip.ID] = baseTrip
 			if !filteredRouteTrips[baseTripID] {
 				fetchedTrips = append(fetchedTrips, baseTrip)
@@ -506,7 +499,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 		serviceDate := serviceDateFor(tripServiceDay, baseTripID, todayMidnight)
 		// If the base trip's window overlaps yesterday's range, use yesterday.
-		if serviceDate == todayMidnight && baseTripErr == nil &&
+		if serviceDate == todayMidnight && resolved &&
 			tripWindowOverlapsRange(baseTrip,
 				prevDaySinceMidnight+timeRangeStart-currentSinceMidnight,
 				prevDaySinceMidnight+timeRangeEnd-currentSinceMidnight) {
