@@ -104,7 +104,6 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 	}
 
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	return api
 }
@@ -202,6 +201,38 @@ func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
 	stops, err := api.GtfsManager.GtfsDB.Queries.GetActiveStops(context.Background())
 	require.NoError(t, err)
 	return stops
+}
+
+// createTestApiWithFeed creates a RestAPI backed by a specific GTFS feed rather than the
+// shared RABA fixture, for behaviour the RABA feed cannot exercise. The feed is loaded
+// into its own in-memory database, so it leaves the shared fixture untouched.
+func createTestApiWithFeed(t testing.TB, feedPath string) *RestAPI {
+	t.Helper()
+
+	gtfsConfig := gtfs.Config{
+		GtfsURL:      feedPath,
+		GTFSDataPath: ":memory:",
+	}
+
+	gtfsManager, err := gtfs.InitGTFSManager(context.Background(), gtfsConfig)
+	require.NoError(t, err)
+
+	application := &app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries),
+		Clock:               clock.RealClock{},
+	}
+
+	api := NewRestAPI(application)
+	t.Cleanup(api.Shutdown)
+
+	return api
 }
 
 // mustGetStopWithoutRoutes returns the ID of a stop no trip calls at, which is

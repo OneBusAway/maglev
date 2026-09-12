@@ -220,6 +220,31 @@ func TestBlockHandlerContextCancellation(t *testing.T) {
 	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
 }
 
+func TestBlockHandlerCrossConfigurationDistanceReset(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("25_1"))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.GreaterOrEqual(t, len(entry.Configurations), 2, "expected at least 2 configurations")
+
+	config0 := entry.Configurations[0]
+	require.NotEmpty(t, config0.Trips)
+	require.GreaterOrEqual(t, len(config0.Trips[0].BlockStopTimes), 2, "expected at least 2 BlockStopTimes for config0")
+	assert.Equal(t, 0.0, config0.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "Configuration 0 first stop should be 0")
+	assert.Greater(t, config0.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 0 second stop should be > 0")
+
+	config1 := entry.Configurations[1]
+	require.NotEmpty(t, config1.Trips)
+	require.GreaterOrEqual(t, len(config1.Trips[0].BlockStopTimes), 2, "expected at least 2 BlockStopTimes for config1")
+	// On the merge base, this incorrectly returned 433750.77 instead of 0.0
+	assert.Equal(t, 0.0, config1.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "Configuration 1 first stop should be 0")
+	assert.Greater(t, config1.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 1 second stop should be > 0")
+}
+
 func BenchmarkBlockHandler(b *testing.B) {
 	api := createTestApi(b)
 	defer api.Shutdown()

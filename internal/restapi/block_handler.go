@@ -78,9 +78,9 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 
 	configurations := make([]models.BlockConfiguration, 0, len(serviceGroups))
 
-	var blockDistance float64
-
 	for _, serviceID := range serviceIDs {
+		var blockDistance float64
+
 		serviceStops := serviceGroups[serviceID]
 
 		config := &models.BlockConfiguration{
