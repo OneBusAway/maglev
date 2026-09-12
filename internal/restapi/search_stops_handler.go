@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -65,6 +66,7 @@ func extractFTS5Terms(sanitizedQuery string) []string {
 // searchStopsHandler searches for stops matching a user-provided query string
 // using full-text search, with optional geographic bounds filtering.
 func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	ctx := r.Context()
 
 	// 1. Parse Parameters
@@ -109,7 +111,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		// This prevents retries on infrastructure errors (context canceled, db locked, etc.)
 		errStr := err.Error()
 		if strings.Contains(errStr, "fts5") || strings.Contains(errStr, "syntax") {
-			api.Logger.Warn(
+			reqLogger.Warn(
 				"FTS5 wildcard query failed, retrying without wildcard",
 				"original_error", err,
 				"fts_query", searchQuery,
@@ -200,10 +202,9 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// GetRoutesForStops orders by (agency_id, route_id) as TEXT (lexicographic, not
-		// numeric), so the first route yields the lexicographically lowest agency ID
-		// serving this stop - a stable, if not numeric-minimal, choice for multi-agency stops.
-		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(routeIDs[0])
+		// The search query resolves this from the precomputed index, so the stop's combined
+		// ID here matches the key the results were sorted by.
+		agencyID := nulls.StringOrEmpty(s.AgencyID)
 
 		stopModels = append(stopModels, api.buildSearchStopModel(ctx, agencyID, stopFromSearchRow(s), routeIDs))
 		keptStopIDs = append(keptStopIDs, s.ID)
@@ -230,7 +231,6 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		references.Agencies = agencyReferencesForStops(keptAgencyRows)
-		utils.SortAgencyReferencesByID(references.Agencies)
 
 		// Populate situation references for alerts affecting the returned stops
 		alerts := api.collectAlertsForStops(keptStopIDs)
@@ -244,6 +244,19 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		utils.SortModelStopsByID(references.Stops)
+
+		// Append missing agencies from parent routes to references.Agencies
+		existingAgencies := make(map[string]bool)
+		for _, agency := range references.Agencies {
+			existingAgencies[agency.ID] = true
+		}
+		for _, row := range parentRoutes {
+			if !existingAgencies[row.AgencyID] {
+				api.appendRouteAgencyReference(ctx, references, row.AgencyID, "")
+				existingAgencies[row.AgencyID] = true
+			}
+		}
+		utils.SortAgencyReferencesByID(references.Agencies)
 
 		references.Routes = mergeParentRouteReferences(routeReferencesForStops(keptRoutesRows), parentRoutes)
 		utils.SortModelRoutesByName(references.Routes)
