@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -29,9 +30,10 @@ func agencyTimezone(api *RestAPI, r *http.Request) *time.Location {
 	if err != nil || len(agencies) == 0 {
 		return time.UTC
 	}
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	loc, err := loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
 	if err != nil {
-		api.Logger.Warn("failed to load agency timezone", "agencyID", agencies[0].ID, "error", err)
+		reqLogger.Warn("failed to load agency timezone", "agencyID", agencies[0].ID, "error", err)
 		return time.UTC
 	}
 	return loc

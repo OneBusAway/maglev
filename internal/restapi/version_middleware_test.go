@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -58,8 +57,7 @@ func TestVersionValidationMiddleware(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &RestAPI{
 				Application: &app.Application{
-					Logger: slog.Default(),
-					Clock:  clock.RealClock{},
+					Clock: clock.RealClock{},
 				},
 			}
 

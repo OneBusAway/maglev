@@ -13,7 +13,7 @@ import (
 
 // invalidAPIKeyResponse sends a 401 Unauthorized response with the required format
 // for invalid API key errors
-func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter) {
+func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter, r *http.Request) {
 	// Create response with the specific format required
 	response := struct {
 		Code        int    `json:"code"`
@@ -27,15 +27,18 @@ func (api *RestAPI) invalidAPIKeyResponse(w http.ResponseWriter) {
 		Version:     models.APIVersion,
 	}
 
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to encode invalid API key response", err)
+		logging.LogError(reqLogger, "failed to encode invalid API key response", err)
 	}
 }
 
 func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
+
 	// Context cancellation and deadline errors represent request lifecycle termination,
 	// not internal server failures. Delegate to the dedicated handler to correctly
 	// handle context.Canceled (no response — client disconnected) and
@@ -47,7 +50,7 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 		api.clientCanceledResponse(w, r, err)
 		return
 	}
-	logging.LogError(api.Logger, "internal server error", err, slog.String("path", r.URL.Path))
+	logging.LogError(reqLogger, "internal server error", err, slog.String("path", r.URL.Path))
 	// Send a 500 Internal Server Error response
 	response := struct {
 		Code        int    `json:"code"`
@@ -65,12 +68,14 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusInternalServerError)
 	encoderErr := json.NewEncoder(w).Encode(response)
 	if encoderErr != nil {
-		logging.LogError(api.Logger, "failed to encode server error response", encoderErr)
+		logging.LogError(reqLogger, "failed to encode server error response", encoderErr)
 	}
 }
 
 // validationErrorResponse sends a 400 Bad Request response with field-specific validation errors
-func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, _ *http.Request, fieldErrors map[string][]string) {
+func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, r *http.Request, fieldErrors map[string][]string) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
+
 	errorText := "validation error"
 	for _, errs := range fieldErrors {
 		if len(errs) > 0 {
@@ -101,7 +106,7 @@ func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, _ *http.Reque
 	w.WriteHeader(http.StatusBadRequest)
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
-		logging.LogError(api.Logger, "failed to encode validation error response", err)
+		logging.LogError(reqLogger, "failed to encode validation error response", err)
 	}
 }
 
@@ -114,16 +119,18 @@ func (api *RestAPI) validationErrorResponse(w http.ResponseWriter, _ *http.Reque
 // 504 Gateway Timeout, which is semantically correct — the server took too long,
 // this is not a server fault (500) nor a client fault.
 func (api *RestAPI) clientCanceledResponse(w http.ResponseWriter, r *http.Request, err error) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
+
 	switch {
 	case errors.Is(err, context.Canceled):
-		api.Logger.Info("request canceled by client",
+		reqLogger.Info("request canceled by client",
 			"path", r.URL.Path,
 			"method", r.Method,
 		)
 		return
 
 	case errors.Is(err, context.DeadlineExceeded):
-		api.Logger.Warn("request deadline exceeded",
+		reqLogger.Warn("request deadline exceeded",
 			"path", r.URL.Path,
 			"method", r.Method,
 		)
@@ -142,12 +149,12 @@ func (api *RestAPI) clientCanceledResponse(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusGatewayTimeout)
 		err = json.NewEncoder(w).Encode(response)
 		if err != nil {
-			api.Logger.Error("failed to encode gateway timeout response", "error", err)
+			reqLogger.Error("failed to encode gateway timeout response", "error", err)
 		}
 		return
 
 	default:
-		api.Logger.Warn("clientCanceledResponse called with unexpected error type",
+		reqLogger.Warn("clientCanceledResponse called with unexpected error type",
 			"error", err,
 			"path", r.URL.Path,
 			"method", r.Method,

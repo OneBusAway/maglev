@@ -11,6 +11,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -84,6 +85,7 @@ type activeStopTime struct {
 // per arrival row, and across a wide window or many stops the uncached compute
 // chain dominates the request.
 func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, acc *arrivalsAccumulator) (stopArrivalsResult, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	stopID := utils.FormCombinedID(in.AgencyID, in.StopCode)
 	result := stopArrivalsResult{Arrivals: make([]models.ArrivalAndDeparture, 0)}
 
@@ -113,7 +115,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 
 		route, routeExists := routesLookup[st.RouteID]
 		if !routeExists {
-			api.Logger.Debug("skipping stop time: route not found in batch fetch",
+			reqLogger.Debug("skipping stop time: route not found in batch fetch",
 				slog.String("routeID", st.RouteID),
 				slog.String("tripID", st.TripID))
 			continue
@@ -121,7 +123,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 
 		trip, tripExists := tripsLookup[st.TripID]
 		if !tripExists {
-			api.Logger.Debug("skipping stop time: trip not found in batch fetch",
+			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
 				slog.String("tripID", st.TripID),
 				slog.String("routeID", st.RouteID))
 			continue
@@ -157,6 +159,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 // window across yesterday, today and tomorrow, so trips whose service day
 // started before midnight are not dropped.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	windowStart := in.QueryTime.Add(-in.Before)
 	windowEnd := in.QueryTime.Add(in.After)
 
@@ -176,7 +179,7 @@ func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrival
 			if dayOffset == 0 {
 				return nil, err
 			}
-			api.Logger.Warn("failed to resolve services for window-spillover day, skipping",
+			reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
 				slog.Int("day_offset", dayOffset),
 				slog.Any("error", err))
 			continue
@@ -204,6 +207,7 @@ func (api *RestAPI) stopTimesForServiceDay(
 	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, in.Location)
 	serviceDateStr := targetDate.Format("20060102")
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
 		return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
@@ -223,7 +227,7 @@ func (api *RestAPI) stopTimesForServiceDay(
 		WindowEndNanos:   endOffset.Nanoseconds(),
 	})
 	if err != nil {
-		api.Logger.Warn("failed to query stop times in window",
+		reqLogger.Warn("failed to query stop times in window",
 			slog.String("stopID", in.StopCode),
 			slog.Any("error", err))
 		return nil, nil
@@ -318,10 +322,11 @@ func (api *RestAPI) tripStopCounts(ctx context.Context, tripIDs []string) map[st
 	if len(tripIDs) == 0 {
 		return counts
 	}
+	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
-		api.Logger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
+		reqLogger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
 		return counts
 	}
 
@@ -360,7 +365,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 	// lookups (GetVehicleForTrip / GetVehicleByID) use the raw RT id
 	// unchanged; the combined form is an output-only concern.
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
-	vehicleID := api.combinedVehicleID(vehicle, route.AgencyID, st.TripID)
+	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
 	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
 		st.TripID,
@@ -444,12 +449,13 @@ func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequenc
 
 // combinedVehicleID renders a vehicle's ID in the combined {agency}_{id} form
 // the spec requires, or empty when the trip has no vehicle assigned.
-func (api *RestAPI) combinedVehicleID(vehicle *gtfs.Vehicle, agencyID, tripID string) string {
+func (api *RestAPI) combinedVehicleID(ctx context.Context, vehicle *gtfs.Vehicle, agencyID, tripID string) string {
 	if vehicle == nil || vehicle.Trip == nil {
 		return ""
 	}
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	if vehicle.ID == nil {
-		api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
+		reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		return ""
 	}
 	return utils.FormCombinedID(agencyID, vehicle.ID.ID)
@@ -468,11 +474,12 @@ func (api *RestAPI) tripStatusForArrival(
 ) (status *models.TripStatus, distanceFromStop float64, numberOfStopsAway int, situations []situationRef) {
 	st := in.stopTime
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	// The vehicle is passed through rather than left nil so BuildTripStatus
 	// does not repeat the GetVehicleForTrip lookup the caller already did.
 	status, extras, err := api.BuildTripStatus(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceMidnight, in.queryTime, in.freqMap)
 	if err != nil {
-		api.Logger.Warn("BuildTripStatus failed for arrival",
+		reqLogger.Warn("BuildTripStatus failed for arrival",
 			"tripID", st.TripID, "error", err)
 	}
 	if extras != nil {
@@ -525,9 +532,10 @@ func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *mode
 		return
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
 	if err != nil {
-		api.Logger.Debug("skipping active trip reference: trip not found",
+		reqLogger.Debug("skipping active trip reference: trip not found",
 			slog.String("activeTripID", activeTripID),
 			slog.String("scheduledTripID", scheduledTripID),
 			slog.Any("error", err))
@@ -537,7 +545,7 @@ func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *mode
 
 	activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
 	if err != nil {
-		api.Logger.Warn("failed to fetch route for active trip reference",
+		reqLogger.Warn("failed to fetch route for active trip reference",
 			"tripID", activeTripID, "routeID", activeTrip.RouteID, "error", err)
 		return
 	}
@@ -591,13 +599,14 @@ func (api *RestAPI) buildArrivalsReferences(ctx context.Context, in arrivalsRefe
 }
 
 func (api *RestAPI) appendTripReferences(ctx context.Context, references *models.ReferencesModel, acc *arrivalsAccumulator) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	for _, trip := range acc.trips {
 		// Get the route to determine the correct agency for trip/route IDs
 		route, ok := acc.routes[trip.RouteID]
 		if !ok {
 			fetchedRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
 			if err != nil {
-				api.Logger.Warn("failed to fetch route for trip reference", "tripID", trip.ID, "routeID", trip.RouteID, "error", err)
+				reqLogger.Warn("failed to fetch route for trip reference", "tripID", trip.ID, "routeID", trip.RouteID, "error", err)
 				continue // Skip instead of falling back to the stop's agency
 			}
 			route = &fetchedRoute
@@ -624,6 +633,7 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 	if err != nil {
 		return err
 	}
+	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	for stopID := range acc.stopIDs {
 		if ctx.Err() != nil {
@@ -632,7 +642,7 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 
 		stopData, ok := stopsByID[stopID]
 		if !ok {
-			api.Logger.Debug("skipping stop reference: stop not found", slog.String("stopID", stopID))
+			reqLogger.Debug("skipping stop reference: stop not found", slog.String("stopID", stopID))
 			continue
 		}
 
@@ -675,9 +685,10 @@ func (api *RestAPI) loadStopReferenceData(ctx context.Context, stopIDs []string)
 	map[string][]gtfsdb.GetRoutesForStopsRow,
 	error,
 ) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
 	if err != nil {
-		api.Logger.Warn("failed to batch fetch stop references", slog.Any("error", err))
+		reqLogger.Warn("failed to batch fetch stop references", slog.Any("error", err))
 		stops = nil
 	}
 
@@ -689,7 +700,7 @@ func (api *RestAPI) loadStopReferenceData(ctx context.Context, stopIDs []string)
 	routesByStop := make(map[string][]gtfsdb.GetRoutesForStopsRow)
 	routeRows, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
 	if err != nil {
-		api.Logger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
+		reqLogger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
 		return stopsByID, routesByStop, nil
 	}
 	for _, row := range routeRows {
@@ -726,6 +737,7 @@ func collectStopRoutes(routesForStop []gtfsdb.GetRoutesForStopsRow, acc *arrival
 }
 
 func (api *RestAPI) appendRouteReferences(ctx context.Context, references *models.ReferencesModel, addedAgencyIDs map[string]bool, acc *arrivalsAccumulator) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	for _, route := range acc.routes {
 		references.Routes = append(references.Routes, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
@@ -742,7 +754,7 @@ func (api *RestAPI) appendRouteReferences(ctx context.Context, references *model
 		if !addedAgencyIDs[route.AgencyID] {
 			routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 			if err != nil {
-				api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
+				reqLogger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
 				continue
 			}
 			references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&routeAgency))
