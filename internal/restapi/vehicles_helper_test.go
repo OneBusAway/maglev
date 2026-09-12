@@ -457,3 +457,48 @@ func TestWallClockSinceMidnightNs(t *testing.T) {
 	normal := time.Date(2024, 6, 1, 10, 15, 30, 0, loc)
 	assert.Equal(t, int64(10*time.Hour+15*time.Minute+30*time.Second), wallClockSinceMidnightNs(normal))
 }
+
+// TestVehicleSituationRefs_InterlinedActiveRouteAlert covers the cross-route
+// case the RABA fixture cannot produce, since none of its blocks span two
+// routes. An alert informed about the active trip's route has to be resolved
+// with that route, not with the route the vehicle nominally reports.
+func TestVehicleSituationRefs_InterlinedActiveRouteAlert(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const (
+		agencyID     = "SituAgency"
+		nominalRoute = "SituRouteNominal"
+		activeRoute  = "SituRouteActive"
+		alertID      = "alert-active-route-only"
+	)
+
+	informedRoute := activeRoute
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{RouteID: &informedRoute},
+		},
+	})
+
+	routeByID := map[string]gtfsdb.Route{
+		nominalRoute: {ID: nominalRoute, AgencyID: agencyID},
+		activeRoute:  {ID: activeRoute, AgencyID: agencyID},
+	}
+
+	refs := api.vehicleSituationRefs(context.Background(),
+		tripRouteRef{tripID: "situ-active-trip", routeID: activeRoute},
+		tripRouteRef{tripID: "situ-nominal-trip", routeID: nominalRoute},
+		routeByID,
+	)
+
+	found := false
+	for _, ref := range refs {
+		if ref.Alert.ID == alertID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "an alert on the active trip's route must be looked up with that route, not the nominal one")
+}
