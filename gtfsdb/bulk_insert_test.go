@@ -3,6 +3,7 @@ package gtfsdb
 import (
 	"context"
 	"database/sql"
+	"runtime"
 	"testing"
 	"time"
 
@@ -345,9 +346,12 @@ func TestBulkInsertPerformance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, recordCount, count)
 
-	// Performance assertion: should complete in reasonable time (< 5 seconds for 10k records)
-	assert.Less(t, duration.Seconds(), 5.0,
-		"Bulk insert of %d records should complete in < 5 seconds (took %v)", recordCount, duration)
+	// Windows runners are too slow at SQLite file I/O to hold a wall-clock budget,
+	// the same reason cmd/api and internal/gtfs skip their timing tests there.
+	if runtime.GOOS != "windows" {
+		assert.Less(t, duration.Seconds(), 5.0,
+			"Bulk insert of %d records should complete in < 5 seconds (took %v)", recordCount, duration)
+	}
 
 	t.Logf("Bulk inserted %d stop_times in %v (~%.0f inserts/sec)",
 		recordCount, duration, float64(recordCount)/duration.Seconds())
