@@ -10,8 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // blockURL builds the /block endpoint URL with key=TEST baked in. Tests that
@@ -243,6 +245,89 @@ func TestBlockHandlerCrossConfigurationDistanceReset(t *testing.T) {
 	// On the merge base, this incorrectly returned 433750.77 instead of 0.0
 	assert.Equal(t, 0.0, config1.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "Configuration 1 first stop should be 0")
 	assert.Greater(t, config1.Trips[0].BlockStopTimes[1].DistanceAlongBlock, 0.0, "Configuration 1 second stop should be > 0")
+}
+
+func TestBlockHandlerChronologicalTripOrdering(t *testing.T) {
+	const agencyID = "test-agency"
+
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			agencyID + ",Test Agency,http://example.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r1," + agencyID + ",1,Route 1,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"s1,1,1,1,1,1,1,1,20250101,20251231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"stop1,Stop 1,40.0,-122.0\n" +
+			"stop2,Stop 2,40.1,-122.0\n" +
+			"stop3,Stop 3,40.2,-122.0\n",
+		"trips.txt": "trip_id,route_id,service_id,block_id\n" +
+			"trip_Z_morning,r1,s1,b1\n" +
+			"trip_M_midday,r1,s1,b1\n" +
+			"trip_A_evening,r1,s1,b1\n" +
+			"trip_X_night,r1,s1,b1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			// 1. Morning trip (08:00 - 08:30)
+			"trip_Z_morning,08:00:00,08:00:00,stop1,1\n" +
+			"trip_Z_morning,08:30:00,08:30:00,stop2,2\n" +
+			// 2. Midday trip (12:00 - 12:30)
+			"trip_M_midday,12:00:00,12:00:00,stop2,1\n" +
+			"trip_M_midday,12:30:00,12:30:00,stop3,2\n" +
+			// 3. Evening trip (17:00 - 17:30)
+			"trip_A_evening,17:00:00,17:00:00,stop3,1\n" +
+			"trip_A_evening,17:30:00,17:30:00,stop1,2\n" +
+			// 4. Post-midnight trip (25:30 - 26:00 = 01:30 - 02:00 next day)
+			"trip_X_night,25:30:00,25:30:00,stop1,1\n" +
+			"trip_X_night,26:00:00,26:00:00,stop2,2\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "test_block_order.zip", files)
+
+	blockCombinedID := utils.FormCombinedID(agencyID, "b1")
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, "/api/where/block/"+blockCombinedID+".json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.Entry.Configurations)
+	config := model.Data.Entry.Configurations[0]
+	require.Len(t, config.Trips, 4)
+
+	// Explicitly assert operational trip sequence instead of alphabetical ID order:
+	expectedTripIDs := []string{
+		utils.FormCombinedID(agencyID, "trip_Z_morning"),
+		utils.FormCombinedID(agencyID, "trip_M_midday"),
+		utils.FormCombinedID(agencyID, "trip_A_evening"),
+		utils.FormCombinedID(agencyID, "trip_X_night"),
+	}
+	actualTripIDs := make([]string, len(config.Trips))
+	for i, tr := range config.Trips {
+		actualTripIDs[i] = tr.TripId
+	}
+	assert.Equal(t, expectedTripIDs, actualTripIDs, "Trips must be ordered chronologically by scheduled time, not lexicographically by trip ID")
+
+	// Verify chronological monotonicity (departure of trip[i-1] <= arrival of trip[i]):
+	for i := 1; i < len(config.Trips); i++ {
+		prevTrip := config.Trips[i-1]
+		currTrip := config.Trips[i]
+		prevDeparture := prevTrip.BlockStopTimes[len(prevTrip.BlockStopTimes)-1].StopTime.DepartureTime.Duration
+		currArrival := currTrip.BlockStopTimes[0].StopTime.ArrivalTime.Duration
+
+		assert.LessOrEqual(t, prevDeparture, currArrival,
+			"Chronological violation: Trip %d (%s ends at %v) must not end after Trip %d (%s starts at %v)",
+			i-1, prevTrip.TripId, prevDeparture, i, currTrip.TripId, currArrival)
+	}
+
+	// Verify DistanceAlongBlock starts at 0 for the first trip and is monotonically non-decreasing across consecutive trips:
+	assert.Equal(t, 0.0, config.Trips[0].BlockStopTimes[0].DistanceAlongBlock, "First stop of first trip in block must start at DistanceAlongBlock 0.0")
+	for i := 1; i < len(config.Trips); i++ {
+		prevTrip := config.Trips[i-1]
+		currTrip := config.Trips[i]
+		prevEndDist := prevTrip.BlockStopTimes[len(prevTrip.BlockStopTimes)-1].DistanceAlongBlock
+		currStartDist := currTrip.BlockStopTimes[0].DistanceAlongBlock
+
+		assert.GreaterOrEqual(t, currStartDist, prevEndDist,
+			"DistanceAlongBlock violation: Trip %d starts at %.1f m, which is before previous trip ended at %.1f m",
+			i, currStartDist, prevEndDist)
+	}
 }
 
 func BenchmarkBlockHandler(b *testing.B) {
