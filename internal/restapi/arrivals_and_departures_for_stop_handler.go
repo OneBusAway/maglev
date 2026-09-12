@@ -9,6 +9,7 @@ import (
 	"time"
 
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -170,7 +171,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode), acc.alertAgencyID)
-	references.Situations = append(references.Situations, api.situationReferences(acc.situations.refs)...)
+	references.Situations = append(references.Situations, api.situationReferences(ctx, acc.situations.refs)...)
 
 	// The top-level list covers every alert reachable from this stop, whether it
 	// was matched through an arrival's trip or through the stop itself.
@@ -207,12 +208,13 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		return nil
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	// Batch-resolve the owning agency for each nearby stop so that
 	// multi-agency feeds produce correct combined IDs.
 	stopAgencyMap := make(map[string]string, len(candidateIDs))
 	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, candidateIDs)
 	if err != nil {
-		api.Logger.Warn("failed to resolve agencies for nearby stops, using fallback",
+		reqLogger.Warn("failed to resolve agencies for nearby stops, using fallback",
 			"error", err, "fallbackAgencyID", fallbackAgencyID)
 	} else {
 		for _, row := range agencyRows {

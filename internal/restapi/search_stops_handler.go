@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -65,6 +66,7 @@ func extractFTS5Terms(sanitizedQuery string) []string {
 // searchStopsHandler searches for stops matching a user-provided query string
 // using full-text search, with optional geographic bounds filtering.
 func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	ctx := r.Context()
 
 	// 1. Parse Parameters
@@ -109,7 +111,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		// This prevents retries on infrastructure errors (context canceled, db locked, etc.)
 		errStr := err.Error()
 		if strings.Contains(errStr, "fts5") || strings.Contains(errStr, "syntax") {
-			api.Logger.Warn(
+			reqLogger.Warn(
 				"FTS5 wildcard query failed, retrying without wildcard",
 				"original_error", err,
 				"fts_query", searchQuery,

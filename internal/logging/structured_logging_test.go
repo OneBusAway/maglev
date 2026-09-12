@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,13 +91,30 @@ func TestLoggerHelpers(t *testing.T) {
 		LogOperation(logger, "gtfs_data_imported",
 			slog.String("source", "file.zip"),
 			slog.Int("stops_count", 150),
-			slog.Duration("duration", 0)) // Will be ignored if zero
+			slog.Duration("duration_ms", 0)) // Will be ignored if zero
 
 		output := buf.String()
 		assert.Contains(t, output, `"level":"DEBUG"`)
 		assert.Contains(t, output, `"msg":"gtfs_data_imported"`)
 		assert.Contains(t, output, `"source":"file.zip"`)
 		assert.Contains(t, output, `"stops_count":150`)
+	})
+
+	t.Run("LogOperation logs output duration in milliseconds", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := NewStructuredLogger(&buf, slog.LevelDebug)
+
+		LogOperation(logger, "gtfs_data_imported",
+			slog.String("source", "file.zip"),
+			slog.Int("stops_count", 150),
+			slog.Duration("duration_ms", 30*time.Second))
+
+		output := buf.String()
+		assert.Contains(t, output, `"level":"DEBUG"`)
+		assert.Contains(t, output, `"msg":"gtfs_data_imported"`)
+		assert.Contains(t, output, `"source":"file.zip"`)
+		assert.Contains(t, output, `"stops_count":150`)
+		assert.Contains(t, output, `"duration_ms":30000`)
 	})
 
 	t.Run("LogHTTPRequest logs request details", func(t *testing.T) {
