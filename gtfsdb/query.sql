@@ -174,6 +174,22 @@ SET
     max_departure_time = (SELECT MAX(departure_time) FROM stop_times WHERE trip_id = trips.id)
 WHERE min_arrival_time IS NULL OR max_departure_time IS NULL;
 
+-- name: ClearStopAgencies :exec
+-- WHERE TRUE is redundant to SQLite but keeps static analysis from reading this as an
+-- accidentally unbounded DELETE. The table is a derived index and is always cleared whole.
+DELETE FROM stop_agencies WHERE TRUE;
+
+-- name: BuildStopAgencies :exec
+INSERT INTO
+    stop_agencies (stop_id, agency_id)
+SELECT DISTINCT
+    stop_times.stop_id,
+    routes.agency_id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id;
+
 -- name: CreateCalendarDate :one
 INSERT
 OR REPLACE INTO calendar_dates (service_id, date, exception_type)
@@ -263,15 +279,12 @@ FROM
     stops;
 
 -- name: GetStopIDsForAgency :many
-SELECT DISTINCT
-    s.id
+SELECT
+    stop_id
 FROM
-    stops s
-    JOIN stop_times st ON s.id = st.stop_id
-    JOIN trips t ON st.trip_id = t.id
-    JOIN routes r ON t.route_id = r.id
+    stop_agencies
 WHERE
-    r.agency_id = ?;
+    agency_id = ?;
 
 -- name: GetTrip :one
 SELECT
@@ -894,6 +907,63 @@ FROM
     stop_times
 WHERE
     stop_id IN (sqlc.slice('stop_ids'));
+
+-- name: GetInServiceTripIDsForStops :many
+-- Blockless trips that serve one of the given stops, run on one of the given
+-- services, and whose scheduled span overlaps [window_start, window_end] --
+-- the same runningLate/runningEarly grace window trips-for-route's runsOn
+-- applies, so a trip that just ended or is about to start is still offered as
+-- a candidate. The caller passes an offset past 24h to match trips belonging
+-- to the previous service day.
+--
+-- Blocked trips are excluded: a bus in a scheduled layover between two block
+-- trips is active in neither trip's own span, so per-trip containment misses
+-- it. GetBlockIDsForStops + GetTripSpansForBlocks handle blocked trips by the
+-- block's whole span instead.
+SELECT DISTINCT
+    t.id
+FROM
+    trips t
+    JOIN stop_times st ON st.trip_id = t.id
+WHERE
+    t.block_id IS NULL
+    AND t.min_arrival_time <= sqlc.arg('window_end')
+    AND t.max_departure_time >= sqlc.arg('window_start')
+    AND st.stop_id IN (sqlc.slice('stop_ids'))
+    AND t.service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetBlockIDsForStops :many
+-- Blocks having at least one trip that serves one of these stops on one of
+-- these services. Time is deliberately not filtered here: a block in layover
+-- is active while none of its own trips are, so the window is applied to the
+-- block's whole span by the caller, via GetTripSpansForBlocks.
+SELECT DISTINCT
+    t.block_id
+FROM
+    trips t
+    JOIN stop_times st ON st.trip_id = t.id
+WHERE
+    t.block_id IS NOT NULL
+    AND st.stop_id IN (sqlc.slice('stop_ids'))
+    AND t.service_id IN (sqlc.slice('service_ids'));
+
+-- name: GetTripSpansForBlocks :many
+-- Every trip's scheduled span in the given blocks, ordered so the caller can
+-- walk one block's trips at a time to test the block's whole span against a
+-- window and pick an anchor trip within it -- see inServiceTripIDs.
+SELECT
+    t.block_id,
+    t.id,
+    t.min_arrival_time,
+    t.max_departure_time
+FROM
+    trips t
+WHERE
+    t.block_id IN (sqlc.slice('block_ids'))
+    AND t.service_id IN (sqlc.slice('service_ids'))
+ORDER BY
+    t.block_id ASC,
+    t.min_arrival_time ASC;
 
 -- name: ListTrips :many
 SELECT

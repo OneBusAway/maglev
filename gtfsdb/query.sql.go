@@ -11,6 +11,23 @@ import (
 	"strings"
 )
 
+const buildStopAgencies = `-- name: BuildStopAgencies :exec
+INSERT INTO
+    stop_agencies (stop_id, agency_id)
+SELECT DISTINCT
+    stop_times.stop_id,
+    routes.agency_id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+`
+
+func (q *Queries) BuildStopAgencies(ctx context.Context) error {
+	_, err := q.exec(ctx, q.buildStopAgenciesStmt, buildStopAgencies)
+	return err
+}
+
 const bulkUpdateTripTimeBounds = `-- name: BulkUpdateTripTimeBounds :exec
 UPDATE trips
 SET
@@ -102,6 +119,17 @@ DELETE FROM shapes
 
 func (q *Queries) ClearShapes(ctx context.Context) error {
 	_, err := q.exec(ctx, q.clearShapesStmt, clearShapes)
+	return err
+}
+
+const clearStopAgencies = `-- name: ClearStopAgencies :exec
+DELETE FROM stop_agencies WHERE TRUE
+`
+
+// WHERE TRUE is redundant to SQLite but keeps static analysis from reading this as an
+// accidentally unbounded DELETE. The table is a derived index and is always cleared whole.
+func (q *Queries) ClearStopAgencies(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearStopAgenciesStmt, clearStopAgencies)
 	return err
 }
 
@@ -1705,6 +1733,68 @@ func (q *Queries) GetBlockIDByTripID(ctx context.Context, id string) (sql.NullSt
 	return block_id, err
 }
 
+const getBlockIDsForStops = `-- name: GetBlockIDsForStops :many
+SELECT DISTINCT
+    t.block_id
+FROM
+    trips t
+    JOIN stop_times st ON st.trip_id = t.id
+WHERE
+    t.block_id IS NOT NULL
+    AND st.stop_id IN (/*SLICE:stop_ids*/?)
+    AND t.service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetBlockIDsForStopsParams struct {
+	StopIds    []string
+	ServiceIds []string
+}
+
+// Blocks having at least one trip that serves one of these stops on one of
+// these services. Time is deliberately not filtered here: a block in layover
+// is active while none of its own trips are, so the window is applied to the
+// block's whole span by the caller, via GetTripSpansForBlocks.
+func (q *Queries) GetBlockIDsForStops(ctx context.Context, arg GetBlockIDsForStopsParams) ([]sql.NullString, error) {
+	query := getBlockIDsForStops
+	var queryParams []interface{}
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var block_id sql.NullString
+		if err := rows.Scan(&block_id); err != nil {
+			return nil, err
+		}
+		items = append(items, block_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getBlockTripIndexIDsForBlocks = `-- name: GetBlockTripIndexIDsForBlocks :many
 SELECT DISTINCT bte.block_trip_index_id
 FROM block_trip_entry bte
@@ -2168,6 +2258,81 @@ func (q *Queries) GetImportMetadata(ctx context.Context) (ImportMetadatum, error
 		&i.FeedExpiresAt,
 	)
 	return i, err
+}
+
+const getInServiceTripIDsForStops = `-- name: GetInServiceTripIDsForStops :many
+SELECT DISTINCT
+    t.id
+FROM
+    trips t
+    JOIN stop_times st ON st.trip_id = t.id
+WHERE
+    t.block_id IS NULL
+    AND t.min_arrival_time <= ?1
+    AND t.max_departure_time >= ?2
+    AND st.stop_id IN (/*SLICE:stop_ids*/?)
+    AND t.service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetInServiceTripIDsForStopsParams struct {
+	WindowEnd   sql.NullInt64
+	WindowStart sql.NullInt64
+	StopIds     []string
+	ServiceIds  []string
+}
+
+// Blockless trips that serve one of the given stops, run on one of the given
+// services, and whose scheduled span overlaps [window_start, window_end] --
+// the same runningLate/runningEarly grace window trips-for-route's runsOn
+// applies, so a trip that just ended or is about to start is still offered as
+// a candidate. The caller passes an offset past 24h to match trips belonging
+// to the previous service day.
+//
+// Blocked trips are excluded: a bus in a scheduled layover between two block
+// trips is active in neither trip's own span, so per-trip containment misses
+// it. GetBlockIDsForStops + GetTripSpansForBlocks handle blocked trips by the
+// block's whole span instead.
+func (q *Queries) GetInServiceTripIDsForStops(ctx context.Context, arg GetInServiceTripIDsForStopsParams) ([]string, error) {
+	query := getInServiceTripIDsForStops
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.WindowEnd)
+	queryParams = append(queryParams, arg.WindowStart)
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getNextAndPreviousTripsInBlock = `-- name: GetNextAndPreviousTripsInBlock :one
@@ -3663,15 +3828,12 @@ func (q *Queries) GetStopForAgency(ctx context.Context, arg GetStopForAgencyPara
 }
 
 const getStopIDsForAgency = `-- name: GetStopIDsForAgency :many
-SELECT DISTINCT
-    s.id
+SELECT
+    stop_id
 FROM
-    stops s
-    JOIN stop_times st ON s.id = st.stop_id
-    JOIN trips t ON st.trip_id = t.id
-    JOIN routes r ON t.route_id = r.id
+    stop_agencies
 WHERE
-    r.agency_id = ?
+    agency_id = ?
 `
 
 func (q *Queries) GetStopIDsForAgency(ctx context.Context, agencyID string) ([]string, error) {
@@ -3682,11 +3844,11 @@ func (q *Queries) GetStopIDsForAgency(ctx context.Context, agencyID string) ([]s
 	defer rows.Close()
 	var items []string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var stop_id string
+		if err := rows.Scan(&stop_id); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, stop_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -4488,6 +4650,83 @@ func (q *Queries) GetTripIDsForStops(ctx context.Context, stopIds []string) ([]s
 			return nil, err
 		}
 		items = append(items, trip_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTripSpansForBlocks = `-- name: GetTripSpansForBlocks :many
+SELECT
+    t.block_id,
+    t.id,
+    t.min_arrival_time,
+    t.max_departure_time
+FROM
+    trips t
+WHERE
+    t.block_id IN (/*SLICE:block_ids*/?)
+    AND t.service_id IN (/*SLICE:service_ids*/?)
+ORDER BY
+    t.block_id ASC,
+    t.min_arrival_time ASC
+`
+
+type GetTripSpansForBlocksParams struct {
+	BlockIds   []sql.NullString
+	ServiceIds []string
+}
+
+type GetTripSpansForBlocksRow struct {
+	BlockID          sql.NullString
+	ID               string
+	MinArrivalTime   sql.NullInt64
+	MaxDepartureTime sql.NullInt64
+}
+
+// Every trip's scheduled span in the given blocks, ordered so the caller can
+// walk one block's trips at a time to test the block's whole span against a
+// window and pick an anchor trip within it -- see inServiceTripIDs.
+func (q *Queries) GetTripSpansForBlocks(ctx context.Context, arg GetTripSpansForBlocksParams) ([]GetTripSpansForBlocksRow, error) {
+	query := getTripSpansForBlocks
+	var queryParams []interface{}
+	if len(arg.BlockIds) > 0 {
+		for _, v := range arg.BlockIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:block_ids*/?", strings.Repeat(",?", len(arg.BlockIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:block_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTripSpansForBlocksRow
+	for rows.Next() {
+		var i GetTripSpansForBlocksRow
+		if err := rows.Scan(
+			&i.BlockID,
+			&i.ID,
+			&i.MinArrivalTime,
+			&i.MaxDepartureTime,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

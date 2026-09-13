@@ -9,6 +9,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -145,6 +146,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	stopID := utils.FormCombinedID(stopAgencyID, stopCode)
 
 	ctx := r.Context()
+	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	// Capture parsing errors (syntax validation only — localization happens below
 	// once we know the agency timezone).
@@ -330,7 +332,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 				vehicle = v
 			}
 		} else {
-			api.Logger.Warn("malformed vehicleId provided",
+			reqLogger.Warn("malformed vehicleId provided",
 				"vehicleId", params.VehicleID,
 				"error", err)
 		}
@@ -348,18 +350,26 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			// prefix before doing GetVehicleByID on the raw id.
 			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
 		} else {
-			api.Logger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
+			reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		}
 		predicted = true
 	}
+
+	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if freqErr != nil {
+		api.serverErrorResponse(w, r, freqErr)
+		return
+	}
+	freqMap := map[string][]gtfsdb.Frequency{tripID: freqRows}
 
 	// Use serviceMidnight (not the raw user-supplied serviceDate, which may
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime)
+	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime, freqMap)
 	if statusErr != nil {
-		api.Logger.Warn("BuildTripStatus failed",
+		reqLogger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
 	}
 
@@ -398,7 +408,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceMidnight)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-	situationIDs, situationRefs := api.situationsFromRefs(statusExtras.situations)
+	situationIDs, situationRefs := api.situationsFromRefs(ctx, statusExtras.situations)
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
@@ -430,6 +440,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		situationIDs,                                   // situationIds
 	)
 
+	// The arrival's frequency uses the window-matched row fetched above.
+	if len(freqRows) > 0 {
+		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceMidnight, currentTime), serviceMidnight)
+		arrival.Frequency = &converted
+	}
+
 	references := models.NewEmptyReferences()
 
 	// Add Stop Agency Reference
@@ -441,7 +457,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		if err == nil {
 			references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&routeAgency))
 		} else {
-			api.Logger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
+			reqLogger.Warn("failed to fetch route agency for reference", "agencyID", route.AgencyID, "error", err)
 		}
 	}
 
@@ -465,7 +481,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			if err == nil {
 				activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
 				if err != nil {
-					api.Logger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
+					reqLogger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
 				} else {
 					activeTripRef := models.NewTripReference(
 						utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
@@ -519,7 +535,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
 	if err != nil {
-		api.Logger.Warn("failed to batch fetch stops for references", "error", err)
+		reqLogger.Warn("failed to batch fetch stops for references", "error", err)
 		batchedStops = nil
 	}
 
@@ -530,7 +546,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	batchedRoutesForStops, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsSlice)
 	if err != nil {
-		api.Logger.Warn("failed to batch fetch routes for stops", "error", err)
+		reqLogger.Warn("failed to batch fetch routes for stops", "error", err)
 		batchedRoutesForStops = nil
 	}
 

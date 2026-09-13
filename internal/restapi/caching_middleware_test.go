@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCacheControlHeaders(t *testing.T) {
@@ -51,6 +52,41 @@ func TestCacheControlHeaders(t *testing.T) {
 
 			gotHeader := resp.Header.Get("Cache-Control")
 			assert.Equal(t, tt.expectedHeader, gotHeader, "Cache-Control header mismatch for %s", tt.endpoint)
+		})
+	}
+}
+
+// TestRealtimeEndpointsAreNotCachedAsStatic guards the endpoints that put real-time
+// service alerts in references.situations. The ETag is the static feed's file hash, so
+// serving one alongside alert data hands clients a 304 for as long as the feed is
+// unchanged, however often the alerts move.
+func TestRealtimeEndpointsAreNotCachedAsStatic(t *testing.T) {
+	api := createTestApi(t)
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	endpoints := []struct {
+		name     string
+		endpoint string
+	}{
+		{"search stop", "/api/where/search/stop.json?input=Buenaventura&key=TEST"},
+		{"search route", "/api/where/search/route.json?input=Route&key=TEST"},
+		{"route", "/api/where/route/25_151.json?key=TEST"},
+	}
+
+	for _, tt := range endpoints {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := http.Get(server.URL + tt.endpoint)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+
+			assert.Empty(t, resp.Header.Get("ETag"),
+				"%s carries real-time alerts and must not be validated against the static feed hash", tt.endpoint)
+			assert.Equal(t, "public, max-age=30", resp.Header.Get("Cache-Control"),
+				"%s carries real-time alerts and must not be cached as static", tt.endpoint)
 		})
 	}
 }

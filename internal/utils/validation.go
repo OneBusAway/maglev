@@ -91,22 +91,6 @@ func ValidateSpan(span float64) error {
 	return nil
 }
 
-// ValidateDate validates date strings in YYYY-MM-DD format
-func ValidateDate(date string) error {
-	// Empty dates are allowed (will default to current date)
-	if date == "" {
-		return nil
-	}
-
-	// Parse date in YYYY-MM-DD format
-	_, err := time.Parse("2006-01-02", date)
-	if err != nil {
-		return errors.New("invalid date format, use YYYY-MM-DD")
-	}
-
-	return nil
-}
-
 // ValidateServiceDate reports whether a service date parameter is parseable, in either
 // of the forms ParseDate accepts. Handlers use it to reject a malformed date before
 // looking up the agency whose timezone ParseDate then resolves the date against.

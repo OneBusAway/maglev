@@ -69,6 +69,73 @@ func TestArrivalAndDepartureForStopHandlerEndToEnd(t *testing.T) {
 	assert.NotEmpty(t, model.Data.References.Trips)
 }
 
+// TestArrivalAndDepartureWithFrequency verifies the ArrivalAndDeparture entry
+// carries frequency data when the requested trip is frequency-based, covering
+// both exact_times=0 (headway-based) and exact_times=1 (schedule-based)
+// windows, and that non-frequency trips keep the field absent.
+func TestArrivalAndDepartureWithFrequency(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+
+	serviceDate := time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name              string
+		tripID            string
+		wantExactTimes    int
+		wantHeadway       time.Duration
+		wantFrequencyData bool
+	}{
+		{
+			name:              "headway-based trip (exact_times=0)",
+			tripID:            freqTripID,
+			wantExactTimes:    0,
+			wantHeadway:       600 * time.Second,
+			wantFrequencyData: true,
+		},
+		{
+			name:              "schedule-based trip (exact_times=1)",
+			tripID:            freqExactTripID,
+			wantExactTimes:    1,
+			wantHeadway:       1800 * time.Second,
+			wantFrequencyData: true,
+		},
+		{
+			name:              "non-frequency trip",
+			tripID:            freqNormalTripD,
+			wantFrequencyData: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopID := utils.FormCombinedID(freqAgencyID, freqStopAID)
+			tripID := utils.FormCombinedID(freqAgencyID, tt.tripID)
+
+			endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+				stopID, tripID, serviceDate.UnixMilli())
+			resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, http.StatusOK, model.Code)
+
+			entry := model.Data.Entry
+			if !tt.wantFrequencyData {
+				assert.Nil(t, entry.Frequency, "non-frequency trips must not carry frequency data")
+				return
+			}
+
+			require.NotNil(t, entry.Frequency, "frequency should be populated for a frequency-based trip")
+			assert.Equal(t, tt.wantExactTimes, entry.Frequency.ExactTimes)
+			assert.Equal(t, tt.wantHeadway, entry.Frequency.Headway.Duration)
+			// UTC agency → serviceMidnight is 2025-06-12; the fixture windows
+			// span 06:00–09:00 UTC. Compare instants (millis): ModelTime
+			// round-trips through JSON in time.Local.
+			assert.Equal(t, time.Date(2025, 6, 12, 6, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.StartTime.UnixMilli())
+			assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), entry.Frequency.EndTime.UnixMilli())
+		})
+	}
+}
+
 func TestArrivalAndDepartureForStopHandlerWithNonexistentStopID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

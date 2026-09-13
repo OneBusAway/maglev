@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -200,6 +201,13 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 		references.Agencies = []models.AgencyReference{agencyRef}
 		references.Routes = routes
 		references.Stops = stopsList
+
+		// A route in routes can belong to a different agency than the one
+		// queried here (a stop can be served by more than one agency's routes).
+		// Every such route's agencyId must resolve against references.agencies too.
+		for _, route := range routes {
+			api.appendRouteAgencyReference(ctx, references, route.AgencyID, currentAgency.ID)
+		}
 	}
 
 	response := models.NewEntryResponse(result, *references, api.Clock)
@@ -426,6 +434,7 @@ func makeEdge(p, q coordPoint) edgeKey {
 // begins, de-overlapping shared track. Each line is floor-encoded via
 // utils.EncodePolyline with length = the merged line's point count.
 func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []string) ([]models.Polyline, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	merger := newPolylineMerger()
 	for _, shapeID := range shapeIDs {
 		if ctx.Err() != nil {
@@ -436,7 +445,7 @@ func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []st
 			return nil, err
 		}
 		if len(points) == 0 {
-			api.Logger.Warn("no shape points for shape", "shape_id", shapeID)
+			reqLogger.Warn("no shape points for shape", "shape_id", shapeID)
 			continue
 		}
 		merger.addShape(points)

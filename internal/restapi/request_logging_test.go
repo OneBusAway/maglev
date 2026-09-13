@@ -264,7 +264,7 @@ func createHandlerWithRequestLogging(api *RestAPI, logger *slog.Logger) http.Han
 	mux.HandleFunc("/api/where/current-time.json", func(w http.ResponseWriter, r *http.Request) {
 		// Check API key for authentication
 		if api.RequestHasInvalidAPIKey(r) {
-			api.invalidAPIKeyResponse(w)
+			api.invalidAPIKeyResponse(w, r)
 			return
 		}
 		api.currentTimeHandler(w, r)

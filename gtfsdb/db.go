@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.buildStopAgenciesStmt, err = db.PrepareContext(ctx, buildStopAgencies); err != nil {
+		return nil, fmt.Errorf("error preparing query BuildStopAgencies: %w", err)
+	}
 	if q.bulkUpdateTripTimeBoundsStmt, err = db.PrepareContext(ctx, bulkUpdateTripTimeBounds); err != nil {
 		return nil, fmt.Errorf("error preparing query BulkUpdateTripTimeBounds: %w", err)
 	}
@@ -53,6 +56,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.clearShapesStmt, err = db.PrepareContext(ctx, clearShapes); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearShapes: %w", err)
+	}
+	if q.clearStopAgenciesStmt, err = db.PrepareContext(ctx, clearStopAgencies); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearStopAgencies: %w", err)
 	}
 	if q.clearStopTimesStmt, err = db.PrepareContext(ctx, clearStopTimes); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearStopTimes: %w", err)
@@ -168,6 +174,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBlockIDByTripIDStmt, err = db.PrepareContext(ctx, getBlockIDByTripID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockIDByTripID: %w", err)
 	}
+	if q.getBlockIDsForStopsStmt, err = db.PrepareContext(ctx, getBlockIDsForStops); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBlockIDsForStops: %w", err)
+	}
 	if q.getBlockTripIndexIDsForBlocksStmt, err = db.PrepareContext(ctx, getBlockTripIndexIDsForBlocks); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockTripIndexIDsForBlocks: %w", err)
 	}
@@ -203,6 +212,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getImportMetadataStmt, err = db.PrepareContext(ctx, getImportMetadata); err != nil {
 		return nil, fmt.Errorf("error preparing query GetImportMetadata: %w", err)
+	}
+	if q.getInServiceTripIDsForStopsStmt, err = db.PrepareContext(ctx, getInServiceTripIDsForStops); err != nil {
+		return nil, fmt.Errorf("error preparing query GetInServiceTripIDsForStops: %w", err)
 	}
 	if q.getNextAndPreviousTripsInBlockStmt, err = db.PrepareContext(ctx, getNextAndPreviousTripsInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextAndPreviousTripsInBlock: %w", err)
@@ -339,6 +351,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getTripIDsForStopsStmt, err = db.PrepareContext(ctx, getTripIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripIDsForStops: %w", err)
 	}
+	if q.getTripSpansForBlocksStmt, err = db.PrepareContext(ctx, getTripSpansForBlocks); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTripSpansForBlocks: %w", err)
+	}
 	if q.getTripTimeBoundsByIDsStmt, err = db.PrepareContext(ctx, getTripTimeBoundsByIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripTimeBoundsByIDs: %w", err)
 	}
@@ -404,6 +419,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.buildStopAgenciesStmt != nil {
+		if cerr := q.buildStopAgenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing buildStopAgenciesStmt: %w", cerr)
+		}
+	}
 	if q.bulkUpdateTripTimeBoundsStmt != nil {
 		if cerr := q.bulkUpdateTripTimeBoundsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing bulkUpdateTripTimeBoundsStmt: %w", cerr)
@@ -452,6 +472,11 @@ func (q *Queries) Close() error {
 	if q.clearShapesStmt != nil {
 		if cerr := q.clearShapesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearShapesStmt: %w", cerr)
+		}
+	}
+	if q.clearStopAgenciesStmt != nil {
+		if cerr := q.clearStopAgenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearStopAgenciesStmt: %w", cerr)
 		}
 	}
 	if q.clearStopTimesStmt != nil {
@@ -644,6 +669,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getBlockIDByTripIDStmt: %w", cerr)
 		}
 	}
+	if q.getBlockIDsForStopsStmt != nil {
+		if cerr := q.getBlockIDsForStopsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBlockIDsForStopsStmt: %w", cerr)
+		}
+	}
 	if q.getBlockTripIndexIDsForBlocksStmt != nil {
 		if cerr := q.getBlockTripIndexIDsForBlocksStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBlockTripIndexIDsForBlocksStmt: %w", cerr)
@@ -702,6 +732,11 @@ func (q *Queries) Close() error {
 	if q.getImportMetadataStmt != nil {
 		if cerr := q.getImportMetadataStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getImportMetadataStmt: %w", cerr)
+		}
+	}
+	if q.getInServiceTripIDsForStopsStmt != nil {
+		if cerr := q.getInServiceTripIDsForStopsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getInServiceTripIDsForStopsStmt: %w", cerr)
 		}
 	}
 	if q.getNextAndPreviousTripsInBlockStmt != nil {
@@ -929,6 +964,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getTripIDsForStopsStmt: %w", cerr)
 		}
 	}
+	if q.getTripSpansForBlocksStmt != nil {
+		if cerr := q.getTripSpansForBlocksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTripSpansForBlocksStmt: %w", cerr)
+		}
+	}
 	if q.getTripTimeBoundsByIDsStmt != nil {
 		if cerr := q.getTripTimeBoundsByIDsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getTripTimeBoundsByIDsStmt: %w", cerr)
@@ -1068,6 +1108,7 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                            DBTX
 	tx                                            *sql.Tx
+	buildStopAgenciesStmt                         *sql.Stmt
 	bulkUpdateTripTimeBoundsStmt                  *sql.Stmt
 	clearAgenciesStmt                             *sql.Stmt
 	clearBlockLayoversStmt                        *sql.Stmt
@@ -1078,6 +1119,7 @@ type Queries struct {
 	clearFrequenciesStmt                          *sql.Stmt
 	clearRoutesStmt                               *sql.Stmt
 	clearShapesStmt                               *sql.Stmt
+	clearStopAgenciesStmt                         *sql.Stmt
 	clearStopTimesStmt                            *sql.Stmt
 	clearStopsStmt                                *sql.Stmt
 	clearTripsStmt                                *sql.Stmt
@@ -1116,6 +1158,7 @@ type Queries struct {
 	getArrivalsAndDeparturesForStopStmt           *sql.Stmt
 	getBlockDetailsStmt                           *sql.Stmt
 	getBlockIDByTripIDStmt                        *sql.Stmt
+	getBlockIDsForStopsStmt                       *sql.Stmt
 	getBlockTripIndexIDsForBlocksStmt             *sql.Stmt
 	getBlockTripIndexIDsForRouteStmt              *sql.Stmt
 	getBlockTripSequenceStmt                      *sql.Stmt
@@ -1128,6 +1171,7 @@ type Queries struct {
 	getFrequenciesForTripsStmt                    *sql.Stmt
 	getFrequencyTripIDsStmt                       *sql.Stmt
 	getImportMetadataStmt                         *sql.Stmt
+	getInServiceTripIDsForStopsStmt               *sql.Stmt
 	getNextAndPreviousTripsInBlockStmt            *sql.Stmt
 	getNextStopInTripStmt                         *sql.Stmt
 	getOrderedStopIDsForRouteDirectionStmt        *sql.Stmt
@@ -1173,6 +1217,7 @@ type Queries struct {
 	getTargetStopTimeWithTotalStopsBySequenceStmt *sql.Stmt
 	getTripStmt                                   *sql.Stmt
 	getTripIDsForStopsStmt                        *sql.Stmt
+	getTripSpansForBlocksStmt                     *sql.Stmt
 	getTripTimeBoundsByIDsStmt                    *sql.Stmt
 	getTripsByBlockIDStmt                         *sql.Stmt
 	getTripsByBlockIDOrderedStmt                  *sql.Stmt
@@ -1199,6 +1244,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                                            tx,
 		tx:                                            tx,
+		buildStopAgenciesStmt:                         q.buildStopAgenciesStmt,
 		bulkUpdateTripTimeBoundsStmt:                  q.bulkUpdateTripTimeBoundsStmt,
 		clearAgenciesStmt:                             q.clearAgenciesStmt,
 		clearBlockLayoversStmt:                        q.clearBlockLayoversStmt,
@@ -1209,6 +1255,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		clearFrequenciesStmt:                          q.clearFrequenciesStmt,
 		clearRoutesStmt:                               q.clearRoutesStmt,
 		clearShapesStmt:                               q.clearShapesStmt,
+		clearStopAgenciesStmt:                         q.clearStopAgenciesStmt,
 		clearStopTimesStmt:                            q.clearStopTimesStmt,
 		clearStopsStmt:                                q.clearStopsStmt,
 		clearTripsStmt:                                q.clearTripsStmt,
@@ -1247,6 +1294,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getArrivalsAndDeparturesForStopStmt:           q.getArrivalsAndDeparturesForStopStmt,
 		getBlockDetailsStmt:                           q.getBlockDetailsStmt,
 		getBlockIDByTripIDStmt:                        q.getBlockIDByTripIDStmt,
+		getBlockIDsForStopsStmt:                       q.getBlockIDsForStopsStmt,
 		getBlockTripIndexIDsForBlocksStmt:             q.getBlockTripIndexIDsForBlocksStmt,
 		getBlockTripIndexIDsForRouteStmt:              q.getBlockTripIndexIDsForRouteStmt,
 		getBlockTripSequenceStmt:                      q.getBlockTripSequenceStmt,
@@ -1259,6 +1307,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getFrequenciesForTripsStmt:                    q.getFrequenciesForTripsStmt,
 		getFrequencyTripIDsStmt:                       q.getFrequencyTripIDsStmt,
 		getImportMetadataStmt:                         q.getImportMetadataStmt,
+		getInServiceTripIDsForStopsStmt:               q.getInServiceTripIDsForStopsStmt,
 		getNextAndPreviousTripsInBlockStmt:            q.getNextAndPreviousTripsInBlockStmt,
 		getNextStopInTripStmt:                         q.getNextStopInTripStmt,
 		getOrderedStopIDsForRouteDirectionStmt:        q.getOrderedStopIDsForRouteDirectionStmt,
@@ -1304,6 +1353,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTargetStopTimeWithTotalStopsBySequenceStmt: q.getTargetStopTimeWithTotalStopsBySequenceStmt,
 		getTripStmt:                                   q.getTripStmt,
 		getTripIDsForStopsStmt:                        q.getTripIDsForStopsStmt,
+		getTripSpansForBlocksStmt:                     q.getTripSpansForBlocksStmt,
 		getTripTimeBoundsByIDsStmt:                    q.getTripTimeBoundsByIDsStmt,
 		getTripsByBlockIDStmt:                         q.getTripsByBlockIDStmt,
 		getTripsByBlockIDOrderedStmt:                  q.getTripsByBlockIDOrderedStmt,

@@ -68,21 +68,16 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 	}
 }
 
-// TestRoutesForLocationHandlerSituationReferences verifies that a route-scoped
-// alert surfaces as a situation reference — the alert-collection branch feeding
-// data.references.situations had no coverage before this test.
-//
-// This is current maglev behavior, not the documented spec: the routes-for-location
-// wiki page states that references.situations is present but empty for this endpoint,
-// and its Implementation Decisions section has no entry recording a deviation. The
-// population comes from commit 4e09c1c, which added it across all non-trip handlers
-// (route, route-search, stops-search) rather than specifically for this endpoint.
-func TestRoutesForLocationHandlerSituationReferences(t *testing.T) {
+// TestRoutesForLocationHandlerSituationReferencesStayEmpty pins the spec's
+// references contract: only agencies is populated. An alert affecting a returned
+// route must not surface here, because route beans carry no situation IDs to
+// resolve — callers wanting alerts fetch them from a route- or trip-scoped
+// endpoint instead.
+func TestRoutesForLocationHandlerSituationReferencesStayEmpty(t *testing.T) {
 	api := createTestApi(t)
 
-	// testdata.Route19's combined ID is "25_3779"; GetAlertsForRoute matches on
-	// the raw (un-prefixed) route ID, and BuildSituationReferences keys the
-	// resulting situation by the alert's own ID, not the combined form.
+	// testdata.Route19's combined ID is "25_3779"; alerts are matched on the raw
+	// (un-prefixed) route ID, so this alert does affect a route the search returns.
 	rawRouteID := "3779"
 	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
 		ID:               "test-alert-routes-for-location",
@@ -94,15 +89,11 @@ func TestRoutesForLocationHandlerSituationReferences(t *testing.T) {
 
 	_, model := callAPIHandler[RoutesResponse](t, api, baseURL)
 
-	situationIDs := make([]string, 0, len(model.Data.References.Situations))
-	for _, situation := range model.Data.References.Situations {
-		situationIDs = append(situationIDs, situation.ID)
-	}
-	assert.Contains(t, situationIDs, "test-alert-routes-for-location")
-
-	// With an alert actually present, includeReferences=false must still suppress it.
-	_, suppressedModel := callAPIHandler[RoutesResponse](t, api, baseURL+"&includeReferences=false")
-	assert.Empty(t, suppressedModel.Data.References.Situations)
+	assert.ElementsMatch(t, []models.Route{testdata.Route19}, model.Data.List,
+		"the alerted route is still returned in the list")
+	assert.Empty(t, model.Data.References.Situations)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies,
+		"agencies remain the one populated reference array")
 }
 
 func TestRoutesForLocationQuery(t *testing.T) {

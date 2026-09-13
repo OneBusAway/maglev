@@ -289,13 +289,13 @@ The pieces:
   problem.
 
 - **Keep the shared `query.sql` in the portable subset — now enforced at
-  generation time.** Most of it already is: standard joins,
-  `IN (/*SLICE:*/)`, quoted `"desc"` (valid in both). Anything
-  non-portable fails `make models` under the PG engine block instead of
-  surfacing at runtime — including PG-strictness traps like `could not
-  determine data type of parameter` in `COALESCE`-style expressions,
-  which a runtime-rewrite design would only meet in the equivalence
-  suite. The known dialect escapes get moved or rewritten:
+  generation time.** Most of it already is: standard joins, quoted
+  `"desc"` (valid in both). Anything non-portable fails `make models`
+  under the PG engine block instead of surfacing at runtime — including
+  PG-strictness traps like `could not determine data type of parameter`
+  in `COALESCE`-style expressions, which a runtime-rewrite design would
+  only meet in the equivalence suite. The known dialect escapes get
+  moved or rewritten:
   - `INSERT OR REPLACE` (`query.sql:582`) and `INSERT OR IGNORE`
     (`query.sql:130`) → `INSERT … ON CONFLICT …` forms (valid on SQLite
     ≥3.24 too, so the portable form replaces both). One semantic trap to
@@ -310,6 +310,14 @@ The pieces:
     scalar `MAX(iso, date('now'))` (`query.sql:1306`) — Postgres' `MAX` is
     aggregate-only; the portable spelling is `GREATEST`. Each gets computed
     in Go or moved to a per-engine query file.
+  - `sqlc.slice()` / `IN (/*SLICE:*/)` — 42 call sites in `query.sql`.
+    sqlc.slice() is MySQL and SQLite only; PostgreSQL requires
+    `= ANY($1::type[])` (or the equivalent named-param form). Method
+    signatures stay slice-typed on both engines, but the SQL cannot be
+    shared: SQLite still needs the runtime placeholder expansion,
+    Postgres binds one array parameter. These therefore fork into
+    per-engine query files (or a mechanical rewrite of each site into a
+    dual-engine pair), not the portable subset.
   - These are the escapes found by inspection, not a complete inventory:
     PR 5 includes a full audit of `query.sql` and `helpers.go`, and the
     cross-engine equivalence suite (§8) is the backstop for anything the
@@ -377,11 +385,14 @@ exercised at runtime.
 
 **Decision gate:** the named-param prep PR *is* the spike — it reveals
 how many queries the PG engine block rejects before anything depends on
-the answer. A small count (expected: the escapes list above is short)
-confirms dual generation; a large one says the shared-source premise is
-wrong and the fallback driver is the cheaper path. Either way the
-equivalence suite (§8) pins behavior, and handlers never observe which
-design sits underneath.
+the answer. The 42 `sqlc.slice()` sites will all reject; that is a
+known, mechanical rewrite, not a surprise, and does not by itself
+invalidate dual generation. What the spike is looking for is *other*
+rejects: a small count of distinct dialect problems beyond the escapes
+list above still confirms dual generation; a large, diverse remainder
+says the shared-source premise is wrong and the fallback driver is the
+cheaper path. Either way the equivalence suite (§8) pins behavior, and
+handlers never observe which design sits underneath.
 
 ### 4.3 What "identical behavior" means
 

@@ -36,6 +36,22 @@ func registerFixtureCleanup(t *testing.T, db *sql.DB, statements ...string) {
 	})
 }
 
+// rebuildStopAgencyIndex refreshes the precomputed stop-to-agency index that stop search
+// orders by. Tests insert fixture stops straight into the database, bypassing the import
+// that builds the index in production.
+func rebuildStopAgencyIndex(t *testing.T, api *RestAPI) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearStopAgencies(ctx))
+	require.NoError(t, api.GtfsManager.GtfsDB.Queries.BuildStopAgencies(ctx))
+}
+
+// clearIndexedStopAgencies removes the given stops from the index. Fixture cleanup has to
+// run this before deleting the stops or agencies the index rows point at.
+func clearIndexedStopAgencies(stopIDs string) string {
+	return `DELETE FROM stop_agencies WHERE stop_id IN (` + stopIDs + `)`
+}
+
 func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -357,6 +373,81 @@ func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
 	assert.Len(t, stopsRespExceeded.Data.List, totalMatches-1)
 }
 
+func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
+		clearIndexedStopAgencies(`'aaa_stop', 'zzz_stop'`),
+		`DELETE FROM stop_times WHERE trip_id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
+		`DELETE FROM trips WHERE id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
+		`DELETE FROM routes WHERE id IN ('route_ord_alpha', 'route_ord_zulu')`,
+		`DELETE FROM agencies WHERE id IN ('111', '999')`,
+		`DELETE FROM stops WHERE id IN ('aaa_stop', 'zzz_stop')`,
+	)
+
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO agencies (id, name, url, timezone)
+		VALUES ('111', 'Agency Low', 'http://low.example.test', 'America/Los_Angeles'),
+		       ('999', 'Agency High', 'http://high.example.test', 'America/Los_Angeles')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20240101', '20251231')
+	`)
+	require.NoError(t, err)
+
+	// Raw stop ID order (aaa_stop, zzz_stop) is the reverse of combined ID order
+	// (111_zzz_stop, 999_aaa_stop).
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding)
+		VALUES ('aaa_stop', 'A1', 'Ordertest Alpha', 40.0, -120.0, 0, 1),
+		       ('zzz_stop', 'Z1', 'Ordertest Zulu', 40.0, -120.0, 0, 1)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO routes (id, agency_id, short_name, type)
+		VALUES ('route_ord_alpha', '999', 'RT-A', 3), ('route_ord_zulu', '111', 'RT-Z', 3)
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO trips (id, route_id, service_id)
+		VALUES ('trip_ord_alpha', 'route_ord_alpha', 'service_1'),
+		       ('trip_ord_zulu', 'route_ord_zulu', 'service_1')
+	`)
+	require.NoError(t, err)
+
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('trip_ord_alpha', 'aaa_stop', 1, 28800, 28800),
+		       ('trip_ord_zulu', 'zzz_stop', 1, 28800, 28800)
+	`)
+	require.NoError(t, err)
+
+	rebuildStopAgencyIndex(t, api)
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ordertest"}}))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, stopsResp.Data.List, 2)
+
+	assert.Equal(t, []string{"111_zzz_stop", "999_aaa_stop"},
+		[]string{stopsResp.Data.List[0].ID, stopsResp.Data.List[1].ID},
+		"results must be ordered by combined stop ID")
+
+	// maxCount truncates on that order, so it decides which stop is returned at all.
+	respCapped, capped := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ordertest"}, "maxCount": {"1"}}))
+	require.Equal(t, http.StatusOK, respCapped.StatusCode)
+	require.Len(t, capped.Data.List, 1)
+	assert.Equal(t, "111_zzz_stop", capped.Data.List[0].ID)
+	assert.True(t, capped.Data.LimitExceeded)
+}
+
 func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -364,6 +455,7 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	ctx := context.Background()
 
 	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
+		clearIndexedStopAgencies(`'child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
 		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
 		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2', 'route_parent_only')`,
@@ -500,6 +592,8 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	rebuildStopAgencyIndex(t, api)
+
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, stopsResp.Code)
@@ -507,8 +601,14 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	require.Len(t, stopsResp.Data.List, 4)
 
 	stopsByName := make(map[string]models.Stop, len(stopsResp.Data.List))
+	seenIDs := make(map[string]bool, len(stopsResp.Data.List))
 	for _, stop := range stopsResp.Data.List {
 		stopsByName[stop.Name] = stop
+		// child_stop_multi_agency is served by both 888 and 999: stop_agencies holds one
+		// row per (stop, agency) pair, so joining it without collapsing to a single agency
+		// would return this stop twice.
+		assert.False(t, seenIDs[stop.ID], "stop %q appeared more than once in the result list", stop.ID)
+		seenIDs[stop.ID] = true
 	}
 
 	child1, ok := stopsByName["Child Stop One"]
@@ -606,6 +706,7 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 
 	// The RABA agency and the service_1 calendar are shared records and are left in place.
 	registerFixtureCleanup(t, db,
+		clearIndexedStopAgencies(`'zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
 		`DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
 		`DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`,
@@ -646,6 +747,8 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	rebuildStopAgencyIndex(t, api)
+
 	// Test 0 routes exclusion
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ghost"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -674,8 +777,80 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	resp, stopsResp = callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Limit Test"}, "maxCount": {"2"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, stopsResp.Data.LimitExceeded, "Expected LimitExceeded to be true because FTS query matched 3 limits")
-	// SearchStopsByName orders by stop ID, so the 3 matches are fetched as limit_ghost_1,
-	// limit_ghost_2, limit_valid_3; truncating to maxCount=2 leaves the two zero-route
-	// ghosts, both of which the filter drops.
-	assert.Empty(t, stopsResp.Data.List, "Expected no items after filtering truncated results")
+	// The two zero-route ghosts resolve no agency, so they have no combined ID to sort by
+	// and fall after limit_valid_3. It takes the first of the two cap slots; the ghost
+	// filling the second is then dropped by the zero-route filter.
+	require.Len(t, stopsResp.Data.List, 1, "Expected only the routed stop to survive filtering")
+	assert.True(t, strings.HasSuffix(stopsResp.Data.List[0].ID, "limit_valid_3"))
+}
+
+func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	db := api.GtfsManager.GtfsDB.DB
+
+	registerFixtureCleanup(t, db,
+		clearIndexedStopAgencies(`'child_stop_cross', 'parent_station_cross'`),
+		`DELETE FROM stop_times WHERE trip_id IN ('child_trip', 'parent_trip')`,
+		`DELETE FROM trips WHERE id IN ('child_trip', 'parent_trip')`,
+		`DELETE FROM routes WHERE id IN ('child_route', 'parent_route')`,
+		`DELETE FROM stops WHERE id IN ('child_stop_cross', 'parent_station_cross')`,
+		`DELETE FROM agencies WHERE id IN ('888', '999')`,
+	)
+
+	// Insert mock data for cross-agency verification
+	_, err := db.Exec(`
+		INSERT INTO agencies (id, name, url, timezone) VALUES ('888', 'Agency 888', 'http://agency888.com', 'America/Los_Angeles');
+		INSERT INTO agencies (id, name, url, timezone) VALUES ('999', 'Agency 999', 'http://agency999.com', 'America/Los_Angeles');
+
+		-- Parent station
+		INSERT INTO stops (id, name, lat, lon, location_type)
+		VALUES ('parent_station_cross', 'Parent Station Cross Agency', 40.0, -120.0, 1);
+
+		-- Child stop belonging to Agency 888, with parent station
+		INSERT INTO stops (id, name, lat, lon, location_type, parent_station)
+		VALUES ('child_stop_cross', 'Child Stop Cross Agency', 40.0, -120.0, 0, 'parent_station_cross');
+
+		-- Route serving child stop (Agency 888)
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('child_route', '888', 'Child Route', 3);
+		INSERT OR IGNORE INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20230101', '20251231');
+		INSERT INTO trips (id, route_id, service_id) VALUES ('child_trip', 'child_route', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('child_trip', 'child_stop_cross', 1, 28800, 28800);
+
+		-- Route serving parent station (Agency 999)
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('parent_route', '999', 'Parent Route', 3);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('parent_trip', 'parent_route', 'service_1');
+		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time)
+		VALUES ('parent_trip', 'parent_station_cross', 1, 29000, 29000);
+	`)
+	require.NoError(t, err)
+
+	rebuildStopAgencyIndex(t, api)
+
+	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop Cross"}}))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, stopsResp.Data.List, 1)
+
+	// Verify references.routes contains the parent route (999_parent_route)
+	var foundParentRoute bool
+	for _, route := range stopsResp.Data.References.Routes {
+		if route.ID == "999_parent_route" {
+			foundParentRoute = true
+			break
+		}
+	}
+	assert.True(t, foundParentRoute, "Expected 999_parent_route in references.routes")
+
+	// Verify references.agencies contains Agency 999 (the parent route's agency)
+	var foundParentAgency bool
+	for _, agency := range stopsResp.Data.References.Agencies {
+		if agency.ID == "999" {
+			foundParentAgency = true
+			break
+		}
+	}
+	assert.True(t, foundParentAgency, "Expected Agency 999 in references.agencies")
 }

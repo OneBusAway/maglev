@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
 )
@@ -141,6 +142,49 @@ func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
 	})
 }
 
+// MockAddDuplicatedVehicle adds a real-time vehicle carrying a DUPLICATED trip
+// descriptor for the given route, filing it into both the merged vehicle list
+// and the per-route duplicated-vehicle index (mirroring
+// rebuildMergedRealtimeLocked) so GetDuplicatedVehiclesForRoute picks it up.
+func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	for _, v := range m.realTimeVehicles {
+		if v.ID != nil && v.ID.ID == vehicleID {
+			return
+		}
+	}
+	now := time.Now()
+	if opts.Timestamp != nil {
+		now = *opts.Timestamp
+	}
+
+	v := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:                   tripID,
+				RouteID:              routeID,
+				ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+			},
+		},
+	}
+	m.realTimeVehicles = append(m.realTimeVehicles, v)
+	idx := len(m.realTimeVehicles) - 1
+	if vehicleID != "" {
+		m.realTimeVehicleLookupByVehicle[vehicleID] = idx
+	}
+	if tripID != "" {
+		m.realTimeVehicleLookupByTrip[tripID] = idx
+	}
+	if m.duplicatedVehicleByRoute == nil {
+		m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
+	}
+	m.duplicatedVehicleByRoute[routeID] = append(m.duplicatedVehicleByRoute[routeID], v)
+}
+
 func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTimeUpdates []gtfs.StopTimeUpdate) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
@@ -181,4 +225,15 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeTripLookup = make(map[string]int)
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	m.rebuildMergedRealtimeLocked()
+}
+
+// MockAddDuplicatedVehicleDirect adds a vehicle directly to the duplicatedVehicleByRoute map for testing.
+func (m *Manager) MockAddDuplicatedVehicleDirect(routeID string, vehicle gtfs.Vehicle) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	if m.duplicatedVehicleByRoute == nil {
+		m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
+	}
+	m.duplicatedVehicleByRoute[routeID] = append(m.duplicatedVehicleByRoute[routeID], vehicle)
 }
