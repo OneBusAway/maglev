@@ -61,6 +61,13 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefs
 
+	// A route in routeRefs can belong to a different agency than the one
+	// requested here (a stop can be served by more than one agency's routes).
+	// Every such route's agencyId must resolve against references.agencies too.
+	for _, route := range routeRefs {
+		api.appendRouteAgencyReference(ctx, references, route.AgencyID, id)
+	}
+
 	// Resolve parent stations referenced by any stop into references.stops.
 	parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
 	if err != nil {

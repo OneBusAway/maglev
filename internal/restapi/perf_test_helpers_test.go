@@ -3,7 +3,6 @@
 package restapi
 
 import (
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +42,5 @@ func createLargeAgencyApi(tb testing.TB) *RestAPI {
 		Clock:       clock.RealClock{},
 	}
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	return api
 }

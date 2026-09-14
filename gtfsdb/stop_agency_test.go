@@ -1,7 +1,9 @@
 package gtfsdb
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -269,4 +271,47 @@ func TestBuildStopAgencyIndex_RebuildsFromScratch(t *testing.T) {
 	`).Scan(&stray)
 	require.NoError(t, err)
 	assert.Zero(t, stray, "rebuild should drop rows for stops no route serves")
+}
+
+func TestBackfillStopAgencyIndex_SettlesWhenNoStopTimeJoinsARoute(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := context.Background()
+
+	_, err := client.DB.ExecContext(ctx, "DELETE FROM stop_agencies")
+	require.NoError(t, err)
+
+	// Replace every stop_times row with one whose trip_id resolves to nothing, so the
+	// index has stop_times but none of them join through to a route. FK checks are off
+	// just long enough to write the dangling reference.
+	_, err = client.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, "DELETE FROM stop_times")
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence)
+		SELECT 'no-such-trip', 0, 0, id, 0 FROM stops LIMIT 1
+	`)
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
+
+	require.NoError(t, client.backfillStopAgencyIndex(ctx),
+		"a stop_times row that can't join to a route should settle, not error")
+
+	var indexed int
+	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stop_agencies").Scan(&indexed))
+	assert.Zero(t, indexed, "nothing joins to a route, so the index should stay empty")
+
+	// A second call must settle without rebuilding: capture the default logger, since
+	// backfillStopAgencyIndex logs "rebuilding stop agency index" only when it actually
+	// runs the rebuild transaction. Before the fix, indexed staying at 0 forever meant
+	// every call rebuilt regardless of whether anything was joinable.
+	previousLogger := slog.Default()
+	var logBuf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	err = client.backfillStopAgencyIndex(ctx)
+	slog.SetDefault(previousLogger)
+	require.NoError(t, err)
+	assert.NotContains(t, logBuf.String(), "rebuilding stop agency index",
+		"a settled index with nothing joinable should not trigger another rebuild")
 }

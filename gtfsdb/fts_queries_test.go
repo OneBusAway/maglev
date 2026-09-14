@@ -254,7 +254,8 @@ func TestSearchStopsByName(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, results, 3)
 
-		// Assert that the result set is ordered ascending by s.id (hub1 < s1 < s3).
+		// No route serves these stops, so none resolves an agency to build a combined ID
+		// from, and they fall through to the raw stop ID tiebreak (hub1 < s1 < s3).
 		assert.Equal(t, "Main Street Hub", results[0].Name.String)
 		assert.Equal(t, "Main Street Station", results[1].Name.String)
 		assert.Equal(t, "Main Street Mall", results[2].Name.String)
@@ -324,6 +325,92 @@ func TestSearchStopsByName(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, results, 1)
 		assert.Equal(t, "s2", results[0].ID)
+	})
+}
+
+// stopServedByAgency creates a stop plus the route, trip and stop time that make the given
+// agency serve it, so the search query has an agency to resolve for that stop.
+func stopServedByAgency(t *testing.T, client *Client, agencyID, stopID, stopName string) {
+	t.Helper()
+	ctx := context.Background()
+
+	_, err := client.Queries.CreateAgency(ctx, CreateAgencyParams{
+		ID:       agencyID,
+		Name:     "Agency " + agencyID,
+		Url:      "http://" + agencyID + ".example.test",
+		Timezone: "America/New_York",
+	})
+	require.NoError(t, err)
+
+	_, err = client.Queries.CreateStop(ctx, CreateStopParams{
+		ID: stopID, Name: nulls.String(stopName), Lat: 40.0, Lon: -74.0,
+	})
+	require.NoError(t, err)
+
+	routeID := "route_" + stopID
+	_, err = client.Queries.CreateRoute(ctx, CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3,
+	})
+	require.NoError(t, err)
+
+	tripID := "trip_" + stopID
+	_, err = client.Queries.CreateTrip(ctx, CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: "service_1",
+	})
+	require.NoError(t, err)
+
+	_, err = client.Queries.CreateStopTime(ctx, CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1, ArrivalTime: 28800, DepartureTime: 28800,
+	})
+	require.NoError(t, err)
+}
+
+func TestSearchStopsByNameOrdersByCombinedID(t *testing.T) {
+	client := createFTSTestClient(t)
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+
+	_, err := client.DB.ExecContext(ctx, `
+		INSERT INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES ('service_1', 1, 1, 1, 1, 1, 1, 1, '20240101', '20251231')
+	`)
+	require.NoError(t, err)
+
+	// Raw stop ID order (aaa, zzz) is the reverse of combined ID order (111_zzz, 999_aaa).
+	stopServedByAgency(t, client, "999", "aaa", "Ordertest Alpha")
+	stopServedByAgency(t, client, "111", "zzz", "Ordertest Zulu")
+
+	// No route serves this stop, so it has no combined ID to sort by.
+	_, err = client.Queries.CreateStop(ctx, CreateStopParams{
+		ID: "bbb", Name: nulls.String("Ordertest Bravo"), Lat: 40.0, Lon: -74.0,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
+
+	results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
+		SearchQuery: "Ordertest",
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+
+	assert.Equal(t, []string{"zzz", "aaa", "bbb"}, []string{results[0].ID, results[1].ID, results[2].ID},
+		"stops must be ordered by combined ID, with agency-less stops last")
+
+	assert.Equal(t, "111", results[0].AgencyID.String)
+	assert.Equal(t, "999", results[1].AgencyID.String)
+	assert.False(t, results[2].AgencyID.Valid, "a stop no route serves resolves no agency")
+
+	t.Run("limit keeps the lowest combined IDs", func(t *testing.T) {
+		capped, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
+			SearchQuery: "Ordertest",
+			Limit:       1,
+		})
+		require.NoError(t, err)
+		require.Len(t, capped, 1)
+		assert.Equal(t, "zzz", capped[0].ID)
 	})
 }
 

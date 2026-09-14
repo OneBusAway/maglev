@@ -43,6 +43,7 @@ func NewClient(config Config) (*Client, error) {
 	// fallback, so a missing or stale index yields an empty combined ID rather than a
 	// merely degraded one - this must succeed before the client is usable.
 	if err := client.backfillStopAgencyIndex(context.Background()); err != nil {
+		_ = client.Close()
 		return nil, fmt.Errorf("unable to backfill stop agency index: %w", err)
 	}
 
@@ -54,7 +55,7 @@ func NewClient(config Config) (*Client, error) {
 // the feed hash is unchanged, so such a database would otherwise keep stale data for as
 // long as its feed stays the same.
 //
-// The legacy check and the indexed/served counts are read-only and run outside any
+// The legacy check and the indexed/joinable checks are read-only and run outside any
 // transaction; the rebuild and the rebuild alone runs inside one, so a failure partway
 // through never leaves stop_agencies dropped or half-populated.
 func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
@@ -64,16 +65,25 @@ func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 	}
 
 	if !legacy {
-		var indexed, served int
+		var indexed, joinable int
+		// joinable checks stop times that resolve to a route, not merely that stop_times
+		// has rows: a stop_times row with a dangling trip_id or route_id would otherwise
+		// make BuildStopAgencies insert nothing every time, leaving indexed permanently 0
+		// and triggering a full rebuild on every NewClient forever.
 		err := c.DB.QueryRowContext(ctx, `
 			SELECT
-				(SELECT COUNT(*) FROM stop_agencies),
-				(SELECT EXISTS (SELECT 1 FROM stop_times))
-		`).Scan(&indexed, &served)
+				(SELECT EXISTS (SELECT 1 FROM stop_agencies)),
+				(SELECT EXISTS (
+					SELECT 1
+					FROM stop_times
+					JOIN trips ON stop_times.trip_id = trips.id
+					JOIN routes ON trips.route_id = routes.id
+				))
+		`).Scan(&indexed, &joinable)
 		if err != nil {
 			return fmt.Errorf("failed to check stop agency index: %w", err)
 		}
-		if indexed > 0 || served == 0 {
+		if indexed > 0 || joinable == 0 {
 			return nil
 		}
 	}
