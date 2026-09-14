@@ -427,16 +427,6 @@ func deduplicateAlerts(alertSlices ...[]gtfs.Alert) []gtfs.Alert {
 	return uniqueAlerts
 }
 
-// collectAlertsForStops returns deduplicated alerts matching any of the given stop IDs.
-// It acquires realTimeMutex internally via GetAlertsForStop; no external lock is required.
-func (api *RestAPI) collectAlertsForStops(stopIDs []string) []gtfs.Alert {
-	var alerts []gtfs.Alert
-	for _, stopID := range stopIDs {
-		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
-	}
-	return deduplicateAlerts(alerts)
-}
-
 // collectAlertsForRoutes returns deduplicated alerts matching any of the given route IDs.
 // It acquires realTimeMutex internally via GetAlertsForRoute; no external lock is required.
 func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
