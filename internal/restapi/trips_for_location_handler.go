@@ -767,6 +767,8 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		return []models.TripsForLocationListEntry{}, nil
 	}
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
+
 	tripsMap := make(map[string]gtfsdb.Trip)
 	blockIDsByAgency := make(map[string]map[string]struct{})
 	agencyIDs := make(map[string]struct{})
@@ -801,7 +803,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 
 	shapesMap, err := api.shapePointsForTrips(ctx, shapedTrips)
 	if err != nil {
-		api.Logger.Warn("failed to bulk fetch shapes", "error", err)
+		reqLogger.Warn("failed to bulk fetch shapes", "error", err)
 		shapesMap = map[string][]gtfs.ShapePoint{}
 	}
 
@@ -861,7 +863,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				if len(missingRouteIDs) > 0 {
 					routes, routeErr := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, missingRouteIDs)
 					if routeErr != nil {
-						api.Logger.Warn("failed to fetch block trip routes", "agency_id", agencyID, "error", routeErr)
+						reqLogger.Warn("failed to fetch block trip routes", "agency_id", agencyID, "error", routeErr)
 						continue
 					}
 					for _, route := range routes {
@@ -875,7 +877,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 					}
 				}
 			} else {
-				api.Logger.Warn("failed to bulk fetch block trips", "agency_id", agencyID, "error", err)
+				reqLogger.Warn("failed to bulk fetch block trips", "agency_id", agencyID, "error", err)
 			}
 		}
 	}
@@ -888,7 +890,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				stopCoords[s.ID] = struct{ lat, lon float64 }{lat: s.Lat, lon: s.Lon}
 			}
 		} else {
-			api.Logger.Warn("failed to bulk fetch stops", "error", err, "stop_count", len(allStopIDs))
+			reqLogger.Warn("failed to bulk fetch stops", "error", err, "stop_count", len(allStopIDs))
 		}
 	}
 
@@ -919,7 +921,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 		agencyLocation, locationFound := request.AgencyLocations[agencyID]
 		if !locationFound {
-			api.Logger.Warn("missing timezone for trip agency", "trip_id", tripID, "agency_id", agencyID)
+			reqLogger.Warn("missing timezone for trip agency", "trip_id", tripID, "agency_id", agencyID)
 			continue
 		}
 		serviceDate := serviceDatesByAgency[agencyID].Resolve(tripData)
@@ -958,7 +960,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			var statusErr error
 			status, _, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, request.CurrentTime, freqMap)
 			if statusErr != nil {
-				api.Logger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
+				reqLogger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
 			}
 		}
@@ -1062,6 +1064,7 @@ func (api *RestAPI) buildScheduleForTrip(
 
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {
 
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	// Batch-fetch all stop coordinates at once
 	stopIDs := make([]string, len(stopTimes))
 	for i, st := range stopTimes {
@@ -1074,7 +1077,7 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 	stopCoords := make(map[string]struct{ lat, lon float64 })
 	if err != nil {
 		// Log the error but continue - distances will be 0 for all stops
-		api.Logger.Warn("Failed to batch-fetch stop coordinates for distance calculation",
+		reqLogger.Warn("Failed to batch-fetch stop coordinates for distance calculation",
 			"error", err,
 			"agency_id", agencyID,
 			"stop_count", len(stopIDs))
@@ -1111,7 +1114,7 @@ func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx c
 		return models.ReferencesModel{}
 	}
 
-	return refs.toReferencesModel()
+	return refs.toReferencesModel(r.Context())
 }
 
 type referenceBuilder struct {
@@ -1199,9 +1202,10 @@ func (rb *referenceBuilder) enrichTripsData() {
 		return
 	}
 
+	reqLogger := logging.ForComponent(rb.ctx, "http_server")
 	trips, err := rb.api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(rb.ctx, tripIDs)
 	if err != nil {
-		logging.LogError(rb.api.Logger, "failed to batch fetch trips for references", err)
+		reqLogger.Error("failed to batch fetch trips for references", "error", err)
 		return
 	}
 
@@ -1317,7 +1321,7 @@ func (rb *referenceBuilder) createTripReference(trip models.Trip, currentAgency 
 	}
 }
 
-func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
+func (rb *referenceBuilder) toReferencesModel(ctx context.Context) models.ReferencesModel {
 	trips := rb.tripsRefList
 	if trips == nil {
 		trips = []models.Trip{}
@@ -1332,13 +1336,13 @@ func (rb *referenceBuilder) toReferencesModel() models.ReferencesModel {
 	references.Routes = rb.getRoutesList()
 	references.Stops = stops
 	references.Trips = trips
-	references.Situations = rb.getSituationsList()
+	references.Situations = rb.getSituationsList(ctx)
 
 	return *references
 }
 
-func (rb *referenceBuilder) getSituationsList() []models.Situation {
-	return rb.api.situationReferences(rb.situations)
+func (rb *referenceBuilder) getSituationsList(ctx context.Context) []models.Situation {
+	return rb.api.situationReferences(ctx, rb.situations)
 }
 
 // scheduleData bundles pre-fetched inputs for buildScheduleFromMemory.
