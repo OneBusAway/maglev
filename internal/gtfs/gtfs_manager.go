@@ -261,52 +261,36 @@ func (manager *Manager) SetGtfsURL(url string) {
 	manager.config.GtfsURL = url
 }
 
-// Shutdown gracefully shuts down the manager and its background goroutines
-// Shutdown stops background workers and closes the database. It waits for the
-// workers to finish, but only until ctx is done: a real-time feed fetch that
-// never returns would otherwise block the caller forever. On timeout it logs,
-// returns the context error, and still closes the database.
+// Shutdown stops the background workers and closes the database once they
+// have exited. It waits only until ctx is done, because a real-time feed
+// fetch that never returns would otherwise block the caller forever. On
+// timeout it returns the context error and leaves the database open for the
+// workers still running; it closes when they finish.
 func (manager *Manager) Shutdown(ctx context.Context) error {
 	manager.shutdownOnce.Do(func() {
-		var err error
 		close(manager.shutdownChan)
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 
-		done := make(chan struct{})
+		closed := make(chan error, 1)
 		go func() {
 			manager.wg.Wait()
-			close(done)
+			if manager.GtfsDB == nil {
+				closed <- nil
+				return
+			}
+			closeErr := manager.GtfsDB.Close()
+			if closeErr != nil {
+				logging.LogError(logger, "failed to close GTFS database", closeErr)
+			}
+			closed <- closeErr
 		}()
 
 		select {
-		case <-done:
+		case manager.shutdownErr = <-closed:
 		case <-ctx.Done():
-			err = fmt.Errorf("waiting for background workers: %w", ctx.Err())
-			logging.LogError(logger, "shutdown timed out, closing database anyway", err)
+			manager.shutdownErr = fmt.Errorf("waiting for background workers: %w", ctx.Err())
+			logging.LogError(logger, "shutdown timed out, the database closes once the workers exit", manager.shutdownErr)
 		}
-
-		if manager.GtfsDB != nil {
-			// sql.DB.Close waits for in-flight queries, so a stuck query would
-			// push Shutdown past ctx on the very path that is meant to bound it.
-			closed := make(chan error, 1)
-			go func() { closed <- manager.GtfsDB.Close() }()
-			select {
-			case closeErr := <-closed:
-				if closeErr != nil {
-					logging.LogError(logger, "failed to close GTFS database", closeErr)
-					if err == nil {
-						err = closeErr
-					}
-				}
-			case <-ctx.Done():
-				logging.LogError(logger, "gave up waiting for the GTFS database to close", ctx.Err())
-				if err == nil {
-					err = fmt.Errorf("closing GTFS database: %w", ctx.Err())
-				}
-			}
-		}
-
-		manager.shutdownErr = err
 	})
 	return manager.shutdownErr
 }
