@@ -394,7 +394,7 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	scheduledArrival := time.Now()
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -407,7 +407,7 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 	scheduledTime := time.Now()
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "test_trip", "test_stop", 1, scheduledTime, scheduledTime)
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -648,7 +648,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 120s delay")
@@ -682,7 +682,7 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.True(t, predicted, "Should be predicted when trip-level delay is available")
@@ -787,6 +787,7 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 
 			scheduledTime := time.Now()
 			predArrival, predDeparture, predicted := api.getPredictedTimes(
+				context.Background(),
 				tc.tripID, tc.lookupStopID, tc.lookupStopSeq, scheduledTime, scheduledTime,
 			)
 
@@ -1212,12 +1213,12 @@ func TestGetPredictedTimes_LoopTripPrefersMatchingSequence(t *testing.T) {
 
 	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	arr, dep, predicted := api.getPredictedTimes("trip-loop-predicted", stopA, 3, scheduled, scheduled)
+	arr, dep, predicted := api.getPredictedTimes(context.Background(), "trip-loop-predicted", stopA, 3, scheduled, scheduled)
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(secondVisit), arr, "sequence 3 must use its own update, not sequence 1's")
 	assert.Equal(t, scheduled.Add(secondVisit), dep)
 
-	arr, dep, predicted = api.getPredictedTimes("trip-loop-predicted", stopA, 1, scheduled, scheduled)
+	arr, dep, predicted = api.getPredictedTimes(context.Background(), "trip-loop-predicted", stopA, 1, scheduled, scheduled)
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(firstVisit), arr, "sequence 1 keeps its own update")
 	assert.Equal(t, scheduled.Add(firstVisit), dep)
@@ -1350,7 +1351,57 @@ func TestGetPredictedTimes_FallsBackToStopIDWithoutSequence(t *testing.T) {
 	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	// The scheduled stop-time has a sequence the feed never mentioned.
-	arr, _, predicted := api.getPredictedTimes("trip-id-only-predicted", stopC, 7, scheduled, scheduled)
+	arr, _, predicted := api.getPredictedTimes(context.Background(), "trip-id-only-predicted", stopC, 7, scheduled, scheduled)
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(delay), arr)
+}
+
+// TestGetPredictedTimes_SequenceMustAgreeWithStopID covers feeds whose stop_sequence has drifted from the static schedule.
+func TestGetPredictedTimes_SequenceMustAgreeWithStopID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID, _ := anyTripAndStop(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), tripID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 3)
+	first, target, next := stopTimes[0], stopTimes[1], stopTimes[2]
+	require.NotEqual(t, target.StopID, first.StopID)
+	require.NotEqual(t, target.StopID, next.StopID)
+
+	targetDelay, nextDelay := 120*time.Second, 300*time.Second
+	behindBySequence := uint32(first.StopSequence)
+	nextBehindBySequence := uint32(target.StopSequence)
+	outOfRange := uint32(stopTimes[len(stopTimes)-1].StopSequence + 100)
+
+	tests := []struct {
+		name    string
+		updates []gtfs.StopTimeUpdate
+	}{
+		{
+			name: "sequences off by one",
+			updates: []gtfs.StopTimeUpdate{
+				{StopSequence: &behindBySequence, StopID: &target.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &targetDelay}},
+				{StopSequence: &nextBehindBySequence, StopID: &next.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &nextDelay}},
+			},
+		},
+		{
+			name: "sequence outside the schedule",
+			updates: []gtfs.StopTimeUpdate{
+				{StopSequence: &outOfRange, StopID: &target.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &targetDelay}},
+			},
+		},
+	}
+
+	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddTripUpdate(tripID, nil, tt.updates)
+
+			arr, _, predicted := api.getPredictedTimes(context.Background(), tripID, target.StopID, target.StopSequence, scheduled, scheduled)
+			require.True(t, predicted)
+			assert.Equal(t, scheduled.Add(targetDelay), arr)
+		})
+	}
 }

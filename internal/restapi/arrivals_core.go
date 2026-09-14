@@ -368,6 +368,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
 	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
+		ctx,
 		st.TripID,
 		in.stopCode,
 		int64(st.StopSequence),

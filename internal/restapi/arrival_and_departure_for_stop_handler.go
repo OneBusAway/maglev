@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -382,7 +383,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -626,6 +627,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 // Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
 // Returns (time.Time{}, time.Time{}, false) if no prediction can be made.
 func (api *RestAPI) getPredictedTimes(
+	ctx context.Context,
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
@@ -644,10 +646,9 @@ func (api *RestAPI) getPredictedTimes(
 	// A stop_id can be visited more than once on a loop trip, so matching on
 	// stop_id alone can bind an update belonging to a different visit. Prefer
 	// the update whose stop_sequence matches the requested one, and fall back
-	// to stop_id only for updates that carry no sequence at all. An update
-	// with some other sequence is positively identifying a different visit,
-	// so it is not a candidate for this one.
+	// to stop_id for updates whose sequence doesn't name a visit to this stop.
 	var target, stopIDFallback *gtfs.StopTimeUpdate
+	var staticStops map[int64]string
 
 	for i := range realTimeTrip.StopTimeUpdates {
 		stu := &realTimeTrip.StopTimeUpdates[i]
@@ -655,13 +656,20 @@ func (api *RestAPI) getPredictedTimes(
 		if stu.StopSequence != nil {
 			seq = int64(*stu.StopSequence)
 		}
+		matchesStop := stu.StopID != nil && *stu.StopID == stopCode
 
-		if seq != -1 {
-			if seq == targetStopSequence && target == nil {
+		switch {
+		case seq == targetStopSequence && (stu.StopID == nil || matchesStop):
+			if target == nil {
 				target = stu
 			}
-		} else if stopIDFallback == nil && stu.StopID != nil && *stu.StopID == stopCode {
-			stopIDFallback = stu
+		case matchesStop && stopIDFallback == nil:
+			if seq != -1 && staticStops == nil {
+				staticStops = api.staticStopsForTrip(ctx, tripID)
+			}
+			if !sequenceIdentifiesVisit(*stu, staticStops) {
+				stopIDFallback = stu
+			}
 		}
 
 		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {

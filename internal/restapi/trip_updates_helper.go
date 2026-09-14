@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -530,9 +531,10 @@ func (d StopDelays) Len() int {
 // GetStopDelaysFromTripUpdates returns the per-stop delay information (arrival
 // and departure delays in seconds) derived from the GTFS-RT StopTimeUpdates for
 // the given trip. A StopTimeUpdate needs either stop_sequence or stop_id to be
-// usable; one with neither is skipped. Returns an empty value when no real-time
-// data is available.
-func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) StopDelays {
+// usable; one with neither is skipped. stopTimes is the trip's static schedule,
+// used to check that an update's stop_sequence and stop_id agree. Returns an
+// empty value when no real-time data is available.
+func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string, stopTimes []*gtfsdb.StopTime) StopDelays {
 	delays := StopDelays{
 		bySequence: make(map[int64]StopDelayInfo),
 		byStopID:   make(map[string]StopDelayInfo),
@@ -543,6 +545,7 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) StopDelays {
 		return delays
 	}
 
+	staticStops := staticStopsBySequence(stopTimes)
 	for _, stu := range tripUpdates[0].StopTimeUpdates {
 		if stu.StopID == nil && stu.StopSequence == nil {
 			continue
@@ -556,10 +559,10 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) StopDelays {
 			info.DepartureDelay = int64(stu.Departure.Delay.Seconds())
 		}
 
-		// An update carrying a stop_sequence identifies one specific visit, so it
-		// must not also seed the stop_id fallback: a later lookup for a different
-		// sequence at the same stop would otherwise read this visit's delay.
-		if stu.StopSequence != nil {
+		// An update whose stop_sequence names a visit to its own stop must not also
+		// seed the stop_id fallback, or another visit to that stop on a loop trip
+		// would read its delay.
+		if sequenceIdentifiesVisit(stu, staticStops) {
 			delays.bySequence[int64(*stu.StopSequence)] = info
 		} else if stu.StopID != nil {
 			delays.byStopID[*stu.StopID] = info
@@ -567,4 +570,45 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string) StopDelays {
 	}
 
 	return delays
+}
+
+// staticStopsBySequence maps each stop_sequence in a trip's static schedule to
+// its stop_id.
+func staticStopsBySequence(stopTimes []*gtfsdb.StopTime) map[int64]string {
+	stops := make(map[int64]string, len(stopTimes))
+	for _, st := range stopTimes {
+		stops[st.StopSequence] = st.StopID
+	}
+	return stops
+}
+
+// sequenceIdentifiesVisit reports whether a StopTimeUpdate's stop_sequence can
+// be trusted to name a static visit. GTFS-RT requires stop_sequence and stop_id
+// to agree when both are present, so an update whose sequence is outside the
+// schedule, or points at a different stop, is matched by stop_id instead, as
+// Java's getBlockStopTimeForStopTimeUpdate does. With no static schedule to
+// check against, the sequence is trusted.
+func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]string) bool {
+	if stu.StopSequence == nil {
+		return false
+	}
+	if stu.StopID == nil || len(staticStops) == 0 {
+		return true
+	}
+	staticStop, ok := staticStops[int64(*stu.StopSequence)]
+	return ok && staticStop == *stu.StopID
+}
+
+// staticStopsForTrip loads a trip's static schedule as a stop_sequence to
+// stop_id map. It returns an empty map when the lookup fails.
+func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[int64]string {
+	stops := map[int64]string{}
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil {
+		return stops
+	}
+	for _, st := range stopTimes {
+		stops[st.StopSequence] = st.StopID
+	}
+	return stops
 }

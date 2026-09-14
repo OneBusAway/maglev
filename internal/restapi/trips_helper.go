@@ -200,7 +200,7 @@ func (api *RestAPI) BuildTripStatus(
 				)
 			}
 		} else {
-			stopDelays := api.GetStopDelaysFromTripUpdates(dbTripID)
+			stopDelays := api.GetStopDelaysFromTripUpdates(dbTripID, stopTimesPtrs)
 			closestStopID, closestOffset = findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimesPtrs, stopDelays)
 			nextStopID, nextOffset = findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimesPtrs, stopDelays)
 		}
