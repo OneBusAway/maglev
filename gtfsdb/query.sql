@@ -1069,6 +1069,28 @@ WHERE st.stop_id = @stop_id
     )
 ORDER BY st.arrival_time;
 
+-- name: GetStopTimesForStopsInWindow :many
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    t.route_id,
+    t.service_id,
+    t.trip_headsign,
+    t.block_id
+FROM stop_times st
+         JOIN trips t ON st.trip_id = t.id
+WHERE (
+    (st.arrival_time BETWEEN @window_start_nanos AND @window_end_nanos)
+        OR
+    (st.departure_time BETWEEN @window_start_nanos AND @window_end_nanos)
+    )
+  AND st.stop_id IN (sqlc.slice('stop_ids'))
+ORDER BY st.stop_id, st.arrival_time;
+
 -- name: UpdateStopDirection :exec
 UPDATE stops
 SET direction = ?

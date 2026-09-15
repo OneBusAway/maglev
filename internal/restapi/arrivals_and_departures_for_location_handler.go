@@ -58,7 +58,14 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	}
 
 	acc := newArrivalsAccumulator("")
-	arrivals, err := api.collectArrivalsForStops(ctx, stops, agencies, params, acc)
+	arrivals, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
+		Stops:      stops,
+		Agencies:   agencies,
+		QueryTime:  params.QueryTime,
+		Before:     params.Before,
+		After:      params.After,
+		RouteTypes: params.RouteTypes,
+	}, acc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
@@ -181,45 +188,6 @@ func (api *RestAPI) sendEmptyArrivalsForLocation(w http.ResponseWriter, r *http.
 	}
 	api.sendResponse(w, r, models.NewArrivalsAndDeparturesForLocationResponse(
 		nil, *models.NewEmptyReferences(), nil, nil, nil, false, api.Clock))
-}
-
-// collectArrivalsForStops runs the shared per-stop arrivals pipeline over every
-// stop in the search area, merging what they reference into acc.
-func (api *RestAPI) collectArrivalsForStops(
-	ctx context.Context,
-	stops []gtfsdb.Stop,
-	agencies *stopAgencyIndex,
-	params arrivalsForLocationParams,
-	acc *arrivalsAccumulator,
-) ([]models.ArrivalAndDeparture, error) {
-	arrivals := make([]models.ArrivalAndDeparture, 0)
-
-	for _, stop := range stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		agencyID := agencies.agencyIDFor(stop.ID)
-		location := agencies.locationFor(stop.ID)
-
-		result, err := api.arrivalsForStop(ctx, stopArrivalsInput{
-			StopCode:   stop.ID,
-			AgencyID:   agencyID,
-			Location:   location,
-			QueryTime:  params.QueryTime.In(location),
-			Before:     params.Before,
-			After:      params.After,
-			RouteTypes: params.RouteTypes,
-		}, acc)
-		if err != nil {
-			return nil, err
-		}
-
-		arrivals = append(arrivals, result.Arrivals...)
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), agencyID)
-	}
-
-	return arrivals, nil
 }
 
 // nearbyStopsForLocation mirrors the Java nearby-stops rule: the union of the
