@@ -166,7 +166,7 @@ func (api *RestAPI) locationReferences(
 		return nil, err
 	}
 
-	references.Situations = append(references.Situations, api.situationReferences(acc.situations.refs)...)
+	references.Situations = append(references.Situations, api.situationReferences(ctx, acc.situations.refs)...)
 	return references, nil
 }
 
