@@ -290,7 +290,7 @@ func TestGetStopDelaysFromTripUpdates_WithDepartureDelay(t *testing.T) {
 	assert.Equal(t, int64(75), delayFor(delays, "stop-B").DepartureDelay)
 }
 
-func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopID(t *testing.T) {
+func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopIDOrSequence(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -303,7 +303,7 @@ func TestGetStopDelaysFromTripUpdates_SkipsStopWithNoStopID(t *testing.T) {
 	api.GtfsManager.MockAddTripUpdate("trip-nil-stopid", nil, updates)
 
 	delays := api.GetStopDelaysFromTripUpdates("trip-nil-stopid", nil)
-	assert.Equal(t, 0, delays.Len(), "stop updates without StopID should be skipped")
+	assert.Equal(t, 0, delays.Len(), "stop updates with neither StopID nor StopSequence should be skipped")
 }
 
 func TestGetStopDelaysFromTripUpdates_IncludesStopWithZeroDelays(t *testing.T) {
