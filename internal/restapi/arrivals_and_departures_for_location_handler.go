@@ -83,9 +83,11 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	registerReferencedStops(acc, stops, lists.nearby)
+	// References cover only the retained entry results, not the stops and
+	// arrivals maxCount trimmed away.
+	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
 
-	references, err := api.locationReferences(ctx, r, agencies, acc)
+	references, err := api.locationReferences(ctx, r, agencies, refAcc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
@@ -96,7 +98,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		*references,
 		lists.stopIDs,
 		lists.nearby,
-		situationIDsFromRefs(acc.situations.refs),
+		situationIDsFromRefs(refAcc.situations.refs),
 		lists.limitExceeded,
 		api.Clock,
 	))
@@ -139,18 +141,44 @@ func combinedStopIDs(stops []gtfsdb.Stop, agencies *stopAgencyIndex) []string {
 	return stopIDs
 }
 
-// registerReferencedStops marks every stop the response names so it reaches
-// references.stops, including the nearby ones (Java's BeanFactoryV2 adds those
-// alongside the arrivals').
-func registerReferencedStops(acc *arrivalsAccumulator, stops []gtfsdb.Stop, nearby []models.StopWithDistance) {
-	for _, stop := range stops {
-		acc.stopIDs[stop.ID] = true
+// retainedAccumulator rebuilds an accumulator holding only what the truncated
+// entry lists reference, so references do not serialize the stops, trips and
+// routes maxCount trimmed away. Situation references stay global: alerts are
+// few, and tracking them per trip would require invasive accumulator changes.
+func retainedAccumulator(
+	arrivals []models.ArrivalAndDeparture,
+	stopIDs []string,
+	nearby []models.StopWithDistance,
+	acc *arrivalsAccumulator,
+) *arrivalsAccumulator {
+	refAcc := newArrivalsAccumulator("")
+	refAcc.situations = acc.situations
+
+	for _, id := range stopIDs {
+		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(id); err == nil {
+			refAcc.stopIDs[bareID] = true
+		}
 	}
 	for _, n := range nearby {
 		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(n.StopID); err == nil {
-			acc.stopIDs[bareID] = true
+			refAcc.stopIDs[bareID] = true
 		}
 	}
+
+	for _, a := range arrivals {
+		if _, bareTripID, err := utils.ExtractAgencyIDAndCodeID(a.TripID); err == nil {
+			if trip, ok := acc.trips[bareTripID]; ok {
+				refAcc.trips[bareTripID] = trip
+			}
+		}
+		if _, bareRouteID, err := utils.ExtractAgencyIDAndCodeID(a.RouteID); err == nil {
+			if route, ok := acc.routes[bareRouteID]; ok {
+				refAcc.routes[bareRouteID] = route
+			}
+		}
+	}
+
+	return refAcc
 }
 
 // locationReferences builds the references block, or an empty one when the
