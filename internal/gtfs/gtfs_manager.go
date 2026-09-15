@@ -40,21 +40,18 @@ type RegionBounds struct {
 // When both locks are needed, staticMutex MUST be acquired first.
 // Never acquire staticMutex while holding realTimeMutex.
 type Manager struct {
-	GtfsDB                         *gtfsdb.Client
-	realTimeTrips                  []gtfs.Trip
-	realTimeVehicles               []gtfs.Vehicle
-	realTimeMutex                  sync.RWMutex
-	realTimeTripLookup             map[string]int
-	realTimeVehicleLookupByTrip    map[string]int
-	realTimeVehicleLookupByVehicle map[string]int
-	duplicatedVehicleByRoute       map[string][]gtfs.Vehicle
-	alertIdx                       alertIndex
-	staticUpdateMutex              sync.Mutex // Protects against concurrent ReloadStatic calls
-	config                         Config
-	shutdownChan                   chan struct{}
-	wg                             sync.WaitGroup
-	shutdownOnce                   sync.Once
-	isReady                        atomic.Bool // Tracks whether initial data loading is complete
+	GtfsDB        *gtfsdb.Client
+	realTimeMutex sync.RWMutex
+	// merged holds the published view of all realtime feeds. Writers rebuild it
+	// under realTimeMutex, which still guards the per-feed maps below; readers
+	// load it without any lock. See mergedRealtime in realtime.go.
+	merged            atomic.Pointer[mergedRealtime]
+	staticUpdateMutex sync.Mutex // Protects against concurrent ReloadStatic calls
+	config            Config
+	shutdownChan      chan struct{}
+	wg                sync.WaitGroup
+	shutdownOnce      sync.Once
+	isReady           atomic.Bool // Tracks whether initial data loading is complete
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
@@ -132,21 +129,17 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		GtfsDB:                         gtfsDB,
-		config:                         config,
-		shutdownChan:                   make(chan struct{}),
-		realTimeTripLookup:             make(map[string]int),
-		realTimeVehicleLookupByTrip:    make(map[string]int),
-		realTimeVehicleLookupByVehicle: make(map[string]int),
-		duplicatedVehicleByRoute:       make(map[string][]gtfs.Vehicle),
-		feedTrips:                      make(map[string][]gtfs.Trip),
-		feedVehicles:                   make(map[string][]gtfs.Vehicle),
-		feedAlerts:                     make(map[string][]gtfs.Alert),
-		feedLastUpdate:                 make(map[string]time.Time),
-		feedAgencyFilter:               make(map[string]map[string]bool),
-		feedVehicleLastSeen:            make(map[string]map[string]time.Time),
-		feedVehicleTimestamp:           make(map[string]uint64),
-		Metrics:                        config.Metrics,
+		GtfsDB:               gtfsDB,
+		config:               config,
+		shutdownChan:         make(chan struct{}),
+		feedTrips:            make(map[string][]gtfs.Trip),
+		feedVehicles:         make(map[string][]gtfs.Vehicle),
+		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedLastUpdate:       make(map[string]time.Time),
+		feedAgencyFilter:     make(map[string]map[string]bool),
+		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleTimestamp: make(map[string]uint64),
+		Metrics:              config.Metrics,
 	}
 
 	// Build per-feed agency filters from config
@@ -638,10 +631,7 @@ func (manager *Manager) VehiclesForAgencyID(ctx context.Context, agencyID string
 // DUPLICATED trips are extra runs of a scheduled trip, each assigned to a different
 // vehicle. They only exist in real-time data and have no static DB entry.
 func (manager *Manager) GetDuplicatedVehiclesForRoute(routeID string) []gtfs.Vehicle {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-
-	src := manager.duplicatedVehicleByRoute[routeID]
+	src := manager.mergedRealtime().duplicatedVehicleByRoute[routeID]
 
 	out := make([]gtfs.Vehicle, len(src))
 	copy(out, src)
@@ -651,16 +641,12 @@ func (manager *Manager) GetDuplicatedVehiclesForRoute(routeID string) []gtfs.Veh
 // GetVehicleForTrip retrieves a vehicle for a specific trip ID or finds the first vehicle that is part of the block
 // for that trip. Note we depend on getting the vehicle that may not match the trip ID exactly,
 // but is part of the same block.
-// IMPORTANT: Caller must hold manager.RLock() before calling this method.
 func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *gtfs.Vehicle {
-
-	manager.realTimeMutex.RLock()
-	if index, exists := manager.realTimeVehicleLookupByTrip[tripID]; exists {
-		vehicle := manager.realTimeVehicles[index]
-		manager.realTimeMutex.RUnlock()
+	merged := manager.mergedRealtime()
+	if index, exists := merged.vehicleLookupByTrip[tripID]; exists {
+		vehicle := merged.vehicles[index]
 		return &vehicle
 	}
-	manager.realTimeMutex.RUnlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -694,13 +680,10 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		blockTripIDs[trip.ID] = true
 	}
 
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-
 	// Iterate over all vehicles to find any vehicle serving a trip in this block.
-	// We use iteration rather than realTimeVehicleLookupByTrip because we need to
+	// We use iteration rather than vehicleLookupByTrip because we need to
 	// match against any trip in the block, not a specific trip ID.
-	for _, v := range manager.realTimeVehicles {
+	for _, v := range manager.mergedRealtime().vehicles {
 		if v.Trip != nil && v.Trip.ID.ID != "" && blockTripIDs[v.Trip.ID.ID] {
 			vehicle := v
 			return &vehicle
@@ -710,12 +693,9 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 }
 
 func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) {
-
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-
-	if index, exists := manager.realTimeVehicleLookupByVehicle[vehicleID]; exists {
-		vehicle := manager.realTimeVehicles[index]
+	merged := manager.mergedRealtime()
+	if index, exists := merged.vehicleLookupByVehicle[vehicleID]; exists {
+		vehicle := merged.vehicles[index]
 		return &vehicle, nil
 	}
 
@@ -723,12 +703,11 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 }
 
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
+	merged := manager.mergedRealtime()
 
 	var updates []gtfs.Trip
-	if index, exists := manager.realTimeTripLookup[tripID]; exists {
-		updates = append(updates, manager.realTimeTrips[index])
+	if index, exists := merged.tripLookup[tripID]; exists {
+		updates = append(updates, merged.trips[index])
 	}
 	return updates
 }
@@ -741,19 +720,16 @@ func (manager *Manager) GetVehicleLastUpdateTime(vehicle *gtfs.Vehicle) time.Tim
 }
 
 func (manager *Manager) GetTripUpdateByID(tripID string) (*gtfs.Trip, error) {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-	if index, exists := manager.realTimeTripLookup[tripID]; exists {
-		trip := manager.realTimeTrips[index]
+	merged := manager.mergedRealtime()
+	if index, exists := merged.tripLookup[tripID]; exists {
+		trip := merged.trips[index]
 		return &trip, nil
 	}
 	return nil, fmt.Errorf("trip with ID %s not found", tripID)
 }
 
 func (manager *Manager) GetAllTripUpdates() []gtfs.Trip {
-	manager.realTimeMutex.RLock()
-	defer manager.realTimeMutex.RUnlock()
-	return manager.realTimeTrips
+	return manager.mergedRealtime().trips
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
