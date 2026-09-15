@@ -258,7 +258,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Omit references entirely when includeReferences=false.
 	references := models.NewEmptyReferences()
 	if ShouldIncludeReferences(r) {
-		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		if len(vehiclesList) > 0 {
+			references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		}
 		references.Routes = routeRefList
 		references.Trips = tripRefList
 		references.Situations = api.situationReferences(ctx, situations.refs)

@@ -78,18 +78,19 @@ func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
-	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
 	// Without injected real-time vehicles, the handler returns an empty list.
 	assert.Empty(t, model.Data.List)
+	assert.Empty(t, model.Data.References.Agencies, "an empty list references no agency")
 }
 
 func TestVehiclesForAgencyHandler_OutOfRangeOnNormalPath(t *testing.T) {
 	tests := []struct {
-		name       string
-		addVehicle bool
+		name         string
+		addVehicle   bool
+		wantAgencies int
 	}{
-		{name: "empty list", addVehicle: false},
-		{name: "with a vehicle", addVehicle: true},
+		{name: "empty list", addVehicle: false, wantAgencies: 0},
+		{name: "with a vehicle", addVehicle: true, wantAgencies: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -106,6 +107,9 @@ func TestVehiclesForAgencyHandler_OutOfRangeOnNormalPath(t *testing.T) {
 			raw, ok := data["outOfRange"]
 			require.True(t, ok, "outOfRange key must be present in the response payload")
 			assert.JSONEq(t, "false", string(raw))
+
+			_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+			assert.Len(t, model.Data.References.Agencies, tt.wantAgencies)
 		})
 	}
 }
