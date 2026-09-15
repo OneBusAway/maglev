@@ -28,7 +28,7 @@ func parseMinutesValue(queryParams url.Values, key string, fallback, maxWindow t
 		addError(key, "must be a non-negative integer")
 		return fallback
 	}
-	if maxMinutes := int(maxWindow / time.Minute); minutes > maxMinutes {
+	if minutes > int(maxWindow/time.Minute) {
 		return maxWindow
 	}
 	return time.Duration(minutes) * time.Minute
