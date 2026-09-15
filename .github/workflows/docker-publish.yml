@@ -11,12 +11,14 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   # Push to GHCR on every main branch commit; build-only on PRs
   buildx:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
