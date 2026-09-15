@@ -1083,4 +1083,42 @@ func TestScheduleForStopHandlerWithFrequency(t *testing.T) {
 		assert.Equal(t, float64(startOfDay.Add(8*time.Hour+15*time.Minute).UnixMilli()), stopTimesByTrip[normalTripID][0]["departureTime"])
 		assert.Empty(t, frequenciesByTrip[normalTripID], "plain trips have no schedule frequencies")
 	})
+
+	t.Run("stop times are sorted by departure time within the direction", func(t *testing.T) {
+		rawStopTimes, ok := dirSchedule["scheduleStopTimes"].([]any)
+		require.True(t, ok, "scheduleStopTimes should be an array")
+		require.Len(t, rawStopTimes, 7, "six expanded exact_times runs plus one plain trip")
+
+		exactTripID := utils.FormCombinedID(freqAgencyID, freqExactTripID)
+		normalTripID := utils.FormCombinedID(freqAgencyID, freqNormalTripD)
+
+		// The expanded exact_times runs (06:15-08:45 at stop B) interleave with
+		// the plain trip's 08:15 departure, so response order only holds when
+		// each direction group is sorted by departure time.
+		at := func(h, m int) float64 {
+			return float64(startOfDay.Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute).UnixMilli())
+		}
+		expected := []struct {
+			tripID        string
+			departureTime float64
+		}{
+			{exactTripID, at(6, 15)},
+			{exactTripID, at(6, 45)},
+			{exactTripID, at(7, 15)},
+			{exactTripID, at(7, 45)},
+			{exactTripID, at(8, 15)},
+			{normalTripID, at(8, 15)},
+			{exactTripID, at(8, 45)},
+		}
+
+		for i, stAny := range rawStopTimes {
+			st := stAny.(map[string]any)
+			assert.Equal(t, expected[i].tripID, st["tripId"], "stop time %d", i)
+			assert.Equal(t, expected[i].departureTime, st["departureTime"], "stop time %d", i)
+			if i > 0 {
+				prev := rawStopTimes[i-1].(map[string]any)
+				assert.LessOrEqual(t, prev["departureTime"], st["departureTime"], "departure times must be non-decreasing")
+			}
+		}
+	})
 }
