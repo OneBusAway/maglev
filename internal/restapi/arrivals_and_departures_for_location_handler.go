@@ -234,6 +234,10 @@ func (api *RestAPI) sendEmptyArrivalsForLocation(w http.ResponseWriter, r *http.
 	api.sendResponse(w, r, models.NewEmptyArrivalsAndDeparturesForLocationResponse(api.Clock))
 }
 
+// nearbyRadiusMeters is the Java nearby-stops radius: the union of the stops
+// within 100 m of each matched stop (each excluding itself).
+const nearbyRadiusMeters = 100.0
+
 // nearbyStopsForLocation mirrors the Java nearby-stops rule: the union of the
 // stops within 100 m of each matched stop (each excluding itself), limited to
 // stops served by a route running on the query date, measured against the
@@ -249,28 +253,14 @@ func (api *RestAPI) nearbyStopsForLocation(
 	agencies *stopAgencyIndex,
 	params arrivalsForLocationParams,
 ) ([]models.StopWithDistance, error) {
-	const nearbyRadiusMeters = 100.0
-
 	candidates := api.GtfsManager.GetStopsInBounds(ctx, expandLocationForNearby(params.Location), 0, true)
 	if len(candidates) == 0 {
 		return nil, nil
 	}
 
-	// Union of stops within 100 m of a matched stop, excluding each stop itself.
-	nearIDs := make(map[string]bool)
-	for _, candidate := range candidates {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		for _, stop := range stops {
-			if stop.ID == candidate.ID {
-				continue
-			}
-			if utils.Distance(candidate.Lat, candidate.Lon, stop.Lat, stop.Lon) <= nearbyRadiusMeters {
-				nearIDs[candidate.ID] = true
-				break
-			}
-		}
+	nearIDs, err := nearbyCandidateIDs(ctx, candidates, stops)
+	if err != nil {
+		return nil, err
 	}
 	if len(nearIDs) == 0 {
 		return nil, nil
@@ -281,22 +271,9 @@ func (api *RestAPI) nearbyStopsForLocation(
 		bareIDs = append(bareIDs, bareID)
 	}
 
-	// One batch agency resolution for every candidate, falling back per stop
-	// to the matched-stop agency index.
-	combinedByBare := make(map[string]string, len(bareIDs))
-	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, bareIDs)
+	combinedByBare, err := api.combinedIDsForNearbyStops(ctx, bareIDs, agencies)
 	if err != nil {
 		return nil, err
-	}
-	for _, row := range agencyRows {
-		if _, exists := combinedByBare[row.StopID]; !exists {
-			combinedByBare[row.StopID] = utils.FormCombinedID(row.ID, row.StopID)
-		}
-	}
-	for bareID := range nearIDs {
-		if _, exists := combinedByBare[bareID]; !exists {
-			combinedByBare[bareID] = utils.FormCombinedID(agencies.agencyIDFor(bareID), bareID)
-		}
 	}
 
 	nearbyStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, bareIDs)
@@ -316,6 +293,57 @@ func (api *RestAPI) nearbyStopsForLocation(
 		return nil, err
 	}
 
+	return buildNearbyResults(nearbyStops, servesRouteType, activeOnDate, combinedByBare, params.Location), nil
+}
+
+// nearbyCandidateIDs returns the union of the stops within 100 m of a matched
+// stop, excluding each stop itself.
+func nearbyCandidateIDs(ctx context.Context, candidates, stops []gtfsdb.Stop) (map[string]bool, error) {
+	nearIDs := make(map[string]bool)
+	for _, candidate := range candidates {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		for _, stop := range stops {
+			if stop.ID == candidate.ID {
+				continue
+			}
+			if utils.Distance(candidate.Lat, candidate.Lon, stop.Lat, stop.Lon) <= nearbyRadiusMeters {
+				nearIDs[candidate.ID] = true
+				break
+			}
+		}
+	}
+	return nearIDs, nil
+}
+
+// combinedIDsForNearbyStops resolves every candidate to its combined agency
+// ID in one batch query, falling back per stop to the matched-stop agency
+// index.
+func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []string, agencies *stopAgencyIndex) (map[string]string, error) {
+	combinedByBare := make(map[string]string, len(bareIDs))
+	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, bareIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range agencyRows {
+		if _, exists := combinedByBare[row.StopID]; !exists {
+			combinedByBare[row.StopID] = utils.FormCombinedID(row.ID, row.StopID)
+		}
+	}
+	for _, bareID := range bareIDs {
+		if _, exists := combinedByBare[bareID]; !exists {
+			combinedByBare[bareID] = utils.FormCombinedID(agencies.agencyIDFor(bareID), bareID)
+		}
+	}
+	return combinedByBare, nil
+}
+
+// buildNearbyResults keeps the nearby stops passing the route-type and
+// active-on-date filters, measuring each against the centre of the search
+// area and ordering nearest first. A nil servesRouteType means no route-type
+// filter is active, so every stop is kept rather than none.
+func buildNearbyResults(nearbyStops []gtfsdb.Stop, servesRouteType map[string]bool, activeOnDate map[string]bool, combinedByBare map[string]string, loc *internalgtfs.LocationParams) []models.StopWithDistance {
 	results := make([]models.StopWithDistance, 0, len(nearbyStops))
 	for _, stop := range nearbyStops {
 		if servesRouteType != nil && !servesRouteType[stop.ID] {
@@ -326,7 +354,7 @@ func (api *RestAPI) nearbyStopsForLocation(
 		}
 		results = append(results, models.StopWithDistance{
 			StopID:            combinedByBare[stop.ID],
-			DistanceFromQuery: utils.Distance(params.Location.Lat, params.Location.Lon, stop.Lat, stop.Lon),
+			DistanceFromQuery: utils.Distance(loc.Lat, loc.Lon, stop.Lat, stop.Lon),
 		})
 	}
 
@@ -336,7 +364,7 @@ func (api *RestAPI) nearbyStopsForLocation(
 		}
 		return results[i].StopID < results[j].StopID
 	})
-	return results, nil
+	return results
 }
 
 // expandLocationForNearby returns a copy of loc whose search box covers the
@@ -344,8 +372,6 @@ func (api *RestAPI) nearbyStopsForLocation(
 // fetches every candidate nearby stop. The active location mode is preserved:
 // radius mode grows the radius, span mode grows the spans.
 func expandLocationForNearby(loc *internalgtfs.LocationParams) *internalgtfs.LocationParams {
-	const nearbyRadiusMeters = 100.0
-
 	expanded := *loc
 	if loc.Radius > 0 || !(loc.LatSpan > 0 && loc.LonSpan > 0) {
 		radius := loc.Radius
