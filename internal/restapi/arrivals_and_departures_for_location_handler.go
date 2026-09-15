@@ -415,7 +415,6 @@ func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string
 	return matching, nil
 }
 
-
 // sortArrivalsByTime orders arrivals by when a rider would actually see them,
 // preferring the predicted time when one exists.
 func sortArrivalsByTime(arrivals []models.ArrivalAndDeparture) {
@@ -546,101 +545,41 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 		fieldErrors[field] = append(fieldErrors[field], msg)
 	}
 
-	params.Location = api.parseRequiredLocation(r, addError)
-	params.Before = parseMinutesParam(queryParams, "minutesBefore", params.Before, addError)
-	params.After = parseMinutesParam(queryParams, "minutesAfter", params.After, addError)
-	params.QueryTime = parseEpochMillisParam(queryParams, "time", params.QueryTime, addError)
-	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
-	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
-	params.EmptyReturnsNotFound = parseOptionalBoolParam(queryParams, "emptyReturnsNotFound", addError)
+	params.Location = &internalgtfs.LocationParams{}
+	params.Location.Lat, fieldErrors = utils.ParseRequiredFloatParam(queryParams, "lat", fieldErrors)
+	params.Location.Lon, fieldErrors = utils.ParseRequiredFloatParam(queryParams, "lon", fieldErrors)
+	params.Location.Radius, fieldErrors = utils.ParseFloatParam(queryParams, "radius", fieldErrors)
+	params.Location.LatSpan, fieldErrors = utils.ParseFloatParam(queryParams, "latSpan", fieldErrors)
+	params.Location.LonSpan, fieldErrors = utils.ParseFloatParam(queryParams, "lonSpan", fieldErrors)
 
-	return params, fieldErrors
-}
-
-// parseRequiredLocation parses the spatial parameters, additionally enforcing
-// lat and lon. parseLocationParams treats them as optional; this endpoint's
-// spec marks them required, and defaulting them to 0 would silently search the
-// Gulf of Guinea.
-func (api *RestAPI) parseRequiredLocation(r *http.Request, addError func(string, string)) *internalgtfs.LocationParams {
-	queryParams := r.URL.Query()
-	for _, key := range []string{"lat", "lon"} {
-		if queryParams.Get(key) == "" {
-			addError(key, "required")
-		}
-	}
-
-	location, locationErrors := api.parseLocationParams(r, nil)
-	forwardFieldErrors(locationErrors, addError)
-	return location
-}
-
-// forwardFieldErrors funnels a shared parser's field errors into the caller's
-// collector.
-func forwardFieldErrors(src map[string][]string, addError func(string, string)) {
-	for field, msgs := range src {
+	for field, msgs := range utils.ValidateLocationParams(
+		params.Location.Lat, params.Location.Lon,
+		params.Location.Radius, params.Location.LatSpan, params.Location.LonSpan,
+	) {
 		for _, msg := range msgs {
 			addError(field, msg)
 		}
 	}
+
+	params.Before = parseMinutesValue(queryParams, "minutesBefore", params.Before, maxArrivalWindow, addError)
+	params.After = parseMinutesValue(queryParams, "minutesAfter", params.After, maxArrivalWindow, addError)
+	params.QueryTime = parseEpochMillisValue(queryParams, "time", params.QueryTime, addError)
+	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
+	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
+	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)
+
+	return params, fieldErrors
 }
 
 func parseArrivalsForLocationMaxCount(queryParams map[string][]string, addError func(string, string)) int {
 	maxCount, fieldErrors := utils.ParseMaxCountClampedTo(
 		queryParams, models.DefaultMaxCountForArrivalsForLocation, models.MaxCountForArrivalsForLocation, nil)
-	forwardFieldErrors(fieldErrors, addError)
+	for field, msgs := range fieldErrors {
+		for _, msg := range msgs {
+			addError(field, msg)
+		}
+	}
 	return maxCount
-}
-
-// parseEpochMillisParam reads a time expressed as Unix milliseconds.
-func parseEpochMillisParam(queryParams map[string][]string, key string, fallback time.Time, addError func(string, string)) time.Time {
-	values, ok := queryParams[key]
-	if !ok || len(values) == 0 || values[0] == "" {
-		return fallback
-	}
-
-	timeMs, err := strconv.ParseInt(values[0], 10, 64)
-	if err != nil {
-		addError(key, "must be a valid Unix timestamp in milliseconds")
-		return fallback
-	}
-	return time.UnixMilli(timeMs)
-}
-
-// parseOptionalBoolParam reads a boolean flag, defaulting to false when absent.
-func parseOptionalBoolParam(queryParams map[string][]string, key string, addError func(string, string)) bool {
-	values, ok := queryParams[key]
-	if !ok || len(values) == 0 || values[0] == "" {
-		return false
-	}
-
-	parsed, err := strconv.ParseBool(values[0])
-	if err != nil {
-		addError(key, "must be a valid boolean")
-		return false
-	}
-	return parsed
-}
-
-// parseMinutesParam reads a minute-valued window parameter, capping it at one
-// service day to bound the per-request stop_time scan.
-func parseMinutesParam(queryParams map[string][]string, key string, fallback time.Duration, addError func(string, string)) time.Duration {
-	const maxWindow = 24 * time.Hour
-
-	values, ok := queryParams[key]
-	if !ok || len(values) == 0 || values[0] == "" {
-		return fallback
-	}
-
-	minutes, err := strconv.Atoi(values[0])
-	if err != nil {
-		addError(key, "must be a valid integer")
-		return fallback
-	}
-	if minutes < 0 {
-		addError(key, "must be a non-negative integer")
-		return fallback
-	}
-	return min(time.Duration(minutes)*time.Minute, maxWindow)
 }
 
 // parseRouteTypesParam reads the comma-delimited routeType filter. Note this
