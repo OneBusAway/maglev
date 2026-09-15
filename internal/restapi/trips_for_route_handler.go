@@ -338,6 +338,17 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	agencyLocations, err := api.agencyLocationsForTrips(ctx, currentAgency.ID, currentLocation, tripAgencyMap)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	serviceDatesByZone, err := api.serviceDateResolversByZone(ctx, agencyLocations, currentTime)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
 	// Batch-fetch frequencies; success seeds nil to skip fallback queries.
 	// Post-batch trips (interlined, DUPLICATED) fall back per-trip.
 	freqMap := make(map[string][]gtfsdb.Frequency)
@@ -415,14 +426,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			// per-active-block guarantee rather than dropping the entry.
 		}
 
-		// Resolve service date from the active trip (keyed in tripServiceDay).
-		// All trips in a block share the same service day.
-		serviceDate := serviceDateFor(tripServiceDay, tripID, todayMidnight)
+		entryLocation := agencyLocations[entryAgencyID]
+		entryServiceDate := serviceDatesByZone[entryLocation.String()].Resolve(tripsByID[entryTripID])
+		activeLocation := agencyLocations[activeAgencyID]
+		activeServiceDate := serviceDatesByZone[activeLocation.String()].Resolve(fetchedTrip)
 
 		var schedule *models.TripsSchedule
 		if includeSchedule {
 			var schedErr error
-			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, serviceDate, currentLocation, freqMap)
+			schedule, schedErr = api.buildScheduleForTrip(ctx, entryTripID, entryAgencyID, entryServiceDate, entryLocation, freqMap)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
@@ -432,14 +444,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		var status *models.TripStatus
 		if includeStatus {
 			var statusErr error
-			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, serviceDate, currentTime, freqMap)
+			status, _, statusErr = api.BuildTripStatus(ctx, activeAgencyID, tripID, nil, activeServiceDate, currentTime, freqMap)
 			if statusErr != nil {
 				reqLogger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
 			}
 		}
 
-		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, entryTripID, serviceDate, currentTime)
+		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, entryTripID, entryServiceDate, currentTime)
 		if freqErr != nil {
 			api.serverErrorResponse(w, r, freqErr)
 			return
@@ -449,7 +461,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  serviceDate.UnixMilli(),
+			ServiceDate:  entryServiceDate.UnixMilli(),
 			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, entryTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
@@ -779,6 +791,39 @@ func serviceDateFor(tripServiceDay map[string]time.Time, id string, todayMidnigh
 		return midnight
 	}
 	return todayMidnight
+}
+
+// agencyLocationsForTrips maps the route's agency and each trip's agency to its timezone.
+func (api *RestAPI) agencyLocationsForTrips(
+	ctx context.Context,
+	routeAgencyID string,
+	routeLocation *time.Location,
+	tripAgencyMap map[string]string,
+) (map[string]*time.Location, error) {
+	locations := map[string]*time.Location{routeAgencyID: routeLocation}
+	var otherAgencyIDs []string
+	for _, agencyID := range tripAgencyMap {
+		if _, seen := locations[agencyID]; !seen {
+			locations[agencyID] = routeLocation
+			otherAgencyIDs = append(otherAgencyIDs, agencyID)
+		}
+	}
+	if len(otherAgencyIDs) == 0 {
+		return locations, nil
+	}
+
+	agencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, otherAgencyIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, agency := range agencies {
+		location, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			return nil, err
+		}
+		locations[agency.ID] = location
+	}
+	return locations, nil
 }
 
 // tripWindowOverlapsRange reports whether the trip's scheduled window

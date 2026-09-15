@@ -275,24 +275,24 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 		assert.Equal(t, expectedTripID, entry.TripId)
 		require.NotNil(t, entry.Schedule)
 		assert.Equal(t, "UTC", entry.Schedule.TimeZone)
-		// Without per-agency timezone resolution, the past-midnight trip uses
-		// prevDayMidnight (June 12 UTC) for both the entry and the status.
-		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
+		assert.Equal(t, time.Date(2025, 6, 13, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
 		require.NotNil(t, entry.Status)
 		expectedActiveTripID := utils.FormCombinedID(tfrAgencyB, "tfr-xb")
 		assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
-		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+		laLoc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, laLoc).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
 	})
 
 	t.Run("references contain combined stop IDs for queried and cross agencies", func(t *testing.T) {
 		refStops := model.Data.References.Stops
-		require.Len(t, refStops, 4, fmt.Sprintf("expected 4 stop references, got %d", len(refStops)))
+		require.Len(t, refStops, 3, fmt.Sprintf("expected 3 stop references, got %d", len(refStops)))
 
+		// tfr-xb hasn't started on its Los Angeles service day, so its status only points at its first stop.
 		expectedStopIDs := map[string]bool{
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID): true,
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID): true,
 			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop1ID):            true,
-			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop2ID):            true,
 		}
 		recvdStopsByID := make(map[string]models.Stop)
 
@@ -317,7 +317,7 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 
 		// combined stopIDs for both agencies on the same bare stop ID should have the same
 		// stop-specific data
-		for _, bareID := range []string{tripsForRouteStop1ID, tripsForRouteStop2ID} {
+		for _, bareID := range []string{tripsForRouteStop1ID} {
 			scheduledTripStopID := utils.FormCombinedID(tripsForRouteAgencyID, bareID)
 			activeTripStopID := utils.FormCombinedID(tfrAgencyB, bareID)
 			scheduledTripStop := recvdStopsByID[scheduledTripStopID]
