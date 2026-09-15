@@ -88,10 +88,10 @@ func TestRebuildRealTimeTripLookup(t *testing.T) {
 
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.NotNil(t, manager.realTimeTripLookup)
-	assert.Len(t, manager.realTimeTripLookup, 2)
-	assert.Equal(t, 0, manager.realTimeTripLookup["trip1"])
-	assert.Equal(t, 1, manager.realTimeTripLookup["trip2"])
+	assert.NotNil(t, manager.mergedRealtime().tripLookup)
+	assert.Len(t, manager.mergedRealtime().tripLookup, 2)
+	assert.Equal(t, 0, manager.mergedRealtime().tripLookup["trip1"])
+	assert.Equal(t, 1, manager.mergedRealtime().tripLookup["trip2"])
 }
 
 func TestRebuildRealTimeVehicleLookupByTrip(t *testing.T) {
@@ -118,10 +118,10 @@ func TestRebuildRealTimeVehicleLookupByTrip(t *testing.T) {
 
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.NotNil(t, manager.realTimeVehicleLookupByTrip)
-	assert.Len(t, manager.realTimeVehicleLookupByTrip, 2)
-	assert.Equal(t, 0, manager.realTimeVehicleLookupByTrip["trip1"])
-	assert.Equal(t, 1, manager.realTimeVehicleLookupByTrip["trip2"])
+	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByTrip)
+	assert.Len(t, manager.mergedRealtime().vehicleLookupByTrip, 2)
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByTrip["trip1"])
+	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByTrip["trip2"])
 }
 
 func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
@@ -144,10 +144,10 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.NotNil(t, manager.realTimeVehicleLookupByVehicle)
-	assert.Len(t, manager.realTimeVehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.realTimeVehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 1, manager.realTimeVehicleLookupByVehicle["vehicle2"])
+	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
+	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
+	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByVehicle["vehicle2"])
 }
 
 func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
@@ -173,10 +173,10 @@ func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.NotNil(t, manager.realTimeVehicleLookupByVehicle)
-	assert.Len(t, manager.realTimeVehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.realTimeVehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 3, manager.realTimeVehicleLookupByVehicle["vehicle3"])
+	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
+	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
+	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle["vehicle3"])
 }
 
 func TestLoadRealtimeData_Non200StatusCode(t *testing.T) {

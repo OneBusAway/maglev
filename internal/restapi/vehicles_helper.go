@@ -301,3 +301,37 @@ func projectVehicleDistanceOnShape(
 	segLen := cumulativeDistances[bestIdx+1] - cumulativeDistances[bestIdx]
 	return cumulativeDistances[bestIdx] + bestRatio*segLen, true
 }
+
+// tripRouteRef pairs a trip with the route it runs on. Interlining puts the two
+// trips of one entry on different routes, so a lookup that reused one route for
+// both would ask for alerts on a route the other trip never serves.
+type tripRouteRef struct {
+	tripID  string
+	routeID string
+}
+
+// vehicleSituationRefs resolves the alerts affecting one vehicle, taking each
+// route's agency from the routes already batch-fetched for the response so the
+// per-vehicle path issues no lookups of its own. A route absent from that batch
+// falls back to resolving the trip's route directly.
+//
+// Interlining puts the vehicle on a trip other than the one it reports, and the
+// response still carries the nominal trip and its route, so alerts informed
+// about either trip belong on the entry.
+func (api *RestAPI) vehicleSituationRefs(ctx context.Context, active, nominal tripRouteRef, routeByID map[string]gtfsdb.Route) []situationRef {
+	refsFor := func(ref tripRouteRef) []situationRef {
+		route, indexed := routeByID[ref.routeID]
+		if !indexed {
+			return api.situationRefsForTrip(ctx, ref.tripID)
+		}
+
+		return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(ref.tripID, ref.routeID, route.AgencyID), route.AgencyID)
+	}
+
+	refs := refsFor(active)
+	if nominal == active {
+		return refs
+	}
+
+	return dedupeSituationRefs(append(refs, refsFor(nominal)...))
+}

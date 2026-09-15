@@ -167,19 +167,14 @@ func TestGetVehicleForTrip_DirectTripIDLookup(t *testing.T) {
 
 func TestManager_GetTripUpdatesForTrip(t *testing.T) {
 	manager := &Manager{
-		realTimeTrips: []gtfs.Trip{
-			{
-				ID: gtfs.TripID{ID: "trip1"},
+		feedTrips: map[string][]gtfs.Trip{
+			"_test": {
+				{ID: gtfs.TripID{ID: "trip1"}},
+				{ID: gtfs.TripID{ID: "trip2"}},
 			},
-			{
-				ID: gtfs.TripID{ID: "trip2"},
-			},
-		},
-		realTimeTripLookup: map[string]int{
-			"trip1": 0,
-			"trip2": 1,
 		},
 	}
+	manager.rebuildMergedRealtimeLocked()
 
 	updates := manager.GetTripUpdatesForTrip("trip1")
 	assert.Len(t, updates, 1)
