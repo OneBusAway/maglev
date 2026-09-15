@@ -188,7 +188,7 @@ func TestVehiclesForAgencyHandler_SituationsPopulatedInReferences(t *testing.T) 
 	const alertID = "alert-vehicles-test"
 	situationID := utils.FormCombinedID(testdata.Raba.ID, alertID)
 	// MockAddAlert must precede MockAddVehicleWithOptions: it triggers rebuildMergedRealtimeLocked,
-	// which rebuilds realTimeVehicles from feedVehicles (empty), wiping any vehicle added first.
+	// which republishes the merged snapshot from feedVehicles (empty), wiping any vehicle added first.
 	api.GtfsManager.MockAddAlert("feed-0", gogtfs.Alert{
 		ID: alertID,
 		InformedEntities: []gogtfs.AlertInformedEntity{
