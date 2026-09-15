@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -187,6 +189,26 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	assert.LessOrEqual(t, len(entry.StopIDs), 1)
 	assert.LessOrEqual(t, len(entry.ArrivalsAndDepartures), 1)
 	assert.LessOrEqual(t, len(entry.NearbyStopIDs), 1)
+
+	// References must cover only the retained entry results, not the stops and
+	// arrivals maxCount trimmed away.
+	retainedTrips := make(map[string]bool, len(entry.ArrivalsAndDepartures))
+	for _, a := range entry.ArrivalsAndDepartures {
+		retainedTrips[a.TripID] = true
+	}
+	for _, tr := range limited.Data.References.Trips {
+		assert.True(t, retainedTrips[tr.ID], "references.trips %s is not in the retained arrivals", tr.ID)
+	}
+	retainedStops := make(map[string]bool, len(entry.StopIDs)+len(entry.NearbyStopIDs))
+	for _, id := range entry.StopIDs {
+		retainedStops[id] = true
+	}
+	for _, n := range entry.NearbyStopIDs {
+		retainedStops[n.StopID] = true
+	}
+	for _, s := range limited.Data.References.Stops {
+		assert.True(t, retainedStops[s.ID], "references.stops %s is not in the retained entry", s.ID)
+	}
 }
 
 // maxCount above the endpoint ceiling clamps rather than erroring, matching the
@@ -312,4 +334,85 @@ func TestArrivalsAndDeparturesForLocationCombinedIDs(t *testing.T) {
 		require.NoError(t, err, "stopIds must be combined {agency}_{code} IDs")
 		assert.Equal(t, testdata.Raba.ID, agencyID)
 	}
+}
+
+// radius takes precedence over latSpan/lonSpan: adding spans to a radius
+// request must not change the searched stops or their arrivals.
+func TestArrivalsAndDeparturesForLocationRadiusTakesPrecedenceOverSpans(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	_, radiusOnly := callArrivalsForLocation(t, api, url.Values{"radius": {"2500"}})
+	_, radiusPlusSpans := callArrivalsForLocation(t, api, url.Values{
+		"radius":  {"2500"},
+		"latSpan": {"0.05"},
+		"lonSpan": {"0.05"},
+	})
+
+	require.NotEmpty(t, radiusOnly.Data.Entry.StopIDs)
+	assert.Equal(t, radiusOnly.Data.Entry.StopIDs, radiusPlusSpans.Data.Entry.StopIDs,
+		"radius must take precedence over latSpan/lonSpan")
+	assert.Len(t, radiusPlusSpans.Data.Entry.ArrivalsAndDepartures,
+		len(radiusOnly.Data.Entry.ArrivalsAndDepartures),
+		"arrivals must be identical regardless of span parameters")
+}
+
+// The RABA fixture has 375 stops, so no integration request can produce the
+// 1000+ candidates needed to exercise the endpoint ceiling. Cover the clamp at
+// the unit level instead: every list is capped and limitExceeded is set.
+func TestTruncateLocationListsCapsAtEndpointCeiling(t *testing.T) {
+	const candidates = models.MaxCountForArrivalsForLocation + 5
+
+	arrivals := make([]models.ArrivalAndDeparture, candidates)
+	stopIDs := make([]string, candidates)
+	nearby := make([]models.StopWithDistance, candidates)
+	for i := range candidates {
+		stopIDs[i] = "25_" + strconv.Itoa(i)
+		nearby[i] = models.StopWithDistance{StopID: "25_" + strconv.Itoa(i)}
+	}
+
+	lists := truncateLocationLists(locationLists{
+		stopIDs:  stopIDs,
+		arrivals: arrivals,
+		nearby:   nearby,
+	}, models.MaxCountForArrivalsForLocation)
+
+	assert.Len(t, lists.stopIDs, models.MaxCountForArrivalsForLocation)
+	assert.Len(t, lists.arrivals, models.MaxCountForArrivalsForLocation)
+	assert.Len(t, lists.nearby, models.MaxCountForArrivalsForLocation)
+	assert.True(t, lists.limitExceeded, "truncating any list must set limitExceeded")
+}
+
+func TestParseArrivalsForLocationMaxCountClampsToCeiling(t *testing.T) {
+	var collected map[string][]string
+	addError := func(field, msg string) {
+		if collected == nil {
+			collected = make(map[string][]string)
+		}
+		collected[field] = append(collected[field], msg)
+	}
+
+	assert.Equal(t, models.MaxCountForArrivalsForLocation,
+		parseArrivalsForLocationMaxCount(url.Values{"maxCount": {"5000"}}, addError))
+	assert.Empty(t, collected, "clamping above the ceiling must not error")
+}
+
+// minutes=153722868 would overflow time.Duration(minutes)*time.Minute into a
+// negative duration; the cap must apply before the conversion.
+func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
+	var collected map[string][]string
+	addError := func(field, msg string) {
+		if collected == nil {
+			collected = make(map[string][]string)
+		}
+		collected[field] = append(collected[field], msg)
+	}
+
+	assert.Equal(t, maxArrivalWindow,
+		parseMinutesValue(url.Values{"minutesAfter": {"153722868"}}, "minutesAfter", 35*time.Minute, maxArrivalWindow, addError))
+	assert.Empty(t, collected)
+
+	assert.Equal(t, 5*time.Minute,
+		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
+	assert.Contains(t, collected, "minutesBefore")
 }
