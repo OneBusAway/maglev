@@ -425,6 +425,16 @@ WHERE
 ORDER BY
     shape_pt_sequence;
 
+-- name: ShapeHasTripForAgency :one
+-- Returns 1 if a trip on one of the agency's routes uses the shape, 0 otherwise.
+SELECT CAST(EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN routes r ON r.id = t.route_id
+    WHERE t.shape_id = sqlc.arg(shape_id)
+      AND r.agency_id = sqlc.arg(agency_id)
+) AS INTEGER) AS has_trip;
+
 -- name: GetStopIDsForRoute :many
 SELECT DISTINCT
     stop_times.stop_id
@@ -895,6 +905,16 @@ WHERE
     t.block_id = ?
 ORDER BY
     t.id, st.stop_sequence;
+
+-- name: BlockHasTripForAgency :one
+-- Returns 1 if a trip on one of the agency's routes is in the block, 0 otherwise.
+SELECT CAST(EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN routes r ON r.id = t.route_id
+    WHERE t.block_id = sqlc.arg(block_id)
+      AND r.agency_id = sqlc.arg(agency_id)
+) AS INTEGER) AS has_trip;
 
 -- name: GetTripIDsForStops :many
 -- GetTripIDsForStops returns the IDs of the trips serving any of these stops.

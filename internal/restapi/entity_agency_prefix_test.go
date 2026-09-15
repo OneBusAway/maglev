@@ -44,6 +44,8 @@ func TestEntityHandlers_AgencyPrefixMustOwnEntity(t *testing.T) {
 	}{
 		{"trip", "own-trip"},
 		{"route", "own-route"},
+		{"shape", "own-shape"},
+		{"block", "own-block"},
 	}
 	prefixes := []struct {
 		agencyID   string
