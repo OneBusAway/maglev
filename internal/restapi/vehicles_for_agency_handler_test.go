@@ -83,6 +83,33 @@ func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	assert.Empty(t, model.Data.List)
 }
 
+func TestVehiclesForAgencyHandler_OutOfRangeOnNormalPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		addVehicle bool
+	}{
+		{name: "empty list", addVehicle: false},
+		{name: "with a vehicle", addVehicle: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			if tt.addVehicle {
+				trip := mustGetTrip(t, api)
+				api.GtfsManager.MockAddVehicleWithOptions("v_out_of_range", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+			}
+
+			data := fetchRawData(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+			raw, ok := data["outOfRange"]
+			require.True(t, ok, "outOfRange key must be present in the response payload")
+			assert.JSONEq(t, "false", string(raw))
+		})
+	}
+}
+
 func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
