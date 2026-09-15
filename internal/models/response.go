@@ -99,6 +99,14 @@ func NewArrivalsAndDeparturesForLocationResponse(
 	return NewOKResponse(data, c)
 }
 
+// NewEmptyArrivalsAndDeparturesForLocationResponse builds the envelope for a
+// query that matched nothing, keeping the populated-case shape because the
+// OpenAPI schema marks entry and references required.
+func NewEmptyArrivalsAndDeparturesForLocationResponse(c clock.Clock) ResponseModel {
+	return NewArrivalsAndDeparturesForLocationResponse(
+		nil, *NewEmptyReferences(), nil, nil, nil, false, c)
+}
+
 // NewResponse creates a standard response using the provided clock.
 func NewResponse(code int, data any, text string, c clock.Clock) ResponseModel {
 	return ResponseModel{
