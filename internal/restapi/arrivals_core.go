@@ -271,6 +271,15 @@ type batchedActiveStopTime struct {
 	QueryTime time.Time
 }
 
+// batchedArrivalLookups groups the four entity maps batchArrivalEntities
+// resolves, so the row loop takes one lookups parameter instead of four.
+type batchedArrivalLookups struct {
+	routes      map[string]gtfsdb.Route
+	trips       map[string]gtfsdb.Trip
+	stopCounts  map[string]int
+	frequencies map[string][]gtfsdb.Frequency
+}
+
 // arrivalsForStops computes arrivals for every stop in the input with one
 // batched pass: active service IDs resolve once per service date, stop_times
 // load once per agency per day, and arrival entities resolve once for the whole
@@ -308,7 +317,12 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		return nil, err
 	}
 
-	arrivals, err = api.buildArrivalsFromRows(ctx, allActive, in, acc, routesLookup, tripsLookup, tripStopCountMap, freqMap)
+	arrivals, err = api.buildArrivalsFromRows(ctx, allActive, in, acc, batchedArrivalLookups{
+		routes:      routesLookup,
+		trips:       tripsLookup,
+		stopCounts:  tripStopCountMap,
+		frequencies: freqMap,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +473,7 @@ func (api *RestAPI) activeServicesForDate(ctx context.Context, serviceDateStr st
 
 // buildArrivalsFromRows converts the batched stop_times into arrivals,
 // registering the routes and trips the retained arrivals need.
-func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batchedActiveStopTime, in multiStopArrivalsInput, acc *arrivalsAccumulator, routesLookup map[string]gtfsdb.Route, tripsLookup map[string]gtfsdb.Trip, tripStopCountMap map[string]int, freqMap map[string][]gtfsdb.Frequency) ([]models.ArrivalAndDeparture, error) {
+func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batchedActiveStopTime, in multiStopArrivalsInput, acc *arrivalsAccumulator, lookups batchedArrivalLookups) ([]models.ArrivalAndDeparture, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	arrivals := make([]models.ArrivalAndDeparture, 0, len(allActive))
 
@@ -470,7 +484,7 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 
 		st := b.GetStopTimesForStopInWindowRow
 
-		route, routeExists := routesLookup[st.RouteID]
+		route, routeExists := lookups.routes[st.RouteID]
 		if !routeExists {
 			reqLogger.Debug("skipping stop time: route not found in batch fetch",
 				slog.String("routeID", st.RouteID),
@@ -478,7 +492,7 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			continue
 		}
 
-		trip, tripExists := tripsLookup[st.TripID]
+		trip, tripExists := lookups.trips[st.TripID]
 		if !tripExists {
 			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
 				slog.String("tripID", st.TripID),
@@ -502,8 +516,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			queryTime:        b.QueryTime,
 			stopCode:         b.StopCode,
 			stopID:           utils.FormCombinedID(b.AgencyID, b.StopCode),
-			totalStopsInTrip: tripStopCountMap[st.TripID],
-			freqMap:          freqMap,
+			totalStopsInTrip: lookups.stopCounts[st.TripID],
+			freqMap:          lookups.frequencies,
 		}, acc)
 
 		arrivals = append(arrivals, *arrival)
