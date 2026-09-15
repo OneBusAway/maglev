@@ -65,6 +65,8 @@ const (
 	orphanRouteAgencyID      = "tfr-agency-x"
 	orphanRouteID            = "tfr-route-x"
 	orphanTripID             = "tfr-trip-x"
+
+	tfrAgencyB = "tfr-agency-b"
 )
 
 // createTestApiWithGTFSFixture builds a RestAPI backed by an in-memory GTFS
@@ -224,10 +226,10 @@ func crossAgencyInterlineFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
 			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n" +
-			"tfr-agency-b,Other Agency,http://example.com,America/Los_Angeles\n",
+			tfrAgencyB + ",Other Agency,http://example.com,America/Los_Angeles\n",
 		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
 			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
-			"tfr-route-otr,tfr-agency-b,OR,Other Route,3\n",
+			"tfr-route-otr," + tfrAgencyB + ",OR,Other Route,3\n",
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
 			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
@@ -250,7 +252,8 @@ func crossAgencyInterlineFiles() map[string]string {
 // the per-agency service day: the entry's serviceDate and schedule timezone
 // follow the queried-route trip's agency (UTC, 2025-06-13), while the
 // status's serviceDate follows the active trip's agency (America/Los_Angeles,
-// 2025-06-12).
+// 2025-06-12). It also verifies that the unique combined stopIDs for both agencies
+// correctly resolves in references.stops.
 func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
 		"trips-for-route-cross-agency.zip", crossAgencyInterlineFiles())
@@ -266,17 +269,69 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 	require.Len(t, model.Data.List, 1)
 
 	entry := model.Data.List[0]
-	expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-xa")
-	assert.Equal(t, expectedTripID, entry.TripId)
-	require.NotNil(t, entry.Schedule)
-	assert.Equal(t, "UTC", entry.Schedule.TimeZone)
-	// Without per-agency timezone resolution, the past-midnight trip uses
-	// prevDayMidnight (June 12 UTC) for both the entry and the status.
-	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
-	require.NotNil(t, entry.Status)
-	expectedActiveTripID := utils.FormCombinedID("tfr-agency-b", "tfr-xb")
-	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
-	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+
+	t.Run("uses correct per-agency service day", func(t *testing.T) {
+		expectedTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-xa")
+		assert.Equal(t, expectedTripID, entry.TripId)
+		require.NotNil(t, entry.Schedule)
+		assert.Equal(t, "UTC", entry.Schedule.TimeZone)
+		// Without per-agency timezone resolution, the past-midnight trip uses
+		// prevDayMidnight (June 12 UTC) for both the entry and the status.
+		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
+		require.NotNil(t, entry.Status)
+		expectedActiveTripID := utils.FormCombinedID(tfrAgencyB, "tfr-xb")
+		assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+	})
+
+	t.Run("references contain combined stop IDs for queried and cross agencies", func(t *testing.T) {
+		refStops := model.Data.References.Stops
+		require.Len(t, refStops, 4, fmt.Sprintf("expected 4 stop references, got %d", len(refStops)))
+
+		expectedStopIDs := map[string]bool{
+			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID): true,
+			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID): true,
+			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop1ID):            true,
+			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop2ID):            true,
+		}
+		recvdStopsByID := make(map[string]models.Stop)
+
+		// we shouldn't receive a stop apart from the expected stops.
+		for _, stop := range refStops {
+			assert.True(t, expectedStopIDs[stop.ID], "unexpected stop reference %q", stop.ID)
+			recvdStopsByID[stop.ID] = stop
+		}
+
+		// ensure that all expected stop IDs are present in the received stops
+		require.Len(t, recvdStopsByID, len(expectedStopIDs), fmt.Sprintf("expected %d stop references, got %d", len(expectedStopIDs), len(recvdStopsByID)))
+
+		for _, stopTime := range entry.Schedule.StopTimes {
+			assert.Contains(t, recvdStopsByID, stopTime.StopID,
+				"schedule stop %q must resolve in references.stops", stopTime.StopID)
+		}
+
+		for _, stopID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
+			assert.Contains(t, recvdStopsByID, stopID,
+				"status stop %q must resolve in references.stops", stopID)
+		}
+
+		// combined stopIDs for both agencies on the same bare stop ID should have the same
+		// stop-specific data
+		for _, bareID := range []string{tripsForRouteStop1ID, tripsForRouteStop2ID} {
+			scheduledTripStopID := utils.FormCombinedID(tripsForRouteAgencyID, bareID)
+			activeTripStopID := utils.FormCombinedID(tfrAgencyB, bareID)
+			scheduledTripStop := recvdStopsByID[scheduledTripStopID]
+			activeTripStop := recvdStopsByID[activeTripStopID]
+
+			// clear the agency-specific values and assert the stop-specific
+			// values are equal
+			scheduledTripStop.ID, scheduledTripStop.Parent = "", ""
+			activeTripStop.ID, activeTripStop.Parent = "", ""
+
+			assert.Equal(t, scheduledTripStop, activeTripStop,
+				"shared stop %q should have the same data for both agency-qualified IDs", bareID)
+		}
+	})
 }
 
 func loopingRouteFiles() map[string]string {
@@ -1383,7 +1438,7 @@ func TestTripsForRouteHandler_OutOfRangeNotEmitted(t *testing.T) {
 }
 
 func TestCollectStopIDsFromSchedule_NilSchedule(t *testing.T) {
-	stopIDsMap := map[string]string{}
+	stopIDsMap := map[string][]string{}
 
 	collectStopIDsFromSchedule(nil, stopIDsMap)
 
@@ -1398,14 +1453,14 @@ func TestCollectStopIDsFromSchedule_PopulatesMap(t *testing.T) {
 			{StopID: "25_1003"},
 		},
 	}
-	stopIDsMap := map[string]string{}
+	stopIDsMap := map[string][]string{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
-	assert.Equal(t, map[string]string{
-		"1001": "25_1001",
-		"1002": "25_1002",
-		"1003": "25_1003",
+	assert.Equal(t, map[string][]string{
+		"1001": {"25_1001"},
+		"1002": {"25_1002"},
+		"1003": {"25_1003"},
 	}, stopIDsMap)
 }
 
@@ -1416,17 +1471,17 @@ func TestCollectStopIDsFromSchedule_SkipsMalformedIDs(t *testing.T) {
 			{StopID: "no-underscore"},
 		},
 	}
-	stopIDsMap := map[string]string{}
+	stopIDsMap := map[string][]string{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
-	assert.Equal(t, map[string]string{"good": "25_good"}, stopIDsMap,
+	assert.Equal(t, map[string][]string{"good": {"25_good"}}, stopIDsMap,
 		"malformed stop IDs must be silently skipped")
 }
 
 func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 	schedule := &models.TripsSchedule{StopTimes: []models.StopTime{}}
-	stopIDsMap := map[string]string{}
+	stopIDsMap := map[string][]string{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 

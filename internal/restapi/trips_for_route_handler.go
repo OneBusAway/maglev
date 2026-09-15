@@ -560,7 +560,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				status:   trip.Status,
 			})
 		}
-
+		// stop ids map maps stopIDs to a slice of unique combined agency IDs.
 		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
 		if stopsErr != nil {
 			api.serverErrorResponse(w, r, stopsErr)
@@ -767,16 +767,14 @@ func tripServiceDayMidnight(currentTime time.Time, trip *gtfsdb.Trip, agencyLoca
 	return time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, agencyLocation)
 }
 
-func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]string) {
+func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string][]string) {
 	if schedule == nil {
 		return
 	}
 	for _, stopTime := range schedule.StopTimes {
 		_, bareID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 		if err == nil {
-			if _, exists := stopIDsMap[bareID]; !exists {
-				stopIDsMap[bareID] = stopTime.StopID
-			}
+			appendUniqueStopID(stopIDsMap, bareID, stopTime.StopID)
 		}
 	}
 }
@@ -810,7 +808,7 @@ type tripReferenceParams struct {
 	Trips           []models.TripsForRouteListEntry
 	Stops           []gtfsdb.Stop
 	PreFetchedTrips []gtfsdb.Trip
-	StopIDMap       map[string]string
+	StopIDMap       map[string][]string
 	Situations      []situationRef
 }
 
@@ -1004,10 +1002,12 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
 func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
-	tripsRefList := make([]models.Trip, 0, len(s.trips))
+	var tripsRefList []models.Trip
 	if !includeTrip {
 		return tripsRefList
 	}
+
+	tripsRefList = make([]models.Trip, 0, len(s.trips))
 
 	for _, trip := range s.trips {
 		// A route that was noted but never resolved is still in the map as a

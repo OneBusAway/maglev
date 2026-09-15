@@ -1066,9 +1066,9 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 type ReferenceParams struct {
 	IncludeTrip bool
 	Stops       []gtfsdb.Stop
-	// StopIDsByBareID maps each stop's bare ID to the combined ID the entries
+	// StopIDsByBareID maps each stop's bare ID to the combined IDs the entries
 	// referred to it by, so a reference is published under the ID pointing at it.
-	StopIDsByBareID map[string]string
+	StopIDsByBareID map[string][]string
 	Trips           []models.TripsForLocationListEntry
 	Situations      []situationRef
 }
@@ -1146,9 +1146,7 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 }
 
 // buildStopList emits the stop references and registers the routes serving them.
-// A stop referred to by more than one agency still gets a single reference — the
-// first ID seen wins, and the other stays dangling.
-func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string]string) {
+func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string][]string) {
 	stopList, routeIDsByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
 	rb.stopList = stopList
 
