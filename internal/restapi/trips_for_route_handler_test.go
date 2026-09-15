@@ -2188,7 +2188,7 @@ func TestTripsForRouteHandler_DuplicatedTripLookupFailures(t *testing.T) {
 			api.GtfsManager.GtfsDB.Queries = originalQueries
 		})
 
-		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.UnixMilli())
+		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d&includeSchedule=false", combinedRouteID, tripsForRouteTestClock.UnixMilli())
 		resp, _ := callAPIHandler[TripsForRouteResponse](t, api, url)
 
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
@@ -2217,7 +2217,7 @@ func TestTripsForRouteHandler_DuplicatedTripLookupFailures(t *testing.T) {
 			api.GtfsManager.GtfsDB.Queries = originalQueries
 		})
 
-		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, tripsForRouteTestClock.UnixMilli())
+		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d&includeSchedule=false", combinedRouteID, tripsForRouteTestClock.UnixMilli())
 		resp, _ := callAPIHandler[TripsForRouteResponse](t, api, url)
 
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
