@@ -661,7 +661,7 @@ func TestFindClosestStopByTimeWithDelays_NoDelays(t *testing.T) {
 		{StopID: "s3", ArrivalTime: secondsToNanos(9 * 3600)}, // 09:00
 	}
 
-	stopID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), nil)
+	stopID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), StopDelays{})
 	assert.Equal(t, "s2", stopID)
 }
 
@@ -674,9 +674,9 @@ func TestFindClosestStopByTimeWithDelays_WithDelay(t *testing.T) {
 		{StopID: "s2", DepartureTime: secondsToNanos(9 * 3600)}, // scheduled 09:00
 	}
 	// delay of +60 minutes pushes s1 to 08:00 — closest to currentTime
-	delays := map[string]StopDelayInfo{
+	delays := StopDelays{byStopID: map[string]StopDelayInfo{
 		"s1": {DepartureDelay: 3600},
-	}
+	}}
 
 	stopID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), delays)
 	assert.Equal(t, "s1", stopID)
@@ -686,7 +686,7 @@ func TestFindClosestStopByTimeWithDelays_EmptyStops(t *testing.T) {
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := time.Date(2024, 1, 1, 8, 0, 0, 0, time.UTC)
 
-	stopID, offset := findClosestStopByTimeWithDelays(currentTime, serviceDate, nil, nil)
+	stopID, offset := findClosestStopByTimeWithDelays(currentTime, serviceDate, nil, StopDelays{})
 	assert.Equal(t, "", stopID)
 	assert.Equal(t, 0, offset)
 }
@@ -701,7 +701,7 @@ func TestFindNextStopByTimeWithDelays_NoDelays(t *testing.T) {
 		{StopID: "s3", DepartureTime: secondsToNanos(10 * 3600)}, // later future
 	}
 
-	stopID, offset := findNextStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), nil)
+	stopID, offset := findNextStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), StopDelays{})
 	assert.Equal(t, "s2", stopID)
 	assert.Equal(t, 3600, offset, "offset should be 3600 seconds (1 hour)")
 }
@@ -715,7 +715,7 @@ func TestFindNextStopByTimeWithDelays_AllStopsPast(t *testing.T) {
 		{StopID: "s2", DepartureTime: secondsToNanos(9 * 3600)},
 	}
 
-	stopID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), nil)
+	stopID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), StopDelays{})
 	assert.Equal(t, "", stopID, "no next stop when all are in the past")
 }
 
@@ -727,9 +727,9 @@ func TestFindNextStopByTimeWithDelays_WithDelay(t *testing.T) {
 		{StopID: "s1", DepartureTime: secondsToNanos(8 * 3600)}, // scheduled 08:00
 	}
 	// +90 minute delay pushes it to 09:30, making it the next stop
-	delays := map[string]StopDelayInfo{
+	delays := StopDelays{byStopID: map[string]StopDelayInfo{
 		"s1": {DepartureDelay: 90 * 60},
-	}
+	}}
 
 	stopID, offset := findNextStopByTimeWithDelays(currentTime, serviceDate, makeStopTimePtrs(stops), delays)
 	assert.Equal(t, "s1", stopID)
@@ -1818,7 +1818,7 @@ func TestFindClosestStopByTimeWithDelays_DSTFallback(t *testing.T) {
 
 	t.Run("first 1:30 AM (PDT, before fallback) — closest is stop-130am", func(t *testing.T) {
 		currentTime := time.Date(2024, 11, 3, 1, 30, 0, 0, la)
-		closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, StopDelays{})
 		assert.Equal(t, "stop-130am", closestID,
 			"at the first 1:30 AM the closest stop should be the 1:30 AM stop")
 	})
@@ -1829,7 +1829,7 @@ func TestFindClosestStopByTimeWithDelays_DSTFallback(t *testing.T) {
 		// Construct second 1:30 AM via unambiguous anchor: 2:00 AM PST minus 30 min.
 		twoAMAfterFallback := time.Date(2024, 11, 3, 2, 0, 0, 0, la)
 		currentTime := twoAMAfterFallback.Add(-30 * time.Minute)
-		closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, StopDelays{})
 		assert.Equal(t, "stop-130am", closestID,
 			"at the second 1:30 AM the closest stop must still match the GTFS wall-clock entry")
 	})
@@ -1849,7 +1849,7 @@ func TestFindNextStopByTimeWithDelays_DSTFallback(t *testing.T) {
 
 	t.Run("first 1:30 AM — next stop is stop-230am", func(t *testing.T) {
 		currentTime := time.Date(2024, 11, 3, 1, 30, 0, 0, la)
-		nextID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		nextID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimes, StopDelays{})
 		assert.Equal(t, "stop-230am", nextID)
 	})
 
@@ -1857,7 +1857,7 @@ func TestFindNextStopByTimeWithDelays_DSTFallback(t *testing.T) {
 		// Construct second 1:30 AM PST via unambiguous anchor.
 		twoAMAfterFallback := time.Date(2024, 11, 3, 2, 0, 0, 0, la)
 		currentTime := twoAMAfterFallback.Add(-30 * time.Minute)
-		nextID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+		nextID, _ := findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimes, StopDelays{})
 		assert.Equal(t, "stop-230am", nextID,
 			"after DST fallback the next stop should be 2:30 AM, not empty or wrapped")
 	})
@@ -1877,7 +1877,7 @@ func TestFindClosestStopByTimeWithDelays_NormalDay(t *testing.T) {
 	}
 
 	currentTime := time.Date(2024, 6, 15, 8, 31, 0, 0, la) // 8:31 AM
-	closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+	closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, StopDelays{})
 	assert.Equal(t, "stop-830am", closestID)
 }
 
@@ -1895,7 +1895,7 @@ func TestFindClosestStopByTimeWithDelays_OvernightTrip(t *testing.T) {
 	}
 
 	currentTime := time.Date(2024, 6, 16, 1, 0, 0, 0, la) // 1:00 AM on Jun 16
-	closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, nil)
+	closestID, _ := findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimes, StopDelays{})
 	assert.Equal(t, "stop-1am-next", closestID)
 }
 
