@@ -409,6 +409,22 @@ func (api *RestAPI) nearbyStopsActiveOnDate(ctx context.Context, stopIDs []strin
 		return active, nil
 	}
 
+	groups, err := groupStopsByLocation(ctx, stopIDs, agencies)
+	if err != nil {
+		return nil, err
+	}
+
+	for loc, ids := range groups {
+		if err := api.collectActiveRoutesForGroup(ctx, loc, ids, queryTime, active); err != nil {
+			return nil, err
+		}
+	}
+	return active, nil
+}
+
+// groupStopsByLocation buckets stops by their own agency timezone so each
+// bucket shares one service date.
+func groupStopsByLocation(ctx context.Context, stopIDs []string, agencies *stopAgencyIndex) (map[*time.Location][]string, error) {
 	groups := make(map[*time.Location][]string)
 	for _, stopID := range stopIDs {
 		if ctx.Err() != nil {
@@ -417,41 +433,56 @@ func (api *RestAPI) nearbyStopsActiveOnDate(ctx context.Context, stopIDs []strin
 		loc := agencies.locationFor(stopID)
 		groups[loc] = append(groups[loc], stopID)
 	}
+	return groups, nil
+}
 
-	for loc, ids := range groups {
-		dateStr := queryTime.In(loc).Format("20060102")
-		serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
-		if err != nil {
-			return nil, err
-		}
-		if len(serviceIDs) == 0 {
-			continue
-		}
-
-		rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
-			StopIds:    ids,
-			ServiceIds: serviceIDs,
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			routeID, ok := row.RouteID.(string)
-			if !ok {
-				continue
-			}
-			if _, _, err := utils.ExtractAgencyIDAndCodeID(routeID); err != nil {
-				continue
-			}
-			routes, ok := active[row.StopID]
-			if !ok {
-				routes = make(map[string]bool)
-				active[row.StopID] = routes
-			}
-			routes[routeID] = true
-		}
+// collectActiveRoutesForGroup records the routes serving one timezone
+// bucket on its local service date.
+func (api *RestAPI) collectActiveRoutesForGroup(ctx context.Context, loc *time.Location, ids []string, queryTime time.Time, active map[string]map[string]bool) error {
+	serviceIDs, err := api.activeServiceIDsForLocation(ctx, loc, queryTime)
+	if err != nil {
+		return err
 	}
-	return active, nil
+	if len(serviceIDs) == 0 {
+		return nil
+	}
+
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
+		StopIds:    ids,
+		ServiceIds: serviceIDs,
+	})
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		recordActiveRoute(active, row.StopID, row.RouteID)
+	}
+	return nil
+}
+
+// activeServiceIDsForLocation resolves the service IDs running on the
+// query date in the given agency timezone.
+func (api *RestAPI) activeServiceIDsForLocation(ctx context.Context, loc *time.Location, queryTime time.Time) ([]string, error) {
+	dateStr := queryTime.In(loc).Format("20060102")
+	return api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
+}
+
+// recordActiveRoute keeps one agency-prefixed route ID for a stop,
+// ignoring rows that do not carry a well-formed combined ID.
+func recordActiveRoute(active map[string]map[string]bool, stopID string, routeID interface{}) {
+	combinedID, ok := routeID.(string)
+	if !ok {
+		return
+	}
+	if _, _, err := utils.ExtractAgencyIDAndCodeID(combinedID); err != nil {
+		return
+	}
+	routes, ok := active[stopID]
+	if !ok {
+		routes = make(map[string]bool)
+		active[stopID] = routes
+	}
+	routes[combinedID] = true
 }
 
 // activeStopsFromRoutes reduces per-route activity to the per-stop boolean
