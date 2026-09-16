@@ -177,17 +177,17 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Build application with dependencies
-	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
 	if err != nil {
 		logger.Error("failed to build application", "error", err)
 		os.Exit(1)
 	}
 
 	// Create HTTP server
-	srv, api := CreateServer(coreApp, cfg)
+	srv, api := CreateServer(coreApp, cfg, logger)
 
 	// Run server with graceful shutdown
-	if err := Run(ctx, srv, coreApp, api); err != nil {
+	if err := Run(ctx, srv, coreApp, api, logger); err != nil {
 		logger.Error("server error", "error", err)
 		os.Exit(1)
 	}

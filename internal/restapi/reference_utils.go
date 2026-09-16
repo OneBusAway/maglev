@@ -412,42 +412,6 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 	}
 }
 
-// deduplicateAlerts takes multiple slices of alerts and returns a single slice with unique alerts by ID.
-func deduplicateAlerts(alertSlices ...[]gtfs.Alert) []gtfs.Alert {
-	seen := make(map[string]struct{})
-	var uniqueAlerts []gtfs.Alert
-
-	for _, slice := range alertSlices {
-		for _, alert := range slice {
-			if _, exists := seen[alert.ID]; !exists {
-				seen[alert.ID] = struct{}{}
-				uniqueAlerts = append(uniqueAlerts, alert)
-			}
-		}
-	}
-	return uniqueAlerts
-}
-
-// collectAlertsForStops returns deduplicated alerts matching any of the given stop IDs.
-// It acquires realTimeMutex internally via GetAlertsForStop; no external lock is required.
-func (api *RestAPI) collectAlertsForStops(stopIDs []string) []gtfs.Alert {
-	var alerts []gtfs.Alert
-	for _, stopID := range stopIDs {
-		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
-	}
-	return deduplicateAlerts(alerts)
-}
-
-// collectAlertsForRoutes returns deduplicated alerts matching any of the given route IDs.
-// It acquires realTimeMutex internally via GetAlertsForRoute; no external lock is required.
-func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
-	var alerts []gtfs.Alert
-	for _, routeID := range routeIDs {
-		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
-	}
-	return deduplicateAlerts(alerts)
-}
-
 // ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
 // It defaults to true if the parameter is absent or if it fails to parse as a boolean.
 func ShouldIncludeReferences(r *http.Request) bool {
@@ -614,8 +578,9 @@ func queryInBatchesReserving[T any](ctx context.Context, ids []string, reserved 
 // so every stop ID an entry emits resolves in the block.
 //
 // The routes each stop serves are returned alongside the references, for callers
-// that collect route references from them.
-func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string]string) ([]models.Stop, map[string][]string) {
+// that collect route references from them. idsByBareId is a map of a bare stop id
+// to combined agencyId_stopId
+func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string][]string) ([]models.Stop, map[string][]string) {
 	routeIDsByStop := api.routeIDsForStops(ctx, stops)
 
 	stopList := make([]models.Stop, 0, len(stops))
@@ -630,27 +595,36 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 			direction = models.UnknownValue
 		}
 
-		parentID := ""
-		if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
-			agencyID, err := utils.ExtractAgencyID(idsByBareID[stop.ID])
-			if err == nil {
-				parentID = utils.FormCombinedID(agencyID, parentStation)
-			}
-		}
-
-		stopList = append(stopList, models.Stop{
+		// compute stop-specific info once here; the agency-specifc info
+		// (ID, Parent) are computed in the following loop for each agencyID_stopID
+		// referencing the same stop.
+		stopInfo := models.Stop{
 			Code:               nulls.StringOrEmpty(stop.Code),
 			Direction:          direction,
-			ID:                 idsByBareID[stop.ID],
+			ID:                 "",
 			Lat:                stop.Lat,
 			Lon:                stop.Lon,
 			LocationType:       int(nulls.Int64OrDefault(stop.LocationType, 0)),
 			Name:               nulls.StringOrEmpty(stop.Name),
-			Parent:             parentID,
+			Parent:             "",
 			RouteIDs:           routeIDs,
 			StaticRouteIDs:     routeIDs,
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-		})
+		}
+
+		for _, combinedID := range idsByBareID[stop.ID] {
+			agencyStop := stopInfo
+			parentID := ""
+			if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+				agencyID, err := utils.ExtractAgencyID(combinedID)
+				if err == nil {
+					parentID = utils.FormCombinedID(agencyID, parentStation)
+				}
+			}
+			agencyStop.ID = combinedID
+			agencyStop.Parent = parentID
+			stopList = append(stopList, agencyStop)
+		}
 	}
 	return stopList, routeIDsByStop
 }
@@ -860,4 +834,55 @@ func (api *RestAPI) tripSituationsFor(ctx context.Context, tripID string, extras
 		return api.TripSituations(ctx, tripID)
 	}
 	return api.situationsFromRefs(ctx, extras.situations)
+}
+
+type tripScheduleAndStatus struct {
+	schedule *models.TripsSchedule
+	status   *models.TripStatus
+}
+
+// stopsReferencedBySchedulesAndStatuses fetches the stops the response refers to:
+// those on each trip's schedule, plus the active trip's closest and next stops
+func (api *RestAPI) stopsReferencedBySchedulesAndStatuses(ctx context.Context, schedulesAndStatuses []tripScheduleAndStatus) ([]gtfsdb.Stop, map[string][]string, error) {
+	// maps bareID to combined agency IDs. In interlined cross-agency blocks,
+	// the same bare stop may be referenced by multiple agencies.
+	stopIDsByBareID := make(map[string][]string)
+
+	for _, entry := range schedulesAndStatuses {
+		collectStopIDsFromSchedule(entry.schedule, stopIDsByBareID)
+		if entry.status == nil {
+			continue
+		}
+		// in cross-agency interlined blocks, the active trip may be
+		// on a different route, served by a different agency.
+		for _, combinedID := range []string{entry.status.ClosestStop, entry.status.NextStop} {
+			_, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+			if err != nil {
+				continue
+			}
+			appendUniqueStopID(stopIDsByBareID, bareID, combinedID)
+		}
+	}
+
+	if len(stopIDsByBareID) == 0 {
+		return nil, nil, nil
+	}
+
+	bareIDs := make([]string, 0, len(stopIDsByBareID))
+	for bareID := range stopIDsByBareID {
+		bareIDs = append(bareIDs, bareID)
+	}
+
+	stops, err := queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	return stops, stopIDsByBareID, err
+}
+
+// appendUniqueStopID builds a list of unique combined stop IDs for each bare stop ID.
+func appendUniqueStopID(stopIDsByBareID map[string][]string, bareID, combinedID string) {
+	for _, existingID := range stopIDsByBareID[bareID] {
+		if existingID == combinedID {
+			return
+		}
+	}
+	stopIDsByBareID[bareID] = append(stopIDsByBareID[bareID], combinedID)
 }

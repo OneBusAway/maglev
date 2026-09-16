@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -18,29 +17,6 @@ import (
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
-
-func TestDeduplicateAlerts(t *testing.T) {
-	alert1 := gtfs.Alert{ID: "alert-1"}
-	alert2 := gtfs.Alert{ID: "alert-2"}
-	alert3 := gtfs.Alert{ID: "alert-3"}
-
-	slice1 := []gtfs.Alert{alert1, alert2}
-	slice2 := []gtfs.Alert{alert2, alert3}
-	slice3 := []gtfs.Alert{alert1, alert3}
-
-	result := deduplicateAlerts(slice1, slice2, slice3)
-
-	assert.Len(t, result, 3, "Should deduplicate and return exactly 3 unique alerts")
-
-	idMap := make(map[string]bool)
-	for _, a := range result {
-		idMap[a.ID] = true
-	}
-
-	assert.True(t, idMap["alert-1"], "Missing alert-1")
-	assert.True(t, idMap["alert-2"], "Missing alert-2")
-	assert.True(t, idMap["alert-3"], "Missing alert-3")
-}
 
 func TestShouldIncludeReferences(t *testing.T) {
 	tests := []struct {
@@ -254,22 +230,22 @@ func TestStopReferences(t *testing.T) {
 		ParentStation: nulls.String("parent-station"),
 	}
 
-	referringIDs := map[string]string{
-		servedStopID:              utils.FormCombinedID("referring-agency", servedStopID),
-		routelessStop.ID:          utils.FormCombinedID("referring-agency", routelessStop.ID),
-		defaultStop.ID:            utils.FormCombinedID("referring-agency", defaultStop.ID),
-		malformedReferenceStop.ID: "malformed-reference-id",
+	referringIDs := map[string][]string{
+		servedStopID:              {utils.FormCombinedID("referring-agency", servedStopID)},
+		routelessStop.ID:          {utils.FormCombinedID("referring-agency", routelessStop.ID)},
+		defaultStop.ID:            {utils.FormCombinedID("referring-agency", defaultStop.ID)},
+		malformedReferenceStop.ID: {"malformed-reference-id"},
 	}
 
 	refs, routeIDsByStop := api.stopReferences(ctx,
 		[]gtfsdb.Stop{servedStop, routelessStop, defaultStop, malformedReferenceStop}, referringIDs)
 	require.Len(t, refs, 4, "a stop with no resolvable routes still gets a reference")
 
-	assert.Equal(t, referringIDs[servedStopID], refs[0].ID, "the referring entry's ID labels the reference")
+	assert.Equal(t, referringIDs[servedStopID][0], refs[0].ID, "the referring entry's ID labels the reference")
 	assert.NotEmpty(t, refs[0].RouteIDs)
 	assert.Equal(t, routeIDsByStop[servedStopID], refs[0].RouteIDs)
 
-	assert.Equal(t, referringIDs[routelessStop.ID], refs[1].ID)
+	assert.Equal(t, referringIDs[routelessStop.ID][0], refs[1].ID)
 	assert.Equal(t, 1, refs[1].LocationType)
 	assert.Equal(t, utils.FormCombinedID("referring-agency", "parent-station"), refs[1].Parent)
 	assert.Empty(t, refs[1].RouteIDs)
