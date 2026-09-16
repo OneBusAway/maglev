@@ -1,8 +1,6 @@
 package restapi
 
 import (
-	"io"
-	"log/slog"
 	"net/http"
 	"testing"
 
@@ -34,7 +32,6 @@ func apiWithClosedDB(t *testing.T) *RestAPI {
 		Clock:       clock.RealClock{},
 	}
 	api := NewRestAPI(application)
-	api.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	return api
 }
 

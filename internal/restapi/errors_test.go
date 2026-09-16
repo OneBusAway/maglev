@@ -3,10 +3,8 @@ package restapi
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -17,10 +15,8 @@ import (
 
 func TestServerErrorResponse(t *testing.T) {
 	// Create a mock Application with Clock
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	application := &app.Application{
-		Clock:  clock.RealClock{},
-		Logger: logger,
+		Clock: clock.RealClock{},
 	}
 
 	api := &RestAPI{Application: application}
