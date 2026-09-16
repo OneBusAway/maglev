@@ -281,14 +281,17 @@ func (api *RestAPI) nearbyStopsForLocation(
 		return nil, err
 	}
 
-	servesRouteType, err := api.stopsServingRouteTypes(ctx, bareIDs, params.RouteTypes)
+	// Java drops nearby stops served only by routes not running on the query
+	// date (e.g. a seasonal shuttle outside its season). The active-date
+	// result is kept per route so the route-type filter below can require
+	// the same route to satisfy both conditions.
+	activeRoutesByStop, err := api.nearbyStopsActiveOnDate(ctx, bareIDs, agencies, params.QueryTime)
 	if err != nil {
 		return nil, err
 	}
+	activeOnDate := activeStopsFromRoutes(activeRoutesByStop)
 
-	// Java drops nearby stops served only by routes not running on the query
-	// date (e.g. a seasonal shuttle outside its season).
-	activeOnDate, err := api.nearbyStopsActiveOnDate(ctx, bareIDs, agencies, params.QueryTime)
+	servesRouteType, err := api.stopsServingRouteTypes(ctx, bareIDs, params.RouteTypes, activeRoutesByStop)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +322,9 @@ func nearbyCandidateIDs(ctx context.Context, candidates, stops []gtfsdb.Stop) (m
 
 // combinedIDsForNearbyStops resolves every candidate to its combined agency
 // ID in one batch query, falling back per stop to the matched-stop agency
-// index.
+// index. It also records each candidate's agency and timezone in the shared
+// index so the active-date filter can group stops by their own agency
+// timezone instead of the matched stops' fallback.
 func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []string, agencies *stopAgencyIndex) (map[string]string, error) {
 	combinedByBare := make(map[string]string, len(bareIDs))
 	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, bareIDs)
@@ -329,6 +334,12 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 	for _, row := range agencyRows {
 		if _, exists := combinedByBare[row.StopID]; !exists {
 			combinedByBare[row.StopID] = utils.FormCombinedID(row.ID, row.StopID)
+		}
+		if _, exists := agencies.byStopID[row.StopID]; !exists {
+			agencies.byStopID[row.StopID] = row.ID
+		}
+		if _, exists := agencies.locations[row.ID]; !exists {
+			agencies.locations[row.ID] = api.agencyLocationOrUTC(row.ID, row.Timezone)
 		}
 	}
 	for _, bareID := range bareIDs {
@@ -388,41 +399,79 @@ func expandLocationForNearby(loc *internalgtfs.LocationParams) *internalgtfs.Loc
 	return &expanded
 }
 
-// nearbyStopsActiveOnDate reports which of the given stops are served by at
-// least one route running on the query date's service day in the fallback
-// agency's timezone.
-func (api *RestAPI) nearbyStopsActiveOnDate(ctx context.Context, stopIDs []string, agencies *stopAgencyIndex, queryTime time.Time) (map[string]bool, error) {
-	active := make(map[string]bool, len(stopIDs))
+// nearbyStopsActiveOnDate reports which routes serve each stop on the query
+// date's service day in that stop's own agency timezone. Stops sharing a
+// timezone are queried together so one request still costs one service-date
+// lookup per timezone rather than one per stop.
+func (api *RestAPI) nearbyStopsActiveOnDate(ctx context.Context, stopIDs []string, agencies *stopAgencyIndex, queryTime time.Time) (map[string]map[string]bool, error) {
+	active := make(map[string]map[string]bool, len(stopIDs))
 	if len(stopIDs) == 0 {
 		return active, nil
 	}
 
-	dateStr := queryTime.In(agencies.fallbackLocation).Format("20060102")
-	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
-	if err != nil {
-		return nil, err
-	}
-	if len(serviceIDs) == 0 {
-		return active, nil
+	groups := make(map[*time.Location][]string)
+	for _, stopID := range stopIDs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		loc := agencies.locationFor(stopID)
+		groups[loc] = append(groups[loc], stopID)
 	}
 
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
-		StopIds:    stopIDs,
-		ServiceIds: serviceIDs,
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		active[row.StopID] = true
+	for loc, ids := range groups {
+		dateStr := queryTime.In(loc).Format("20060102")
+		serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
+		if err != nil {
+			return nil, err
+		}
+		if len(serviceIDs) == 0 {
+			continue
+		}
+
+		rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
+			StopIds:    ids,
+			ServiceIds: serviceIDs,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			routeID, ok := row.RouteID.(string)
+			if !ok {
+				continue
+			}
+			if _, _, err := utils.ExtractAgencyIDAndCodeID(routeID); err != nil {
+				continue
+			}
+			routes, ok := active[row.StopID]
+			if !ok {
+				routes = make(map[string]bool)
+				active[row.StopID] = routes
+			}
+			routes[routeID] = true
+		}
 	}
 	return active, nil
 }
 
+// activeStopsFromRoutes reduces per-route activity to the per-stop boolean
+// buildNearbyResults expects.
+func activeStopsFromRoutes(activeRoutesByStop map[string]map[string]bool) map[string]bool {
+	active := make(map[string]bool, len(activeRoutesByStop))
+	for stopID := range activeRoutesByStop {
+		active[stopID] = true
+	}
+	return active
+}
+
 // stopsServingRouteTypes reports which of the given stops are served by at
-// least one route of an allowed type. It returns nil when no filter is active,
-// which callers read as "keep everything" rather than "keep nothing".
-func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string, routeTypes []int) (map[string]bool, error) {
+// least one active route of an allowed type. The active set holds the
+// agency-prefixed route IDs running on the query date, so a stop served by
+// one route of the right type and another route on the right date is not
+// kept unless a single route satisfies both. It returns nil when no filter
+// is active, which callers read as "keep everything" rather than
+// "keep nothing".
+func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string, routeTypes []int, activeRoutesByStop map[string]map[string]bool) (map[string]bool, error) {
 	if len(routeTypes) == 0 {
 		return nil, nil
 	}
@@ -434,9 +483,13 @@ func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string
 
 	matching := make(map[string]bool, len(stopIDs))
 	for _, row := range rows {
-		if isRouteTypeAllowed(row.Type, routeTypes) {
-			matching[row.StopID] = true
+		if !isRouteTypeAllowed(row.Type, routeTypes) {
+			continue
 		}
+		if !activeRoutesByStop[row.StopID][utils.FormCombinedID(row.AgencyID, row.ID)] {
+			continue
+		}
+		matching[row.StopID] = true
 	}
 	return matching, nil
 }
