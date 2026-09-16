@@ -362,25 +362,26 @@ func TestArrivalAndDepartureForStopHandlerWithWrongStopSequence(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, trips)
 
-	var validTripID, validStopID string
-	var stopSequence int64
+	var validTripID string
 	for _, trip := range trips {
 		stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(t.Context(), trip.ID)
 		if err == nil && len(stopTimes) >= 2 {
 			validTripID = trip.ID
-			validStopID = stopTimes[1].StopID
-			stopSequence = stopTimes[1].StopSequence
 			break
 		}
 	}
 	require.NotEmpty(t, validTripID, "No valid trip with multiple stops found in test data")
 
-	combinedStopID := utils.FormCombinedID(agency.ID, validStopID)
 	combinedTripID := utils.FormCombinedID(agency.ID, validTripID)
 	serviceDate := time.Now()
-	wrongSequence := stopSequence + 100
 
-	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d", combinedStopID, combinedTripID, serviceDate.UnixMilli(), wrongSequence)
+	// A stopID that genuinely does not appear anywhere on this trip must
+	// still 404 regardless of what position is requested -- unlike an
+	// offset from a real stop's position, which the expand-outward search
+	// can legitimately resolve given enough drift.
+	combinedStopID := utils.FormCombinedID(agency.ID, "definitely-not-on-this-trip")
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=0", combinedStopID, combinedTripID, serviceDate.UnixMilli())
 	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -962,15 +963,15 @@ func TestArrivalAndDepartureForStopHandler_LoopRouteStopSequence(t *testing.T) {
 		serviceDateMs,
 	)
 
-	resp1, model1 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=2")
+	resp1, model1 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=0")
 	require.Equal(t, http.StatusOK, resp1.StatusCode)
 	require.Equal(t, http.StatusOK, model1.Code)
 	assert.Equal(t, 1, model1.Data.Entry.StopSequence, "expected zero-based index for stop_sequence=2")
 
-	resp2, model2 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=15")
+	resp2, model2 := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=1")
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
 	require.Equal(t, http.StatusOK, model2.Code)
-	assert.Equal(t, 14, model2.Data.Entry.StopSequence, "expected zero-based index for stop_sequence=15")
+	assert.Equal(t, 14, model2.Data.Entry.StopSequence, "expected zero-based index for stop_sequence=1")
 }
 
 func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
