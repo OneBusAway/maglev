@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -13,6 +14,7 @@ import (
 
 // vehiclesForAgencyHandler returns real-time vehicle positions for all vehicles operated by a given agency.
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
 		return
@@ -98,6 +100,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Maps to build references
 	routeRefs := make(map[string]models.Route)
 	tripRefs := make(map[string]models.Trip)
+	situations := newSituationCollector()
 
 	for _, vehicle := range vehiclesForAgency {
 		if ctx.Err() != nil {
@@ -106,7 +109,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		if vehicle.ID == nil {
-			api.Logger.Warn("skipping vehicle with nil ID descriptor", "agencyID", id)
+			reqLogger.Warn("skipping vehicle with nil ID descriptor", "agencyID", id)
 			continue
 		}
 		vid := vehicle.ID.ID
@@ -200,9 +203,14 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				addRouteReference(routeRefs, route)
 			}
 
+			// An interlined vehicle executes a trip that can belong to another
+			// route, and that route is only known once the trip below resolves.
+			activeRouteID := vehicle.Trip.ID.RouteID
+
 			// For interlining, also add the active trip and its route to references.
 			if activeTripID != vehicle.Trip.ID.ID {
 				if activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID); err == nil {
+					activeRouteID = activeTrip.RouteID
 					tripRefs[activeTripID] = models.Trip{
 						ID:      utils.FormCombinedID(id, activeTripID),
 						RouteID: utils.FormCombinedID(id, activeTrip.RouteID),
@@ -211,6 +219,8 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					if !ok {
 						if fetched, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID); err == nil {
 							activeRoute, ok = fetched, true
+							// Cache it so the situation lookup below stays free of queries.
+							routeByID[activeTrip.RouteID] = fetched
 						}
 					}
 					if ok {
@@ -218,6 +228,12 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 					}
 				}
 			}
+
+			tripStatus.SituationIDs = situations.addRefs(api.vehicleSituationRefs(ctx,
+				tripRouteRef{tripID: activeTripID, routeID: activeRouteID},
+				tripRouteRef{tripID: vehicle.Trip.ID.ID, routeID: vehicle.Trip.ID.RouteID},
+				routeByID,
+			))
 		} else {
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
@@ -245,12 +261,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 		references.Routes = routeRefList
 		references.Trips = tripRefList
-
-		alerts := deduplicateAlerts(
-			api.collectAlertsForRoutes(routeIDs),
-			api.GtfsManager.GetAlertsByIDs("", "", id),
-		)
-		references.Situations = append(references.Situations, api.BuildSituationReferences(alerts)...)
+		references.Situations = api.situationReferences(ctx, situations.refs)
 	}
 
 	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
 )
@@ -39,13 +40,14 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
 
-	for _, v := range m.realTimeVehicles {
+	merged := m.mergedRealtime().clone()
+	for _, v := range merged.vehicles {
 		if v.ID != nil && v.ID.ID == vehicleID {
 			return
 		}
 	}
 	now := time.Now()
-	m.realTimeVehicles = append(m.realTimeVehicles, gtfs.Vehicle{
+	merged.vehicles = append(merged.vehicles, gtfs.Vehicle{
 		ID:        &gtfs.VehicleID{ID: vehicleID},
 		Timestamp: &now,
 		Trip: &gtfs.Trip{
@@ -56,11 +58,12 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 		},
 	})
 
-	idx := len(m.realTimeVehicles) - 1
-	m.realTimeVehicleLookupByVehicle[vehicleID] = idx
+	idx := len(merged.vehicles) - 1
+	merged.vehicleLookupByVehicle[vehicleID] = idx
 	if tripID != "" {
-		m.realTimeVehicleLookupByTrip[tripID] = idx
+		merged.vehicleLookupByTrip[tripID] = idx
 	}
+	m.merged.Store(merged)
 }
 
 type MockVehicleOptions struct {
@@ -80,7 +83,7 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
 
-	for _, v := range m.realTimeVehicles {
+	for _, v := range m.mergedRealtime().vehicles {
 		if v.ID != nil && v.ID.ID == vehicleID {
 			return
 		}
@@ -121,15 +124,17 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 		CurrentStatus:       opts.CurrentStatus,
 		OccupancyStatus:     opts.OccupancyStatus,
 	}
-	m.realTimeVehicles = append(m.realTimeVehicles, v)
+	merged := m.mergedRealtime().clone()
+	merged.vehicles = append(merged.vehicles, v)
 
-	idx := len(m.realTimeVehicles) - 1
+	idx := len(merged.vehicles) - 1
 	if vehicleID != "" && !opts.NoID {
-		m.realTimeVehicleLookupByVehicle[vehicleID] = idx
+		merged.vehicleLookupByVehicle[vehicleID] = idx
 	}
 	if tripID != "" && !opts.NoTrip {
-		m.realTimeVehicleLookupByTrip[tripID] = idx
+		merged.vehicleLookupByTrip[tripID] = idx
 	}
+	m.merged.Store(merged)
 }
 
 func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
@@ -141,6 +146,48 @@ func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
 	})
 }
 
+// MockAddDuplicatedVehicle adds a real-time vehicle carrying a DUPLICATED trip
+// descriptor for the given route, filing it into both the merged vehicle list
+// and the per-route duplicated-vehicle index (mirroring
+// rebuildMergedRealtimeLocked) so GetDuplicatedVehiclesForRoute picks it up.
+func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, opts MockVehicleOptions) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	merged := m.mergedRealtime().clone()
+	for _, v := range merged.vehicles {
+		if v.ID != nil && v.ID.ID == vehicleID {
+			return
+		}
+	}
+	now := time.Now()
+	if opts.Timestamp != nil {
+		now = *opts.Timestamp
+	}
+
+	v := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{
+				ID:                   tripID,
+				RouteID:              routeID,
+				ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+			},
+		},
+	}
+	merged.vehicles = append(merged.vehicles, v)
+	idx := len(merged.vehicles) - 1
+	if vehicleID != "" {
+		merged.vehicleLookupByVehicle[vehicleID] = idx
+	}
+	if tripID != "" {
+		merged.vehicleLookupByTrip[tripID] = idx
+	}
+	merged.duplicatedVehicleByRoute[routeID] = append(merged.duplicatedVehicleByRoute[routeID], v)
+	m.merged.Store(merged)
+}
+
 func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTimeUpdates []gtfs.StopTimeUpdate) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
@@ -150,11 +197,10 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 		Delay:           delay,
 		StopTimeUpdates: stopTimeUpdates,
 	}
-	m.realTimeTrips = append(m.realTimeTrips, trip)
-	if m.realTimeTripLookup == nil {
-		m.realTimeTripLookup = make(map[string]int)
-	}
-	m.realTimeTripLookup[tripID] = len(m.realTimeTrips) - 1
+	merged := m.mergedRealtime().clone()
+	merged.trips = append(merged.trips, trip)
+	merged.tripLookup[tripID] = len(merged.trips) - 1
+	m.merged.Store(merged)
 }
 
 func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
@@ -173,23 +219,18 @@ func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
 
-	m.realTimeVehicles = nil
-	m.realTimeVehicleLookupByVehicle = make(map[string]int)
-	m.realTimeVehicleLookupByTrip = make(map[string]int)
-	m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
-	m.realTimeTrips = nil
-	m.realTimeTripLookup = make(map[string]int)
 	m.feedAlerts = make(map[string][]gtfs.Alert)
+	// rebuild republishes an empty snapshot from the (empty) feed maps, which
+	// also clears anything the Mock* helpers injected directly.
 	m.rebuildMergedRealtimeLocked()
 }
 
-// MockAddDuplicatedVehicle adds a vehicle directly to the duplicatedVehicleByRoute map for testing.
-func (m *Manager) MockAddDuplicatedVehicle(routeID string, vehicle gtfs.Vehicle) {
+// MockAddDuplicatedVehicleDirect adds a vehicle directly to the duplicatedVehicleByRoute map for testing.
+func (m *Manager) MockAddDuplicatedVehicleDirect(routeID string, vehicle gtfs.Vehicle) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
 
-	if m.duplicatedVehicleByRoute == nil {
-		m.duplicatedVehicleByRoute = make(map[string][]gtfs.Vehicle)
-	}
-	m.duplicatedVehicleByRoute[routeID] = append(m.duplicatedVehicleByRoute[routeID], vehicle)
+	merged := m.mergedRealtime().clone()
+	merged.duplicatedVehicleByRoute[routeID] = append(merged.duplicatedVehicleByRoute[routeID], vehicle)
+	m.merged.Store(merged)
 }

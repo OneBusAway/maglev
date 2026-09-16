@@ -71,14 +71,14 @@ func TestMultiFeedDataMerging(t *testing.T) {
 		if v.ID == nil || v.ID.ID == "" {
 			continue
 		}
-		_, found := manager.realTimeVehicleLookupByVehicle[v.ID.ID]
+		_, found := manager.mergedRealtime().vehicleLookupByVehicle[v.ID.ID]
 		assert.True(t, found, "feed-A vehicle %q should be in the merged lookup", v.ID.ID)
 	}
 	for _, v := range feedBVehicles {
 		if v.ID == nil || v.ID.ID == "" {
 			continue
 		}
-		_, found := manager.realTimeVehicleLookupByVehicle[v.ID.ID]
+		_, found := manager.mergedRealtime().vehicleLookupByVehicle[v.ID.ID]
 		assert.True(t, found, "feed-B vehicle %q should be in the merged lookup", v.ID.ID)
 	}
 }

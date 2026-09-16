@@ -9,7 +9,7 @@ func (api *RestAPI) validateProtectedAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.URL.Query().Get("key")
 		if !isProtectedAPIKey(key, api.Config.ProtectedApiKeys) {
-			api.invalidAPIKeyResponse(w)
+			api.invalidAPIKeyResponse(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)

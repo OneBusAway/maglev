@@ -29,9 +29,11 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// route.AgencyID was just read from the database, so a failure here is a
+	// server-side problem rather than a client asking for something absent.
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 
