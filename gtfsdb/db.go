@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.blockHasTripForAgencyStmt, err = db.PrepareContext(ctx, blockHasTripForAgency); err != nil {
+		return nil, fmt.Errorf("error preparing query BlockHasTripForAgency: %w", err)
+	}
 	if q.buildStopAgenciesStmt, err = db.PrepareContext(ctx, buildStopAgencies); err != nil {
 		return nil, fmt.Errorf("error preparing query BuildStopAgencies: %w", err)
 	}
@@ -402,6 +405,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.routeHasFutureServiceStmt, err = db.PrepareContext(ctx, routeHasFutureService); err != nil {
 		return nil, fmt.Errorf("error preparing query RouteHasFutureService: %w", err)
 	}
+	if q.shapeHasTripForAgencyStmt, err = db.PrepareContext(ctx, shapeHasTripForAgency); err != nil {
+		return nil, fmt.Errorf("error preparing query ShapeHasTripForAgency: %w", err)
+	}
 	if q.updateFeedExpiresAtStmt, err = db.PrepareContext(ctx, updateFeedExpiresAt); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateFeedExpiresAt: %w", err)
 	}
@@ -419,6 +425,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.blockHasTripForAgencyStmt != nil {
+		if cerr := q.blockHasTripForAgencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing blockHasTripForAgencyStmt: %w", cerr)
+		}
+	}
 	if q.buildStopAgenciesStmt != nil {
 		if cerr := q.buildStopAgenciesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing buildStopAgenciesStmt: %w", cerr)
@@ -1049,6 +1060,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing routeHasFutureServiceStmt: %w", cerr)
 		}
 	}
+	if q.shapeHasTripForAgencyStmt != nil {
+		if cerr := q.shapeHasTripForAgencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing shapeHasTripForAgencyStmt: %w", cerr)
+		}
+	}
 	if q.updateFeedExpiresAtStmt != nil {
 		if cerr := q.updateFeedExpiresAtStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateFeedExpiresAtStmt: %w", cerr)
@@ -1108,6 +1124,7 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                            DBTX
 	tx                                            *sql.Tx
+	blockHasTripForAgencyStmt                     *sql.Stmt
 	buildStopAgenciesStmt                         *sql.Stmt
 	bulkUpdateTripTimeBoundsStmt                  *sql.Stmt
 	clearAgenciesStmt                             *sql.Stmt
@@ -1234,6 +1251,7 @@ type Queries struct {
 	listTripsStmt                                 *sql.Stmt
 	listTripsWithLimitStmt                        *sql.Stmt
 	routeHasFutureServiceStmt                     *sql.Stmt
+	shapeHasTripForAgencyStmt                     *sql.Stmt
 	updateFeedExpiresAtStmt                       *sql.Stmt
 	updateImportTimeStmt                          *sql.Stmt
 	updateStopDirectionStmt                       *sql.Stmt
@@ -1244,6 +1262,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                                            tx,
 		tx:                                            tx,
+		blockHasTripForAgencyStmt:                     q.blockHasTripForAgencyStmt,
 		buildStopAgenciesStmt:                         q.buildStopAgenciesStmt,
 		bulkUpdateTripTimeBoundsStmt:                  q.bulkUpdateTripTimeBoundsStmt,
 		clearAgenciesStmt:                             q.clearAgenciesStmt,
@@ -1370,6 +1389,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listTripsStmt:                                 q.listTripsStmt,
 		listTripsWithLimitStmt:                        q.listTripsWithLimitStmt,
 		routeHasFutureServiceStmt:                     q.routeHasFutureServiceStmt,
+		shapeHasTripForAgencyStmt:                     q.shapeHasTripForAgencyStmt,
 		updateFeedExpiresAtStmt:                       q.updateFeedExpiresAtStmt,
 		updateImportTimeStmt:                          q.updateImportTimeStmt,
 		updateStopDirectionStmt:                       q.updateStopDirectionStmt,
