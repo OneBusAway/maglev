@@ -193,11 +193,25 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	// References must cover only the retained entry results, not the stops and
 	// arrivals maxCount trimmed away.
 	retainedTrips := make(map[string]bool, len(entry.ArrivalsAndDepartures))
+	retainedRoutes := make(map[string]bool, len(entry.ArrivalsAndDepartures))
 	for _, a := range entry.ArrivalsAndDepartures {
 		retainedTrips[a.TripID] = true
+		retainedRoutes[a.RouteID] = true
 	}
+	referencedTrips := make(map[string]bool, len(limited.Data.References.Trips))
 	for _, tr := range limited.Data.References.Trips {
 		assert.True(t, retainedTrips[tr.ID], "references.trips %s is not in the retained arrivals", tr.ID)
+		referencedTrips[tr.ID] = true
+	}
+	for tripID := range retainedTrips {
+		assert.True(t, referencedTrips[tripID], "retained arrival trip %s must resolve in references.trips", tripID)
+	}
+	referencedRoutes := make(map[string]bool, len(limited.Data.References.Routes))
+	for _, r := range limited.Data.References.Routes {
+		referencedRoutes[r.ID] = true
+	}
+	for routeID := range retainedRoutes {
+		assert.True(t, referencedRoutes[routeID], "retained arrival route %s must resolve in references.routes", routeID)
 	}
 	retainedStops := make(map[string]bool, len(entry.StopIDs)+len(entry.NearbyStopIDs))
 	for _, id := range entry.StopIDs {
@@ -206,8 +220,13 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	for _, n := range entry.NearbyStopIDs {
 		retainedStops[n.StopID] = true
 	}
+	referencedStops := make(map[string]bool, len(limited.Data.References.Stops))
 	for _, s := range limited.Data.References.Stops {
 		assert.True(t, retainedStops[s.ID], "references.stops %s is not in the retained entry", s.ID)
+		referencedStops[s.ID] = true
+	}
+	for stopID := range retainedStops {
+		assert.True(t, referencedStops[stopID], "retained stop %s must resolve in references.stops", stopID)
 	}
 }
 
