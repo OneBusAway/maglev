@@ -338,8 +338,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	stopIDsMap := make(map[string]string)
-
 	// Batch-fetch frequencies; success seeds nil to skip fallback queries.
 	// Post-batch trips (interlined, DUPLICATED) fall back per-trip.
 	freqMap := make(map[string][]gtfsdb.Frequency)
@@ -429,8 +427,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				api.serverErrorResponse(w, r, schedErr)
 				return
 			}
-
-			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
 		var status *models.TripStatus
@@ -521,7 +517,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				api.serverErrorResponse(w, r, schedErr)
 				return
 			}
-			collectStopIDsFromSchedule(schedule, stopIDsMap)
 		}
 
 		var status *models.TripStatus
@@ -557,24 +552,25 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var references models.ReferencesModel
 	if includeReferences {
-		var stops []gtfsdb.Stop
-		if len(stopIDsMap) > 0 {
-			bareIDs := make([]string, 0, len(stopIDsMap))
-			for bareID := range stopIDsMap {
-				bareIDs = append(bareIDs, bareID)
-			}
-			var err error
-			stops, err = queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
-			if err != nil {
-				reqLogger.Warn("failed to fetch stops for references", "error", err, "count", len(bareIDs))
-				stops = []gtfsdb.Stop{}
-			}
+		tripSchedulesAndStatuses := make([]tripScheduleAndStatus, 0, len(result))
+
+		for _, trip := range result {
+			tripSchedulesAndStatuses = append(tripSchedulesAndStatuses, tripScheduleAndStatus{
+				schedule: trip.Schedule,
+				status:   trip.Status,
+			})
+		}
+		// stop ids map maps stopIDs to a slice of unique combined agency IDs.
+		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
+		if stopsErr != nil {
+			api.serverErrorResponse(w, r, stopsErr)
+			return
 		}
 
 		references = api.buildTripReferences(ctx, tripReferenceParams{
 			IncludeTrip:     includeTrip,
 			Trips:           result,
-			Stops:           stops,
+			Stops:           stopsReferenced,
 			PreFetchedTrips: fetchedTrips,
 			StopIDMap:       stopIDsMap,
 			Situations:      situations.refs,
@@ -771,16 +767,14 @@ func tripServiceDayMidnight(currentTime time.Time, trip *gtfsdb.Trip, agencyLoca
 	return time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, agencyLocation)
 }
 
-func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string]string) {
+func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string][]string) {
 	if schedule == nil {
 		return
 	}
 	for _, stopTime := range schedule.StopTimes {
 		_, bareID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 		if err == nil {
-			if _, exists := stopIDsMap[bareID]; !exists {
-				stopIDsMap[bareID] = stopTime.StopID
-			}
+			appendUniqueStopID(stopIDsMap, bareID, stopTime.StopID)
 		}
 	}
 }
@@ -814,7 +808,7 @@ type tripReferenceParams struct {
 	Trips           []models.TripsForRouteListEntry
 	Stops           []gtfsdb.Stop
 	PreFetchedTrips []gtfsdb.Trip
-	StopIDMap       map[string]string
+	StopIDMap       map[string][]string
 	Situations      []situationRef
 }
 
@@ -1008,10 +1002,12 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
 func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
-	tripsRefList := make([]models.Trip, 0, len(s.trips))
+	var tripsRefList []models.Trip
 	if !includeTrip {
 		return tripsRefList
 	}
+
+	tripsRefList = make([]models.Trip, 0, len(s.trips))
 
 	for _, trip := range s.trips {
 		// A route that was noted but never resolved is still in the map as a
