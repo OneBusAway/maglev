@@ -1083,4 +1083,23 @@ func TestScheduleForStopHandlerWithFrequency(t *testing.T) {
 		assert.Equal(t, float64(startOfDay.Add(8*time.Hour+15*time.Minute).UnixMilli()), stopTimesByTrip[normalTripID][0]["departureTime"])
 		assert.Empty(t, frequenciesByTrip[normalTripID], "plain trips have no schedule frequencies")
 	})
+
+	t.Run("stop times are sorted by departure time within the direction", func(t *testing.T) {
+		rawStopTimes, ok := dirSchedule["scheduleStopTimes"].([]any)
+		require.True(t, ok, "scheduleStopTimes should be an array")
+		require.Len(t, rawStopTimes, 7, "six expanded exact_times runs plus one plain trip")
+
+		// The expanded exact_times runs (06:15-08:45 at stop B) interleave with
+		// the plain trip's 08:15 departure, so response order only holds when
+		// each direction group is sorted by departure time. The two trips tied
+		// at 08:15 assert no relative order, only chronological sequence.
+		for i, stAny := range rawStopTimes {
+			if i == 0 {
+				continue
+			}
+			prev := rawStopTimes[i-1].(map[string]any)
+			curr := stAny.(map[string]any)
+			assert.LessOrEqual(t, prev["departureTime"], curr["departureTime"], "departure times must be non-decreasing")
+		}
+	})
 }

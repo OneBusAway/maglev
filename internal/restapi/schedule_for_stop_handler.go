@@ -223,6 +223,10 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			stopTimes := directionMap[dirID]
 			if stopTimes == nil {
 				stopTimes = []models.ScheduleStopTime{}
+			} else {
+				slices.SortStableFunc(stopTimes, func(a, b models.ScheduleStopTime) int {
+					return cmp.Compare(a.DepartureTime, b.DepartureTime)
+				})
 			}
 			directionSchedule := models.NewStopRouteDirectionSchedule(tripHeadsign, stopTimes, frequencies)
 			directionSchedules = append(directionSchedules, directionSchedule)
