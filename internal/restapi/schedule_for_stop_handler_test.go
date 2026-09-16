@@ -867,6 +867,95 @@ func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
 	})
 }
 
+// TestScheduleForStopHandlerSpecShape covers the response guarantees that the other tests
+// in this file assert only indirectly: the envelope's shape, which reference lists the
+// endpoint populates, the field shape of a stop time, and departure-time ordering within a
+// direction group.
+func TestScheduleForStopHandlerSpecShape(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agencyID := mustGetAgencies(t, api)[0].ID
+	stopID := utils.FormCombinedID(agencyID, mustGetStop(t, api).ID)
+
+	// NOTE: Hardcoded date matches GTFS data validity
+	endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=org.onebusaway.iphone&date=2025-06-12"
+	resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data, ok := model.Data.(map[string]any)
+	require.True(t, ok)
+	entry, ok := data["entry"].(map[string]any)
+	require.True(t, ok)
+	references, ok := data["references"].(map[string]any)
+	require.True(t, ok)
+
+	t.Run("envelope carries the documented fields", func(t *testing.T) {
+		assert.Equal(t, http.StatusOK, model.Code)
+		assert.Equal(t, "OK", model.Text)
+		assert.Equal(t, 2, model.Version)
+		assert.NotZero(t, model.CurrentTime)
+	})
+
+	t.Run("every reference list is present", func(t *testing.T) {
+		for _, list := range []string{"agencies", "routes", "stops", "trips", "situations", "stopTimes"} {
+			_, ok := references[list].([]any)
+			assert.True(t, ok, "references.%s should be an array", list)
+		}
+
+		// Stop times carry trip IDs, but the endpoint does not resolve them into records.
+		assert.Empty(t, references["trips"], "trips are referenced by ID only")
+		assert.Empty(t, references["stopTimes"])
+		assert.Empty(t, references["situations"])
+	})
+
+	t.Run("every route in the entry has a reference record", func(t *testing.T) {
+		referencedRouteIDs := make(map[string]bool)
+		for _, routeRef := range references["routes"].([]any) {
+			referencedRouteIDs[routeRef.(map[string]any)["id"].(string)] = true
+		}
+
+		routeSchedules, ok := entry["stopRouteSchedules"].([]any)
+		require.True(t, ok)
+		require.NotEmpty(t, routeSchedules, "the queried stop should have service on this date")
+
+		for _, routeSchedule := range routeSchedules {
+			routeID := routeSchedule.(map[string]any)["routeId"].(string)
+			assert.True(t, referencedRouteIDs[routeID], "route %s appears in the entry but not in references", routeID)
+		}
+	})
+
+	t.Run("stop times are sorted by departure time and carry combined IDs", func(t *testing.T) {
+		assertedAnyStopTime := false
+
+		for _, routeSchedule := range entry["stopRouteSchedules"].([]any) {
+			for _, directionSchedule := range routeSchedule.(map[string]any)["stopRouteDirectionSchedules"].([]any) {
+				stopTimes, ok := directionSchedule.(map[string]any)["scheduleStopTimes"].([]any)
+				require.True(t, ok)
+
+				for i, stopTimeAny := range stopTimes {
+					stopTime := stopTimeAny.(map[string]any)
+					assertedAnyStopTime = true
+
+					assert.Regexp(t, "^"+agencyID+"_", stopTime["tripId"], "tripId should be a combined ID")
+					assert.Regexp(t, "^"+agencyID+"_", stopTime["serviceId"], "serviceId should be a combined ID")
+					assert.Contains(t, stopTime, "stopHeadsign")
+					assert.IsType(t, float64(0), stopTime["arrivalTime"])
+					assert.IsType(t, float64(0), stopTime["departureTime"])
+
+					if i > 0 {
+						previous := stopTimes[i-1].(map[string]any)
+						assert.LessOrEqual(t, previous["departureTime"], stopTime["departureTime"],
+							"stop times must be sorted by departure time")
+					}
+				}
+			}
+		}
+
+		assert.True(t, assertedAnyStopTime, "expected at least one stop time to assert against")
+	})
+}
+
 func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 	startOfDay := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
 	agencyID := "1"
