@@ -613,7 +613,7 @@ func (manager *Manager) VehiclesForAgencyID(ctx context.Context, agencyID string
 		routeIDs[route.ID] = true
 	}
 
-	// Step 2: Acquire real-time snapshot independently to read vehicles.
+	// Read vehicles for those routes from the current realtime snapshot.
 	merged := manager.mergedRealtime()
 
 	var vehicles []gtfs.Vehicle

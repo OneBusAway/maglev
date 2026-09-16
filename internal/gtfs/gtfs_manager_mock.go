@@ -65,9 +65,6 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
 	if routeID != "" {
-		if merged.vehiclesByRoute == nil {
-			merged.vehiclesByRoute = make(map[string][]gtfs.Vehicle)
-		}
 		merged.vehiclesByRoute[routeID] = append(merged.vehiclesByRoute[routeID], v)
 	}
 
@@ -143,9 +140,6 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
 	if !opts.NoTrip && routeID != "" {
-		if merged.vehiclesByRoute == nil {
-			merged.vehiclesByRoute = make(map[string][]gtfs.Vehicle)
-		}
 		merged.vehiclesByRoute[routeID] = append(merged.vehiclesByRoute[routeID], v)
 	}
 
@@ -199,7 +193,10 @@ func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, op
 	if tripID != "" {
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
-	merged.duplicatedVehicleByRoute[routeID] = append(merged.duplicatedVehicleByRoute[routeID], v)
+	if routeID != "" {
+		merged.duplicatedVehicleByRoute[routeID] = append(merged.duplicatedVehicleByRoute[routeID], v)
+		merged.vehiclesByRoute[routeID] = append(merged.vehiclesByRoute[routeID], v)
+	}
 	m.merged.Store(merged)
 }
 
