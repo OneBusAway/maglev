@@ -62,6 +62,7 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 			nulls.StringOrEmpty(routeRow.TextColor)))
 	}
 
+	// This response has no situationIds, so situation references remain empty.
 	references := models.NewEmptyReferences()
 
 	if includeReferences {
@@ -73,16 +74,7 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
 		utils.SortAgencyReferencesByID(agencies)
 
-		// Populate situation references for alerts affecting the returned routes
-		resultRawRouteIDs := make([]string, 0, len(routes))
-		for _, routeRow := range routes {
-			resultRawRouteIDs = append(resultRawRouteIDs, routeRow.ID)
-		}
-		alerts := api.collectAlertsForRoutes(resultRawRouteIDs)
-		situations := api.BuildSituationReferences(alerts)
-
 		references.Agencies = agencies
-		references.Situations = situations
 	}
 
 	response := models.NewListResponseWithRange(results, *references, false, api.Clock, isLimitExceeded)

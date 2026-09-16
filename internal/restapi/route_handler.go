@@ -43,6 +43,7 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		route.Color.String,
 		route.TextColor.String)
 
+	// This response has no situationIds, so situation references remain empty.
 	references := models.NewEmptyReferences()
 
 	includeReferences := ShouldIncludeReferences(r)
@@ -60,11 +61,6 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		// Use the existing helper to map the database row to the model
 		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 	}
-
-	// Populate situation references for alerts affecting this route
-	alerts := api.GtfsManager.GetAlertsForRoute(routeID)
-	situations := api.BuildSituationReferences(alerts)
-	references.Situations = append(references.Situations, situations...)
 
 	response := models.NewEntryResponse(routeData, *references, api.Clock)
 	api.sendResponse(w, r, response)

@@ -412,42 +412,6 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 	}
 }
 
-// deduplicateAlerts takes multiple slices of alerts and returns a single slice with unique alerts by ID.
-func deduplicateAlerts(alertSlices ...[]gtfs.Alert) []gtfs.Alert {
-	seen := make(map[string]struct{})
-	var uniqueAlerts []gtfs.Alert
-
-	for _, slice := range alertSlices {
-		for _, alert := range slice {
-			if _, exists := seen[alert.ID]; !exists {
-				seen[alert.ID] = struct{}{}
-				uniqueAlerts = append(uniqueAlerts, alert)
-			}
-		}
-	}
-	return uniqueAlerts
-}
-
-// collectAlertsForStops returns deduplicated alerts matching any of the given stop IDs.
-// It acquires realTimeMutex internally via GetAlertsForStop; no external lock is required.
-func (api *RestAPI) collectAlertsForStops(stopIDs []string) []gtfs.Alert {
-	var alerts []gtfs.Alert
-	for _, stopID := range stopIDs {
-		alerts = append(alerts, api.GtfsManager.GetAlertsForStop(stopID)...)
-	}
-	return deduplicateAlerts(alerts)
-}
-
-// collectAlertsForRoutes returns deduplicated alerts matching any of the given route IDs.
-// It acquires realTimeMutex internally via GetAlertsForRoute; no external lock is required.
-func (api *RestAPI) collectAlertsForRoutes(routeIDs []string) []gtfs.Alert {
-	var alerts []gtfs.Alert
-	for _, routeID := range routeIDs {
-		alerts = append(alerts, api.GtfsManager.GetAlertsForRoute(routeID)...)
-	}
-	return deduplicateAlerts(alerts)
-}
-
 // ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
 // It defaults to true if the parameter is absent or if it fails to parse as a boolean.
 func ShouldIncludeReferences(r *http.Request) bool {
