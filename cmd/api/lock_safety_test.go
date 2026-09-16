@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"runtime"
@@ -48,17 +49,18 @@ func TestHandlerLockSafety(t *testing.T) {
 		ApiKeys:   []string{"TEST"},
 	}
 
-	application, err := BuildApplication(ctx, appConfig, gtfsConfig)
+	logger := slog.New(slog.DiscardHandler)
+	application, err := BuildApplication(ctx, appConfig, gtfsConfig, logger)
 	require.NoError(t, err)
 
-	srv, api := CreateServer(application, appConfig)
+	srv, api := CreateServer(application, appConfig, logger)
 
 	serverCtx, serverCancel := context.WithCancel(context.Background())
 	defer serverCancel()
 
 	serverErrChan := make(chan error, 1)
 	go func() {
-		serverErrChan <- Run(serverCtx, srv, application, api)
+		serverErrChan <- Run(serverCtx, srv, application, api, logger)
 	}()
 
 	// Wait for server to become ready

@@ -39,17 +39,21 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 			defer func() {
 				if rec := recover(); rec != nil {
 					stack := debug.Stack()
-					reqID, _ := r.Context().Value(RequestIDKey).(string)
 					var err error
 					if e, ok := rec.(error); ok {
 						err = e
 					} else {
 						err = fmt.Errorf("%v", rec)
 					}
-					logging.LogError(logger, "handler panic recovered", err,
+					// try to get the request logger from the context. If it doesn't exist, fall back
+					// to the configured logger.
+					reqLogger := logging.ForComponent(r.Context(), "http_server")
+					if reqLogger == nil {
+						reqLogger = logger
+					}
+					logging.LogError(reqLogger, "handler panic recovered", err,
 						slog.String("path", r.URL.Path),
 						slog.String("method", r.Method),
-						slog.String("request_id", reqID),
 						slog.String("stack", string(stack)))
 					if !rw.wroteHeader {
 						w.Header().Set("Content-Type", "application/json")
@@ -66,10 +70,10 @@ func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler
 							Version:     models.APIVersion,
 						}
 						if err := json.NewEncoder(w).Encode(response); err != nil {
-							logging.LogError(logger, "failed to encode panic recovery response", err,
+							logging.LogError(reqLogger, "failed to encode panic recovery response", err,
 								slog.String("path", r.URL.Path),
 								slog.String("method", r.Method),
-								slog.String("request_id", reqID))
+							)
 						}
 					}
 				}

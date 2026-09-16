@@ -72,7 +72,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		var statusErr error
 		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, freqMap)
 		if statusErr != nil {
-			reqLogger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
+			reqLogger.Warn("BuildTripStatus failed",
+				"tripID", tripID,
+				"error", statusErr)
 			status = nil
 		}
 	}

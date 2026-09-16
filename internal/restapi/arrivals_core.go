@@ -85,10 +85,10 @@ type activeStopTime struct {
 // per arrival row, and across a wide window or many stops the uncached compute
 // chain dominates the request.
 func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, acc *arrivalsAccumulator) (stopArrivalsResult, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
 	stopID := utils.FormCombinedID(in.AgencyID, in.StopCode)
 	result := stopArrivalsResult{Arrivals: make([]models.ArrivalAndDeparture, 0)}
 
-	reqLogger := logging.ForComponent(ctx, "http_server")
 	allActiveStopTimes, err := api.activeStopTimesForWindow(ctx, in)
 	if err != nil {
 		return result, err
@@ -322,8 +322,8 @@ func (api *RestAPI) tripStopCounts(ctx context.Context, tripIDs []string) map[st
 	if len(tripIDs) == 0 {
 		return counts
 	}
-
 	reqLogger := logging.ForComponent(ctx, "http_server")
+
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
 		reqLogger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
