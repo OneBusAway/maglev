@@ -42,17 +42,11 @@ func vehiclesForAgencyURL(agencyID string, params ...url.Values) string {
 // assert field presence, not just decoded zero values.
 func fetchRawData(t testing.TB, api *RestAPI, endpoint string) map[string]json.RawMessage {
 	t.Helper()
-	server := httptest.NewServer(api.SetupAPIRoutes())
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + endpoint)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var envelope struct {
+	type rawDataEnvelope struct {
 		Data map[string]json.RawMessage `json:"data"`
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+
+	_, envelope := callAPIHandler[rawDataEnvelope](t, api, endpoint)
 	return envelope.Data
 }
 
@@ -78,9 +72,40 @@ func TestVehiclesForAgencyHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, "OK", model.Text)
-	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
 	// Without injected real-time vehicles, the handler returns an empty list.
 	assert.Empty(t, model.Data.List)
+	assert.Empty(t, model.Data.References.Agencies, "an empty list references no agency")
+}
+
+func TestVehiclesForAgencyHandler_OutOfRangeOnNormalPath(t *testing.T) {
+	tests := []struct {
+		name         string
+		addVehicle   bool
+		wantAgencies int
+	}{
+		{name: "empty list", addVehicle: false, wantAgencies: 0},
+		{name: "with a vehicle", addVehicle: true, wantAgencies: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			if tt.addVehicle {
+				trip := mustGetTrip(t, api)
+				api.GtfsManager.MockAddVehicleWithOptions("v_out_of_range", trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+			}
+
+			data := fetchRawData(t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+			raw, ok := data["outOfRange"]
+			require.True(t, ok, "outOfRange key must be present in the response payload")
+			assert.JSONEq(t, "false", string(raw))
+
+			_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+			assert.Len(t, model.Data.References.Agencies, tt.wantAgencies)
+		})
+	}
 }
 
 func TestVehiclesForAgencyHandlerWithNonExistentAgency(t *testing.T) {
