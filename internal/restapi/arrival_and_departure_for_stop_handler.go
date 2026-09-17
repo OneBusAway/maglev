@@ -773,28 +773,36 @@ func findStopTimeForTripStop(stopTimes []gtfsdb.StopTime, stopCode string, reque
 	// whichever visit's arrival/departure is closest to the query time
 	// (matches Java's behavior , not just "first match").
 	if requestedIndex == nil {
-		found := false
-		var best gtfsdb.StopTime
-		var bestDelta int64
-
-		for _, st := range stopTimes {
-			if st.StopID != stopCode {
-				continue
-			}
-			a := absInt64(queryOffset - st.ArrivalTime)
-			b := absInt64(queryOffset - st.DepartureTime)
-			delta := min(a, b)
-			if !found || delta < bestDelta {
-				found = true
-				best = st
-				bestDelta = delta
-			}
-		}
-		return best, found
+		return findClosestStopTime(stopTimes, stopCode, queryOffset)
 	}
 
+	return findStopTimeByPosition(stopTimes, stopCode, *requestedIndex)
+}
+
+func findClosestStopTime(stopTimes []gtfsdb.StopTime, stopCode string, queryOffset int64) (gtfsdb.StopTime, bool) {
+	found := false
+	var best gtfsdb.StopTime
+	var bestDelta int64
+
+	for _, st := range stopTimes {
+		if st.StopID != stopCode {
+			continue
+		}
+		a := absInt64(queryOffset - st.ArrivalTime)
+		b := absInt64(queryOffset - st.DepartureTime)
+		delta := min(a, b)
+		if !found || delta < bestDelta {
+			found = true
+			best = st
+			bestDelta = delta
+		}
+	}
+	return best, found
+}
+
+func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex int) (gtfsdb.StopTime, bool) {
 	n := len(stopTimes)
-	idx := *requestedIndex
+	idx := requestedIndex
 
 	// Distance to the farther edge of the slice , past this, there's
 	// nothing left on either side to check.
