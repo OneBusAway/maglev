@@ -334,6 +334,53 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 	})
 }
 
+// laggingZoneInterlineFiles puts the route's agency in Los Angeles, a day behind the UTC agency running the active trip.
+func laggingZoneInterlineFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,America/Los_Angeles\n" +
+			tfrAgencyB + ",Other Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tfrAgencyB + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-la,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-utc,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-la,tfr-lz-a,Headsign A,0,tfr-lz-block\n" +
+			"tfr-route-otr,tfr-svc-utc,tfr-lz-b,Headsign B,0,tfr-lz-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-lz-a,17:05:00,17:05:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-lz-a,17:20:00,17:20:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-lz-b,00:25:00,00:25:00," + tripsForRouteStop2ID + ",1\n" +
+			"tfr-lz-b,00:45:00,00:45:00," + tripsForRouteStop1ID + ",2\n",
+	}
+}
+
+func TestTripsForRouteHandler_InterlinedAgencyAheadOfRouteAgency(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-lagging-zone.zip", laggingZoneInterlineFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+	entry := model.Data.List[0]
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-lz-a"), entry.TripId)
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, laLoc).UnixMilli(), entry.ServiceDate)
+	require.NotNil(t, entry.Status)
+	assert.Equal(t, utils.FormCombinedID(tfrAgencyB, "tfr-lz-b"), entry.Status.ActiveTripID)
+	assert.Equal(t, time.Date(2025, 6, 13, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+}
+
 func loopingRouteFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
