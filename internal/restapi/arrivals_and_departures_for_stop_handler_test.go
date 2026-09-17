@@ -842,6 +842,31 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
+func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	api.GtfsManager.MockResetRealTimeData()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(combinedStopID))
+
+	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
+	for _, entry := range model.Data.Entry.ArrivalsAndDepartures {
+		if entry.TripID != expectedTripID {
+			continue
+		}
+		assert.False(t, entry.Predicted)
+		assert.True(t, entry.PredictedArrivalTime.IsZero())
+		assert.True(t, entry.PredictedDepartureTime.IsZero())
+		assert.True(t, entry.LastUpdateTime.IsZero())
+		return
+	}
+	t.Fatalf("expected to find arrival for trip %s", expectedTripID)
+}
+
 // TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a vehicle
 // position without any TripUpdate does NOT mark the arrival as predicted.
 func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
