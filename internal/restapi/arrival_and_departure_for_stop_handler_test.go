@@ -597,8 +597,7 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 	combinedTripID := utils.FormCombinedID(agencyB, tripB_ID)
 	serviceDate := time.Now().UnixMilli()
 
-	endpoint :=
-		fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", combinedStopID, combinedTripID, serviceDate)
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", combinedStopID, combinedTripID, serviceDate)
 	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, http.StatusOK, model.Code)
@@ -1597,7 +1596,7 @@ func TestArrivalAndDepartureForStop_LoopTripPredictionMatchesRequestedSequence(t
 		time.Now().UnixMilli(),
 	)
 
-	resp, later := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=3")
+	resp, later := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=1") // position 1 = raw seq 3 , the later visit
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, http.StatusOK, later.Code)
 	require.True(t, later.Data.Entry.Predicted, "the seeded update must produce a prediction")
@@ -1606,7 +1605,7 @@ func TestArrivalAndDepartureForStop_LoopTripPredictionMatchesRequestedSequence(t
 		later.Data.Entry.PredictedArrivalTime.UnixMilli(),
 		"sequence 3 must be answered with its own delay, not sequence 1's")
 
-	_, earlier := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=1")
+	_, earlier := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=0") // position 0 , raw seq 1 , the first visit
 	require.Equal(t, http.StatusOK, earlier.Code)
 	assert.Equal(t,
 		earlier.Data.Entry.ScheduledArrivalTime.UnixMilli()+firstVisit.Milliseconds(),
