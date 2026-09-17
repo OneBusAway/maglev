@@ -125,6 +125,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		blocksFromIndices, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
 			FromTime:   sql.NullInt64{Int64: timeRangeStart.Nanoseconds(), Valid: true},
 			ToTime:     sql.NullInt64{Int64: timeRangeEnd.Nanoseconds(), Valid: true},
+			RouteID:    routeID,
 			IndexIds:   indexIDs,
 			ServiceIds: serviceIDs,
 		})
@@ -158,6 +159,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			prevBlocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
 				FromTime:   sql.NullInt64{Int64: prevFromTime.Nanoseconds(), Valid: true},
 				ToTime:     sql.NullInt64{Int64: prevToTime.Nanoseconds(), Valid: true},
+				RouteID:    routeID,
 				IndexIds:   prevIndexIDs,
 				ServiceIds: prevServiceIDs,
 			})
