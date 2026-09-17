@@ -817,14 +817,17 @@ func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, reques
 			continue
 		}
 		for _, candidate := range [2]int{idx - d, idx + d} {
-			if candidate < 0 || candidate >= n {
-				continue
-			}
-			if stopTimes[candidate].StopID == stopCode {
+			if stopTimeMatches(stopTimes, candidate, stopCode) {
 				return stopTimes[candidate], true
 			}
 		}
 	}
 
 	return gtfsdb.StopTime{}, false
+}
+
+func stopTimeMatches(stopTimes []gtfsdb.StopTime, index int, stopCode string) bool {
+	return index >= 0 &&
+		index < len(stopTimes) &&
+		stopTimes[index].StopID == stopCode
 }
