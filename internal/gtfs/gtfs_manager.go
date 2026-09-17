@@ -634,14 +634,12 @@ func (manager *Manager) VehiclesForAgencyID(ctx context.Context, agencyID string
 		routeIDs[route.ID] = true
 	}
 
-	// Step 2: Acquire real-time lock independently to read vehicles.
-	rtVehicles := manager.GetRealTimeVehicles()
+	// Read vehicles for those routes from the current realtime snapshot.
+	merged := manager.mergedRealtime()
 
 	var vehicles []gtfs.Vehicle
-	for _, v := range rtVehicles {
-		if v.Trip != nil && routeIDs[v.Trip.ID.RouteID] {
-			vehicles = append(vehicles, v)
-		}
+	for routeID := range routeIDs {
+		vehicles = append(vehicles, merged.vehiclesByRoute[routeID]...)
 	}
 
 	return vehicles, nil

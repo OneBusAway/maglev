@@ -142,6 +142,58 @@ func TestManager_GetVehicleByID(t *testing.T) {
 	assert.Nil(t, notFound)
 }
 
+func TestManager_RebuildMergedRealtime_VehiclesByRoute(t *testing.T) {
+	manager := &Manager{
+		feedVehicles: map[string][]gtfs.Vehicle{
+			"feed-1": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v1"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "route-a"}},
+				},
+				{
+					ID:   &gtfs.VehicleID{ID: "v-no-trip"},
+					Trip: nil,
+				},
+			},
+			"feed-2": {
+				{
+					ID:   &gtfs.VehicleID{ID: "v2"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "route-a"}},
+				},
+				{
+					ID:   &gtfs.VehicleID{ID: "v3"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "route-b"}},
+				},
+				{
+					ID:   &gtfs.VehicleID{ID: "v-empty-route"},
+					Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: ""}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	merged := manager.mergedRealtime()
+	require.Len(t, merged.vehiclesByRoute["route-a"], 2)
+	assert.ElementsMatch(t, []string{"v1", "v2"}, []string{
+		merged.vehiclesByRoute["route-a"][0].ID.ID,
+		merged.vehiclesByRoute["route-a"][1].ID.ID,
+	})
+
+	require.Len(t, merged.vehiclesByRoute["route-b"], 1)
+	assert.Equal(t, "v3", merged.vehiclesByRoute["route-b"][0].ID.ID)
+
+	// stale-feed clear: remove feed-1
+	delete(manager.feedVehicles, "feed-1")
+	manager.rebuildMergedRealtimeLocked()
+
+	merged = manager.mergedRealtime()
+	require.Len(t, merged.vehiclesByRoute["route-a"], 1)
+	assert.Equal(t, "v2", merged.vehiclesByRoute["route-a"][0].ID.ID)
+	require.Len(t, merged.vehiclesByRoute["route-b"], 1)
+	assert.Equal(t, "v3", merged.vehiclesByRoute["route-b"][0].ID.ID)
+}
+
 func TestGetVehicleForTrip_DirectTripIDLookup(t *testing.T) {
 	tripID := "trip-direct"
 	vehicleID := "v-direct"
