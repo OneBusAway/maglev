@@ -42,17 +42,11 @@ func vehiclesForAgencyURL(agencyID string, params ...url.Values) string {
 // assert field presence, not just decoded zero values.
 func fetchRawData(t testing.TB, api *RestAPI, endpoint string) map[string]json.RawMessage {
 	t.Helper()
-	server := httptest.NewServer(api.SetupAPIRoutes())
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + endpoint)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var envelope struct {
+	type rawDataEnvelope struct {
 		Data map[string]json.RawMessage `json:"data"`
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+
+	_, envelope := callAPIHandler[rawDataEnvelope](t, api, endpoint)
 	return envelope.Data
 }
 
