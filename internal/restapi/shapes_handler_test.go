@@ -24,7 +24,8 @@ type shapePoint struct {
 	sequence int64
 }
 
-// setupShapeTest creates a test agency and inserts shape points into the database.
+// setupShapeTest creates a test agency with a trip that uses the shape, and
+// inserts the shape points into the database.
 // Returns the combined "agencyID_shapeID" used by the handler.
 func setupShapeTest(t *testing.T, api *RestAPI, shapeID string, points []shapePoint) string {
 	t.Helper()
@@ -36,6 +37,26 @@ func setupShapeTest(t *testing.T, api *RestAPI, shapeID string, points []shapePo
 		Name:     "Test Transit Agency",
 		Url:      "http://test-agency.com",
 		Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	route, err := api.GtfsManager.GtfsDB.Queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID:       shapeID + "_route",
+		AgencyID: agencyID,
+		Type:     3,
+	})
+	require.NoError(t, err)
+	service, err := api.GtfsManager.GtfsDB.Queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        shapeID + "_service",
+		StartDate: "20240101",
+		EndDate:   "20991231",
+	})
+	require.NoError(t, err)
+	_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        shapeID + "_trip",
+		RouteID:   route.ID,
+		ServiceID: service.ID,
+		ShapeID:   sql.NullString{String: shapeID, Valid: true},
 	})
 	require.NoError(t, err)
 

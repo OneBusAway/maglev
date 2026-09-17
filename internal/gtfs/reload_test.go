@@ -39,7 +39,7 @@ func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestReload_FailureRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	agencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
 	if err != nil {
@@ -155,7 +155,7 @@ func TestReload_OldDatabaseCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	manager.SetGtfsURL(gtfsNew)
 	_, err = manager.ReloadStatic(context.Background())
@@ -190,7 +190,7 @@ func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init manager: %v", err)
 	}
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	// Verify initial state
 	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())
@@ -242,7 +242,7 @@ func TestReload_ConcurrentReload(t *testing.T) {
 
 	manager, err := InitGTFSManager(ctx, gtfsConfig)
 	require.NoError(t, err)
-	defer manager.Shutdown()
+	defer manager.Shutdown(context.Background())
 
 	// Verify initial state
 	initialAgencies, err := manager.GtfsDB.Queries.ListAgencies(context.Background())

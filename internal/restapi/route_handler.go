@@ -27,7 +27,7 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	if route.ID == "" {
+	if route.ID == "" || route.AgencyID != agencyID {
 		api.sendNotFound(w, r)
 		return
 	}

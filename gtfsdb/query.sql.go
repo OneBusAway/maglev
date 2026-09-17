@@ -11,6 +11,29 @@ import (
 	"strings"
 )
 
+const blockHasTripForAgency = `-- name: BlockHasTripForAgency :one
+SELECT CAST(EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN routes r ON r.id = t.route_id
+    WHERE t.block_id = ?1
+      AND r.agency_id = ?2
+) AS INTEGER) AS has_trip
+`
+
+type BlockHasTripForAgencyParams struct {
+	BlockID  sql.NullString
+	AgencyID string
+}
+
+// Returns 1 if a trip on one of the agency's routes is in the block, 0 otherwise.
+func (q *Queries) BlockHasTripForAgency(ctx context.Context, arg BlockHasTripForAgencyParams) (int64, error) {
+	row := q.queryRow(ctx, q.blockHasTripForAgencyStmt, blockHasTripForAgency, arg.BlockID, arg.AgencyID)
+	var has_trip int64
+	err := row.Scan(&has_trip)
+	return has_trip, err
+}
+
 const buildStopAgencies = `-- name: BuildStopAgencies :exec
 INSERT INTO
     stop_agencies (stop_id, agency_id)
@@ -5656,6 +5679,29 @@ func (q *Queries) RouteHasFutureService(ctx context.Context, arg RouteHasFutureS
 	var has_future_service int64
 	err := row.Scan(&has_future_service)
 	return has_future_service, err
+}
+
+const shapeHasTripForAgency = `-- name: ShapeHasTripForAgency :one
+SELECT CAST(EXISTS (
+    SELECT 1
+    FROM trips t
+    JOIN routes r ON r.id = t.route_id
+    WHERE t.shape_id = ?1
+      AND r.agency_id = ?2
+) AS INTEGER) AS has_trip
+`
+
+type ShapeHasTripForAgencyParams struct {
+	ShapeID  sql.NullString
+	AgencyID string
+}
+
+// Returns 1 if a trip on one of the agency's routes uses the shape, 0 otherwise.
+func (q *Queries) ShapeHasTripForAgency(ctx context.Context, arg ShapeHasTripForAgencyParams) (int64, error) {
+	row := q.queryRow(ctx, q.shapeHasTripForAgencyStmt, shapeHasTripForAgency, arg.ShapeID, arg.AgencyID)
+	var has_trip int64
+	err := row.Scan(&has_trip)
+	return has_trip, err
 }
 
 const updateFeedExpiresAt = `-- name: UpdateFeedExpiresAt :exec

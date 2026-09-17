@@ -28,6 +28,10 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+	if route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
+		return
+	}
 
 	// route.AgencyID was just read from the database, so a failure here is a
 	// server-side problem rather than a client asking for something absent.

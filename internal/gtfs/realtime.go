@@ -42,6 +42,7 @@ type mergedRealtime struct {
 	vehicleLookupByTrip      map[string]int
 	vehicleLookupByVehicle   map[string]int
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
+	vehiclesByRoute          map[string][]gtfs.Vehicle
 	alerts                   alertIndex
 }
 
@@ -52,6 +53,7 @@ var emptyMergedRealtime = &mergedRealtime{
 	vehicleLookupByTrip:      map[string]int{},
 	vehicleLookupByVehicle:   map[string]int{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
+	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	alerts: alertIndex{
 		byTrip:   map[string][]gtfs.Alert{},
 		byRoute:  map[string][]gtfs.Alert{},
@@ -80,6 +82,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		vehicleLookupByTrip:      maps.Clone(m.vehicleLookupByTrip),
 		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
+		vehiclesByRoute:          maps.Clone(m.vehiclesByRoute),
 		alerts: alertIndex{
 			byTrip:   maps.Clone(m.alerts.byTrip),
 			byRoute:  maps.Clone(m.alerts.byRoute),
@@ -98,6 +101,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	}
 	if out.duplicatedVehicleByRoute == nil {
 		out.duplicatedVehicleByRoute = map[string][]gtfs.Vehicle{}
+	}
+	if out.vehiclesByRoute == nil {
+		out.vehiclesByRoute = map[string][]gtfs.Vehicle{}
 	}
 	return out
 }
@@ -701,9 +707,13 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	vehicleLookupByTrip := make(map[string]int, len(allVehicles))
 	vehicleLookupByVehicle := make(map[string]int, len(allVehicles))
 	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
+	vehiclesByRoute := make(map[string][]gtfs.Vehicle)
 	for i, vehicle := range allVehicles {
 		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
 			vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
+		}
+		if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
+			vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)
 		}
 		if vehicle.ID != nil && vehicle.ID.ID != "" {
 			vehicleLookupByVehicle[vehicle.ID.ID] = i
@@ -775,6 +785,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehicleLookupByTrip:      vehicleLookupByTrip,
 		vehicleLookupByVehicle:   vehicleLookupByVehicle,
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
+		vehiclesByRoute:          vehiclesByRoute,
 		alerts:                   idx,
 	})
 }

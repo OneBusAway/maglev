@@ -35,6 +35,19 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hasTrip, err := api.GtfsManager.GtfsDB.Queries.BlockHasTripForAgency(ctx, gtfsdb.BlockHasTripForAgencyParams{
+		BlockID:  nulls.String(blockID),
+		AgencyID: agencyID,
+	})
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if hasTrip == 0 {
+		api.sendNotFound(w, r)
+		return
+	}
+
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
 	if err != nil {
 		if ctx.Err() != nil {

@@ -51,6 +51,7 @@ type Manager struct {
 	shutdownChan      chan struct{}
 	wg                sync.WaitGroup
 	shutdownOnce      sync.Once
+	shutdownErr       error
 	isReady           atomic.Bool // Tracks whether initial data loading is complete
 
 	staticMutex  sync.RWMutex
@@ -253,18 +254,38 @@ func (manager *Manager) SetGtfsURL(url string) {
 	manager.config.GtfsURL = url
 }
 
-// Shutdown gracefully shuts down the manager and its background goroutines
-func (manager *Manager) Shutdown() {
+// Shutdown stops the background workers and closes the database once they
+// have exited. It waits only until ctx is done, because a real-time feed
+// fetch that never returns would otherwise block the caller forever. On
+// timeout it returns the context error and leaves the database open for the
+// workers still running; it closes when they finish.
+func (manager *Manager) Shutdown(ctx context.Context) error {
 	manager.shutdownOnce.Do(func() {
 		close(manager.shutdownChan)
-		manager.wg.Wait()
-		if manager.GtfsDB != nil {
-			if err := manager.GtfsDB.Close(); err != nil {
-				logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-				logging.LogError(logger, "failed to close GTFS database", err)
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+
+		closed := make(chan error, 1)
+		go func() {
+			manager.wg.Wait()
+			if manager.GtfsDB == nil {
+				closed <- nil
+				return
 			}
+			closeErr := manager.GtfsDB.Close()
+			if closeErr != nil {
+				logging.LogError(logger, "failed to close GTFS database", closeErr)
+			}
+			closed <- closeErr
+		}()
+
+		select {
+		case manager.shutdownErr = <-closed:
+		case <-ctx.Done():
+			manager.shutdownErr = fmt.Errorf("waiting for background workers: %w", ctx.Err())
+			logging.LogError(logger, "shutdown timed out, the database closes once the workers exit", manager.shutdownErr)
 		}
 	})
+	return manager.shutdownErr
 }
 
 // GetAgencies returns all agencies from the database.
@@ -613,14 +634,12 @@ func (manager *Manager) VehiclesForAgencyID(ctx context.Context, agencyID string
 		routeIDs[route.ID] = true
 	}
 
-	// Step 2: Acquire real-time lock independently to read vehicles.
-	rtVehicles := manager.GetRealTimeVehicles()
+	// Read vehicles for those routes from the current realtime snapshot.
+	merged := manager.mergedRealtime()
 
 	var vehicles []gtfs.Vehicle
-	for _, v := range rtVehicles {
-		if v.Trip != nil && routeIDs[v.Trip.ID.RouteID] {
-			vehicles = append(vehicles, v)
-		}
+	for routeID := range routeIDs {
+		vehicles = append(vehicles, merged.vehiclesByRoute[routeID]...)
 	}
 
 	return vehicles, nil
