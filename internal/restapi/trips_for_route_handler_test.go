@@ -42,6 +42,10 @@ var afterMidnightClock = time.Date(2025, 6, 13, 0, 30, 0, 0, time.UTC)
 // and gap-case fixtures.
 var loopRouteClock = time.Date(2025, 6, 12, 10, 15, 0, 0, time.UTC)
 
+// layoverClock falls between both pairs of trips in layoverFiles: neither
+// block has a trip whose own scheduled span contains 10:00.
+var layoverClock = time.Date(2025, 6, 12, 10, 0, 0, 0, time.UTC)
+
 // duplicatedTripClock is inside tfr-trip-b's running window (11:15–11:45) but
 // before the base trip's active window (11:55–12:05), so only the DUPLICATED
 // fallback can resolve the base trip.
@@ -383,6 +387,47 @@ func gapFiles() map[string]string {
 			"tfr-gap-b,10:30:00,10:30:00," + tripsForRouteStop2ID + ",2\n" +
 			"tfr-gap-c,10:35:00,10:35:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-gap-c,10:50:00,10:50:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+// layoverFiles contains two blocks that are between trips at layoverClock.
+// One pair shares a terminal, while the other ends and begins at different
+// stops (a deadhead/repositioning gap that the block_layover table does not
+// index). Both blocks still have a route trip inside the endpoint's window.
+func layoverFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n" +
+			"tfr-stop3,Stop Three,37.7949,-122.3994\n" +
+			"tfr-stop4,Stop Four,37.8049,-122.3894\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id,shape_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-same-prev,Same Previous,0,tfr-same-block,tfr-same-prev-shape\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-same-next,Same Next,0,tfr-same-block,\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-diff-prev,Different Previous,0,tfr-diff-block,\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-diff-next,Different Next,0,tfr-diff-block,\n",
+		// The previous trip's shape continues past its final stop. Halfway through
+		// the layover, Java's distance-along-block rule therefore still selects
+		// the previous trip; the shapeless different-terminal pair selects next.
+		"shapes.txt": "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n" +
+			"tfr-same-prev-shape,37.7749,-122.4194,1\n" +
+			"tfr-same-prev-shape,37.7849,-122.4094,2\n" +
+			"tfr-same-prev-shape,37.7949,-122.3994,3\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-same-prev,09:30:00,09:30:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-same-prev,09:50:00,09:50:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-same-next,10:10:00,10:10:00," + tripsForRouteStop2ID + ",1\n" +
+			"tfr-same-next,10:30:00,10:30:00," + tripsForRouteStop1ID + ",2\n" +
+			"tfr-diff-prev,09:35:00,09:35:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-diff-prev,09:55:00,09:55:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-diff-next,10:15:00,10:15:00,tfr-stop3,1\n" +
+			"tfr-diff-next,10:35:00,10:35:00,tfr-stop4,2\n",
 	}
 }
 
@@ -1644,6 +1689,45 @@ func TestTripsForRouteHandler_GapCase(t *testing.T) {
 	require.NotNil(t, entry.Status)
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-gap-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestTripsForRouteHandler_ReturnsBlocksDuringLayover verifies that a block
+// does not disappear merely because the query time falls between its trips.
+// The different-terminal case is important: it has no block_layover index row
+// and must be resolved from the block's complete scheduled span.
+func TestTripsForRouteHandler_ReturnsBlocksDuringLayover(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(layoverClock),
+		"trips-for-route-layover.zip", layoverFiles())
+	var sameTerminalLayovers, differentTerminalLayovers int
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow(
+		"SELECT COUNT(*) FROM block_layover WHERE block_id = ?", "tfr-same-block").Scan(&sameTerminalLayovers))
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow(
+		"SELECT COUNT(*) FROM block_layover WHERE block_id = ?", "tfr-diff-block").Scan(&differentTerminalLayovers))
+	require.Equal(t, 1, sameTerminalLayovers)
+	require.Zero(t, differentTerminalLayovers)
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, layoverClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 2)
+
+	activeTripIDs := make(map[string]string, len(model.Data.List))
+	for _, entry := range model.Data.List {
+		require.NotNil(t, entry.Status)
+		activeTripIDs[entry.TripId] = entry.Status.ActiveTripID
+	}
+
+	// The two blocks intentionally exercise both outcomes of Java's
+	// distance-based previous-versus-next trip selection.
+	expectedSame := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-same-prev")
+	expectedDifferent := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-diff-next")
+	assert.Equal(t, expectedSame, activeTripIDs[expectedSame])
+	assert.Equal(t, expectedDifferent, activeTripIDs[expectedDifferent])
 }
 
 // TestTripsForRouteHandler_InterlinedBlockAcrossServiceIDs verifies that a

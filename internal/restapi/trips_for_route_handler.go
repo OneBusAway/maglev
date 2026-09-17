@@ -14,9 +14,14 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
+
+type tripsForRouteServiceDay struct {
+	serviceIDs    []string
+	sinceMidnight time.Duration
+	midnight      time.Time
+}
 
 // tripsForRouteHandler returns all active trips for a route, including their real-time
 // status, schedule, and vehicle positions when available.
@@ -220,64 +225,37 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var activeTrips []string
 
-	type serviceDayEntry struct {
-		serviceIDs    []string
-		sinceMidnight time.Duration
-		midnight      time.Time
-	}
-	serviceDays := []serviceDayEntry{
+	serviceDays := []tripsForRouteServiceDay{
 		{serviceIDs: serviceIDs, sinceMidnight: currentSinceMidnight, midnight: todayMidnight},
 	}
 	if len(prevServiceIDs) > 0 {
-		serviceDays = append(serviceDays, serviceDayEntry{
+		serviceDays = append(serviceDays, tripsForRouteServiceDay{
 			serviceIDs:    prevServiceIDs,
 			sinceMidnight: prevDaySinceMidnight,
 			midnight:      prevDayMidnight,
 		})
 	}
 
+	blockIDs := make([]string, 0, len(allLinkedBlocks))
 	for blockID := range allLinkedBlocks {
+		blockIDs = append(blockIDs, blockID)
+	}
+
+	// Reuse the snapshot when BuildTripStatus processes the selected trip below.
+	// Resolving a block and building its status otherwise perform the same four
+	// database queries independently.
+	ctx = WithSnapshotCache(ctx, newSnapshotCache())
+	activeTrips, resolvedServiceDays, err := api.resolveTripsForRouteBlocks(ctx, blockIDs, serviceDays, currentTime)
+	if err != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
-
-		blockIDNullStr := nulls.String(blockID)
-
-		for _, sd := range serviceDays {
-			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
-				BlockID:    blockIDNullStr,
-				ServiceIds: sd.serviceIDs,
-			})
-			if err != nil {
-				reqLogger.Warn("trips-for-route: failed to fetch trips in block", "block_id", blockID, "error", err)
-				continue
-			}
-			if len(tripsInBlock) == 0 {
-				continue
-			}
-
-			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
-				BlockID:     blockIDNullStr,
-				ServiceIds:  sd.serviceIDs,
-				CurrentTime: sql.NullInt64{Int64: sd.sinceMidnight.Nanoseconds(), Valid: true}})
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				reqLogger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
-				continue
-			}
-			if errors.Is(err, sql.ErrNoRows) {
-				// No trip in this block is currently running at the requested time.
-				// Java OBA only returns blocks with a currently-running trip (see
-				// BlockStatusServiceImpl.computeLocations which adds scheduled locations
-				// only when isInService()). Skip rather than picking a "best candidate"
-				// upcoming/past trip that isn't actually running.
-				continue
-			}
-
-			activeTrips = append(activeTrips, activeTrip)
-			tripServiceDay[activeTrip] = sd.midnight
-			break
-		}
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	for tripID, serviceDay := range resolvedServiceDays {
+		tripServiceDay[tripID] = serviceDay
 	}
 
 	activeTrips = append(activeTrips, nullBlockTrips...)
@@ -573,6 +551,88 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// resolveTripsForRouteBlocks returns the Java-style scheduled active trip for
+// every selected block. A block remains in service between two consecutive
+// trips: its scheduled position is interpolated across that gap, and the
+// distance along the block determines whether the previous or next trip is
+// active. This is deliberately the same snapshot path used by
+// trips-for-location and BuildTripStatus.
+func (api *RestAPI) resolveTripsForRouteBlocks(
+	ctx context.Context,
+	blockIDs []string,
+	serviceDays []tripsForRouteServiceDay,
+	currentTime time.Time,
+) ([]string, map[string]time.Time, error) {
+	activeTrips := make([]string, 0, len(blockIDs))
+	tripServiceDays := make(map[string]time.Time, len(blockIDs))
+	resolvedBlocks := make(map[string]struct{}, len(blockIDs))
+
+	for _, sd := range serviceDays {
+		if len(sd.serviceIDs) == 0 {
+			continue
+		}
+
+		spans, err := queryInBatchesReserving(ctx, blockIDs, len(sd.serviceIDs),
+			func(ctx context.Context, batch []string) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
+				nullableBatch := make([]sql.NullString, len(batch))
+				for i, blockID := range batch {
+					nullableBatch[i] = sql.NullString{String: blockID, Valid: true}
+				}
+				return api.GtfsManager.GtfsDB.Queries.GetTripSpansForBlocks(ctx, gtfsdb.GetTripSpansForBlocksParams{
+					BlockIds:   nullableBatch,
+					ServiceIds: sd.serviceIDs,
+				})
+			})
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Batched results are sorted within each query, not across batches.
+		// Drop unusable spans before sorting so one trip without stop_times
+		// cannot make selectAnchorInGroup reject an otherwise valid block.
+		validSpans := spans[:0]
+		for _, span := range spans {
+			if span.BlockID.Valid && span.MinArrivalTime.Valid && span.MaxDepartureTime.Valid {
+				validSpans = append(validSpans, span)
+			}
+		}
+		slices.SortFunc(validSpans, func(a, b gtfsdb.GetTripSpansForBlocksRow) int {
+			if byBlock := strings.Compare(a.BlockID.String, b.BlockID.String); byBlock != 0 {
+				return byBlock
+			}
+			if a.MinArrivalTime.Int64 < b.MinArrivalTime.Int64 {
+				return -1
+			}
+			if a.MinArrivalTime.Int64 > b.MinArrivalTime.Int64 {
+				return 1
+			}
+			return strings.Compare(a.ID, b.ID)
+		})
+
+		windowStart := sd.sinceMidnight.Nanoseconds() - int64(runningLate)
+		windowEnd := sd.sinceMidnight.Nanoseconds() + int64(runningEarly)
+		for _, anchor := range selectBlockAnchors(validSpans, windowStart, windowEnd) {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+			if _, alreadyResolved := resolvedBlocks[anchor.blockID]; alreadyResolved {
+				continue
+			}
+
+			snapshot := api.computeScheduledBlockSnapshot(ctx, anchor.tripID, currentTime, sd.midnight)
+			if snapshot == nil || !snapshot.InRange || snapshot.ActiveTripID == "" {
+				continue
+			}
+
+			activeTrips = append(activeTrips, snapshot.ActiveTripID)
+			tripServiceDays[snapshot.ActiveTripID] = sd.midnight
+			resolvedBlocks[anchor.blockID] = struct{}{}
+		}
+	}
+
+	return activeTrips, tripServiceDays, nil
 }
 
 // blockTripEntry is a candidate queried-route trip within an interlined
