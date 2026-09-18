@@ -405,7 +405,6 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
-	api.GtfsManager.MockResetRealTimeData()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)

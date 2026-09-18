@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
@@ -846,22 +847,32 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
-	api.GtfsManager.MockResetRealTimeData()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
-	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+	type rawResponse struct {
+		Data struct {
+			Entry struct {
+				ArrivalsAndDepartures []map[string]json.RawMessage `json:"arrivalsAndDepartures"`
+			} `json:"entry"`
+		} `json:"data"`
+	}
+	_, model := callAPIHandler[rawResponse](t, api,
 		arrivalsAndDeparturesURL(combinedStopID))
 
 	expectedTripID := utils.FormCombinedID("dp-agency", tripID)
 	for _, entry := range model.Data.Entry.ArrivalsAndDepartures {
-		if entry.TripID != expectedTripID {
+		var entryTripID string
+		require.NoError(t, json.Unmarshal(entry["tripId"], &entryTripID))
+		if entryTripID != expectedTripID {
 			continue
 		}
-		assert.False(t, entry.Predicted)
-		assert.True(t, entry.PredictedArrivalTime.IsZero())
-		assert.True(t, entry.PredictedDepartureTime.IsZero())
-		assert.True(t, entry.LastUpdateTime.IsZero())
+		assert.JSONEq(t, "false", string(entry["predicted"]))
+		assert.JSONEq(t, "0", string(entry["predictedArrivalTime"]))
+		assert.JSONEq(t, "0", string(entry["predictedDepartureTime"]))
+		lastUpdateTime, present := entry["lastUpdateTime"]
+		require.True(t, present, "lastUpdateTime must be present when no real-time data is available")
+		assert.JSONEq(t, "0", string(lastUpdateTime))
 		return
 	}
 	t.Fatalf("expected to find arrival for trip %s", expectedTripID)
