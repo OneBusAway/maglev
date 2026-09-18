@@ -220,8 +220,8 @@ func overnightInterlineFiles() map[string]string {
 // crossAgencyInterlineFiles models an interlined block whose active trip
 // belongs to a second agency in a different timezone: at 00:30 UTC on
 // 2025-06-13 (17:30 PDT on 2025-06-12), the active trip tfr-xb runs under
-// yesterday's service in America/Los_Angeles while the queried-route trip
-// tfr-xa runs under today's service in UTC.
+// the 2025-06-12 service in America/Los_Angeles while the queried-route trip
+// tfr-xa runs under the 2025-06-13 service in UTC.
 func crossAgencyInterlineFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -242,8 +242,8 @@ func crossAgencyInterlineFiles() map[string]string {
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"tfr-xa,00:05:00,00:05:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-xa,00:25:00,00:25:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-xb,24:00:00,24:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-xb,25:00:00,25:00:00," + tripsForRouteStop2ID + ",2\n",
+			"tfr-xb,17:00:00,17:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-xb,18:00:00,18:00:00," + tripsForRouteStop2ID + ",2\n",
 	}
 }
 
@@ -286,13 +286,13 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 
 	t.Run("references contain combined stop IDs for queried and cross agencies", func(t *testing.T) {
 		refStops := model.Data.References.Stops
-		require.Len(t, refStops, 3, fmt.Sprintf("expected 3 stop references, got %d", len(refStops)))
+		require.Len(t, refStops, 4, fmt.Sprintf("expected 4 stop references, got %d", len(refStops)))
 
-		// tfr-xb hasn't started on its Los Angeles service day, so its status only points at its first stop.
 		expectedStopIDs := map[string]bool{
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID): true,
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID): true,
 			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop1ID):            true,
+			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop2ID):            true,
 		}
 		recvdStopsByID := make(map[string]models.Stop)
 
@@ -317,7 +317,7 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 
 		// combined stopIDs for both agencies on the same bare stop ID should have the same
 		// stop-specific data
-		for _, bareID := range []string{tripsForRouteStop1ID} {
+		for _, bareID := range []string{tripsForRouteStop1ID, tripsForRouteStop2ID} {
 			scheduledTripStopID := utils.FormCombinedID(tripsForRouteAgencyID, bareID)
 			activeTripStopID := utils.FormCombinedID(tfrAgencyB, bareID)
 			scheduledTripStop := recvdStopsByID[scheduledTripStopID]
@@ -332,6 +332,26 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 				"shared stop %q should have the same data for both agency-qualified IDs", bareID)
 		}
 	})
+}
+
+// At 00:30 UTC an LA trip timed 24:00-25:00 has not started, since it is only 17:30 in Los Angeles.
+func TestTripsForRouteHandler_CrossAgencyTripNotStartedInItsOwnZone(t *testing.T) {
+	files := crossAgencyInterlineFiles()
+	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+		"tfr-xa,00:05:00,00:05:00," + tripsForRouteStop1ID + ",1\n" +
+		"tfr-xa,00:25:00,00:25:00," + tripsForRouteStop2ID + ",2\n" +
+		"tfr-xb,24:00:00,24:00:00," + tripsForRouteStop1ID + ",1\n" +
+		"tfr-xb,25:00:00,25:00:00," + tripsForRouteStop2ID + ",2\n"
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-cross-agency-not-started.zip", files)
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.List)
 }
 
 // laggingZoneInterlineFiles puts the route's agency in Los Angeles, a day behind the UTC agency running the active trip.

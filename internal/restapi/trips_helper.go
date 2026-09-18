@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -1433,29 +1432,25 @@ func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.T
 // offset a trip's scheduled span is measured against for that day.
 type serviceDay struct {
 	serviceIDs      []string
+	services        map[string]struct{}
 	sinceMidnightNs int64
 	midnight        time.Time
 }
+
+// Indexes into the slice returned by ServiceDays.
+const (
+	queryServiceDay = iota
+	previousServiceDay
+)
 
 // ServiceDays returns the query day and the day before it. A trip belonging to
 // the previous service day is matched against the query moment offset by +24h,
 // since GTFS expresses its stop times relative to its own service date.
 func (r *serviceDateResolver) ServiceDays() []serviceDay {
 	return []serviceDay{
-		{serviceIDs: serviceIDSlice(r.queryDayServices), sinceMidnightNs: r.sinceMidnightNs, midnight: r.queryDayMidnight},
-		{serviceIDs: serviceIDSlice(r.previousDayServices), sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour), midnight: r.queryDayMidnight.AddDate(0, 0, -1)},
+		{serviceIDs: serviceIDSlice(r.queryDayServices), services: r.queryDayServices, sinceMidnightNs: r.sinceMidnightNs, midnight: r.queryDayMidnight},
+		{serviceIDs: serviceIDSlice(r.previousDayServices), services: r.previousDayServices, sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour), midnight: r.queryDayMidnight.AddDate(0, 0, -1)},
 	}
-}
-
-// serviceDaysInZones returns the service days of every zone in resolvers, firstZone's first.
-func serviceDaysInZones(resolvers map[string]*serviceDateResolver, firstZone string) []serviceDay {
-	days := resolvers[firstZone].ServiceDays()
-	for _, zone := range slices.Sorted(maps.Keys(resolvers)) {
-		if zone != firstZone {
-			days = append(days, resolvers[zone].ServiceDays()...)
-		}
-	}
-	return days
 }
 
 func serviceIDSlice(services map[string]struct{}) []string {

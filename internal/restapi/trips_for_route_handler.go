@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -71,21 +73,21 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	// An interlined trip can belong to an agency on another local date, so search every agency's zone.
+	// An interlined trip can belong to an agency on another local date, so resolve every agency's zone.
 	serviceDatesByZone, err := api.serviceDateResolversByZone(ctx, agencyLocations, currentTime)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
 	routeServiceDates := serviceDatesByZone[currentLocation.String()]
-	serviceDays := serviceDaysInZones(serviceDatesByZone, currentLocation.String())
+	routeServiceDays := routeServiceDates.ServiceDays()
 
 	// tripServiceDay records the service-day midnight each active trip was found under.
 	tripServiceDay := make(map[string]time.Time)
 
 	allLinkedBlocks := make(map[string]bool)
 	var nullBlockTrips []string
-	for _, day := range serviceDays {
+	for _, day := range routeServiceDays {
 		blockIDs, dayNullBlockTrips, err := api.routeBlocksAndTripsInService(ctx, routeID, day)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
@@ -114,53 +116,19 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var activeTrips []string
-
-	for blockID := range allLinkedBlocks {
+	blockActiveTrips, err := api.activeTripsInBlocks(ctx, slices.Collect(maps.Keys(allLinkedBlocks)), serviceDatesByZone, agencyLocations)
+	if err != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 			return
 		}
-
-		blockIDNullStr := nulls.String(blockID)
-
-		for _, day := range serviceDays {
-			if len(day.serviceIDs) == 0 {
-				continue
-			}
-			tripsInBlock, err := api.GtfsManager.GtfsDB.Queries.GetTripsInBlock(ctx, gtfsdb.GetTripsInBlockParams{
-				BlockID:    blockIDNullStr,
-				ServiceIds: day.serviceIDs,
-			})
-			if err != nil {
-				reqLogger.Warn("trips-for-route: failed to fetch trips in block", "block_id", blockID, "error", err)
-				continue
-			}
-			if len(tripsInBlock) == 0 {
-				continue
-			}
-
-			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetActiveTripInBlockAtTime(ctx, gtfsdb.GetActiveTripInBlockAtTimeParams{
-				BlockID:     blockIDNullStr,
-				ServiceIds:  day.serviceIDs,
-				CurrentTime: nulls.Int64(day.sinceMidnightNs)})
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				reqLogger.Warn("trips-for-route: failed to get active trip in block", "block_id", blockID, "error", err)
-				continue
-			}
-			if errors.Is(err, sql.ErrNoRows) {
-				// No trip in this block is currently running at the requested time.
-				// Java OBA only returns blocks with a currently-running trip (see
-				// BlockStatusServiceImpl.computeLocations which adds scheduled locations
-				// only when isInService()). Skip rather than picking a "best candidate"
-				// upcoming/past trip that isn't actually running.
-				continue
-			}
-
-			activeTrips = append(activeTrips, activeTrip)
-			tripServiceDay[activeTrip] = day.midnight
-			break
-		}
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	var activeTrips []string
+	for tripID, serviceDayMidnight := range blockActiveTrips {
+		activeTrips = append(activeTrips, tripID)
+		tripServiceDay[tripID] = serviceDayMidnight
 	}
 
 	activeTrips = append(activeTrips, nullBlockTrips...)
@@ -237,7 +205,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	routeServiceDays := routeServiceDates.ServiceDays()
 	routeToday, routeYesterday := routeServiceDays[0], routeServiceDays[1]
 	blockTripForRoute, err := api.buildBlockTripForRoute(ctx, fetchedTrips, routeID, routeToday.serviceIDs, routeYesterday.serviceIDs)
 	if err != nil {
@@ -665,6 +632,99 @@ func serviceDateFor(tripServiceDay map[string]time.Time, id string, todayMidnigh
 		return midnight
 	}
 	return todayMidnight
+}
+
+// activeTripsInBlocks returns the trip each block is running at the request time,
+// keyed to its service-day midnight. A candidate is only tested against the
+// service days of its own agency's timezone.
+func (api *RestAPI) activeTripsInBlocks(
+	ctx context.Context,
+	blockIDs []string,
+	serviceDatesByZone map[string]*serviceDateResolver,
+	agencyLocations map[string]*time.Location,
+) (map[string]time.Time, error) {
+	serviceDaysByZone := make(map[string][]serviceDay, len(serviceDatesByZone))
+	serviceIDs := make(map[string]struct{})
+	for zone, resolver := range serviceDatesByZone {
+		serviceDaysByZone[zone] = resolver.ServiceDays()
+		for _, day := range serviceDaysByZone[zone] {
+			for id := range day.services {
+				serviceIDs[id] = struct{}{}
+			}
+		}
+	}
+	if len(blockIDs) == 0 || len(serviceIDs) == 0 {
+		return nil, nil
+	}
+
+	queries := api.GtfsManager.GtfsDB.Queries
+	nullBlockIDs := make([]sql.NullString, len(blockIDs))
+	for i, blockID := range blockIDs {
+		nullBlockIDs[i] = nulls.String(blockID)
+	}
+	candidates, err := queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
+		BlockIds:   nullBlockIDs,
+		ServiceIds: slices.Collect(maps.Keys(serviceIDs)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetch trips in blocks: %w", err)
+	}
+
+	routeIDs := make(map[string]struct{}, len(candidates))
+	for _, trip := range candidates {
+		routeIDs[trip.RouteID] = struct{}{}
+	}
+	routes, err := queries.GetRoutesByIDs(ctx, slices.Collect(maps.Keys(routeIDs)))
+	if err != nil {
+		return nil, fmt.Errorf("fetch routes of block trips: %w", err)
+	}
+	zoneByRoute := make(map[string]string, len(routes))
+	for _, route := range routes {
+		if location, ok := agencyLocations[route.AgencyID]; ok {
+			zoneByRoute[route.ID] = location.String()
+		}
+	}
+
+	candidatesByBlock := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
+	for _, trip := range candidates {
+		candidatesByBlock[trip.BlockID.String] = append(candidatesByBlock[trip.BlockID.String], trip)
+	}
+
+	activeTrips := make(map[string]time.Time)
+	for _, blockTrips := range candidatesByBlock {
+		// Java OBA only returns blocks with a trip in service (BlockStatusServiceImpl.computeLocations).
+		if tripID, serviceDayMidnight, found := activeTripInBlock(blockTrips, serviceDaysByZone, zoneByRoute); found {
+			activeTrips[tripID] = serviceDayMidnight
+		}
+	}
+	return activeTrips, nil
+}
+
+// activeTripInBlock returns the earliest trip in service on the query day, or
+// failing that on the previous day, testing each trip in its own agency's zone.
+// blockTrips must be ordered by min_arrival_time.
+func activeTripInBlock(
+	blockTrips []gtfsdb.GetTripsByBlockIDsRow,
+	serviceDaysByZone map[string][]serviceDay,
+	zoneByRoute map[string]string,
+) (string, time.Time, bool) {
+	for _, dayIndex := range []int{queryServiceDay, previousServiceDay} {
+		for _, trip := range blockTrips {
+			days := serviceDaysByZone[zoneByRoute[trip.RouteID]]
+			if dayIndex >= len(days) {
+				continue
+			}
+			day := days[dayIndex]
+			_, serviceRuns := day.services[trip.ServiceID]
+			inService := trip.MinArrivalTime.Valid && trip.MaxDepartureTime.Valid &&
+				trip.MinArrivalTime.Int64 <= day.sinceMidnightNs &&
+				trip.MaxDepartureTime.Int64 >= day.sinceMidnightNs
+			if serviceRuns && inService {
+				return trip.ID, day.midnight, true
+			}
+		}
+	}
+	return "", time.Time{}, false
 }
 
 // routeBlocksAndTripsInService returns the route's blocks and null-block trips
