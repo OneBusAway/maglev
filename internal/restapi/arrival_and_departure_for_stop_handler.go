@@ -805,6 +805,24 @@ func findClosestStopTime(stopTimes []gtfsdb.StopTime, stopCode string, queryOffs
 // over stopTimes, so a wildly out-of-range requestedIndex costs no more
 // than a valid one.
 func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex int) (gtfsdb.StopTime, int, bool) {
+	n := len(stopTimes)
+	if n == 0 {
+		return gtfsdb.StopTime{}, 0, false
+	}
+	idx := requestedIndex
+
+	if idx < 0 {
+		idx = 0
+	} else if idx > n-1 {
+		idx = n - 1
+	}
+
+	// Exact hit at the requested position can't be beaten by any other
+	// occurrence, so return immediately without scanning the rest.
+	if stopTimes[idx].StopID == stopCode {
+		return stopTimes[idx], idx, true
+	}
+
 	found := false
 	bestIdx := 0
 	bestDist := 0
@@ -813,7 +831,7 @@ func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, reques
 		if st.StopID != stopCode {
 			continue
 		}
-		dist := absInt(i - requestedIndex)
+		dist := absInt(i - idx)
 		if !found || dist < bestDist {
 			found = true
 			bestIdx = i
