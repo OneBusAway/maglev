@@ -429,6 +429,34 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 	assert.True(t, entry.LastUpdateTime.IsZero())
 }
 
+func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictsFromDeviation(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
+	addDownstreamSTU(t, api, tripID, 174*time.Second)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.True(t, entry.TripStatus.Predicted)
+	assert.Equal(t, 174, entry.TripStatus.ScheduleDeviation)
+	assert.True(t, entry.Predicted, "arrival should be predicted when tripStatus is predicted")
+	assert.Equal(t, scheduledArrivalMs+174_000, entry.PredictedArrivalTime.UnixMilli())
+}
+
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
