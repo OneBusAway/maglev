@@ -252,7 +252,8 @@ func overnightInterlineFiles() map[string]string {
 // belongs to a second agency in a different timezone: at 00:30 UTC on
 // 2025-06-13 (17:30 PDT on 2025-06-12), the active trip tfr-xb runs under
 // yesterday's service in America/Los_Angeles while the queried-route trip
-// tfr-xa runs under today's service in UTC.
+// tfr-xa's service is active on both dates, providing queried-route evidence
+// for the previous service day as well as today.
 func crossAgencyInterlineFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -263,7 +264,7 @@ func crossAgencyInterlineFiles() map[string]string {
 			"tfr-route-otr," + tfrAgencyB + ",OR,Other Route,3\n",
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
-			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
+			"tfr-svc-today,0,0,0,1,1,0,0,20250612,20250613\n",
 		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
 			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
 			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
@@ -497,6 +498,34 @@ func crossDayBlockReuseFiles() map[string]string {
 			"tfr-today-a,24:30:00,24:30:00," + tripsForRouteStop2ID + ",2\n" +
 			"tfr-today-b,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-today-b,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
+// asymmetricCrossDayBlockReuseFiles reuses one block ID for a queried-route
+// trip today and an unrelated other-route trip yesterday. The previous-day
+// trip must not be selected without previous-day evidence for the queried
+// route, even though it is active at the requested wall-clock time.
+func asymmetricCrossDayBlockReuseFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-today,tfr-today-only,Today,0,tfr-reused-block\n" +
+			"tfr-route-otr,tfr-svc-yest,tfr-yest-unrelated,Yesterday,0,tfr-reused-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-today-only,00:20:00,00:20:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-only,00:40:00,00:40:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-yest-unrelated,24:20:00,24:20:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-unrelated,24:40:00,24:40:00," + tripsForRouteStop2ID + ",2\n",
 	}
 }
 
@@ -1863,6 +1892,28 @@ func TestTripsForRouteHandler_ReusedBlockIDAcrossDays(t *testing.T) {
 	require.NotNil(t, entry.Status)
 	expectedActiveTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-yest-b")
 	assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
+}
+
+// TestTripsForRouteHandler_ReusedBlockIDWithoutPreviousRouteEvidence verifies
+// that a today-only queried-route block cannot pull in an unrelated active
+// trip from yesterday merely because both services reuse the same block ID.
+func TestTripsForRouteHandler_ReusedBlockIDWithoutPreviousRouteEvidence(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-asymmetric-crossday.zip", asymmetricCrossDayBlockReuseFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+	entry := model.Data.List[0]
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-today-only"), entry.TripId)
+	assert.Equal(t, time.Date(2025, 6, 13, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
+	require.NotNil(t, entry.Status)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-today-only"), entry.Status.ActiveTripID)
 }
 
 // TestResolveInterlinedEntryTripID_FetchedTripMissingTimes verifies that a

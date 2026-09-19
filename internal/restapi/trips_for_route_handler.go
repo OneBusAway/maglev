@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -129,11 +130,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	if len(indexIDs) > 0 {
 		blocksFromIndices, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
-			FromTime:   sql.NullInt64{Int64: timeRangeStart.Nanoseconds(), Valid: true},
-			ToTime:     sql.NullInt64{Int64: timeRangeEnd.Nanoseconds(), Valid: true},
-			RouteID:    routeID,
-			IndexIds:   indexIDs,
-			ServiceIds: serviceIDs,
+			FromTime:         sql.NullInt64{Int64: timeRangeStart.Nanoseconds(), Valid: true},
+			ToTime:           sql.NullInt64{Int64: timeRangeEnd.Nanoseconds(), Valid: true},
+			RouteID:          routeID,
+			IndexIds:         indexIDs,
+			ActiveServiceIds: serviceIDs,
+			RouteServiceIds:  serviceIDs,
 		})
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
@@ -164,11 +166,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			prevFromTime := prevDaySinceMidnight + timeRangeStart - currentSinceMidnight
 			prevToTime := prevDaySinceMidnight + timeRangeEnd - currentSinceMidnight
 			prevBlocks, err := api.GtfsManager.GtfsDB.Queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
-				FromTime:   sql.NullInt64{Int64: prevFromTime.Nanoseconds(), Valid: true},
-				ToTime:     sql.NullInt64{Int64: prevToTime.Nanoseconds(), Valid: true},
-				RouteID:    routeID,
-				IndexIds:   prevIndexIDs,
-				ServiceIds: prevServiceIDs,
+				FromTime:         sql.NullInt64{Int64: prevFromTime.Nanoseconds(), Valid: true},
+				ToTime:           sql.NullInt64{Int64: prevToTime.Nanoseconds(), Valid: true},
+				RouteID:          routeID,
+				IndexIds:         prevIndexIDs,
+				ActiveServiceIds: prevServiceIDs,
+				RouteServiceIds:  prevServiceIDs,
 			})
 			if err != nil {
 				reqLogger.Warn("trips-for-route: failed to fetch previous-day blocks", "error", err)
@@ -179,15 +182,6 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 					}
 				}
 			}
-		}
-
-		// A block discovered through today's queried-route trip can be running
-		// an interlined trip from yesterday's service (including across agency
-		// timezones). Keep those blocks eligible for previous-day resolution.
-		// The reverse is intentionally not done: a yesterday-only candidate must
-		// not resolve an unrelated reuse of its block ID in today's service.
-		for blockID := range currentLinkedBlocks {
-			previousLinkedBlocks[blockID] = true
 		}
 	}
 
@@ -632,7 +626,7 @@ func (api *RestAPI) tripsForRouteBlockSpans(
 		func(ctx context.Context, batch []string) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
 			nullableBatch := make([]sql.NullString, len(batch))
 			for i, blockID := range batch {
-				nullableBatch[i] = sql.NullString{String: blockID, Valid: true}
+				nullableBatch[i] = nulls.String(blockID)
 			}
 			return api.GtfsManager.GtfsDB.Queries.GetTripSpansForBlocks(ctx, gtfsdb.GetTripSpansForBlocksParams{
 				BlockIds:   nullableBatch,
