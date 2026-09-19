@@ -1924,6 +1924,8 @@ func (q *Queries) GetBlockTripIndexIDsForRoute(ctx context.Context, arg GetBlock
 }
 
 const getBlockTripSequence = `-- name: GetBlockTripSequence :one
+
+
 WITH BlockTrips AS (
     SELECT id, ROW_NUMBER() OVER (ORDER BY min_arrival_time) - 1 AS seq
     FROM trips
@@ -1939,6 +1941,7 @@ type GetBlockTripSequenceParams struct {
 	ServiceIds []string
 }
 
+// Optimized queries using SQLite window functions
 // Calculates a trip's zero-based index within its block's ordered sequence,
 func (q *Queries) GetBlockTripSequence(ctx context.Context, arg GetBlockTripSequenceParams) (int64, error) {
 	query := getBlockTripSequence
@@ -4488,124 +4491,6 @@ func (q *Queries) GetStopsWithTripContext(ctx context.Context, id string) ([]Get
 		return nil, err
 	}
 	return items, nil
-}
-
-const getTargetStopTimeWithTotalStops = `-- name: GetTargetStopTimeWithTotalStops :one
-
-SELECT
-    st.trip_id,
-    st.arrival_time,
-    st.departure_time,
-    st.stop_id,
-    st.stop_sequence,
-    st.stop_headsign,
-    st.pickup_type,
-    st.drop_off_type,
-    st.shape_dist_traveled,
-    st.timepoint,
-    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = ?1) AS total_stops
-FROM stop_times st
-WHERE st.trip_id = ?1 AND st.stop_id = ?2
-ORDER BY st.stop_sequence
-LIMIT 1
-`
-
-type GetTargetStopTimeWithTotalStopsParams struct {
-	TripID string
-	StopID string
-}
-
-type GetTargetStopTimeWithTotalStopsRow struct {
-	TripID            string
-	ArrivalTime       int64
-	DepartureTime     int64
-	StopID            string
-	StopSequence      int64
-	StopHeadsign      sql.NullString
-	PickupType        sql.NullInt64
-	DropOffType       sql.NullInt64
-	ShapeDistTraveled sql.NullFloat64
-	Timepoint         sql.NullInt64
-	TotalStops        int64
-}
-
-// Optimized queries using SQLite window functions
-// Fetches a specific stop time for a trip+stop, along with the total stop count,
-func (q *Queries) GetTargetStopTimeWithTotalStops(ctx context.Context, arg GetTargetStopTimeWithTotalStopsParams) (GetTargetStopTimeWithTotalStopsRow, error) {
-	row := q.queryRow(ctx, q.getTargetStopTimeWithTotalStopsStmt, getTargetStopTimeWithTotalStops, arg.TripID, arg.StopID)
-	var i GetTargetStopTimeWithTotalStopsRow
-	err := row.Scan(
-		&i.TripID,
-		&i.ArrivalTime,
-		&i.DepartureTime,
-		&i.StopID,
-		&i.StopSequence,
-		&i.StopHeadsign,
-		&i.PickupType,
-		&i.DropOffType,
-		&i.ShapeDistTraveled,
-		&i.Timepoint,
-		&i.TotalStops,
-	)
-	return i, err
-}
-
-const getTargetStopTimeWithTotalStopsBySequence = `-- name: GetTargetStopTimeWithTotalStopsBySequence :one
-SELECT
-    st.trip_id,
-    st.arrival_time,
-    st.departure_time,
-    st.stop_id,
-    st.stop_sequence,
-    st.stop_headsign,
-    st.pickup_type,
-    st.drop_off_type,
-    st.shape_dist_traveled,
-    st.timepoint,
-    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = ?1) AS total_stops
-FROM stop_times st
-WHERE st.trip_id = ?1 AND st.stop_id = ?2 AND st.stop_sequence = ?3
-LIMIT 1
-`
-
-type GetTargetStopTimeWithTotalStopsBySequenceParams struct {
-	TripID       string
-	StopID       string
-	StopSequence int64
-}
-
-type GetTargetStopTimeWithTotalStopsBySequenceRow struct {
-	TripID            string
-	ArrivalTime       int64
-	DepartureTime     int64
-	StopID            string
-	StopSequence      int64
-	StopHeadsign      sql.NullString
-	PickupType        sql.NullInt64
-	DropOffType       sql.NullInt64
-	ShapeDistTraveled sql.NullFloat64
-	Timepoint         sql.NullInt64
-	TotalStops        int64
-}
-
-// Fetches a specific stop time for a trip+stop+sequence, along with the total stop count,
-func (q *Queries) GetTargetStopTimeWithTotalStopsBySequence(ctx context.Context, arg GetTargetStopTimeWithTotalStopsBySequenceParams) (GetTargetStopTimeWithTotalStopsBySequenceRow, error) {
-	row := q.queryRow(ctx, q.getTargetStopTimeWithTotalStopsBySequenceStmt, getTargetStopTimeWithTotalStopsBySequence, arg.TripID, arg.StopID, arg.StopSequence)
-	var i GetTargetStopTimeWithTotalStopsBySequenceRow
-	err := row.Scan(
-		&i.TripID,
-		&i.ArrivalTime,
-		&i.DepartureTime,
-		&i.StopID,
-		&i.StopSequence,
-		&i.StopHeadsign,
-		&i.PickupType,
-		&i.DropOffType,
-		&i.ShapeDistTraveled,
-		&i.Timepoint,
-		&i.TotalStops,
-	)
-	return i, err
 }
 
 const getTrip = `-- name: GetTrip :one
