@@ -206,13 +206,9 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
-	agencyLocations := make(map[string]*time.Location, len(agencies))
-	for _, agency := range agencies {
-		location, locationErr := loadAgencyLocation(agency.ID, agency.Timezone)
-		if locationErr != nil {
-			return nil, nil, locationErr
-		}
-		agencyLocations[agency.ID] = location
+	agencyLocations, locationErr := agencyLocationsByID(agencies)
+	if locationErr != nil {
+		return nil, nil, locationErr
 	}
 	currentLocation := agencyLocations[agencies[0].ID]
 
@@ -965,6 +961,19 @@ type blockTripsKey struct {
 func serviceDateMidnight(currentTime time.Time, agencyLocation *time.Location) time.Time {
 	_, midnight := utils.ServiceDateMidnight(nil, currentTime.In(agencyLocation))
 	return midnight
+}
+
+// agencyLocationsByID maps each agency ID to the agency's time zone.
+func agencyLocationsByID(agencies []gtfsdb.Agency) (map[string]*time.Location, error) {
+	locations := make(map[string]*time.Location, len(agencies))
+	for _, agency := range agencies {
+		location, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			return nil, err
+		}
+		locations[agency.ID] = location
+	}
+	return locations, nil
 }
 
 // serviceDateResolversByZone builds one serviceDateResolver per distinct agency

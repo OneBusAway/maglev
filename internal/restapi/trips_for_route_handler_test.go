@@ -247,8 +247,8 @@ func overnightInterlineFiles() map[string]string {
 // crossAgencyInterlineFiles models an interlined block whose active trip
 // belongs to a second agency in a different timezone: at 00:30 UTC on
 // 2025-06-13 (17:30 PDT on 2025-06-12), the active trip tfr-xb runs under
-// yesterday's service in America/Los_Angeles while the queried-route trip
-// tfr-xa runs under today's service in UTC.
+// the 2025-06-12 service in America/Los_Angeles while the queried-route trip
+// tfr-xa runs under the 2025-06-13 service in UTC.
 func crossAgencyInterlineFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -269,8 +269,8 @@ func crossAgencyInterlineFiles() map[string]string {
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"tfr-xa,00:05:00,00:05:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-xa,00:25:00,00:25:00," + tripsForRouteStop2ID + ",2\n" +
-			"tfr-xb,24:00:00,24:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-xb,25:00:00,25:00:00," + tripsForRouteStop2ID + ",2\n",
+			"tfr-xb,17:00:00,17:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-xb,18:00:00,18:00:00," + tripsForRouteStop2ID + ",2\n",
 	}
 }
 
@@ -302,13 +302,13 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 		assert.Equal(t, expectedTripID, entry.TripId)
 		require.NotNil(t, entry.Schedule)
 		assert.Equal(t, "UTC", entry.Schedule.TimeZone)
-		// Without per-agency timezone resolution, the past-midnight trip uses
-		// prevDayMidnight (June 12 UTC) for both the entry and the status.
-		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
+		assert.Equal(t, time.Date(2025, 6, 13, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
 		require.NotNil(t, entry.Status)
 		expectedActiveTripID := utils.FormCombinedID(tfrAgencyB, "tfr-xb")
 		assert.Equal(t, expectedActiveTripID, entry.Status.ActiveTripID)
-		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+		laLoc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, laLoc).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
 	})
 
 	t.Run("references contain combined stop IDs for queried and cross agencies", func(t *testing.T) {
@@ -359,6 +359,73 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 				"shared stop %q should have the same data for both agency-qualified IDs", bareID)
 		}
 	})
+}
+
+// At 00:30 UTC an LA trip timed 24:00-25:00 has not started, since it is only 17:30 in Los Angeles.
+func TestTripsForRouteHandler_CrossAgencyTripNotStartedInItsOwnZone(t *testing.T) {
+	files := crossAgencyInterlineFiles()
+	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+		"tfr-xa,00:05:00,00:05:00," + tripsForRouteStop1ID + ",1\n" +
+		"tfr-xa,00:25:00,00:25:00," + tripsForRouteStop2ID + ",2\n" +
+		"tfr-xb,24:00:00,24:00:00," + tripsForRouteStop1ID + ",1\n" +
+		"tfr-xb,25:00:00,25:00:00," + tripsForRouteStop2ID + ",2\n"
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-cross-agency-not-started.zip", files)
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.List)
+}
+
+// laggingZoneInterlineFiles puts the route's agency in Los Angeles, a day behind the UTC agency running the active trip.
+func laggingZoneInterlineFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,America/Los_Angeles\n" +
+			tfrAgencyB + ",Other Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tfrAgencyB + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-la,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-utc,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-la,tfr-lz-a,Headsign A,0,tfr-lz-block\n" +
+			"tfr-route-otr,tfr-svc-utc,tfr-lz-b,Headsign B,0,tfr-lz-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-lz-a,17:05:00,17:05:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-lz-a,17:20:00,17:20:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-lz-b,00:25:00,00:25:00," + tripsForRouteStop2ID + ",1\n" +
+			"tfr-lz-b,00:45:00,00:45:00," + tripsForRouteStop1ID + ",2\n",
+	}
+}
+
+func TestTripsForRouteHandler_InterlinedAgencyAheadOfRouteAgency(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-lagging-zone.zip", laggingZoneInterlineFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+	entry := model.Data.List[0]
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-lz-a"), entry.TripId)
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, laLoc).UnixMilli(), entry.ServiceDate)
+	require.NotNil(t, entry.Status)
+	assert.Equal(t, utils.FormCombinedID(tfrAgencyB, "tfr-lz-b"), entry.Status.ActiveTripID)
+	assert.Equal(t, time.Date(2025, 6, 13, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
 }
 
 func loopingRouteFiles() map[string]string {
