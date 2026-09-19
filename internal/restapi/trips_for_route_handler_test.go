@@ -762,6 +762,33 @@ func overnightBlockFiles() map[string]string {
 	}
 }
 
+// activeReusedBlockFiles models two simultaneously active runs whose service
+// days reuse the same block ID: today's trip runs from 00:00–01:00, while
+// yesterday's trip runs from 24:00–25:00. Both represent distinct vehicles at
+// afterMidnightClock and must survive service-day-scoped block deduplication.
+func activeReusedBlockFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-today,0,0,0,0,1,0,0,20250613,20250613\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-active-yest,Yesterday,0,tfr-reused-block\n" +
+			tripsForRouteRouteID + ",tfr-svc-today,tfr-active-today,Today,0,tfr-reused-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-active-yest,24:00:00,24:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-active-yest,25:00:00,25:00:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-active-today,00:00:00,00:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-active-today,01:00:00,01:00:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
 // nullBlockDailyCrossMidnightFiles models a null-block trip running 00:30–24:30
 // under a daily service: its window overlaps both days' discovery windows.
 func nullBlockDailyCrossMidnightFiles() map[string]string {
@@ -2174,6 +2201,32 @@ func TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip(t *testing.T) {
 	// Status must agree with the entry's serviceDate.
 	require.NotNil(t, entry.Status, "entry.Status should not be nil")
 	assert.Equal(t, expectedServiceDate, entry.Status.ServiceDate.UnixMilli())
+}
+
+// TestTripsForRouteHandler_ReusedActiveBlockIDAcrossServiceDays verifies that
+// resolving today's occurrence of a block does not suppress a distinct,
+// simultaneously active occurrence from the previous service day.
+func TestTripsForRouteHandler_ReusedActiveBlockIDAcrossServiceDays(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-active-reused-block.zip", activeReusedBlockFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 2)
+
+	serviceDates := make(map[string]int64, len(model.Data.List))
+	for _, entry := range model.Data.List {
+		serviceDates[entry.TripId] = entry.ServiceDate
+	}
+	todayTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-active-today")
+	yesterdayTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-active-yest")
+	assert.Equal(t, time.Date(2025, 6, 13, 0, 0, 0, 0, time.UTC).UnixMilli(), serviceDates[todayTripID])
+	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), serviceDates[yesterdayTripID])
 }
 
 // TestBuildTripReferences_FetchesUnprefetchedTrips verifies that trips
