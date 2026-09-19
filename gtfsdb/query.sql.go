@@ -1968,6 +1968,7 @@ FROM block_trip_entry bte
 JOIN trips t ON bte.trip_id = t.id
 WHERE t.max_departure_time >= ?1
   AND t.min_arrival_time <= ?2
+  AND t.route_id = ?3
   AND bte.block_id IS NOT NULL
   AND bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
   AND bte.service_id IN (/*SLICE:service_ids*/?)
@@ -1976,12 +1977,14 @@ WHERE t.max_departure_time >= ?1
 type GetBlocksForBlockTripIndexIDsParams struct {
 	FromTime   sql.NullInt64
 	ToTime     sql.NullInt64
+	RouteID    string
 	IndexIds   []int64
 	ServiceIds []string
 }
 
-// Get distinct block_ids whose schedule window overlaps [from_time, to_time] within the
-// specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+// Get distinct block_ids with a trip on the requested route whose schedule window overlaps
+// [from_time, to_time] within the specified BlockTripIndex IDs. Mirrors Java's
+// BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
 // which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
 // whose trips are hours away from the requested time.
 // Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
@@ -1992,6 +1995,7 @@ func (q *Queries) GetBlocksForBlockTripIndexIDs(ctx context.Context, arg GetBloc
 	var queryParams []interface{}
 	queryParams = append(queryParams, arg.FromTime)
 	queryParams = append(queryParams, arg.ToTime)
+	queryParams = append(queryParams, arg.RouteID)
 	if len(arg.IndexIds) > 0 {
 		for _, v := range arg.IndexIds {
 			queryParams = append(queryParams, v)

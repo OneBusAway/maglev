@@ -157,6 +157,33 @@ func interlineFiles() map[string]string {
 	}
 }
 
+// sharedBlockTripIndexFiles puts trips from two unrelated routes and blocks
+// into the same block_trip_index: the index builder groups by service ID and
+// first stop, not by route. Only tfr-target-block should be selected when the
+// endpoint is queried for tripsForRouteRouteID.
+func sharedBlockTripIndexFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tripsForRouteAgencyID + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc,tfr-target-trip,Target,0,tfr-target-block\n" +
+			"tfr-route-otr,tfr-svc,tfr-unrelated-trip,Unrelated,0,tfr-unrelated-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-target-trip,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-target-trip,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-unrelated-trip,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-unrelated-trip,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n",
+	}
+}
+
 // twoServiceIDsInterlineFiles models a block whose active (other-route) trip
 // and queried-route trip run under two different service_ids that are both
 // active on the same calendar day (unlike overnightInterlineFiles, this isn't
@@ -389,9 +416,10 @@ func gapFiles() map[string]string {
 // crossDayBlockReuseFiles reuses block_id "tfr-overnight" for two otherwise
 // unrelated service_ids on consecutive calendar days, and deliberately gives
 // today's occurrence (tfr-today-a) a time-of-day closer to the active trip's
-// midpoint than yesterday's actual match (tfr-yest-a). This defeats a pure
-// nearest-midpoint search across all same-block candidates and requires
-// preferring same-service_id candidates first.
+// midpoint than yesterday's actual match (tfr-yest-a). Yesterday's match still
+// overlaps the endpoint window so the block legitimately qualifies. This
+// defeats a pure nearest-midpoint search across all same-block candidates and
+// requires preferring same-service_id candidates first.
 func crossDayBlockReuseFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -411,16 +439,17 @@ func crossDayBlockReuseFiles() map[string]string {
 			tripsForRouteRouteID + ",tfr-svc-today,tfr-today-a,Headsign A,0,tfr-overnight\n" +
 			"tfr-route-otr,tfr-svc-today,tfr-today-b,Headsign B,0,tfr-overnight\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			// yest-a: mid 22:05 — the correct match, but farther from yest-b's mid.
-			"tfr-yest-a,22:00:00,22:00:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-yest-a,22:10:00,22:10:00," + tripsForRouteStop2ID + ",2\n" +
-			// yest-b (active): mid 24:20.
-			"tfr-yest-b,23:55:00,23:55:00," + tripsForRouteStop1ID + ",1\n" +
+			// yest-a: mid 24:02:30 — the correct in-window match, but farther
+			// from yest-b's midpoint than the unrelated today-a occurrence.
+			"tfr-yest-a,24:00:00,24:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-yest-a,24:05:00,24:05:00," + tripsForRouteStop2ID + ",2\n" +
+			// yest-b (active): mid 24:25.
+			"tfr-yest-b,24:05:00,24:05:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-yest-b,24:45:00,24:45:00," + tripsForRouteStop2ID + ",2\n" +
-			// today-a: mid 24:20 — numerically identical to yest-b's mid, despite
+			// today-a: mid 24:25 — numerically identical to yest-b's mid, despite
 			// being an unrelated trip from a different calendar day's block.
-			"tfr-today-a,24:15:00,24:15:00," + tripsForRouteStop1ID + ",1\n" +
-			"tfr-today-a,24:25:00,24:25:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-today-a,24:20:00,24:20:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-today-a,24:30:00,24:30:00," + tripsForRouteStop2ID + ",2\n" +
 			"tfr-today-b,23:00:00,23:00:00," + tripsForRouteStop1ID + ",1\n" +
 			"tfr-today-b,23:30:00,23:30:00," + tripsForRouteStop2ID + ",2\n",
 	}
@@ -1521,6 +1550,33 @@ func TestTripsForRouteHandler_InterlinedBlock(t *testing.T) {
 	require.Len(t, entry.Schedule.StopTimes, 2)
 	assert.Equal(t, 11*time.Hour+20*time.Minute, entry.Schedule.StopTimes[0].ArrivalTime.Duration)
 	assert.Equal(t, 11*time.Hour+50*time.Minute, entry.Schedule.StopTimes[1].ArrivalTime.Duration)
+}
+
+// TestTripsForRouteHandler_SharedIndexDoesNotLeakUnrelatedBlocks verifies
+// that selecting an index through the requested route does not select other
+// blocks merely because their trips share that index and overlap the window.
+func TestTripsForRouteHandler_SharedIndexDoesNotLeakUnrelatedBlocks(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock),
+		"trips-for-route-shared-index.zip", sharedBlockTripIndexFiles())
+
+	var indexCount int
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow(`
+		SELECT COUNT(DISTINCT block_trip_index_id)
+		FROM block_trip_entry
+		WHERE trip_id IN ('tfr-target-trip', 'tfr-unrelated-trip')`,
+	).Scan(&indexCount))
+	require.Equal(t, 1, indexCount, "fixture trips must share one block_trip_index")
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+		combinedRouteID, tripsForRouteTestClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-target-trip"), model.Data.List[0].TripId)
 }
 
 // TestTripsForRouteHandler_InterlinedBlock_TripReference verifies that with

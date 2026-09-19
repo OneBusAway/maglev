@@ -174,6 +174,11 @@ func TestArrivalAndDepartureWithEmptyValues(t *testing.T) {
 	assert.Nil(t, arrival.TripStatus)
 	assert.Nil(t, arrival.SituationIDs)
 	assert.Equal(t, time.Time{}, arrival.LastUpdateTime.Time)
+
+	jsonData, err := json.Marshal(arrival)
+	assert.NoError(t, err)
+	assert.Contains(t, string(jsonData), `"lastUpdateTime":0`,
+		"lastUpdateTime must be present and zero when no real-time data is available")
 }
 
 func TestArrivalAndDepartureWithNilTripStatus(t *testing.T) {
