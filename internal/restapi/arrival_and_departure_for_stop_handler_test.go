@@ -440,10 +440,14 @@ func TestArrivalAndDepartureForStopHandler_EquidistantPositionsPreferLowerIndex(
 		{stopID, 5, 8*time.Hour + 20*time.Minute},
 	}
 	for _, s := range stops {
-		_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
-			ID: s.stopID, Name: nulls.String(s.stopID), Lat: 47.0, Lon: -122.0,
-		})
-		require.NoError(t, err)
+		if s.stopID != stopID {
+			_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+				ID: s.stopID, Name: nulls.String(s.stopID), Lat: 47.0, Lon: -122.0,
+			})
+
+			require.NoError(t, err)
+		}
+
 		_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
 			TripID: tripID, StopID: s.stopID, StopSequence: s.seq,
 			ArrivalTime:   int64(s.offset),
