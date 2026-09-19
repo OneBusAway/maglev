@@ -260,7 +260,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	queryOffset := int64(currentTime.Sub(serviceMidnight))
 
-	matchedStopTime, found := findStopTimeForTripStop(orderedStopTimes, stopCode, params.StopSequence, queryOffset)
+	matchedStopTime, matchedIdx, found := findStopTimeForTripStop(orderedStopTimes, stopCode, params.StopSequence, queryOffset)
 	if !found {
 		api.sendNotFound(w, r)
 		return
@@ -408,7 +408,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predicted,                                      // predicted
 		true,                                           // arrivalEnabled
 		true,                                           // departureEnabled
-		int(targetStopTime.StopSequence)-1,             // stopSequence (Zero-based index)
+		matchedIdx,                                     // stopSequence (Zero-based position in the trip's stop list)
 		totalStopsInTrip,                               // totalStopsInTrip
 		numberOfStopsAway,                              // numberOfStopsAway
 		blockTripSequence,                              // blockTripSequence
@@ -768,7 +768,7 @@ func (api *RestAPI) getPredictedTimes(
 // stop_sequence value), and the search expands outward from that position,
 // checking the lower index before the higher index at each distance —
 // matching Java's getBlockStopTime stopSequence branch.
-func findStopTimeForTripStop(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex *int, queryOffset int64) (gtfsdb.StopTime, bool) {
+func findStopTimeForTripStop(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex *int, queryOffset int64) (gtfsdb.StopTime, int, bool) {
 	// when no position is given: a stop can appear twice on a loop trip, so pick
 	// whichever visit's arrival/departure is closest to the query time
 	// (matches Java's behavior , not just "first match").
@@ -779,12 +779,13 @@ func findStopTimeForTripStop(stopTimes []gtfsdb.StopTime, stopCode string, reque
 	return findStopTimeByPosition(stopTimes, stopCode, *requestedIndex)
 }
 
-func findClosestStopTime(stopTimes []gtfsdb.StopTime, stopCode string, queryOffset int64) (gtfsdb.StopTime, bool) {
+func findClosestStopTime(stopTimes []gtfsdb.StopTime, stopCode string, queryOffset int64) (gtfsdb.StopTime, int, bool) {
 	found := false
 	var best gtfsdb.StopTime
 	var bestDelta int64
+	var bestIdx int
 
-	for _, st := range stopTimes {
+	for i, st := range stopTimes {
 		if st.StopID != stopCode {
 			continue
 		}
@@ -794,13 +795,14 @@ func findClosestStopTime(stopTimes []gtfsdb.StopTime, stopCode string, queryOffs
 		if !found || delta < bestDelta {
 			found = true
 			best = st
+			bestIdx = i
 			bestDelta = delta
 		}
 	}
-	return best, found
+	return best, bestIdx, found
 }
 
-func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex int) (gtfsdb.StopTime, bool) {
+func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex int) (gtfsdb.StopTime, int, bool) {
 	n := len(stopTimes)
 	idx := requestedIndex
 
@@ -812,18 +814,18 @@ func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, reques
 	for d := 0; d <= maxDist; d++ {
 		if d == 0 {
 			if idx >= 0 && idx < n && stopTimes[idx].StopID == stopCode {
-				return stopTimes[idx], true
+				return stopTimes[idx], idx, true
 			}
 			continue
 		}
 		for _, candidate := range [2]int{idx - d, idx + d} {
 			if stopTimeMatches(stopTimes, candidate, stopCode) {
-				return stopTimes[candidate], true
+				return stopTimes[candidate], candidate, true
 			}
 		}
 	}
 
-	return gtfsdb.StopTime{}, false
+	return gtfsdb.StopTime{}, 0, false
 }
 
 func stopTimeMatches(stopTimes []gtfsdb.StopTime, index int, stopCode string) bool {
