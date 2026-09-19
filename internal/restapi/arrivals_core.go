@@ -903,10 +903,6 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		scheduledArrivalTime,
 		scheduledDepartureTime,
 	)
-	if !predicted {
-		predictedArrivalTime = time.Time{}
-		predictedDepartureTime = time.Time{}
-	}
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
@@ -963,11 +959,33 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 		blockTripSequence = tripStatus.BlockTripSequence
 	}
 
+	applyTripStatusPrediction(arrival, tripStatus, in)
+
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
 	arrival.NumberOfStopsAway = numberOfStopsAway
 	arrival.BlockTripSequence = blockTripSequence
 	arrival.SituationIDs = acc.situations.addRefs(situationRefs)
+}
+
+// applyTripStatusPrediction fills an unpredicted arrival's predicted times
+// from its trip status when getPredictedTimes found no per-stop prediction.
+func applyTripStatusPrediction(arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, in arrivalInput) {
+	if arrival.Predicted {
+		return
+	}
+	serviceStart := in.serviceDate.Start(in.location)
+	predictedArrival, predictedDeparture, ok := predictedTimesFromTripStatus(
+		tripStatus,
+		serviceStart.Add(time.Duration(in.stopTime.ArrivalTime)),
+		serviceStart.Add(time.Duration(in.stopTime.DepartureTime)),
+	)
+	if !ok {
+		return
+	}
+	arrival.PredictedArrivalTime = models.NewModelTime(predictedArrival)
+	arrival.PredictedDepartureTime = models.NewModelTime(predictedDeparture)
+	arrival.Predicted = true
 }
 
 // applyFrequency sets arrival.Frequency from the trip's frequency rows, using
