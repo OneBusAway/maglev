@@ -375,12 +375,16 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		scheduledArrivalTime,
 		scheduledDepartureTime,
 	)
-	if !predicted {
-		predictedArrivalTime = time.Time{}
-		predictedDepartureTime = time.Time{}
-	}
 
 	tripStatus, distanceFromStop, numberOfStopsAway, situationRefs := api.tripStatusForArrival(ctx, in, vehicle, acc)
+
+	if !predicted {
+		if arr, dep, ok := predictedTimesFromTripStatus(tripStatus, scheduledArrivalTime, scheduledDepartureTime); ok {
+			predictedArrivalTime = arr
+			predictedDepartureTime = dep
+			predicted = true
+		}
+	}
 
 	// BuildTripStatus (via calculateBlockTripSequence) already computed
 	// this and set it on the status; reuse rather than redoing the block

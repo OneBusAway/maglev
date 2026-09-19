@@ -614,6 +614,20 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 	}
 }
 
+// predictedTimesFromTripStatus is the arrival-level fallback used when the
+// per-stop prediction path returns nothing: mirrors Java's
+// setPredictedTimesFromScheduleDeviation (ArrivalAndDepartureServiceImpl.java:772).
+func predictedTimesFromTripStatus(
+	tripStatus *models.TripStatus,
+	scheduledArrival, scheduledDeparture time.Time,
+) (predictedArrival, predictedDeparture time.Time, predicted bool) {
+	if tripStatus == nil || !tripStatus.Predicted {
+		return time.Time{}, time.Time{}, false
+	}
+	deviation := time.Duration(tripStatus.ScheduleDeviation) * time.Second
+	return scheduledArrival.Add(deviation), scheduledDeparture.Add(deviation), true
+}
+
 // delayedStopTimeSeconds returns the scheduled stop-time in seconds since
 // service-date midnight, shifted by whatever real-time delay applies to that
 // stop visit. It reports false when the stop-time carries neither an arrival
