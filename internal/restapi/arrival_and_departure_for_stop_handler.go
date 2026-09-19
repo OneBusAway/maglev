@@ -765,9 +765,9 @@ func (api *RestAPI) getPredictedTimes(
 //
 // If requestedIndex is non-nil, it is treated as the 0-based position of the
 // stop within the trip's stop list (per the OBA API spec — NOT the raw GTFS
-// stop_sequence value), and the search expands outward from that position,
-// checking the lower index before the higher index at each distance —
-// matching Java's getBlockStopTime stopSequence branch.
+// stop_sequence value), We return whichever visit sits closest to that position, so a slightly
+// stale position (a stop added/removed since the client last saw this
+// trip) still resolves instead of 404ing.
 func findStopTimeForTripStop(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex *int, queryOffset int64) (gtfsdb.StopTime, int, bool) {
 	// when no position is given: a stop can appear twice on a loop trip, so pick
 	// whichever visit's arrival/departure is closest to the query time
@@ -802,34 +802,37 @@ func findClosestStopTime(stopTimes []gtfsdb.StopTime, stopCode string, queryOffs
 	return best, bestIdx, found
 }
 
+// findStopTimeByPosition returns the visit of stopCode whose index is
+// closest to requestedIndex, and that index. Ties go to the lower index,
+// since delta only improves strictly as we scan left to right. One pass
+// over stopTimes, so a wildly out-of-range requestedIndex costs no more
+// than a valid one.
 func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex int) (gtfsdb.StopTime, int, bool) {
-	n := len(stopTimes)
-	idx := requestedIndex
+	found := false
+	bestIdx := 0
+	bestDist := 0
 
-	// Distance to the farther edge of the slice , past this, there's
-	// nothing left on either side to check.
-	maxDist := max(idx, n-1-idx)
-
-	// if a position is given: check it directly first, then expand outward.
-	for d := 0; d <= maxDist; d++ {
-		if d == 0 {
-			if idx >= 0 && idx < n && stopTimes[idx].StopID == stopCode {
-				return stopTimes[idx], idx, true
-			}
+	for i, st := range stopTimes {
+		if st.StopID != stopCode {
 			continue
 		}
-		for _, candidate := range [2]int{idx - d, idx + d} {
-			if stopTimeMatches(stopTimes, candidate, stopCode) {
-				return stopTimes[candidate], candidate, true
-			}
+		dist := absInt(i - requestedIndex)
+		if !found || dist < bestDist {
+			found = true
+			bestIdx = i
+			bestDist = dist
 		}
 	}
 
-	return gtfsdb.StopTime{}, 0, false
+	if !found {
+		return gtfsdb.StopTime{}, 0, false
+	}
+	return stopTimes[bestIdx], bestIdx, true
 }
 
-func stopTimeMatches(stopTimes []gtfsdb.StopTime, index int, stopCode string) bool {
-	return index >= 0 &&
-		index < len(stopTimes) &&
-		stopTimes[index].StopID == stopCode
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
