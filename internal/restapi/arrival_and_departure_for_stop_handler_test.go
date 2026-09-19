@@ -401,6 +401,34 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	assert.False(t, predicted)
 }
 
+func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	entry := model.Data.Entry
+	assert.False(t, entry.Predicted)
+	assert.True(t, entry.PredictedArrivalTime.IsZero(),
+		"schedule-only arrival must not expose its scheduled time as a prediction")
+	assert.True(t, entry.PredictedDepartureTime.IsZero(),
+		"schedule-only departure must not expose its scheduled time as a prediction")
+	assert.True(t, entry.LastUpdateTime.IsZero())
+}
+
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

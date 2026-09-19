@@ -1226,8 +1226,9 @@ WHERE bte.block_id IN (sqlc.slice('block_ids'))
 ORDER BY bte.block_trip_index_id;
 
 -- name: GetBlocksForBlockTripIndexIDs :many
--- Get distinct block_ids whose schedule window overlaps [from_time, to_time] within the
--- specified BlockTripIndex IDs. Mirrors Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+-- Get distinct block_ids with a trip on the requested route whose schedule window overlaps
+-- [from_time, to_time] within the specified BlockTripIndex IDs. Mirrors Java's
+-- BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
 -- which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
 -- whose trips are hours away from the requested time.
 -- Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
@@ -1238,6 +1239,7 @@ FROM block_trip_entry bte
 JOIN trips t ON bte.trip_id = t.id
 WHERE t.max_departure_time >= sqlc.arg('from_time')
   AND t.min_arrival_time <= sqlc.arg('to_time')
+  AND t.route_id = sqlc.arg('route_id')
   AND bte.block_id IS NOT NULL
   AND bte.block_trip_index_id IN (sqlc.slice('index_ids'))
   AND bte.service_id IN (sqlc.slice('service_ids'));
@@ -1537,5 +1539,4 @@ FROM
     JOIN stops s ON s.id = st.stop_id
 GROUP BY
     r.agency_id;
-
 

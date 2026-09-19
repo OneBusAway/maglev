@@ -750,6 +750,7 @@ func (api *RestAPI) routeBlocksAndTripsInService(ctx context.Context, routeID st
 		indexedBlocks, err := queries.GetBlocksForBlockTripIndexIDs(ctx, gtfsdb.GetBlocksForBlockTripIndexIDsParams{
 			FromTime:   nulls.Int64(windowStart),
 			ToTime:     nulls.Int64(windowEnd),
+			RouteID:    routeID,
 			IndexIds:   indexIDs,
 			ServiceIds: day.serviceIDs,
 		})
