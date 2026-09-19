@@ -234,50 +234,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	var targetRow gtfsdb.GetTargetStopTimeWithTotalStopsRow
-
-	if params.StopSequence != nil {
-		seqRow, seqErr := api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStopsBySequence(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsBySequenceParams{
-			TripID:       tripID,
-			StopID:       stopCode,
-			StopSequence: int64(*params.StopSequence),
-		})
-		if seqErr != nil {
-			if errors.Is(seqErr, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
-			} else {
-				api.serverErrorResponse(w, r, seqErr)
-			}
-			return
-		}
-
-		targetRow = gtfsdb.GetTargetStopTimeWithTotalStopsRow(seqRow)
-	} else {
-		targetRow, err = api.GtfsManager.GtfsDB.Queries.GetTargetStopTimeWithTotalStops(ctx, gtfsdb.GetTargetStopTimeWithTotalStopsParams{
-			TripID: tripID,
-			StopID: stopCode,
-		})
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
-			} else {
-				api.serverErrorResponse(w, r, err)
-			}
-			return
-		}
-	}
-
-	targetStopTime := struct {
-		ArrivalTime   int64
-		DepartureTime int64
-		StopSequence  int64
-		StopHeadsign  string
-	}{
-		ArrivalTime:   targetRow.ArrivalTime,
-		DepartureTime: targetRow.DepartureTime,
-		StopSequence:  targetRow.StopSequence,
-	}
-
 	// Set current time
 	var currentTime time.Time
 	if params.Time != nil {
@@ -295,6 +251,30 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		0, 0, 0, 0,
 		loc,
 	)
+
+	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
+	queryOffset := int64(currentTime.Sub(serviceMidnight))
+
+	matchedStopTime, matchedIdx, found := findStopTimeForTripStop(orderedStopTimes, stopCode, params.StopSequence, queryOffset)
+	if !found {
+		api.sendNotFound(w, r)
+		return
+	}
+	targetStopTime := struct {
+		ArrivalTime   int64
+		DepartureTime int64
+		StopSequence  int64
+		StopHeadsign  string
+	}{
+		ArrivalTime:   matchedStopTime.ArrivalTime,
+		DepartureTime: matchedStopTime.DepartureTime,
+		StopSequence:  matchedStopTime.StopSequence,
+	}
 
 	// Arrival time is stored in nanoseconds since midnight → convert to duration
 	// arrival and departure time is stored in nanoseconds (sqlite)
@@ -401,7 +381,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	totalStopsInTrip := int(targetRow.TotalStops)
+	totalStopsInTrip := len(orderedStopTimes)
 
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceMidnight)
 
@@ -425,7 +405,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predicted,                                      // predicted
 		true,                                           // arrivalEnabled
 		true,                                           // departureEnabled
-		int(targetStopTime.StopSequence)-1,             // stopSequence (Zero-based index)
+		matchedIdx,                                     // stopSequence (Zero-based position in the trip's stop list)
 		totalStopsInTrip,                               // totalStopsInTrip
 		numberOfStopsAway,                              // numberOfStopsAway
 		blockTripSequence,                              // blockTripSequence
@@ -507,7 +487,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if tripStatus != nil {
 		if tripStatus.NextStop != "" {
 			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
-
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -517,7 +496,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 		if tripStatus.ClosestStop != "" {
 			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
-
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -772,4 +750,104 @@ func (api *RestAPI) getPredictedTimes(
 	predictedDeparture := scheduledDepartureTime.Add(*departureOffset)
 
 	return predictedArrival, predictedDeparture, true
+}
+
+// findStopTimeForTripStop locates the stop_time row for stopCode within an
+// already-ordered (by stop_sequence) slice of a trip's stop_times.
+//
+// If requestedIndex is nil, it mirrors Java's ArrivalAndDepartureServiceImpl
+// .getBlockStopTime (no-stopSequence branch): among all visits of stopCode
+// on this trip, pick the one whose arrival or departure time is closest to
+// queryOffset (nanoseconds since service midnight).
+//
+// If requestedIndex is non-nil, it is treated as the 0-based position of the
+// stop within the trip's stop list (per the OBA API spec — NOT the raw GTFS
+// stop_sequence value), We return whichever visit sits closest to that position, so a slightly
+// stale position (a stop added/removed since the client last saw this
+// trip) still resolves instead of 404ing.
+func findStopTimeForTripStop(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex *int, queryOffset int64) (gtfsdb.StopTime, int, bool) {
+	// when no position is given: a stop can appear twice on a loop trip, so pick
+	// whichever visit's arrival/departure is closest to the query time
+	// (matches Java's behavior , not just "first match").
+	if requestedIndex == nil {
+		return findClosestStopTime(stopTimes, stopCode, queryOffset)
+	}
+
+	return findStopTimeByPosition(stopTimes, stopCode, *requestedIndex)
+}
+
+func findClosestStopTime(stopTimes []gtfsdb.StopTime, stopCode string, queryOffset int64) (gtfsdb.StopTime, int, bool) {
+	found := false
+	var best gtfsdb.StopTime
+	var bestDelta int64
+	var bestIdx int
+
+	for i, st := range stopTimes {
+		if st.StopID != stopCode {
+			continue
+		}
+		a := absInt64(queryOffset - st.ArrivalTime)
+		b := absInt64(queryOffset - st.DepartureTime)
+		delta := min(a, b)
+		if !found || delta < bestDelta {
+			found = true
+			best = st
+			bestIdx = i
+			bestDelta = delta
+		}
+	}
+	return best, bestIdx, found
+}
+
+// findStopTimeByPosition returns the visit of stopCode whose index is
+// closest to requestedIndex, and that index. Ties go to the lower index,
+// since delta only improves strictly as we scan left to right. One pass
+// over stopTimes, so a wildly out-of-range requestedIndex costs no more
+// than a valid one.
+func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, requestedIndex int) (gtfsdb.StopTime, int, bool) {
+	n := len(stopTimes)
+	if n == 0 {
+		return gtfsdb.StopTime{}, 0, false
+	}
+	idx := requestedIndex
+
+	if idx < 0 {
+		idx = 0
+	} else if idx > n-1 {
+		idx = n - 1
+	}
+
+	// Exact hit at the requested position can't be beaten by any other
+	// occurrence, so return immediately without scanning the rest.
+	if stopTimes[idx].StopID == stopCode {
+		return stopTimes[idx], idx, true
+	}
+
+	found := false
+	bestIdx := 0
+	bestDist := 0
+
+	for i, st := range stopTimes {
+		if st.StopID != stopCode {
+			continue
+		}
+		dist := absInt(i - idx)
+		if !found || dist < bestDist {
+			found = true
+			bestIdx = i
+			bestDist = dist
+		}
+	}
+
+	if !found {
+		return gtfsdb.StopTime{}, 0, false
+	}
+	return stopTimes[bestIdx], bestIdx, true
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
