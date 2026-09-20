@@ -274,3 +274,35 @@ func createHandlerWithRequestLogging(api *RestAPI, logger *slog.Logger) http.Han
 	requestLogger := NewRequestLoggingMiddleware(logger)
 	return requestLogger(mux)
 }
+
+func TestResponseWriter_PreservesFirstStatus(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	rw := &responseWriter{
+		ResponseWriter: rec,
+		statusCode:     http.StatusOK,
+	}
+
+	rw.WriteHeader(http.StatusNotFound)
+	rw.WriteHeader(http.StatusInternalServerError)
+
+	assert.Equal(t, http.StatusNotFound, rw.statusCode)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestResponseWriter_WriteCommitsOK(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	rw := &responseWriter{
+		ResponseWriter: rec,
+		statusCode:     http.StatusOK,
+	}
+
+	_, err := rw.Write([]byte("ok"))
+	require.NoError(t, err)
+
+	rw.WriteHeader(http.StatusInternalServerError)
+
+	assert.Equal(t, http.StatusOK, rw.statusCode)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}

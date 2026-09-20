@@ -48,10 +48,24 @@ func MetricsHandler(m *metrics.Metrics) func(http.Handler) http.Handler {
 // metricsResponseWriter wraps http.ResponseWriter to capture status code.
 type metricsResponseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode  int
+	wroteHeader bool
 }
 
 func (w *metricsResponseWriter) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
+
+	w.wroteHeader = true
 	w.statusCode = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *metricsResponseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	return w.ResponseWriter.Write(b)
 }

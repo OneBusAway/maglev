@@ -168,3 +168,35 @@ func TestMetricsHandler_VariousStatusCodes(t *testing.T) {
 		})
 	}
 }
+
+func TestMetricsResponseWriter_PreservesFirstStatus(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	w := &metricsResponseWriter{
+		ResponseWriter: rec,
+		statusCode:     http.StatusOK,
+	}
+
+	w.WriteHeader(http.StatusNotFound)
+	w.WriteHeader(http.StatusInternalServerError)
+
+	assert.Equal(t, http.StatusNotFound, w.statusCode)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestMetricsResponseWriter_WriteCommitsOK(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	w := &metricsResponseWriter{
+		ResponseWriter: rec,
+		statusCode:     http.StatusOK,
+	}
+
+	_, err := w.Write([]byte("ok"))
+	require.NoError(t, err)
+
+	w.WriteHeader(http.StatusInternalServerError)
+
+	assert.Equal(t, http.StatusOK, w.statusCode)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
