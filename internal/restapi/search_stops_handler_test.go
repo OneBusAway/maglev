@@ -804,8 +804,6 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 }
 
 func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
-
-func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 

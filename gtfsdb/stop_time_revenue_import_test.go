@@ -17,13 +17,10 @@ import (
 // in searchStopsByName.
 //
 // This goes through the real import path rather than inserting rows directly,
-// because the defect lives in parsing, not in our SQL: the pinned go-gtfs
-// v1.1.1 stores an absent column as 1 ("not allowed"), which makes the filter
-// drop every stop in such a feed and empties /api/where/search/stop.json.
-//
-// So this test fails today, on purpose. It goes red until
-// https://github.com/OneBusAway/go-gtfs/pull/5 is released and go.mod is
-// bumped to a version that parses a blank or absent column as 0.
+// because the interesting behavior lives in parsing, not in our SQL: go-gtfs
+// (OneBusAway/go-gtfs#5) parses an absent or blank column as 0
+// ("regularly scheduled"), which the importer then stores as NULL, so the
+// filter keeps every stop in such a feed.
 func TestImportedStopTimesOmittingPickupColumns(t *testing.T) {
 	client, err := NewClient(Config{
 		DBPath: ":memory:",
