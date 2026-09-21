@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -197,6 +199,42 @@ func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, s
 	}
 
 	return api.routeReferenceByID(ctx, routeID)
+}
+
+// appendTripRouteReferences adds the route of every referenced trip whose routeId
+// is not already in references.routes. A route that no longer exists costs the
+// reference, not the response.
+func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *models.ReferencesModel) error {
+	present := make(map[string]bool, len(references.Routes))
+	for _, route := range references.Routes {
+		present[route.ID] = true
+	}
+
+	for _, trip := range references.Trips {
+		if trip.RouteID == "" || present[trip.RouteID] {
+			continue
+		}
+		_, routeID, err := utils.ExtractAgencyIDAndCodeID(trip.RouteID)
+		if err != nil {
+			continue
+		}
+
+		route, err := api.routeReferenceByID(ctx, routeID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		present[trip.RouteID] = true
+		if !present[route.ID] {
+			present[route.ID] = true
+			references.Routes = append(references.Routes, route)
+		}
+	}
+
+	return nil
 }
 
 // appendRouteAgencyReference adds a route's own agency to references when it is not

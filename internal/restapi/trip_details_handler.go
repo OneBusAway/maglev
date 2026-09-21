@@ -342,16 +342,13 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 		references.Situations = append(references.Situations, situationRefs...)
 
-		if params.IncludeSchedule && schedule != nil {
-			stopIDs := make([]string, 0, len(schedule.StopTimes))
-			for _, st := range schedule.StopTimes {
-				_, rawStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
-				if err != nil {
-					continue
-				}
-				stopIDs = append(stopIDs, rawStopID)
-			}
+		stopIDs, err := referencedStopIDs(status, schedule)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
+		if len(stopIDs) > 0 {
 			stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
@@ -366,6 +363,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			references.Routes = routes
+		}
+
+		if err := api.appendTripRouteReferences(ctx, references); err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 	}
 
