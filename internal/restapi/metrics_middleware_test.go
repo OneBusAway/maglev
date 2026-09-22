@@ -89,28 +89,6 @@ func TestMetricsHandler_UnmatchedPath(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-func TestMetricsResponseWriter_WriteHeader(t *testing.T) {
-	rec := httptest.NewRecorder()
-	w := &metricsResponseWriter{
-		ResponseWriter: rec,
-		statusCode:     http.StatusOK,
-	}
-
-	w.WriteHeader(http.StatusNotFound)
-
-	assert.Equal(t, http.StatusNotFound, w.statusCode)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestMetricsResponseWriter_InitialStatusCode(t *testing.T) {
-	w := &metricsResponseWriter{
-		statusCode: http.StatusOK,
-	}
-
-	// Without calling WriteHeader, statusCode should be 200
-	assert.Equal(t, http.StatusOK, w.statusCode)
-}
-
 func TestMetricsHandler_Integration(t *testing.T) {
 	m := metrics.New()
 
@@ -167,36 +145,4 @@ func TestMetricsHandler_VariousStatusCodes(t *testing.T) {
 			assert.Equal(t, tc.statusCode, rec.Code)
 		})
 	}
-}
-
-func TestMetricsResponseWriter_PreservesFirstStatus(t *testing.T) {
-	rec := httptest.NewRecorder()
-
-	w := &metricsResponseWriter{
-		ResponseWriter: rec,
-		statusCode:     http.StatusOK,
-	}
-
-	w.WriteHeader(http.StatusNotFound)
-	w.WriteHeader(http.StatusInternalServerError)
-
-	assert.Equal(t, http.StatusNotFound, w.statusCode)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestMetricsResponseWriter_WriteCommitsOK(t *testing.T) {
-	rec := httptest.NewRecorder()
-
-	w := &metricsResponseWriter{
-		ResponseWriter: rec,
-		statusCode:     http.StatusOK,
-	}
-
-	_, err := w.Write([]byte("ok"))
-	require.NoError(t, err)
-
-	w.WriteHeader(http.StatusInternalServerError)
-
-	assert.Equal(t, http.StatusOK, w.statusCode)
-	assert.Equal(t, http.StatusOK, rec.Code)
 }
