@@ -10,22 +10,20 @@ import (
 
 // currentTimeHandler returns the server's current time as a JSON response.
 // readableTime is formatted in the primary agency's local timezone.
+// Readiness is owned by /healthz; this endpoint always returns the OBA JSON envelope.
 func (api *RestAPI) currentTimeHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GtfsManager.IsReady() {
-		http.Error(w, "Service Unavailable: GTFS data invalid", http.StatusServiceUnavailable)
-		return
-	}
-
 	loc := agencyTimezone(api, r)
-	timeData := models.NewCurrentTimeDataInLocation(api.Clock.Now(), loc)
-	response := models.NewOKResponse(timeData, api.Clock)
-
-	api.sendResponse(w, r, response)
+	now := api.Clock.Now()
+	timeData := models.NewCurrentTimeDataInLocation(now, loc)
+	api.sendResponse(w, r, models.NewOKResponseAt(timeData, now))
 }
 
 // agencyTimezone returns the primary agency's IANA timezone location.
 // Falls back to UTC if the timezone cannot be loaded.
 func agencyTimezone(api *RestAPI, r *http.Request) *time.Location {
+	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
+		return time.UTC
+	}
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	agencies, err := api.GtfsManager.GetAgencies(r.Context())
 	if err != nil || len(agencies) == 0 {

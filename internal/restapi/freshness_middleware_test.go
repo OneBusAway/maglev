@@ -35,6 +35,46 @@ func TestFreshnessMiddleware(t *testing.T) {
 		}
 	})
 
+	t.Run("GtfsDB is nil", func(t *testing.T) {
+		manager := newTestManagerNoData(t)
+		manager.GtfsDB = nil
+		api := &RestAPI{
+			Application: &app.Application{
+				GtfsManager: manager,
+			},
+		}
+
+		req := httptest.NewRequest("GET", "/", nil)
+		rr := httptest.NewRecorder()
+
+		handler := api.FreshnessMiddleware(dummyHandler)
+		handler.ServeHTTP(rr, req)
+
+		if rr.Header().Get("X-Data-Last-Updated") != "" {
+			t.Errorf("Expected no X-Data-Last-Updated header, got %q", rr.Header().Get("X-Data-Last-Updated"))
+		}
+	})
+
+	t.Run("Queries is nil", func(t *testing.T) {
+		manager := newTestManagerNoData(t)
+		manager.GtfsDB.Queries = nil
+		api := &RestAPI{
+			Application: &app.Application{
+				GtfsManager: manager,
+			},
+		}
+
+		req := httptest.NewRequest("GET", "/", nil)
+		rr := httptest.NewRecorder()
+
+		handler := api.FreshnessMiddleware(dummyHandler)
+		handler.ServeHTTP(rr, req)
+
+		if rr.Header().Get("X-Data-Last-Updated") != "" {
+			t.Errorf("Expected no X-Data-Last-Updated header, got %q", rr.Header().Get("X-Data-Last-Updated"))
+		}
+	})
+
 	t.Run("GtfsManager exists but lastUpdated is zero", func(t *testing.T) {
 		api := &RestAPI{
 			Application: &app.Application{
