@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -193,15 +192,9 @@ func TestCurrentTimeHandler_NilGTFSDependencies(t *testing.T) {
 			tc.setup(t, application)
 			api := NewRestAPI(application)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/where/current-time.json?key=TEST", nil)
-			w := httptest.NewRecorder()
-			api.currentTimeHandler(w, req)
-
-			assert.Equal(t, http.StatusOK, w.Code)
-			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-			var model models.ResponseModel
-			require.NoError(t, json.NewDecoder(w.Body).Decode(&model))
+			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 			assert.Equal(t, http.StatusOK, model.Code)
 			assert.Equal(t, "OK", model.Text)
 			assert.Equal(t, expectedMs, model.CurrentTime)
