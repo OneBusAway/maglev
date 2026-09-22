@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -144,6 +145,76 @@ func TestCurrentTimeHandler_WhenGTFSNotReady(t *testing.T) {
 	assert.Equal(t, expectedMs, model.CurrentTime)
 	assert.Equal(t, fixedTime.UTC().Format(time.RFC3339), entry["readableTime"],
 		"unready manager has no agencies, so readableTime falls back to UTC")
+}
+
+func TestCurrentTimeHandler_NilGTFSDependencies(t *testing.T) {
+	fixedTime := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+	expectedMs := fixedTime.UnixMilli()
+	expectedReadable := fixedTime.UTC().Format(time.RFC3339)
+
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *app.Application)
+	}{
+		{
+			name: "nil GtfsManager",
+			setup: func(_ *testing.T, application *app.Application) {
+				application.GtfsManager = nil
+			},
+		},
+		{
+			name: "nil GtfsDB",
+			setup: func(t *testing.T, application *app.Application) {
+				manager := newTestManagerNoData(t)
+				manager.GtfsDB = nil
+				application.GtfsManager = manager
+			},
+		},
+		{
+			name: "nil Queries",
+			setup: func(t *testing.T, application *app.Application) {
+				manager := newTestManagerNoData(t)
+				manager.GtfsDB.Queries = nil
+				application.GtfsManager = manager
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			application := &app.Application{
+				Config: appconf.Config{
+					Env:       appconf.EnvFlagToEnvironment("test"),
+					ApiKeys:   []string{"TEST"},
+					RateLimit: 100,
+				},
+				Clock: clock.NewMockClock(fixedTime),
+			}
+			tc.setup(t, application)
+			api := NewRestAPI(application)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/where/current-time.json?key=TEST", nil)
+			w := httptest.NewRecorder()
+			api.currentTimeHandler(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+
+			var model models.ResponseModel
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&model))
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.Equal(t, "OK", model.Text)
+			assert.Equal(t, expectedMs, model.CurrentTime)
+
+			responseData, ok := model.Data.(map[string]any)
+			require.True(t, ok, "could not cast data to expected type")
+			entry, ok := responseData["entry"].(map[string]any)
+			require.True(t, ok, "could not find entry in response data")
+			assert.Equal(t, float64(expectedMs), entry["time"])
+			assert.Equal(t, expectedReadable, entry["readableTime"],
+				"nil GTFS dependencies fall back to UTC")
+		})
+	}
 }
 
 func TestCurrentTimeHandler_EnvelopeMatchesEntryTime(t *testing.T) {
