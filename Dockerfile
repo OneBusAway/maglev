@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} \
     go build \
-    -tags "sqlite_fts5 sqlite_math-functions" \
+    -tags "sqlite_fts5 sqlite_math_functions" \
     -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=${GIT_COMMIT}' \
               -X 'maglev.onebusaway.org/internal/buildinfo.Branch=${GIT_BRANCH}' \
               -X 'maglev.onebusaway.org/internal/buildinfo.BuildTime=${BUILD_TIME}' \
