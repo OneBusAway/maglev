@@ -365,7 +365,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			references.Routes = routes
 		}
 
-		if err := api.appendTripRouteReferences(ctx, references); err != nil {
+		if err := api.appendTripRouteReferences(ctx, references, agencyID); err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}

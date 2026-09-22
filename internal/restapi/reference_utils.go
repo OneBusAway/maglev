@@ -202,9 +202,10 @@ func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, s
 }
 
 // appendTripRouteReferences adds the route of every referenced trip whose routeId
-// is not already in references.routes. A route that no longer exists costs the
-// reference, not the response.
-func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *models.ReferencesModel) error {
+// is not already in references.routes, plus that route's agency when it is not
+// requestAgencyID. A route that no longer exists costs the reference, not the
+// response.
+func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *models.ReferencesModel, requestAgencyID string) error {
 	present := make(map[string]bool, len(references.Routes))
 	for _, route := range references.Routes {
 		present[route.ID] = true
@@ -227,10 +228,12 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 			return err
 		}
 
+		alreadyInRoutes := present[route.ID]
 		present[trip.RouteID] = true
-		if !present[route.ID] {
+		if !alreadyInRoutes {
 			present[route.ID] = true
 			references.Routes = append(references.Routes, route)
+			api.appendRouteAgencyReference(ctx, references, route.AgencyID, requestAgencyID)
 		}
 	}
 

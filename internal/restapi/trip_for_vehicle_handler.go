@@ -213,7 +213,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 
 	references.Routes = utils.MapValues(routeRefs)
 
-	if err := api.appendTripRouteReferences(ctx, references); err != nil {
+	if err := api.appendTripRouteReferences(ctx, references, agencyID); err != nil {
 		return nil, err
 	}
 
