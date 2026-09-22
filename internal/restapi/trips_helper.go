@@ -1437,12 +1437,6 @@ type serviceDay struct {
 	midnight        time.Time
 }
 
-// Indexes into the slice returned by ServiceDays.
-const (
-	queryServiceDay = iota
-	previousServiceDay
-)
-
 // ServiceDays returns the query day and the day before it. A trip belonging to
 // the previous service day is matched against the query moment offset by +24h,
 // since GTFS expresses its stop times relative to its own service date.
