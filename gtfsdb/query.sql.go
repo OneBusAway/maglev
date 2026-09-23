@@ -1355,6 +1355,9 @@ FROM
     JOIN agencies a ON routes.agency_id = a.id
 WHERE
     stop_times.stop_id IN (/*SLICE:stop_ids*/?)
+ORDER BY
+    stop_times.stop_id ASC,
+    a.id ASC
 `
 
 type GetAgenciesForStopsRow struct {
@@ -4015,6 +4018,94 @@ func (q *Queries) GetStopTimesForStopInWindow(ctx context.Context, arg GetStopTi
 	var items []GetStopTimesForStopInWindowRow
 	for rows.Next() {
 		var i GetStopTimesForStopInWindowRow
+		if err := rows.Scan(
+			&i.TripID,
+			&i.ArrivalTime,
+			&i.DepartureTime,
+			&i.StopID,
+			&i.StopSequence,
+			&i.StopHeadsign,
+			&i.RouteID,
+			&i.ServiceID,
+			&i.TripHeadsign,
+			&i.BlockID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStopTimesForStopsInWindow = `-- name: GetStopTimesForStopsInWindow :many
+SELECT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    t.route_id,
+    t.service_id,
+    t.trip_headsign,
+    t.block_id
+FROM stop_times st
+         JOIN trips t ON st.trip_id = t.id
+WHERE (
+    (st.arrival_time BETWEEN ?1 AND ?2)
+        OR
+    (st.departure_time BETWEEN ?1 AND ?2)
+    )
+  AND st.stop_id IN (/*SLICE:stop_ids*/?)
+ORDER BY st.stop_id, st.arrival_time
+`
+
+type GetStopTimesForStopsInWindowParams struct {
+	WindowStartNanos int64
+	WindowEndNanos   int64
+	StopIds          []string
+}
+
+type GetStopTimesForStopsInWindowRow struct {
+	TripID        string
+	ArrivalTime   int64
+	DepartureTime int64
+	StopID        string
+	StopSequence  int64
+	StopHeadsign  sql.NullString
+	RouteID       string
+	ServiceID     string
+	TripHeadsign  sql.NullString
+	BlockID       sql.NullString
+}
+
+func (q *Queries) GetStopTimesForStopsInWindow(ctx context.Context, arg GetStopTimesForStopsInWindowParams) ([]GetStopTimesForStopsInWindowRow, error) {
+	query := getStopTimesForStopsInWindow
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.WindowStartNanos)
+	queryParams = append(queryParams, arg.WindowEndNanos)
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopTimesForStopsInWindowRow
+	for rows.Next() {
+		var i GetStopTimesForStopsInWindowRow
 		if err := rows.Scan(
 			&i.TripID,
 			&i.ArrivalTime,
