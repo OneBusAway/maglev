@@ -77,13 +77,13 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 
 	// --- Routes without ID validation ---
 	mux.Handle("GET /api/where/agencies-with-coverage.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.agenciesWithCoverageHandler))))
+	mux.Handle("GET /api/where/search/stop.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.searchStopsHandler))))
+	mux.Handle("GET /api/where/search/route.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.routeSearchHandler))))
+	mux.Handle("GET /api/where/stops-for-location.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.stopsForLocationHandler))))
+	mux.Handle("GET /api/where/routes-for-location.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.routesForLocationHandler))))
 
 	// Non-static endpoints (no ETag)
 	mux.Handle("GET /api/where/current-time.json", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.currentTimeHandler)))
-	mux.Handle("GET /api/where/search/stop.json", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.searchStopsHandler)))
-	mux.Handle("GET /api/where/search/route.json", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.routeSearchHandler)))
-	mux.Handle("GET /api/where/stops-for-location.json", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.stopsForLocationHandler)))
-	mux.Handle("GET /api/where/routes-for-location.json", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.routesForLocationHandler)))
 	mux.Handle("GET /api/where/trips-for-location.json", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.tripsForLocationHandler)))
 	mux.Handle("GET /api/where/config.json", rateLimitAndValidateAPIKey(api, api.configHandler))
 
