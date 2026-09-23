@@ -2752,3 +2752,49 @@ func TestRouteZoneServiceDates_SkipsUnusableAgencyZone(t *testing.T) {
 	assert.Contains(t, locations, "A1")
 	assert.NotContains(t, locations, "BROKEN", "an agency with an unusable zone must not join the candidate set")
 }
+
+// previousDayLayoverFiles has a block from yesterday's service in layover after midnight,
+// with its next trip starting outside the running window.
+func previousDayLayoverFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-yest,0,0,0,1,0,0,0,20250612,20250612\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n" +
+			"tfr-stop3,Stop Three,37.7949,-122.3994\n" +
+			"tfr-stop4,Stop Four,37.8049,-122.3894\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-late-prev,Late Previous,0,tfr-late-block\n" +
+			tripsForRouteRouteID + ",tfr-svc-yest,tfr-late-next,Late Next,0,tfr-late-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-late-prev,23:40:00,23:40:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-late-prev,24:05:00,24:05:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-late-next,24:45:00,24:45:00,tfr-stop3,1\n" +
+			"tfr-late-next,25:10:00,25:10:00,tfr-stop4,2\n",
+	}
+}
+
+func TestTripsForRouteHandler_PreviousDayLayoverKeepsItsServiceDate(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-previous-day-layover.zip", previousDayLayoverFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+	entry := model.Data.List[0]
+	require.NotNil(t, entry.Status)
+	assert.Contains(t, entry.Status.ActiveTripID, "tfr-late-next")
+
+	yesterday := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
+	assert.Equal(t, yesterday, entry.ServiceDate)
+	assert.Equal(t, yesterday, entry.Status.ServiceDate.UnixMilli())
+}

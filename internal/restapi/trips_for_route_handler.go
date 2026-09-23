@@ -280,10 +280,12 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			// per-active-block guarantee rather than dropping the entry.
 		}
 
+		activeServiceDate := tripServiceDay[tripID]
+		entryServiceDate := activeServiceDate
 		entryLocation := locationOrDefault(agencyLocations, entryAgencyID, currentLocation)
-		entryServiceDate := serviceDatesByZone[entryLocation.String()].Resolve(tripsByID[entryTripID])
-		activeLocation := locationOrDefault(agencyLocations, activeAgencyID, currentLocation)
-		activeServiceDate := serviceDatesByZone[activeLocation.String()].Resolve(fetchedTrip)
+		if entryTripID != tripID {
+			entryServiceDate = serviceDatesByZone[entryLocation.String()].Resolve(tripsByID[entryTripID])
+		}
 
 		var schedule *models.TripsSchedule
 		if includeSchedule {
