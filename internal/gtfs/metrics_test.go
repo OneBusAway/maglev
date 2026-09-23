@@ -23,13 +23,11 @@ var metricsTestNowSinceMidnight = metricsTestNow.Sub(
 	time.Date(metricsTestNow.Year(), metricsTestNow.Month(), metricsTestNow.Day(), 0, 0, 0, 0, metricsTestNow.Location()))
 
 // activeStopTimeUpdates returns a single stop_time_update whose predictions
-// bracket the real wall clock, so isCombinedRecordActive/isTripActive treat
-// it as currently active. Matched-trip activity is deliberately measured
-// against time.Now(), not metricsTestNow (see populateRealtimeMetrics), so
-// tests exercising matched counts must anchor predictions to real time too.
+// bracket metricsTestNow, so isCombinedRecordActive/isTripActive treat it as
+// currently active.
 func activeStopTimeUpdates() []gtfs.StopTimeUpdate {
-	arrival := time.Now().Add(-5 * time.Minute)
-	departure := time.Now().Add(30 * time.Minute)
+	arrival := metricsTestNow.Add(-5 * time.Minute)
+	departure := metricsTestNow.Add(30 * time.Minute)
 	return []gtfs.StopTimeUpdate{
 		{Arrival: &gtfs.StopTimeEvent{Time: &arrival}, Departure: &gtfs.StopTimeEvent{Time: &departure}},
 	}
@@ -223,8 +221,6 @@ func TestGetMetrics_RecordsTotalGroupsTripUpdatesByBlock(t *testing.T) {
 // matched regardless of whether its predictions were current, running far
 // higher than Java for the same feed.
 func TestGetMetrics_MatchedTripsRequireActivePrediction(t *testing.T) {
-	// isTripActive is measured against time.Now(), not metricsTestNow, so
-	// predictions are anchored to real wall time here (see activeStopTimeUpdates).
 	tests := []struct {
 		name          string
 		firstOffset   time.Duration
@@ -256,8 +252,8 @@ func TestGetMetrics_MatchedTripsRequireActivePrediction(t *testing.T) {
 			manager := newTestManagerWithRoutes(routes)
 			mustCreateTrip(t, manager, "T1", "R1")
 
-			first := time.Now().Add(tc.firstOffset)
-			last := time.Now().Add(tc.lastOffset)
+			first := metricsTestNow.Add(tc.firstOffset)
+			last := metricsTestNow.Add(tc.lastOffset)
 			manager.feedTrips["feed-1"] = []gtfs.Trip{
 				{
 					ID: gtfs.TripID{ID: "T1", RouteID: "R1"},
@@ -766,9 +762,9 @@ func TestGetMetrics_BlockWithFinishedAndActiveTripCountsAsActive(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	longFinished := time.Now().Add(-2 * time.Hour)
-	activeArrival := time.Now().Add(-5 * time.Minute)
-	activeDeparture := time.Now().Add(30 * time.Minute)
+	longFinished := metricsTestNow.Add(-2 * time.Hour)
+	activeArrival := metricsTestNow.Add(-5 * time.Minute)
+	activeDeparture := metricsTestNow.Add(30 * time.Minute)
 	manager.feedTrips["feed-1"] = []gtfs.Trip{
 		{
 			ID: gtfs.TripID{ID: "FINISHED_LEG", RouteID: "R1"},
