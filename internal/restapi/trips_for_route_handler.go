@@ -124,8 +124,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	// A block resolves on the service day its route trip was found on, so a block ID
 	// reused on both days can yield one active trip per day.
 	var activeTrips []string
-	for dayIndex, day := range routeServiceDays {
-		dayActiveTrips, err := api.activeTripsInBlocks(ctx, dayBlockIDs[dayIndex], dayIndex, day,
+	for dayIndex := range routeServiceDays {
+		dayActiveTrips, err := api.activeTripsInBlocks(ctx, dayBlockIDs[dayIndex], dayIndex,
 			currentLocation.String(), serviceDatesByZone, agencyLocations, currentTime)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -777,10 +777,6 @@ func serviceDateFor(tripServiceDay map[string]time.Time, id string, todayMidnigh
 	return todayMidnight
 }
 
-// activeTripsInBlocks returns the trip each block is running at the request time,
-// keyed to its service-day midnight. blockIDs were found on routeDay, the
-// dayIndex entry of the route agency's service days, and a candidate is only
-// tested against the same entry for its own agency's timezone.
 // routeZoneServiceDates resolves the queried route agency's zone first, then every
 // other agency zone best effort. An agency whose time zone cannot be loaded, or whose
 // service days cannot be read, is logged and left out: a route that does not depend on
@@ -854,11 +850,13 @@ func (api *RestAPI) serviceDateResolverForZone(
 	}), nil
 }
 
+// activeTripsInBlocks returns the trip each block is running at the request time,
+// keyed to its service-day midnight. blockIDs were found on the dayIndex entry of
+// the route agency's service days.
 func (api *RestAPI) activeTripsInBlocks(
 	ctx context.Context,
 	blockIDs []string,
 	dayIndex int,
-	routeDay serviceDay,
 	routeZone string,
 	serviceDatesByZone map[string]*serviceDateResolver,
 	agencyLocations map[string]*time.Location,

@@ -2703,7 +2703,7 @@ func crossAgencyLayoverFiles() map[string]string {
 
 // TestTripsForRouteHandler_CrossAgencyLayoverUsesTripAgencyClock verifies that a block
 // between trips is resolved on the clock of the agency whose trips bracket the request
-// time, and that the entry carries that agency's service date rather than the queried
+// time: the status carries that agency's service date, and the entry keeps the queried
 // route agency's.
 func TestTripsForRouteHandler_CrossAgencyLayoverUsesTripAgencyClock(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
