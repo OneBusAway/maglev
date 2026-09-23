@@ -117,6 +117,17 @@ func TestStatusCapturingWriter(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 		},
+		{
+			name: "preserves switching protocols status",
+			handler: func(t *testing.T, w *statusCapturingWriter) {
+				w.WriteHeader(http.StatusSwitchingProtocols)
+				w.WriteHeader(http.StatusCreated)
+
+				_, err := w.Write([]byte("ok"))
+				require.NoError(t, err)
+			},
+			expectedStatus: http.StatusSwitchingProtocols,
+		},
 	}
 
 	for _, tt := range tests {
