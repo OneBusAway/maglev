@@ -15,7 +15,6 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
-	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -70,7 +69,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Midnight at the start of the current service day (in the agency's timezone).
-	todayMidnight := servicedate.Start(currentTime.Year(), currentTime.Month(), currentTime.Day(), currentLocation)
+	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
 	// Midnight at the start of the previous service day. Trips that run past
 	// midnight belong to yesterday's service day, so their entries must report
 	// yesterday's midnight as serviceDate, not today's.
@@ -87,7 +86,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Time since midnight of the service day, as a duration.
-	serviceDayMidnight := servicedate.Start(currentTime.Year(), currentTime.Month(), currentTime.Day(), currentTime.Location())
+	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
 	currentSinceMidnight := max(currentTime.Sub(serviceDayMidnight), 0)
 
 	// Check the previous day's service for trips running past midnight.
@@ -883,7 +882,7 @@ func tripServiceDayMidnight(currentTime time.Time, trip *gtfsdb.Trip, agencyLoca
 	if !slices.Contains(serviceIDs, trip.ServiceID) && slices.Contains(prevServiceIDs, trip.ServiceID) {
 		serviceDate = currentTime.AddDate(0, 0, -1)
 	}
-	return servicedate.Start(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), agencyLocation)
+	return time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, agencyLocation)
 }
 
 func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string][]string) {
