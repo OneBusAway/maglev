@@ -2,7 +2,6 @@ package gtfs
 
 import (
 	"context"
-	"database/sql"
 	"maps"
 	"sort"
 	"time"
@@ -120,8 +119,8 @@ func newMetricsSnapshot(agencyIDs []string) MetricsSnapshot {
 // (via BlockStatusServiceImpl#getActiveBlocksForAgency, queried with
 // timeFrom == timeTo == now: a strict point-in-time check with no
 // running-late/running-early tolerance, unlike trips-for-route). A block
-// counts as active both while a trip is in progress and while laying over
-// between two of its trips, so this counts both.
+// counts as active from its first trip's start to its last trip's end, so
+// both trips in progress and layovers between trips count.
 func (manager *Manager) activeTripsByAgency(ctx context.Context, now time.Time, agencies []gtfsdb.Agency) (map[string]int, error) {
 	counts := make(map[string]int, len(agencies))
 	for _, agency := range agencies {
@@ -163,8 +162,8 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 }
 
 // countActiveBlocksAt counts the distinct blocks active for one agency at the
-// given instant — a trip in progress, or a layover between two of the
-// block's trips — among the services active on serviceDay.
+// given instant — between the block's first trip start and last trip end —
+// among the services active on serviceDay.
 func (manager *Manager) countActiveBlocksAt(ctx context.Context, agencyID string, serviceDay time.Time, at time.Duration) (int, error) {
 	serviceIDs, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDay.Format("20060102"))
 	if err != nil {
@@ -174,30 +173,13 @@ func (manager *Manager) countActiveBlocksAt(ctx context.Context, agencyID string
 		return 0, nil
 	}
 
-	tripBlockIDs, err := manager.GtfsDB.Queries.GetActiveTripBlockIDsForAgency(ctx, gtfsdb.GetActiveTripBlockIDsForAgencyParams{
-		AgencyID:   agencyID,
-		At:         sql.NullInt64{Int64: at.Nanoseconds(), Valid: true},
-		ServiceIds: serviceIDs,
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	layoverBlockIDs, err := manager.GtfsDB.Queries.GetActiveLayoverBlockIDsForAgency(ctx, gtfsdb.GetActiveLayoverBlockIDsForAgencyParams{
+	activeBlockIDs, err := manager.GtfsDB.Queries.GetActiveBlockIDsForAgency(ctx, gtfsdb.GetActiveBlockIDsForAgencyParams{
 		AgencyID:   agencyID,
 		At:         at.Nanoseconds(),
 		ServiceIds: serviceIDs,
 	})
 	if err != nil {
 		return 0, err
-	}
-
-	activeBlockIDs := make(map[string]bool, len(tripBlockIDs)+len(layoverBlockIDs))
-	for _, blockID := range tripBlockIDs {
-		activeBlockIDs[blockID] = true
-	}
-	for _, blockID := range layoverBlockIDs {
-		activeBlockIDs[blockID] = true
 	}
 	return len(activeBlockIDs), nil
 }

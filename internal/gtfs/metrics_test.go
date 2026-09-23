@@ -18,8 +18,7 @@ import (
 var metricsTestNow = time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
 
 // metricsTestNowSinceMidnight is metricsTestNow expressed as nanoseconds
-// since its own midnight, matching the trips/block_layover schema-window
-// convention.
+// since its own midnight, matching the trips schema-window convention.
 var metricsTestNowSinceMidnight = metricsTestNow.Sub(
 	time.Date(metricsTestNow.Year(), metricsTestNow.Month(), metricsTestNow.Day(), 0, 0, 0, 0, metricsTestNow.Location()))
 
@@ -640,43 +639,60 @@ func TestGetMetrics_ScheduledTripsCountHasNoRunningLateEarlyTolerance(t *testing
 // TestGetMetrics_ScheduledTripsCountIncludesLayoverBlocks guards the other
 // half of the getActiveBlocksForAgency fix: a block laying over between two
 // of its trips still counts as active, even though no single trip's own
-// schedule window covers metricsTestNow.
+// schedule window covers metricsTestNow. The block_layover table is left
+// empty on purpose: it only records layovers where consecutive trips share a
+// stop, whereas upstream's createLayoverIndices counts every gap between a
+// block's trips.
 func TestGetMetrics_ScheduledTripsCountIncludesLayoverBlocks(t *testing.T) {
 	routes := map[string]*gtfs.Route{
 		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
 	}
 	manager := newTestManagerWithRoutes(routes)
 	ensureDefaultCalendar(t, manager)
-	mustCreateStop(t, manager, "LAYOVER_STOP")
 
-	// The block's next trip departs an hour after metricsTestNow, so no trip
-	// is in progress at metricsTestNow, but the vehicle is laying over.
-	_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
-		ID:               "NEXT_LEG",
-		RouteID:          "R1",
-		ServiceID:        defaultTestServiceID,
-		BlockID:          sql.NullString{String: "BLOCK1", Valid: true},
-		MinArrivalTime:   sql.NullInt64{Int64: (metricsTestNowSinceMidnight + time.Hour).Nanoseconds(), Valid: true},
-		MaxDepartureTime: sql.NullInt64{Int64: (metricsTestNowSinceMidnight + 2*time.Hour).Nanoseconds(), Valid: true},
-	})
-	require.NoError(t, err)
-
-	err = manager.GtfsDB.Queries.CreateBlockLayover(context.Background(), gtfsdb.CreateBlockLayoverParams{
-		BlockID:       "BLOCK1",
-		ServiceID:     defaultTestServiceID,
-		RouteID:       "R1",
-		LayoverStopID: "LAYOVER_STOP",
-		LayoverStart:  (metricsTestNowSinceMidnight - 10*time.Minute).Nanoseconds(),
-		LayoverEnd:    (metricsTestNowSinceMidnight + time.Hour).Nanoseconds(),
-		NextTripID:    "NEXT_LEG",
-	})
-	require.NoError(t, err)
+	blockTrips := []struct {
+		id         string
+		start, end time.Duration
+	}{
+		{"PREVIOUS_LEG", metricsTestNowSinceMidnight - time.Hour, metricsTestNowSinceMidnight - 10*time.Minute},
+		{"NEXT_LEG", metricsTestNowSinceMidnight + time.Hour, metricsTestNowSinceMidnight + 2*time.Hour},
+	}
+	for _, trip := range blockTrips {
+		_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
+			ID:               trip.id,
+			RouteID:          "R1",
+			ServiceID:        defaultTestServiceID,
+			BlockID:          sql.NullString{String: "BLOCK1", Valid: true},
+			MinArrivalTime:   sql.NullInt64{Int64: trip.start.Nanoseconds(), Valid: true},
+			MaxDepartureTime: sql.NullInt64{Int64: trip.end.Nanoseconds(), Valid: true},
+		})
+		require.NoError(t, err)
+	}
 
 	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, snapshot.ScheduledTripsCount["A"],
-		"a block laying over between trips at metricsTestNow should count as active")
+		"a block between its first trip's start and last trip's end should count as active")
+}
+
+// TestGetMetrics_ScheduledTripsCountWithSeveralActiveServices guards the
+// active-block query's parameter binding: with more than one active service
+// ID, sqlc expands the service_ids slice into several placeholders, and any
+// parameter numbered after it would bind to the wrong value.
+func TestGetMetrics_ScheduledTripsCountWithSeveralActiveServices(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	mustCreateTrip(t, manager, "T1", "R1")
+	mustCreateCalendar(t, manager, "service-2")
+	mustCreateCalendar(t, manager, "service-3")
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, snapshot.ScheduledTripsCount["A"])
 }
 
 // TestGetMetrics_BlockWithFinishedAndActiveTripCountsAsActive guards the
