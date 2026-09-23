@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestCacheControlHeaders(t *testing.T) {
@@ -49,10 +48,10 @@ func TestCacheControlHeaders(t *testing.T) {
 			expectETag:     true,
 		},
 		{
-			name:           "Static Data - Route",
+			name:           "Real-time Data - Route",
 			endpoint:       "/api/where/route/25_151.json?key=org.onebusaway.iphone",
-			expectedHeader: "public, max-age=300",
-			expectETag:     true,
+			expectedHeader: "public, max-age=30",
+			expectETag:     false,
 		},
 		{
 			name:           "Real-time Data (Short Cache)",
@@ -114,6 +113,7 @@ func TestRealtimeEndpointsAreNotCachedAsStatic(t *testing.T) {
 		})
 	}
 }
+
 // TestCacheControlWriter_304PreservesCache proves the bug fix works
 func TestCacheControlWriter_304PreservesCache(t *testing.T) {
 	// Dummy handler that just returns 304 Not Modified
