@@ -387,26 +387,34 @@ func TestGetMetrics_FeedAgencyFilterFallback(t *testing.T) {
 	assert.Equal(t, []string{"GHOST"}, snapshot.RealtimeTripIDsUnmatched["A"])
 }
 
-func TestGetMetrics_UnresolvableFeedIsNotAttributed(t *testing.T) {
+// TestGetMetrics_UnfilteredFeedCoversAllAgencies guards the classic outage
+// this endpoint exists to catch: static GTFS changed but the real-time feed
+// didn't, so none of its trip IDs resolve. A feed with no `agency-ids` covers
+// every agency (GtfsRealtimeSource#start), so its records and unmatched trip
+// IDs must still be reported rather than silently dropped.
+func TestGetMetrics_UnfilteredFeedCoversAllAgencies(t *testing.T) {
 	routes := map[string]*gtfs.Route{
-		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
+		"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
 	}
 	manager := newTestManagerWithRoutes(routes)
-	mustCreateTrip(t, manager, "T1", "R1")
 
-	// No feed agency filter and no resolvable static route: this feed's
-	// match counts can't be attributed to any agency. Freshness is spread
-	// across all static agencies in this case — see
-	// TestGetMetrics_UnfilteredUnresolvableFeedFreshnessSpreadsAcrossAgencies.
 	manager.feedTrips["feed-1"] = []gtfs.Trip{
-		{ID: gtfs.TripID{ID: "GHOST", RouteID: ""}},
+		{ID: gtfs.TripID{ID: "GHOST1", RouteID: "RA"}},
+		{ID: gtfs.TripID{ID: "GHOST2", RouteID: "RA"}},
 	}
 
 	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
 	require.NoError(t, err)
 
-	assert.Equal(t, 0, snapshot.RealtimeRecordsTotal["A"])
-	assert.Equal(t, 0, snapshot.RealtimeTripCountsUnmatched["A"])
+	for _, agencyID := range []string{"A", "B"} {
+		assert.Equal(t, 2, snapshot.RealtimeRecordsTotal[agencyID])
+		assert.Equal(t, 0, snapshot.RealtimeTripCountsMatched[agencyID])
+		assert.Equal(t, 2, snapshot.RealtimeTripCountsUnmatched[agencyID])
+		assert.Equal(t, []string{"GHOST1", "GHOST2"}, snapshot.RealtimeTripIDsUnmatched[agencyID])
+		assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate[agencyID],
+			"the covering feed has never updated, so freshness must be unknown, not the no-feed 0")
+	}
 }
 
 func TestGetMetrics_TimeSinceLastRealtimeUpdate(t *testing.T) {
@@ -476,7 +484,7 @@ func TestGetMetrics_FeedWithoutTripDataIsStillVisible(t *testing.T) {
 }
 
 // TestGetMetrics_StalenessUsesMostStaleFeed guards the fix for
-// applyFeedMetrics taking the minimum staleness across feeds covering an
+// updateStaleness taking the minimum staleness across feeds covering an
 // agency: a healthy feed would mask a dead sibling. The maximum (most stale)
 // is the correct choice for a monitoring signal.
 func TestGetMetrics_StalenessUsesMostStaleFeed(t *testing.T) {
@@ -540,10 +548,12 @@ func TestGetMetrics_MultipleFeedsIsolateAgencies(t *testing.T) {
 	manager.feedTrips["feed-a"] = []gtfs.Trip{
 		{ID: gtfs.TripID{ID: "TA1", RouteID: "RA"}, StopTimeUpdates: activeStopTimeUpdates()},
 	}
+	manager.feedAgencyFilter["feed-a"] = map[string]bool{"A": true}
 	manager.feedTrips["feed-b"] = []gtfs.Trip{
 		{ID: gtfs.TripID{ID: "TB1", RouteID: "RB"}, StopTimeUpdates: activeStopTimeUpdates()},
 		{ID: gtfs.TripID{ID: "GHOST_B", RouteID: "RB"}},
 	}
+	manager.feedAgencyFilter["feed-b"] = map[string]bool{"B": true}
 
 	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
 	require.NoError(t, err)
@@ -556,6 +566,35 @@ func TestGetMetrics_MultipleFeedsIsolateAgencies(t *testing.T) {
 	assert.Equal(t, 1, snapshot.RealtimeTripCountsMatched["B"])
 	assert.Equal(t, 1, snapshot.RealtimeTripCountsUnmatched["B"])
 	assert.Equal(t, []string{"GHOST_B"}, snapshot.RealtimeTripIDsUnmatched["B"])
+}
+
+// TestGetMetrics_MatchedTripsSplitByTripAgency guards against every agency
+// a feed covers receiving that feed's full matched count: Java's
+// getValidRealtimeTripIds attributes each matched trip to its own agency.
+func TestGetMetrics_MatchedTripsSplitByTripAgency(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
+		"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	mustCreateTrip(t, manager, "TA1", "RA")
+	mustCreateTrip(t, manager, "TA2", "RA")
+	mustCreateTrip(t, manager, "TB1", "RB")
+
+	manager.feedTrips["feed-1"] = []gtfs.Trip{
+		{ID: gtfs.TripID{ID: "TA1", RouteID: "RA"}, StopTimeUpdates: activeStopTimeUpdates()},
+		{ID: gtfs.TripID{ID: "TA2", RouteID: "RA"}, StopTimeUpdates: activeStopTimeUpdates()},
+		{ID: gtfs.TripID{ID: "TB1", RouteID: "RB"}, StopTimeUpdates: activeStopTimeUpdates()},
+	}
+	manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true, "B": true}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, snapshot.RealtimeTripCountsMatched["A"])
+	assert.Equal(t, 1, snapshot.RealtimeTripCountsMatched["B"])
+	assert.Equal(t, 3, snapshot.RealtimeRecordsTotal["A"], "records stay attributed to every covered agency")
+	assert.Equal(t, 3, snapshot.RealtimeRecordsTotal["B"], "records stay attributed to every covered agency")
 }
 
 // TestGetMetrics_ScheduledTripsCountOnlyCountsActiveTrips guards the fix for
@@ -820,28 +859,4 @@ func TestGetMetrics_ConfiguredFilteredFeedNeverFetchedIsUnknown(t *testing.T) {
 
 	assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate["A"],
 		"a configured feed that has never fetched must report unknown for its covered agency, not the fresh-looking 0")
-}
-
-// An unfiltered feed whose trips don't resolve can't attribute match
-// counts, but its freshness signal must still reach every static agency.
-func TestGetMetrics_UnfilteredUnresolvableFeedFreshnessSpreadsAcrossAgencies(t *testing.T) {
-	routes := map[string]*gtfs.Route{
-		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
-		"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
-	}
-	manager := newTestManagerWithRoutes(routes)
-
-	manager.feedTrips["feed-1"] = []gtfs.Trip{
-		{ID: gtfs.TripID{ID: "GHOST", RouteID: ""}},
-	}
-
-	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
-	require.NoError(t, err)
-
-	for _, agencyID := range []string{"A", "B"} {
-		assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate[agencyID],
-			"unattributable configured feed must spread its unknown freshness to every static agency")
-		assert.Equal(t, 0, snapshot.RealtimeRecordsTotal[agencyID],
-			"matching counts must still not be attributed when the feed cannot be pinned to an agency")
-	}
 }

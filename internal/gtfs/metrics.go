@@ -16,14 +16,11 @@ import (
 // trip counts, and GTFS-RT matching health, keyed by agency ID.
 //
 // "Matched" means a real-time trip/stop ID resolves against the static
-// schedule. This is an approximation of the upstream Java implementation,
-// which instead matches a trip update to a static block using
-// schedule-deviation heuristics as a side effect of its GTFS-RT ingestion
-// engine — a much stricter check than static-ID existence, so
-// RealtimeTripCountsMatched will typically be higher here than in Java for
-// the same feed. Record counting and matched/unmatched ID deduplication,
-// however, are intentionally kept in step with Java's semantics: see
-// countMatchedGroups and computeFeedMetrics.
+// schedule and, for trips, that its block has a currently active prediction
+// window (see isCombinedRecordActive), mirroring Java's
+// GtfsRealtimeTripLibrary#isTripActive gate. Record counting and
+// matched/unmatched ID deduplication follow Java's semantics too: see
+// countMatchedGroupsByAgency and computeFeedMetrics.
 type MetricsSnapshot struct {
 	AgencyIDs                   []string
 	ScheduledTripsCount         map[string]int
@@ -51,10 +48,10 @@ const realtimeUpdateUnknown int64 = -1
 // GetMetrics computes an aggregate health snapshot: currently-active trip
 // counts per agency, plus GTFS-RT matching status (records received,
 // matched/unmatched trip and stop IDs, and feed staleness) attributed to the
-// agencies each feed is configured to cover. scheduleReferenceTime is the
-// reference time used to decide which trips count as currently active; it
-// does not affect real-time feed staleness, which is always measured against
-// the real wall clock (see populateRealtimeMetrics).
+// agencies each feed covers. scheduleReferenceTime is the reference time
+// used to decide which trips count as currently active; it does not affect
+// real-time feed staleness, which is always measured against the real wall
+// clock (see populateRealtimeMetrics).
 func (manager *Manager) GetMetrics(ctx context.Context, scheduleReferenceTime time.Time) (MetricsSnapshot, error) {
 	agencies, err := manager.GtfsDB.Queries.ListAgencies(ctx)
 	if err != nil {
@@ -236,8 +233,10 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 
 // populateRealtimeMetrics computes matched/unmatched trip and stop counts for
 // each feed and attributes them to the agencies that feed covers: its
-// configured `agency-ids` filter if set, otherwise the agencies actually
-// resolved from the feed's matched trips.
+// configured `agency-ids` filter if set, otherwise every static agency,
+// matching GtfsRealtimeSource#start. Matched trip counts are the exception:
+// they go to each matched trip's own agency, matching
+// MetricsBeanServiceImpl#getValidRealtimeTripIds.
 //
 // Staleness is measured against the real wall clock, not the `now` GetMetrics
 // received: feedLastUpdate is always stamped with time.Now() when a feed
@@ -247,9 +246,9 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *MetricsSnapshot) error {
 	now := time.Now()
 
-	knownAgencies := make(map[string]bool, len(snapshot.AgencyIDs))
+	allAgencies := make(map[string]bool, len(snapshot.AgencyIDs))
 	for _, agencyID := range snapshot.AgencyIDs {
-		knownAgencies[agencyID] = true
+		allAgencies[agencyID] = true
 	}
 
 	unmatchedTripIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
@@ -262,11 +261,6 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 			return err
 		}
 
-		agencyIDs := feed.agencyFilter
-		if len(agencyIDs) == 0 {
-			agencyIDs = metrics.resolvedAgencyIDs
-		}
-
 		// A feed that has never successfully updated is the worst possible
 		// staleness: use realtimeUpdateUnknown so it propagates correctly
 		// through the max-staleness-wins comparison even when a sibling feed
@@ -276,23 +270,27 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 			staleness = int64(now.Sub(feed.lastUpdate).Seconds())
 		}
 
-		for agencyID := range agencyIDs {
-			if !knownAgencies[agencyID] {
+		coveredAgencies := feed.agencyFilter
+		if len(coveredAgencies) == 0 {
+			coveredAgencies = allAgencies
+		}
+
+		for agencyID := range coveredAgencies {
+			if !allAgencies[agencyID] {
 				// Skip agencies absent from static GTFS — a stale or
 				// misspelled agency-ids entry must not create orphan keys.
 				continue
 			}
-			applyFeedMetrics(snapshot, agencyID, metrics, staleness)
+			snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
+			updateStaleness(snapshot, agencyID, staleness)
 			addToAgencySet(unmatchedTripIDsByAgency, agencyID, metrics.tripIDsUnmatched)
 			addToAgencySet(matchedStopIDsByAgency, agencyID, metrics.stopIDsMatched)
 			addToAgencySet(unmatchedStopIDsByAgency, agencyID, metrics.stopIDsUnmatched)
 		}
 
-		// Unfiltered feed with no resolvable trips: freshness spreads to every
-		// static agency so a broken configured feed does not read as 0.
-		if len(feed.agencyFilter) == 0 && len(metrics.resolvedAgencyIDs) == 0 {
-			for _, agencyID := range snapshot.AgencyIDs {
-				updateStaleness(snapshot, agencyID, staleness)
+		for agencyID, matched := range metrics.tripsMatchedByAgency {
+			if allAgencies[agencyID] {
+				snapshot.RealtimeTripCountsMatched[agencyID] += matched
 			}
 		}
 	}
@@ -327,12 +325,11 @@ func addToAgencySet(sets map[string]map[string]bool, agencyID string, ids []stri
 
 // feedMetrics is the matched/unmatched breakdown computed for a single feed.
 type feedMetrics struct {
-	recordsTotal      int
-	tripsMatched      int
-	tripIDsUnmatched  []string
-	stopIDsMatched    []string
-	stopIDsUnmatched  []string
-	resolvedAgencyIDs map[string]bool
+	recordsTotal         int
+	tripsMatchedByAgency map[string]int
+	tripIDsUnmatched     []string
+	stopIDsMatched       []string
+	stopIDsUnmatched     []string
 }
 
 // computeFeedMetrics cross-references a feed's real-time trips (and the stops
@@ -352,7 +349,7 @@ type feedMetrics struct {
 // but not-currently-active block counts toward neither matched nor
 // unmatched, matching GtfsRealtimeTripLibrary#createVehicleLocationRecordForUpdate.
 func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Trip, now time.Time) (feedMetrics, error) {
-	metrics := feedMetrics{resolvedAgencyIDs: map[string]bool{}}
+	metrics := feedMetrics{tripsMatchedByAgency: map[string]int{}}
 	if len(trips) == 0 {
 		return metrics, nil
 	}
@@ -367,20 +364,19 @@ func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Tri
 		return feedMetrics{}, err
 	}
 
+	agencyByRouteID, err := manager.agencyIDsByRouteID(ctx, tripRouteByID)
+	if err != nil {
+		return feedMetrics{}, err
+	}
+
 	tripGroups := groupTripsByBlock(trips, tripBlockByID)
 	metrics.recordsTotal = len(tripGroups)
-	metrics.tripsMatched = countMatchedGroups(tripGroups, tripRouteByID, now)
+	metrics.tripsMatchedByAgency = countMatchedGroupsByAgency(tripGroups, tripRouteByID, agencyByRouteID, now)
 
 	classification := classifyTrips(trips, tripRouteByID, staticStopIDs)
 	metrics.tripIDsUnmatched = sortedKeys(classification.unmatchedTripIDs)
 	metrics.stopIDsMatched = sortedKeys(classification.matchedStopIDs)
 	metrics.stopIDsUnmatched = sortedKeys(classification.unmatchedStopIDs)
-
-	resolvedAgencyIDs, err := manager.agencyIDsForRoutes(ctx, classification.routeIDs)
-	if err != nil {
-		return feedMetrics{}, err
-	}
-	metrics.resolvedAgencyIDs = resolvedAgencyIDs
 
 	return metrics, nil
 }
@@ -420,10 +416,9 @@ func (manager *Manager) staticStopIDsForTrips(ctx context.Context, trips []gtfs.
 }
 
 // tripClassification is the per-trip breakdown computeFeedMetrics needs:
-// which routes were referenced (for agency attribution), which trip IDs
-// didn't resolve statically, and which referenced stop IDs did/didn't.
+// which trip IDs didn't resolve statically, and which referenced stop IDs
+// did/didn't.
 type tripClassification struct {
-	routeIDs         map[string]bool
 	unmatchedTripIDs map[string]bool
 	matchedStopIDs   map[string]bool
 	unmatchedStopIDs map[string]bool
@@ -431,16 +426,13 @@ type tripClassification struct {
 
 func classifyTrips(trips []gtfs.Trip, tripRouteByID map[string]string, staticStopIDs map[string]bool) tripClassification {
 	result := tripClassification{
-		routeIDs:         make(map[string]bool, len(tripRouteByID)),
 		unmatchedTripIDs: make(map[string]bool),
 		matchedStopIDs:   make(map[string]bool),
 		unmatchedStopIDs: make(map[string]bool),
 	}
 
 	for _, trip := range trips {
-		if routeID, matched := tripRouteByID[trip.ID.ID]; matched {
-			result.routeIDs[routeID] = true
-		} else {
+		if _, matched := tripRouteByID[trip.ID.ID]; !matched {
 			result.unmatchedTripIDs[trip.ID.ID] = true
 		}
 		classifyStopTimeUpdates(trip.StopTimeUpdates, staticStopIDs, &result)
@@ -462,18 +454,24 @@ func classifyStopTimeUpdates(updates []gtfs.StopTimeUpdate, staticStopIDs map[st
 	}
 }
 
-// countMatchedGroups counts the block-grouped records that resolve
-// statically and are currently active; see isCombinedRecordActive for why
-// a resolved but not-currently-active block counts toward neither matched
-// nor unmatched.
-func countMatchedGroups(tripGroups map[string][]gtfs.Trip, tripRouteByID map[string]string, now time.Time) int {
-	matched := 0
+// countMatchedGroupsByAgency counts, per agency, the block-grouped records
+// that resolve statically and are currently active; see
+// isCombinedRecordActive for why a resolved but not-currently-active block
+// counts toward neither matched nor unmatched. Each record goes to the
+// agency of its first statically matched trip, the counterpart of Java
+// splitting matched trip IDs by their agency prefix.
+func countMatchedGroupsByAgency(tripGroups map[string][]gtfs.Trip, tripRouteByID, agencyByRouteID map[string]string, now time.Time) map[string]int {
+	matchedByAgency := make(map[string]int)
 	for _, group := range tripGroups {
-		if groupHasStaticMatch(group, tripRouteByID) && isCombinedRecordActive(group, now) {
-			matched++
+		routeID, matched := firstStaticRouteID(group, tripRouteByID)
+		if !matched || !isCombinedRecordActive(group, now) {
+			continue
+		}
+		if agencyID, ok := agencyByRouteID[routeID]; ok {
+			matchedByAgency[agencyID]++
 		}
 	}
-	return matched
+	return matchedByAgency
 }
 
 // groupTripsByBlock groups a feed poll's trip updates by their static block
@@ -498,13 +496,13 @@ func groupTripsByBlock(trips []gtfs.Trip, tripBlockByID map[string]string) map[s
 	return groups
 }
 
-func groupHasStaticMatch(group []gtfs.Trip, tripRouteByID map[string]string) bool {
+func firstStaticRouteID(group []gtfs.Trip, tripRouteByID map[string]string) (string, bool) {
 	for _, trip := range group {
-		if _, matched := tripRouteByID[trip.ID.ID]; matched {
-			return true
+		if routeID, matched := tripRouteByID[trip.ID.ID]; matched {
+			return routeID, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // activeRecordLookahead is how far in the future a combined record's first
@@ -576,50 +574,34 @@ func sortedKeys(set map[string]bool) []string {
 	return keys
 }
 
-// agencyIDsForRoutes resolves the set of agency IDs that own the given static
-// route IDs. Used to attribute a feed's metrics to agencies when the feed has
-// no explicit `agency-ids` configuration.
-func (manager *Manager) agencyIDsForRoutes(ctx context.Context, routeIDs map[string]bool) (map[string]bool, error) {
+// agencyIDsByRouteID resolves the owning agency of every static route
+// referenced by a feed poll's matched trips.
+func (manager *Manager) agencyIDsByRouteID(ctx context.Context, tripRouteByID map[string]string) (map[string]string, error) {
+	routeIDs := make(map[string]bool, len(tripRouteByID))
+	for _, routeID := range tripRouteByID {
+		routeIDs[routeID] = true
+	}
 	if len(routeIDs) == 0 {
-		return map[string]bool{}, nil
+		return map[string]string{}, nil
 	}
 
-	ids := make([]string, 0, len(routeIDs))
-	for routeID := range routeIDs {
-		ids = append(ids, routeID)
-	}
-
-	routes, err := utils.QueryInBatches(ctx, ids, manager.GtfsDB.Queries.GetRoutesByIDs)
+	routes, err := utils.QueryInBatches(ctx, sortedKeys(routeIDs), manager.GtfsDB.Queries.GetRoutesByIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	agencyIDs := make(map[string]bool, len(routes))
+	agencyByRouteID := make(map[string]string, len(routes))
 	for _, route := range routes {
-		agencyIDs[route.AgencyID] = true
+		agencyByRouteID[route.ID] = route.AgencyID
 	}
-	return agencyIDs, nil
-}
-
-// applyFeedMetrics accumulates a feed's per-agency totals into snapshot.
-// Matched/unmatched trip and stop IDs are handled separately by
-// populateRealtimeMetrics (via addToAgencySet), since they need
-// deduplicating across feeds that cover the same agency rather than summed
-// directly.
-//
-// staleness is either a non-negative seconds value (feed has updated) or
-// realtimeUpdateUnknown (-1, feed has never updated). isStalerThan treats
-// realtimeUpdateUnknown as worse than any non-negative value, so a
-// never-updated sibling feed always wins over a healthy one.
-func applyFeedMetrics(snapshot *MetricsSnapshot, agencyID string, metrics feedMetrics, staleness int64) {
-	snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
-	snapshot.RealtimeTripCountsMatched[agencyID] += metrics.tripsMatched
-	updateStaleness(snapshot, agencyID, staleness)
+	return agencyByRouteID, nil
 }
 
 // updateStaleness keeps the worst staleness value across feeds covering the
-// same agency. Split from applyFeedMetrics so the unattributable-feed
-// fallback can update freshness without re-accumulating match counts.
+// same agency. staleness is either a non-negative seconds value (feed has
+// updated) or realtimeUpdateUnknown (-1, feed has never updated);
+// isStalerThan treats realtimeUpdateUnknown as worse than any non-negative
+// value, so a never-updated sibling feed always wins over a healthy one.
 func updateStaleness(snapshot *MetricsSnapshot, agencyID string, staleness int64) {
 	existing, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]
 	if !tracked || isStalerThan(staleness, existing) {
