@@ -136,6 +136,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 type queryMetricCall struct {
 	queryName string
 	op        string
+	duration  time.Duration
 	hadErr    bool
 }
 
@@ -143,10 +144,15 @@ type testQueryMetricsRecorder struct {
 	calls []queryMetricCall
 }
 
-func (r *testQueryMetricsRecorder) RecordDBQuery(queryName, op string, err error) {
+func (r *testQueryMetricsRecorder) RecordDBQuery(
+	queryName, op string,
+	duration time.Duration,
+	err error,
+) {
 	r.calls = append(r.calls, queryMetricCall{
 		queryName: queryName,
 		op:        op,
+		duration:  duration,
 		hadErr:    err != nil,
 	})
 }
@@ -156,11 +162,11 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
 	recorder := &testQueryMetricsRecorder{}
-
 	wrapper := newMetricsWrapper(db)
 	wrapper.queryMetrics = recorder
+
+	ctx := context.Background()
 
 	_, err = wrapper.QueryContext(ctx, "-- name: ListAgencies :many\nSELECT 1")
 	require.NoError(t, err)
@@ -174,9 +180,21 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	assert.Equal(t, 1, n)
 
 	require.Len(t, recorder.calls, 3)
-	assert.Equal(t, queryMetricCall{queryName: "ListAgencies", op: "query", hadErr: false}, recorder.calls[0])
-	assert.Equal(t, queryMetricCall{queryName: "BrokenExec", op: "exec", hadErr: true}, recorder.calls[1])
-	assert.Equal(t, queryMetricCall{queryName: "unknown", op: "query_row", hadErr: false}, recorder.calls[2])
+
+	assert.Equal(t, "ListAgencies", recorder.calls[0].queryName)
+	assert.Equal(t, "query", recorder.calls[0].op)
+	assert.GreaterOrEqual(t, recorder.calls[0].duration, time.Duration(0))
+	assert.False(t, recorder.calls[0].hadErr)
+
+	assert.Equal(t, "BrokenExec", recorder.calls[1].queryName)
+	assert.Equal(t, "exec", recorder.calls[1].op)
+	assert.GreaterOrEqual(t, recorder.calls[1].duration, time.Duration(0))
+	assert.True(t, recorder.calls[1].hadErr)
+
+	assert.Equal(t, "unknown", recorder.calls[2].queryName)
+	assert.Equal(t, "query_row", recorder.calls[2].op)
+	assert.GreaterOrEqual(t, recorder.calls[2].duration, time.Duration(0))
+	assert.False(t, recorder.calls[2].hadErr)
 }
 
 func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
@@ -208,6 +226,7 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
         trip_id TEXT NOT NULL
     );
 `
+
 	t.Cleanup(func() {
 		ddl = originalDDL
 	})
@@ -230,7 +249,11 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
 	assert.Empty(t, agencies)
 
 	require.Len(t, recorder.calls, 1)
-	assert.Equal(t, queryMetricCall{queryName: "ListAgencies", op: "query", hadErr: false}, recorder.calls[0])
+
+	assert.Equal(t, "ListAgencies", recorder.calls[0].queryName)
+	assert.Equal(t, "query", recorder.calls[0].op)
+	assert.GreaterOrEqual(t, recorder.calls[0].duration, time.Duration(0))
+	assert.False(t, recorder.calls[0].hadErr)
 }
 
 func TestExtractQueryName(t *testing.T) {

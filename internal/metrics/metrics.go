@@ -27,6 +27,7 @@ type Metrics struct {
 	DBConnectionsIdle  prometheus.Gauge
 	DBWaitSecondsTotal prometheus.Counter
 	DBQueryTotal       *prometheus.CounterVec
+	DBQueryDuration    *prometheus.HistogramVec
 
 	// GTFS-RT metrics
 	FeedLastSuccessfulFetchTime *prometheus.GaugeVec
@@ -103,6 +104,15 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		[]string{"query_name", "op", "status"},
 	)
 
+	dbQueryDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "maglev_db_query_duration_seconds",
+			Help:    "Database query call-return latency (does not include row iteration or scan time) by query name, op, and status",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"query_name", "op", "status"},
+	)
+
 	feedLastSuccessfulFetchTime := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "maglev_feed_last_successful_fetch_time",
@@ -147,6 +157,7 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		dbConnectionsIdle,
 		dbWaitSecondsTotal,
 		dbQueryTotal,
+		dbQueryDuration,
 		feedLastSuccessfulFetchTime,
 		feedConsecutiveErrors,
 		feedFetchDuration,
@@ -162,6 +173,7 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 		DBConnectionsIdle:           dbConnectionsIdle,
 		DBWaitSecondsTotal:          dbWaitSecondsTotal,
 		DBQueryTotal:                dbQueryTotal,
+		DBQueryDuration:             dbQueryDuration,
 		FeedLastSuccessfulFetchTime: feedLastSuccessfulFetchTime,
 		FeedConsecutiveErrors:       feedConsecutiveErrors,
 		FeedFetchDuration:           feedFetchDuration,
@@ -170,9 +182,13 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 	}
 }
 
-// RecordDBQuery records per-query DB counters.
-func (m *Metrics) RecordDBQuery(queryName, op string, err error) {
-	if m == nil || m.DBQueryTotal == nil {
+// RecordDBQuery records per-query DB counters and latency.
+func (m *Metrics) RecordDBQuery(
+	queryName, op string,
+	duration time.Duration,
+	err error,
+) {
+	if m == nil {
 		return
 	}
 
@@ -188,7 +204,15 @@ func (m *Metrics) RecordDBQuery(queryName, op string, err error) {
 		status = "error"
 	}
 
-	m.DBQueryTotal.WithLabelValues(queryName, op, status).Inc()
+	if m.DBQueryTotal != nil {
+		m.DBQueryTotal.WithLabelValues(queryName, op, status).Inc()
+	}
+
+	if m.DBQueryDuration != nil {
+		m.DBQueryDuration.
+			WithLabelValues(queryName, op, status).
+			Observe(duration.Seconds())
+	}
 }
 
 // StartDBStatsCollector starts a goroutine that periodically collects database

@@ -67,8 +67,12 @@ func newMetricsWrapper(db *sql.DB) *metricsWrapper {
 }
 
 func (s *metricsWrapper) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	start := time.Now()
+
 	res, err := s.db.ExecContext(ctx, query, args...)
-	s.recordQueryMetrics("exec", query, err)
+
+	s.recordQueryMetrics("exec", query, time.Since(start), err)
+
 	return res, err
 }
 
@@ -79,21 +83,32 @@ func (s *metricsWrapper) PrepareContext(ctx context.Context, query string) (*sql
 }
 
 func (s *metricsWrapper) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	start := time.Now()
+
 	rows, err := s.db.QueryContext(ctx, query, args...)
-	s.recordQueryMetrics("query", query, err)
+
+	// Records call-return latency. Row iteration happens after QueryContext
+	// returns and is outside the scope of this wrapper.
+	s.recordQueryMetrics("query", query, time.Since(start), err)
+
 	return rows, err
 }
 
 func (s *metricsWrapper) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	start := time.Now()
+
 	row := s.db.QueryRowContext(ctx, query, args...)
-	// Note: QueryRowContext defers errors to row.Scan(), so err is always nil here.
-	// query_row metrics always report status="ok". See PR description for follow-up plan.
-	s.recordQueryMetrics("query_row", query, nil)
+
+	// QueryRowContext defers errors until Scan(), so the Scan error is not
+	// available here. This records call-return latency and preserves the
+	// existing status behavior.
+	s.recordQueryMetrics("query_row", query, time.Since(start), nil)
+
 	return row
 }
 
-func (s *metricsWrapper) recordQueryMetrics(op, query string, err error) {
-	s.queryMetrics.RecordDBQuery(extractQueryName(query), op, err)
+func (s *metricsWrapper) recordQueryMetrics(op, query string, duration time.Duration, err error) {
+	s.queryMetrics.RecordDBQuery(extractQueryName(query), op, duration, err)
 }
 
 func extractQueryName(query string) string {
