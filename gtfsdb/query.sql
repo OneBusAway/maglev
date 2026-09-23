@@ -1465,7 +1465,6 @@ SELECT CAST((
     )
 ) AS INTEGER) AS has_future_service;
 
--- Optimized queries using SQLite window functions
 
 
 -- name: GetBlockTripSequence :one

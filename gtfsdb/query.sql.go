@@ -1924,8 +1924,6 @@ func (q *Queries) GetBlockTripIndexIDsForRoute(ctx context.Context, arg GetBlock
 }
 
 const getBlockTripSequence = `-- name: GetBlockTripSequence :one
-
-
 WITH BlockTrips AS (
     SELECT id, ROW_NUMBER() OVER (ORDER BY min_arrival_time) - 1 AS seq
     FROM trips
@@ -1941,7 +1939,6 @@ type GetBlockTripSequenceParams struct {
 	ServiceIds []string
 }
 
-// Optimized queries using SQLite window functions
 // Calculates a trip's zero-based index within its block's ordered sequence,
 func (q *Queries) GetBlockTripSequence(ctx context.Context, arg GetBlockTripSequenceParams) (int64, error) {
 	query := getBlockTripSequence
