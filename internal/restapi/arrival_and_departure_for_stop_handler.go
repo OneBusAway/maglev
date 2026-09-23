@@ -831,7 +831,7 @@ func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, reques
 		if st.StopID != stopCode {
 			continue
 		}
-		dist := absInt(i - idx)
+		dist := int(absInt64(int64(i - idx)))
 		if !found || dist < bestDist {
 			found = true
 			bestIdx = i
@@ -843,11 +843,4 @@ func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, reques
 		return gtfsdb.StopTime{}, 0, false
 	}
 	return stopTimes[bestIdx], bestIdx, true
-}
-
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
