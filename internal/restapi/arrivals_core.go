@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -205,7 +206,7 @@ func (api *RestAPI) stopTimesForServiceDay(
 ) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	targetDate := in.QueryTime.AddDate(0, 0, dayOffset)
-	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, in.Location)
+	serviceMidnight := servicedate.Start(targetDate.Year(), targetDate.Month(), targetDate.Day(), in.Location)
 	serviceDateStr := targetDate.Format("20060102")
 
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)

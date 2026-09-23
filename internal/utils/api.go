@@ -12,11 +12,11 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 )
 
 func CalculateServiceDate(currentTime time.Time) time.Time {
-	year, month, day := currentTime.Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, currentTime.Location())
+	return servicedate.StartOf(currentTime)
 }
 
 func ServiceDateMidnight(explicitServiceDate *time.Time, currentTime time.Time) (time.Time, time.Time) {
@@ -26,11 +26,10 @@ func ServiceDateMidnight(explicitServiceDate *time.Time, currentTime time.Time) 
 	} else {
 		serviceDate = CalculateServiceDate(currentTime)
 	}
-	// Always return midnight of the service date in the date's own timezone.
-	// This ensures all endpoints return a consistent serviceDate millis value.
-	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
-	return serviceDate, midnight
+	// Always return the start of the service date in the date's own timezone, so
+	// every endpoint reports the same serviceDate millis.
+	start := servicedate.StartOf(serviceDate)
+	return serviceDate, start
 }
 
 // CalculateSecondsSinceServiceDate returns the number of wall-clock seconds elapsed
@@ -363,12 +362,13 @@ func ParseDate(date string, loc *time.Location) (time.Time, error) {
 		// Convert to the provided timezone and explicitly set to midnight
 		t := time.UnixMilli(v).In(loc)
 		y, m, d := t.Date()
-		return time.Date(y, m, d, 0, 0, 0, 0, loc), nil
+		return servicedate.Start(y, m, d, loc), nil
 	}
 
 	// Parsing in YYYY-MM-DD format
 	if parsedDate, err := time.ParseInLocation("2006-01-02", date, loc); err == nil {
-		return parsedDate, nil
+		y, m, d := parsedDate.Date()
+		return servicedate.Start(y, m, d, loc), nil
 	}
 
 	return time.Time{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")

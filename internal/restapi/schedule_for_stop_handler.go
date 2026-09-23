@@ -15,6 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -73,7 +74,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		responseDate = now.UnixMilli()
 
 		y, m, d := now.Date()
-		startOfDay = time.Date(y, m, d, 0, 0, 0, 0, loc)
+		startOfDay = servicedate.Start(y, m, d, loc)
 	}
 
 	targetDate := startOfDay.Format("20060102")

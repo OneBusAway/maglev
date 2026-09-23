@@ -17,6 +17,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -59,8 +60,7 @@ func (api *RestAPI) BuildTripStatus(
 		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 	}
 	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
-	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
+	sdMidnight := servicedate.Start(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), serviceDate.Location())
 	status := models.NewTripStatus()
 	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	status.ServiceDate = models.NewModelTime(sdMidnight)
@@ -406,8 +406,7 @@ func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]
 // selectFrequency returns the row whose [start_time, end_time) window
 // contains effectiveTime, falling back to freqs[0].
 func selectFrequency(freqs []gtfsdb.Frequency, serviceDate, effectiveTime time.Time) *gtfsdb.Frequency {
-	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
+	midnight := servicedate.Start(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), serviceDate.Location())
 	for i := range freqs {
 		start := midnight.Add(time.Duration(freqs[i].StartTime))
 		end := midnight.Add(time.Duration(freqs[i].EndTime))

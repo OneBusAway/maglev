@@ -10,6 +10,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -63,16 +64,16 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			}
 			t := time.UnixMilli(epochMs).In(loc)
 			y, m, d := t.Date()
-			parsedDate = time.Date(y, m, d, 0, 0, 0, 0, loc)
+			parsedDate = servicedate.Start(y, m, d, loc)
 		}
 		y, m, d := parsedDate.Date()
-		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		startOfDay := servicedate.Start(y, m, d, loc)
 		targetDate = startOfDay.Format("20060102")
 		scheduleDate = startOfDay.UnixMilli()
 	} else {
 		now := api.Clock.Now().In(loc)
 		y, m, d := now.Date()
-		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		startOfDay := servicedate.Start(y, m, d, loc)
 		targetDate = startOfDay.Format("20060102")
 		scheduleDate = startOfDay.UnixMilli()
 	}
