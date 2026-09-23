@@ -312,13 +312,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			tripsToInclude = append(tripsToInclude, utils.FormCombinedID(agencyID, trip.ID))
 		}
 
-		if params.IncludeSchedule && schedule != nil {
-			if schedule.NextTripID != "" {
-				tripsToInclude = append(tripsToInclude, schedule.NextTripID)
-			}
-			if schedule.PreviousTripID != "" {
-				tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
-			}
+		if params.IncludeSchedule {
+			tripsToInclude = append(tripsToInclude, scheduleLinkedTripIDs(schedule)...)
 		}
 
 		if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
@@ -342,16 +337,13 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 		references.Situations = append(references.Situations, situationRefs...)
 
-		if params.IncludeSchedule && schedule != nil {
-			stopIDs := make([]string, 0, len(schedule.StopTimes))
-			for _, st := range schedule.StopTimes {
-				_, rawStopID, err := utils.ExtractAgencyIDAndCodeID(st.StopID)
-				if err != nil {
-					continue
-				}
-				stopIDs = append(stopIDs, rawStopID)
-			}
+		stopIDs, err := referencedStopIDs(status, schedule)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
+		if len(stopIDs) > 0 {
 			stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
@@ -366,6 +358,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			references.Routes = routes
+		}
+
+		if err := api.appendTripRouteReferences(ctx, references, agencyID); err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 	}
 
@@ -452,7 +449,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
-			RouteID:        utils.FormCombinedID(agencyID, refTrip.RouteID),
+			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
 			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
 			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
 			TripHeadsign:   refTrip.TripHeadsign.String,

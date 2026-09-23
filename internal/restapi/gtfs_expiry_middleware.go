@@ -12,7 +12,7 @@ import (
 func GtfsExpiryMiddleware(manager *gtfs.Manager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if manager != nil {
+			if manager != nil && manager.GtfsDB != nil && manager.GtfsDB.Queries != nil {
 				// Only apply this header to API routes to reduce noise on other endpoints
 				if strings.HasPrefix(r.URL.Path, "/api/") {
 					expiresAt := manager.FeedExpiresAt(r.Context())

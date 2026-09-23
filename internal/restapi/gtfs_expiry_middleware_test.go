@@ -41,6 +41,20 @@ func TestGtfsExpiryMiddleware(t *testing.T) {
 			expectedHeader: "",
 		},
 		{
+			name:           "Nil GtfsDB - does not panic and no header",
+			path:           "/api/where/agencies-with-coverage.json",
+			manager:        newTestManagerNoData(t),
+			setupManager:   func(m *gtfs.Manager) { m.GtfsDB = nil },
+			expectedHeader: "",
+		},
+		{
+			name:           "Nil Queries - does not panic and no header",
+			path:           "/api/where/agencies-with-coverage.json",
+			manager:        newTestManagerNoData(t),
+			setupManager:   func(m *gtfs.Manager) { m.GtfsDB.Queries = nil },
+			expectedHeader: "",
+		},
+		{
 			name:           "Zero expiry time (no calendar data) - no header",
 			path:           "/api/where/agencies-with-coverage.json",
 			manager:        newTestManagerNoData(t),

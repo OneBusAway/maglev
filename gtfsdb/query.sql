@@ -1226,23 +1226,27 @@ WHERE bte.block_id IN (sqlc.slice('block_ids'))
 ORDER BY bte.block_trip_index_id;
 
 -- name: GetBlocksForBlockTripIndexIDs :many
--- Get distinct block_ids with a trip on the requested route whose schedule window overlaps
--- [from_time, to_time] within the specified BlockTripIndex IDs. Mirrors Java's
--- BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+-- Get distinct block_ids that have requested-route evidence and whose schedule window
+-- overlaps [from_time, to_time]. The route trip itself need not overlap the window: an
+-- interlined trip on another route can be the active part of the same block. Mirrors
+-- Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
 -- which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
 -- whose trips are hours away from the requested time.
 -- Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
 -- no stop_times rows) are implicitly excluded: SQL NULL comparisons return UNKNOWN, which
 -- WHERE treats as false. A trip with no stop_times cannot be "active" in any time range.
-SELECT DISTINCT bte.block_id
-FROM block_trip_entry bte
-JOIN trips t ON bte.trip_id = t.id
-WHERE t.max_departure_time >= sqlc.arg('from_time')
-  AND t.min_arrival_time <= sqlc.arg('to_time')
-  AND t.route_id = sqlc.arg('route_id')
-  AND bte.block_id IS NOT NULL
-  AND bte.block_trip_index_id IN (sqlc.slice('index_ids'))
-  AND bte.service_id IN (sqlc.slice('service_ids'));
+SELECT DISTINCT active_bte.block_id
+FROM block_trip_entry active_bte
+JOIN trips active_trip ON active_bte.trip_id = active_trip.id
+JOIN block_trip_entry route_bte ON route_bte.block_id = active_bte.block_id
+JOIN trips route_trip ON route_bte.trip_id = route_trip.id
+WHERE active_trip.max_departure_time >= sqlc.arg('from_time')
+  AND active_trip.min_arrival_time <= sqlc.arg('to_time')
+  AND route_trip.route_id = sqlc.arg('route_id')
+  AND active_bte.block_id IS NOT NULL
+  AND route_bte.block_trip_index_id IN (sqlc.slice('index_ids'))
+  AND active_bte.service_id IN (sqlc.slice('active_service_ids'))
+  AND route_bte.service_id IN (sqlc.slice('route_service_ids'));
 
 -- name: GetActiveTripInBlockAtTime :one
 -- Find the currently active trip in a specific block at the given time
@@ -1522,4 +1526,3 @@ FROM
     JOIN stops s ON s.id = st.stop_id
 GROUP BY
     r.agency_id;
-

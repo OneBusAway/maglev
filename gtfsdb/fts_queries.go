@@ -108,6 +108,27 @@ FROM stops s
 JOIN stops_fts fts
   ON s.rowid = fts.rowid
 WHERE fts.stop_name MATCH ?
+  -- A stop qualifies only if some stop time permits unrestricted pick-up or
+  -- drop-off (pickup_type/drop_off_type == 0), matching the legacy
+  -- stopHasRevenueService predicate. Types 2 (phone agency) and 3 (coordinate
+  -- with driver) are restricted and intentionally do not qualify.
+  --
+  -- The COALESCE exists because toNullInt64 (gtfsdb/helpers.go) persists a
+  -- parsed 0 as NULL, so NULL and 0 both mean unrestricted here.
+  --
+  -- A stored 1 always means an explicit "not allowed" in the feed: GTFS leaves
+  -- pickup_type/drop_off_type optional with an empty value of 0, and go-gtfs
+  -- (OneBusAway/go-gtfs#5) parses a blank or absent column as 0, so neither
+  -- can reach storage as 1.
+  AND EXISTS (
+      SELECT 1
+      FROM stop_times st
+      WHERE st.stop_id = s.id
+        AND (
+            COALESCE(st.pickup_type, 0) = 0
+            OR COALESCE(st.drop_off_type, 0) = 0
+        )
+  )
 ORDER BY agency_id IS NULL, agency_id || '_' || s.id, s.id
 LIMIT ?
 `

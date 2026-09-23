@@ -1960,28 +1960,33 @@ func (q *Queries) GetBlockTripSequence(ctx context.Context, arg GetBlockTripSequ
 }
 
 const getBlocksForBlockTripIndexIDs = `-- name: GetBlocksForBlockTripIndexIDs :many
-SELECT DISTINCT bte.block_id
-FROM block_trip_entry bte
-JOIN trips t ON bte.trip_id = t.id
-WHERE t.max_departure_time >= ?1
-  AND t.min_arrival_time <= ?2
-  AND t.route_id = ?3
-  AND bte.block_id IS NOT NULL
-  AND bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
-  AND bte.service_id IN (/*SLICE:service_ids*/?)
+SELECT DISTINCT active_bte.block_id
+FROM block_trip_entry active_bte
+JOIN trips active_trip ON active_bte.trip_id = active_trip.id
+JOIN block_trip_entry route_bte ON route_bte.block_id = active_bte.block_id
+JOIN trips route_trip ON route_bte.trip_id = route_trip.id
+WHERE active_trip.max_departure_time >= ?1
+  AND active_trip.min_arrival_time <= ?2
+  AND route_trip.route_id = ?3
+  AND active_bte.block_id IS NOT NULL
+  AND route_bte.block_trip_index_id IN (/*SLICE:index_ids*/?)
+  AND active_bte.service_id IN (/*SLICE:active_service_ids*/?)
+  AND route_bte.service_id IN (/*SLICE:route_service_ids*/?)
 `
 
 type GetBlocksForBlockTripIndexIDsParams struct {
-	FromTime   sql.NullInt64
-	ToTime     sql.NullInt64
-	RouteID    string
-	IndexIds   []int64
-	ServiceIds []string
+	FromTime         sql.NullInt64
+	ToTime           sql.NullInt64
+	RouteID          string
+	IndexIds         []int64
+	ActiveServiceIds []string
+	RouteServiceIds  []string
 }
 
-// Get distinct block_ids with a trip on the requested route whose schedule window overlaps
-// [from_time, to_time] within the specified BlockTripIndex IDs. Mirrors Java's
-// BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
+// Get distinct block_ids that have requested-route evidence and whose schedule window
+// overlaps [from_time, to_time]. The route trip itself need not overlap the window: an
+// interlined trip on another route can be the active part of the same block. Mirrors
+// Java's BlockCalendarServiceImpl.getActiveBlocksInTimeRange,
 // which binary-searches maxArrivals/minDepartures so "all E blocks" never includes a block
 // whose trips are hours away from the requested time.
 // Trips with NULL min_arrival_time / max_departure_time (possible only when a trip has
@@ -2001,13 +2006,21 @@ func (q *Queries) GetBlocksForBlockTripIndexIDs(ctx context.Context, arg GetBloc
 	} else {
 		query = strings.Replace(query, "/*SLICE:index_ids*/?", "NULL", 1)
 	}
-	if len(arg.ServiceIds) > 0 {
-		for _, v := range arg.ServiceIds {
+	if len(arg.ActiveServiceIds) > 0 {
+		for _, v := range arg.ActiveServiceIds {
 			queryParams = append(queryParams, v)
 		}
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+		query = strings.Replace(query, "/*SLICE:active_service_ids*/?", strings.Repeat(",?", len(arg.ActiveServiceIds))[1:], 1)
 	} else {
-		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+		query = strings.Replace(query, "/*SLICE:active_service_ids*/?", "NULL", 1)
+	}
+	if len(arg.RouteServiceIds) > 0 {
+		for _, v := range arg.RouteServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:route_service_ids*/?", strings.Repeat(",?", len(arg.RouteServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:route_service_ids*/?", "NULL", 1)
 	}
 	rows, err := q.query(ctx, nil, query, queryParams...)
 	if err != nil {

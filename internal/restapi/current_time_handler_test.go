@@ -10,9 +10,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
+
+// advancingClock returns a later time on every Now() call so a second sample
+// would disagree with the first. MockClock is not enough for that invariant.
+type advancingClock struct {
+	now  time.Time
+	step time.Duration
+	n    int
+}
+
+func (c *advancingClock) Now() time.Time {
+	t := c.now
+	c.now = c.now.Add(c.step)
+	c.n++
+	return t
+}
 
 func TestCurrentTimeHandlerRequiresValidApiKey(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/current-time.json?key=invalid")
@@ -94,6 +110,122 @@ func TestCurrentTimeHandler_DeterministicTime(t *testing.T) {
 	require.NoError(t, err)
 	expectedReadable := fixedTime.In(agencyLoc).Format(time.RFC3339)
 	assert.Equal(t, expectedReadable, entry["readableTime"], "readableTime should use agency timezone")
+}
+
+func TestCurrentTimeHandler_WhenGTFSNotReady(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	require.False(t, manager.IsReady(), "fixture must start unready")
+
+	fixedTime := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+	api := NewRestAPI(&app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsManager: manager,
+		Clock:       clock.NewMockClock(fixedTime),
+	})
+
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, "OK", model.Text)
+
+	expectedMs := fixedTime.UnixMilli()
+	assert.Equal(t, expectedMs, model.CurrentTime)
+
+	responseData, ok := model.Data.(map[string]any)
+	require.True(t, ok, "could not cast data to expected type")
+	entry, ok := responseData["entry"].(map[string]any)
+	require.True(t, ok, "could not find entry in response data")
+	assert.Equal(t, float64(expectedMs), entry["time"])
+	assert.Equal(t, expectedMs, model.CurrentTime)
+	assert.Equal(t, fixedTime.UTC().Format(time.RFC3339), entry["readableTime"],
+		"unready manager has no agencies, so readableTime falls back to UTC")
+}
+
+func TestCurrentTimeHandler_NilGTFSDependencies(t *testing.T) {
+	fixedTime := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+	expectedMs := fixedTime.UnixMilli()
+	expectedReadable := fixedTime.UTC().Format(time.RFC3339)
+
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *app.Application)
+	}{
+		{
+			name: "nil GtfsManager",
+			setup: func(_ *testing.T, application *app.Application) {
+				application.GtfsManager = nil
+			},
+		},
+		{
+			name: "nil GtfsDB",
+			setup: func(t *testing.T, application *app.Application) {
+				manager := newTestManagerNoData(t)
+				manager.GtfsDB = nil
+				application.GtfsManager = manager
+			},
+		},
+		{
+			name: "nil Queries",
+			setup: func(t *testing.T, application *app.Application) {
+				manager := newTestManagerNoData(t)
+				manager.GtfsDB.Queries = nil
+				application.GtfsManager = manager
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			application := &app.Application{
+				Config: appconf.Config{
+					Env:       appconf.EnvFlagToEnvironment("test"),
+					ApiKeys:   []string{"TEST"},
+					RateLimit: 100,
+				},
+				Clock: clock.NewMockClock(fixedTime),
+			}
+			tc.setup(t, application)
+			api := NewRestAPI(application)
+
+			resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.Equal(t, "OK", model.Text)
+			assert.Equal(t, expectedMs, model.CurrentTime)
+
+			responseData, ok := model.Data.(map[string]any)
+			require.True(t, ok, "could not cast data to expected type")
+			entry, ok := responseData["entry"].(map[string]any)
+			require.True(t, ok, "could not find entry in response data")
+			assert.Equal(t, float64(expectedMs), entry["time"])
+			assert.Equal(t, expectedReadable, entry["readableTime"],
+				"nil GTFS dependencies fall back to UTC")
+		})
+	}
+}
+
+func TestCurrentTimeHandler_EnvelopeMatchesEntryTime(t *testing.T) {
+	fixedTime := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+	clk := &advancingClock{now: fixedTime, step: time.Millisecond}
+	api := createTestApiWithClock(t, clk)
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+
+	responseData, ok := model.Data.(map[string]any)
+	require.True(t, ok, "could not cast data to expected type")
+	entry, ok := responseData["entry"].(map[string]any)
+	require.True(t, ok, "could not find entry in response data")
+
+	assert.Equal(t, 1, clk.n, "handler must sample the clock once")
+	assert.Equal(t, float64(model.CurrentTime), entry["time"],
+		"envelope currentTime and data.entry.time must be the same instant")
+	assert.Equal(t, fixedTime.UnixMilli(), model.CurrentTime)
 }
 
 func TestAgencyTimezone_EmptyAgencies(t *testing.T) {
