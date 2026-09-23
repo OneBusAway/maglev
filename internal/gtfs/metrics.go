@@ -49,9 +49,9 @@ const realtimeUpdateUnknown int64 = -1
 // counts per agency, plus GTFS-RT matching status (records received,
 // matched/unmatched trip and stop IDs, and feed staleness) attributed to the
 // agencies each feed covers. scheduleReferenceTime is the reference time
-// used to decide which trips count as currently active; it does not affect
-// real-time feed staleness, which is always measured against the real wall
-// clock (see populateRealtimeMetrics).
+// used to decide which scheduled and real-time trips count as currently
+// active; it does not affect real-time feed staleness, which is always
+// measured against the real wall clock (see populateRealtimeMetrics).
 func (manager *Manager) GetMetrics(ctx context.Context, scheduleReferenceTime time.Time) (MetricsSnapshot, error) {
 	agencies, err := manager.GtfsDB.Queries.ListAgencies(ctx)
 	if err != nil {
@@ -71,7 +71,7 @@ func (manager *Manager) GetMetrics(ctx context.Context, scheduleReferenceTime ti
 	}
 	maps.Copy(snapshot.ScheduledTripsCount, scheduledTripsCount)
 
-	if err := manager.populateRealtimeMetrics(ctx, &snapshot); err != nil {
+	if err := manager.populateRealtimeMetrics(ctx, &snapshot, scheduleReferenceTime); err != nil {
 		return MetricsSnapshot{}, err
 	}
 
@@ -238,13 +238,13 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 // they go to each matched trip's own agency, matching
 // MetricsBeanServiceImpl#getValidRealtimeTripIds.
 //
-// Staleness is measured against the real wall clock, not the `now` GetMetrics
-// received: feedLastUpdate is always stamped with time.Now() when a feed
-// refreshes (see realtime.go), independent of any test clock injection, so
-// comparing it against an injected `now` would produce a meaningless delta
-// whenever that `now` isn't close to the real time.
-func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *MetricsSnapshot) error {
-	now := time.Now()
+// Trip activity is judged against scheduleReferenceTime, but staleness is
+// measured against the real wall clock: feedLastUpdate is always stamped
+// with time.Now() when a feed refreshes (see realtime.go), independent of
+// any test clock injection, so comparing it against an injected time would
+// produce a meaningless delta whenever that time isn't close to the real one.
+func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *MetricsSnapshot, scheduleReferenceTime time.Time) error {
+	wallClockNow := time.Now()
 
 	allAgencies := make(map[string]bool, len(snapshot.AgencyIDs))
 	for _, agencyID := range snapshot.AgencyIDs {
@@ -256,7 +256,7 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 	unmatchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
 
 	for _, feed := range manager.snapshotRealtimeFeedState() {
-		metrics, err := manager.computeFeedMetrics(ctx, feed.trips, now)
+		metrics, err := manager.computeFeedMetrics(ctx, feed.trips, scheduleReferenceTime)
 		if err != nil {
 			return err
 		}
@@ -267,7 +267,7 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 		// covering the same agency is healthy.
 		staleness := realtimeUpdateUnknown
 		if feed.hasUpdate {
-			staleness = int64(now.Sub(feed.lastUpdate).Seconds())
+			staleness = int64(wallClockNow.Sub(feed.lastUpdate).Seconds())
 		}
 
 		coveredAgencies := feed.agencyFilter

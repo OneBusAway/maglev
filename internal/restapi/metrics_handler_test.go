@@ -73,14 +73,12 @@ func TestMetricsHandlerWithRealTimeData(t *testing.T) {
 
 	require.Positive(t, entry.RealtimeRecordsTotal[agencyID],
 		"expected real-time trip records once the .pb fixtures are loaded")
-	// Matched counting requires each block's representative trip to have a
-	// currently active prediction window (see isCombinedRecordActive), checked
-	// against the real wall clock, not the mock clock this test injects. The
-	// .pb fixtures' predictions are timestamped in the past, so every record
-	// is permanently outside that window: matched is deterministically 0.
-	// (Unmatched counting isn't time-gated, and happens to be 0 here too,
-	// since these fixtures' trip IDs all resolve against RABA's static data.)
-	assert.Equal(t, 0, entry.RealtimeTripCountsMatched[agencyID])
+	// Matched counting requires a block to have a prediction window active at
+	// the injected clock (see isCombinedRecordActive), which this mock clock
+	// places inside the .pb fixtures' window. The fixtures' trip IDs all
+	// resolve against RABA's static data, so nothing is unmatched.
+	assert.Positive(t, entry.RealtimeTripCountsMatched[agencyID])
+	assert.LessOrEqual(t, entry.RealtimeTripCountsMatched[agencyID], entry.RealtimeRecordsTotal[agencyID])
 	assert.Equal(t, 0, entry.RealtimeTripCountsUnmatched[agencyID])
 	assert.Len(t, entry.RealtimeTripIDsUnmatched[agencyID], entry.RealtimeTripCountsUnmatched[agencyID])
 
