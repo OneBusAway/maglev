@@ -192,14 +192,8 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 		references.Trips = append(references.Trips, *tripRef)
 	}
 
-	if schedule != nil {
-		var linkedTripIDs []string
-		for _, id := range []string{schedule.NextTripID, schedule.PreviousTripID} {
-			if id != "" {
-				linkedTripIDs = append(linkedTripIDs, id)
-			}
-		}
-
+	{
+		linkedTripIDs := scheduleLinkedTripIDs(schedule)
 		if len(linkedTripIDs) > 0 {
 			linkedTrips, err := api.buildReferencedTrips(ctx, agencyID, linkedTripIDs, trip)
 			if err != nil {

@@ -201,6 +201,21 @@ func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, s
 	return api.routeReferenceByID(ctx, routeID)
 }
 
+// scheduleLinkedTripIDs returns the combined IDs of the trips a schedule block
+// links to, skipping the ones it leaves empty.
+func scheduleLinkedTripIDs(schedule *models.Schedule) []string {
+	if schedule == nil {
+		return nil
+	}
+	linked := make([]string, 0, 2)
+	for _, id := range []string{schedule.NextTripID, schedule.PreviousTripID} {
+		if id != "" {
+			linked = append(linked, id)
+		}
+	}
+	return linked
+}
+
 // appendTripRouteReferences adds the route of every referenced trip whose routeId
 // is not already in references.routes, plus that route's agency when it is not
 // requestAgencyID. A route that no longer exists costs the reference, not the
@@ -228,13 +243,9 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 			return err
 		}
 
-		alreadyInRoutes := present[route.ID]
-		present[trip.RouteID] = true
-		if !alreadyInRoutes {
-			present[route.ID] = true
-			references.Routes = append(references.Routes, route)
-			api.appendRouteAgencyReference(ctx, references, route.AgencyID, requestAgencyID)
-		}
+		present[route.ID] = true
+		references.Routes = append(references.Routes, route)
+		api.appendRouteAgencyReference(ctx, references, route.AgencyID, requestAgencyID)
 	}
 
 	return nil

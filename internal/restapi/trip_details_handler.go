@@ -312,13 +312,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			tripsToInclude = append(tripsToInclude, utils.FormCombinedID(agencyID, trip.ID))
 		}
 
-		if params.IncludeSchedule && schedule != nil {
-			if schedule.NextTripID != "" {
-				tripsToInclude = append(tripsToInclude, schedule.NextTripID)
-			}
-			if schedule.PreviousTripID != "" {
-				tripsToInclude = append(tripsToInclude, schedule.PreviousTripID)
-			}
+		if params.IncludeSchedule {
+			tripsToInclude = append(tripsToInclude, scheduleLinkedTripIDs(schedule)...)
 		}
 
 		if params.IncludeStatus && status != nil && status.ActiveTripID != "" {
@@ -454,7 +449,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
-			RouteID:        utils.FormCombinedID(agencyID, refTrip.RouteID),
+			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
 			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
 			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
 			TripHeadsign:   refTrip.TripHeadsign.String,
