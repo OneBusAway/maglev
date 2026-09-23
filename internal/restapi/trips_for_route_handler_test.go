@@ -2798,3 +2798,52 @@ func TestTripsForRouteHandler_PreviousDayLayoverKeepsItsServiceDate(t *testing.T
 	assert.Equal(t, yesterday, entry.ServiceDate)
 	assert.Equal(t, yesterday, entry.Status.ServiceDate.UnixMilli())
 }
+
+// crossZonePreviousDayFiles interlines a route trip from yesterday's UTC service with a
+// Los Angeles trip whose local service day is the UTC route's previous day.
+func crossZonePreviousDayFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n" +
+			tfrAgencyB + ",Other Agency,http://example.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tfrAgencyB + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-a,0,0,0,1,0,0,0,20250612,20250612\n" +
+			"tfr-svc-b,0,0,0,1,0,0,0,20250612,20250612\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-a,tfr-ya,Headsign A,0,tfr-zblock\n" +
+			"tfr-route-otr,tfr-svc-b,tfr-lb,Headsign B,0,tfr-zblock\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-ya,23:40:00,23:40:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-ya,24:15:00,24:15:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-lb,17:20:00,17:20:00," + tripsForRouteStop2ID + ",1\n" +
+			"tfr-lb,17:50:00,17:50:00," + tripsForRouteStop1ID + ",2\n",
+	}
+}
+
+func TestTripsForRouteHandler_CrossZoneTripOnTheRoutesPreviousDay(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-cross-zone-previous-day.zip", crossZonePreviousDayFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+	entry := model.Data.List[0]
+	require.NotNil(t, entry.Status)
+	assert.Contains(t, entry.Status.ActiveTripID, "tfr-lb")
+	assert.Contains(t, entry.TripId, "tfr-ya")
+
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, losAngeles).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
+	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
+}

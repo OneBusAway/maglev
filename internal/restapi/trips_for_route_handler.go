@@ -890,7 +890,7 @@ func (api *RestAPI) activeTripsInBlocks(
 	tripsInBlock := tripsByBlock(candidates)
 	var betweenTrips []string
 	for _, blockID := range blockIDs {
-		if tripID, serviceDayMidnight, found := activeTripInBlock(tripsInBlock[blockID], dayIndex, serviceDaysByZone, zoneByRoute); found {
+		if tripID, serviceDayMidnight, found := activeTripInBlock(tripsInBlock[blockID], dayIndex, routeZone, serviceDaysByZone, zoneByRoute); found {
 			activeTrips[tripID] = serviceDayMidnight
 			continue
 		}
@@ -940,41 +940,55 @@ func (api *RestAPI) resolveBlockBetweenTrips(
 	activeTrips map[string]time.Time,
 ) error {
 	for _, zone := range blockCandidateZones(block.blockTrips, block.zoneByRoute, block.routeZone) {
-		days := block.serviceDaysByZone[zone]
-		if block.dayIndex >= len(days) {
-			continue
-		}
-		day := days[block.dayIndex]
-		if !zoneBlockCoversTime(block.blockTrips, zone, day, block.zoneByRoute) {
-			continue
-		}
-
-		zoneTrips, zoneServiceDays, err := api.resolveTripsForRouteBlocks(ctx, []tripsForRouteServiceDay{{
-			blockIDs:      []string{block.blockID},
-			serviceIDs:    day.serviceIDs,
-			sinceMidnight: time.Duration(day.sinceMidnightNs),
-			midnight:      day.midnight,
-		}}, block.currentTime)
-		if err != nil {
-			return err
-		}
-
-		resolved := false
-		for _, tripID := range zoneTrips {
-			if block.zoneByRoute[block.routeOfTrip[tripID]] != zone {
-				continue
+		days := zoneServiceDaysToTest(block.serviceDaysByZone[zone], block.dayIndex, zone == block.routeZone)
+		for _, day := range days {
+			resolved, err := api.resolveBlockInZone(ctx, block, zone, day, activeTrips)
+			if err != nil {
+				return err
 			}
-			resolved = true
-			if _, found := activeTrips[tripID]; !found {
-				activeTrips[tripID] = zoneServiceDays[tripID]
+			if resolved {
+				return nil
 			}
-		}
-		if resolved {
-			return nil
 		}
 	}
 
 	return nil
+}
+
+// resolveBlockInZone resolves the block on one zone's service day and records the
+// trips it selects that belong to that zone. It reports whether it recorded any.
+func (api *RestAPI) resolveBlockInZone(
+	ctx context.Context,
+	block blockBetweenTrips,
+	zone string,
+	day serviceDay,
+	activeTrips map[string]time.Time,
+) (bool, error) {
+	if !zoneBlockCoversTime(block.blockTrips, zone, day, block.zoneByRoute) {
+		return false, nil
+	}
+
+	zoneTrips, zoneServiceDays, err := api.resolveTripsForRouteBlocks(ctx, []tripsForRouteServiceDay{{
+		blockIDs:      []string{block.blockID},
+		serviceIDs:    day.serviceIDs,
+		sinceMidnight: time.Duration(day.sinceMidnightNs),
+		midnight:      day.midnight,
+	}}, block.currentTime)
+	if err != nil {
+		return false, err
+	}
+
+	resolved := false
+	for _, tripID := range zoneTrips {
+		if block.zoneByRoute[block.routeOfTrip[tripID]] != zone {
+			continue
+		}
+		resolved = true
+		if _, found := activeTrips[tripID]; !found {
+			activeTrips[tripID] = zoneServiceDays[tripID]
+		}
+	}
+	return resolved, nil
 }
 
 // zoneBlockCoversTime reports whether the trips this zone's agencies run on the block
@@ -1078,30 +1092,46 @@ func tripsByBlock(trips []gtfsdb.GetTripsByBlockIDsRow) map[string][]gtfsdb.GetT
 	return byBlock
 }
 
-// activeTripInBlock returns the earliest trip in service on the dayIndex service
-// day, testing each trip in its own agency's zone. blockTrips must be ordered by
-// min_arrival_time.
+// activeTripInBlock returns the earliest trip in service at the request time, testing
+// each trip in its own agency's zone. blockTrips must be ordered by min_arrival_time.
 func activeTripInBlock(
 	blockTrips []gtfsdb.GetTripsByBlockIDsRow,
 	dayIndex int,
+	routeZone string,
 	serviceDaysByZone map[string][]serviceDay,
 	zoneByRoute map[string]string,
 ) (string, time.Time, bool) {
 	for _, trip := range blockTrips {
-		days := serviceDaysByZone[zoneByRoute[trip.RouteID]]
-		if dayIndex >= len(days) {
-			continue
-		}
-		day := days[dayIndex]
-		_, serviceRuns := day.services[trip.ServiceID]
-		inService := trip.MinArrivalTime.Valid && trip.MaxDepartureTime.Valid &&
-			trip.MinArrivalTime.Int64 <= day.sinceMidnightNs &&
-			trip.MaxDepartureTime.Int64 >= day.sinceMidnightNs
-		if serviceRuns && inService {
-			return trip.ID, day.midnight, true
+		zone := zoneByRoute[trip.RouteID]
+		for _, day := range zoneServiceDaysToTest(serviceDaysByZone[zone], dayIndex, zone == routeZone) {
+			if tripInServiceOn(trip, day) {
+				return trip.ID, day.midnight, true
+			}
 		}
 	}
 	return "", time.Time{}, false
+}
+
+// zoneServiceDaysToTest returns the route's own dayIndex day in the route's zone, and
+// every day in another zone, whose local date need not line up with the route's.
+func zoneServiceDaysToTest(days []serviceDay, dayIndex int, isRouteZone bool) []serviceDay {
+	if !isRouteZone {
+		return days
+	}
+	if dayIndex >= len(days) {
+		return nil
+	}
+	return days[dayIndex : dayIndex+1]
+}
+
+// tripInServiceOn reports whether trip runs on day and spans that day's request time.
+func tripInServiceOn(trip gtfsdb.GetTripsByBlockIDsRow, day serviceDay) bool {
+	if _, runs := day.services[trip.ServiceID]; !runs {
+		return false
+	}
+	return trip.MinArrivalTime.Valid && trip.MaxDepartureTime.Valid &&
+		trip.MinArrivalTime.Int64 <= day.sinceMidnightNs &&
+		trip.MaxDepartureTime.Int64 >= day.sinceMidnightNs
 }
 
 // routeBlocksAndTripsInService returns the route's blocks and null-block trips
