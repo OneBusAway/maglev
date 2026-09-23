@@ -48,10 +48,10 @@ func TestCacheControlHeaders(t *testing.T) {
 			expectETag:     true,
 		},
 		{
-			name:           "Real-time Data - Route",
+			name:           "Static Data - Route",
 			endpoint:       "/api/where/route/25_151.json?key=org.onebusaway.iphone",
-			expectedHeader: "public, max-age=30",
-			expectETag:     false,
+			expectedHeader: "public, max-age=300",
+			expectETag:     true,
 		},
 		{
 			name:           "Real-time Data (Short Cache)",
