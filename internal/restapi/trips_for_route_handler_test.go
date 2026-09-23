@@ -2666,3 +2666,89 @@ func TestTripsForRouteHandler_DuplicatedTripLookupFailures(t *testing.T) {
 		assert.True(t, found, "duplicated trip entry should be present in response list")
 	})
 }
+
+// crossAgencyLayoverFiles puts the queried route's only trip out of reach at the
+// request time and gives the other agency, a day behind in Los Angeles, two trips
+// that bracket its own local time. The block is therefore between trips for agency
+// B and not yet running for agency A.
+func crossAgencyLayoverFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			tripsForRouteAgencyID + ",Test Agency,http://example.com,UTC\n" +
+			tfrAgencyB + ",Other Agency,http://example.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			tripsForRouteRouteID + "," + tripsForRouteAgencyID + ",TR,Test Route,3\n" +
+			"tfr-route-otr," + tfrAgencyB + ",OR,Other Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"tfr-svc-a,0,0,0,0,1,0,0,20250613,20250613\n" +
+			"tfr-svc-b,0,0,0,1,0,0,0,20250612,20250612\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			tripsForRouteStop1ID + ",Stop One,37.7749,-122.4194\n" +
+			tripsForRouteStop2ID + ",Stop Two,37.7849,-122.4094\n" +
+			"tfr-stop3,Stop Three,37.7949,-122.3994\n" +
+			"tfr-stop4,Stop Four,37.8049,-122.3894\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc-a,tfr-xa,Headsign A,0,tfr-xblock\n" +
+			"tfr-route-otr,tfr-svc-b,tfr-xb-prev,Headsign B1,0,tfr-xblock\n" +
+			"tfr-route-otr,tfr-svc-b,tfr-xb-next,Headsign B2,0,tfr-xblock\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"tfr-xa,00:35:00,00:35:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-xa,00:50:00,00:50:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-xb-prev,17:00:00,17:00:00," + tripsForRouteStop1ID + ",1\n" +
+			"tfr-xb-prev,17:20:00,17:20:00," + tripsForRouteStop2ID + ",2\n" +
+			"tfr-xb-next,17:40:00,17:40:00,tfr-stop3,1\n" +
+			"tfr-xb-next,18:00:00,18:00:00,tfr-stop4,2\n",
+	}
+}
+
+// TestTripsForRouteHandler_CrossAgencyLayoverUsesTripAgencyClock verifies that a block
+// between trips is resolved on the clock of the agency whose trips bracket the request
+// time, and that the entry carries that agency's service date rather than the queried
+// route agency's.
+func TestTripsForRouteHandler_CrossAgencyLayoverUsesTripAgencyClock(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-cross-agency-layover.zip", crossAgencyLayoverFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+
+	entry := model.Data.List[0]
+	require.NotNil(t, entry.Status)
+	assert.Contains(t, entry.Status.ActiveTripID, "tfr-xb")
+
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, losAngeles).UnixMilli(), entry.Status.ServiceDate.UnixMilli(),
+		"the active trip's service date must come from its own agency's clock")
+	assert.Equal(t, time.Date(2025, 6, 13, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate,
+		"the entry keeps the queried route agency's service date")
+}
+
+// TestRouteZoneServiceDates_SkipsUnusableAgencyZone verifies that an agency with a
+// time zone the runtime cannot load is left out rather than failing a request for a
+// route that belongs to another agency.
+func TestRouteZoneServiceDates_SkipsUnusableAgencyZone(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	agencies := []gtfsdb.Agency{
+		{ID: "A1", Timezone: "America/Los_Angeles"},
+		{ID: "BROKEN", Timezone: "Not/AZone"},
+	}
+
+	resolvers, locations, err := api.routeZoneServiceDates(ctx, agencies, "A1", losAngeles,
+		time.Date(2025, 6, 13, 0, 30, 0, 0, time.UTC))
+
+	require.NoError(t, err)
+	require.Contains(t, resolvers, losAngeles.String())
+	assert.Contains(t, locations, "A1")
+	assert.NotContains(t, locations, "BROKEN", "an agency with an unusable zone must not join the candidate set")
+}

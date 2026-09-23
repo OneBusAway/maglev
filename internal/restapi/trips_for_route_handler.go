@@ -75,19 +75,13 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	agencyLocations, err := agencyLocationsByID(agencies)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
 	// An interlined trip can belong to an agency on another local date, so resolve every agency's zone.
-	serviceDatesByZone, err := api.serviceDateResolversByZone(ctx, agencyLocations, currentTime)
+	serviceDatesByZone, agencyLocations, err := api.routeZoneServiceDates(ctx, agencies, currentAgency.ID, currentLocation, currentTime)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	routeServiceDates := serviceDatesByZone[currentLocation.String()]
-	routeServiceDays := routeServiceDates.ServiceDays()
+	routeServiceDays := serviceDatesByZone[currentLocation.String()].ServiceDays()
 
 	// tripServiceDay records the service-day midnight each active trip was found under.
 	tripServiceDay := make(map[string]time.Time)
@@ -132,7 +126,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	var activeTrips []string
 	for dayIndex, day := range routeServiceDays {
 		dayActiveTrips, err := api.activeTripsInBlocks(ctx, dayBlockIDs[dayIndex], dayIndex, day,
-			serviceDatesByZone, agencyLocations, currentTime)
+			currentLocation.String(), serviceDatesByZone, agencyLocations, currentTime)
 		if err != nil {
 			if ctx.Err() != nil {
 				api.clientCanceledResponse(w, r, ctx.Err())
@@ -785,11 +779,85 @@ func serviceDateFor(tripServiceDay map[string]time.Time, id string, todayMidnigh
 // keyed to its service-day midnight. blockIDs were found on routeDay, the
 // dayIndex entry of the route agency's service days, and a candidate is only
 // tested against the same entry for its own agency's timezone.
+// routeZoneServiceDates resolves the queried route agency's zone first, then every
+// other agency zone best effort. An agency whose time zone cannot be loaded, or whose
+// service days cannot be read, is logged and left out: a route that does not depend on
+// that agency still answers.
+func (api *RestAPI) routeZoneServiceDates(
+	ctx context.Context,
+	agencies []gtfsdb.Agency,
+	currentAgencyID string,
+	currentLocation *time.Location,
+	currentTime time.Time,
+) (map[string]*serviceDateResolver, map[string]*time.Location, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
+
+	routeResolver, err := api.serviceDateResolverForZone(ctx, currentLocation, currentTime)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolvers := map[string]*serviceDateResolver{currentLocation.String(): routeResolver}
+	locations := map[string]*time.Location{currentAgencyID: currentLocation}
+
+	for _, agency := range agencies {
+		if agency.ID == currentAgencyID {
+			continue
+		}
+		location, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			reqLogger.Warn("trips-for-route: skipping agency with an unusable time zone",
+				"agencyID", agency.ID, "timezone", agency.Timezone, "error", err)
+			continue
+		}
+		locations[agency.ID] = location
+
+		if _, resolved := resolvers[location.String()]; resolved {
+			continue
+		}
+		resolver, err := api.serviceDateResolverForZone(ctx, location, currentTime)
+		if err != nil {
+			reqLogger.Warn("trips-for-route: skipping agency zone with no service days",
+				"agencyID", agency.ID, "zone", location.String(), "error", err)
+			continue
+		}
+		resolvers[location.String()] = resolver
+	}
+
+	return resolvers, locations, nil
+}
+
+// serviceDateResolverForZone builds one zone's resolver. The previous day's service IDs
+// stay best effort, as they were before this handler resolved dates per zone: losing
+// them costs past-midnight trips rather than the response.
+func (api *RestAPI) serviceDateResolverForZone(
+	ctx context.Context,
+	location *time.Location,
+	currentTime time.Time,
+) (*serviceDateResolver, error) {
+	queryDayMidnight := serviceDateMidnight(currentTime, location)
+	queryDay, err := api.activeServiceIDsForDate(ctx, queryDayMidnight)
+	if err != nil {
+		return nil, err
+	}
+	previousDay, err := api.activeServiceIDsForDate(ctx, queryDayMidnight.AddDate(0, 0, -1))
+	if err != nil {
+		logging.ForComponent(ctx, "http_server").Warn("trips-for-route: previous service day unavailable",
+			"zone", location.String(), "error", err)
+		previousDay = nil
+	}
+
+	return newServiceDateResolverFor(queryDayMidnight, currentTime.In(location), serviceIDsByDay{
+		QueryDay:    queryDay,
+		PreviousDay: previousDay,
+	}), nil
+}
+
 func (api *RestAPI) activeTripsInBlocks(
 	ctx context.Context,
 	blockIDs []string,
 	dayIndex int,
 	routeDay serviceDay,
+	routeZone string,
 	serviceDatesByZone map[string]*serviceDateResolver,
 	agencyLocations map[string]*time.Location,
 	currentTime time.Time,
@@ -827,33 +895,138 @@ func (api *RestAPI) activeTripsInBlocks(
 		betweenTrips = append(betweenTrips, blockID)
 	}
 
-	// A block with no trip running is between trips; its scheduled span picks the
-	// trip, as Java's BlockStatusServiceImpl.computeLocations does during a layover.
-	layoverTrips, layoverServiceDays, err := api.resolveTripsForRouteBlocks(ctx, []tripsForRouteServiceDay{{
-		blockIDs:      betweenTrips,
-		serviceIDs:    routeDay.serviceIDs,
-		sinceMidnight: time.Duration(routeDay.sinceMidnightNs),
-		midnight:      routeDay.midnight,
-	}}, currentTime)
-	if err != nil {
-		return nil, err
-	}
 	routeOfTrip := make(map[string]string, len(candidates))
 	for _, trip := range candidates {
 		routeOfTrip[trip.ID] = trip.RouteID
 	}
-	for _, tripID := range layoverTrips {
-		// The span was measured on the route agency's clock, which only holds for a
-		// trip whose own agency starts the same service day at the same instant.
-		days := serviceDaysByZone[zoneByRoute[routeOfTrip[tripID]]]
-		if dayIndex >= len(days) || !days[dayIndex].midnight.Equal(routeDay.midnight) {
-			continue
-		}
-		if _, found := activeTrips[tripID]; !found {
-			activeTrips[tripID] = layoverServiceDays[tripID]
+	for _, blockID := range betweenTrips {
+		if err := api.resolveBlockBetweenTrips(ctx, blockBetweenTrips{
+			blockID:           blockID,
+			dayIndex:          dayIndex,
+			routeZone:         routeZone,
+			blockTrips:        tripsInBlock[blockID],
+			serviceDaysByZone: serviceDaysByZone,
+			zoneByRoute:       zoneByRoute,
+			routeOfTrip:       routeOfTrip,
+			currentTime:       currentTime,
+		}, activeTrips); err != nil {
+			return nil, err
 		}
 	}
 	return activeTrips, nil
+}
+
+type blockBetweenTrips struct {
+	blockID           string
+	dayIndex          int
+	routeZone         string
+	blockTrips        []gtfsdb.GetTripsByBlockIDsRow
+	serviceDaysByZone map[string][]serviceDay
+	zoneByRoute       map[string]string
+	routeOfTrip       map[string]string
+	currentTime       time.Time
+}
+
+// resolveBlockBetweenTrips picks the trip a block sits on when none of its trips is
+// running at the request time, the way Java's BlockStatusServiceImpl.computeLocations
+// keeps a block during a layover. The block's scheduled span is measured once per
+// candidate agency zone, and a trip is only taken from the pass that ran on its own
+// agency's clock, so another agency's offset can never make it look active.
+func (api *RestAPI) resolveBlockBetweenTrips(
+	ctx context.Context,
+	block blockBetweenTrips,
+	activeTrips map[string]time.Time,
+) error {
+	for _, zone := range blockCandidateZones(block.blockTrips, block.zoneByRoute, block.routeZone) {
+		days := block.serviceDaysByZone[zone]
+		if block.dayIndex >= len(days) {
+			continue
+		}
+		day := days[block.dayIndex]
+		if !zoneBlockCoversTime(block.blockTrips, zone, day, block.zoneByRoute) {
+			continue
+		}
+
+		zoneTrips, zoneServiceDays, err := api.resolveTripsForRouteBlocks(ctx, []tripsForRouteServiceDay{{
+			blockIDs:      []string{block.blockID},
+			serviceIDs:    day.serviceIDs,
+			sinceMidnight: time.Duration(day.sinceMidnightNs),
+			midnight:      day.midnight,
+		}}, block.currentTime)
+		if err != nil {
+			return err
+		}
+
+		resolved := false
+		for _, tripID := range zoneTrips {
+			if block.zoneByRoute[block.routeOfTrip[tripID]] != zone {
+				continue
+			}
+			resolved = true
+			if _, found := activeTrips[tripID]; !found {
+				activeTrips[tripID] = zoneServiceDays[tripID]
+			}
+		}
+		if resolved {
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// zoneBlockCoversTime reports whether the trips this zone's agencies run on the block
+// bracket the request time on that zone's clock. A block is only between trips for an
+// agency once that agency's own run has started and has not finished; without this the
+// span of an interlined trip from another zone would stand in for it.
+func zoneBlockCoversTime(
+	blockTrips []gtfsdb.GetTripsByBlockIDsRow,
+	zone string,
+	day serviceDay,
+	zoneByRoute map[string]string,
+) bool {
+	var first, last int64
+	found := false
+	for _, trip := range blockTrips {
+		if zoneByRoute[trip.RouteID] != zone {
+			continue
+		}
+		if _, runs := day.services[trip.ServiceID]; !runs {
+			continue
+		}
+		if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+			continue
+		}
+		if !found || trip.MinArrivalTime.Int64 < first {
+			first = trip.MinArrivalTime.Int64
+		}
+		if !found || trip.MaxDepartureTime.Int64 > last {
+			last = trip.MaxDepartureTime.Int64
+		}
+		found = true
+	}
+
+	return found && first <= day.sinceMidnightNs && day.sinceMidnightNs <= last
+}
+
+// blockCandidateZones lists the zones a block's trips belong to, the queried route's
+// zone first so a single-agency block resolves on the first pass.
+func blockCandidateZones(
+	blockTrips []gtfsdb.GetTripsByBlockIDsRow,
+	zoneByRoute map[string]string,
+	routeZone string,
+) []string {
+	zones := []string{routeZone}
+	seen := map[string]bool{routeZone: true}
+	for _, trip := range blockTrips {
+		zone := zoneByRoute[trip.RouteID]
+		if zone == "" || seen[zone] {
+			continue
+		}
+		seen[zone] = true
+		zones = append(zones, zone)
+	}
+	return zones
 }
 
 // zoneServiceDays returns each zone's service days and every service ID active on any of them.
