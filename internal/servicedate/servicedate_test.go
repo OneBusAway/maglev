@@ -9,51 +9,72 @@ import (
 	"maglev.onebusaway.org/internal/servicedate"
 )
 
-// A stop time of 08:00:00 has to land at 08:00 local on every service day, including
-// the two days a year local midnight is not twelve hours before noon.
-func TestStart_HoldsStopTimesAtLocalClockTime(t *testing.T) {
-	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+func losAngeles(t *testing.T) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
+	return loc
+}
 
-	const eightAM = 8 * time.Hour
+// The expected values are gtfs-modules' ServiceDateTest.testGetAsDateWithTimezoneB and C.
+func TestStart_MatchesJavaServiceDate(t *testing.T) {
+	la := losAngeles(t)
 
 	for _, tc := range []struct {
-		name       string
-		year       int
-		month      time.Month
-		day        int
-		wantOffset string
+		name string
+		date servicedate.Date
+		want time.Time
 	}{
-		{name: "ordinary day", year: 2026, month: time.November, day: 2, wantOffset: "PST"},
-		{name: "fall back", year: 2026, month: time.November, day: 1, wantOffset: "PST"},
-		{name: "spring forward", year: 2026, month: time.March, day: 8, wantOffset: "PDT"},
+		{name: "ordinary day, 00:00 PDT", date: servicedate.New(2010, time.June, 15), want: time.Date(2010, time.June, 15, 7, 0, 0, 0, time.UTC)},
+		{name: "spring forward, 23:00 PST the day before", date: servicedate.New(2010, time.March, 14), want: time.Date(2010, time.March, 14, 7, 0, 0, 0, time.UTC)},
+		{name: "fall back, 01:00 PDT", date: servicedate.New(2010, time.November, 7), want: time.Date(2010, time.November, 7, 8, 0, 0, 0, time.UTC)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stopTime := servicedate.Start(tc.year, tc.month, tc.day, losAngeles).Add(eightAM)
-
-			zone, _ := stopTime.Zone()
-			assert.Equal(t, 8, stopTime.In(losAngeles).Hour(), "08:00:00 must read as 08:00 local")
-			assert.Equal(t, tc.day, stopTime.In(losAngeles).Day(), "and stay on its own service day")
-			assert.Equal(t, tc.wantOffset, zone)
+			assert.True(t, tc.want.Equal(tc.date.Start(la)), "got %s", tc.date.Start(la))
 		})
 	}
 }
 
-func TestStart_IsLocalMidnightOnDaysWithoutATransition(t *testing.T) {
-	losAngeles, err := time.LoadLocation("America/Los_Angeles")
-	require.NoError(t, err)
+func TestStart_HoldsStopTimesAtLocalClockTime(t *testing.T) {
+	la := losAngeles(t)
 
-	start := servicedate.Start(2026, time.June, 15, losAngeles)
+	for _, date := range []servicedate.Date{
+		servicedate.New(2026, time.November, 2),
+		servicedate.New(2026, time.November, 1),
+		servicedate.New(2026, time.March, 8),
+	} {
+		t.Run(date.String(), func(t *testing.T) {
+			stopTime := date.Start(la).Add(8 * time.Hour).In(la)
 
-	assert.Equal(t, time.Date(2026, time.June, 15, 0, 0, 0, 0, losAngeles), start)
+			assert.Equal(t, 8, stopTime.Hour())
+			assert.Equal(t, date, servicedate.Of(stopTime))
+		})
+	}
 }
 
-func TestStartOf_UsesTheDateInItsOwnLocation(t *testing.T) {
-	losAngeles, err := time.LoadLocation("America/Los_Angeles")
-	require.NoError(t, err)
+func TestFromInstant_RecoversTheDateFromMidnightStartOrAnyTimeThatDay(t *testing.T) {
+	la := losAngeles(t)
 
-	// 15:00 UTC on the fall-back day is 08:00 in Los Angeles.
-	instant := time.Date(2026, time.November, 1, 15, 0, 0, 0, time.UTC).In(losAngeles)
+	for _, date := range []servicedate.Date{
+		servicedate.New(2026, time.November, 2),
+		servicedate.New(2026, time.November, 1),
+		servicedate.New(2026, time.March, 8),
+	} {
+		t.Run(date.String(), func(t *testing.T) {
+			assert.Equal(t, date, servicedate.FromInstant(date.Start(la), la))
+			assert.Equal(t, date, servicedate.FromInstant(date.Start(la).UTC(), la))
+			assert.Equal(t, date, servicedate.FromInstant(date.Midnight(la), la))
+			assert.Equal(t, date, servicedate.FromInstant(date.Midnight(la).Add(15*time.Hour), la))
+		})
+	}
+}
 
-	assert.Equal(t, servicedate.Start(2026, time.November, 1, losAngeles), servicedate.StartOf(instant))
+func TestDate_CalendarFields(t *testing.T) {
+	springForward := servicedate.New(2026, time.March, 8)
+
+	assert.Equal(t, "20260308", springForward.String())
+	assert.Equal(t, time.Sunday, springForward.Weekday())
+	assert.Equal(t, servicedate.New(2026, time.March, 7), springForward.AddDays(-1))
+	assert.Equal(t, servicedate.New(2026, time.February, 28), servicedate.New(2026, time.March, 1).AddDays(-1))
+	assert.Equal(t, servicedate.New(2027, time.January, 1), servicedate.New(2026, time.December, 31).AddDays(1))
 }

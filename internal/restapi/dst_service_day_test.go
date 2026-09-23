@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -9,11 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// dstFiles is one Los Angeles agency with a single 08:00 trip running every day, so
-// the same stop time can be read on a DST transition day and on an ordinary one.
+// dstFiles is one Los Angeles agency with an 08:00 trip that runs only on Sundays.
 func dstFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -21,7 +20,7 @@ func dstFiles() map[string]string {
 		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
 			"dst-route,dst-agency,DR,DST Route,3\n",
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
-			"dst-svc,1,1,1,1,1,1,1,20260101,20261231\n",
+			"dst-svc,0,0,0,0,0,0,1,20260101,20261231\n",
 		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
 			"dst-stop1,Stop One,37.7749,-122.4194\n" +
 			"dst-stop2,Stop Two,37.7849,-122.4094\n",
@@ -33,49 +32,63 @@ func dstFiles() map[string]string {
 	}
 }
 
-// TestArrivalsForStop_StopTimesHoldLocalClockTimeAcrossDST verifies that an 08:00:00
-// stop time is served as 08:00 local on the two days a year local midnight is not the
-// start of the service day. GTFS measures stop times from noon less twelve hours.
-func TestArrivalsForStop_StopTimesHoldLocalClockTimeAcrossDST(t *testing.T) {
+type dstArrival struct {
+	ServiceDate          int64 `json:"serviceDate"`
+	ScheduledArrivalTime int64 `json:"scheduledArrivalTime"`
+}
+
+type dstArrivalsResponse struct {
+	Data struct {
+		Entry struct {
+			ArrivalsAndDepartures []dstArrival `json:"arrivalsAndDepartures"`
+		} `json:"entry"`
+	} `json:"data"`
+}
+
+type dstArrivalResponse struct {
+	Data struct {
+		Entry dstArrival `json:"entry"`
+	} `json:"data"`
+}
+
+func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 	losAngeles, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
+	stopID := utils.FormCombinedID("dst-agency", "dst-stop1")
+	tripID := utils.FormCombinedID("dst-agency", "dst-trip")
+
 	for _, tc := range []struct {
 		name string
-		at   time.Time
+		date servicedate.Date
 	}{
-		{name: "ordinary day", at: time.Date(2026, 11, 2, 7, 50, 0, 0, losAngeles)},
-		{name: "fall back", at: time.Date(2026, 11, 1, 7, 50, 0, 0, losAngeles)},
-		{name: "spring forward", at: time.Date(2026, 3, 8, 7, 50, 0, 0, losAngeles)},
+		{name: "ordinary Sunday", date: servicedate.New(2026, time.November, 8)},
+		{name: "fall back", date: servicedate.New(2026, time.November, 1)},
+		{name: "spring forward", date: servicedate.New(2026, time.March, 8)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tc.at),
-				fmt.Sprintf("dst-%s.zip", tc.at.Format("20060102")), dstFiles())
+			start := tc.date.Start(losAngeles)
+			now := start.Add(7*time.Hour + 50*time.Minute)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+				fmt.Sprintf("dst-%s.zip", tc.date), dstFiles())
 
-			type rawResponse struct {
-				Data struct {
-					Entry struct {
-						ArrivalsAndDepartures []map[string]json.RawMessage `json:"arrivalsAndDepartures"`
-					} `json:"entry"`
-				} `json:"data"`
+			wantArrival := start.Add(8 * time.Hour).UnixMilli()
+			wantServiceDate := tc.date.Midnight(losAngeles).UnixMilli()
+
+			_, plural := callAPIHandler[dstArrivalsResponse](t, api, fmt.Sprintf(
+				"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=5&minutesAfter=30", stopID))
+			arrivals := plural.Data.Entry.ArrivalsAndDepartures
+			require.Len(t, arrivals, 1, "the 08:00 Sunday trip is in the 07:45 to 08:20 window")
+			assert.Equal(t, wantArrival, arrivals[0].ScheduledArrivalTime)
+			assert.Equal(t, wantServiceDate, arrivals[0].ServiceDate)
+
+			for _, serviceDate := range []int64{arrivals[0].ServiceDate, start.UnixMilli()} {
+				resp, single := callAPIHandler[dstArrivalResponse](t, api, fmt.Sprintf(
+					"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", stopID, tripID, serviceDate))
+				require.Equal(t, 200, resp.StatusCode)
+				assert.Equal(t, wantArrival, single.Data.Entry.ScheduledArrivalTime)
+				assert.Equal(t, wantServiceDate, single.Data.Entry.ServiceDate)
 			}
-
-			combinedStopID := utils.FormCombinedID("dst-agency", "dst-stop1")
-			url := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=5&minutesAfter=30&time=%d",
-				combinedStopID, tc.at.UnixMilli())
-			_, model := callAPIHandler[rawResponse](t, api, url)
-
-			require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1,
-				"the 08:00 trip must be in the window that starts at 07:50")
-
-			var scheduled int64
-			require.NoError(t, json.Unmarshal(
-				model.Data.Entry.ArrivalsAndDepartures[0]["scheduledArrivalTime"], &scheduled))
-
-			arrival := time.UnixMilli(scheduled).In(losAngeles)
-			assert.Equal(t, 8, arrival.Hour(), "08:00:00 must be served as 08:00 local")
-			assert.Equal(t, 0, arrival.Minute())
-			assert.Equal(t, tc.at.Day(), arrival.Day())
 		})
 	}
 }

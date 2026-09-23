@@ -74,7 +74,7 @@ type stopArrivalsResult struct {
 // since the ±1-day window can match the same trip on adjacent service days.
 type activeStopTime struct {
 	gtfsdb.GetStopTimesForStopInWindowRow
-	ServiceDate time.Time
+	ServiceDate servicedate.Date
 }
 
 // arrivalsForStop computes the arrivals and departures for a single stop over
@@ -112,7 +112,6 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		}
 
 		st := ast.GetStopTimesForStopInWindowRow
-		serviceMidnight := ast.ServiceDate
 
 		route, routeExists := routesLookup[st.RouteID]
 		if !routeExists {
@@ -142,7 +141,8 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		arrival := api.buildArrival(ctx, arrivalInput{
 			stopTime:         st,
 			route:            route,
-			serviceMidnight:  serviceMidnight,
+			serviceDate:      ast.ServiceDate,
+			location:         in.Location,
 			queryTime:        in.QueryTime,
 			stopCode:         in.StopCode,
 			stopID:           stopID,
@@ -205,9 +205,9 @@ func (api *RestAPI) stopTimesForServiceDay(
 	windowStart, windowEnd time.Time,
 ) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	targetDate := in.QueryTime.AddDate(0, 0, dayOffset)
-	serviceMidnight := servicedate.Start(targetDate.Year(), targetDate.Month(), targetDate.Day(), in.Location)
-	serviceDateStr := targetDate.Format("20060102")
+	serviceDate := servicedate.Of(in.QueryTime.In(in.Location)).AddDays(dayOffset)
+	serviceStart := serviceDate.Start(in.Location)
+	serviceDateStr := serviceDate.String()
 
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
@@ -217,14 +217,14 @@ func (api *RestAPI) stopTimesForServiceDay(
 		return nil, nil
 	}
 
-	endOffset := windowEnd.Sub(serviceMidnight)
+	endOffset := windowEnd.Sub(serviceStart)
 	if endOffset < 0 {
 		return nil, nil
 	}
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopInWindow(ctx, gtfsdb.GetStopTimesForStopInWindowParams{
 		StopID:           in.StopCode,
-		WindowStartNanos: windowStart.Sub(serviceMidnight).Nanoseconds(),
+		WindowStartNanos: windowStart.Sub(serviceStart).Nanoseconds(),
 		WindowEndNanos:   endOffset.Nanoseconds(),
 	})
 	if err != nil {
@@ -244,7 +244,7 @@ func (api *RestAPI) stopTimesForServiceDay(
 		if activeServiceIDSet[st.ServiceID] {
 			dayStopTimes = append(dayStopTimes, activeStopTime{
 				GetStopTimesForStopInWindowRow: st,
-				ServiceDate:                    serviceMidnight,
+				ServiceDate:                    serviceDate,
 			})
 		}
 	}
@@ -343,7 +343,8 @@ func (api *RestAPI) tripStopCounts(ctx context.Context, tripIDs []string) map[st
 type arrivalInput struct {
 	stopTime         gtfsdb.GetStopTimesForStopInWindowRow
 	route            gtfsdb.Route
-	serviceMidnight  time.Time
+	serviceDate      servicedate.Date
+	location         *time.Location
 	queryTime        time.Time
 	stopCode         string
 	stopID           string
@@ -356,9 +357,11 @@ type arrivalInput struct {
 func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arrivalsAccumulator) *models.ArrivalAndDeparture {
 	st := in.stopTime
 	route := in.route
+	serviceStart := in.serviceDate.Start(in.location)
+	serviceMidnight := in.serviceDate.Midnight(in.location)
 
-	scheduledArrivalTime := in.serviceMidnight.Add(time.Duration(st.ArrivalTime))
-	scheduledDepartureTime := in.serviceMidnight.Add(time.Duration(st.DepartureTime))
+	scheduledArrivalTime := serviceStart.Add(time.Duration(st.ArrivalTime))
+	scheduledDepartureTime := serviceStart.Add(time.Duration(st.DepartureTime))
 
 	// Get vehicle if available. The response's top-level `vehicleId`
 	// is the combined {agencyId}_{vehicleId} form per spec, matching
@@ -410,7 +413,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		st.TripHeadsign.String,                          // tripHeadsign
 		in.stopID,                                       // stopID
 		vehicleID,                                       // vehicleID
-		in.serviceMidnight,                              // serviceDate
+		serviceMidnight,                                 // serviceDate
 		scheduledArrivalTime,                            // scheduledArrivalTime
 		scheduledDepartureTime,                          // scheduledDepartureTime
 		predictedArrivalTime,                            // predictedArrivalTime
@@ -432,7 +435,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		situationIDs,                                    // situationIDs
 	)
 
-	applyFrequency(arrival, in.freqMap[st.TripID], in.serviceMidnight, in.queryTime)
+	applyFrequency(arrival, in.freqMap[st.TripID], serviceMidnight, in.queryTime)
 
 	return arrival
 }
@@ -479,7 +482,7 @@ func (api *RestAPI) tripStatusForArrival(
 
 	// The vehicle is passed through rather than left nil so BuildTripStatus
 	// does not repeat the GetVehicleForTrip lookup the caller already did.
-	status, extras, err := api.BuildTripStatus(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceMidnight, in.queryTime, in.freqMap)
+	status, extras, err := api.BuildTripStatus(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceDate.Midnight(in.location), in.queryTime, in.freqMap)
 	if err != nil {
 		reqLogger.Warn("BuildTripStatus failed for arrival",
 			"tripID", st.TripID, "error", err)
