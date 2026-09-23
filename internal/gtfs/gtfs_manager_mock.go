@@ -47,7 +47,7 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 		}
 	}
 	now := time.Now()
-	merged.vehicles = append(merged.vehicles, gtfs.Vehicle{
+	v := gtfs.Vehicle{
 		ID:        &gtfs.VehicleID{ID: vehicleID},
 		Timestamp: &now,
 		Trip: &gtfs.Trip{
@@ -56,13 +56,18 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 				RouteID: routeID,
 			},
 		},
-	})
+	}
+	merged.vehicles = append(merged.vehicles, v)
 
 	idx := len(merged.vehicles) - 1
 	merged.vehicleLookupByVehicle[vehicleID] = idx
 	if tripID != "" {
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
+	if routeID != "" {
+		merged.vehiclesByRoute[routeID] = append(merged.vehiclesByRoute[routeID], v)
+	}
+
 	m.merged.Store(merged)
 }
 
@@ -134,6 +139,10 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	if tripID != "" && !opts.NoTrip {
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
+	if !opts.NoTrip && routeID != "" {
+		merged.vehiclesByRoute[routeID] = append(merged.vehiclesByRoute[routeID], v)
+	}
+
 	m.merged.Store(merged)
 }
 
@@ -184,7 +193,10 @@ func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, op
 	if tripID != "" {
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
-	merged.duplicatedVehicleByRoute[routeID] = append(merged.duplicatedVehicleByRoute[routeID], v)
+	if routeID != "" {
+		merged.duplicatedVehicleByRoute[routeID] = append(merged.duplicatedVehicleByRoute[routeID], v)
+		merged.vehiclesByRoute[routeID] = append(merged.vehiclesByRoute[routeID], v)
+	}
 	m.merged.Store(merged)
 }
 

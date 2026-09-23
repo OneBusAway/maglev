@@ -26,6 +26,10 @@ import (
 	"maglev.onebusaway.org/internal/webui"
 )
 
+// gtfsShutdownTimeout bounds how long we wait for GTFS background workers
+// during shutdown before closing the database anyway.
+const gtfsShutdownTimeout = 30 * time.Second
+
 func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	gtfsCfg := gtfs.Config{
 		GtfsURL:               gtfsCfgData.GtfsURL,
@@ -91,10 +95,9 @@ func newLogHandler(format string, level slog.Level) slog.Handler {
 }
 
 // BuildApplication creates and initializes the Application with all dependencies.
-// This includes creating the logger, initializing the GTFS manager, and creating the direction calculator.
+// This includes initializing the GTFS manager, and creating the direction calculator.
 // Returns an error if GTFS manager initialization fails.
-func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config) (*app.Application, error) {
-	logger := slog.Default()
+func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Config, logger *slog.Logger) (*app.Application, error) {
 	appMetrics := metrics.NewWithLogger(logger)
 	gtfsCfg.Metrics = appMetrics
 
@@ -117,7 +120,6 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 	coreApp := &app.Application{
 		Config:              cfg,
 		GtfsConfig:          gtfsCfg,
-		Logger:              logger,
 		GtfsManager:         gtfsManager,
 		DirectionCalculator: directionCalculator,
 		Clock:               appClock,
@@ -151,8 +153,7 @@ func createClock(env appconf.Environment) clock.Clock {
 
 // CreateServer creates and configures the HTTP server with routes and middleware.
 // Sets up both REST API routes and WebUI routes, applies security headers, and adds request logging.
-func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *restapi.RestAPI) {
-
+func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Logger) (*http.Server, *restapi.RestAPI) {
 	api := restapi.NewRestAPI(coreApp)
 
 	webUI := &webui.WebUI{
@@ -166,7 +167,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 
 	// Add metrics endpoint (no auth required) - uses custom registry with structured error logging
 	mux.Handle("GET /metrics", promhttp.HandlerFor(coreApp.Metrics.Registry, promhttp.HandlerOpts{
-		ErrorLog: slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}))
 
 	// Apply API-specific middleware closest to the routes. Both middlewares
@@ -190,12 +191,12 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
 
 	// Add request logging middleware (outermost)
-	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(coreApp.Logger)
+	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(logger)
 
 	sizeLimitMiddleware := restapi.SizeLimitMiddleware(1 << 20) // 1 MB limit
 
 	// Panic recovery outermost so all handler panics are caught
-	handler := restapi.NewRecoveryMiddleware(coreApp.Logger, coreApp.Clock)(
+	handler := restapi.NewRecoveryMiddleware(logger, coreApp.Clock)(
 		sizeLimitMiddleware(restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler))),
 	)
 
@@ -206,7 +207,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 20, // 1 MB (explicit; matches Go's default)
-		ErrorLog:       slog.NewLogLogger(coreApp.Logger.Handler(), slog.LevelError),
+		ErrorLog:       slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 
 	return srv, api
@@ -216,10 +217,9 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config) (*http.Server, *
 // Starts the server in a goroutine, waits for shutdown signals (SIGINT, SIGTERM) or context cancellation,
 // and performs graceful shutdown with a 30-second timeout.
 // Returns an error if the server fails to start or shutdown fails.
-func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *restapi.RestAPI) error {
+func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *restapi.RestAPI, logger *slog.Logger) error {
 	cfg := coreApp.Config
 	tlsEnabled := cfg.TLSCertPath != "" && cfg.TLSKeyPath != ""
-	logger := coreApp.Logger
 	logger.Info("starting server", "addr", srv.Addr, "tls", tlsEnabled)
 
 	// Set up signal handling for graceful shutdown, merging with provided context
@@ -272,7 +272,11 @@ func Run(ctx context.Context, srv *http.Server, coreApp *app.Application, api *r
 
 	// Then shutdown GTFS manager (stops data fetching - the lowest-level dependency)
 	if coreApp.GtfsManager != nil {
-		coreApp.GtfsManager.Shutdown()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), gtfsShutdownTimeout)
+		if err := coreApp.GtfsManager.Shutdown(shutdownCtx); err != nil {
+			logger.Error("GTFS manager shutdown did not complete cleanly", "error", err)
+		}
+		cancel()
 	}
 
 	logger.Info("server exited")

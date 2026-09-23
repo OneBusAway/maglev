@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,9 +16,11 @@ import (
 // returns its path. The RABA fixture has no frequencies.txt, so frequency behaviour needs
 // a feed of its own.
 //
-// At stop_1 on a weekday, route_1 runs headway-based service in both directions,
-// route_2 mixes frequency and fixed trips where the frequency headsign wins, and
-// route_3 mixes frequency and fixed trips where the fixed-trip headsign wins.
+// At stop_1 on a weekday:
+// - route_1 runs headway-based service in both directions.
+// - route_2 mixes frequency and fixed trips where the frequency headsign wins.
+// - route_3 mixes frequency and fixed trips where the fixed-trip headsign wins.
+// - route_4 runs an exact_times=1 frequency trip that expands into discrete stop times.
 func writeFrequencyFeed(t testing.TB) string {
 	t.Helper()
 
@@ -28,7 +31,8 @@ func writeFrequencyFeed(t testing.TB) string {
 		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
 			"route_1,1,R1,Route One,3\n" +
 			"route_2,1,R2,Route Two,3\n" +
-			"route_3,1,R3,Route Three,3\n",
+			"route_3,1,R3,Route Three,3\n" +
+			"route_4,1,R4,Route Four,3\n",
 
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"service_1,1,1,1,1,1,0,0,20240101,20251231\n",
@@ -45,7 +49,8 @@ func writeFrequencyFeed(t testing.TB) string {
 			"route_2,service_1,trip_fixed_later,Local Express,0\n" +
 			"route_3,service_1,trip_freq_sparse,Sparse Shuttle,0\n" +
 			"route_3,service_1,trip_fixed_major_a,Scheduled Trunk,0\n" +
-			"route_3,service_1,trip_fixed_major_b,Scheduled Trunk,0\n",
+			"route_3,service_1,trip_fixed_major_b,Scheduled Trunk,0\n" +
+			"route_4,service_1,trip_exact,Exact Express,0\n",
 
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"trip_freq_out,06:00:00,06:00:00,stop_1,1\n" +
@@ -63,16 +68,21 @@ func writeFrequencyFeed(t testing.TB) string {
 			"trip_fixed_major_a,07:00:00,07:00:00,stop_1,1\n" +
 			"trip_fixed_major_a,07:30:00,07:30:00,stop_2,2\n" +
 			"trip_fixed_major_b,07:20:00,07:20:00,stop_1,1\n" +
-			"trip_fixed_major_b,07:50:00,07:50:00,stop_2,2\n",
+			"trip_fixed_major_b,07:50:00,07:50:00,stop_2,2\n" +
+			// trip_exact starts at stop_2, so stop_1 sits five minutes into the trip.
+			"trip_exact,06:00:00,06:00:00,stop_2,1\n" +
+			"trip_exact,06:05:00,06:05:00,stop_1,2\n",
 
 		// trip_freq_out runs every 10 minutes in the morning and every 15 in the evening;
 		// the evening window is listed first so the response's ordering is load-bearing.
+		// trip_exact is the only exact_times=1 trip: 06:00-08:00 every 30 minutes.
 		"frequencies.txt": "trip_id,start_time,end_time,headway_secs,exact_times\n" +
 			"trip_freq_out,16:00:00,19:00:00,900,0\n" +
 			"trip_freq_out,06:00:00,09:00:00,600,0\n" +
 			"trip_freq_in,07:00:00,10:00:00,720,0\n" +
 			"trip_freq_mixed,06:00:00,09:00:00,1800,0\n" +
-			"trip_freq_sparse,06:00:00,06:30:00,1800,0\n",
+			"trip_freq_sparse,06:00:00,06:30:00,1800,0\n" +
+			"trip_exact,06:00:00,08:00:00,1800,1\n",
 	}
 
 	feedPath := filepath.Join(t.TempDir(), "frequencies.zip")
@@ -189,6 +199,32 @@ func TestScheduleForStopHandlerFrequencies(t *testing.T) {
 		require.Len(t, stopTimes, 2, "the fixed-schedule trips stay in stop times")
 		assert.Equal(t, "1_trip_fixed_major_a", stopTimes[0].(map[string]any)["tripId"])
 		assert.Equal(t, "1_trip_fixed_major_b", stopTimes[1].(map[string]any)["tripId"])
+	})
+
+	t.Run("exact_times trips expand into individual stop times", func(t *testing.T) {
+		exact, ok := groups["Exact Express"]
+		require.True(t, ok, "expected a direction group for the exact_times trip")
+
+		assert.Empty(t, exact["scheduleFrequencies"], "exact_times service is not a headway window")
+
+		stopTimes, ok := exact["scheduleStopTimes"].([]any)
+		require.True(t, ok)
+		// 06:00-08:00 every 30 minutes, and this stop is five minutes into the trip.
+		require.Len(t, stopTimes, 4)
+
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		serviceDay := time.Date(2025, 6, 12, 0, 0, 0, 0, loc)
+
+		for i, stopTime := range stopTimes {
+			run, ok := stopTime.(map[string]any)
+			require.True(t, ok)
+
+			expected := serviceDay.Add(time.Duration(i)*30*time.Minute + 6*time.Hour + 5*time.Minute)
+			assert.Equal(t, float64(expected.UnixMilli()), run["departureTime"])
+			assert.Equal(t, run["departureTime"], run["arrivalTime"])
+			assert.Equal(t, "1_trip_exact", run["tripId"])
+		}
 	})
 
 	t.Run("the opposite direction keeps its own frequencies", func(t *testing.T) {

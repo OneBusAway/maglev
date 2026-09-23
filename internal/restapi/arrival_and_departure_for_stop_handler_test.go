@@ -394,11 +394,39 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	scheduledArrival := time.Now()
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes("nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "nonexistent_trip", "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
 	assert.False(t, predicted)
+}
+
+func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	entry := model.Data.Entry
+	assert.False(t, entry.Predicted)
+	assert.True(t, entry.PredictedArrivalTime.IsZero(),
+		"schedule-only arrival must not expose its scheduled time as a prediction")
+	assert.True(t, entry.PredictedDepartureTime.IsZero(),
+		"schedule-only departure must not expose its scheduled time as a prediction")
+	assert.True(t, entry.LastUpdateTime.IsZero())
 }
 
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
@@ -407,7 +435,7 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 	scheduledTime := time.Now()
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes("test_trip", "test_stop", 1, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "test_trip", "test_stop", 1, scheduledTime, scheduledTime)
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -648,7 +676,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 120s delay")
@@ -682,7 +710,7 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.True(t, predicted, "Should be predicted when trip-level delay is available")
@@ -787,6 +815,7 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 
 			scheduledTime := time.Now()
 			predArrival, predDeparture, predicted := api.getPredictedTimes(
+				context.Background(),
 				tc.tripID, tc.lookupStopID, tc.lookupStopSeq, scheduledTime, scheduledTime,
 			)
 
@@ -1185,4 +1214,222 @@ func TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics(t *testing
 	assert.InDelta(t, 0.0, model.Data.Entry.DistanceFromStop, 0.001,
 		"schedule-only snapshot with no shape data yields distanceFromStop=0 "+
 			"via the arithmetic path, not via the metricsForStop-skipped default")
+}
+
+// TestGetPredictedTimes_LoopTripPrefersMatchingSequence regresses the case
+// where a loop trip visits the same stop_id at more than one stop_sequence.
+// Matching on stop_id alone bound the first update whose stop_id happened to
+// match, so a request for the later visit was served the earlier visit's
+// prediction.
+func TestGetPredictedTimes_LoopTripPrefersMatchingSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopA, stopB := "STOP_A", "STOP_B"
+	seq1, seq2, seq3 := uint32(1), uint32(2), uint32(3)
+	firstVisit := 60 * time.Second
+	onTime := 0 * time.Second
+	secondVisit := 600 * time.Second
+
+	updates := []gtfs.StopTimeUpdate{
+		{StopSequence: &seq1, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &firstVisit}},
+		{StopSequence: &seq2, StopID: &stopB, Arrival: &gtfs.StopTimeEvent{Delay: &onTime}},
+		{StopSequence: &seq3, StopID: &stopA, Arrival: &gtfs.StopTimeEvent{Delay: &secondVisit}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-loop-predicted", nil, updates)
+
+	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	arr, dep, predicted := api.getPredictedTimes(context.Background(), "trip-loop-predicted", stopA, 3, scheduled, scheduled)
+	require.True(t, predicted)
+	assert.Equal(t, scheduled.Add(secondVisit), arr, "sequence 3 must use its own update, not sequence 1's")
+	assert.Equal(t, scheduled.Add(secondVisit), dep)
+
+	arr, dep, predicted = api.getPredictedTimes(context.Background(), "trip-loop-predicted", stopA, 1, scheduled, scheduled)
+	require.True(t, predicted)
+	assert.Equal(t, scheduled.Add(firstVisit), arr, "sequence 1 keeps its own update")
+	assert.Equal(t, scheduled.Add(firstVisit), dep)
+}
+
+// TestArrivalAndDepartureForStop_LoopTripPredictionMatchesRequestedSequence
+// drives the loop case through the endpoint rather than through getPredictedTimes
+// alone. The same stop is served at two sequences with different delays, and a
+// request for the later visit must be answered with that visit's prediction.
+func TestArrivalAndDepartureForStop_LoopTripPredictionMatchesRequestedSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := t.Context()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID  = "SeqLoopAgency"
+		routeID   = "SeqLoopRoute"
+		tripID    = "SeqLoopTrip"
+		stopID    = "SeqLoopStop"
+		serviceID = "SeqLoopService"
+	)
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Seq Loop Transit", Url: "https://seqloop.example.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:   stopID,
+		Name: nulls.String("Seq Loop Stop"),
+		Lat:  47.0,
+		Lon:  -122.0,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        serviceID,
+		Monday:    1,
+		Tuesday:   1,
+		Wednesday: 1,
+		Thursday:  1,
+		Friday:    1,
+		Saturday:  1,
+		Sunday:    1,
+		StartDate: "20200101",
+		EndDate:   "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        tripID,
+		RouteID:   routeID,
+		ServiceID: serviceID,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopID,
+		StopSequence:  1,
+		ArrivalTime:   int64(8 * time.Hour),
+		DepartureTime: int64(8 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID:        tripID,
+		StopID:        stopID,
+		StopSequence:  3,
+		ArrivalTime:   int64(9 * time.Hour),
+		DepartureTime: int64(9 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	rawStopID := stopID
+	seq1, seq3 := uint32(1), uint32(3)
+	firstVisit, secondVisit := 60*time.Second, 600*time.Second
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{StopSequence: &seq1, StopID: &rawStopID, Arrival: &gtfs.StopTimeEvent{Delay: &firstVisit}},
+		{StopSequence: &seq3, StopID: &rawStopID, Arrival: &gtfs.StopTimeEvent{Delay: &secondVisit}},
+	})
+
+	baseEndpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+		utils.FormCombinedID(agencyID, stopID),
+		utils.FormCombinedID(agencyID, tripID),
+		time.Now().UnixMilli(),
+	)
+
+	resp, later := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=3")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, later.Code)
+	require.True(t, later.Data.Entry.Predicted, "the seeded update must produce a prediction")
+	assert.Equal(t,
+		later.Data.Entry.ScheduledArrivalTime.UnixMilli()+secondVisit.Milliseconds(),
+		later.Data.Entry.PredictedArrivalTime.UnixMilli(),
+		"sequence 3 must be answered with its own delay, not sequence 1's")
+
+	_, earlier := callAPIHandler[ArrivalAndDepartureResponse](t, api, baseEndpoint+"&stopSequence=1")
+	require.Equal(t, http.StatusOK, earlier.Code)
+	assert.Equal(t,
+		earlier.Data.Entry.ScheduledArrivalTime.UnixMilli()+firstVisit.Milliseconds(),
+		earlier.Data.Entry.PredictedArrivalTime.UnixMilli(),
+		"sequence 1 keeps its own delay")
+}
+
+// TestGetPredictedTimes_FallsBackToStopIDWithoutSequence pins the other half
+// of the rule: an update carrying no stop_sequence at all is still matched on
+// stop_id, so feeds that omit sequences keep working.
+func TestGetPredictedTimes_FallsBackToStopIDWithoutSequence(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopC := "STOP_C"
+	delay := 45 * time.Second
+	updates := []gtfs.StopTimeUpdate{
+		{StopID: &stopC, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-id-only-predicted", nil, updates)
+
+	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// The scheduled stop-time has a sequence the feed never mentioned.
+	arr, _, predicted := api.getPredictedTimes(context.Background(), "trip-id-only-predicted", stopC, 7, scheduled, scheduled)
+	require.True(t, predicted)
+	assert.Equal(t, scheduled.Add(delay), arr)
+}
+
+// TestGetPredictedTimes_SequenceMustAgreeWithStopID covers feeds whose stop_sequence has drifted from the static schedule.
+func TestGetPredictedTimes_SequenceMustAgreeWithStopID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID, _ := anyTripAndStop(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), tripID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 3)
+	first, target, next := stopTimes[0], stopTimes[1], stopTimes[2]
+	require.NotEqual(t, target.StopID, first.StopID)
+	require.NotEqual(t, target.StopID, next.StopID)
+
+	targetDelay, nextDelay := 120*time.Second, 300*time.Second
+	behindBySequence := uint32(first.StopSequence)
+	nextBehindBySequence := uint32(target.StopSequence)
+	outOfRange := uint32(stopTimes[len(stopTimes)-1].StopSequence + 100)
+
+	tests := []struct {
+		name    string
+		updates []gtfs.StopTimeUpdate
+	}{
+		{
+			name: "sequences off by one",
+			updates: []gtfs.StopTimeUpdate{
+				{StopSequence: &behindBySequence, StopID: &target.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &targetDelay}},
+				{StopSequence: &nextBehindBySequence, StopID: &next.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &nextDelay}},
+			},
+		},
+		{
+			name: "sequence outside the schedule",
+			updates: []gtfs.StopTimeUpdate{
+				{StopSequence: &outOfRange, StopID: &target.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &targetDelay}},
+			},
+		},
+	}
+
+	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddTripUpdate(tripID, nil, tt.updates)
+
+			arr, _, predicted := api.getPredictedTimes(context.Background(), tripID, target.StopID, target.StopSequence, scheduled, scheduled)
+			require.True(t, predicted)
+			assert.Equal(t, scheduled.Add(targetDelay), arr)
+		})
+	}
 }

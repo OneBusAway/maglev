@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -377,12 +378,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if status != nil {
 		tripStatus = status
 
-		predictedArrivalTime = scheduledArrivalTime
-		predictedDepartureTime = scheduledDepartureTime
-
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -626,6 +624,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 // Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
 // Returns (time.Time{}, time.Time{}, false) if no prediction can be made.
 func (api *RestAPI) getPredictedTimes(
+	ctx context.Context,
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
@@ -641,33 +640,33 @@ func (api *RestAPI) getPredictedTimes(
 	var closestPriorSequence int64 = -1
 	var foundTarget bool
 
-	for _, stu := range realTimeTrip.StopTimeUpdates {
+	// A stop_id can be visited more than once on a loop trip, so matching on
+	// stop_id alone can bind an update belonging to a different visit. Prefer
+	// the update whose stop_sequence matches the requested one, and fall back
+	// to stop_id for updates whose sequence doesn't name a visit to this stop.
+	var target, stopIDFallback *gtfs.StopTimeUpdate
+	var staticStops map[int64]string
+
+	for i := range realTimeTrip.StopTimeUpdates {
+		stu := &realTimeTrip.StopTimeUpdates[i]
 		seq := int64(-1)
 		if stu.StopSequence != nil {
 			seq = int64(*stu.StopSequence)
 		}
+		matchesStop := stu.StopID != nil && *stu.StopID == stopCode
 
-		if (stu.StopID != nil && *stu.StopID == stopCode) || (seq != -1 && seq == targetStopSequence) {
-			foundTarget = true
-			if stu.Arrival != nil {
-				if stu.Arrival.Time != nil {
-					offset := stu.Arrival.Time.Sub(scheduledArrivalTime)
-					arrivalOffset = &offset
-				} else if stu.Arrival.Delay != nil {
-					offset := *stu.Arrival.Delay
-					arrivalOffset = &offset
-				}
+		switch {
+		case seq == targetStopSequence && (stu.StopID == nil || matchesStop):
+			if target == nil {
+				target = stu
 			}
-			if stu.Departure != nil {
-				if stu.Departure.Time != nil {
-					offset := stu.Departure.Time.Sub(scheduledDepartureTime)
-					departureOffset = &offset
-				} else if stu.Departure.Delay != nil {
-					offset := *stu.Departure.Delay
-					departureOffset = &offset
-				}
+		case matchesStop && stopIDFallback == nil:
+			if seq != -1 && staticStops == nil {
+				staticStops = api.staticStopsForTrip(ctx, tripID)
 			}
-			break
+			if !sequenceIdentifiesVisit(*stu, staticStops) {
+				stopIDFallback = stu
+			}
 		}
 
 		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
@@ -677,6 +676,31 @@ func (api *RestAPI) getPredictedTimes(
 				propagatedDelay = *stu.Departure.Delay
 			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
 				propagatedDelay = *stu.Arrival.Delay
+			}
+		}
+	}
+
+	if target == nil {
+		target = stopIDFallback
+	}
+	if target != nil {
+		foundTarget = true
+		if target.Arrival != nil {
+			if target.Arrival.Time != nil {
+				offset := target.Arrival.Time.Sub(scheduledArrivalTime)
+				arrivalOffset = &offset
+			} else if target.Arrival.Delay != nil {
+				offset := *target.Arrival.Delay
+				arrivalOffset = &offset
+			}
+		}
+		if target.Departure != nil {
+			if target.Departure.Time != nil {
+				offset := target.Departure.Time.Sub(scheduledDepartureTime)
+				departureOffset = &offset
+			} else if target.Departure.Delay != nil {
+				offset := *target.Departure.Delay
+				departureOffset = &offset
 			}
 		}
 	}

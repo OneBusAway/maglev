@@ -1,11 +1,11 @@
 package restapi
 
 import (
-	"database/sql"
-	"errors"
 	"net/http"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -18,14 +18,16 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	_, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-
+	hasTrip, err := api.GtfsManager.GtfsDB.Queries.ShapeHasTripForAgency(ctx, gtfsdb.ShapeHasTripForAgencyParams{
+		ShapeID:  nulls.String(shapeCode),
+		AgencyID: agencyID,
+	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
 		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if hasTrip == 0 {
+		api.sendNotFound(w, r)
 		return
 	}
 

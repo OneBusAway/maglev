@@ -1,6 +1,8 @@
 package models
 
 import (
+	"time"
+
 	"maglev.onebusaway.org/internal/clock"
 )
 
@@ -15,7 +17,13 @@ type ResponseModel struct {
 
 // NewOKResponse creates a successful response using the provided clock.
 func NewOKResponse(data any, c clock.Clock) ResponseModel {
-	return NewResponse(200, data, "OK", c)
+	return NewOKResponseAt(data, c.Now())
+}
+
+// NewOKResponseAt creates a successful response stamped with a specific instant.
+// Use this when the payload already embeds that same instant (e.g. current-time).
+func NewOKResponseAt(data any, t time.Time) ResponseModel {
+	return NewResponseAt(200, data, "OK", t)
 }
 
 func NewListResponse(list any, references ReferencesModel, limitExceeded bool, c clock.Clock) ResponseModel {
@@ -109,9 +117,14 @@ func NewEmptyArrivalsAndDeparturesForLocationResponse(c clock.Clock) ResponseMod
 
 // NewResponse creates a standard response using the provided clock.
 func NewResponse(code int, data any, text string, c clock.Clock) ResponseModel {
+	return NewResponseAt(code, data, text, c.Now())
+}
+
+// NewResponseAt creates a standard response stamped with a specific instant.
+func NewResponseAt(code int, data any, text string, t time.Time) ResponseModel {
 	return ResponseModel{
 		Code:        code,
-		CurrentTime: ResponseCurrentTime(c),
+		CurrentTime: t.UnixMilli(),
 		Data:        data,
 		Text:        text,
 		Version:     APIVersion,

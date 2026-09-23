@@ -258,14 +258,17 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	// Omit references entirely when includeReferences=false.
 	references := models.NewEmptyReferences()
 	if ShouldIncludeReferences(r) {
-		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		if len(vehiclesList) > 0 {
+			references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		}
 		references.Routes = routeRefList
 		references.Trips = tripRefList
 		references.Situations = api.situationReferences(ctx, situations.refs)
 	}
 
 	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
-	response := models.NewListResponse(vehiclesList, *references, false, api.Clock)
+	const outOfRange, limitExceeded = false, false
+	response := models.NewListResponseWithRange(vehiclesList, *references, outOfRange, api.Clock, limitExceeded)
 	api.sendResponse(w, r, response)
 }
 

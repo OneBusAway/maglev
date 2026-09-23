@@ -105,9 +105,9 @@ func TestRouteHandler_EntityIDWithUnderscores(t *testing.T) {
 	}
 }
 
-// TestRouteHandlerWithSituations verifies that a real-time alert informing a
-// route shows up in references.situations for that route's response.
-func TestRouteHandlerWithSituations(t *testing.T) {
+// TestRouteHandlerOmitsAmbientSituations verifies that matching alerts do not
+// populate situation references and the owning agency remains referenced.
+func TestRouteHandlerOmitsAmbientSituations(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
@@ -127,9 +127,9 @@ func TestRouteHandlerWithSituations(t *testing.T) {
 	resp, model := callAPIHandler[RouteEntryResponse](t, api, routeURL(testdata.Route1.ID))
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Len(t, model.Data.References.Situations, 1,
-		"expected exactly one situation matching the seeded alert")
-	assert.Equal(t, alertID, model.Data.References.Situations[0].ID)
+	assert.Equal(t, testdata.Route1.ID, model.Data.Entry.ID)
+	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
+	assert.Equal(t, []models.Situation{}, model.Data.References.Situations)
 }
 
 // TestRouteHandler_IncludeReferencesFalse verifies that when includeReferences=false,
