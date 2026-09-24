@@ -808,18 +808,16 @@ func (api *RestAPI) routeZoneServiceDates(
 				"agencyID", agency.ID, "timezone", agency.Timezone, "error", err)
 			continue
 		}
+		if _, resolved := resolvers[location.String()]; !resolved {
+			resolver, err := api.serviceDateResolverForZone(ctx, location, currentTime)
+			if err != nil {
+				reqLogger.Warn("trips-for-route: skipping agency zone with no service days",
+					"agencyID", agency.ID, "zone", location.String(), "error", err)
+				continue
+			}
+			resolvers[location.String()] = resolver
+		}
 		locations[agency.ID] = location
-
-		if _, resolved := resolvers[location.String()]; resolved {
-			continue
-		}
-		resolver, err := api.serviceDateResolverForZone(ctx, location, currentTime)
-		if err != nil {
-			reqLogger.Warn("trips-for-route: skipping agency zone with no service days",
-				"agencyID", agency.ID, "zone", location.String(), "error", err)
-			continue
-		}
-		resolvers[location.String()] = resolver
 	}
 
 	return resolvers, locations, nil
