@@ -265,21 +265,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		api.sendNotFound(w, r)
 		return
 	}
-	targetStopTime := struct {
-		ArrivalTime   int64
-		DepartureTime int64
-		StopSequence  int64
-		StopHeadsign  string
-	}{
-		ArrivalTime:   matchedStopTime.ArrivalTime,
-		DepartureTime: matchedStopTime.DepartureTime,
-		StopSequence:  matchedStopTime.StopSequence,
-	}
 
 	// Arrival time is stored in nanoseconds since midnight → convert to duration
 	// arrival and departure time is stored in nanoseconds (sqlite)
-	arrivalOffset := time.Duration(targetStopTime.ArrivalTime)
-	departureOffset := time.Duration(targetStopTime.DepartureTime)
+	arrivalOffset := time.Duration(matchedStopTime.ArrivalTime)
+	departureOffset := time.Duration(matchedStopTime.DepartureTime)
 
 	// Add offsets to midnight
 	scheduledArrivalTime := serviceMidnight.Add(arrivalOffset)
@@ -360,7 +350,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, targetStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -374,7 +364,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		// It applies the same schedule-deviation shift internally, so
 		// recomputing here just to run metricsForStop was duplicating work.
 		if statusExtras.snapshot != nil {
-			if d, n, ok := statusExtras.snapshot.metricsForStop(tripID, int(targetStopTime.StopSequence)); ok {
+			if d, n, ok := statusExtras.snapshot.metricsForStop(tripID, int(matchedStopTime.StopSequence)); ok {
 				distanceFromStop = d
 				numberOfStopsAway = n
 			}
