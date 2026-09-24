@@ -759,7 +759,7 @@ func findStopTimeForTripStop(stopTimes []gtfsdb.StopTime, stopCode string, reque
 	// when no position is given: a stop can appear twice on a loop trip, so pick
 	// whichever visit's arrival/departure is closest to the query time
 	// (matches Java's behavior , not just "first match").
-	if requestedIndex == nil {
+	if requestedIndex == nil || *requestedIndex < 0 {
 		return findClosestStopTime(stopTimes, stopCode, queryOffset)
 	}
 
@@ -801,11 +801,8 @@ func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, reques
 	}
 	idx := requestedIndex
 
-	if idx < 0 {
-		idx = 0
-	} else if idx > n-1 {
-		idx = n - 1
-	}
+	// Clamp oversized indexes to the last position.
+	idx = min(idx, n-1)
 
 	// Exact hit at the requested position can't be beaten by any other
 	// occurrence, so return immediately without scanning the rest.
