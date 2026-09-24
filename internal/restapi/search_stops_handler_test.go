@@ -111,6 +111,18 @@ func TestSearchStopsHandlerEdgeCaseParams(t *testing.T) {
 			},
 		},
 		{
+			// The unmatched term starts past character 32, so a legacy
+			// 32-char-truncated key could never require it; Maglev evaluates
+			// every term and must return nothing.
+			name:           "long query with unmatched term past char 32 returns empty",
+			params:         url.Values{"input": {"Buenaventura Buenaventura Buenaventura NonExistentStopName12345"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.Empty(t, stopsResp.Data.List)
+				assert.False(t, stopsResp.Data.LimitExceeded)
+			},
+		},
+		{
 			name:           "stop code alone does not match stop names",
 			params:         url.Values{"input": {"1001"}},
 			expectedStatus: http.StatusOK,
