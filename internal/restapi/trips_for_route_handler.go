@@ -283,7 +283,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		activeServiceDate := tripServiceDay[tripID]
 		entryServiceDate := activeServiceDate
 		entryLocation := locationOrDefault(agencyLocations, entryAgencyID, currentLocation)
-		if entryTripID != tripID {
+		activeLocation := locationOrDefault(agencyLocations, activeAgencyID, currentLocation)
+		if entryLocation.String() != activeLocation.String() {
 			entryServiceDate = serviceDatesByZone[entryLocation.String()].Resolve(tripsByID[entryTripID])
 		}
 
