@@ -434,7 +434,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceMidnight, currentTime), serviceMidnight)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, currentTime), serviceStart)
 		arrival.Frequency = &converted
 	}
 

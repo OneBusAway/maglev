@@ -408,9 +408,14 @@ func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]
 func selectFrequency(freqs []gtfsdb.Frequency, serviceDate, effectiveTime time.Time) *gtfsdb.Frequency {
 	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
 		0, 0, 0, 0, serviceDate.Location())
+	return selectFrequencyFromStart(freqs, midnight, effectiveTime)
+}
+
+// selectFrequencyFromStart is selectFrequency with the windows measured from serviceStart.
+func selectFrequencyFromStart(freqs []gtfsdb.Frequency, serviceStart, effectiveTime time.Time) *gtfsdb.Frequency {
 	for i := range freqs {
-		start := midnight.Add(time.Duration(freqs[i].StartTime))
-		end := midnight.Add(time.Duration(freqs[i].EndTime))
+		start := serviceStart.Add(time.Duration(freqs[i].StartTime))
+		end := serviceStart.Add(time.Duration(freqs[i].EndTime))
 		if !effectiveTime.Before(start) && effectiveTime.Before(end) {
 			return &freqs[i]
 		}

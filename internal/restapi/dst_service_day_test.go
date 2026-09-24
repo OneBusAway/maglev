@@ -29,12 +29,17 @@ func dstFiles() map[string]string {
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"dst-trip,08:00:00,08:00:00,dst-stop1,1\n" +
 			"dst-trip,08:30:00,08:30:00,dst-stop2,2\n",
+		"frequencies.txt": "trip_id,start_time,end_time,headway_secs,exact_times\n" +
+			"dst-trip,08:00:00,09:00:00,600,0\n",
 	}
 }
 
 type dstArrival struct {
 	ServiceDate          int64 `json:"serviceDate"`
 	ScheduledArrivalTime int64 `json:"scheduledArrivalTime"`
+	Frequency            *struct {
+		StartTime int64 `json:"startTime"`
+	} `json:"frequency"`
 }
 
 type dstArrivalsResponse struct {
@@ -81,6 +86,8 @@ func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 			require.Len(t, arrivals, 1, "the 08:00 Sunday trip is in the 07:45 to 08:20 window")
 			assert.Equal(t, wantArrival, arrivals[0].ScheduledArrivalTime)
 			assert.Equal(t, wantServiceDate, arrivals[0].ServiceDate)
+			require.NotNil(t, arrivals[0].Frequency)
+			assert.Equal(t, wantArrival, arrivals[0].Frequency.StartTime, "the 08:00 frequency window starts at 08:00 local")
 
 			for _, serviceDate := range []int64{arrivals[0].ServiceDate, start.UnixMilli()} {
 				resp, single := callAPIHandler[dstArrivalResponse](t, api, fmt.Sprintf(
@@ -88,6 +95,8 @@ func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 				require.Equal(t, 200, resp.StatusCode)
 				assert.Equal(t, wantArrival, single.Data.Entry.ScheduledArrivalTime)
 				assert.Equal(t, wantServiceDate, single.Data.Entry.ServiceDate)
+				require.NotNil(t, single.Data.Entry.Frequency)
+				assert.Equal(t, wantArrival, single.Data.Entry.Frequency.StartTime)
 			}
 		})
 	}

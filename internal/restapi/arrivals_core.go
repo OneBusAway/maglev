@@ -435,7 +435,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		situationIDs,                                    // situationIDs
 	)
 
-	applyFrequency(arrival, in.freqMap[st.TripID], serviceMidnight, in.queryTime)
+	applyFrequency(arrival, in.freqMap[st.TripID], serviceStart, in.queryTime)
 
 	return arrival
 }
@@ -444,11 +444,11 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 // the row whose window contains queryTime. A trip with no frequency rows
 // leaves Frequency nil — selectFrequency panics on an empty slice, so this
 // guard is load-bearing, not defensive filler.
-func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequency, serviceMidnight, queryTime time.Time) {
+func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequency, serviceStart, queryTime time.Time) {
 	if len(freqs) == 0 {
 		return
 	}
-	converted := models.NewFrequencyFromDB(*selectFrequency(freqs, serviceMidnight, queryTime), serviceMidnight)
+	converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqs, serviceStart, queryTime), serviceStart)
 	arrival.Frequency = &converted
 }
 
