@@ -886,7 +886,7 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 }
 
 const getActiveBlockIDsForAgency = `-- name: GetActiveBlockIDsForAgency :many
-SELECT COALESCE(trips.block_id, trips.id) AS block_id
+SELECT COALESCE(NULLIF(trips.block_id, ''), trips.id) AS block_id
 FROM
     (SELECT CAST(?1 AS INTEGER) AS at) AS query_instant
     CROSS JOIN trips
@@ -895,7 +895,7 @@ WHERE
     routes.agency_id = ?2
     AND trips.service_id IN (/*SLICE:service_ids*/?)
 GROUP BY
-    COALESCE(trips.block_id, trips.id)
+    COALESCE(NULLIF(trips.block_id, ''), trips.id)
 HAVING
     MIN(trips.min_arrival_time) <= query_instant.at
     AND MAX(trips.max_departure_time) >= query_instant.at
@@ -915,6 +915,7 @@ type GetActiveBlockIDsForAgencyParams struct {
 // block_layover table) doesn't require consecutive trips to share a stop.
 // block_id is optional in GTFS, so trips.id is substituted for trips with no
 // block_id, matching them 1:1 to their own "block" rather than dropping them.
+// The importer stores a missing block_id as ” rather than NULL, hence NULLIF.
 // Callers run this once for today's service (at the current time-of-day) and
 // once for yesterday's service (the same instant shifted +24h) to catch
 // after-midnight trips, mirroring the today/yesterday pattern in

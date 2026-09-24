@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // metricsTestNow is a fixed reference time (well within the "service-1"
@@ -728,6 +729,35 @@ func TestGetMetrics_ScheduledTripsCountWithSeveralActiveServices(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, snapshot.ScheduledTripsCount["A"])
+}
+
+// TestGetMetrics_ScheduledTripsCountTreatsImportedBlocklessTripsSeparately
+// guards the blockless-trip fallback against how the importer actually stores
+// a missing block_id: as a valid empty string, not NULL. Each such trip must
+// count as its own block rather than all of them collapsing into one.
+func TestGetMetrics_ScheduledTripsCountTreatsImportedBlocklessTripsSeparately(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	ensureDefaultCalendar(t, manager)
+
+	for _, tripID := range []string{"BLOCKLESS1", "BLOCKLESS2"} {
+		_, err := manager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
+			ID:               tripID,
+			RouteID:          "R1",
+			ServiceID:        defaultTestServiceID,
+			BlockID:          nulls.String(""),
+			MinArrivalTime:   sql.NullInt64{Int64: 0, Valid: true},
+			MaxDepartureTime: sql.NullInt64{Int64: (24 * time.Hour).Nanoseconds(), Valid: true},
+		})
+		require.NoError(t, err)
+	}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, snapshot.ScheduledTripsCount["A"])
 }
 
 // TestGetMetrics_BlockWithFinishedAndActiveTripCountsAsActive guards the

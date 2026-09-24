@@ -1019,6 +1019,7 @@ SELECT COUNT(*) FROM trips;
 -- block_layover table) doesn't require consecutive trips to share a stop.
 -- block_id is optional in GTFS, so trips.id is substituted for trips with no
 -- block_id, matching them 1:1 to their own "block" rather than dropping them.
+-- The importer stores a missing block_id as '' rather than NULL, hence NULLIF.
 -- Callers run this once for today's service (at the current time-of-day) and
 -- once for yesterday's service (the same instant shifted +24h) to catch
 -- after-midnight trips, mirroring the today/yesterday pattern in
@@ -1026,7 +1027,7 @@ SELECT COUNT(*) FROM trips;
 -- The slice param must come last so the other params keep stable ?N
 -- numbers once sqlc expands it (see GetActiveLayoverBlockIDsForRoute). `at`
 -- is only needed in HAVING, after the slice, so it is bound up front in FROM.
-SELECT COALESCE(trips.block_id, trips.id) AS block_id
+SELECT COALESCE(NULLIF(trips.block_id, ''), trips.id) AS block_id
 FROM
     (SELECT CAST(sqlc.arg('at') AS INTEGER) AS at) AS query_instant
     CROSS JOIN trips
@@ -1035,7 +1036,7 @@ WHERE
     routes.agency_id = sqlc.arg('agency_id')
     AND trips.service_id IN (sqlc.slice('service_ids'))
 GROUP BY
-    COALESCE(trips.block_id, trips.id)
+    COALESCE(NULLIF(trips.block_id, ''), trips.id)
 HAVING
     MIN(trips.min_arrival_time) <= query_instant.at
     AND MAX(trips.max_departure_time) >= query_instant.at;
