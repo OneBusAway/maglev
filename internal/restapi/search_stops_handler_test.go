@@ -66,6 +66,115 @@ func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
+func TestSearchStopsHandlerEdgeCaseParams(t *testing.T) {
+	tests := []struct {
+		name           string
+		params         url.Values
+		expectedStatus int
+		check          func(t *testing.T, stopsResp StopsResponse)
+	}{
+		{
+			name:           "empty string input rejected like missing input",
+			params:         url.Values{"input": {""}},
+			expectedStatus: http.StatusBadRequest,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.Contains(t, stopsResp.Data.FieldErrors, "input")
+			},
+		},
+		{
+			name:           "uppercase input matches case-insensitively",
+			params:         url.Values{"input": {"BUENAVENTURA"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.Equal(t, http.StatusOK, stopsResp.Code)
+				assert.NotEmpty(t, stopsResp.Data.List)
+			},
+		},
+		{
+			name:           "reversed multi-word order still matches",
+			params:         url.Values{"input": {"Library Montgomery"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				ids := make([]string, 0, len(stopsResp.Data.List))
+				for _, stop := range stopsResp.Data.List {
+					ids = append(ids, stop.ID)
+				}
+				assert.Contains(t, ids, "25_8006")
+			},
+		},
+		{
+			name:           "query longer than legacy 32-char cap still matches",
+			params:         url.Values{"input": {"Buenaventura Buenaventura Buenaventura Buenaventura"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.NotEmpty(t, stopsResp.Data.List)
+			},
+		},
+		{
+			name:           "stop code alone does not match stop names",
+			params:         url.Values{"input": {"1001"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.Empty(t, stopsResp.Data.List)
+				assert.False(t, stopsResp.Data.LimitExceeded)
+			},
+		},
+		{
+			name:           "maxCount at ceiling is allowed",
+			params:         url.Values{"input": {"Buenaventura"}, "maxCount": {"250"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.NotEmpty(t, stopsResp.Data.List)
+				assert.False(t, stopsResp.Data.LimitExceeded)
+			},
+		},
+		{
+			name:           "invalid includeReferences falls back to true",
+			params:         url.Values{"input": {"Buenaventura"}, "includeReferences": {"maybe"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.NotEmpty(t, stopsResp.Data.List)
+				assert.NotEmpty(t, stopsResp.Data.References.Agencies)
+				assert.NotEmpty(t, stopsResp.Data.References.Routes)
+			},
+		},
+		{
+			name:           "version 2 is accepted and response stays v2",
+			params:         url.Values{"input": {"Buenaventura"}, "version": {"2"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.Equal(t, 2, stopsResp.Version)
+				assert.NotEmpty(t, stopsResp.Data.List)
+			},
+		},
+		{
+			name:           "unsupported version is rejected",
+			params:         url.Values{"input": {"Buenaventura"}, "version": {"1"}},
+			expectedStatus: http.StatusBadRequest,
+			check:          func(t *testing.T, stopsResp StopsResponse) {},
+		},
+		{
+			name:           "agencyId is ignored and searches all agencies",
+			params:         url.Values{"input": {"Buenaventura"}, "agencyId": {"99"}},
+			expectedStatus: http.StatusOK,
+			check: func(t *testing.T, stopsResp StopsResponse) {
+				assert.NotEmpty(t, stopsResp.Data.List)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(tt.params))
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			tt.check(t, stopsResp)
+		})
+	}
+}
+
 func TestSearchStopsHandlerMissingInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
