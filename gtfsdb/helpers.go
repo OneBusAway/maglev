@@ -165,7 +165,10 @@ func createDB(config Config) (*sql.DB, error) {
 	return db, nil
 }
 
-const schemaVersion = 1
+// schemaVersion is the PRAGMA user_version of schema.sql. Bump it, and record
+// the new schema hash in TestSchemaVersion_MatchesSchemaHash, whenever
+// schema.sql changes.
+const schemaVersion = 2
 
 func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
@@ -205,6 +208,10 @@ func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
 					err,
 				)
 			}
+		}
+
+		if err := invalidatePreFlexImport(ctx, tx, currentVersion); err != nil {
+			return err
 		}
 
 		_, err = tx.ExecContext(
@@ -787,6 +794,32 @@ func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, er
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
 // Delete order respects foreign key constraints.
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
+	// Flex tables first: flex_stop_times references trips, location_group_stops
+	// references stops, and ondemand_rules references ondemand_services.
+	if err := q.ClearOnDemandStopServices(ctx); err != nil {
+		return fmt.Errorf("error clearing ondemand_stop_services: %w", err)
+	}
+	if err := q.ClearOnDemandRules(ctx); err != nil {
+		return fmt.Errorf("error clearing ondemand_rules: %w", err)
+	}
+	if err := q.ClearOnDemandServices(ctx); err != nil {
+		return fmt.Errorf("error clearing ondemand_services: %w", err)
+	}
+	if err := q.ClearFlexStopTimes(ctx); err != nil {
+		return fmt.Errorf("error clearing flex_stop_times: %w", err)
+	}
+	if err := q.ClearLocationGroupStops(ctx); err != nil {
+		return fmt.Errorf("error clearing location_group_stops: %w", err)
+	}
+	if err := q.ClearLocationGroups(ctx); err != nil {
+		return fmt.Errorf("error clearing location_groups: %w", err)
+	}
+	if err := q.ClearLocations(ctx); err != nil {
+		return fmt.Errorf("error clearing locations: %w", err)
+	}
+	if err := q.ClearBookingRules(ctx); err != nil {
+		return fmt.Errorf("error clearing booking_rules: %w", err)
+	}
 	if err := q.ClearStopAgencies(ctx); err != nil {
 		return fmt.Errorf("error clearing stop_agencies: %w", err)
 	}

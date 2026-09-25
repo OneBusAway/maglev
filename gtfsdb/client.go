@@ -64,6 +64,36 @@ func NewClient(config Config) (*Client, error) {
 	return client, nil
 }
 
+// flexSchemaVersion is the schemaVersion that added the flex tables.
+const flexSchemaVersion = 2
+
+// flexInvalidationHash replaces import_metadata.file_hash so the next
+// StoreGtfsData sees a hash mismatch and reimports. Deleting the row instead
+// would make hasExisting false, skip clearAllGTFSDataWithQueries, and collide on
+// the stop_times primary key. It must be at least 8 characters because
+// StoreGtfsData logs FileHash[:8].
+const flexInvalidationHash = "invalidated:flex-import-v1"
+
+// invalidatePreFlexImport marks a database migrated from before
+// flexSchemaVersion for one reimport. Flex tables are populated only inside
+// StoreGtfsData, which is skipped when the feed hash is unchanged, so a
+// database imported before those tables existed would never fill them.
+// performDatabaseMigration calls it in its transaction, before it stamps the
+// new user_version, so the reimport is forced exactly once.
+func invalidatePreFlexImport(ctx context.Context, tx *sql.Tx, fromVersion int) error {
+	if fromVersion >= flexSchemaVersion {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, "UPDATE import_metadata SET file_hash = ?", flexInvalidationHash)
+	if err != nil {
+		return fmt.Errorf("failed to invalidate pre-flex import: %w", err)
+	}
+	if invalidated, _ := result.RowsAffected(); invalidated > 0 {
+		slog.Default().Info("invalidating pre-flex GTFS import", "user_version", fromVersion)
+	}
+	return nil
+}
+
 // backfillStopAgencyIndex builds stop_agencies for a database imported before the table
 // existed, or before it held one row per agency serving a stop. An import is skipped when
 // the feed hash is unchanged, so such a database would otherwise keep stale data for as
