@@ -1,9 +1,6 @@
 package utils
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
 // MapValues returns the values of a map as a slice.
 // The order of the returned values is non-deterministic.
@@ -37,23 +34,18 @@ func QueryInBatches[T any](ctx context.Context, ids []string, query func(context
 // batch at IDsPerBatchedQuery silently assumes the batched slice is the whole
 // statement, and the untracked binds can push the total over the limit.
 //
-// Assumes the reserved binds themselves fit in one statement. A second
-// dimension large enough on its own to need batching (hundreds of active
-// service IDs on one day, say) would still overflow; batch that dimension
-// too if a feed ever gets there.
+// Assumes the reserved binds themselves fit in one statement. When they use
+// up the whole IDsPerBatchedQuery budget (hundreds of active service IDs on
+// one day, say), batches fall back to a single ID each rather than failing:
+// that budget is kept conservatively under the oldest SQLite limit (999),
+// and both bundled drivers allow 32766 binds, so such a statement still
+// runs.
 func QueryInBatchesReserving[T any](ctx context.Context, ids []string, reserved int,
 	query func(context.Context, []string) ([]T, error)) ([]T, error) {
 	if len(ids) == 0 {
 		return []T{}, nil
 	}
-	// A reserved budget at or above IDsPerBatchedQuery leaves no headroom for
-	// even one batched ID under the SQLite bind limit. Silently forcing
-	// batchSize to 1 would still push each statement past the limit; refuse
-	// instead and force the caller to batch the reserved dimension too.
-	if reserved >= IDsPerBatchedQuery {
-		return nil, fmt.Errorf("QueryInBatchesReserving: reserved binds (%d) meet or exceed the batch limit (%d); batch the reserved dimension too", reserved, IDsPerBatchedQuery)
-	}
-	batchSize := IDsPerBatchedQuery - reserved
+	batchSize := max(1, IDsPerBatchedQuery-reserved)
 	results := make([]T, 0, len(ids))
 	for start := 0; start < len(ids); start += batchSize {
 		end := min(start+batchSize, len(ids))

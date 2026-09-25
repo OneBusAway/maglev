@@ -205,16 +205,17 @@ func TestQueryInBatchesReserving(t *testing.T) {
 		assert.Equal(t, 2, batches)
 	})
 
-	t.Run("reserved at or above the limit rejects non-empty ids", func(t *testing.T) {
-		batches := 0
-		_, err := utils.QueryInBatchesReserving(ctx, []string{"only-one"}, utils.IDsPerBatchedQuery,
-			func(context.Context, []string) ([]string, error) {
-				batches++
-				return nil, nil
+	t.Run("reserved at or above the limit falls back to one-ID batches", func(t *testing.T) {
+		var batchSizes []int
+		results, err := utils.QueryInBatchesReserving(ctx, []string{"a", "b", "c"}, utils.IDsPerBatchedQuery,
+			func(_ context.Context, batch []string) ([]string, error) {
+				batchSizes = append(batchSizes, len(batch))
+				return batch, nil
 			})
 
-		require.Error(t, err, "reserved leaving no batch capacity must fail loudly, not silently oversize the statement")
-		assert.Equal(t, 0, batches, "the query must not run when the batch has no room")
+		require.NoError(t, err, "a large reserved dimension must not fail requests that fit the real SQLite limit")
+		assert.Equal(t, []string{"a", "b", "c"}, results)
+		assert.Equal(t, []int{1, 1, 1}, batchSizes)
 	})
 
 	t.Run("reserved at or above the limit still allows empty ids", func(t *testing.T) {
