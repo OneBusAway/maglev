@@ -1212,3 +1212,30 @@ func TestParseBoolParam(t *testing.T) {
 		})
 	}
 }
+
+func TestParseEnumParam(t *testing.T) {
+	type detail string
+	allowed := []detail{"none", "full"}
+	tests := []struct {
+		name          string
+		params        url.Values
+		expectedValue detail
+		expectError   bool
+	}{
+		{name: "Allowed value is returned", params: url.Values{"detail": []string{"none"}}, expectedValue: "none"},
+		{name: "Missing parameter takes the fallback", params: url.Values{}, expectedValue: "full"},
+		{name: "Empty value takes the fallback", params: url.Values{"detail": []string{""}}, expectedValue: "full"},
+		{name: "Unknown value records an error and takes the fallback", params: url.Values{"detail": []string{"FULL"}}, expectedValue: "full", expectError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, fieldErrors := ParseEnumParam(tt.params, "detail", allowed, "full", nil)
+			assert.Equal(t, tt.expectedValue, value)
+			if tt.expectError {
+				assert.Equal(t, []string{`Invalid field value for field "detail".`}, fieldErrors["detail"])
+			} else {
+				assert.Empty(t, fieldErrors)
+			}
+		})
+	}
+}
