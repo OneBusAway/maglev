@@ -263,3 +263,55 @@ func TestStoreFlexEntities_DuplicatesAndUnusableRecords(t *testing.T) {
 	require.Len(t, groupStops, 1, "duplicate and uninserted members are dropped")
 	assert.Equal(t, "member", groupStops[0].StopID)
 }
+
+func TestStoreGtfsData_OnDemandTablesAndStopAgencies(t *testing.T) {
+	client := newTestClientWithZip(t, "../testdata/charlevoix-flex.zip")
+	ctx := context.Background()
+
+	assert.Equal(t, 4, countRows(t, client, "ondemand_services"))
+	assert.Equal(t, 13, countRows(t, client, "ondemand_rules"))
+	assert.Equal(t, 2, countRows(t, client, "ondemand_stop_services"))
+
+	service, err := client.Queries.GetOnDemandService(ctx, "CC3")
+	require.NoError(t, err)
+	assert.Equal(t, OndemandService{ID: "CC3", AgencyID: "CC", RouteID: "CC3", ServiceKind: ServiceKindStopGroup}, service)
+
+	// Group members appear in no stop_times row; the UNION gives them an agency anyway.
+	agencyStops, err := client.Queries.GetStopIDsForAgency(ctx, "CC")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"CC_Ironton_Ferry_East", "CC_Ironton_Ferry_West"}, agencyStops)
+}
+
+func TestStoreGtfsData_ReimportWithoutFlexClearsFlexTables(t *testing.T) {
+	client := newTestClientWithZip(t, "../testdata/charlevoix-flex.zip")
+	require.Greater(t, countRows(t, client, "ondemand_rules"), 0)
+
+	rabaBytes, err := os.ReadFile("../testdata/raba.zip")
+	require.NoError(t, err)
+	parsed, err := ParseGtfsData(rabaBytes, "raba")
+	require.NoError(t, err)
+	changed, err := client.StoreGtfsData(context.Background(), parsed)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	for _, table := range []string{"booking_rules", "locations", "location_groups", "location_group_stops",
+		"flex_stop_times", "ondemand_services", "ondemand_rules", "ondemand_stop_services"} {
+		assert.Equal(t, 0, countRows(t, client, table), table)
+	}
+}
+
+func TestStoreGtfsData_GroupMemberWithoutCoordinatesGetsNoAgency(t *testing.T) {
+	files := flexfixtures.GroupDeviatedFiles()
+	files["stops.txt"] = strings.Replace(files["stops.txt"], "s3,Gartz Kirche,53.2000,14.3800", "s3,Gartz Kirche,,", 1)
+	client := newTestClientWithBytes(t, flexfixtures.ZipBytes(t, files), "flex-group-deviated")
+
+	var pointerCount int
+	require.NoError(t, client.DB.QueryRow(
+		"SELECT COUNT(*) FROM ondemand_stop_services WHERE stop_id = 's3'").Scan(&pointerCount))
+	assert.Equal(t, 1, pointerCount, "the compiled pointer is kept")
+
+	agencyStops, err := client.Queries.GetStopIDsForAgency(context.Background(), "gd")
+	require.NoError(t, err)
+	assert.Contains(t, agencyStops, "s1")
+	assert.NotContains(t, agencyStops, "s3", "an unstored stop cannot join the stop agency index")
+}
