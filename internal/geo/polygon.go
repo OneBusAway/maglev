@@ -2,9 +2,15 @@ package geo
 
 import "math"
 
+// collinearEpsilon is the cross-product magnitude below which three points are
+// treated as collinear, absorbing float error in the on-edge tests.
+const collinearEpsilon = 1e-12
+
 // PointInPolygon reports whether (lat, lon) is inside the geometry: inside the
 // exterior ring of some polygon and outside every hole of that polygon. A point
-// exactly on a ring counts as inside, so zone edges are never a dead band.
+// exactly on an exterior ring counts as inside, so zone edges are never a dead
+// band; a point exactly on a hole ring counts as outside, since the hole's edge
+// belongs to the hole.
 func PointInPolygon(lat, lon float64, polygons [][][][2]float64) bool {
 	for _, polygon := range polygons {
 		if len(polygon) == 0 || !pointInRing(lat, lon, polygon[0]) {
@@ -47,7 +53,7 @@ func pointInRing(lat, lon float64, ring [][2]float64) bool {
 // pointOnSegment reports whether (x, y) lies on the closed segment [a, b].
 func pointOnSegment(x, y float64, a, b [2]float64) bool {
 	cross := (b[0]-a[0])*(y-a[1]) - (b[1]-a[1])*(x-a[0])
-	if math.Abs(cross) > 1e-12 {
+	if math.Abs(cross) > collinearEpsilon {
 		return false
 	}
 	return x >= math.Min(a[0], b[0]) && x <= math.Max(a[0], b[0]) &&
@@ -147,7 +153,7 @@ func segmentsIntersect(p1, p2, q1, q2 [2]float64) bool {
 func orientation(a, b, c [2]float64) int {
 	cross := (b[1]-a[1])*(c[0]-b[0]) - (b[0]-a[0])*(c[1]-b[1])
 	switch {
-	case math.Abs(cross) < 1e-12:
+	case math.Abs(cross) < collinearEpsilon:
 		return 0
 	case cross > 0:
 		return 1
