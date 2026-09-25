@@ -288,3 +288,111 @@ func TestValidateAndFilterGTFSData_OrphanedParentStation(t *testing.T) {
 		t.Errorf("expected stop3.Parent to reference %q, got %+v", validParent.Id, stop3.Parent)
 	}
 }
+
+func windowedLocationStopTime(loc *gtfs.Location, seq int) gtfs.ScheduledStopTime {
+	start := 5 * time.Hour
+	end := 18 * time.Hour
+	return gtfs.ScheduledStopTime{
+		Location:                 loc,
+		StopSequence:             seq,
+		StartPickupDropOffWindow: &start,
+		EndPickupDropOffWindow:   &end,
+		PickupType:               gtfs.PickupDropOffPolicy_PhoneAgency,
+		DropOffType:              gtfs.PickupDropOffPolicy_No,
+	}
+}
+
+func TestValidateAndFilterGTFSData_FlexRecords(t *testing.T) {
+	zone := &gtfs.Location{Id: "zone_a"}
+
+	tests := []struct {
+		name        string
+		mutate      func(d *gtfs.Static)
+		wantErr     string
+		wantTripIDs []string
+	}{
+		{
+			name: "zero stops is fine when locations exist",
+			mutate: func(d *gtfs.Static) {
+				d.Stops = nil
+				d.Locations = []gtfs.Location{*zone}
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{
+					windowedLocationStopTime(zone, 1),
+					windowedLocationStopTime(zone, 2),
+				}
+			},
+			wantTripIDs: []string{"trip1"},
+		},
+		{
+			name: "zero stops and zero locations is fatal",
+			mutate: func(d *gtfs.Static) {
+				d.Stops = nil
+				d.Locations = nil
+			},
+			wantErr: "no stops found",
+		},
+		{
+			name: "record referencing both a stop and a location drops the trip",
+			mutate: func(d *gtfs.Static) {
+				d.Locations = []gtfs.Location{*zone}
+				st := windowedLocationStopTime(zone, 1)
+				st.Stop = &d.Stops[0]
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{st}
+			},
+			wantTripIDs: nil,
+			wantErr:     "all trips were filtered out",
+		},
+		{
+			name: "timed record without a stop drops the trip",
+			mutate: func(d *gtfs.Static) {
+				d.Locations = []gtfs.Location{*zone}
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{{Location: zone, StopSequence: 1}}
+			},
+			wantErr: "all trips were filtered out",
+		},
+		{
+			name: "timed record with an empty stop id and a location drops the trip",
+			mutate: func(d *gtfs.Static) {
+				d.Locations = []gtfs.Location{*zone}
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{
+					{Stop: &gtfs.Stop{Id: ""}, Location: zone, StopSequence: 1},
+				}
+			},
+			wantErr: "all trips were filtered out",
+		},
+		{
+			name: "windowed stop record is kept",
+			mutate: func(d *gtfs.Static) {
+				st := windowedLocationStopTime(nil, 1)
+				st.Stop = &d.Stops[0]
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{st, windowedLocationStopTime(nil, 2)}
+				d.Trips[0].StopTimes[1].Stop = &d.Stops[0]
+			},
+			wantTripIDs: []string{"trip1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := createValidGTFS()
+			tt.mutate(data)
+			err := ValidateAndFilterGTFSData(data, nil)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("want error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var got []string
+			for _, trip := range data.Trips {
+				got = append(got, trip.ID)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.wantTripIDs, ",") {
+				t.Fatalf("want trips %v, got %v", tt.wantTripIDs, got)
+			}
+		})
+	}
+}
