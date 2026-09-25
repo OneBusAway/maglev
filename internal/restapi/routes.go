@@ -132,6 +132,9 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/where/situation/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.situationHandler)))
 	mux.Handle("GET /api/where/arrivals-and-departures-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.arrivalsAndDeparturesForStopHandler)))
 
+	// --- /api/ondemand: static-data surfaces on the long-cache, static-ETag tier ---
+	mux.Handle("GET /api/ondemand/service/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.onDemandServiceHandler))))
+
 	// Unknown API paths get the JSON 404 envelope. Every registered pattern is
 	// more specific, so this only catches paths no endpoint serves. The key
 	// check runs first, so a caller without a valid key gets the same 401 as
