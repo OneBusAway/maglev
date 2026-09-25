@@ -12,9 +12,9 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// onDemandSearch is the resolved query: viewport mode iff no radius and both
-// spans are positive (BoundsFromParams' predicate); otherwise point mode with
-// the stops-for-location default radius, clamped to the maximum.
+// onDemandSearch is the resolved query: viewport mode iff LocationParams.IsViewport;
+// otherwise point mode with the stops-for-location default radius, clamped to
+// the maximum.
 type onDemandSearch struct {
 	Viewport bool
 	Point    geoPoint
@@ -24,20 +24,12 @@ type onDemandSearch struct {
 
 func newOnDemandSearch(loc *gtfs.LocationParams) onDemandSearch {
 	point := geoPoint{Lat: loc.Lat, Lon: loc.Lon}
-	if loc.Radius <= 0 && loc.LatSpan > 0 && loc.LonSpan > 0 {
+	if loc.IsViewport() {
 		// Viewport bounds are deliberately not clamped: zones are few and a 50 km
 		// zone must survive a zoomed-out map.
-		return onDemandSearch{
-			Viewport: true,
-			Point:    point,
-			Bounds:   geo.CalculateBoundsFromSpan(loc.Lat, loc.Lon, loc.LatSpan/2, loc.LonSpan/2),
-		}
+		return onDemandSearch{Viewport: true, Point: point, Bounds: gtfs.BoundsFromParams(loc)}
 	}
-	radius := loc.Radius
-	if radius <= 0 {
-		radius = models.DefaultSearchRadiusInMeters
-	}
-	radius = utils.ClampRadius(radius)
+	radius := utils.ClampRadius(loc.RadiusOrDefault())
 	return onDemandSearch{
 		Point:  point,
 		Radius: radius,
@@ -204,20 +196,17 @@ func applyMatchReasons(list []models.OnDemandService, matches []onDemandMatch) {
 }
 
 // onDemandOutOfRange is true when the search bounds intersect neither any
-// agency's stop bounds nor any service's bounds. CheckIfOutOfBounds alone is
+// agency's region bounds nor any service's bounds. CheckIfOutOfBounds alone is
 // wrong here: Alexandria has one stop inside a ~50 km zone. No bounds at all
 // means false. candidateServiceIDs is idx.ServiceBoundsOverlapping(bounds),
 // which the caller has already computed for matching.
 func (api *RestAPI) onDemandOutOfRange(bounds geo.CoordinateBounds, idx *gtfs.FlexIndex, candidateServiceIDs []string) bool {
-	regions := api.GtfsManager.GetRegionBounds()
-	if len(regions) == 0 && len(idx.ServiceBounds) == 0 {
+	overlapsRegion, hasRegions := api.GtfsManager.OverlapsAnyRegion(bounds)
+	if overlapsRegion {
 		return false
 	}
-	for _, region := range regions {
-		regionBounds := geo.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
-		if !geo.IsOutOfBounds(bounds, regionBounds) {
-			return false
-		}
+	if !hasRegions && len(idx.ServiceBounds) == 0 {
+		return false
 	}
 	return len(candidateServiceIDs) == 0
 }
