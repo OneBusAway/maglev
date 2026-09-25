@@ -32,6 +32,7 @@ func TestFlexIndex_Alexandria(t *testing.T) {
 
 	assert.False(t, idx.IsFlexEmpty())
 	assert.Equal(t, []string{"5088_77652"}, idx.OnDemandServiceIDsForRoute("77652"))
+	assert.Equal(t, map[string]string{"5088_77652": "77652"}, idx.BareServiceIDs)
 	assert.Nil(t, idx.OnDemandServiceIDsForStop("4258639"), "the stop is referenced by no rule")
 
 	area := idx.FlexArea("area_1449")
