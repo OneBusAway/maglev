@@ -56,6 +56,7 @@ type Manager struct {
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
+	flexIndex    *FlexIndex // on-demand view of the static data; see flex_index.go
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle

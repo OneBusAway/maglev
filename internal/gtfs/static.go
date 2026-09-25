@@ -221,11 +221,17 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	newFlexIndex, err := buildFlexIndex(ctx, manager.GtfsDB)
+	if err != nil {
+		logging.LogError(logger, "Error building on-demand index", err)
+		return false, err
+	}
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
 	manager.regionBounds = newRegionBounds
+	manager.flexIndex = newFlexIndex
 
 	// Replace direction and trip-distance caches together for the new feed.
 	// In-flight calculations retain the retired cache generation.
