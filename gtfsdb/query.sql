@@ -1010,6 +1010,37 @@ SELECT COUNT(*) FROM stops;
 -- name: CountTrips :one
 SELECT COUNT(*) FROM trips;
 
+-- name: GetActiveBlockIDsForAgency :many
+-- Returns the distinct block IDs active at the given instant for one agency,
+-- among the given active service IDs. A block is active from its first trip's
+-- start to its last trip's end, so every gap between consecutive trips counts
+-- as a layover. This matches upstream's
+-- BlockIndexFactoryServiceImpl#createLayoverIndices, which (unlike the
+-- block_layover table) doesn't require consecutive trips to share a stop.
+-- block_id is optional in GTFS, so trips.id is substituted for trips with no
+-- block_id, matching them 1:1 to their own "block" rather than dropping them.
+-- The importer stores a missing block_id as '' rather than NULL, hence NULLIF.
+-- Callers run this once for today's service (at the current time-of-day) and
+-- once for yesterday's service (the same instant shifted +24h) to catch
+-- after-midnight trips, mirroring the today/yesterday pattern in
+-- trips_for_route_handler.go.
+-- The slice param must come last so the other params keep stable ?N
+-- numbers once sqlc expands it (see GetActiveLayoverBlockIDsForRoute). `at`
+-- is only needed in HAVING, after the slice, so it is bound up front in FROM.
+SELECT COALESCE(NULLIF(trips.block_id, ''), trips.id) AS block_id
+FROM
+    (SELECT CAST(sqlc.arg('at') AS INTEGER) AS at) AS query_instant
+    CROSS JOIN trips
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    routes.agency_id = sqlc.arg('agency_id')
+    AND trips.service_id IN (sqlc.slice('service_ids'))
+GROUP BY
+    COALESCE(NULLIF(trips.block_id, ''), trips.id)
+HAVING
+    MIN(trips.min_arrival_time) <= query_instant.at
+    AND MAX(trips.max_departure_time) >= query_instant.at;
+
 -- name: GetArrivalsAndDeparturesForStop :many
 SELECT
     st.trip_id,

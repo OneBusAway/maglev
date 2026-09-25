@@ -137,21 +137,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedLastUpdate:       make(map[string]time.Time),
-		feedAgencyFilter:     make(map[string]map[string]bool),
+		feedAgencyFilter:     config.feedAgencyFilters(),
 		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
 		Metrics:              config.Metrics,
-	}
-
-	// Build per-feed agency filters from config
-	for _, feedCfg := range config.RTFeeds {
-		if len(feedCfg.AgencyIDs) > 0 {
-			filter := make(map[string]bool, len(feedCfg.AgencyIDs))
-			for _, id := range feedCfg.AgencyIDs {
-				filter[id] = true
-			}
-			manager.feedAgencyFilter[feedCfg.ID] = filter
-		}
 	}
 
 	var attemptsMade int
