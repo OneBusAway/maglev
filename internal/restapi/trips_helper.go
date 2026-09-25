@@ -436,21 +436,29 @@ func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []stri
 	return freqMap, nil
 }
 
+// isFlexOnlyTrip reports whether a trip has no timed stop_times, only flex
+// windows. min_arrival_time caches MIN(stop_times.arrival_time) and
+// arrival_time is NOT NULL, so it is NULL exactly when the trip has no timed
+// records.
+func isFlexOnlyTrip(trip *gtfsdb.Trip) bool {
+	return !trip.MinArrivalTime.Valid
+}
+
 // BuildTripSchedule returns the trip's schedule (stop times, block
 // neighbors, frequency) resolved around serviceDate in the agency's timezone.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
-	if err != nil {
-		return nil, err
-	}
-
 	// A flex-only trip has no timed records: no stops to project, no block
 	// neighbours to resolve. Return the empty schedule the wiki specifies.
-	if len(stopTimes) == 0 {
+	if isFlexOnlyTrip(trip) {
 		return &models.Schedule{
 			StopTimes: []models.StopTime{},
 			TimeZone:  loc.String(),
 		}, nil
+	}
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)

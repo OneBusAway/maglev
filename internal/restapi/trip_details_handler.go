@@ -241,10 +241,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
 
-	// Status describes a vehicle moving along timed stops; a trip with no timed
-	// stop_times (min_arrival_time NULL) has nothing to track and omits the key.
-	hasTimedStopTimes := trip.MinArrivalTime.Valid
-	if params.IncludeStatus && hasTimedStopTimes {
+	// Status describes a vehicle moving along timed stops; a flex-only trip has
+	// nothing to track and omits the key.
+	if params.IncludeStatus && !isFlexOnlyTrip(&trip) {
 		var statusErr error
 		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, nil)
 		if statusErr != nil {
