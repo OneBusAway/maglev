@@ -85,7 +85,23 @@ func buildFlexIndex(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Log
 
 	idx.computeServiceBounds()
 	idx.sortLists()
+	warnInertRuleCalendars(ctx, gtfsDB, logger)
 	return idx, nil
+}
+
+// warnInertRuleCalendars logs, once per reload rather than per request, each
+// rule calendar the /ondemand builder drops because it compiles to no calendar.
+// It is diagnostic only, so a failed query is logged and never fails the build.
+func warnInertRuleCalendars(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Logger) {
+	rows, err := gtfsDB.Queries.ListInertOnDemandRuleCalendars(ctx)
+	if err != nil {
+		logger.Warn("could not check on-demand rule calendars", slog.String("error", err.Error()))
+		return
+	}
+	for _, row := range rows {
+		logger.Warn("dropping on-demand rules whose calendar has no service days or added dates",
+			slog.String("service_id", row.ServiceID), slog.String("gtfs_service_id", row.GtfsServiceID))
+	}
 }
 
 func (idx *FlexIndex) loadAreas(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Logger) error {
