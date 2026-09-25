@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,10 +102,64 @@ func TestFlexIndex_SkippedLocationIsAbsent(t *testing.T) {
 	_, err := manager.GtfsDB.DB.ExecContext(ctx, "DELETE FROM locations WHERE id = 'gaylord'")
 	require.NoError(t, err)
 
-	idx, err := buildFlexIndex(ctx, manager.GtfsDB)
+	idx, err := buildFlexIndex(ctx, manager.GtfsDB, slog.Default())
 	require.NoError(t, err)
 
 	assert.Nil(t, idx.FlexArea("gaylord"))
 	assert.ElementsMatch(t, []string{"charlevoix_county", "petoskey"}, idx.ServiceAreaIDs["CC_CC2_med"])
 	assert.Equal(t, utils.UnionBounds(idx.FlexArea("charlevoix_county").Bounds, idx.FlexArea("petoskey").Bounds), idx.ServiceBounds["CC_CC2_med"])
+}
+
+func TestFlexIndex_CorruptGeometryIsSkippedOnReload(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	_, err := manager.GtfsDB.DB.ExecContext(ctx, "UPDATE locations SET geometry = 'not geojson' WHERE id = 'gaylord'")
+	require.NoError(t, err)
+
+	_, err = manager.ReloadStatic(ctx)
+	require.NoError(t, err)
+
+	idx := manager.FlexIndex()
+	assert.Nil(t, idx.FlexArea("gaylord"))
+	assert.Len(t, idx.Areas, 3)
+	assert.ElementsMatch(t, []string{"charlevoix_county", "petoskey"}, idx.ServiceAreaIDs["CC_CC2_med"])
+}
+
+func TestFlexIndex_BuildFailurePublishesEmptyIndex(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	require.False(t, manager.FlexIndex().IsFlexEmpty())
+	_, err := manager.GtfsDB.DB.ExecContext(ctx, "DROP TABLE ondemand_stop_services")
+	require.NoError(t, err)
+
+	_, err = manager.ReloadStatic(ctx)
+	require.NoError(t, err, "an on-demand index failure must not fail the reload")
+
+	assert.True(t, manager.FlexIndex().IsFlexEmpty())
+}
+
+func TestFlexIndex_UnsetManagerIndexIsEmpty(t *testing.T) {
+	idx := (&Manager{}).FlexIndex()
+	require.NotNil(t, idx)
+	assert.True(t, idx.IsFlexEmpty())
+}
+
+func TestFlexIndex_RowsForUnknownServicesAreIgnored(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	for _, statement := range []string{
+		"DELETE FROM ondemand_rules WHERE service_id = 'CC2_med'",
+		"DELETE FROM ondemand_services WHERE id = 'CC2_med'",
+		"INSERT INTO ondemand_stop_services (stop_id, service_id) VALUES ('CC_Ironton_Ferry_West', 'ghost')",
+	} {
+		_, err := manager.GtfsDB.DB.ExecContext(ctx, statement)
+		require.NoError(t, err, statement)
+	}
+
+	idx, err := buildFlexIndex(ctx, manager.GtfsDB, slog.Default())
+	require.NoError(t, err)
+
+	assert.NotContains(t, idx.ServiceAreaIDs, "CC_CC2_med")
+	assert.Equal(t, []string{"CC_CC3"}, idx.OnDemandServiceIDsForStop("CC_Ironton_Ferry_West"))
+	assert.Len(t, idx.ServiceStops["CC_CC3"], 2)
 }
