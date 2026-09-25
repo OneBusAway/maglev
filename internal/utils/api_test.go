@@ -1212,3 +1212,28 @@ func TestParseBoolParam(t *testing.T) {
 		})
 	}
 }
+
+func TestParseGTFSTimeOfDay(t *testing.T) {
+	tests := []struct {
+		value   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"00:00:00", 0, false},
+		{"05:30:00", 5*time.Hour + 30*time.Minute, false},
+		{"24:50:00", 24*time.Hour + 50*time.Minute, false},
+		{"25:00:05", 25*time.Hour + 5*time.Second, false},
+		{"5:30", 0, true},
+		{"aa:00:00", 0, true},
+		{"", 0, true},
+	}
+	for _, tt := range tests {
+		got, err := ParseGTFSTimeOfDay(tt.value)
+		if tt.wantErr {
+			assert.Error(t, err, tt.value)
+			continue
+		}
+		require.NoError(t, err, tt.value)
+		assert.Equal(t, tt.want, got, tt.value)
+	}
+}

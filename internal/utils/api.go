@@ -417,3 +417,21 @@ func ClampRadius(radius float64) float64 {
 	}
 	return radius
 }
+
+// ParseGTFSTimeOfDay parses a GTFS "HH:MM:SS" time of day, where hours may
+// exceed 24 for service days that run past midnight.
+func ParseGTFSTimeOfDay(value string) (time.Duration, error) {
+	parts := strings.Split(value, ":")
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("invalid time of day %q: want HH:MM:SS", value)
+	}
+	fields := make([]int, 3)
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 || (i > 0 && n > 59) {
+			return 0, fmt.Errorf("invalid time of day %q", value)
+		}
+		fields[i] = n
+	}
+	return time.Duration(fields[0])*time.Hour + time.Duration(fields[1])*time.Minute + time.Duration(fields[2])*time.Second, nil
+}
