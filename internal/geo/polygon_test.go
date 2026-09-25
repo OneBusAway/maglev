@@ -79,3 +79,21 @@ func TestPolygonIntersectsBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestClampedProjection(t *testing.T) {
+	tests := []struct {
+		name           string
+		px, py, dx, dy float64
+		want           float64
+	}{
+		{name: "interior", px: 3, py: 4, dx: 10, dy: 0, want: 0.3},
+		{name: "before start clamps to 0", px: -5, py: 1, dx: 10, dy: 0, want: 0},
+		{name: "past end clamps to 1", px: 15, py: -1, dx: 10, dy: 0, want: 1},
+		{name: "zero-length segment", px: 2, py: 2, dx: 0, dy: 0, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.InDelta(t, tt.want, clampedProjection(tt.px, tt.py, tt.dx, tt.dy), 1e-12)
+		})
+	}
+}
