@@ -1251,15 +1251,15 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 const noStopTimesProblem = "trip has no stop times"
 
 // inMemoryStopTimesProblem checks the stop times of a trip held in memory,
-// which may have been built by hand. A parsed feed never has a stop time
-// without a stop: go-gtfs drops the rows whose stop is unknown.
+// which may have been built by hand. A parsed feed always passes: go-gtfs
+// drops the rows that break the stop/location/location group rules.
 func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
 	if len(stopTimes) == 0 {
 		return noStopTimesProblem
 	}
 	for _, stopTime := range stopTimes {
-		if stopTime.Stop == nil || stopTime.Stop.Id == "" {
-			return "stop time for trip references missing stop"
+		if reason := stopTimeReferenceError(stopTime); reason != "" {
+			return "stop time for trip " + reason
 		}
 	}
 	return ""
@@ -1296,8 +1296,8 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimes
 	if len(data.Routes) == 0 {
 		return fmt.Errorf("validation failed: no routes found in feed (missing or empty routes.txt)")
 	}
-	if len(data.Stops) == 0 {
-		return fmt.Errorf("validation failed: no stops found in feed (missing or empty stops.txt)")
+	if len(data.Stops) == 0 && len(data.Locations) == 0 {
+		return fmt.Errorf("validation failed: no stops found in feed (missing or empty stops.txt) and no locations.geojson")
 	}
 	if len(data.Trips) == 0 {
 		return fmt.Errorf("validation failed: no trips found in feed (missing or empty trips.txt)")
@@ -1395,4 +1395,44 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimes
 	}
 
 	return nil
+}
+
+// stopTimeReferenceError reports why a stop_time fails the exactly-one-of
+// stop/location/location-group rule, or "" when it passes. A timed record
+// (one without pickup/drop-off windows) must reference a stop, because it is
+// the only kind that lands in stop_times.
+func stopTimeReferenceError(st gtfs.ScheduledStopTime) string {
+	hasStop := st.Stop != nil && st.Stop.Id != ""
+	references := 0
+	if hasStop {
+		references++
+	}
+	if st.Location() != nil {
+		references++
+	}
+	if st.LocationGroup() != nil {
+		references++
+	}
+	switch {
+	case references == 0:
+		return "references no stop, location or location group"
+	case references > 1:
+		return "references more than one of stop, location and location group"
+	case !st.IsWindowed() && !hasStop:
+		return "timed record does not reference a stop"
+	}
+	return ""
+}
+
+// timedStopTimes returns the records that carry arrival/departure
+// times, in stop_sequence order. Windowed (flex) records are excluded: they
+// have no times and, for zone and group records, no stop.
+func timedStopTimes(stopTimes []gtfs.ScheduledStopTime) []gtfs.ScheduledStopTime {
+	timed := make([]gtfs.ScheduledStopTime, 0, len(stopTimes))
+	for _, st := range stopTimes {
+		if !st.IsWindowed() {
+			timed = append(timed, st)
+		}
+	}
+	return timed
 }
