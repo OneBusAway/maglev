@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -38,7 +39,7 @@ type FlexIndex struct {
 	RouteServiceIDs map[string][]string               // bare route id → sorted combined service ids
 	ServiceBounds   map[string]utils.CoordinateBounds // combined service id → union of area bboxes and stop points
 	ServiceAreaIDs  map[string][]string               // combined service id → sorted bare location ids from its records, each with an entry in Areas
-	ServiceStops    map[string][]FlexStopPoint        // combined service id → rule-referenced stops
+	ServiceStops    map[string][]FlexStopPoint        // combined service id → rule-referenced stops, ordered by stop id
 }
 
 // NewEmptyFlexIndex returns an index with no services; every lookup misses.
@@ -54,7 +55,7 @@ func NewEmptyFlexIndex() *FlexIndex {
 }
 
 // buildFlexIndex reads the on-demand tables into a fresh index.
-func buildFlexIndex(ctx context.Context, gtfsDB *gtfsdb.Client) (*FlexIndex, error) {
+func buildFlexIndex(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Logger) (*FlexIndex, error) {
 	idx := NewEmptyFlexIndex()
 
 	services, err := gtfsDB.Queries.ListOnDemandServices(ctx)
@@ -72,7 +73,7 @@ func buildFlexIndex(ctx context.Context, gtfsDB *gtfsdb.Client) (*FlexIndex, err
 		idx.RouteServiceIDs[service.RouteID] = append(idx.RouteServiceIDs[service.RouteID], combinedID)
 	}
 
-	if err := idx.loadAreas(ctx, gtfsDB); err != nil {
+	if err := idx.loadAreas(ctx, gtfsDB, logger); err != nil {
 		return nil, err
 	}
 	if err := idx.loadServiceAreas(ctx, gtfsDB, combinedByBareService); err != nil {
@@ -87,7 +88,7 @@ func buildFlexIndex(ctx context.Context, gtfsDB *gtfsdb.Client) (*FlexIndex, err
 	return idx, nil
 }
 
-func (idx *FlexIndex) loadAreas(ctx context.Context, gtfsDB *gtfsdb.Client) error {
+func (idx *FlexIndex) loadAreas(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Logger) error {
 	locations, err := gtfsDB.Queries.ListLocations(ctx)
 	if err != nil {
 		return fmt.Errorf("list locations: %w", err)
@@ -95,7 +96,10 @@ func (idx *FlexIndex) loadAreas(ctx context.Context, gtfsDB *gtfsdb.Client) erro
 	for _, location := range locations {
 		_, polygons, err := utils.ParseGeoJSONPolygons([]byte(location.Geometry))
 		if err != nil {
-			return fmt.Errorf("parse geometry of location %s: %w", location.ID, err)
+			// Skip rather than fail: one bad zone must not wedge every reload.
+			logger.Warn("skipping on-demand zone with unparseable geometry",
+				slog.String("location_id", location.ID), slog.String("error", err.Error()))
+			continue
 		}
 		idx.Areas[location.ID] = &FlexArea{
 			ID:       location.ID,
