@@ -23,23 +23,6 @@ var pointerFixtureClock = time.Date(2025, 6, 12, 9, 10, 0, 0, time.UTC)
 
 const pointerFixtureServiceDateMillis = "1749686400000" // 2025-06-12T00:00:00Z
 
-// groupDeviatedFilesWithHermannShape gives her-trip a shape through h1–h3.
-// Scheduled trips-for-location places a vehicle-less trip by projecting its
-// schedule onto its shape, so a shapeless trip is never found in any box.
-func groupDeviatedFilesWithHermannShape() map[string]string {
-	files := flexfixtures.GroupDeviatedFiles()
-	files["trips.txt"] = "route_id,service_id,trip_id,block_id,shape_id\n" +
-		"rufbus,svc,ruf-trip,,\n" +
-		"hermann,svc,her-trip,her-block,her-shape\n" +
-		"hermann,svc,her-trip-2,her-block,\n" +
-		"winstop,svc,win-trip,,\n"
-	files["shapes.txt"] = "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n" +
-		"her-shape,44.3100,-94.4600,1\n" +
-		"her-shape,44.3200,-94.4500,2\n" +
-		"her-shape,44.3300,-94.4400,3\n"
-	return files
-}
-
 // walkJSON calls visit for every JSON object in the document.
 func walkJSON(value any, visit func(object map[string]any)) {
 	switch v := value.(type) {
@@ -56,6 +39,7 @@ func walkJSON(value any, visit func(object map[string]any)) {
 }
 
 // looksLikeRouteOrStop reports whether an object is a serialized models.Route or models.Stop.
+// Routes are recognized by the deprecated nullSafeShortName field, which only models.Route emits.
 func looksLikeRouteOrStop(object map[string]any) bool {
 	_, hasShortName := object["nullSafeShortName"]
 	_, hasRouteIDs := object["routeIds"]
@@ -63,15 +47,21 @@ func looksLikeRouteOrStop(object map[string]any) bool {
 	return hasShortName || (hasRouteIDs && hasLat)
 }
 
+// pointerCounts tallies the Route/Stop serializations assertPointers checked.
+type pointerCounts struct {
+	flex    int
+	nonFlex int
+}
+
 // assertPointers walks a response and checks every Route/Stop serialization:
 // flex entities carry exactly their expected onDemandServiceIds, others carry
-// no key at all. It returns the number of flex entities seen.
-func assertPointers(t *testing.T, body []byte, expected map[string][]string) int {
+// no key at all. It returns how many of each it saw.
+func assertPointers(t *testing.T, body []byte, expected map[string][]string) pointerCounts {
 	t.Helper()
 	var document any
 	require.NoError(t, json.Unmarshal(body, &document))
 
-	hits := 0
+	var counts pointerCounts
 	walkJSON(document, func(object map[string]any) {
 		if !looksLikeRouteOrStop(object) {
 			return
@@ -80,10 +70,11 @@ func assertPointers(t *testing.T, body []byte, expected map[string][]string) int
 		want, isFlex := expected[id]
 		got, hasKey := object["onDemandServiceIds"]
 		if !isFlex {
+			counts.nonFlex++
 			assert.False(t, hasKey, "non-flex entity %s must not carry onDemandServiceIds", id)
 			return
 		}
-		hits++
+		counts.flex++
 		require.True(t, hasKey, "flex entity %s is missing onDemandServiceIds", id)
 		gotIDs := make([]string, 0)
 		for _, v := range got.([]any) {
@@ -91,7 +82,7 @@ func assertPointers(t *testing.T, body []byte, expected map[string][]string) int
 		}
 		assert.Equal(t, want, gotIDs, "pointer on %s", id)
 	})
-	return hits
+	return counts
 }
 
 func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
@@ -107,11 +98,16 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 		// gd_h3 is only ever a timed drop-off after other timed stops, so no rule references it.
 	}
 
+	manisteeExpected := map[string][]string{"MC_MC1": {"MC_MC1"}, "MC_MC2": {"MC_MC2"}}
+
 	fixtures := []struct {
-		name      string
-		api       *RestAPI
-		expected  map[string][]string
-		endpoints []string
+		name     string
+		api      *RestAPI
+		expected map[string][]string
+		// absenceOnly rows target timed-only entities: they must serialize at
+		// least one non-flex route or stop, and none of those may carry the key.
+		absenceOnly bool
+		endpoints   []string
 	}{
 		{
 			name:     "charlevoix",
@@ -129,7 +125,7 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 		},
 		{
 			name:     "group and deviated",
-			api:      createTestApiWithGTFSFixture(t, clock.NewMockClock(pointerFixtureClock), "flex-group-deviated.zip", groupDeviatedFilesWithHermannShape()),
+			api:      createTestApiWithGTFSFixture(t, clock.NewMockClock(pointerFixtureClock), "flex-group-deviated.zip", flexfixtures.GroupDeviatedFiles()),
 			expected: deviatedExpected,
 			endpoints: []string{
 				"/api/where/stop/gd_s1.json",
@@ -154,6 +150,23 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 				"/api/ondemand/services-for-location.json?lat=44.32&lon=-94.45&radius=3000&geometryDetail=none",
 			},
 		},
+		{
+			// MC3 is a timed-only route in a flex feed, so neither it nor its
+			// stops may point at an on-demand service.
+			name:        "manistee timed-only route",
+			api:         createTestApiWithFeed(t, models.GetFixturePath(t, "manistee-flex.zip")),
+			expected:    manisteeExpected,
+			absenceOnly: true,
+			endpoints: []string{
+				"/api/where/route/MC_MC3.json",
+				"/api/where/stops-for-route/MC_MC3.json",
+				"/api/where/routes-for-agency/MC.json",
+				"/api/where/stop/MC_MC_MCT_Office.json",
+				"/api/where/stop/MC_MC_Family_Fare.json",
+				"/api/where/stop/MC_MC_Walgreens.json",
+				"/api/where/stop/MC_MC_WS_Community_College.json",
+			},
+		},
 	}
 
 	for _, fixture := range fixtures {
@@ -173,8 +186,12 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
 
-					hits := assertPointers(t, body, fixture.expected)
-					assert.Greater(t, hits, 0, "endpoint must serialize at least one flex route or stop, else it proves nothing")
+					counts := assertPointers(t, body, fixture.expected)
+					if fixture.absenceOnly {
+						assert.Greater(t, counts.nonFlex, 0, "endpoint must serialize at least one timed-only route or stop, else it proves nothing")
+						return
+					}
+					assert.Greater(t, counts.flex, 0, "endpoint must serialize at least one flex route or stop, else it proves nothing")
 				})
 			}
 		})
