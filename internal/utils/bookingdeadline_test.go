@@ -168,6 +168,14 @@ func TestCountBackServiceDays(t *testing.T) {
 	assert.False(t, CalendarActiveOn(weekday, civilDate(t, "2028-01-03")), "outside the date range")
 }
 
+func TestCountBackServiceDays_StopsAtCalendarStart(t *testing.T) {
+	lateStart := BookingCalendar{ID: "late", Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartDate: "2026-03-12", EndDate: "2027-12-31"}
+
+	got := CountBackServiceDays(civilDate(t, "2026-03-16"), 5, &lateStart)
+
+	assert.Equal(t, civilDate(t, "2026-03-11"), got, "only Fri 03-13 and Thu 03-12 are countable; stops the day before the start date")
+}
+
 func intPtr(value int) *int { return &value }
 
 func stringPtr(value string) *string { return &value }

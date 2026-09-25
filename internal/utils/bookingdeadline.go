@@ -111,6 +111,11 @@ func CountBackServiceDays(civilDate time.Time, days int, calendar *BookingCalend
 	current := civilDate
 	for counted := 0; counted < days; {
 		current = current.AddDate(0, 0, -1)
+		// No service day precedes the calendar's start, so the count can never
+		// complete; stopping here keeps the loop finite and the deadline early.
+		if current.Format(civilDateLayout) < calendar.StartDate {
+			return current
+		}
 		if CalendarActiveOn(*calendar, current) {
 			counted++
 		}
