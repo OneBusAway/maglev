@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/geo"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -109,7 +110,7 @@ func TestFlexIndex_SkippedLocationIsAbsent(t *testing.T) {
 
 	assert.Nil(t, idx.FlexArea("gaylord"))
 	assert.ElementsMatch(t, []string{"charlevoix_county", "petoskey"}, idx.ServiceAreaIDs["CC_CC2_med"])
-	assert.Equal(t, utils.UnionBounds(idx.FlexArea("charlevoix_county").Bounds, idx.FlexArea("petoskey").Bounds), idx.ServiceBounds["CC_CC2_med"])
+	assert.Equal(t, geo.UnionBounds(idx.FlexArea("charlevoix_county").Bounds, idx.FlexArea("petoskey").Bounds), idx.ServiceBounds["CC_CC2_med"])
 }
 
 func TestFlexIndex_CorruptGeometryIsSkippedOnReload(t *testing.T) {

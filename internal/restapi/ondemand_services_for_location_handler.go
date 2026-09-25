@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/geo"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -141,7 +142,7 @@ func serviceFlexAreas(idx *gtfs.FlexIndex, serviceID string) []*gtfs.FlexArea {
 // areaContainsPoint > stopWithinRadius > areaNearby.
 func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, point geoPoint, radius float64) (string, bool) {
 	for _, area := range areas {
-		if utils.PointInPolygon(point.Lat, point.Lon, area.Polygons) {
+		if geo.PointInPolygon(point.Lat, point.Lon, area.Polygons) {
 			return models.MatchReasonAreaContainsPoint, true
 		}
 	}
@@ -151,7 +152,7 @@ func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, point geoPoi
 		}
 	}
 	for _, area := range areas {
-		if distance, _, _ := utils.NearestPointOnBoundary(point.Lat, point.Lon, area.Polygons); distance <= radius {
+		if distance, _, _ := geo.NearestPointOnBoundary(point.Lat, point.Lon, area.Polygons); distance <= radius {
 			return models.MatchReasonAreaNearby, true
 		}
 	}
@@ -162,7 +163,7 @@ func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, point geoPoi
 // areaIntersectsViewport > stopWithinViewport. Near-miss matching does not apply.
 func matchViewport(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, bounds utils.CoordinateBounds) (string, bool) {
 	for _, area := range areas {
-		if utils.PolygonIntersectsBounds(area.Polygons, bounds) {
+		if geo.PolygonIntersectsBounds(area.Polygons, bounds) {
 			return models.MatchReasonAreaIntersectsViewport, true
 		}
 	}
