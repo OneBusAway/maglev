@@ -472,10 +472,12 @@ FROM
 WHERE
     trips.route_id = ?;
 
+-- min_arrival_time IS NULL exactly for trips with no timed stop_times (flex-only trips), which have no fixed-route schedule to show.
 -- name: GetAllTripsForRoute :many
 SELECT DISTINCT *
 FROM trips t
 WHERE t.route_id = @route_id
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign;
 
 -- name: GetStopIDsForTrip :many
@@ -522,11 +524,13 @@ WHERE c.start_date <= ?1
 UNION
 SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 1;
 
+-- min_arrival_time IS NULL exactly for trips with no timed stop_times (flex-only trips), which have no fixed-route schedule to show.
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
 FROM trips t
 WHERE t.route_id = @route_id
   AND t.service_id IN (sqlc.slice(('service_ids')))
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign;
 
 -- name: GetScheduleForStop :many
