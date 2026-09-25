@@ -189,7 +189,17 @@ SELECT DISTINCT
     routes.agency_id
 FROM
     stop_routes
-    JOIN routes ON stop_routes.route_id = routes.id;
+    JOIN routes ON stop_routes.route_id = routes.id
+UNION
+SELECT DISTINCT
+    ondemand_stop_services.stop_id,
+    ondemand_services.agency_id
+FROM
+    ondemand_stop_services
+    JOIN ondemand_services ON ondemand_services.id = ondemand_stop_services.service_id
+    -- Pointers may name stops that were never stored (no coordinates);
+    -- stop_agencies has a foreign key to stops.
+    JOIN stops ON stops.id = ondemand_stop_services.stop_id;
 
 -- name: ClearStopRoutes :exec
 DELETE FROM stop_routes
