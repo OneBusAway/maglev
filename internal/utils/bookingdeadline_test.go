@@ -139,7 +139,7 @@ func TestBookingVectors_CoverEveryRequiredCase(t *testing.T) {
 	for _, state := range []string{"open", "closedForDate", "notYetOpen", "unknown"} {
 		assert.Greater(t, states[state], 0, "at least one vector must reach state %s", state)
 	}
-	assert.GreaterOrEqual(t, len(file.Vectors), 16)
+	assert.GreaterOrEqual(t, len(file.Vectors), 21)
 }
 
 func TestServiceDayInstant_DSTAnchor(t *testing.T) {
@@ -162,18 +162,45 @@ func TestCountBackServiceDays(t *testing.T) {
 	weekday := BookingCalendar{ID: "wk", Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartDate: "2024-01-01", EndDate: "2027-12-31", ExceptedDates: []string{"2026-03-13"}}
 	monday := civilDate(t, "2026-03-16")
 
-	assert.Equal(t, civilDate(t, "2026-03-15"), CountBackServiceDays(monday, 1, nil), "no calendar counts civil days")
-	assert.Equal(t, civilDate(t, "2026-03-12"), CountBackServiceDays(monday, 1, &weekday), "skips the weekend and the excepted Friday")
-	assert.Equal(t, monday, CountBackServiceDays(monday, 0, &weekday))
+	tests := []struct {
+		name     string
+		days     int
+		calendar *BookingCalendar
+		want     string
+	}{
+		{"no calendar counts civil days", 1, nil, "2026-03-15"},
+		{"skips the weekend and the excepted Friday", 1, &weekday, "2026-03-12"},
+		{"zero days is the date itself", 0, &weekday, "2026-03-16"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := CountBackServiceDays(monday, tt.days, tt.calendar)
+			require.True(t, ok)
+			assert.Equal(t, civilDate(t, tt.want), got)
+		})
+	}
 	assert.False(t, CalendarActiveOn(weekday, civilDate(t, "2028-01-03")), "outside the date range")
 }
 
-func TestCountBackServiceDays_StopsAtCalendarStart(t *testing.T) {
-	lateStart := BookingCalendar{ID: "late", Days: []string{"mon", "tue", "wed", "thu", "fri"}, StartDate: "2026-03-12", EndDate: "2027-12-31"}
-
-	got := CountBackServiceDays(civilDate(t, "2026-03-16"), 5, &lateStart)
-
-	assert.Equal(t, civilDate(t, "2026-03-11"), got, "only Fri 03-13 and Thu 03-12 are countable; stops the day before the start date")
+func TestCountBackServiceDays_ReportsCountsThatCannotComplete(t *testing.T) {
+	weekdays := []string{"mon", "tue", "wed", "thu", "fri"}
+	tests := []struct {
+		name     string
+		calendar BookingCalendar
+		days     int
+	}{
+		{"reaches the calendar start date first", BookingCalendar{Days: weekdays, StartDate: "2026-03-12", EndDate: "2027-12-31"}, 3},
+		{"empty start date", BookingCalendar{Days: weekdays, EndDate: "2027-12-31"}, 1},
+		{"unparseable start date", BookingCalendar{Days: weekdays, StartDate: "March 2026", EndDate: "2027-12-31"}, 1},
+		{"no active weekdays", BookingCalendar{Days: []string{"monday"}, StartDate: "2024-01-01", EndDate: "2027-12-31"}, 1},
+		{"walk exceeds the backstop cap", BookingCalendar{Days: []string{"mon"}, StartDate: "2000-01-01", EndDate: "2027-12-31"}, 60},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok := CountBackServiceDays(civilDate(t, "2026-03-16"), tt.days, &tt.calendar)
+			assert.False(t, ok)
+		})
+	}
 }
 
 func intPtr(value int) *int { return &value }
@@ -208,16 +235,6 @@ func TestEvaluateBookingDeadline_BranchesOutsideTheVectors(t *testing.T) {
 			wantOpen:   stringPtr("2026-03-11T03:30:00-04:00"),
 		},
 		{
-			name:       "type 1 startDay counts civil days and ignores the forbidden calendar id",
-			window:     window,
-			rule:       BookingRuleInput{BookingType: 1, PriorNoticeDurationMin: intPtr(60), PriorNoticeStartDay: intPtr(1), PriorNoticeStartTime: stringPtr("08:00:00"), PriorNoticeCalendarID: stringPtr(weekdays.ID)},
-			travelDate: "2026-03-16",
-			now:        "2026-03-15T09:00:00-04:00",
-			wantState:  BookingOpen,
-			wantCutoff: stringPtr("2026-03-16T17:00:00-04:00"),
-			wantOpen:   stringPtr("2026-03-15T08:00:00-04:00"),
-		},
-		{
 			name:       "type 2 prior-notice calendar missing from the references counts civil days",
 			window:     window,
 			rule:       BookingRuleInput{BookingType: 2, PriorNoticeLastDay: intPtr(1), PriorNoticeLastTime: stringPtr("15:00:00"), PriorNoticeCalendarID: stringPtr("absent")},
@@ -225,14 +242,6 @@ func TestEvaluateBookingDeadline_BranchesOutsideTheVectors(t *testing.T) {
 			now:        "2026-03-15T09:00:00-04:00",
 			wantState:  BookingOpen,
 			wantCutoff: stringPtr("2026-03-15T15:00:00-04:00"),
-		},
-		{
-			name:       "type 2 with null lastDay is unknown",
-			window:     window,
-			rule:       BookingRuleInput{BookingType: 2, PriorNoticeLastTime: stringPtr("15:00:00")},
-			travelDate: "2026-03-11",
-			now:        "2026-03-10T09:00:00-04:00",
-			wantState:  BookingUnknown,
 		},
 		{
 			name:       "unsupported booking type is unknown",

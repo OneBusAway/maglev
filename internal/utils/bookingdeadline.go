@@ -35,6 +35,9 @@ const (
 	defaultEarliest   = "00:00:00"
 )
 
+// calendarWeekdays are the wire day names, indexed by time.Weekday.
+var calendarWeekdays = [...]string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+
 // BookingCalendar is the wire calendar shape (wiki §2.4).
 type BookingCalendar struct {
 	ID            string   `json:"id"`
@@ -92,7 +95,7 @@ func CalendarActiveOn(calendar BookingCalendar, civilDate time.Time) bool {
 			return false
 		}
 	}
-	weekday := [...]string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}[civilDate.Weekday()]
+	weekday := calendarWeekdays[civilDate.Weekday()]
 	for _, day := range calendar.Days {
 		if day == weekday {
 			return true
@@ -101,26 +104,54 @@ func CalendarActiveOn(calendar BookingCalendar, civilDate time.Time) bool {
 	return false
 }
 
+// maxCountBackDays caps the civil days CountBackServiceDays will walk. It is a
+// backstop against calendars too sparse for any real prior-notice window.
+const maxCountBackDays = 400
+
 // CountBackServiceDays steps back from the civil date one day at a time. With a
 // calendar, only days the calendar is active on are counted; without one,
-// every civil day counts. Zero days returns the date itself.
-func CountBackServiceDays(civilDate time.Time, days int, calendar *BookingCalendar) time.Time {
+// every civil day counts. Zero days returns the date itself. It reports false
+// when the count cannot complete, which the evaluator maps to unknown.
+func CountBackServiceDays(civilDate time.Time, days int, calendar *BookingCalendar) (time.Time, bool) {
 	if calendar == nil {
-		return civilDate.AddDate(0, 0, -days)
+		return civilDate.AddDate(0, 0, -days), true
 	}
+	if days == 0 {
+		return civilDate, true
+	}
+	startDate, err := time.Parse(civilDateLayout, calendar.StartDate)
+	if err != nil || !hasActiveWeekday(*calendar) {
+		return time.Time{}, false
+	}
+
 	current := civilDate
-	for counted := 0; counted < days; {
+	counted := 0
+	for walked := 0; walked < maxCountBackDays; walked++ {
 		current = current.AddDate(0, 0, -1)
-		// No service day precedes the calendar's start, so the count can never
-		// complete; stopping here keeps the loop finite and the deadline early.
-		if current.Format(civilDateLayout) < calendar.StartDate {
-			return current
+		// No service day precedes the calendar's start, so a count that reaches
+		// it cannot be consumed; the deadline is unknown rather than guessed.
+		if current.Before(startDate) {
+			return time.Time{}, false
 		}
 		if CalendarActiveOn(*calendar, current) {
 			counted++
 		}
+		if counted == days {
+			return current, true
+		}
 	}
-	return current
+	return time.Time{}, false
+}
+
+func hasActiveWeekday(calendar BookingCalendar) bool {
+	for _, day := range calendar.Days {
+		for _, weekday := range calendarWeekdays {
+			if day == weekday {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // EvaluateBookingDeadline implements evaluate(rule, bookingRule, D, now, tz, calendars).
@@ -192,7 +223,8 @@ func sameDayBounds(window BookingWindow, rule *BookingRuleInput, travelDate, lat
 
 // priorDaysBounds: last day and start day are both counted on the prior-notice
 // calendar when one is named (spec §6.1); a null last time means midnight of
-// the last day (conservative); a null last day makes the rule unknown.
+// the last day (conservative); a null last day, or a count-back on either day
+// that cannot complete, makes the rule unknown.
 func priorDaysBounds(rule *BookingRuleInput, travelDate time.Time, loc *time.Location, calendars map[string]BookingCalendar) (*time.Time, *time.Time, error) {
 	if rule.PriorNoticeLastDay == nil {
 		return nil, nil, nil
@@ -204,14 +236,22 @@ func priorDaysBounds(rule *BookingRuleInput, travelDate time.Time, loc *time.Loc
 		}
 	}
 
-	cutoff, err := ServiceDayInstant(CountBackServiceDays(travelDate, *rule.PriorNoticeLastDay, countingCalendar), stringOr(rule.PriorNoticeLastTime, defaultEarliest), loc)
+	lastDayDate, ok := CountBackServiceDays(travelDate, *rule.PriorNoticeLastDay, countingCalendar)
+	if !ok {
+		return nil, nil, nil
+	}
+	cutoff, err := ServiceDayInstant(lastDayDate, stringOr(rule.PriorNoticeLastTime, defaultEarliest), loc)
 	if err != nil {
 		return nil, nil, err
 	}
 	if rule.PriorNoticeStartDay == nil {
 		return &cutoff, nil, nil
 	}
-	open, err := ServiceDayInstant(CountBackServiceDays(travelDate, *rule.PriorNoticeStartDay, countingCalendar), stringOr(rule.PriorNoticeStartTime, defaultEarliest), loc)
+	startDayDate, ok := CountBackServiceDays(travelDate, *rule.PriorNoticeStartDay, countingCalendar)
+	if !ok {
+		return nil, nil, nil
+	}
+	open, err := ServiceDayInstant(startDayDate, stringOr(rule.PriorNoticeStartTime, defaultEarliest), loc)
 	if err != nil {
 		return nil, nil, err
 	}

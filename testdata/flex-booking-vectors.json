@@ -6,7 +6,8 @@
     {"id": "MC_mon-tues-wed-thurs-fri","days": ["mon","tue","wed","thu","fri"],"startDate": "2024-01-01","endDate": "2027-12-31","exceptedDates": ["2024-05-27","2024-07-04","2024-09-02","2024-11-28","2024-11-29","2024-12-24","2024-12-25","2025-01-01","2025-05-26","2025-07-04","2025-09-01","2025-11-27","2025-11-28","2025-12-24","2025-12-25","2026-01-01"]},
     {"id": "MC_sat","days": ["sat"],"startDate": "2024-01-01","endDate": "2027-12-31","exceptedDates": []},
     {"id": "MC_mon-tues-wed-thurs-fri-sat-sun","days": ["mon","tue","wed","thu","fri","sat","sun"],"startDate": "2024-01-01","endDate": "2027-12-31","exceptedDates": []},
-    {"id": "AP_mon-tues-wed-thurs-fri","days": ["mon","tue","wed","thu","fri"],"startDate": "2024-01-01","endDate": "2027-12-31","exceptedDates": ["2024-05-27","2024-07-04","2024-09-02","2024-11-28","2024-11-29","2024-12-24","2024-12-25","2025-01-01","2025-05-26","2025-07-04","2025-09-01","2025-11-27","2025-11-28","2025-12-24","2025-12-25","2026-01-01"]}
+    {"id": "AP_mon-tues-wed-thurs-fri","days": ["mon","tue","wed","thu","fri"],"startDate": "2024-01-01","endDate": "2027-12-31","exceptedDates": ["2024-05-27","2024-07-04","2024-09-02","2024-11-28","2024-11-29","2024-12-24","2024-12-25","2025-01-01","2025-05-26","2025-07-04","2025-09-01","2025-11-27","2025-11-28","2025-12-24","2025-12-25","2026-01-01"]},
+    {"id": "MC_synthetic_weekdays_from_2026-03-16","days": ["mon","tue","wed","thu","fri"],"startDate": "2026-03-16","endDate": "2027-12-31","exceptedDates": []}
   ],
   "vectors": [
     {
@@ -152,6 +153,51 @@
       "travelDate": "2026-03-08",
       "now": "2026-03-07T16:00:00-05:00",
       "expected": {"state": "open","cutoffInstant": "2026-03-07T17:00:00-05:00","openInstant": null,"nextBookableServiceDate": "2026-03-08"}
+    },
+    {
+      "name": "priorNoticeCalendarId starting too late: last-day count-back cannot complete, unknown",
+      "timezone": "America/Detroit",
+      "bookingRule": {"id": "MC_synthetic_calendar_starts_late","bookingType": 2,"priorNoticeDurationMin": null,"priorNoticeDurationMax": null,"priorNoticeLastDay": 1,"priorNoticeLastTime": "15:00:00","priorNoticeStartDay": 3,"priorNoticeStartTime": "09:00:00","priorNoticeCalendarId": "MC_synthetic_weekdays_from_2026-03-16","message": null,"pickupMessage": null,"dropOffMessage": null,"phoneNumber": null,"infoUrl": null,"bookingUrl": null},
+      "rule": {"startPickupTime": "05:30:00","endPickupTime": "18:00:00","calendarIds": ["MC_mon-tues-wed-thurs-fri"]},
+      "travelDate": "2026-03-16",
+      "now": "2026-03-13T14:00:00-04:00",
+      "expected": {"state": "unknown","cutoffInstant": null,"openInstant": null,"nextBookableServiceDate": null}
+    },
+    {
+      "name": "priorNoticeCalendarId starting too late: start-day count-back cannot complete, unknown",
+      "timezone": "America/Detroit",
+      "bookingRule": {"id": "MC_synthetic_calendar_starts_late","bookingType": 2,"priorNoticeDurationMin": null,"priorNoticeDurationMax": null,"priorNoticeLastDay": 1,"priorNoticeLastTime": "15:00:00","priorNoticeStartDay": 3,"priorNoticeStartTime": "09:00:00","priorNoticeCalendarId": "MC_synthetic_weekdays_from_2026-03-16","message": null,"pickupMessage": null,"dropOffMessage": null,"phoneNumber": null,"infoUrl": null,"bookingUrl": null},
+      "rule": {"startPickupTime": "05:30:00","endPickupTime": "18:00:00","calendarIds": ["MC_mon-tues-wed-thurs-fri"]},
+      "travelDate": "2026-03-17",
+      "now": "2026-03-13T14:00:00-04:00",
+      "expected": {"state": "unknown","cutoffInstant": null,"openInstant": null,"nextBookableServiceDate": null}
+    },
+    {
+      "name": "bookingType 2 with null priorNoticeLastDay: unknown",
+      "timezone": "America/Detroit",
+      "bookingRule": {"id": "MC_synthetic_no_last_day","bookingType": 2,"priorNoticeDurationMin": null,"priorNoticeDurationMax": null,"priorNoticeLastDay": null,"priorNoticeLastTime": "15:00:00","priorNoticeStartDay": null,"priorNoticeStartTime": null,"priorNoticeCalendarId": null,"message": null,"pickupMessage": null,"dropOffMessage": null,"phoneNumber": null,"infoUrl": null,"bookingUrl": null},
+      "rule": {"startPickupTime": "05:30:00","endPickupTime": "18:00:00","calendarIds": ["MC_mon-tues-wed-thurs-fri"]},
+      "travelDate": "2026-03-11",
+      "now": "2026-03-10T12:00:00-04:00",
+      "expected": {"state": "unknown","cutoffInstant": null,"openInstant": null,"nextBookableServiceDate": null}
+    },
+    {
+      "name": "same-day bookingType 1 with a forbidden priorNoticeCalendarId: ignored, open at noon",
+      "timezone": "America/Detroit",
+      "bookingRule": {"id": "MC_synthetic_same_day_with_calendar","bookingType": 1,"priorNoticeDurationMin": 60,"priorNoticeDurationMax": null,"priorNoticeLastDay": null,"priorNoticeLastTime": null,"priorNoticeStartDay": null,"priorNoticeStartTime": null,"priorNoticeCalendarId": "MC_mon-tues-wed-thurs-fri","message": null,"pickupMessage": null,"dropOffMessage": null,"phoneNumber": null,"infoUrl": null,"bookingUrl": null},
+      "rule": {"startPickupTime": "05:30:00","endPickupTime": "18:00:00","calendarIds": ["MC_mon-tues-wed-thurs-fri"]},
+      "travelDate": "2026-03-11",
+      "now": "2026-03-11T12:00:00-04:00",
+      "expected": {"state": "open","cutoffInstant": "2026-03-11T17:00:00-04:00","openInstant": null,"nextBookableServiceDate": "2026-03-11"}
+    },
+    {
+      "name": "same-day bookingType 1 startDay counts civil days, not the forbidden priorNoticeCalendarId",
+      "timezone": "America/Detroit",
+      "bookingRule": {"id": "MC_synthetic_same_day_start_day_with_calendar","bookingType": 1,"priorNoticeDurationMin": 60,"priorNoticeDurationMax": null,"priorNoticeLastDay": null,"priorNoticeLastTime": null,"priorNoticeStartDay": 1,"priorNoticeStartTime": "08:00:00","priorNoticeCalendarId": "MC_mon-tues-wed-thurs-fri","message": null,"pickupMessage": null,"dropOffMessage": null,"phoneNumber": null,"infoUrl": null,"bookingUrl": null},
+      "rule": {"startPickupTime": "05:30:00","endPickupTime": "18:00:00","calendarIds": ["MC_mon-tues-wed-thurs-fri"]},
+      "travelDate": "2026-03-16",
+      "now": "2026-03-13T12:00:00-04:00",
+      "expected": {"state": "notYetOpen","cutoffInstant": "2026-03-16T17:00:00-04:00","openInstant": "2026-03-15T08:00:00-04:00","nextBookableServiceDate": "2026-03-13"}
     }
   ]
 }
