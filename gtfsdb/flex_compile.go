@@ -411,15 +411,19 @@ func optionalOf[T cmp.Ordered](p *T) optional[T] {
 	return optional[T]{value: *p, valid: true}
 }
 
-// compareOptional orders absent values first.
-func compareOptional[T cmp.Ordered](a, b optional[T]) int {
-	if a.valid != b.valid {
-		if !a.valid {
-			return -1
-		}
+// ComparePtr orders a nil pointer before any value and otherwise compares the
+// pointed-to values with cmp.Compare. Use it to sort by optional fields.
+func ComparePtr[T cmp.Ordered](a, b *T) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
 		return 1
+	default:
+		return cmp.Compare(*a, *b)
 	}
-	return cmp.Compare(a.value, b.value)
 }
 
 // ruleKey is CompiledRule minus the representative trip, with pointers
@@ -461,22 +465,21 @@ func ruleKeyOf(rule CompiledRule) ruleKey {
 // booking rules and safe duration. Rules are unique by that key, so this is a
 // total order independent of trip order.
 func compareRules(a, b CompiledRule) int {
-	ka, kb := ruleKeyOf(a), ruleKeyOf(b)
 	return cmp.Or(
-		cmp.Compare(ka.serviceID, kb.serviceID),
-		cmp.Compare(ka.gtfsServiceID, kb.gtfsServiceID),
-		cmp.Compare(ka.fromKind, kb.fromKind),
-		cmp.Compare(ka.fromID, kb.fromID),
-		cmp.Compare(ka.toKind, kb.toKind),
-		cmp.Compare(ka.toID, kb.toID),
-		compareOptional(ka.start, kb.start),
-		compareOptional(ka.end, kb.end),
-		compareOptional(ka.endDropOff, kb.endDropOff),
-		cmp.Compare(ka.pickupType, kb.pickupType),
-		cmp.Compare(ka.dropOffType, kb.dropOffType),
-		compareOptional(ka.pickupBooking, kb.pickupBooking),
-		compareOptional(ka.dropOffBooking, kb.dropOffBooking),
-		compareOptional(ka.safeFactor, kb.safeFactor),
-		compareOptional(ka.safeOffset, kb.safeOffset),
+		cmp.Compare(a.ServiceID, b.ServiceID),
+		cmp.Compare(a.GTFSServiceID, b.GTFSServiceID),
+		cmp.Compare(a.FromKind, b.FromKind),
+		cmp.Compare(a.FromID, b.FromID),
+		cmp.Compare(a.ToKind, b.ToKind),
+		cmp.Compare(a.ToID, b.ToID),
+		ComparePtr(a.StartPickupTime, b.StartPickupTime),
+		ComparePtr(a.EndPickupTime, b.EndPickupTime),
+		ComparePtr(a.EndDropOffTime, b.EndDropOffTime),
+		cmp.Compare(a.PickupType, b.PickupType),
+		cmp.Compare(a.DropOffType, b.DropOffType),
+		ComparePtr(a.PickupBookingRuleID, b.PickupBookingRuleID),
+		ComparePtr(a.DropOffBookingRuleID, b.DropOffBookingRuleID),
+		ComparePtr(a.SafeDurationFactor, b.SafeDurationFactor),
+		ComparePtr(a.SafeDurationOffset, b.SafeDurationOffset),
 	)
 }
