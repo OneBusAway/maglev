@@ -459,6 +459,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getTripsInBlockStmt, err = db.PrepareContext(ctx, getTripsInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsInBlock: %w", err)
 	}
+	if q.getWhereAgencyIDsForStopsStmt, err = db.PrepareContext(ctx, getWhereAgencyIDsForStops); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWhereAgencyIDsForStops: %w", err)
+	}
 	if q.listAgenciesStmt, err = db.PrepareContext(ctx, listAgencies); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAgencies: %w", err)
 	}
@@ -1240,6 +1243,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getTripsInBlockStmt: %w", cerr)
 		}
 	}
+	if q.getWhereAgencyIDsForStopsStmt != nil {
+		if cerr := q.getWhereAgencyIDsForStopsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWhereAgencyIDsForStopsStmt: %w", cerr)
+		}
+	}
 	if q.listAgenciesStmt != nil {
 		if cerr := q.listAgenciesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listAgenciesStmt: %w", cerr)
@@ -1509,6 +1517,7 @@ type Queries struct {
 	getTripsByServiceIDStmt                   *sql.Stmt
 	getTripsForRouteInActiveServiceIDsStmt    *sql.Stmt
 	getTripsInBlockStmt                       *sql.Stmt
+	getWhereAgencyIDsForStopsStmt             *sql.Stmt
 	listAgenciesStmt                          *sql.Stmt
 	listAgencyIdsStmt                         *sql.Stmt
 	listLocationsStmt                         *sql.Stmt
@@ -1677,6 +1686,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsByServiceIDStmt:                   q.getTripsByServiceIDStmt,
 		getTripsForRouteInActiveServiceIDsStmt:    q.getTripsForRouteInActiveServiceIDsStmt,
 		getTripsInBlockStmt:                       q.getTripsInBlockStmt,
+		getWhereAgencyIDsForStopsStmt:             q.getWhereAgencyIDsForStopsStmt,
 		listAgenciesStmt:                          q.listAgenciesStmt,
 		listAgencyIdsStmt:                         q.listAgencyIdsStmt,
 		listLocationsStmt:                         q.listLocationsStmt,
