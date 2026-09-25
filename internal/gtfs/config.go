@@ -44,6 +44,25 @@ func (config Config) enabledFeeds() []RTFeedConfig {
 	return feeds
 }
 
+// feedAgencyFilters maps each enabled feed's ID to its configured agency-ids.
+// Disabled feeds are left out: they never poll, so an entry for one would
+// make the metrics endpoint report its agencies as permanently unknown.
+// Feeds without agency-ids get no entry, meaning they cover every agency.
+func (config Config) feedAgencyFilters() map[string]map[string]bool {
+	filters := make(map[string]map[string]bool)
+	for _, feed := range config.enabledFeeds() {
+		if len(feed.AgencyIDs) == 0 {
+			continue
+		}
+		filter := make(map[string]bool, len(feed.AgencyIDs))
+		for _, id := range feed.AgencyIDs {
+			filter[id] = true
+		}
+		filters[feed.ID] = filter
+	}
+	return filters
+}
+
 func (config Config) isLocalFile() bool {
 	return !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
 }
