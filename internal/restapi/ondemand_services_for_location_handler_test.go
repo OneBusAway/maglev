@@ -187,7 +187,7 @@ func TestOnDemandServicesForLocationHandler_NonFlexFeed(t *testing.T) {
 func TestOnDemandOutOfRange_NoBoundsAtAll(t *testing.T) {
 	api := NewRestAPI(&app.Application{GtfsManager: newTestManagerNoData(t)})
 	search := utils.CalculateBounds(47.6, -122.3, 600)
-	assert.False(t, api.onDemandOutOfRange(search, gtfs.NewEmptyFlexIndex()), "no stop or service bounds means nothing is out of range")
+	assert.False(t, api.onDemandOutOfRange(search, gtfs.NewEmptyFlexIndex(), nil), "no stop or service bounds means nothing is out of range")
 }
 
 // An agency id containing "_" cannot be split back out of a combined service
