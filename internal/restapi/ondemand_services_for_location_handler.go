@@ -65,7 +65,8 @@ func (api *RestAPI) onDemandServicesForLocationHandler(w http.ResponseWriter, r 
 	search := newOnDemandSearch(loc)
 	idx := api.GtfsManager.FlexIndex()
 	distances := search.areaDistances(idx)
-	matches := matchOnDemandServices(idx, search, distances)
+	candidateServiceIDs := idx.ServiceBoundsOverlapping(search.Bounds)
+	matches := matchOnDemandServices(idx, candidateServiceIDs, search, distances)
 
 	services, err := api.loadMatchedOnDemandServices(ctx, matches)
 	if err != nil {
@@ -79,7 +80,7 @@ func (api *RestAPI) onDemandServicesForLocationHandler(w http.ResponseWriter, r 
 	}
 	applyMatchReasons(list, matches)
 
-	outOfRange := api.onDemandOutOfRange(search.Bounds, idx)
+	outOfRange := api.onDemandOutOfRange(search.Bounds, idx, candidateServiceIDs)
 	api.sendResponse(w, r, models.NewOnDemandListResponseWithRange(list, *references, outOfRange, api.Clock))
 }
 
@@ -109,11 +110,12 @@ func (search onDemandSearch) areaDistances(idx *gtfs.FlexIndex) *areaDistances {
 	return newAreaDistances(idx, search.Point)
 }
 
-// matchOnDemandServices tests every service whose bounds overlap the search
-// bounds and returns the ones that match, with their strongest reason.
-func matchOnDemandServices(idx *gtfs.FlexIndex, search onDemandSearch, distances *areaDistances) []onDemandMatch {
+// matchOnDemandServices tests every candidate service (those whose bounds
+// overlap the search bounds) and returns the ones that match, with their
+// strongest reason.
+func matchOnDemandServices(idx *gtfs.FlexIndex, candidateServiceIDs []string, search onDemandSearch, distances *areaDistances) []onDemandMatch {
 	var matches []onDemandMatch
-	for _, serviceID := range idx.ServiceBoundsOverlapping(search.Bounds) {
+	for _, serviceID := range candidateServiceIDs {
 		if reason, ok := matchOnDemandService(idx, serviceID, search, distances); ok {
 			matches = append(matches, onDemandMatch{ServiceID: serviceID, BareServiceID: idx.BareServiceIDs[serviceID], Reason: reason})
 		}
@@ -204,8 +206,9 @@ func applyMatchReasons(list []models.OnDemandService, matches []onDemandMatch) {
 // onDemandOutOfRange is true when the search bounds intersect neither any
 // agency's stop bounds nor any service's bounds. CheckIfOutOfBounds alone is
 // wrong here: Alexandria has one stop inside a ~50 km zone. No bounds at all
-// means false.
-func (api *RestAPI) onDemandOutOfRange(bounds geo.CoordinateBounds, idx *gtfs.FlexIndex) bool {
+// means false. candidateServiceIDs is idx.ServiceBoundsOverlapping(bounds),
+// which the caller has already computed for matching.
+func (api *RestAPI) onDemandOutOfRange(bounds geo.CoordinateBounds, idx *gtfs.FlexIndex, candidateServiceIDs []string) bool {
 	regions := api.GtfsManager.GetRegionBounds()
 	if len(regions) == 0 && len(idx.ServiceBounds) == 0 {
 		return false
@@ -216,5 +219,5 @@ func (api *RestAPI) onDemandOutOfRange(bounds geo.CoordinateBounds, idx *gtfs.Fl
 			return false
 		}
 	}
-	return len(idx.ServiceBoundsOverlapping(bounds)) == 0
+	return len(candidateServiceIDs) == 0
 }
