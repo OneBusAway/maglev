@@ -1721,6 +1721,22 @@ FROM ondemand_stop_services oss
 JOIN stops s ON s.id = oss.stop_id
 ORDER BY oss.service_id, oss.stop_id;
 
+-- name: ListInertOnDemandRuleCalendars :many
+-- Rule calendars that compile to no /ondemand calendar: no calendar row with a
+-- service day and no added date. The /ondemand builder drops such rules.
+SELECT DISTINCT r.service_id, r.gtfs_service_id
+FROM ondemand_rules r
+WHERE NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = r.gtfs_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+AND NOT EXISTS (
+    SELECT 1 FROM calendar_dates cd
+    WHERE cd.service_id = r.gtfs_service_id AND cd.exception_type = 1
+)
+ORDER BY r.service_id, r.gtfs_service_id;
+
 -- name: ListOnDemandServiceLocationIDs :many
 SELECT DISTINCT t.route_id AS service_id, fst.location_id
 FROM flex_stop_times fst

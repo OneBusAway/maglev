@@ -6269,6 +6269,51 @@ func (q *Queries) ListAgencyIds(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listInertOnDemandRuleCalendars = `-- name: ListInertOnDemandRuleCalendars :many
+SELECT DISTINCT r.service_id, r.gtfs_service_id
+FROM ondemand_rules r
+WHERE NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = r.gtfs_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+AND NOT EXISTS (
+    SELECT 1 FROM calendar_dates cd
+    WHERE cd.service_id = r.gtfs_service_id AND cd.exception_type = 1
+)
+ORDER BY r.service_id, r.gtfs_service_id
+`
+
+type ListInertOnDemandRuleCalendarsRow struct {
+	ServiceID     string
+	GtfsServiceID string
+}
+
+// Rule calendars that compile to no /ondemand calendar: no calendar row with a
+// service day and no added date. The /ondemand builder drops such rules.
+func (q *Queries) ListInertOnDemandRuleCalendars(ctx context.Context) ([]ListInertOnDemandRuleCalendarsRow, error) {
+	rows, err := q.query(ctx, q.listInertOnDemandRuleCalendarsStmt, listInertOnDemandRuleCalendars)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInertOnDemandRuleCalendarsRow
+	for rows.Next() {
+		var i ListInertOnDemandRuleCalendarsRow
+		if err := rows.Scan(&i.ServiceID, &i.GtfsServiceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLocations = `-- name: ListLocations :many
 SELECT id, name, description, min_lat, max_lat, min_lon, max_lon, geometry FROM locations ORDER BY id
 `

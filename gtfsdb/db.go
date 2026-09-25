@@ -474,6 +474,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listAgencyIdsStmt, err = db.PrepareContext(ctx, listAgencyIds); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAgencyIds: %w", err)
 	}
+	if q.listInertOnDemandRuleCalendarsStmt, err = db.PrepareContext(ctx, listInertOnDemandRuleCalendars); err != nil {
+		return nil, fmt.Errorf("error preparing query ListInertOnDemandRuleCalendars: %w", err)
+	}
 	if q.listLocationsStmt, err = db.PrepareContext(ctx, listLocations); err != nil {
 		return nil, fmt.Errorf("error preparing query ListLocations: %w", err)
 	}
@@ -1274,6 +1277,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listAgencyIdsStmt: %w", cerr)
 		}
 	}
+	if q.listInertOnDemandRuleCalendarsStmt != nil {
+		if cerr := q.listInertOnDemandRuleCalendarsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listInertOnDemandRuleCalendarsStmt: %w", cerr)
+		}
+	}
 	if q.listLocationsStmt != nil {
 		if cerr := q.listLocationsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listLocationsStmt: %w", cerr)
@@ -1538,6 +1546,7 @@ type Queries struct {
 	getWhereAgencyIDsForStopsStmt                 *sql.Stmt
 	listAgenciesStmt                              *sql.Stmt
 	listAgencyIdsStmt                             *sql.Stmt
+	listInertOnDemandRuleCalendarsStmt            *sql.Stmt
 	listLocationsStmt                             *sql.Stmt
 	listOnDemandServiceLocationIDsStmt            *sql.Stmt
 	listOnDemandServiceStopPointsStmt             *sql.Stmt
@@ -1709,6 +1718,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getWhereAgencyIDsForStopsStmt:                 q.getWhereAgencyIDsForStopsStmt,
 		listAgenciesStmt:                              q.listAgenciesStmt,
 		listAgencyIdsStmt:                             q.listAgencyIdsStmt,
+		listInertOnDemandRuleCalendarsStmt:            q.listInertOnDemandRuleCalendarsStmt,
 		listLocationsStmt:                             q.listLocationsStmt,
 		listOnDemandServiceLocationIDsStmt:            q.listOnDemandServiceLocationIDsStmt,
 		listOnDemandServiceStopPointsStmt:             q.listOnDemandServiceStopPointsStmt,
