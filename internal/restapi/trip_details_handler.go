@@ -366,6 +366,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	api.attachOnDemandPointersToReferences(references)
 	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }

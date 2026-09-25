@@ -85,6 +85,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	slices.SortFunc(results, func(a, b models.Route) int {
 		return strings.Compare(a.ID, b.ID)
 	})
+	api.attachOnDemandPointers(results, nil)
 	response := models.NewListResponseWithRange(results, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
