@@ -53,8 +53,9 @@ func (data *GtfsData) rows() *feedRows {
 // errStopped ends a stream early when the rows' consumer stops reading.
 var errStopped = errors.New("stopped reading")
 
-// stopTimes yields the stop times of the stored trips, one trip at a time,
-// and records each trip's ends.
+// stopTimes yields the timed stop times of the stored trips, one trip at a
+// time, and records each trip's ends. A trip with only windowed (flex)
+// records has no ends, so the block indexes skip it.
 func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 	return func(yield func(CreateStopTimeParams) bool) {
 		err := r.stream.EachTripStopTimes(func(tripIndex int, stopTimes []gtfs.ScheduledStopTime) error {
@@ -62,8 +63,12 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 			if !r.storedTrips[trip.ID] {
 				return nil
 			}
-			r.tripEnds = append(r.tripEnds, newTripEnds(trip, stopTimes[0], stopTimes[len(stopTimes)-1]))
-			for _, stopTime := range stopTimes {
+			timed := timedStopTimes(stopTimes)
+			if len(timed) == 0 {
+				return nil
+			}
+			r.tripEnds = append(r.tripEnds, newTripEnds(trip, timed[0], timed[len(timed)-1]))
+			for _, stopTime := range timed {
 				if !yield(stopTimeParams(trip.ID, stopTime)) {
 					return errStopped
 				}
