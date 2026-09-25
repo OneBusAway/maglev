@@ -9,6 +9,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/geo"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -24,8 +25,52 @@ type geoPoint struct {
 // onDemandBuildOptions controls what a builder run embeds in references.
 type onDemandBuildOptions struct {
 	GeometryDetail GeometryDetail
-	// QueryPoint, when set, fills distanceToArea and nearestPointOnBoundary.
-	QueryPoint *geoPoint
+	// AreaDistances, when set, fills distanceToArea and nearestPointOnBoundary.
+	AreaDistances *areaDistances
+}
+
+// areaDistance is a query point's relation to one zone's full geometry.
+type areaDistance struct {
+	Inside     bool
+	Meters     float64 // 0 inside
+	NearestLon float64 // nearest boundary point, set only outside
+	NearestLat float64
+}
+
+// areaDistances measures one query point against the zones of one FlexIndex
+// snapshot, at most once per zone per request: matching and the references
+// builder both need the result, and a full zone can have thousands of vertices.
+type areaDistances struct {
+	index  *gtfs.FlexIndex
+	point  geoPoint
+	byArea map[string]areaDistance
+}
+
+func newAreaDistances(index *gtfs.FlexIndex, point geoPoint) *areaDistances {
+	return &areaDistances{index: index, point: point, byArea: make(map[string]areaDistance)}
+}
+
+func (distances *areaDistances) of(area *gtfs.FlexArea) areaDistance {
+	if cached, ok := distances.byArea[area.ID]; ok {
+		return cached
+	}
+	distance := areaDistance{Inside: true}
+	if !geo.PointInPolygon(distances.point.Lat, distances.point.Lon, area.Polygons) {
+		meters, lon, lat := geo.NearestPointOnBoundary(distances.point.Lat, distances.point.Lon, area.Polygons)
+		distance = areaDistance{Meters: meters, NearestLon: lon, NearestLat: lat}
+	}
+	distances.byArea[area.ID] = distance
+	return distance
+}
+
+// ofLocation measures a bare location id; false when the snapshot has no
+// parsed zone for it.
+func (distances *areaDistances) ofLocation(locationID string) (areaDistance, bool) {
+	area := distances.index.FlexArea(locationID)
+	if area == nil {
+		return areaDistance{}, false
+	}
+	return distances.of(area), true
 }
 
 // agencyScopedID pairs a bare id with the agency that prefixes it on the wire.
@@ -430,8 +475,8 @@ func (api *RestAPI) serviceAreaReference(ctx context.Context, location gtfsdb.Lo
 		// NULL means the feed geometry already met the display target.
 		area.Geometry = validStoredGeometry(ctx, location.ID, nulls.StringOrDefault(location.GeometrySimplified, location.Geometry))
 	}
-	if opts.QueryPoint != nil {
-		api.applyAreaDistance(&area, location.ID, *opts.QueryPoint)
+	if opts.AreaDistances != nil {
+		applyAreaDistance(&area, location.ID, opts.AreaDistances)
 	}
 	return area
 }
@@ -449,19 +494,15 @@ func validStoredGeometry(ctx context.Context, locationID, geometry string) json.
 
 // applyAreaDistance fills distanceToArea (0 inside) and, outside, the nearest
 // boundary point, always against the full geometry.
-func (api *RestAPI) applyAreaDistance(area *models.ServiceArea, locationID string, point geoPoint) {
-	flexArea := api.GtfsManager.FlexIndex().FlexArea(locationID)
-	if flexArea == nil {
+func applyAreaDistance(area *models.ServiceArea, locationID string, distances *areaDistances) {
+	distance, ok := distances.ofLocation(locationID)
+	if !ok {
 		return
 	}
-	if geo.PointInPolygon(point.Lat, point.Lon, flexArea.Polygons) {
-		zero := 0.0
-		area.DistanceToArea = &zero
-		return
+	area.DistanceToArea = &distance.Meters
+	if !distance.Inside {
+		area.NearestPointOnBoundary = &[2]float64{distance.NearestLon, distance.NearestLat}
 	}
-	distance, lon, lat := geo.NearestPointOnBoundary(point.Lat, point.Lon, flexArea.Polygons)
-	area.DistanceToArea = &distance
-	area.NearestPointOnBoundary = &[2]float64{lon, lat}
 }
 
 // onDemandLocationGroup is a referenced group with its member stop ids.
