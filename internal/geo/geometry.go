@@ -105,3 +105,13 @@ func IsOutOfBounds(inner, outer CoordinateBounds) bool {
 		inner.MaxLon < outer.MinLon ||
 		inner.MinLon > outer.MaxLon
 }
+
+// UnionBounds returns the smallest box containing both a and b.
+func UnionBounds(a, b CoordinateBounds) CoordinateBounds {
+	return CoordinateBounds{
+		MinLat: math.Min(a.MinLat, b.MinLat),
+		MaxLat: math.Max(a.MaxLat, b.MaxLat),
+		MinLon: math.Min(a.MinLon, b.MinLon),
+		MaxLon: math.Max(a.MaxLon, b.MaxLon),
+	}
+}

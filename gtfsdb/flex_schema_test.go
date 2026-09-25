@@ -104,3 +104,43 @@ func TestNewClient_InvalidatesPreFlexImportOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, parsed.Hash, metadata.FileHash)
 }
+
+// A flex feed imported before the flex tables existed kept none of its flex
+// records; the one-time invalidation must make the next import store them.
+func TestNewClient_PreFlexImportOfFlexFeedGainsFlexTables(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "alexandria.db")
+	flexTables := []string{
+		"ondemand_stop_services", "ondemand_rules", "ondemand_services", "flex_stop_times",
+		"location_group_stops", "location_groups", "locations", "booking_rules",
+	}
+
+	client, err := NewClient(Config{DBPath: dbPath, Env: appconf.Development})
+	require.NoError(t, err)
+	feedBytes, err := os.ReadFile("../testdata/alexandria-flex.zip")
+	require.NoError(t, err)
+	parsed, err := ParseGtfsData(feedBytes, "test-alexandria")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(ctx, parsed)
+	require.NoError(t, err)
+
+	// Stand in for the pre-flex import: same feed, empty flex tables, old version.
+	for _, table := range flexTables {
+		_, err = client.DB.ExecContext(ctx, "DELETE FROM "+table)
+		require.NoError(t, err, table)
+	}
+	_, err = client.DB.ExecContext(ctx, "PRAGMA user_version = 0")
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+
+	client, err = NewClient(Config{DBPath: dbPath, Env: appconf.Development})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	changed, err := client.StoreGtfsData(ctx, parsed)
+	require.NoError(t, err)
+	assert.True(t, changed, "the unchanged feed must be reimported")
+	for _, table := range []string{"ondemand_services", "ondemand_rules", "flex_stop_times", "locations", "booking_rules"} {
+		assert.Positive(t, countRows(t, client, table), "%s is populated after the reimport", table)
+	}
+}

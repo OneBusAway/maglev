@@ -315,3 +315,27 @@ func TestStoreGtfsData_GroupMemberWithoutCoordinatesGetsNoAgency(t *testing.T) {
 	assert.Contains(t, agencyStops, "s1")
 	assert.NotContains(t, agencyStops, "s3", "an unstored stop cannot join the stop agency index")
 }
+
+// A stop a fixed route serves keeps only that route's agency in stop_agencies
+// when another agency's flex rules reference it; a flex-only stop is indexed
+// under the flex service's agency.
+func TestStoreGtfsData_FlexStopAgenciesKeepFixedRouteAgency(t *testing.T) {
+	client := newTestClientWithBytes(t, flexfixtures.ZipBytes(t, flexfixtures.TwoAgencyFiles()), "flex-two-agency")
+
+	rows, err := client.DB.Query("SELECT stop_id, agency_id FROM stop_agencies ORDER BY stop_id, agency_id")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var indexed []string
+	for rows.Next() {
+		var stopID, agencyID string
+		require.NoError(t, rows.Scan(&stopID, &agencyID))
+		indexed = append(indexed, agencyID+"_"+stopID)
+	}
+	require.NoError(t, rows.Err())
+
+	assert.Equal(t, []string{
+		flexfixtures.TAFixedAgencyID + "_" + flexfixtures.TASharedStopID,
+		flexfixtures.TAFlexAgencyID + "_" + flexfixtures.TAFlexStopID,
+		flexfixtures.TAFixedAgencyID + "_" + flexfixtures.TAFixedStopID,
+	}, indexed)
+}

@@ -198,7 +198,18 @@ FROM
     JOIN ondemand_services ON ondemand_services.id = ondemand_stop_services.service_id
     -- Pointers may name stops that were never stored (no coordinates);
     -- stop_agencies has a foreign key to stops.
-    JOIN stops ON stops.id = ondemand_stop_services.stop_id;
+    JOIN stops ON stops.id = ondemand_stop_services.stop_id
+WHERE
+    -- A stop a fixed route serves keeps that route's agency: adding the flex
+    -- service's agency could change its /where id (MIN rule) and list it under
+    -- an agency whose /where/stop lookup 404s. Only flex-only stops fall back.
+    NOT EXISTS (
+        SELECT 1
+        FROM stop_times
+        JOIN trips ON stop_times.trip_id = trips.id
+        JOIN routes ON trips.route_id = routes.id
+        WHERE stop_times.stop_id = ondemand_stop_services.stop_id
+    );
 
 -- name: CreateCalendarDate :one
 INSERT
@@ -1692,6 +1703,15 @@ SELECT * FROM calendar WHERE id IN (sqlc.slice('service_ids')) ORDER BY id;
 -- name: GetCalendarDatesForServiceIDs :many
 SELECT * FROM calendar_dates WHERE service_id IN (sqlc.slice('service_ids')) ORDER BY service_id, date;
 
+-- name: GetWhereAgencyIDsForStops :many
+-- The agency each stop's /where id carries: the same MIN rule searchStopsByName
+-- (fts_queries.go) applies to stop_agencies.
+SELECT stop_id, CAST(MIN(agency_id) AS TEXT) AS agency_id
+FROM stop_agencies
+WHERE stop_id IN (sqlc.slice('stop_ids'))
+GROUP BY stop_id
+ORDER BY stop_id;
+
 -- name: ListOnDemandStopServices :many
 SELECT * FROM ondemand_stop_services ORDER BY stop_id, service_id;
 
@@ -1700,6 +1720,36 @@ SELECT oss.service_id, oss.stop_id, s.lat, s.lon
 FROM ondemand_stop_services oss
 JOIN stops s ON s.id = oss.stop_id
 ORDER BY oss.service_id, oss.stop_id;
+
+-- name: ListInertOnDemandRuleCalendars :many
+-- Rule calendars that compile to no /ondemand calendar: no calendar row with a
+-- service day and no added date. The /ondemand builder drops such rules.
+SELECT DISTINCT r.service_id, r.gtfs_service_id
+FROM ondemand_rules r
+WHERE NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = r.gtfs_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+AND NOT EXISTS (
+    SELECT 1 FROM calendar_dates cd
+    WHERE cd.service_id = r.gtfs_service_id AND cd.exception_type = 1
+)
+ORDER BY r.service_id, r.gtfs_service_id;
+
+-- name: ListBookingRulesWithoutPriorNoticeCalendar :many
+-- Booking rules whose prior-notice service has no calendar row with a service
+-- day, so no base calendar is emitted for it and the builder nulls
+-- priorNoticeCalendarId.
+SELECT b.id, b.prior_notice_service_id
+FROM booking_rules b
+WHERE b.prior_notice_service_id IS NOT NULL AND b.prior_notice_service_id != ''
+AND NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = b.prior_notice_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+ORDER BY b.id;
 
 -- name: ListOnDemandServiceLocationIDs :many
 SELECT DISTINCT t.route_id AS service_id, fst.location_id

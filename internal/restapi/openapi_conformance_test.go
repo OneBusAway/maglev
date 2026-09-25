@@ -26,12 +26,18 @@ import (
 // specPath is the relative path to the OpenAPI spec from this test package.
 var specPath = filepath.Join("../../testdata", "openapi.yml")
 
-// loadOpenAPISpec loads and validates the OpenAPI specification.
+// loadOpenAPISpec loads and validates the upstream OpenAPI specification.
 func loadOpenAPISpec(t *testing.T) *openapi3.T {
 	t.Helper()
+	return loadOpenAPISpecFrom(t, specPath)
+}
+
+// loadOpenAPISpecFrom loads and validates an OpenAPI document from disk.
+func loadOpenAPISpecFrom(t *testing.T, path string) *openapi3.T {
+	t.Helper()
 	loader := openapi3.NewLoader()
-	doc, err := loader.LoadFromFile(specPath)
-	require.NoError(t, err, "Failed to load OpenAPI spec from %s", specPath)
+	doc, err := loader.LoadFromFile(path)
+	require.NoError(t, err, "Failed to load OpenAPI spec from %s", path)
 
 	err = doc.Validate(loader.Context)
 	require.NoError(t, err, "OpenAPI spec validation failed")

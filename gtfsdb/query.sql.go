@@ -54,6 +54,17 @@ FROM
     -- Pointers may name stops that were never stored (no coordinates);
     -- stop_agencies has a foreign key to stops.
     JOIN stops ON stops.id = ondemand_stop_services.stop_id
+WHERE
+    -- A stop a fixed route serves keeps that route's agency: adding the flex
+    -- service's agency could change its /where id (MIN rule) and list it under
+    -- an agency whose /where/stop lookup 404s. Only flex-only stops fall back.
+    NOT EXISTS (
+        SELECT 1
+        FROM stop_times
+        JOIN trips ON stop_times.trip_id = trips.id
+        JOIN routes ON trips.route_id = routes.id
+        WHERE stop_times.stop_id = ondemand_stop_services.stop_id
+    )
 `
 
 func (q *Queries) BuildStopAgencies(ctx context.Context) error {
@@ -6137,6 +6148,54 @@ func (q *Queries) GetTripsInBlock(ctx context.Context, arg GetTripsInBlockParams
 	return items, nil
 }
 
+const getWhereAgencyIDsForStops = `-- name: GetWhereAgencyIDsForStops :many
+SELECT stop_id, CAST(MIN(agency_id) AS TEXT) AS agency_id
+FROM stop_agencies
+WHERE stop_id IN (/*SLICE:stop_ids*/?)
+GROUP BY stop_id
+ORDER BY stop_id
+`
+
+type GetWhereAgencyIDsForStopsRow struct {
+	StopID   string
+	AgencyID string
+}
+
+// The agency each stop's /where id carries: the same MIN rule searchStopsByName
+// (fts_queries.go) applies to stop_agencies.
+func (q *Queries) GetWhereAgencyIDsForStops(ctx context.Context, stopIds []string) ([]GetWhereAgencyIDsForStopsRow, error) {
+	query := getWhereAgencyIDsForStops
+	var queryParams []interface{}
+	if len(stopIds) > 0 {
+		for _, v := range stopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(stopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetWhereAgencyIDsForStopsRow
+	for rows.Next() {
+		var i GetWhereAgencyIDsForStopsRow
+		if err := rows.Scan(&i.StopID, &i.AgencyID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgencies = `-- name: ListAgencies :many
 SELECT
     id, name, url, timezone, lang, phone, fare_url, email
@@ -6200,6 +6259,94 @@ func (q *Queries) ListAgencyIds(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBookingRulesWithoutPriorNoticeCalendar = `-- name: ListBookingRulesWithoutPriorNoticeCalendar :many
+SELECT b.id, b.prior_notice_service_id
+FROM booking_rules b
+WHERE b.prior_notice_service_id IS NOT NULL AND b.prior_notice_service_id != ''
+AND NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = b.prior_notice_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+ORDER BY b.id
+`
+
+type ListBookingRulesWithoutPriorNoticeCalendarRow struct {
+	ID                   string
+	PriorNoticeServiceID sql.NullString
+}
+
+// Booking rules whose prior-notice service has no calendar row with a service
+// day, so no base calendar is emitted for it and the builder nulls
+// priorNoticeCalendarId.
+func (q *Queries) ListBookingRulesWithoutPriorNoticeCalendar(ctx context.Context) ([]ListBookingRulesWithoutPriorNoticeCalendarRow, error) {
+	rows, err := q.query(ctx, q.listBookingRulesWithoutPriorNoticeCalendarStmt, listBookingRulesWithoutPriorNoticeCalendar)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBookingRulesWithoutPriorNoticeCalendarRow
+	for rows.Next() {
+		var i ListBookingRulesWithoutPriorNoticeCalendarRow
+		if err := rows.Scan(&i.ID, &i.PriorNoticeServiceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInertOnDemandRuleCalendars = `-- name: ListInertOnDemandRuleCalendars :many
+SELECT DISTINCT r.service_id, r.gtfs_service_id
+FROM ondemand_rules r
+WHERE NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = r.gtfs_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+AND NOT EXISTS (
+    SELECT 1 FROM calendar_dates cd
+    WHERE cd.service_id = r.gtfs_service_id AND cd.exception_type = 1
+)
+ORDER BY r.service_id, r.gtfs_service_id
+`
+
+type ListInertOnDemandRuleCalendarsRow struct {
+	ServiceID     string
+	GtfsServiceID string
+}
+
+// Rule calendars that compile to no /ondemand calendar: no calendar row with a
+// service day and no added date. The /ondemand builder drops such rules.
+func (q *Queries) ListInertOnDemandRuleCalendars(ctx context.Context) ([]ListInertOnDemandRuleCalendarsRow, error) {
+	rows, err := q.query(ctx, q.listInertOnDemandRuleCalendarsStmt, listInertOnDemandRuleCalendars)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInertOnDemandRuleCalendarsRow
+	for rows.Next() {
+		var i ListInertOnDemandRuleCalendarsRow
+		if err := rows.Scan(&i.ServiceID, &i.GtfsServiceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
