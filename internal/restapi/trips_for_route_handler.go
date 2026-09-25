@@ -467,6 +467,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	} else {
 		references = *models.NewEmptyReferences()
 	}
+	api.attachOnDemandPointersToReferences(&references)
 	response := models.NewListResponse(result, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
@@ -481,6 +482,7 @@ func (api *RestAPI) sendEmptyTripsForRouteList(w http.ResponseWriter, r *http.Re
 	} else {
 		references = *models.NewEmptyReferences()
 	}
+	api.attachOnDemandPointersToReferences(&references)
 	response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

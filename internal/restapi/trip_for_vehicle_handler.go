@@ -135,6 +135,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		references.Situations = situationRefs
 	}
 
+	api.attachOnDemandPointersToReferences(references)
 	response := models.NewEntryResponse(entry, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
