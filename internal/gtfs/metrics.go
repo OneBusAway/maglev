@@ -193,9 +193,10 @@ type realtimeFeedState struct {
 }
 
 // snapshotRealtimeFeedState enumerates every feed the manager knows about.
-// The union of all five per-feed maps is needed: any one alone can miss a
-// vehicle-positions-only feed (no feedTrips entry) or a configured feed
-// that has never fetched (only feedAgencyFilter entry).
+// The union of the enabled feed config and the per-feed maps is needed: the
+// maps alone miss an unfiltered feed that has never fetched (no entry in any
+// of them), and any one map alone can miss a vehicle-positions-only feed (no
+// feedTrips entry).
 func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
@@ -215,6 +216,9 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 	}
 	for feedID := range manager.feedAgencyFilter {
 		feedIDs[feedID] = true
+	}
+	for _, feedCfg := range manager.config.enabledFeeds() {
+		feedIDs[feedCfg.ID] = true
 	}
 
 	states := make([]realtimeFeedState, 0, len(feedIDs))
