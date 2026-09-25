@@ -19,7 +19,7 @@ type onDemandSearch struct {
 	Viewport bool
 	Point    geoPoint
 	Radius   float64
-	Bounds   utils.CoordinateBounds
+	Bounds   geo.CoordinateBounds
 }
 
 func newOnDemandSearch(loc *gtfs.LocationParams) onDemandSearch {
@@ -30,7 +30,7 @@ func newOnDemandSearch(loc *gtfs.LocationParams) onDemandSearch {
 		return onDemandSearch{
 			Viewport: true,
 			Point:    point,
-			Bounds:   utils.CalculateBoundsFromSpan(loc.Lat, loc.Lon, loc.LatSpan/2, loc.LonSpan/2),
+			Bounds:   geo.CalculateBoundsFromSpan(loc.Lat, loc.Lon, loc.LatSpan/2, loc.LonSpan/2),
 		}
 	}
 	radius := loc.Radius
@@ -41,7 +41,7 @@ func newOnDemandSearch(loc *gtfs.LocationParams) onDemandSearch {
 	return onDemandSearch{
 		Point:  point,
 		Radius: radius,
-		Bounds: utils.CalculateBounds(loc.Lat, loc.Lon, radius),
+		Bounds: geo.CalculateBounds(loc.Lat, loc.Lon, radius),
 	}
 }
 
@@ -152,7 +152,7 @@ func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, distances *a
 	}
 	point := distances.point
 	for _, stop := range stops {
-		if utils.Distance(point.Lat, point.Lon, stop.Lat, stop.Lon) <= radius {
+		if geo.Distance(point.Lat, point.Lon, stop.Lat, stop.Lon) <= radius {
 			return models.MatchReasonStopWithinRadius, true
 		}
 	}
@@ -166,14 +166,14 @@ func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, distances *a
 
 // matchViewport applies the viewport-mode grounds in strength order:
 // areaIntersectsViewport > stopWithinViewport. Near-miss matching does not apply.
-func matchViewport(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, bounds utils.CoordinateBounds) (string, bool) {
+func matchViewport(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, bounds geo.CoordinateBounds) (string, bool) {
 	for _, area := range areas {
 		if geo.PolygonIntersectsBounds(area.Polygons, bounds) {
 			return models.MatchReasonAreaIntersectsViewport, true
 		}
 	}
 	for _, stop := range stops {
-		if utils.BoundsContain(bounds, stop.Lat, stop.Lon) {
+		if geo.BoundsContain(bounds, stop.Lat, stop.Lon) {
 			return models.MatchReasonStopWithinViewport, true
 		}
 	}
@@ -205,14 +205,14 @@ func applyMatchReasons(list []models.OnDemandService, matches []onDemandMatch) {
 // agency's stop bounds nor any service's bounds. CheckIfOutOfBounds alone is
 // wrong here: Alexandria has one stop inside a ~50 km zone. No bounds at all
 // means false.
-func (api *RestAPI) onDemandOutOfRange(bounds utils.CoordinateBounds, idx *gtfs.FlexIndex) bool {
+func (api *RestAPI) onDemandOutOfRange(bounds geo.CoordinateBounds, idx *gtfs.FlexIndex) bool {
 	regions := api.GtfsManager.GetRegionBounds()
 	if len(regions) == 0 && len(idx.ServiceBounds) == 0 {
 		return false
 	}
 	for _, region := range regions {
-		regionBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
-		if !utils.IsOutOfBounds(bounds, regionBounds) {
+		regionBounds := geo.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
+		if !geo.IsOutOfBounds(bounds, regionBounds) {
 			return false
 		}
 	}
