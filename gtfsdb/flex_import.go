@@ -2,7 +2,6 @@ package gtfsdb
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -156,12 +155,12 @@ func bookingRuleParams(rule gtfs.BookingRule) CreateBookingRuleParams {
 	return CreateBookingRuleParams{
 		ID:                     rule.Id,
 		BookingType:            int64(rule.Type),
-		PriorNoticeDurationMin: nullInt64FromPtr(rule.PriorNoticeDurationMin),
-		PriorNoticeDurationMax: nullInt64FromPtr(rule.PriorNoticeDurationMax),
-		PriorNoticeLastDay:     nullInt64FromPtr(rule.PriorNoticeLastDay),
-		PriorNoticeLastTime:    nullInt64FromPtr(rule.PriorNoticeLastTime),
-		PriorNoticeStartDay:    nullInt64FromPtr(rule.PriorNoticeStartDay),
-		PriorNoticeStartTime:   nullInt64FromPtr(rule.PriorNoticeStartTime),
+		PriorNoticeDurationMin: nulls.Int64FromPtr(rule.PriorNoticeDurationMin),
+		PriorNoticeDurationMax: nulls.Int64FromPtr(rule.PriorNoticeDurationMax),
+		PriorNoticeLastDay:     nulls.Int64FromPtr(rule.PriorNoticeLastDay),
+		PriorNoticeLastTime:    nulls.Int64FromPtr(rule.PriorNoticeLastTime),
+		PriorNoticeStartDay:    nulls.Int64FromPtr(rule.PriorNoticeStartDay),
+		PriorNoticeStartTime:   nulls.Int64FromPtr(rule.PriorNoticeStartTime),
 		PriorNoticeServiceID:   nulls.NonEmptyString(rule.PriorNoticeServiceId),
 		Message:                nulls.NonEmptyString(rule.Message),
 		PickupMessage:          nulls.NonEmptyString(rule.PickupMessage),
@@ -210,8 +209,8 @@ func flexStopTimeParams(tripID string, st gtfs.ScheduledStopTime) CreateFlexStop
 		EndPickupDropOffWindow:   int64(*st.EndPickupDropOffWindow),
 		PickupType:               int64(st.PickupType),
 		DropOffType:              int64(st.DropOffType),
-		SafeDurationFactor:       nullFloat64FromPtr(st.SafeDurationFactor),
-		SafeDurationOffset:       nullFloat64FromPtr(st.SafeDurationOffset),
+		SafeDurationFactor:       nulls.Float64FromPtr(st.SafeDurationFactor),
+		SafeDurationOffset:       nulls.Float64FromPtr(st.SafeDurationOffset),
 	}
 	if st.Stop != nil {
 		params.StopID = nulls.String(st.Stop.Id)
@@ -229,22 +228,6 @@ func flexStopTimeParams(tripID string, st gtfs.ScheduledStopTime) CreateFlexStop
 		params.DropOffBookingRuleID = nulls.String(st.DropOffBookingRule.Id)
 	}
 	return params
-}
-
-// nullInt64FromPtr maps an optional integer-like value (int32 counts, or a
-// time.Duration in nanoseconds since midnight) to its nullable column.
-func nullInt64FromPtr[T ~int32 | ~int64](value *T) sql.NullInt64 {
-	if value == nil {
-		return sql.NullInt64{}
-	}
-	return nulls.Int64(int64(*value))
-}
-
-func nullFloat64FromPtr(value *float64) sql.NullFloat64 {
-	if value == nil {
-		return sql.NullFloat64{}
-	}
-	return sql.NullFloat64{Float64: *value, Valid: true}
 }
 
 // storeOnDemand writes the compiled services, rules and stop pointers. It runs
@@ -305,22 +288,15 @@ func onDemandRuleParams(rule CompiledRule) CreateOnDemandRuleParams {
 		FromKind:             int64(rule.FromKind),
 		ToID:                 rule.ToID,
 		ToKind:               int64(rule.ToKind),
-		StartPickupTime:      nullInt64FromPtr(rule.StartPickupTime),
-		EndPickupTime:        nullInt64FromPtr(rule.EndPickupTime),
-		EndDropOffTime:       nullInt64FromPtr(rule.EndDropOffTime),
+		StartPickupTime:      nulls.Int64FromPtr(rule.StartPickupTime),
+		EndPickupTime:        nulls.Int64FromPtr(rule.EndPickupTime),
+		EndDropOffTime:       nulls.Int64FromPtr(rule.EndDropOffTime),
 		GtfsServiceID:        rule.GTFSServiceID,
 		PickupType:           rule.PickupType,
 		DropOffType:          rule.DropOffType,
-		PickupBookingRuleID:  nullStringFromPtr(rule.PickupBookingRuleID),
-		DropOffBookingRuleID: nullStringFromPtr(rule.DropOffBookingRuleID),
-		SafeDurationFactor:   nullFloat64FromPtr(rule.SafeDurationFactor),
-		SafeDurationOffset:   nullFloat64FromPtr(rule.SafeDurationOffset),
+		PickupBookingRuleID:  nulls.StringFromPtr(rule.PickupBookingRuleID),
+		DropOffBookingRuleID: nulls.StringFromPtr(rule.DropOffBookingRuleID),
+		SafeDurationFactor:   nulls.Float64FromPtr(rule.SafeDurationFactor),
+		SafeDurationOffset:   nulls.Float64FromPtr(rule.SafeDurationOffset),
 	}
-}
-
-func nullStringFromPtr(value *string) sql.NullString {
-	if value == nil {
-		return sql.NullString{}
-	}
-	return nulls.String(*value)
 }

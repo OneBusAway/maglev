@@ -81,3 +81,29 @@ func IntOrNil(ni sql.NullInt64) *int {
 	value := int(ni.Int64)
 	return &value
 }
+
+// Int64FromPtr maps an optional integer-like value (an int32 count, or a
+// time.Duration in nanoseconds) to a sql.NullInt64; nil becomes NULL.
+func Int64FromPtr[T ~int32 | ~int64](value *T) sql.NullInt64 {
+	if value == nil {
+		return sql.NullInt64{}
+	}
+	return Int64(int64(*value))
+}
+
+// Float64FromPtr maps an optional float64 to a sql.NullFloat64; nil becomes NULL.
+func Float64FromPtr(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
+}
+
+// StringFromPtr maps an optional string to a sql.NullString; nil becomes NULL
+// and a non-nil empty string stays a valid empty string.
+func StringFromPtr(value *string) sql.NullString {
+	if value == nil {
+		return sql.NullString{}
+	}
+	return String(*value)
+}

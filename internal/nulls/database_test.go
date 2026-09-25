@@ -3,6 +3,7 @@ package nulls
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
@@ -42,4 +43,26 @@ func TestFloat64OrNil(t *testing.T) {
 func TestIntOrNil(t *testing.T) {
 	assert.Equal(t, 90, *IntOrNil(sql.NullInt64{Int64: 90, Valid: true}))
 	assert.Nil(t, IntOrNil(sql.NullInt64{Int64: 90, Valid: false}))
+}
+
+func TestInt64FromPtr(t *testing.T) {
+	count := int32(7)
+	duration := 90 * time.Minute
+	assert.Equal(t, sql.NullInt64{Int64: 7, Valid: true}, Int64FromPtr(&count))
+	assert.Equal(t, sql.NullInt64{Int64: int64(duration), Valid: true}, Int64FromPtr(&duration))
+	assert.Equal(t, sql.NullInt64{}, Int64FromPtr[int64](nil))
+}
+
+func TestFloat64FromPtr(t *testing.T) {
+	factor := 1.5
+	assert.Equal(t, sql.NullFloat64{Float64: 1.5, Valid: true}, Float64FromPtr(&factor))
+	assert.Equal(t, sql.NullFloat64{}, Float64FromPtr(nil))
+}
+
+func TestStringFromPtr(t *testing.T) {
+	id := "rule-1"
+	empty := ""
+	assert.Equal(t, sql.NullString{String: "rule-1", Valid: true}, StringFromPtr(&id))
+	assert.Equal(t, sql.NullString{String: "", Valid: true}, StringFromPtr(&empty))
+	assert.Equal(t, sql.NullString{}, StringFromPtr(nil))
 }
