@@ -121,4 +121,5 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	// --- /api/ondemand: static-data surfaces on the long-cache, static-ETag tier ---
 	mux.Handle("GET /api/ondemand/service/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.onDemandServiceHandler))))
 	mux.Handle("GET /api/ondemand/services-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.onDemandServicesForAgencyHandler))))
+	mux.Handle("GET /api/ondemand/services-for-location.json", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.onDemandServicesForLocationHandler))))
 }
