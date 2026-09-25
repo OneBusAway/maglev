@@ -149,9 +149,23 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// Nothing scheduled in the window: emit the bare envelope without paying
-	// for reference, alert or nearby-stop lookups.
+	// Nothing scheduled in the window: skip alert and nearby-stop lookups, but
+	// still add the queried stop to references so its onDemandServiceIds
+	// pointer (attached below) reaches clients — it's the only path a
+	// flex-only stop that no fixed route serves has to surface its on-demand
+	// services when the window is empty.
 	if !result.Matched {
+		acc.stopIDs[stopCode] = true
+		if err := api.appendStopReferences(ctx, references, arrivalsReferencesInput{
+			fallbackAgencyID: stopAgencyID,
+		}, acc); err != nil {
+			if ctx.Err() != nil {
+				api.clientCanceledResponse(w, r, ctx.Err())
+			} else {
+				api.serverErrorResponse(w, r, err)
+			}
+			return
+		}
 		api.attachOnDemandPointersToReferences(references)
 		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, []string{}, stopID, api.Clock)
 		api.sendResponse(w, r, response)
