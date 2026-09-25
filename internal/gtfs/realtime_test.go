@@ -280,6 +280,19 @@ func TestEnabledFeeds(t *testing.T) {
 	}
 }
 
+func TestConfigFeedAgencyFilters(t *testing.T) {
+	cfg := Config{RTFeeds: []RTFeedConfig{
+		{ID: "filtered", AgencyIDs: []string{"A", "B"}, TripUpdatesURL: "http://example.com/tu", Enabled: true},
+		{ID: "unfiltered", TripUpdatesURL: "http://example.com/tu", Enabled: true},
+		{ID: "disabled", AgencyIDs: []string{"A"}, TripUpdatesURL: "http://example.com/tu", Enabled: false},
+		{ID: "no-urls", AgencyIDs: []string{"A"}, Enabled: true},
+	}}
+
+	assert.Equal(t, map[string]map[string]bool{
+		"filtered": {"A": true, "B": true},
+	}, cfg.feedAgencyFilters(), "only enabled feeds with agency-ids get a filter")
+}
+
 func TestClearFeedData(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
