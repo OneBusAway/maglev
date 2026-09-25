@@ -90,10 +90,17 @@ func TestBuildAvailabilityRules_StopEndpointsTakeTheirWhereAgency(t *testing.T) 
 	assert.Equal(t, []string{"bb_unindexed"}, rules[0].FromIds, "a stop with no stop_agencies row falls back to the service's agency")
 }
 
-func TestBuildAvailabilityRules_UnknownCalendarYieldsEmptyIDs(t *testing.T) {
-	rules := buildAvailabilityRules([]gtfsdb.OndemandRule{ruleRow("ghost", "z1", "z1", time.Hour, 2*time.Hour, "br")}, serviceIDScope{agencyID: "X"}, map[string][]string{})
-	require.Len(t, rules, 1)
-	assert.Equal(t, []string{}, rules[0].CalendarIds)
+func TestBuildAvailabilityRules_DropsRulesWithNoCalendar(t *testing.T) {
+	rows := []gtfsdb.OndemandRule{
+		ruleRow("ghost", "z1", "z1", time.Hour, 2*time.Hour, "br"),
+		ruleRow("ghost", "z1", "z2", time.Hour, 2*time.Hour, "br"),
+		ruleRow("svc", "z1", "z2", time.Hour, 2*time.Hour, "br"),
+	}
+	rules := buildAvailabilityRules(rows, serviceIDScope{agencyID: "X"}, map[string][]string{"svc": {"X_svc"}})
+
+	require.Len(t, rules, 1, "a rule whose calendars compile to nothing is inert and dropped")
+	assert.Equal(t, []string{"X_z2"}, rules[0].ToIds)
+	assert.Equal(t, []string{"X_svc"}, rules[0].CalendarIds, "a rule keeps the calendars that did compile")
 	assert.Empty(t, buildAvailabilityRules(nil, serviceIDScope{agencyID: "X"}, nil))
 	assert.NotNil(t, buildAvailabilityRules(nil, serviceIDScope{agencyID: "X"}, nil), "rules is never null on the wire")
 }

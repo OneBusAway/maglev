@@ -194,6 +194,26 @@ func TestBuildOnDemandServices_TwoAgenciesSharingAZone(t *testing.T) {
 		"a prior-notice service with no rows compiles to no calendar and no error")
 }
 
+func TestBuildOnDemandServices_ServiceWithOnlyInertRulesKeepsEmptyRules(t *testing.T) {
+	files := twoAgencySharedZoneFiles()
+	files["calendar.txt"] = "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+		"svc,0,0,0,0,0,0,0,20240101,20991231\n" +
+		// Feed validation needs one active calendar; no trip uses this one.
+		"unused,1,1,1,1,1,1,1,20240101,20991231\n"
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "inert-calendar.zip", files)
+
+	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+
+	require.Equal(t, []string{"a1_r1", "a2_r2"}, ids(list, func(s models.OnDemandService) string { return s.ID }))
+	for _, service := range list {
+		assert.NotNil(t, service.Rules, "rules is never null on the wire")
+		assert.Empty(t, service.Rules, "a calendar with no service days yields no rule")
+	}
+	assert.Empty(t, refs.Calendars)
+	assert.Equal(t, []string{"a1_zone_x", "a2_zone_x"}, ids(refs.ServiceAreas, func(a models.ServiceArea) string { return a.ID }),
+		"the service still carries the zones its records reference")
+}
+
 // zeroRuleDeviatedFiles permits no pickups anywhere, so compilation yields no rules.
 func zeroRuleDeviatedFiles() map[string]string {
 	return map[string]string{
