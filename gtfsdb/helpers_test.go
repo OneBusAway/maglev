@@ -211,6 +211,9 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
     	id TEXT PRIMARY KEY,
     	code TEXT
 	);
+    CREATE TABLE IF NOT EXISTS import_metadata (
+        file_hash TEXT NOT NULL
+    );
 `
 	t.Cleanup(func() {
 		ddl = originalDDL
