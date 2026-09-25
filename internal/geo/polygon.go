@@ -86,12 +86,20 @@ func NearestPointOnBoundary(lat, lon float64, polygons [][][][2]float64) (distan
 func closestPointOnSegment(lon, lat float64, a, b [2]float64, scaleX, scaleY float64) (float64, float64) {
 	px, py := (lon-a[0])*scaleX, (lat-a[1])*scaleY
 	dx, dy := (b[0]-a[0])*scaleX, (b[1]-a[1])*scaleY
-	lengthSquared := dx*dx + dy*dy
-	t := 0.0
-	if lengthSquared > 0 {
-		t = math.Max(0, math.Min(1, (px*dx+py*dy)/lengthSquared))
-	}
+	t := clampedProjection(px, py, dx, dy)
 	return a[0] + t*(b[0]-a[0]), a[1] + t*(b[1]-a[1])
+}
+
+// clampedProjection is the parameter t in [0, 1] of the point on a segment
+// nearest a point, where (px, py) is the point and (dx, dy) the segment end,
+// both relative to the segment start in a planar frame. A zero-length
+// segment projects to t = 0.
+func clampedProjection(px, py, dx, dy float64) float64 {
+	lengthSquared := dx*dx + dy*dy
+	if lengthSquared > 0 {
+		return math.Max(0, math.Min(1, (px*dx+py*dy)/lengthSquared))
+	}
+	return 0
 }
 
 // PolygonIntersectsBounds reports whether the geometry overlaps the bounding

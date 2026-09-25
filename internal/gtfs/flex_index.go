@@ -16,7 +16,7 @@ import (
 // and distance tests. Display geometry is read from the database when needed.
 type FlexArea struct {
 	ID       string // bare location id
-	Bounds   utils.CoordinateBounds
+	Bounds   geo.CoordinateBounds
 	Polygons [][][][2]float64
 }
 
@@ -35,13 +35,13 @@ type FlexStopPoint struct {
 // Combined service ids are built from ondemand_services.agency_id — the
 // service's own agency — never from the requesting stop's or route's agency.
 type FlexIndex struct {
-	Areas           map[string]*FlexArea              // bare location id → area
-	StopServiceIDs  map[string][]string               // bare stop id → sorted combined service ids
-	RouteServiceIDs map[string][]string               // bare route id → sorted combined service ids
-	ServiceBounds   map[string]utils.CoordinateBounds // combined service id → union of area bboxes and stop points
-	ServiceAreaIDs  map[string][]string               // combined service id → sorted bare location ids from its records, each with an entry in Areas
-	ServiceStops    map[string][]FlexStopPoint        // combined service id → rule-referenced stops, ordered by stop id
-	BareServiceIDs  map[string]string                 // combined service id → bare service id
+	Areas           map[string]*FlexArea            // bare location id → area
+	StopServiceIDs  map[string][]string             // bare stop id → sorted combined service ids
+	RouteServiceIDs map[string][]string             // bare route id → sorted combined service ids
+	ServiceBounds   map[string]geo.CoordinateBounds // combined service id → union of area bboxes and stop points
+	ServiceAreaIDs  map[string][]string             // combined service id → sorted bare location ids from its records, each with an entry in Areas
+	ServiceStops    map[string][]FlexStopPoint      // combined service id → rule-referenced stops, ordered by stop id
+	BareServiceIDs  map[string]string               // combined service id → bare service id
 }
 
 // NewEmptyFlexIndex returns an index with no services; every lookup misses.
@@ -50,7 +50,7 @@ func NewEmptyFlexIndex() *FlexIndex {
 		Areas:           map[string]*FlexArea{},
 		StopServiceIDs:  map[string][]string{},
 		RouteServiceIDs: map[string][]string{},
-		ServiceBounds:   map[string]utils.CoordinateBounds{},
+		ServiceBounds:   map[string]geo.CoordinateBounds{},
 		ServiceAreaIDs:  map[string][]string{},
 		ServiceStops:    map[string][]FlexStopPoint{},
 		BareServiceIDs:  map[string]string{},
@@ -140,7 +140,7 @@ func (idx *FlexIndex) loadAreas(ctx context.Context, gtfsDB *gtfsdb.Client, logg
 		}
 		idx.Areas[location.ID] = &FlexArea{
 			ID:       location.ID,
-			Bounds:   utils.CoordinateBounds{MinLat: location.MinLat, MaxLat: location.MaxLat, MinLon: location.MinLon, MaxLon: location.MaxLon},
+			Bounds:   geo.CoordinateBounds{MinLat: location.MinLat, MaxLat: location.MaxLat, MinLon: location.MinLon, MaxLon: location.MaxLon},
 			Polygons: polygons,
 		}
 	}
@@ -167,25 +167,21 @@ func (idx *FlexIndex) loadServiceAreas(ctx context.Context, gtfsDB *gtfsdb.Clien
 	return nil
 }
 
+// loadStopPointers fills StopServiceIDs and ServiceStops from one scan of the
+// stop pointers joined to stops. A pointer to a stop that was never stored (no
+// coordinates) is dropped: such a stop appears in no /where response.
 func (idx *FlexIndex) loadStopPointers(ctx context.Context, gtfsDB *gtfsdb.Client, combinedByBareService map[string]string) error {
-	pointers, err := gtfsDB.Queries.ListOnDemandStopServices(ctx)
-	if err != nil {
-		return fmt.Errorf("list on-demand stop services: %w", err)
-	}
-	for _, pointer := range pointers {
-		if combinedID, ok := combinedByBareService[pointer.ServiceID]; ok {
-			idx.StopServiceIDs[pointer.StopID] = append(idx.StopServiceIDs[pointer.StopID], combinedID)
-		}
-	}
-
 	points, err := gtfsDB.Queries.ListOnDemandServiceStopPoints(ctx)
 	if err != nil {
 		return fmt.Errorf("list on-demand service stop points: %w", err)
 	}
 	for _, point := range points {
-		if combinedID, ok := combinedByBareService[point.ServiceID]; ok {
-			idx.ServiceStops[combinedID] = append(idx.ServiceStops[combinedID], FlexStopPoint{StopID: point.StopID, Lat: point.Lat, Lon: point.Lon})
+		combinedID, ok := combinedByBareService[point.ServiceID]
+		if !ok {
+			continue
 		}
+		idx.StopServiceIDs[point.StopID] = append(idx.StopServiceIDs[point.StopID], combinedID)
+		idx.ServiceStops[combinedID] = append(idx.ServiceStops[combinedID], FlexStopPoint{StopID: point.StopID, Lat: point.Lat, Lon: point.Lon})
 	}
 	return nil
 }
@@ -202,12 +198,12 @@ func (idx *FlexIndex) computeServiceBounds() {
 	}
 	for serviceID, stops := range idx.ServiceStops {
 		for _, stop := range stops {
-			idx.addServiceBounds(serviceID, utils.CoordinateBounds{MinLat: stop.Lat, MaxLat: stop.Lat, MinLon: stop.Lon, MaxLon: stop.Lon})
+			idx.addServiceBounds(serviceID, geo.CoordinateBounds{MinLat: stop.Lat, MaxLat: stop.Lat, MinLon: stop.Lon, MaxLon: stop.Lon})
 		}
 	}
 }
 
-func (idx *FlexIndex) addServiceBounds(serviceID string, bounds utils.CoordinateBounds) {
+func (idx *FlexIndex) addServiceBounds(serviceID string, bounds geo.CoordinateBounds) {
 	if existing, ok := idx.ServiceBounds[serviceID]; ok {
 		bounds = geo.UnionBounds(existing, bounds)
 	}
@@ -245,10 +241,10 @@ func (idx *FlexIndex) FlexArea(locationID string) *FlexArea {
 
 // ServiceBoundsOverlapping returns, sorted, the combined ids of every service
 // whose bounds overlap the given box.
-func (idx *FlexIndex) ServiceBoundsOverlapping(bounds utils.CoordinateBounds) []string {
+func (idx *FlexIndex) ServiceBoundsOverlapping(bounds geo.CoordinateBounds) []string {
 	var matches []string
 	for serviceID, serviceBounds := range idx.ServiceBounds {
-		if !utils.IsOutOfBounds(bounds, serviceBounds) {
+		if !geo.IsOutOfBounds(bounds, serviceBounds) {
 			matches = append(matches, serviceID)
 		}
 	}

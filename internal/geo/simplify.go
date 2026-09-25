@@ -193,10 +193,6 @@ func metersPerDegree(ring [][2]float64) (scaleX, scaleY float64) {
 func pointToSegmentMeters(point, segmentStart, segmentEnd [2]float64, scaleX, scaleY float64) float64 {
 	px, py := (point[0]-segmentStart[0])*scaleX, (point[1]-segmentStart[1])*scaleY
 	dx, dy := (segmentEnd[0]-segmentStart[0])*scaleX, (segmentEnd[1]-segmentStart[1])*scaleY
-	lengthSquared := dx*dx + dy*dy
-	t := 0.0
-	if lengthSquared > 0 {
-		t = math.Max(0, math.Min(1, (px*dx+py*dy)/lengthSquared))
-	}
+	t := clampedProjection(px, py, dx, dy)
 	return math.Hypot(px-t*dx, py-t*dy)
 }

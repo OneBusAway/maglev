@@ -256,8 +256,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		utils.SortModelRoutesByName(references.Routes)
 	}
 
-	api.attachOnDemandPointers(nil, stopModels)
-	api.attachOnDemandPointersToReferences(references)
+	api.attachStopListOnDemandIDs(stopModels, references)
 	response := models.NewListResponseWithRange(stopModels, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

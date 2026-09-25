@@ -1,6 +1,10 @@
 package restapi
 
-import "net/url"
+import (
+	"net/url"
+
+	"maglev.onebusaway.org/internal/utils"
+)
 
 // GeometryDetail selects how much zone geometry an /ondemand response embeds.
 type GeometryDetail string
@@ -13,20 +17,11 @@ const (
 
 const geometryDetailParam = "geometryDetail"
 
+// geometryDetailValues are the accepted values of the geometryDetail parameter.
+var geometryDetailValues = []GeometryDetail{GeometryDetailNone, GeometryDetailSimplified, GeometryDetailFull}
+
 // parseGeometryDetail reads the tri-state geometryDetail parameter, returning
 // fallback when absent and recording a field error for any other value.
 func parseGeometryDetail(params url.Values, fallback GeometryDetail, fieldErrors map[string][]string) (GeometryDetail, map[string][]string) {
-	if fieldErrors == nil {
-		fieldErrors = make(map[string][]string)
-	}
-	value := params.Get(geometryDetailParam)
-	switch GeometryDetail(value) {
-	case "":
-		return fallback, fieldErrors
-	case GeometryDetailNone, GeometryDetailSimplified, GeometryDetailFull:
-		return GeometryDetail(value), fieldErrors
-	default:
-		fieldErrors[geometryDetailParam] = append(fieldErrors[geometryDetailParam], `Invalid field value for field "geometryDetail".`)
-		return fallback, fieldErrors
-	}
+	return utils.ParseEnumParam(params, geometryDetailParam, geometryDetailValues, fallback, fieldErrors)
 }

@@ -12,36 +12,28 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// onDemandSearch is the resolved query: viewport mode iff no radius and both
-// spans are positive (BoundsFromParams' predicate); otherwise point mode with
-// the stops-for-location default radius, clamped to the maximum.
+// onDemandSearch is the resolved query: viewport mode iff LocationParams.IsViewport;
+// otherwise point mode with the stops-for-location default radius, clamped to
+// the maximum.
 type onDemandSearch struct {
 	Viewport bool
 	Point    geoPoint
 	Radius   float64
-	Bounds   utils.CoordinateBounds
+	Bounds   geo.CoordinateBounds
 }
 
 func newOnDemandSearch(loc *gtfs.LocationParams) onDemandSearch {
 	point := geoPoint{Lat: loc.Lat, Lon: loc.Lon}
-	if loc.Radius <= 0 && loc.LatSpan > 0 && loc.LonSpan > 0 {
+	if loc.IsViewport() {
 		// Viewport bounds are deliberately not clamped: zones are few and a 50 km
 		// zone must survive a zoomed-out map.
-		return onDemandSearch{
-			Viewport: true,
-			Point:    point,
-			Bounds:   utils.CalculateBoundsFromSpan(loc.Lat, loc.Lon, loc.LatSpan/2, loc.LonSpan/2),
-		}
+		return onDemandSearch{Viewport: true, Point: point, Bounds: gtfs.BoundsFromParams(loc)}
 	}
-	radius := loc.Radius
-	if radius <= 0 {
-		radius = models.DefaultSearchRadiusInMeters
-	}
-	radius = utils.ClampRadius(radius)
+	radius := utils.ClampRadius(loc.RadiusOrDefault())
 	return onDemandSearch{
 		Point:  point,
 		Radius: radius,
-		Bounds: utils.CalculateBounds(loc.Lat, loc.Lon, radius),
+		Bounds: geo.CalculateBounds(loc.Lat, loc.Lon, radius),
 	}
 }
 
@@ -65,7 +57,8 @@ func (api *RestAPI) onDemandServicesForLocationHandler(w http.ResponseWriter, r 
 	search := newOnDemandSearch(loc)
 	idx := api.GtfsManager.FlexIndex()
 	distances := search.areaDistances(idx)
-	matches := matchOnDemandServices(idx, search, distances)
+	candidateServiceIDs := idx.ServiceBoundsOverlapping(search.Bounds)
+	matches := matchOnDemandServices(idx, candidateServiceIDs, search, distances)
 
 	services, err := api.loadMatchedOnDemandServices(ctx, matches)
 	if err != nil {
@@ -79,7 +72,7 @@ func (api *RestAPI) onDemandServicesForLocationHandler(w http.ResponseWriter, r 
 	}
 	applyMatchReasons(list, matches)
 
-	outOfRange := api.onDemandOutOfRange(search.Bounds, idx)
+	outOfRange := api.onDemandOutOfRange(search.Bounds, idx, candidateServiceIDs)
 	api.sendResponse(w, r, models.NewOnDemandListResponseWithRange(list, *references, outOfRange, api.Clock))
 }
 
@@ -109,11 +102,12 @@ func (search onDemandSearch) areaDistances(idx *gtfs.FlexIndex) *areaDistances {
 	return newAreaDistances(idx, search.Point)
 }
 
-// matchOnDemandServices tests every service whose bounds overlap the search
-// bounds and returns the ones that match, with their strongest reason.
-func matchOnDemandServices(idx *gtfs.FlexIndex, search onDemandSearch, distances *areaDistances) []onDemandMatch {
+// matchOnDemandServices tests every candidate service (those whose bounds
+// overlap the search bounds) and returns the ones that match, with their
+// strongest reason.
+func matchOnDemandServices(idx *gtfs.FlexIndex, candidateServiceIDs []string, search onDemandSearch, distances *areaDistances) []onDemandMatch {
 	var matches []onDemandMatch
-	for _, serviceID := range idx.ServiceBoundsOverlapping(search.Bounds) {
+	for _, serviceID := range candidateServiceIDs {
 		if reason, ok := matchOnDemandService(idx, serviceID, search, distances); ok {
 			matches = append(matches, onDemandMatch{ServiceID: serviceID, BareServiceID: idx.BareServiceIDs[serviceID], Reason: reason})
 		}
@@ -152,7 +146,7 @@ func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, distances *a
 	}
 	point := distances.point
 	for _, stop := range stops {
-		if utils.Distance(point.Lat, point.Lon, stop.Lat, stop.Lon) <= radius {
+		if geo.Distance(point.Lat, point.Lon, stop.Lat, stop.Lon) <= radius {
 			return models.MatchReasonStopWithinRadius, true
 		}
 	}
@@ -166,14 +160,14 @@ func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, distances *a
 
 // matchViewport applies the viewport-mode grounds in strength order:
 // areaIntersectsViewport > stopWithinViewport. Near-miss matching does not apply.
-func matchViewport(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, bounds utils.CoordinateBounds) (string, bool) {
+func matchViewport(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, bounds geo.CoordinateBounds) (string, bool) {
 	for _, area := range areas {
 		if geo.PolygonIntersectsBounds(area.Polygons, bounds) {
 			return models.MatchReasonAreaIntersectsViewport, true
 		}
 	}
 	for _, stop := range stops {
-		if utils.BoundsContain(bounds, stop.Lat, stop.Lon) {
+		if geo.BoundsContain(bounds, stop.Lat, stop.Lon) {
 			return models.MatchReasonStopWithinViewport, true
 		}
 	}
@@ -202,19 +196,17 @@ func applyMatchReasons(list []models.OnDemandService, matches []onDemandMatch) {
 }
 
 // onDemandOutOfRange is true when the search bounds intersect neither any
-// agency's stop bounds nor any service's bounds. CheckIfOutOfBounds alone is
+// agency's region bounds nor any service's bounds. CheckIfOutOfBounds alone is
 // wrong here: Alexandria has one stop inside a ~50 km zone. No bounds at all
-// means false.
-func (api *RestAPI) onDemandOutOfRange(bounds utils.CoordinateBounds, idx *gtfs.FlexIndex) bool {
-	regions := api.GtfsManager.GetRegionBounds()
-	if len(regions) == 0 && len(idx.ServiceBounds) == 0 {
+// means false. candidateServiceIDs is idx.ServiceBoundsOverlapping(bounds),
+// which the caller has already computed for matching.
+func (api *RestAPI) onDemandOutOfRange(bounds geo.CoordinateBounds, idx *gtfs.FlexIndex, candidateServiceIDs []string) bool {
+	overlapsRegion, hasRegions := api.GtfsManager.OverlapsAnyRegion(bounds)
+	if overlapsRegion {
 		return false
 	}
-	for _, region := range regions {
-		regionBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
-		if !utils.IsOutOfBounds(bounds, regionBounds) {
-			return false
-		}
+	if !hasRegions && len(idx.ServiceBounds) == 0 {
+		return false
 	}
-	return len(idx.ServiceBoundsOverlapping(bounds)) == 0
+	return len(candidateServiceIDs) == 0
 }

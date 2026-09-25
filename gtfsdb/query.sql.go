@@ -6526,33 +6526,6 @@ func (q *Queries) ListOnDemandServices(ctx context.Context) ([]OndemandService, 
 	return items, nil
 }
 
-const listOnDemandStopServices = `-- name: ListOnDemandStopServices :many
-SELECT stop_id, service_id FROM ondemand_stop_services ORDER BY stop_id, service_id
-`
-
-func (q *Queries) ListOnDemandStopServices(ctx context.Context) ([]OndemandStopService, error) {
-	rows, err := q.query(ctx, q.listOnDemandStopServicesStmt, listOnDemandStopServices)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []OndemandStopService
-	for rows.Next() {
-		var i OndemandStopService
-		if err := rows.Scan(&i.StopID, &i.ServiceID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listRoutes = `-- name: ListRoutes :many
 SELECT
     id,
