@@ -246,3 +246,81 @@ func nullFloat64FromPtr(value *float64) sql.NullFloat64 {
 	}
 	return sql.NullFloat64{Float64: *value, Valid: true}
 }
+
+// storeOnDemand writes the compiled services, rules and stop pointers. It runs
+// after trips and flex_stop_times and before the stop agency index, which reads
+// ondemand_stop_services.
+func (c *Client) storeOnDemand(ctx context.Context, compiled CompiledOnDemand, qtx *Queries) error {
+	if err := storeOnDemandServices(ctx, compiled.Services, qtx); err != nil {
+		return err
+	}
+	if err := storeOnDemandRules(ctx, compiled.Rules, qtx); err != nil {
+		return err
+	}
+	return storeOnDemandStopServices(ctx, compiled.StopServices, qtx)
+}
+
+func storeOnDemandServices(ctx context.Context, services []CompiledService, qtx *Queries) error {
+	for _, service := range services {
+		if err := qtx.CreateOnDemandService(ctx, CreateOnDemandServiceParams{
+			ID:          service.ID,
+			AgencyID:    service.AgencyID,
+			RouteID:     service.RouteID,
+			ServiceKind: service.Kind,
+		}); err != nil {
+			return fmt.Errorf("unable to create on-demand service %s: %w", service.ID, err)
+		}
+	}
+	return nil
+}
+
+func storeOnDemandRules(ctx context.Context, rules []CompiledRule, qtx *Queries) error {
+	for _, rule := range rules {
+		if err := qtx.CreateOnDemandRule(ctx, onDemandRuleParams(rule)); err != nil {
+			return fmt.Errorf("unable to create on-demand rule for %s: %w", rule.ServiceID, err)
+		}
+	}
+	return nil
+}
+
+func storeOnDemandStopServices(ctx context.Context, stopServices map[string][]string, qtx *Queries) error {
+	for stopID, serviceIDs := range stopServices {
+		for _, serviceID := range serviceIDs {
+			if err := qtx.CreateOnDemandStopService(ctx, CreateOnDemandStopServiceParams{
+				StopID:    stopID,
+				ServiceID: serviceID,
+			}); err != nil {
+				return fmt.Errorf("unable to create on-demand stop service %s/%s: %w", stopID, serviceID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func onDemandRuleParams(rule CompiledRule) CreateOnDemandRuleParams {
+	return CreateOnDemandRuleParams{
+		ServiceID:            rule.ServiceID,
+		TripID:               rule.TripID,
+		FromID:               rule.FromID,
+		FromKind:             int64(rule.FromKind),
+		ToID:                 rule.ToID,
+		ToKind:               int64(rule.ToKind),
+		StartPickupTime:      nullInt64FromPtr(rule.StartPickupTime),
+		EndPickupTime:        nullInt64FromPtr(rule.EndPickupTime),
+		EndDropOffTime:       nullInt64FromPtr(rule.EndDropOffTime),
+		GtfsServiceID:        rule.GTFSServiceID,
+		PickupType:           rule.PickupType,
+		DropOffType:          rule.DropOffType,
+		PickupBookingRuleID:  nullStringFromPtr(rule.PickupBookingRuleID),
+		DropOffBookingRuleID: nullStringFromPtr(rule.DropOffBookingRuleID),
+		SafeDurationFactor:   nullFloat64FromPtr(rule.SafeDurationFactor),
+		SafeDurationOffset:   nullFloat64FromPtr(rule.SafeDurationOffset),
+	}
+}
+
+func nullStringFromPtr(value *string) sql.NullString {
+	if value == nil {
+		return sql.NullString{}
+	}
+	return nulls.String(*value)
+}

@@ -44,6 +44,16 @@ FROM
     stop_times
     JOIN trips ON stop_times.trip_id = trips.id
     JOIN routes ON trips.route_id = routes.id
+UNION
+SELECT DISTINCT
+    ondemand_stop_services.stop_id,
+    ondemand_services.agency_id
+FROM
+    ondemand_stop_services
+    JOIN ondemand_services ON ondemand_services.id = ondemand_stop_services.service_id
+    -- Pointers may name stops that were never stored (no coordinates);
+    -- stop_agencies has a foreign key to stops.
+    JOIN stops ON stops.id = ondemand_stop_services.stop_id
 `
 
 func (q *Queries) BuildStopAgencies(ctx context.Context) error {
