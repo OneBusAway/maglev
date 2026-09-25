@@ -1883,11 +1883,11 @@ const getAllTripsForRoute = `-- name: GetAllTripsForRoute :many
 SELECT DISTINCT id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed, min_arrival_time, max_departure_time
 FROM trips t
 WHERE t.route_id = ?1
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
   AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign
 `
 
-// min_arrival_time IS NULL exactly for trips with no timed stop_times (flex-only trips), which have no fixed-route schedule to show.
 func (q *Queries) GetAllTripsForRoute(ctx context.Context, routeID string) ([]Trip, error) {
 	rows, err := q.query(ctx, q.getAllTripsForRouteStmt, getAllTripsForRoute, routeID)
 	if err != nil {
@@ -2602,6 +2602,8 @@ WHERE st.trip_id = (
         FROM trips
         WHERE block_id = ?1
           AND service_id IN (/*SLICE:service_ids*/?)
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND min_arrival_time IS NOT NULL
     ) WHERE id = ?3
 )
 ORDER BY st.stop_sequence ASC
@@ -3041,6 +3043,8 @@ WITH NavTrips AS (
     FROM trips
     WHERE block_id = ?2
       AND service_id IN (/*SLICE:service_ids*/?)
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT prev_trip_id, next_trip_id
 FROM NavTrips
@@ -5513,6 +5517,8 @@ FROM
 WHERE
     t.block_id IN (/*SLICE:block_ids*/?)
     AND t.service_id IN (/*SLICE:service_ids*/?)
+    -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+    AND t.min_arrival_time IS NOT NULL
 ORDER BY
     t.block_id ASC,
     t.min_arrival_time ASC
@@ -5769,6 +5775,8 @@ SELECT
 FROM trips t
 WHERE t.block_id IN (/*SLICE:block_ids*/?)
   AND t.service_id IN (/*SLICE:service_ids*/?)
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.block_id, t.min_arrival_time, t.id
 `
 
@@ -6048,6 +6056,7 @@ SELECT DISTINCT id, route_id, service_id, trip_headsign, trip_short_name, direct
 FROM trips t
 WHERE t.route_id = ?1
   AND t.service_id IN (/*SLICE:('service_ids')*/?)
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
   AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign
 `
@@ -6057,7 +6066,6 @@ type GetTripsForRouteInActiveServiceIDsParams struct {
 	ServiceIds []string
 }
 
-// min_arrival_time IS NULL exactly for trips with no timed stop_times (flex-only trips), which have no fixed-route schedule to show.
 func (q *Queries) GetTripsForRouteInActiveServiceIDs(ctx context.Context, arg GetTripsForRouteInActiveServiceIDsParams) ([]Trip, error) {
 	query := getTripsForRouteInActiveServiceIDs
 	var queryParams []interface{}
