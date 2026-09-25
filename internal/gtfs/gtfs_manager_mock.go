@@ -146,6 +146,9 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	m.merged.Store(merged)
 }
 
+// MockAddTrip inserts a trip row, then refreshes cached trip time bounds as the
+// importer does: a trip with timed stop_times and NULL bounds reads as
+// flex-only and is skipped by the fixed-route queries.
 func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
 	ctx := context.Background()
 	_, _ = m.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
@@ -153,6 +156,7 @@ func (m *Manager) MockAddTrip(tripID, agencyID, routeID string) {
 		RouteID:   routeID,
 		ServiceID: "",
 	})
+	_ = m.GtfsDB.Queries.BulkUpdateTripTimeBounds(ctx)
 }
 
 // MockAddDuplicatedVehicle adds a real-time vehicle carrying a DUPLICATED trip
