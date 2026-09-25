@@ -188,7 +188,17 @@ SELECT DISTINCT
 FROM
     stop_times
     JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id;
+    JOIN routes ON trips.route_id = routes.id
+UNION
+SELECT DISTINCT
+    ondemand_stop_services.stop_id,
+    ondemand_services.agency_id
+FROM
+    ondemand_stop_services
+    JOIN ondemand_services ON ondemand_services.id = ondemand_stop_services.service_id
+    -- Pointers may name stops that were never stored (no coordinates);
+    -- stop_agencies has a foreign key to stops.
+    JOIN stops ON stops.id = ondemand_stop_services.stop_id;
 
 -- name: CreateCalendarDate :one
 INSERT
@@ -1563,3 +1573,137 @@ FROM
     JOIN stops s ON s.id = st.stop_id
 GROUP BY
     r.agency_id;
+
+-- ---------------------------------------------------------------------------
+-- GTFS-Flex
+-- ---------------------------------------------------------------------------
+
+-- name: CreateBookingRule :exec
+INSERT INTO booking_rules (
+    id, booking_type, prior_notice_duration_min, prior_notice_duration_max,
+    prior_notice_last_day, prior_notice_last_time, prior_notice_start_day,
+    prior_notice_start_time, prior_notice_service_id, message, pickup_message,
+    drop_off_message, phone_number, info_url, booking_url
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: CreateLocation :exec
+INSERT INTO locations (
+    id, name, description, geometry, geometry_simplified, min_lat, max_lat, min_lon, max_lon
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: CreateLocationGroup :exec
+INSERT INTO location_groups (id, name) VALUES (?, ?);
+
+-- name: CreateLocationGroupStop :exec
+INSERT INTO location_group_stops (location_group_id, stop_id) VALUES (?, ?);
+
+-- name: CreateFlexStopTime :exec
+INSERT INTO flex_stop_times (
+    trip_id, stop_sequence, stop_id, location_id, location_group_id,
+    start_pickup_drop_off_window, end_pickup_drop_off_window, pickup_type, drop_off_type,
+    pickup_booking_rule_id, drop_off_booking_rule_id, safe_duration_factor, safe_duration_offset
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: CreateOnDemandService :exec
+INSERT INTO ondemand_services (id, agency_id, route_id, service_kind) VALUES (?, ?, ?, ?);
+
+-- name: CreateOnDemandRule :exec
+INSERT INTO ondemand_rules (
+    service_id, trip_id, from_id, from_kind, to_id, to_kind,
+    start_pickup_time, end_pickup_time, end_drop_off_time, gtfs_service_id,
+    pickup_type, drop_off_type, pickup_booking_rule_id, drop_off_booking_rule_id,
+    safe_duration_factor, safe_duration_offset
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: CreateOnDemandStopService :exec
+INSERT OR IGNORE INTO ondemand_stop_services (stop_id, service_id) VALUES (?, ?);
+
+-- name: ClearOnDemandStopServices :exec
+DELETE FROM ondemand_stop_services;
+
+-- name: ClearOnDemandRules :exec
+DELETE FROM ondemand_rules;
+
+-- name: ClearOnDemandServices :exec
+DELETE FROM ondemand_services;
+
+-- name: ClearFlexStopTimes :exec
+DELETE FROM flex_stop_times;
+
+-- name: ClearLocationGroupStops :exec
+DELETE FROM location_group_stops;
+
+-- name: ClearLocationGroups :exec
+DELETE FROM location_groups;
+
+-- name: ClearLocations :exec
+DELETE FROM locations;
+
+-- name: ClearBookingRules :exec
+DELETE FROM booking_rules;
+
+-- name: GetOnDemandService :one
+SELECT * FROM ondemand_services WHERE id = ?;
+
+-- name: ListOnDemandServices :many
+SELECT * FROM ondemand_services ORDER BY id;
+
+-- name: GetOnDemandServicesForAgency :many
+SELECT * FROM ondemand_services WHERE agency_id = ? ORDER BY id;
+
+-- name: GetOnDemandServicesByIDs :many
+SELECT * FROM ondemand_services WHERE id IN (sqlc.slice('service_ids')) ORDER BY id;
+
+-- name: GetOnDemandRulesForServices :many
+SELECT * FROM ondemand_rules WHERE service_id IN (sqlc.slice('service_ids')) ORDER BY service_id, id;
+
+-- name: GetFlexRecordReferencesForRoutes :many
+SELECT DISTINCT
+    t.route_id,
+    fst.location_id,
+    fst.location_group_id,
+    fst.pickup_booking_rule_id,
+    fst.drop_off_booking_rule_id
+FROM flex_stop_times fst
+JOIN trips t ON t.id = fst.trip_id
+WHERE t.route_id IN (sqlc.slice('route_ids'))
+ORDER BY t.route_id, fst.location_id, fst.location_group_id;
+
+-- name: ListLocations :many
+SELECT id, name, description, min_lat, max_lat, min_lon, max_lon, geometry FROM locations ORDER BY id;
+
+-- name: GetLocationsByIDs :many
+SELECT * FROM locations WHERE id IN (sqlc.slice('location_ids')) ORDER BY id;
+
+-- name: GetLocationGroupsByIDs :many
+SELECT * FROM location_groups WHERE id IN (sqlc.slice('group_ids')) ORDER BY id;
+
+-- name: GetLocationGroupStopsForGroups :many
+SELECT * FROM location_group_stops
+WHERE location_group_id IN (sqlc.slice('group_ids'))
+ORDER BY location_group_id, stop_id;
+
+-- name: GetBookingRulesByIDs :many
+SELECT * FROM booking_rules WHERE id IN (sqlc.slice('booking_rule_ids')) ORDER BY id;
+
+-- name: GetCalendarsByIDs :many
+SELECT * FROM calendar WHERE id IN (sqlc.slice('service_ids')) ORDER BY id;
+
+-- name: GetCalendarDatesForServiceIDs :many
+SELECT * FROM calendar_dates WHERE service_id IN (sqlc.slice('service_ids')) ORDER BY service_id, date;
+
+-- name: ListOnDemandStopServices :many
+SELECT * FROM ondemand_stop_services ORDER BY stop_id, service_id;
+
+-- name: ListOnDemandServiceStopPoints :many
+SELECT oss.service_id, oss.stop_id, s.lat, s.lon
+FROM ondemand_stop_services oss
+JOIN stops s ON s.id = oss.stop_id
+ORDER BY oss.service_id, oss.stop_id;
+
+-- name: ListOnDemandServiceLocationIDs :many
+SELECT DISTINCT t.route_id AS service_id, fst.location_id
+FROM flex_stop_times fst
+JOIN trips t ON t.id = fst.trip_id
+WHERE fst.location_id IS NOT NULL
+ORDER BY t.route_id, fst.location_id;

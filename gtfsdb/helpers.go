@@ -234,6 +234,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(data.Static.Warnings)))
+	logStaticWarnings(logger, data.Static.Warnings)
 
 	staticCounts := c.staticDataCounts(data.Static)
 	for k, v := range staticCounts {
@@ -282,10 +283,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 	}
 
-	singleAgencyID := ""
-	if len(data.Static.Agencies) == 1 {
-		singleAgencyID = data.Static.Agencies[0].Id
-	}
+	singleAgencyID := soleAgencyID(data.Static.Agencies)
 
 	for _, r := range data.Static.Routes {
 		route := CreateRouteParams{
@@ -351,6 +349,18 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("unable to create stops: %w", err)
 	}
 
+	insertedStopIDs := make(map[string]struct{}, len(allStopParams))
+	for _, params := range allStopParams {
+		insertedStopIDs[params.ID] = struct{}{}
+	}
+	logging.LogOperation(logger, "inserting_flex_entities",
+		slog.Int("booking_rules", len(data.Static.BookingRules)),
+		slog.Int("locations", len(data.Static.Locations)),
+		slog.Int("location_groups", len(data.Static.LocationGroups)))
+	if err := c.storeFlexEntities(ctx, data.Static, insertedStopIDs, qtx); err != nil {
+		return false, fmt.Errorf("unable to create flex entities: %w", err)
+	}
+
 	logging.LogOperation(logger, "agencies_and_routes_inserted",
 		slog.Int("agencies", len(data.Static.Agencies)),
 		slog.Int("routes", len(data.Static.Routes)))
@@ -407,8 +417,9 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	var allStopTimeParams []CreateStopTimeParams
-	for _, t := range data.Static.Trips {
-		for _, st := range t.StopTimes {
+	for i := range data.Static.Trips {
+		t := &data.Static.Trips[i]
+		for _, st := range timedStopTimes(t) {
 			var shapeDistTraveled float64
 			if st.ShapeDistanceTraveled != nil {
 				shapeDistTraveled = *st.ShapeDistanceTraveled
@@ -433,6 +444,19 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	if err := c.bulkInsertStopTimes(ctx, allStopTimeParams, tx); err != nil {
 		return false, fmt.Errorf("unable to create stop times: %w", err)
 	}
+	if err := c.storeFlexStopTimes(ctx, data.Static, qtx); err != nil {
+		return false, fmt.Errorf("unable to create flex stop times: %w", err)
+	}
+
+	logging.LogOperation(logger, "compiling_on_demand_services")
+	compiled := CompileOnDemand(data.Static)
+	if err := c.storeOnDemand(ctx, compiled, qtx); err != nil {
+		return false, fmt.Errorf("unable to store on-demand services: %w", err)
+	}
+	logging.LogOperation(logger, "on_demand_services_compiled",
+		slog.Int("services", len(compiled.Services)),
+		slog.Int("rules", len(compiled.Rules)),
+		slog.Int("pointer_stops", len(compiled.StopServices)))
 
 	// Collect frequency entries from all trips
 	var allFrequencyParams []CreateFrequencyParams
@@ -626,6 +650,32 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
 // Delete order respects foreign key constraints.
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
+	// Flex tables first: flex_stop_times references trips, location_group_stops
+	// references stops, and ondemand_rules references ondemand_services.
+	if err := q.ClearOnDemandStopServices(ctx); err != nil {
+		return fmt.Errorf("error clearing ondemand_stop_services: %w", err)
+	}
+	if err := q.ClearOnDemandRules(ctx); err != nil {
+		return fmt.Errorf("error clearing ondemand_rules: %w", err)
+	}
+	if err := q.ClearOnDemandServices(ctx); err != nil {
+		return fmt.Errorf("error clearing ondemand_services: %w", err)
+	}
+	if err := q.ClearFlexStopTimes(ctx); err != nil {
+		return fmt.Errorf("error clearing flex_stop_times: %w", err)
+	}
+	if err := q.ClearLocationGroupStops(ctx); err != nil {
+		return fmt.Errorf("error clearing location_group_stops: %w", err)
+	}
+	if err := q.ClearLocationGroups(ctx); err != nil {
+		return fmt.Errorf("error clearing location_groups: %w", err)
+	}
+	if err := q.ClearLocations(ctx); err != nil {
+		return fmt.Errorf("error clearing locations: %w", err)
+	}
+	if err := q.ClearBookingRules(ctx); err != nil {
+		return fmt.Errorf("error clearing booking_rules: %w", err)
+	}
 	if err := q.ClearStopAgencies(ctx); err != nil {
 		return fmt.Errorf("error clearing stop_agencies: %w", err)
 	}
@@ -753,6 +803,15 @@ func ParseNullBool(s string) sql.NullInt64 {
 		return sql.NullInt64{Int64: 1, Valid: true}
 	}
 	return sql.NullInt64{Int64: 0, Valid: true}
+}
+
+// soleAgencyID is the feed's only agency id, the fallback for routes that
+// omit agency_id; empty when the feed has several agencies.
+func soleAgencyID(agencies []gtfs.Agency) string {
+	if len(agencies) == 1 {
+		return agencies[0].Id
+	}
+	return ""
 }
 
 func pickFirstAvailable(a, b string) string {
@@ -1300,13 +1359,15 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 
 	tripMap := make(map[string]*tripInfo)
 
-	for _, trip := range staticData.Trips {
-		if len(trip.StopTimes) == 0 {
+	for i := range staticData.Trips {
+		trip := &staticData.Trips[i]
+		timed := timedStopTimes(trip)
+		if len(timed) == 0 {
 			continue
 		}
 
-		// Get the FIRST stop - this is the layover location where the trip starts
-		firstStop := trip.StopTimes[0].Stop.Id
+		// Get the FIRST timed stop - this is the layover location where the trip starts
+		firstStop := timed[0].Stop.Id
 
 		tripMap[trip.ID] = &tripInfo{
 			tripID:        trip.ID,
@@ -1403,15 +1464,20 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 		blockID   string
 		serviceID string
 	}
-	blockTrips := make(map[blockKey][]*gtfs.ScheduledTrip)
+	type blockTrip struct {
+		trip  *gtfs.ScheduledTrip
+		timed []gtfs.ScheduledStopTime
+	}
+	blockTrips := make(map[blockKey][]blockTrip)
 
 	for i := range staticData.Trips {
 		trip := &staticData.Trips[i]
-		if trip.BlockID == "" || len(trip.StopTimes) == 0 {
+		timed := timedStopTimes(trip)
+		if trip.BlockID == "" || len(timed) == 0 {
 			continue
 		}
 		key := blockKey{blockID: trip.BlockID, serviceID: trip.Service.Id}
-		blockTrips[key] = append(blockTrips[key], trip)
+		blockTrips[key] = append(blockTrips[key], blockTrip{trip: trip, timed: timed})
 	}
 
 	q := c.Queries
@@ -1425,16 +1491,16 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				continue
 			}
 
-			slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
-				return cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime)
+			slices.SortFunc(trips, func(a, b blockTrip) int {
+				return cmp.Compare(a.timed[0].DepartureTime, b.timed[0].DepartureTime)
 			})
 
 			for i := 0; i < len(trips)-1; i++ {
 				currentTrip := trips[i]
 				nextTrip := trips[i+1]
 
-				lastStopCurrent := currentTrip.StopTimes[len(currentTrip.StopTimes)-1]
-				firstStopNext := nextTrip.StopTimes[0]
+				lastStopCurrent := currentTrip.timed[len(currentTrip.timed)-1]
+				firstStopNext := nextTrip.timed[0]
 
 				if lastStopCurrent.Stop.Id != firstStopNext.Stop.Id {
 					continue
@@ -1458,11 +1524,11 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
 					BlockID:       key.blockID,
 					ServiceID:     key.serviceID,
-					RouteID:       nextTrip.Route.Id,
+					RouteID:       nextTrip.trip.Route.Id,
 					LayoverStopID: lastStopCurrent.Stop.Id,
 					LayoverStart:  layoverStart,
 					LayoverEnd:    layoverEnd,
-					NextTripID:    nextTrip.ID,
+					NextTripID:    nextTrip.trip.ID,
 				})
 				if err != nil {
 					return fmt.Errorf("failed to create block layover: %w", err)
@@ -1501,8 +1567,8 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 	if len(data.Routes) == 0 {
 		return fmt.Errorf("validation failed: no routes found in feed (missing or empty routes.txt)")
 	}
-	if len(data.Stops) == 0 {
-		return fmt.Errorf("validation failed: no stops found in feed (missing or empty stops.txt)")
+	if len(data.Stops) == 0 && len(data.Locations) == 0 {
+		return fmt.Errorf("validation failed: no stops found in feed (missing or empty stops.txt) and no locations.geojson")
 	}
 	if len(data.Trips) == 0 {
 		return fmt.Errorf("validation failed: no trips found in feed (missing or empty trips.txt)")
@@ -1573,17 +1639,18 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 			continue
 		}
 
-		// Ensure stop times reference valid stops
-		hasInvalidStop := false
+		// Every record must reference exactly one of stop / location / location
+		// group, and a timed record (no windows) must reference a stop.
+		invalidRecord := ""
 		for _, st := range trip.StopTimes {
-			if st.Stop == nil || st.Stop.Id == "" {
-				logger.Warn("stop time for trip references missing stop, skipping trip", slog.String("trip_id", trip.ID))
-				hasInvalidStop = true
+			if reason := stopTimeReferenceError(st); reason != "" {
+				invalidRecord = reason
 				break
 			}
 		}
-
-		if hasInvalidStop {
+		if invalidRecord != "" {
+			logger.Warn("stop time for trip has an invalid reference, skipping trip",
+				slog.String("trip_id", trip.ID), slog.String("reason", invalidRecord))
 			continue
 		}
 
@@ -1610,4 +1677,44 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 	}
 
 	return nil
+}
+
+// stopTimeReferenceError reports why a stop_time fails the exactly-one-of
+// stop/location/location-group rule, or "" when it passes. A timed record
+// (one without pickup/drop-off windows) must reference a stop, because it is
+// the only kind that lands in stop_times.
+func stopTimeReferenceError(st gtfs.ScheduledStopTime) string {
+	hasStop := st.Stop != nil && st.Stop.Id != ""
+	references := 0
+	if hasStop {
+		references++
+	}
+	if st.Location != nil {
+		references++
+	}
+	if st.LocationGroup != nil {
+		references++
+	}
+	switch {
+	case references == 0:
+		return "references no stop, location or location group"
+	case references > 1:
+		return "references more than one of stop, location and location group"
+	case !st.IsWindowed() && !hasStop:
+		return "timed record does not reference a stop"
+	}
+	return ""
+}
+
+// timedStopTimes returns the trip's records that carry arrival/departure
+// times, in stop_sequence order. Windowed (flex) records are excluded: they
+// have no times and, for zone and group records, no stop.
+func timedStopTimes(trip *gtfs.ScheduledTrip) []gtfs.ScheduledStopTime {
+	timed := make([]gtfs.ScheduledStopTime, 0, len(trip.StopTimes))
+	for _, st := range trip.StopTimes {
+		if !st.IsWindowed() {
+			timed = append(timed, st)
+		}
+	}
+	return timed
 }

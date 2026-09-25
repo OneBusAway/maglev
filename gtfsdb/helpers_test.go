@@ -207,6 +207,9 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
     CREATE TABLE IF NOT EXISTS stop_times (
         trip_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS import_metadata (
+        file_hash TEXT NOT NULL
+    );
 `
 	t.Cleanup(func() {
 		ddl = originalDDL
