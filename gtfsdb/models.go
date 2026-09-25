@@ -47,6 +47,24 @@ type BlockTripIndex struct {
 	CreatedAt       int64
 }
 
+type BookingRule struct {
+	ID                     string
+	BookingType            int64
+	PriorNoticeDurationMin sql.NullInt64
+	PriorNoticeDurationMax sql.NullInt64
+	PriorNoticeLastDay     sql.NullInt64
+	PriorNoticeLastTime    sql.NullInt64
+	PriorNoticeStartDay    sql.NullInt64
+	PriorNoticeStartTime   sql.NullInt64
+	PriorNoticeServiceID   sql.NullString
+	Message                sql.NullString
+	PickupMessage          sql.NullString
+	DropOffMessage         sql.NullString
+	PhoneNumber            sql.NullString
+	InfoUrl                sql.NullString
+	BookingUrl             sql.NullString
+}
+
 type Calendar struct {
 	ID        string
 	Monday    int64
@@ -66,6 +84,22 @@ type CalendarDate struct {
 	ExceptionType int64
 }
 
+type FlexStopTime struct {
+	TripID                   string
+	StopSequence             int64
+	StopID                   sql.NullString
+	LocationID               sql.NullString
+	LocationGroupID          sql.NullString
+	StartPickupDropOffWindow int64
+	EndPickupDropOffWindow   int64
+	PickupType               int64
+	DropOffType              int64
+	PickupBookingRuleID      sql.NullString
+	DropOffBookingRuleID     sql.NullString
+	SafeDurationFactor       sql.NullFloat64
+	SafeDurationOffset       sql.NullFloat64
+}
+
 type Frequency struct {
 	TripID      string
 	StartTime   int64
@@ -80,6 +114,60 @@ type ImportMetadatum struct {
 	ImportTime    int64
 	FileSource    string
 	FeedExpiresAt sql.NullInt64
+}
+
+type Location struct {
+	ID                 string
+	Name               sql.NullString
+	Description        sql.NullString
+	Geometry           string
+	GeometrySimplified sql.NullString
+	MinLat             float64
+	MaxLat             float64
+	MinLon             float64
+	MaxLon             float64
+}
+
+type LocationGroup struct {
+	ID   string
+	Name sql.NullString
+}
+
+type LocationGroupStop struct {
+	LocationGroupID string
+	StopID          string
+}
+
+type OndemandRule struct {
+	ID                   int64
+	ServiceID            string
+	TripID               string
+	FromID               string
+	FromKind             int64
+	ToID                 string
+	ToKind               int64
+	StartPickupTime      sql.NullInt64
+	EndPickupTime        sql.NullInt64
+	EndDropOffTime       sql.NullInt64
+	GtfsServiceID        string
+	PickupType           int64
+	DropOffType          int64
+	PickupBookingRuleID  sql.NullString
+	DropOffBookingRuleID sql.NullString
+	SafeDurationFactor   sql.NullFloat64
+	SafeDurationOffset   sql.NullFloat64
+}
+
+type OndemandService struct {
+	ID          string
+	AgencyID    string
+	RouteID     string
+	ServiceKind string
+}
+
+type OndemandStopService struct {
+	StopID    string
+	ServiceID string
 }
 
 type ProblemReportsStop struct {
