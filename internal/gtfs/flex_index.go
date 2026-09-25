@@ -167,25 +167,21 @@ func (idx *FlexIndex) loadServiceAreas(ctx context.Context, gtfsDB *gtfsdb.Clien
 	return nil
 }
 
+// loadStopPointers fills StopServiceIDs and ServiceStops from one scan of the
+// stop pointers joined to stops. A pointer to a stop that was never stored (no
+// coordinates) is dropped: such a stop appears in no /where response.
 func (idx *FlexIndex) loadStopPointers(ctx context.Context, gtfsDB *gtfsdb.Client, combinedByBareService map[string]string) error {
-	pointers, err := gtfsDB.Queries.ListOnDemandStopServices(ctx)
-	if err != nil {
-		return fmt.Errorf("list on-demand stop services: %w", err)
-	}
-	for _, pointer := range pointers {
-		if combinedID, ok := combinedByBareService[pointer.ServiceID]; ok {
-			idx.StopServiceIDs[pointer.StopID] = append(idx.StopServiceIDs[pointer.StopID], combinedID)
-		}
-	}
-
 	points, err := gtfsDB.Queries.ListOnDemandServiceStopPoints(ctx)
 	if err != nil {
 		return fmt.Errorf("list on-demand service stop points: %w", err)
 	}
 	for _, point := range points {
-		if combinedID, ok := combinedByBareService[point.ServiceID]; ok {
-			idx.ServiceStops[combinedID] = append(idx.ServiceStops[combinedID], FlexStopPoint{StopID: point.StopID, Lat: point.Lat, Lon: point.Lon})
+		combinedID, ok := combinedByBareService[point.ServiceID]
+		if !ok {
+			continue
 		}
+		idx.StopServiceIDs[point.StopID] = append(idx.StopServiceIDs[point.StopID], combinedID)
+		idx.ServiceStops[combinedID] = append(idx.ServiceStops[combinedID], FlexStopPoint{StopID: point.StopID, Lat: point.Lat, Lon: point.Lon})
 	}
 	return nil
 }

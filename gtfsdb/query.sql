@@ -1724,9 +1724,6 @@ WHERE stop_id IN (sqlc.slice('stop_ids'))
 GROUP BY stop_id
 ORDER BY stop_id;
 
--- name: ListOnDemandStopServices :many
-SELECT * FROM ondemand_stop_services ORDER BY stop_id, service_id;
-
 -- name: ListOnDemandServiceStopPoints :many
 SELECT oss.service_id, oss.stop_id, s.lat, s.lon
 FROM ondemand_stop_services oss
