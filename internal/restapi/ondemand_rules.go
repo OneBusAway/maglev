@@ -8,6 +8,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -71,8 +72,8 @@ func availabilityRuleFromRow(row gtfsdb.OndemandRule, agencyID string) *models.A
 		DropOffType:          int(row.DropOffType),
 		PickupBookingRuleId:  combinedIDOrNil(agencyID, row.PickupBookingRuleID),
 		DropOffBookingRuleId: combinedIDOrNil(agencyID, row.DropOffBookingRuleID),
-		SafeDurationFactor:   floatOrNil(row.SafeDurationFactor),
-		SafeDurationOffset:   floatOrNil(row.SafeDurationOffset),
+		SafeDurationFactor:   nulls.Float64OrNil(row.SafeDurationFactor),
+		SafeDurationOffset:   nulls.Float64OrNil(row.SafeDurationOffset),
 	}
 }
 
@@ -140,20 +141,4 @@ func combinedIDOrNil(agencyID string, value sql.NullString) *string {
 	}
 	combined := utils.FormCombinedID(agencyID, value.String)
 	return &combined
-}
-
-func floatOrNil(value sql.NullFloat64) *float64 {
-	if !value.Valid {
-		return nil
-	}
-	f := value.Float64
-	return &f
-}
-
-func intOrNil(value sql.NullInt64) *int {
-	if !value.Valid {
-		return nil
-	}
-	i := int(value.Int64)
-	return &i
 }

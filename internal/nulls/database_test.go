@@ -33,3 +33,13 @@ func TestNullWheelchairBoardingOrUnknown(t *testing.T) {
 	assert.Equal(t, gtfs.WheelchairBoarding_Possible, WheelchairBoardingOrUnknown(sql.NullInt64{Int64: int64(gtfs.WheelchairBoarding_Possible), Valid: true}))
 	assert.Equal(t, gtfs.WheelchairBoarding_NotSpecified, WheelchairBoardingOrUnknown(sql.NullInt64{Int64: 0, Valid: false}))
 }
+
+func TestFloat64OrNil(t *testing.T) {
+	assert.Equal(t, 2.5, *Float64OrNil(sql.NullFloat64{Float64: 2.5, Valid: true}))
+	assert.Nil(t, Float64OrNil(sql.NullFloat64{Float64: 2.5, Valid: false}))
+}
+
+func TestIntOrNil(t *testing.T) {
+	assert.Equal(t, 90, *IntOrNil(sql.NullInt64{Int64: 90, Valid: true}))
+	assert.Nil(t, IntOrNil(sql.NullInt64{Int64: 90, Valid: false}))
+}

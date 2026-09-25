@@ -92,13 +92,9 @@ func addScoped(set map[agencyScopedID]struct{}, agencyID, id string) {
 
 // bareIDs returns the distinct bare ids of a scoped set, for one batched query.
 func bareIDs(set map[agencyScopedID]struct{}) []string {
-	seen := make(map[string]struct{}, len(set))
+	ids := make([]string, 0, len(set))
 	for scoped := range set {
-		seen[scoped.ID] = struct{}{}
-	}
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
+		ids = append(ids, scoped.ID)
 	}
 	return utils.SortedUnique(ids)
 }
@@ -233,6 +229,7 @@ func onDemandServiceModel(service gtfsdb.OndemandService, route gtfsdb.Route, ru
 
 // onDemandBookingRules loads the referenced booking rules and registers each
 // prior_notice_service_id as a calendar to compile.
+// Extends ids.gtfsServices, so it must run before onDemandCalendars.
 func (api *RestAPI) onDemandBookingRules(ctx context.Context, ids *onDemandReferenceIDs) ([]models.BookingRule, error) {
 	rows, err := queryInBatches(ctx, bareIDs(ids.bookingRules), api.GtfsManager.GtfsDB.Queries.GetBookingRulesByIDs)
 	if err != nil {
@@ -261,11 +258,11 @@ func bookingRuleReference(rule gtfsdb.BookingRule, agencyID string) models.Booki
 	return models.BookingRule{
 		ID:                     utils.FormCombinedID(agencyID, rule.ID),
 		BookingType:            int(rule.BookingType),
-		PriorNoticeDurationMin: intOrNil(rule.PriorNoticeDurationMin),
-		PriorNoticeDurationMax: intOrNil(rule.PriorNoticeDurationMax),
-		PriorNoticeLastDay:     intOrNil(rule.PriorNoticeLastDay),
+		PriorNoticeDurationMin: nulls.IntOrNil(rule.PriorNoticeDurationMin),
+		PriorNoticeDurationMax: nulls.IntOrNil(rule.PriorNoticeDurationMax),
+		PriorNoticeLastDay:     nulls.IntOrNil(rule.PriorNoticeLastDay),
 		PriorNoticeLastTime:    timeOfDayOrNil(rule.PriorNoticeLastTime),
-		PriorNoticeStartDay:    intOrNil(rule.PriorNoticeStartDay),
+		PriorNoticeStartDay:    nulls.IntOrNil(rule.PriorNoticeStartDay),
 		PriorNoticeStartTime:   timeOfDayOrNil(rule.PriorNoticeStartTime),
 		PriorNoticeCalendarId:  combinedIDOrNil(agencyID, rule.PriorNoticeServiceID),
 		Message:                models.NullableString(nulls.StringOrEmpty(rule.Message)),
@@ -460,6 +457,7 @@ func (api *RestAPI) applyAreaDistance(area *models.ServiceArea, locationID strin
 
 // onDemandLocationGroups resolves groups and adds their members to ids.stops so
 // the standard stop references cover them.
+// Extends ids.stops, so it must run before appendOnDemandStopReferences.
 func (api *RestAPI) onDemandLocationGroups(ctx context.Context, ids *onDemandReferenceIDs) ([]models.LocationGroupReference, error) {
 	groupIDs := bareIDs(ids.groups)
 	rows, err := queryInBatches(ctx, groupIDs, api.GtfsManager.GtfsDB.Queries.GetLocationGroupsByIDs)
@@ -502,6 +500,7 @@ func (api *RestAPI) onDemandLocationGroups(ctx context.Context, ids *onDemandRef
 // appendOnDemandStopReferences builds standard stop references per agency and
 // pulls in the routes (and their agencies) serving those stops so every routeId
 // on a stop resolves within the block.
+// Extends agencyIDs, so the agency lookup must run after it.
 func (api *RestAPI) appendOnDemandStopReferences(ctx context.Context, references *models.OnDemandReferences, stops map[agencyScopedID]struct{}, agencyIDs map[string]struct{}) error {
 	stopIDsByAgency := make(map[string][]string)
 	for scoped := range stops {

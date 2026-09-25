@@ -93,3 +93,40 @@ func TestSortAvailabilityRules_UsesSortedIDs(t *testing.T) {
 	assert.Equal(t, []string{"X_a", "X_b"}, rules[2].FromIds, "fromIds are sorted before rules are ordered")
 	assert.Equal(t, []string{"X_c1", "X_c2"}, rules[2].CalendarIds)
 }
+
+func TestCompareAvailabilityRules_TiebreaksAfterFirstCalendar(t *testing.T) {
+	text := func(value string) *string { return &value }
+	base := func() models.AvailabilityRule {
+		return models.AvailabilityRule{
+			FromIds: []string{"X_a"}, ToIds: []string{"X_a"}, CalendarIds: []string{"X_c"},
+			EndDropOffTime: text("12:00:00"), PickupType: 2, DropOffType: 2,
+			PickupBookingRuleId: text("X_br"), DropOffBookingRuleId: text("X_br"),
+		}
+	}
+	tests := []struct {
+		name          string
+		first, second func(*models.AvailabilityRule)
+	}{
+		{"fromIds", func(r *models.AvailabilityRule) { r.FromIds = []string{"X_a"} }, func(r *models.AvailabilityRule) { r.FromIds = []string{"X_b"} }},
+		{"fromIds prefix first", func(r *models.AvailabilityRule) { r.FromIds = []string{"X_a"} }, func(r *models.AvailabilityRule) { r.FromIds = []string{"X_a", "X_b"} }},
+		{"toIds", func(r *models.AvailabilityRule) { r.ToIds = []string{"X_a"} }, func(r *models.AvailabilityRule) { r.ToIds = []string{"X_b"} }},
+		{"endDropOffTime", func(r *models.AvailabilityRule) { r.EndDropOffTime = text("11:00:00") }, func(r *models.AvailabilityRule) {}},
+		{"endDropOffTime null first", func(r *models.AvailabilityRule) { r.EndDropOffTime = nil }, func(r *models.AvailabilityRule) {}},
+		{"pickupType", func(r *models.AvailabilityRule) { r.PickupType = 1 }, func(r *models.AvailabilityRule) {}},
+		{"dropOffType", func(r *models.AvailabilityRule) { r.DropOffType = 1 }, func(r *models.AvailabilityRule) {}},
+		{"pickupBookingRuleId", func(r *models.AvailabilityRule) { r.PickupBookingRuleId = text("X_aa") }, func(r *models.AvailabilityRule) {}},
+		{"pickupBookingRuleId null first", func(r *models.AvailabilityRule) { r.PickupBookingRuleId = nil }, func(r *models.AvailabilityRule) {}},
+		{"dropOffBookingRuleId", func(r *models.AvailabilityRule) { r.DropOffBookingRuleId = text("X_aa") }, func(r *models.AvailabilityRule) {}},
+		{"dropOffBookingRuleId null first", func(r *models.AvailabilityRule) { r.DropOffBookingRuleId = nil }, func(r *models.AvailabilityRule) {}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first, second := base(), base()
+			tt.first(&first)
+			tt.second(&second)
+			assert.Negative(t, compareAvailabilityRules(first, second))
+			assert.Positive(t, compareAvailabilityRules(second, first))
+		})
+	}
+	assert.Zero(t, compareAvailabilityRules(base(), base()))
+}
