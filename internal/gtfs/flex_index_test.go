@@ -1,8 +1,10 @@
 package gtfs
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -162,4 +164,24 @@ func TestFlexIndex_RowsForUnknownServicesAreIgnored(t *testing.T) {
 	assert.NotContains(t, idx.ServiceAreaIDs, "CC_CC2_med")
 	assert.Equal(t, []string{"CC_CC3"}, idx.OnDemandServiceIDsForStop("CC_Ironton_Ferry_West"))
 	assert.Len(t, idx.ServiceStops["CC_CC3"], 2)
+}
+
+func TestFlexIndex_WarnsOnceForRuleCalendarsWithNoService(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	for _, statement := range []string{
+		"UPDATE calendar SET monday = 0, tuesday = 0, wednesday = 0, thursday = 0, friday = 0, saturday = 0, sunday = 0 WHERE id = 'sat'",
+		"DELETE FROM calendar_dates WHERE service_id = 'sat' AND exception_type = 1",
+	} {
+		_, err := manager.GtfsDB.DB.ExecContext(ctx, statement)
+		require.NoError(t, err, statement)
+	}
+	var logs bytes.Buffer
+
+	_, err := buildFlexIndex(ctx, manager.GtfsDB, slog.New(slog.NewTextHandler(&logs, nil)))
+	require.NoError(t, err)
+
+	warning := "service_id=CC1 gtfs_service_id=sat"
+	assert.Equal(t, 1, strings.Count(logs.String(), warning), logs.String())
+	assert.NotContains(t, logs.String(), "gtfs_service_id=mon-tues-wed-thurs-fri")
 }
