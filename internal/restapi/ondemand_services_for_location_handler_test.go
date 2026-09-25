@@ -2,11 +2,13 @@ package restapi
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -186,4 +188,19 @@ func TestOnDemandOutOfRange_NoBoundsAtAll(t *testing.T) {
 	api := NewRestAPI(&app.Application{GtfsManager: newTestManagerNoData(t)})
 	search := utils.CalculateBounds(47.6, -122.3, 600)
 	assert.False(t, api.onDemandOutOfRange(search, gtfs.NewEmptyFlexIndex()), "no stop or service bounds means nothing is out of range")
+}
+
+// An agency id containing "_" cannot be split back out of a combined service
+// id, so matching must carry the bare id from the index.
+func TestOnDemandServicesForLocationHandler_AgencyIDWithUnderscore(t *testing.T) {
+	files := twoAgencySharedZoneFiles()
+	for name, content := range files {
+		files[name] = strings.ReplaceAll(content, "a1", "north_co")
+	}
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "underscore-agency.zip", files)
+
+	resp, model := callAPIHandler[onDemandListResponse](t, api, "/api/ondemand/services-for-location.json?key=TEST&lat=0.05&lon=0.05&geometryDetail=none")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{"a2_r2", "north_co_r1"}, ids(model.Data.List, func(s models.OnDemandService) string { return s.ID }))
 }
