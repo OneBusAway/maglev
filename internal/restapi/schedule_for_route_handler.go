@@ -88,7 +88,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		route.Url.String,
 		route.Color.String,
 		route.TextColor.String)
-	api.attachRouteOnDemandIDs(&routeModel)
+	// One snapshot serves both the route entry here, which the no-service
+	// responses embed, and the full schedule's references below.
+	onDemandIndex := api.pointerFlexIndex()
+	setRouteOnDemandIDs(onDemandIndex, &routeModel)
 
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
 	if err != nil {
@@ -356,7 +359,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		ServiceIDs:        combinedServiceIDs,
 		StopTripGroupings: stopTripGroupings,
 	}
-	api.attachOnDemandPointersToReferences(references)
+	setOnDemandPointers(onDemandIndex, references.Routes, references.Stops)
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
 }
 

@@ -202,8 +202,8 @@ func TestAttachOnDemandPointers_NilSafe(t *testing.T) {
 	api := &RestAPI{}
 	route := models.Route{ID: "x_y"}
 	stop := models.Stop{ID: "x_y"}
-	api.attachRouteOnDemandIDs(&route)
-	api.attachStopOnDemandIDs(&stop)
+	api.attachRouteOnDemandIDs(&route, models.NewEmptyReferences())
+	api.attachStopOnDemandIDs(&stop, models.NewEmptyReferences())
 	api.attachOnDemandPointersToReferences(models.NewEmptyReferences())
 	assert.Nil(t, route.OnDemandServiceIDs)
 	assert.Nil(t, stop.OnDemandServiceIDs)
@@ -212,7 +212,7 @@ func TestAttachOnDemandPointers_NilSafe(t *testing.T) {
 func TestAttachOnDemandPointers_IgnoresUnparseableIDs(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
 	route := models.Route{ID: "no-underscore"}
-	api.attachRouteOnDemandIDs(&route)
+	api.attachRouteOnDemandIDs(&route, models.NewEmptyReferences())
 	assert.Nil(t, route.OnDemandServiceIDs)
 }
 
@@ -220,4 +220,16 @@ func TestPointerFlexIndex_SkipsFeedsWithoutOnDemandServices(t *testing.T) {
 	assert.Nil(t, createTestApi(t).pointerFlexIndex(), "a fixed-route feed attaches no pointers")
 	assert.Nil(t, (&RestAPI{}).pointerFlexIndex(), "a RestAPI without an Application attaches no pointers")
 	assert.NotNil(t, alexandriaAPI(t).pointerFlexIndex())
+}
+
+func TestAttachRouteOnDemandIDs_FillsEntryAndReferences(t *testing.T) {
+	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
+	route := models.Route{ID: "CC_CC1"}
+	references := models.NewEmptyReferences()
+	references.Routes = append(references.Routes, models.Route{ID: "CC_CC1"})
+
+	api.attachRouteOnDemandIDs(&route, references)
+
+	assert.NotEmpty(t, route.OnDemandServiceIDs)
+	assert.Equal(t, route.OnDemandServiceIDs, references.Routes[0].OnDemandServiceIDs)
 }
