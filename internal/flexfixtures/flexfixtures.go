@@ -38,6 +38,17 @@ const (
 	APSaturdaySvc = "sat"
 )
 
+// Identifiers used by TwoAgencyFiles.
+const (
+	TAFixedAgencyID = "aa"
+	TAFlexAgencyID  = "bb"
+	TAFlexRouteID   = "flexbb"
+	TAGroupID       = "grp_bb"
+	TASharedStopID  = "X" // served by aa's fixed route and referenced by bb's flex rules
+	TAFlexStopID    = "Y" // referenced only by bb's flex rules
+	TAFixedStopID   = "Z" // served only by aa's fixed route
+)
+
 // ZipBytes zips the given file map in memory.
 func ZipBytes(t testing.TB, files map[string]string) []byte {
 	t.Helper()
@@ -207,4 +218,36 @@ func zeroStopsStopTimes() string {
 		out += p.trip + ",,,," + p.to + ",,2,1,2," + p.rule + "," + p.rule + "," + start + "," + end + ",2,30\n"
 	}
 	return out
+}
+
+// TwoAgencyFiles is a UTC feed where agency aa runs a fixed route through stop
+// X and agency bb runs a flex service whose rules reference X (as a windowed
+// pickup and as a location-group member) and the flex-only stop Y.
+func TwoAgencyFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"aa,Alpha Transit,http://example.com/aa,UTC\n" +
+			"bb,Beta Dial-A-Ride,http://example.com/bb,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"fixed,aa,1,Alpha Line,3\n" +
+			"flexbb,bb,B,Beta Flex,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"X,Shared Plaza,47.6000,-122.3300\n" +
+			"Y,Beta Corner,47.6100,-122.3200\n" +
+			"Z,Alpha Terminal,47.6200,-122.3100\n",
+		"location_groups.txt": "location_group_id,location_group_name\n" +
+			"grp_bb,Beta stops\n",
+		"location_group_stops.txt": "location_group_id,stop_id\n" +
+			"grp_bb,X\ngrp_bb,Y\n",
+		"trips.txt": "route_id,service_id,trip_id\n" +
+			"fixed,svc,fixed-trip\n" +
+			"flexbb,svc,bb-trip\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,location_group_id,stop_sequence,pickup_type,drop_off_type,start_pickup_drop_off_window,end_pickup_drop_off_window\n" +
+			"fixed-trip,08:00:00,08:00:00,X,,1,,,,\n" +
+			"fixed-trip,08:10:00,08:10:00,Z,,2,,,,\n" +
+			"bb-trip,,,X,,1,2,1,08:00:00,10:00:00\n" +
+			"bb-trip,,,,grp_bb,2,1,2,08:00:00,10:00:00\n",
+	}
 }
