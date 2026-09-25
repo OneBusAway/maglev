@@ -215,3 +215,9 @@ func TestAttachOnDemandPointers_IgnoresUnparseableIDs(t *testing.T) {
 	api.attachRouteOnDemandIDs(&route)
 	assert.Nil(t, route.OnDemandServiceIDs)
 }
+
+func TestPointerFlexIndex_SkipsFeedsWithoutOnDemandServices(t *testing.T) {
+	assert.Nil(t, createTestApi(t).pointerFlexIndex(), "a fixed-route feed attaches no pointers")
+	assert.Nil(t, (&RestAPI{}).pointerFlexIndex(), "a RestAPI without an Application attaches no pointers")
+	assert.NotNil(t, alexandriaAPI(t).pointerFlexIndex())
+}
