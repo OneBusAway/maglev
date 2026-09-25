@@ -16,26 +16,24 @@ import (
 
 // attachRouteOnDemandIDs sets the pointer on a route model from its combined id.
 func (api *RestAPI) attachRouteOnDemandIDs(route *models.Route) {
-	if !api.hasFlexIndex() {
-		return
+	if index := api.pointerFlexIndex(); index != nil {
+		setRouteOnDemandIDs(index, route)
 	}
-	setRouteOnDemandIDs(api.GtfsManager.FlexIndex(), route)
 }
 
 // attachStopOnDemandIDs sets the pointer on a stop model from its combined id.
 func (api *RestAPI) attachStopOnDemandIDs(stop *models.Stop) {
-	if !api.hasFlexIndex() {
-		return
+	if index := api.pointerFlexIndex(); index != nil {
+		setStopOnDemandIDs(index, stop)
 	}
-	setStopOnDemandIDs(api.GtfsManager.FlexIndex(), stop)
 }
 
 // attachOnDemandPointers fills the pointer on every route and stop in place.
 func (api *RestAPI) attachOnDemandPointers(routes []models.Route, stops []models.Stop) {
-	if !api.hasFlexIndex() {
+	index := api.pointerFlexIndex()
+	if index == nil {
 		return
 	}
-	index := api.GtfsManager.FlexIndex()
 	for i := range routes {
 		setRouteOnDemandIDs(index, &routes[i])
 	}
@@ -50,9 +48,19 @@ func (api *RestAPI) attachOnDemandPointersToReferences(references *models.Refere
 	api.attachOnDemandPointers(references.Routes, references.Stops)
 }
 
-// hasFlexIndex guards tests that build a RestAPI without an Application or manager.
-func (api *RestAPI) hasFlexIndex() bool {
-	return api.Application != nil && api.GtfsManager != nil
+// pointerFlexIndex returns the snapshot to fill pointers from, or nil when no
+// pointer can be set: a RestAPI built without an Application or manager (some
+// tests), or a feed with no on-demand services, which then skips per-item id
+// parsing on every /where response.
+func (api *RestAPI) pointerFlexIndex() *gtfs.FlexIndex {
+	if api.Application == nil || api.GtfsManager == nil {
+		return nil
+	}
+	index := api.GtfsManager.FlexIndex()
+	if index.IsFlexEmpty() {
+		return nil
+	}
+	return index
 }
 
 // setRouteOnDemandIDs sets a route's pointer from one index snapshot; routes
