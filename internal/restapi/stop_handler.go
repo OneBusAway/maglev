@@ -171,8 +171,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	api.attachStopOnDemandIDs(stopData)
-	api.attachOnDemandPointersToReferences(references)
+	api.attachStopOnDemandIDs(stopData, references)
 	response := models.NewEntryResponse(stopData, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
