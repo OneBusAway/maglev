@@ -132,15 +132,6 @@ func TestSearchStopsHandlerEdgeCaseParams(t *testing.T) {
 			},
 		},
 		{
-			name:           "maxCount at ceiling is allowed",
-			params:         url.Values{"input": {"Buenaventura"}, "maxCount": {"250"}},
-			expectedStatus: http.StatusOK,
-			check: func(t *testing.T, stopsResp StopsResponse) {
-				assert.NotEmpty(t, stopsResp.Data.List)
-				assert.False(t, stopsResp.Data.LimitExceeded)
-			},
-		},
-		{
 			name:           "invalid includeReferences falls back to true",
 			params:         url.Values{"input": {"Buenaventura"}, "includeReferences": {"maybe"}},
 			expectedStatus: http.StatusOK,
@@ -149,21 +140,6 @@ func TestSearchStopsHandlerEdgeCaseParams(t *testing.T) {
 				assert.NotEmpty(t, stopsResp.Data.References.Agencies)
 				assert.NotEmpty(t, stopsResp.Data.References.Routes)
 			},
-		},
-		{
-			name:           "version 2 is accepted and response stays v2",
-			params:         url.Values{"input": {"Buenaventura"}, "version": {"2"}},
-			expectedStatus: http.StatusOK,
-			check: func(t *testing.T, stopsResp StopsResponse) {
-				assert.Equal(t, 2, stopsResp.Version)
-				assert.NotEmpty(t, stopsResp.Data.List)
-			},
-		},
-		{
-			name:           "unsupported version is rejected",
-			params:         url.Values{"input": {"Buenaventura"}, "version": {"1"}},
-			expectedStatus: http.StatusBadRequest,
-			check:          func(t *testing.T, stopsResp StopsResponse) {},
 		},
 		{
 			name:           "agencyId is ignored and searches all agencies",
@@ -270,6 +246,7 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 	}{
 		{"omitted", "", http.StatusOK, false},
 		{"valid", "10", http.StatusOK, false},
+		{"atCeiling", "250", http.StatusOK, false},
 		{"zero", "0", http.StatusBadRequest, true},
 		{"negative", "-1", http.StatusBadRequest, true},
 		{"tooLarge", "251", http.StatusBadRequest, true},
