@@ -191,6 +191,9 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
 | `/api/gtfs_realtime/alerts-for-agency/{id}.pb` | `alerts_for_agency_handler.go` | GTFS-RT service alerts for an agency |
 | `/api/gtfs_realtime/trip-updates-for-agency/{id}.pb` | `trip_updates_for_agency_handler.go` | GTFS-RT trip updates for an agency |
+| `/api/ondemand/service/{id}` | `ondemand_service_handler.go` | Single on-demand (GTFS-Flex) service with rules and references |
+| `/api/ondemand/services-for-agency/{id}` | `ondemand_services_for_agency_handler.go` | An agency's on-demand services |
+| `/api/ondemand/services-for-location.json` | `ondemand_services_for_location_handler.go` | On-demand services covering a point/radius or viewport |
 
 ## Middleware Components
 
@@ -306,6 +309,13 @@ After modifying SQL queries or schema, run `make models` to regenerate the Go co
 - `GetRoutesForStops`, `GetAgenciesForStops` - Batch lookups
 - `GetStopsByIDs`, `GetRoutesByIDs`, `GetTripsByIDs` - Batch by IDs
 
+**GTFS-Flex:**
+- Tables `booking_rules`, `locations`, `location_groups`, `location_group_stops`, `flex_stop_times` hold the feed's flex data; windowed stop_times records go to `flex_stop_times`, never `stop_times`
+- `ondemand_services`, `ondemand_rules`, `ondemand_stop_services` are compiled at import by `gtfsdb.CompileOnDemand` (`gtfsdb/flex_compile.go`)
+- `trips.min_arrival_time IS NULL` identifies a flex-only trip; `GetAllTripsForRoute` and `GetTripsForRouteInActiveServiceIDs` exclude them
+- `BuildStopAgencies` unions `ondemand_stop_services` so rule-referenced stops no fixed route serves still resolve to an agency; a stop with stop_times keeps only its fixed routes' agencies
+- `NewClient` bumps `PRAGMA user_version` to `flexImportVersion` and invalidates `import_metadata.file_hash` once so pre-flex databases reimport
+
 ## In-Memory Data Structures
 
 What the GTFS Manager (`internal/gtfs/gtfs_manager.go`) does and does not keep
@@ -356,6 +366,13 @@ When a single feed refreshes, only its per-feed sub-map is overwritten; other fe
 
 **Direction Calculator** (shape-based direction inference):
 - `DirectionCalculator` - Precomputed stop directions from shape geometry
+
+**Flex Index** (`internal/gtfs/flex_index.go`), rebuilt in `ReloadStatic` and read via `manager.FlexIndex()`, which takes `staticMutex.RLock` only to fetch the pointer; the returned snapshot is immutable and read without locks, so fetch it once per request or batch:
+- `Areas` - bare location id → parsed zone polygons and bbox (containment and distance always run on the full geometry)
+- `StopServiceIDs` / `RouteServiceIDs` - bare stop/route id → combined on-demand service ids (the `onDemandServiceIds` pointers)
+- `ServiceBounds`, `ServiceAreaIDs`, `ServiceStops`, `BareServiceIDs` - per combined service id, for `services-for-location` candidate filtering and matching
+
+`ReloadStatic` commits the new database before it swaps in the new index (the same window `regionBounds` has), so a request in between can see new rows with the old index.
 
 ## Data Access Patterns
 
@@ -419,6 +436,9 @@ Located in `testdata/`:
 - `raba-vehicle-positions.pb` - RABA real-time vehicle positions
 - `raba-trip-updates.pb` - RABA real-time trip updates
 - `unitrans-*.pb` - Unitrans real-time data (for mismatched data testing)
+- `alexandria-flex.zip`, `manistee-flex.zip`, `charlevoix-flex.zip` - Real GTFS-Flex feeds (single zone; zone-to-zone plus a timed route; location group)
+- `flex-booking-vectors.json` - Booking-deadline vectors shared with the iOS and Android clients
+- `openapi-ondemand.yml` - Locally maintained OpenAPI document for `/api/ondemand` (`openapi.yml` stays upstream-synced)
 - `config_*.json` - Configuration test fixtures
 
 ### Testing Patterns
