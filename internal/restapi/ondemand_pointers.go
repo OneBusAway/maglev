@@ -30,6 +30,14 @@ func (api *RestAPI) attachStopOnDemandIDs(stop *models.Stop, references *models.
 	setOnDemandPointers(index, references.Routes, references.Stops)
 }
 
+// attachStopListOnDemandIDs sets the pointer on a stop list and on its
+// references block from one snapshot.
+func (api *RestAPI) attachStopListOnDemandIDs(stops []models.Stop, references *models.ReferencesModel) {
+	index := api.pointerFlexIndex()
+	setOnDemandPointers(index, nil, stops)
+	setOnDemandPointers(index, references.Routes, references.Stops)
+}
+
 // attachOnDemandPointers fills the pointer on every route and stop in place.
 func (api *RestAPI) attachOnDemandPointers(routes []models.Route, stops []models.Stop) {
 	setOnDemandPointers(api.pointerFlexIndex(), routes, stops)
