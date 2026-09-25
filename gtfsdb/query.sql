@@ -1737,6 +1737,20 @@ AND NOT EXISTS (
 )
 ORDER BY r.service_id, r.gtfs_service_id;
 
+-- name: ListBookingRulesWithoutPriorNoticeCalendar :many
+-- Booking rules whose prior-notice service has no calendar row with a service
+-- day, so no base calendar is emitted for it and the builder nulls
+-- priorNoticeCalendarId.
+SELECT b.id, b.prior_notice_service_id
+FROM booking_rules b
+WHERE b.prior_notice_service_id IS NOT NULL AND b.prior_notice_service_id != ''
+AND NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = b.prior_notice_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+ORDER BY b.id;
+
 -- name: ListOnDemandServiceLocationIDs :many
 SELECT DISTINCT t.route_id AS service_id, fst.location_id
 FROM flex_stop_times fst

@@ -86,6 +86,7 @@ func buildFlexIndex(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Log
 	idx.computeServiceBounds()
 	idx.sortLists()
 	warnInertRuleCalendars(ctx, gtfsDB, logger)
+	warnDanglingPriorNoticeCalendars(ctx, gtfsDB, logger)
 	return idx, nil
 }
 
@@ -101,6 +102,22 @@ func warnInertRuleCalendars(ctx context.Context, gtfsDB *gtfsdb.Client, logger *
 	for _, row := range rows {
 		logger.Warn("dropping on-demand rules whose calendar has no service days or added dates",
 			slog.String("service_id", row.ServiceID), slog.String("gtfs_service_id", row.GtfsServiceID))
+	}
+}
+
+// warnDanglingPriorNoticeCalendars logs, once per reload, each booking rule
+// whose prior-notice service emits no base calendar; the /ondemand builder
+// nulls its priorNoticeCalendarId. Diagnostic only, like warnInertRuleCalendars.
+func warnDanglingPriorNoticeCalendars(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Logger) {
+	rows, err := gtfsDB.Queries.ListBookingRulesWithoutPriorNoticeCalendar(ctx)
+	if err != nil {
+		logger.Warn("could not check prior-notice calendars", slog.String("error", err.Error()))
+		return
+	}
+	for _, row := range rows {
+		logger.Warn("dropping prior-notice calendar with no base calendar",
+			slog.String("booking_rule_id", row.ID),
+			slog.String("prior_notice_service_id", nulls.StringOrEmpty(row.PriorNoticeServiceID)))
 	}
 }
 

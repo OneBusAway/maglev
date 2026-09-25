@@ -6269,6 +6269,49 @@ func (q *Queries) ListAgencyIds(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listBookingRulesWithoutPriorNoticeCalendar = `-- name: ListBookingRulesWithoutPriorNoticeCalendar :many
+SELECT b.id, b.prior_notice_service_id
+FROM booking_rules b
+WHERE b.prior_notice_service_id IS NOT NULL AND b.prior_notice_service_id != ''
+AND NOT EXISTS (
+    SELECT 1 FROM calendar c
+    WHERE c.id = b.prior_notice_service_id
+      AND 1 IN (c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday)
+)
+ORDER BY b.id
+`
+
+type ListBookingRulesWithoutPriorNoticeCalendarRow struct {
+	ID                   string
+	PriorNoticeServiceID sql.NullString
+}
+
+// Booking rules whose prior-notice service has no calendar row with a service
+// day, so no base calendar is emitted for it and the builder nulls
+// priorNoticeCalendarId.
+func (q *Queries) ListBookingRulesWithoutPriorNoticeCalendar(ctx context.Context) ([]ListBookingRulesWithoutPriorNoticeCalendarRow, error) {
+	rows, err := q.query(ctx, q.listBookingRulesWithoutPriorNoticeCalendarStmt, listBookingRulesWithoutPriorNoticeCalendar)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBookingRulesWithoutPriorNoticeCalendarRow
+	for rows.Next() {
+		var i ListBookingRulesWithoutPriorNoticeCalendarRow
+		if err := rows.Scan(&i.ID, &i.PriorNoticeServiceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInertOnDemandRuleCalendars = `-- name: ListInertOnDemandRuleCalendars :many
 SELECT DISTINCT r.service_id, r.gtfs_service_id
 FROM ondemand_rules r

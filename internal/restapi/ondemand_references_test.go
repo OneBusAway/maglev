@@ -416,7 +416,5 @@ func TestBuildOnDemandServices_PriorNoticeCalendarMustResolve(t *testing.T) {
 		"a calendar_dates-only service has no base calendar")
 	assert.Nil(t, refs.BookingRules[0].PriorNoticeCalendarId, "an id with no emitted calendar is dropped")
 	assert.Equal(t, "a2_svc", *refs.BookingRules[1].PriorNoticeCalendarId, "an id that resolves is kept")
-	assert.Contains(t, logs.String(), "booking_rule_id=a1_br")
-	assert.Contains(t, logs.String(), "prior_notice_calendar_id=a1_holiday")
-	assert.NotContains(t, logs.String(), "a2_br_svc")
+	assert.Empty(t, logs.String(), "the dangling id is logged once per reload by buildFlexIndex, not per request")
 }
