@@ -6148,6 +6148,54 @@ func (q *Queries) GetTripsInBlock(ctx context.Context, arg GetTripsInBlockParams
 	return items, nil
 }
 
+const getWhereAgencyIDsForStops = `-- name: GetWhereAgencyIDsForStops :many
+SELECT stop_id, CAST(MIN(agency_id) AS TEXT) AS agency_id
+FROM stop_agencies
+WHERE stop_id IN (/*SLICE:stop_ids*/?)
+GROUP BY stop_id
+ORDER BY stop_id
+`
+
+type GetWhereAgencyIDsForStopsRow struct {
+	StopID   string
+	AgencyID string
+}
+
+// The agency each stop's /where id carries: the same MIN rule searchStopsByName
+// (fts_queries.go) applies to stop_agencies.
+func (q *Queries) GetWhereAgencyIDsForStops(ctx context.Context, stopIds []string) ([]GetWhereAgencyIDsForStopsRow, error) {
+	query := getWhereAgencyIDsForStops
+	var queryParams []interface{}
+	if len(stopIds) > 0 {
+		for _, v := range stopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(stopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetWhereAgencyIDsForStopsRow
+	for rows.Next() {
+		var i GetWhereAgencyIDsForStopsRow
+		if err := rows.Scan(&i.StopID, &i.AgencyID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgencies = `-- name: ListAgencies :many
 SELECT
     id, name, url, timezone, lang, phone, fare_url, email

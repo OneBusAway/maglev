@@ -1703,6 +1703,15 @@ SELECT * FROM calendar WHERE id IN (sqlc.slice('service_ids')) ORDER BY id;
 -- name: GetCalendarDatesForServiceIDs :many
 SELECT * FROM calendar_dates WHERE service_id IN (sqlc.slice('service_ids')) ORDER BY service_id, date;
 
+-- name: GetWhereAgencyIDsForStops :many
+-- The agency each stop's /where id carries: the same MIN rule searchStopsByName
+-- (fts_queries.go) applies to stop_agencies.
+SELECT stop_id, CAST(MIN(agency_id) AS TEXT) AS agency_id
+FROM stop_agencies
+WHERE stop_id IN (sqlc.slice('stop_ids'))
+GROUP BY stop_id
+ORDER BY stop_id;
+
 -- name: ListOnDemandStopServices :many
 SELECT * FROM ondemand_stop_services ORDER BY stop_id, service_id;
 

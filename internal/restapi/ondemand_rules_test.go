@@ -34,7 +34,7 @@ func TestBuildAvailabilityRules_MergesCalendarsAcrossRows(t *testing.T) {
 		ruleRow("mon-tues-wed-thurs-fri", "charlevoix_county", "charlevoix_county", 7*time.Hour+20*time.Minute, 16*time.Hour+40*time.Minute, "booking_rule_CC1"),
 	}
 
-	rules := buildAvailabilityRules(rows, "CC", calendars)
+	rules := buildAvailabilityRules(rows, serviceIDScope{agencyID: "CC"}, calendars)
 	require.Len(t, rules, 1, "rows identical except for calendar merge")
 
 	rule := rules[0]
@@ -61,7 +61,7 @@ func TestBuildAvailabilityRules_TotalOrder(t *testing.T) {
 	}
 	rows = append(rows, gtfsdb.OndemandRule{ServiceID: "CC1", FromID: "z9", ToID: "z9", FromKind: 1, ToKind: 1, GtfsServiceID: "a", PickupType: 2, DropOffType: 2})
 
-	rules := buildAvailabilityRules(rows, "X", calendars)
+	rules := buildAvailabilityRules(rows, serviceIDScope{agencyID: "X"}, calendars)
 	require.Len(t, rules, 5)
 	assert.Nil(t, rules[0].StartPickupTime, "null windows sort first")
 	assert.Equal(t, "05:00:00", *rules[1].StartPickupTime)
@@ -73,12 +73,29 @@ func TestBuildAvailabilityRules_TotalOrder(t *testing.T) {
 	assert.Equal(t, []string{"X_a", "X_b"}, rules[4].CalendarIds)
 }
 
+func TestBuildAvailabilityRules_StopEndpointsTakeTheirWhereAgency(t *testing.T) {
+	row := ruleRow("a", "X", "grp", time.Hour, 2*time.Hour, "br")
+	row.FromKind = int64(gtfsdb.EndpointStop)
+	row.ToKind = int64(gtfsdb.EndpointGroup)
+	scope := serviceIDScope{agencyID: "bb", stopAgencies: stopAgencyIDs{"X": "aa"}}
+
+	rules := buildAvailabilityRules([]gtfsdb.OndemandRule{row}, scope, map[string][]string{"a": {"bb_a"}})
+	require.Len(t, rules, 1)
+	assert.Equal(t, []string{"aa_X"}, rules[0].FromIds, "a stop keeps its own /where agency")
+	assert.Equal(t, []string{"bb_grp"}, rules[0].ToIds, "a group takes the service's agency")
+	assert.Equal(t, "bb_br", *rules[0].PickupBookingRuleId)
+
+	row.FromID = "unindexed"
+	rules = buildAvailabilityRules([]gtfsdb.OndemandRule{row}, scope, map[string][]string{"a": {"bb_a"}})
+	assert.Equal(t, []string{"bb_unindexed"}, rules[0].FromIds, "a stop with no stop_agencies row falls back to the service's agency")
+}
+
 func TestBuildAvailabilityRules_UnknownCalendarYieldsEmptyIDs(t *testing.T) {
-	rules := buildAvailabilityRules([]gtfsdb.OndemandRule{ruleRow("ghost", "z1", "z1", time.Hour, 2*time.Hour, "br")}, "X", map[string][]string{})
+	rules := buildAvailabilityRules([]gtfsdb.OndemandRule{ruleRow("ghost", "z1", "z1", time.Hour, 2*time.Hour, "br")}, serviceIDScope{agencyID: "X"}, map[string][]string{})
 	require.Len(t, rules, 1)
 	assert.Equal(t, []string{}, rules[0].CalendarIds)
-	assert.Empty(t, buildAvailabilityRules(nil, "X", nil))
-	assert.NotNil(t, buildAvailabilityRules(nil, "X", nil), "rules is never null on the wire")
+	assert.Empty(t, buildAvailabilityRules(nil, serviceIDScope{agencyID: "X"}, nil))
+	assert.NotNil(t, buildAvailabilityRules(nil, serviceIDScope{agencyID: "X"}, nil), "rules is never null on the wire")
 }
 
 func TestSortAvailabilityRules_UsesSortedIDs(t *testing.T) {

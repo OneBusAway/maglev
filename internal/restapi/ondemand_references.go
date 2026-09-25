@@ -30,6 +30,8 @@ type onDemandBuildOptions struct {
 // agencyScopedID pairs a bare id with the agency that prefixes it on the wire.
 // Zone, group, booking-rule and calendar ids take the agency of the service
 // whose rules reference them, so the same bare id can appear under two agencies.
+// Stop ids are collected the same way, then re-keyed by each stop's own /where
+// agency (stopAgencyIDs.rescope).
 type agencyScopedID struct {
 	AgencyID string
 	ID       string
@@ -126,6 +128,17 @@ func (api *RestAPI) buildOnDemandServices(ctx context.Context, services []gtfsdb
 		}
 	}
 
+	groups, err := api.loadOnDemandLocationGroups(ctx, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, ids.stops)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids.stops = stopAgencies.rescope(ids.stops)
+	references.LocationGroups = locationGroupReferences(groups, stopAgencies)
+
 	// Booking rules may name a prior-notice service, whose calendar joins the block.
 	references.BookingRules, err = api.onDemandBookingRules(ctx, ids)
 	if err != nil {
@@ -144,7 +157,8 @@ func (api *RestAPI) buildOnDemandServices(ctx context.Context, services []gtfsdb
 	}
 	serviceModels := make([]models.OnDemandService, 0, len(services))
 	for _, service := range services {
-		rules := buildAvailabilityRules(rulesByService[service.ID], service.AgencyID, calendarIDsForAgency(calendarIDs, service.AgencyID))
+		scope := serviceIDScope{agencyID: service.AgencyID, stopAgencies: stopAgencies}
+		rules := buildAvailabilityRules(rulesByService[service.ID], scope, calendarIDsForAgency(calendarIDs, service.AgencyID))
 		serviceModels = append(serviceModels, onDemandServiceModel(service, routes[service.RouteID], rules))
 	}
 	utils.SortByKey(serviceModels, func(s models.OnDemandService) string { return s.ID })
@@ -349,15 +363,12 @@ func calendarIDsForAgency(calendarIDs map[agencyScopedID][]string, agencyID stri
 	return byService
 }
 
-// fillOnDemandReferences resolves areas, groups (and their member stops),
-// rule-referenced stops with the routes serving them, the services' own
-// routes, and every agency involved.
+// fillOnDemandReferences resolves areas, rule-referenced and group-member
+// stops with the routes serving them, the services' own routes, and every
+// agency involved.
 func (api *RestAPI) fillOnDemandReferences(ctx context.Context, references *models.OnDemandReferences, services []gtfsdb.OndemandService, routes map[string]gtfsdb.Route, ids *onDemandReferenceIDs, opts onDemandBuildOptions) error {
 	var err error
 	if references.ServiceAreas, err = api.onDemandServiceAreas(ctx, ids.locations, opts); err != nil {
-		return err
-	}
-	if references.LocationGroups, err = api.onDemandLocationGroups(ctx, ids); err != nil {
 		return err
 	}
 
@@ -455,10 +466,17 @@ func (api *RestAPI) applyAreaDistance(area *models.ServiceArea, locationID strin
 	area.NearestPointOnBoundary = &[2]float64{lon, lat}
 }
 
-// onDemandLocationGroups resolves groups and adds their members to ids.stops so
-// the standard stop references cover them.
-// Extends ids.stops, so it must run before appendOnDemandStopReferences.
-func (api *RestAPI) onDemandLocationGroups(ctx context.Context, ids *onDemandReferenceIDs) ([]models.LocationGroupReference, error) {
+// onDemandLocationGroup is a referenced group with its member stop ids.
+type onDemandLocationGroup struct {
+	scoped  agencyScopedID
+	group   gtfsdb.LocationGroup
+	members []string
+}
+
+// loadOnDemandLocationGroups resolves groups and adds their members to
+// ids.stops so the standard stop references cover them.
+// Extends ids.stops, so it must run before loadStopAgencyIDs.
+func (api *RestAPI) loadOnDemandLocationGroups(ctx context.Context, ids *onDemandReferenceIDs) ([]onDemandLocationGroup, error) {
 	groupIDs := bareIDs(ids.groups)
 	rows, err := queryInBatches(ctx, groupIDs, api.GtfsManager.GtfsDB.Queries.GetLocationGroupsByIDs)
 	if err != nil {
@@ -477,24 +495,77 @@ func (api *RestAPI) onDemandLocationGroups(ctx context.Context, ids *onDemandRef
 		byID[row.ID] = row
 	}
 
-	groups := make([]models.LocationGroupReference, 0, len(ids.groups))
+	groups := make([]onDemandLocationGroup, 0, len(ids.groups))
 	for scoped := range ids.groups {
 		group, ok := byID[scoped.ID]
 		if !ok {
 			continue
 		}
-		stopIDs := make([]string, 0, len(membersByGroup[group.ID]))
-		for _, stopID := range membersByGroup[group.ID] {
+		members := membersByGroup[group.ID]
+		for _, stopID := range members {
 			addScoped(ids.stops, scoped.AgencyID, stopID)
-			stopIDs = append(stopIDs, utils.FormCombinedID(scoped.AgencyID, stopID))
 		}
-		groups = append(groups, models.LocationGroupReference{
-			ID:      scoped.combined(),
-			Name:    models.NullableString(nulls.StringOrEmpty(group.Name)),
+		groups = append(groups, onDemandLocationGroup{scoped: scoped, group: group, members: members})
+	}
+	return groups, nil
+}
+
+// locationGroupReferences builds the group references; member stop ids carry
+// each stop's own /where agency, the group id its service's agency.
+func locationGroupReferences(groups []onDemandLocationGroup, stopAgencies stopAgencyIDs) []models.LocationGroupReference {
+	references := make([]models.LocationGroupReference, 0, len(groups))
+	for _, group := range groups {
+		stopIDs := make([]string, 0, len(group.members))
+		for _, stopID := range group.members {
+			stopIDs = append(stopIDs, stopAgencies.combinedStopID(group.scoped.AgencyID, stopID))
+		}
+		references = append(references, models.LocationGroupReference{
+			ID:      group.scoped.combined(),
+			Name:    models.NullableString(nulls.StringOrEmpty(group.group.Name)),
 			StopIds: utils.SortedUnique(stopIDs),
 		})
 	}
-	return groups, nil
+	return references
+}
+
+// stopAgencyIDs maps a bare stop id to the agency its /where id carries.
+type stopAgencyIDs map[string]string
+
+// loadStopAgencyIDs resolves the /where agency of every referenced stop with
+// the MIN rule stop search uses, so /ondemand and /where agree on stop ids.
+func (api *RestAPI) loadStopAgencyIDs(ctx context.Context, stops map[agencyScopedID]struct{}) (stopAgencyIDs, error) {
+	rows, err := queryInBatches(ctx, bareIDs(stops), api.GtfsManager.GtfsDB.Queries.GetWhereAgencyIDsForStops)
+	if err != nil {
+		return nil, fmt.Errorf("load stop agencies: %w", err)
+	}
+	agencies := make(stopAgencyIDs, len(rows))
+	for _, row := range rows {
+		agencies[row.StopID] = row.AgencyID
+	}
+	return agencies, nil
+}
+
+// agencyFor returns the stop's /where agency, falling back to the referencing
+// service's agency for a stop with no stop_agencies row at all.
+func (agencies stopAgencyIDs) agencyFor(serviceAgencyID, stopID string) string {
+	if agencyID, ok := agencies[stopID]; ok {
+		return agencyID
+	}
+	return serviceAgencyID
+}
+
+func (agencies stopAgencyIDs) combinedStopID(serviceAgencyID, stopID string) string {
+	return utils.FormCombinedID(agencies.agencyFor(serviceAgencyID, stopID), stopID)
+}
+
+// rescope re-keys a stop set collected under service agencies by each stop's
+// own /where agency.
+func (agencies stopAgencyIDs) rescope(stops map[agencyScopedID]struct{}) map[agencyScopedID]struct{} {
+	rescoped := make(map[agencyScopedID]struct{}, len(stops))
+	for scoped := range stops {
+		addScoped(rescoped, agencies.agencyFor(scoped.AgencyID, scoped.ID), scoped.ID)
+	}
+	return rescoped
 }
 
 // appendOnDemandStopReferences builds standard stop references per agency and
