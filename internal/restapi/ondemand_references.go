@@ -147,6 +147,40 @@ func bareIDs(set map[agencyScopedID]struct{}) []string {
 	return utils.SortedUnique(ids)
 }
 
+// batchQuery is a sqlc query over one IN (...) list of ids, as queryInBatches
+// runs it.
+type batchQuery[Row any] func(context.Context, []string) ([]Row, error)
+
+// loadKeyedInBatches runs query over ids in batches and maps each row to one
+// key/value entry; a later row with the same key replaces an earlier one.
+func loadKeyedInBatches[Row any, K comparable, V any](ctx context.Context, ids []string, query batchQuery[Row], entry func(Row) (K, V)) (map[K]V, error) {
+	rows, err := queryInBatches(ctx, ids, query)
+	if err != nil {
+		return nil, err
+	}
+	keyed := make(map[K]V, len(rows))
+	for _, row := range rows {
+		key, value := entry(row)
+		keyed[key] = value
+	}
+	return keyed, nil
+}
+
+// loadGroupedInBatches runs query over ids in batches and groups each row's
+// value under its key, in row order.
+func loadGroupedInBatches[Row any, K comparable, V any](ctx context.Context, ids []string, query batchQuery[Row], entry func(Row) (K, V)) (map[K][]V, error) {
+	rows, err := queryInBatches(ctx, ids, query)
+	if err != nil {
+		return nil, err
+	}
+	grouped := make(map[K][]V)
+	for _, row := range rows {
+		key, value := entry(row)
+		grouped[key] = append(grouped[key], value)
+	}
+	return grouped, nil
+}
+
 // buildOnDemandServices turns service rows into wire services with their rules
 // and the complete /ondemand references block. Services and every reference
 // array come back sorted by id.
@@ -222,13 +256,10 @@ func (api *RestAPI) loadOnDemandRules(ctx context.Context, services []gtfsdb.Ond
 	for _, service := range services {
 		serviceIDs = append(serviceIDs, service.ID)
 	}
-	rows, err := queryInBatches(ctx, serviceIDs, api.GtfsManager.GtfsDB.Queries.GetOnDemandRulesForServices)
+	byService, err := loadGroupedInBatches(ctx, serviceIDs, api.GtfsManager.GtfsDB.Queries.GetOnDemandRulesForServices,
+		func(row gtfsdb.OndemandRule) (string, gtfsdb.OndemandRule) { return row.ServiceID, row })
 	if err != nil {
 		return nil, fmt.Errorf("load on-demand rules: %w", err)
-	}
-	byService := make(map[string][]gtfsdb.OndemandRule, len(services))
-	for _, row := range rows {
-		byService[row.ServiceID] = append(byService[row.ServiceID], row)
 	}
 	return byService, nil
 }
@@ -238,13 +269,12 @@ func (api *RestAPI) loadFlexRecordReferences(ctx context.Context, services []gtf
 	for _, service := range services {
 		routeIDs = append(routeIDs, service.RouteID)
 	}
-	rows, err := queryInBatches(ctx, routeIDs, api.GtfsManager.GtfsDB.Queries.GetFlexRecordReferencesForRoutes)
+	byRoute, err := loadGroupedInBatches(ctx, routeIDs, api.GtfsManager.GtfsDB.Queries.GetFlexRecordReferencesForRoutes,
+		func(row gtfsdb.GetFlexRecordReferencesForRoutesRow) (string, gtfsdb.GetFlexRecordReferencesForRoutesRow) {
+			return row.RouteID, row
+		})
 	if err != nil {
 		return nil, fmt.Errorf("load flex record references: %w", err)
-	}
-	byRoute := make(map[string][]gtfsdb.GetFlexRecordReferencesForRoutesRow, len(services))
-	for _, row := range rows {
-		byRoute[row.RouteID] = append(byRoute[row.RouteID], row)
 	}
 	return byRoute, nil
 }
@@ -254,13 +284,10 @@ func (api *RestAPI) loadRoutesByBareID(ctx context.Context, services []gtfsdb.On
 	for _, service := range services {
 		routeIDs = append(routeIDs, service.RouteID)
 	}
-	rows, err := queryInBatches(ctx, utils.SortedUnique(routeIDs), api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+	routes, err := loadKeyedInBatches(ctx, utils.SortedUnique(routeIDs), api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs,
+		func(row gtfsdb.Route) (string, gtfsdb.Route) { return row.ID, row })
 	if err != nil {
 		return nil, fmt.Errorf("load on-demand routes: %w", err)
-	}
-	routes := make(map[string]gtfsdb.Route, len(rows))
-	for _, row := range rows {
-		routes[row.ID] = row
 	}
 	return routes, nil
 }
@@ -292,13 +319,10 @@ func onDemandServiceModel(service gtfsdb.OndemandService, route gtfsdb.Route, ru
 // prior_notice_service_id as a calendar to compile.
 // Extends ids.gtfsServices, so it must run before onDemandCalendars.
 func (api *RestAPI) onDemandBookingRules(ctx context.Context, ids *onDemandReferenceIDs) ([]models.BookingRule, error) {
-	rows, err := queryInBatches(ctx, bareIDs(ids.bookingRules), api.GtfsManager.GtfsDB.Queries.GetBookingRulesByIDs)
+	byID, err := loadKeyedInBatches(ctx, bareIDs(ids.bookingRules), api.GtfsManager.GtfsDB.Queries.GetBookingRulesByIDs,
+		func(row gtfsdb.BookingRule) (string, gtfsdb.BookingRule) { return row.ID, row })
 	if err != nil {
 		return nil, fmt.Errorf("load booking rules: %w", err)
-	}
-	byID := make(map[string]gtfsdb.BookingRule, len(rows))
-	for _, row := range rows {
-		byID[row.ID] = row
 	}
 
 	bookingRules := make([]models.BookingRule, 0, len(ids.bookingRules))
@@ -339,21 +363,15 @@ func bookingRuleReference(rule gtfsdb.BookingRule, agencyID string) models.Booki
 // returns, per scoped service, the combined calendar ids a rule should carry.
 func (api *RestAPI) onDemandCalendars(ctx context.Context, gtfsServices map[agencyScopedID]struct{}) (map[agencyScopedID][]string, []models.OnDemandCalendar, error) {
 	serviceIDs := bareIDs(gtfsServices)
-	calendarRows, err := queryInBatches(ctx, serviceIDs, api.GtfsManager.GtfsDB.Queries.GetCalendarsByIDs)
+	baseByService, err := loadKeyedInBatches(ctx, serviceIDs, api.GtfsManager.GtfsDB.Queries.GetCalendarsByIDs,
+		func(row gtfsdb.Calendar) (string, gtfsdb.Calendar) { return row.ID, row })
 	if err != nil {
 		return nil, nil, fmt.Errorf("load calendars: %w", err)
 	}
-	baseByService := make(map[string]gtfsdb.Calendar, len(calendarRows))
-	for _, row := range calendarRows {
-		baseByService[row.ID] = row
-	}
-	dateRows, err := queryInBatches(ctx, serviceIDs, api.GtfsManager.GtfsDB.Queries.GetCalendarDatesForServiceIDs)
+	datesByService, err := loadGroupedInBatches(ctx, serviceIDs, api.GtfsManager.GtfsDB.Queries.GetCalendarDatesForServiceIDs,
+		func(row gtfsdb.CalendarDate) (string, gtfsdb.CalendarDate) { return row.ServiceID, row })
 	if err != nil {
 		return nil, nil, fmt.Errorf("load calendar dates: %w", err)
-	}
-	datesByService := make(map[string][]gtfsdb.CalendarDate)
-	for _, row := range dateRows {
-		datesByService[row.ServiceID] = append(datesByService[row.ServiceID], row)
 	}
 
 	calendarIDs := make(map[agencyScopedID][]string, len(gtfsServices))
@@ -443,13 +461,10 @@ func (api *RestAPI) fillOnDemandReferences(ctx context.Context, references *mode
 }
 
 func (api *RestAPI) onDemandServiceAreas(ctx context.Context, locations map[agencyScopedID]struct{}, opts onDemandBuildOptions) ([]models.ServiceArea, error) {
-	rows, err := queryInBatches(ctx, bareIDs(locations), api.GtfsManager.GtfsDB.Queries.GetLocationsByIDs)
+	byID, err := loadKeyedInBatches(ctx, bareIDs(locations), api.GtfsManager.GtfsDB.Queries.GetLocationsByIDs,
+		func(row gtfsdb.Location) (string, gtfsdb.Location) { return row.ID, row })
 	if err != nil {
 		return nil, fmt.Errorf("load locations: %w", err)
-	}
-	byID := make(map[string]gtfsdb.Location, len(rows))
-	for _, row := range rows {
-		byID[row.ID] = row
 	}
 	areas := make([]models.ServiceArea, 0, len(locations))
 	for scoped := range locations {
@@ -518,21 +533,15 @@ type onDemandLocationGroup struct {
 // Extends ids.stops, so it must run before loadStopAgencyIDs.
 func (api *RestAPI) loadOnDemandLocationGroups(ctx context.Context, ids *onDemandReferenceIDs) ([]onDemandLocationGroup, error) {
 	groupIDs := bareIDs(ids.groups)
-	rows, err := queryInBatches(ctx, groupIDs, api.GtfsManager.GtfsDB.Queries.GetLocationGroupsByIDs)
+	byID, err := loadKeyedInBatches(ctx, groupIDs, api.GtfsManager.GtfsDB.Queries.GetLocationGroupsByIDs,
+		func(row gtfsdb.LocationGroup) (string, gtfsdb.LocationGroup) { return row.ID, row })
 	if err != nil {
 		return nil, fmt.Errorf("load location groups: %w", err)
 	}
-	memberRows, err := queryInBatches(ctx, groupIDs, api.GtfsManager.GtfsDB.Queries.GetLocationGroupStopsForGroups)
+	membersByGroup, err := loadGroupedInBatches(ctx, groupIDs, api.GtfsManager.GtfsDB.Queries.GetLocationGroupStopsForGroups,
+		func(member gtfsdb.LocationGroupStop) (string, string) { return member.LocationGroupID, member.StopID })
 	if err != nil {
 		return nil, fmt.Errorf("load location group stops: %w", err)
-	}
-	membersByGroup := make(map[string][]string)
-	for _, member := range memberRows {
-		membersByGroup[member.LocationGroupID] = append(membersByGroup[member.LocationGroupID], member.StopID)
-	}
-	byID := make(map[string]gtfsdb.LocationGroup, len(rows))
-	for _, row := range rows {
-		byID[row.ID] = row
 	}
 
 	groups := make([]onDemandLocationGroup, 0, len(ids.groups))
@@ -574,13 +583,10 @@ type stopAgencyIDs map[string]string
 // loadStopAgencyIDs resolves the /where agency of every referenced stop with
 // the MIN rule stop search uses, so /ondemand and /where agree on stop ids.
 func (api *RestAPI) loadStopAgencyIDs(ctx context.Context, stops map[agencyScopedID]struct{}) (stopAgencyIDs, error) {
-	rows, err := queryInBatches(ctx, bareIDs(stops), api.GtfsManager.GtfsDB.Queries.GetWhereAgencyIDsForStops)
+	agencies, err := loadKeyedInBatches(ctx, bareIDs(stops), api.GtfsManager.GtfsDB.Queries.GetWhereAgencyIDsForStops,
+		func(row gtfsdb.GetWhereAgencyIDsForStopsRow) (string, string) { return row.StopID, row.AgencyID })
 	if err != nil {
 		return nil, fmt.Errorf("load stop agencies: %w", err)
-	}
-	agencies := make(stopAgencyIDs, len(rows))
-	for _, row := range rows {
-		agencies[row.StopID] = row.AgencyID
 	}
 	return agencies, nil
 }

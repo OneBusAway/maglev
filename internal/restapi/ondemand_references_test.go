@@ -434,3 +434,56 @@ func TestBuildOnDemandServices_PriorNoticeCalendarMustResolve(t *testing.T) {
 	assert.Equal(t, "a2_svc", *refs.BookingRules[1].PriorNoticeCalendarId, "an id that resolves is kept")
 	assert.Empty(t, logs.String(), "the dangling id is logged once per reload by buildFlexIndex, not per request")
 }
+
+type batchLoadTestRow struct {
+	Key   string
+	Value int
+}
+
+// echoRowsQuery returns one row per id, keyed by the id's first letter, and
+// records how many batches it was called with.
+func echoRowsQuery(calls *int) batchQuery[batchLoadTestRow] {
+	return func(_ context.Context, ids []string) ([]batchLoadTestRow, error) {
+		*calls++
+		rows := make([]batchLoadTestRow, 0, len(ids))
+		for i, id := range ids {
+			rows = append(rows, batchLoadTestRow{Key: id[:1], Value: i})
+		}
+		return rows, nil
+	}
+}
+
+func TestLoadKeyedInBatches(t *testing.T) {
+	calls := 0
+	keyed, err := loadKeyedInBatches(context.Background(), []string{"a1", "b1", "a2"}, echoRowsQuery(&calls),
+		func(row batchLoadTestRow) (string, int) { return row.Key, row.Value })
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"a": 2, "b": 1}, keyed, "a later row replaces an earlier one with the same key")
+	assert.Equal(t, 1, calls)
+}
+
+func TestLoadGroupedInBatches(t *testing.T) {
+	calls := 0
+	ids := make([]string, idsPerBatchedQuery+1)
+	for i := range ids {
+		ids[i] = "a"
+	}
+	ids[len(ids)-1] = "b"
+	grouped, err := loadGroupedInBatches(context.Background(), ids, echoRowsQuery(&calls),
+		func(row batchLoadTestRow) (string, int) { return row.Key, row.Value })
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls, "ids beyond one batch take a second query")
+	assert.Len(t, grouped["a"], idsPerBatchedQuery)
+	assert.Equal(t, []int{0, 1, 2}, grouped["a"][:3], "values keep row order")
+	assert.Equal(t, []int{0}, grouped["b"])
+}
+
+func TestLoadInBatches_PropagatesQueryErrors(t *testing.T) {
+	failing := func(context.Context, []string) ([]batchLoadTestRow, error) { return nil, assert.AnError }
+	entry := func(row batchLoadTestRow) (string, int) { return row.Key, row.Value }
+
+	_, err := loadKeyedInBatches(context.Background(), []string{"a"}, failing, entry)
+	assert.ErrorIs(t, err, assert.AnError)
+	_, err = loadGroupedInBatches(context.Background(), []string{"a"}, failing, entry)
+	assert.ErrorIs(t, err, assert.AnError)
+}
