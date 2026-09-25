@@ -261,7 +261,10 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	var statusExtras *tripStatusExtras
 	statusFreqMap := map[string][]gtfsdb.Frequency{trip.ID: freqRows}
 
-	if params.IncludeStatus {
+	// Status describes a vehicle moving along timed stops; a trip with no timed
+	// stop_times (min_arrival_time NULL) has nothing to track and omits the key.
+	hasTimedStopTimes := trip.MinArrivalTime.Valid
+	if params.IncludeStatus && hasTimedStopTimes {
 		var statusErr error
 		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, statusFreqMap)
 		if statusErr != nil {
