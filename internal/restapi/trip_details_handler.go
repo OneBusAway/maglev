@@ -241,7 +241,10 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
 
-	if params.IncludeStatus {
+	// Status describes a vehicle moving along timed stops; a trip with no timed
+	// stop_times (min_arrival_time NULL) has nothing to track and omits the key.
+	hasTimedStopTimes := trip.MinArrivalTime.Valid
+	if params.IncludeStatus && hasTimedStopTimes {
 		var statusErr error
 		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, nil)
 		if statusErr != nil {
@@ -366,6 +369,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	api.attachOnDemandPointersToReferences(references)
 	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }

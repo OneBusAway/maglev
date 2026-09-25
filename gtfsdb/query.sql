@@ -469,6 +469,8 @@ WHERE
 SELECT DISTINCT *
 FROM trips t
 WHERE t.route_id = @route_id
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign;
 
 -- name: GetStopIDsForTrip :many
@@ -535,6 +537,8 @@ SELECT DISTINCT *
 FROM trips t
 WHERE t.route_id = @route_id
   AND t.service_id IN (sqlc.slice(('service_ids')))
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign;
 
 -- name: GetOrderedStopIDsForTrip :many
@@ -1002,6 +1006,8 @@ FROM
 WHERE
     t.block_id IN (sqlc.slice('block_ids'))
     AND t.service_id IN (sqlc.slice('service_ids'))
+    -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+    AND t.min_arrival_time IS NOT NULL
 ORDER BY
     t.block_id ASC,
     t.min_arrival_time ASC;
@@ -1363,6 +1369,8 @@ SELECT
 FROM trips t
 WHERE t.block_id IN (sqlc.slice('block_ids'))
   AND t.service_id IN (sqlc.slice('service_ids'))
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.block_id, t.min_arrival_time, t.id;
 
 -- Problem Report Queries
@@ -1549,6 +1557,8 @@ WITH NavTrips AS (
     FROM trips
     WHERE block_id = @block_id
       AND service_id IN (sqlc.slice('service_ids'))
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT prev_trip_id, next_trip_id
 FROM NavTrips
@@ -1564,6 +1574,8 @@ WHERE st.trip_id = (
         FROM trips
         WHERE block_id = @block_id
           AND service_id IN (sqlc.slice('service_ids'))
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND min_arrival_time IS NOT NULL
     ) WHERE id = @trip_id
 )
 ORDER BY st.stop_sequence ASC

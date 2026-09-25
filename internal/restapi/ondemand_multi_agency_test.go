@@ -63,4 +63,15 @@ func TestOnDemand_StopReferencedAcrossAgenciesKeepsItsWhereID(t *testing.T) {
 		assert.Equal(t, []string{"aa_X"}, model.Data.Entry.Rules[0].FromIds)
 		assert.Equal(t, []string{"bb_grp_bb"}, model.Data.Entry.Rules[0].ToIds)
 	})
+
+	t.Run("where stop pointer", func(t *testing.T) {
+		resp, model := callAPIHandler[struct {
+			Data struct {
+				Entry models.Stop `json:"entry"`
+			} `json:"data"`
+		}](t, api, "/api/where/stop/aa_X.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "aa_X", model.Data.Entry.ID)
+		assert.Equal(t, []string{"bb_flexbb"}, model.Data.Entry.OnDemandServiceIDs)
+	})
 }
