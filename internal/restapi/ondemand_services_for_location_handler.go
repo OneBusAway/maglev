@@ -47,8 +47,9 @@ func newOnDemandSearch(loc *gtfs.LocationParams) onDemandSearch {
 
 // onDemandMatch is a matched service and the strongest ground it matched on.
 type onDemandMatch struct {
-	ServiceID string // combined
-	Reason    string
+	ServiceID     string // combined
+	BareServiceID string
+	Reason        string
 }
 
 // onDemandServicesForLocationHandler finds services whose areas contain, lie
@@ -114,7 +115,7 @@ func matchOnDemandServices(idx *gtfs.FlexIndex, search onDemandSearch, distances
 	var matches []onDemandMatch
 	for _, serviceID := range idx.ServiceBoundsOverlapping(search.Bounds) {
 		if reason, ok := matchOnDemandService(idx, serviceID, search, distances); ok {
-			matches = append(matches, onDemandMatch{ServiceID: serviceID, Reason: reason})
+			matches = append(matches, onDemandMatch{ServiceID: serviceID, BareServiceID: idx.BareServiceIDs[serviceID], Reason: reason})
 		}
 	}
 	return matches
@@ -130,6 +131,8 @@ func matchOnDemandService(idx *gtfs.FlexIndex, serviceID string, search onDemand
 	return matchPoint(areas, stops, distances, search.Radius)
 }
 
+// serviceFlexAreas cannot yield a nil area: ServiceAreaIDs lists only ids
+// present in Areas (see loadServiceAreas).
 func serviceFlexAreas(idx *gtfs.FlexIndex, serviceID string) []*gtfs.FlexArea {
 	areaIDs := idx.ServiceAreaIDs[serviceID]
 	areas := make([]*gtfs.FlexArea, 0, len(areaIDs))
@@ -183,11 +186,7 @@ func (api *RestAPI) loadMatchedOnDemandServices(ctx context.Context, matches []o
 	}
 	bareIDs := make([]string, 0, len(matches))
 	for _, match := range matches {
-		_, bareID, err := utils.ExtractAgencyIDAndCodeID(match.ServiceID)
-		if err != nil {
-			return nil, err
-		}
-		bareIDs = append(bareIDs, bareID)
+		bareIDs = append(bareIDs, match.BareServiceID)
 	}
 	return queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetOnDemandServicesByIDs)
 }

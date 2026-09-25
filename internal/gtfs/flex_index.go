@@ -41,6 +41,7 @@ type FlexIndex struct {
 	ServiceBounds   map[string]utils.CoordinateBounds // combined service id → union of area bboxes and stop points
 	ServiceAreaIDs  map[string][]string               // combined service id → sorted bare location ids from its records, each with an entry in Areas
 	ServiceStops    map[string][]FlexStopPoint        // combined service id → rule-referenced stops, ordered by stop id
+	BareServiceIDs  map[string]string                 // combined service id → bare service id
 }
 
 // NewEmptyFlexIndex returns an index with no services; every lookup misses.
@@ -52,6 +53,7 @@ func NewEmptyFlexIndex() *FlexIndex {
 		ServiceBounds:   map[string]utils.CoordinateBounds{},
 		ServiceAreaIDs:  map[string][]string{},
 		ServiceStops:    map[string][]FlexStopPoint{},
+		BareServiceIDs:  map[string]string{},
 	}
 }
 
@@ -71,6 +73,7 @@ func buildFlexIndex(ctx context.Context, gtfsDB *gtfsdb.Client, logger *slog.Log
 	for _, service := range services {
 		combinedID := utils.FormCombinedID(service.AgencyID, service.ID)
 		combinedByBareService[service.ID] = combinedID
+		idx.BareServiceIDs[combinedID] = service.ID
 		idx.RouteServiceIDs[service.RouteID] = append(idx.RouteServiceIDs[service.RouteID], combinedID)
 	}
 
