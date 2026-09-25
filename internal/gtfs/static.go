@@ -221,11 +221,17 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	newFlexIndex, err := buildFlexIndex(ctx, manager.GtfsDB)
+	if err != nil {
+		logging.LogError(logger, "Error building on-demand index", err)
+		return false, err
+	}
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
 	manager.regionBounds = newRegionBounds
+	manager.flexIndex = newFlexIndex
 
 	// Clear the direction calculator's cached results so stale entries from the
 	// pre-reload dataset aren't served
