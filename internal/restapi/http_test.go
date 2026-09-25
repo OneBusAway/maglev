@@ -208,6 +208,14 @@ func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
 // into its own in-memory database, so it leaves the shared fixture untouched.
 func createTestApiWithFeed(t testing.TB, feedPath string) *RestAPI {
 	t.Helper()
+	return createTestApiWithFeedAndClock(t, feedPath, clock.RealClock{})
+}
+
+// createTestApiWithFeedAndClock is createTestApiWithFeed with a deterministic
+// clock. Tests that snapshot whole responses need both: a fixed time and a
+// database no other test in the package can write to.
+func createTestApiWithFeedAndClock(t testing.TB, feedPath string, c clock.Clock) *RestAPI {
+	t.Helper()
 
 	gtfsConfig := gtfs.Config{
 		GtfsURL:      feedPath,
@@ -219,14 +227,15 @@ func createTestApiWithFeed(t testing.TB, feedPath string) *RestAPI {
 
 	application := &app.Application{
 		Config: appconf.Config{
-			Env:       appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:   []string{"TEST"},
-			RateLimit: 100,
+			Env:           appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:       []string{"TEST", "test", "org.onebusaway.iphone"},
+			ExemptApiKeys: []string{"org.onebusaway.iphone"},
+			RateLimit:     100,
 		},
 		GtfsConfig:          gtfsConfig,
 		GtfsManager:         gtfsManager,
 		DirectionCalculator: gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries),
-		Clock:               clock.RealClock{},
+		Clock:               c,
 	}
 
 	api := NewRestAPI(application)
