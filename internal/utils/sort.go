@@ -90,3 +90,23 @@ func routeSortKey(r gtfsdb.Route) RouteSortKey {
 func modelRouteSortKey(r models.Route) RouteSortKey {
 	return RouteSortKey{r.ShortName, r.LongName, r.AgencyID, r.ID}
 }
+
+// SortedUnique returns the distinct values in ascending order; never nil.
+func SortedUnique(values []string) []string {
+	unique := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	slices.Sort(unique)
+	return unique
+}
+
+// SortByKey sorts items in place by the string key each yields.
+func SortByKey[T any](items []T, key func(T) string) {
+	slices.SortFunc(items, func(a, b T) int { return cmp.Compare(key(a), key(b)) })
+}
