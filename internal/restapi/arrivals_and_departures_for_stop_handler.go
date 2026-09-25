@@ -138,8 +138,23 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	// Nothing scheduled in the window: skip the reference lookups, but keep
-	// the stop's alerts and neighbours, which don't depend on arrivals.
+	// the stop's alerts and neighbours, which don't depend on arrivals, and
+	// still add the queried stop to references so its onDemandServiceIds
+	// pointer reaches clients — it's the only path a flex-only stop that no
+	// fixed route serves has to surface its on-demand services when the
+	// window is empty.
 	if !result.Matched {
+		acc.stopIDs[stopCode] = true
+		if err := api.appendStopReferences(ctx, references, arrivalsReferencesInput{
+			fallbackAgencyID: stopAgencyID,
+		}, acc); err != nil {
+			if ctx.Err() != nil {
+				api.clientCanceledResponse(w, r, ctx.Err())
+			} else {
+				api.serverErrorResponse(w, r, err)
+			}
+			return
+		}
 		situationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
 		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, situationIDs, stopID, api.Clock)
 		api.sendResponse(w, r, response)
