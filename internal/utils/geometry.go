@@ -71,3 +71,23 @@ func PolygonsBounds(polygons [][][][2]float64) CoordinateBounds {
 func SimplifyPolygons(polygons [][][][2]float64) SimplifiedPolygons {
 	return geo.SimplifyPolygons(polygons)
 }
+
+// UnionBounds returns the smallest box containing both a and b.
+func UnionBounds(a, b CoordinateBounds) CoordinateBounds {
+	return geo.UnionBounds(a, b)
+}
+
+// PointInPolygon reports whether (lat, lon) is inside the geometry, holes excluded.
+func PointInPolygon(lat, lon float64, polygons [][][][2]float64) bool {
+	return geo.PointInPolygon(lat, lon, polygons)
+}
+
+// NearestPointOnBoundary returns the distance to, and location of, the closest ring point.
+func NearestPointOnBoundary(lat, lon float64, polygons [][][][2]float64) (distanceMeters, nearestLon, nearestLat float64) {
+	return geo.NearestPointOnBoundary(lat, lon, polygons)
+}
+
+// PolygonIntersectsBounds reports whether the geometry overlaps the bounding box.
+func PolygonIntersectsBounds(polygons [][][][2]float64, bounds CoordinateBounds) bool {
+	return geo.PolygonIntersectsBounds(polygons, bounds)
+}
