@@ -32,18 +32,32 @@ func ruleGroupKeyOf(row gtfsdb.OndemandRule) ruleGroupKey {
 	}
 }
 
+// serviceIDScope prefixes the ids one service's rules emit: a stop takes its
+// own /where agency, every other id the service's agency.
+type serviceIDScope struct {
+	agencyID     string
+	stopAgencies stopAgencyIDs
+}
+
+func (scope serviceIDScope) endpointID(id string, kind int64) string {
+	if gtfsdb.EndpointKind(kind) == gtfsdb.EndpointStop {
+		return scope.stopAgencies.combinedStopID(scope.agencyID, id)
+	}
+	return utils.FormCombinedID(scope.agencyID, id)
+}
+
 // buildAvailabilityRules groups a service's rows by tuple-minus-calendar,
-// prefixes every id with the service's agency, resolves calendarIds through
+// prefixes every id through scope, resolves calendarIds through
 // calendarIDsByService (bare gtfs service id → combined calendar ids) and
 // returns the rules in the wiki §3.4 total order. Never nil.
-func buildAvailabilityRules(rows []gtfsdb.OndemandRule, agencyID string, calendarIDsByService map[string][]string) []models.AvailabilityRule {
+func buildAvailabilityRules(rows []gtfsdb.OndemandRule, scope serviceIDScope, calendarIDsByService map[string][]string) []models.AvailabilityRule {
 	groups := make(map[ruleGroupKey]*models.AvailabilityRule)
 	var order []ruleGroupKey
 	for _, row := range rows {
 		key := ruleGroupKeyOf(row)
 		rule, ok := groups[key]
 		if !ok {
-			rule = availabilityRuleFromRow(row, agencyID)
+			rule = availabilityRuleFromRow(row, scope)
 			groups[key] = rule
 			order = append(order, key)
 		}
@@ -60,10 +74,11 @@ func buildAvailabilityRules(rows []gtfsdb.OndemandRule, agencyID string, calenda
 	return rules
 }
 
-func availabilityRuleFromRow(row gtfsdb.OndemandRule, agencyID string) *models.AvailabilityRule {
+func availabilityRuleFromRow(row gtfsdb.OndemandRule, scope serviceIDScope) *models.AvailabilityRule {
+	agencyID := scope.agencyID
 	return &models.AvailabilityRule{
-		FromIds:              []string{utils.FormCombinedID(agencyID, row.FromID)},
-		ToIds:                []string{utils.FormCombinedID(agencyID, row.ToID)},
+		FromIds:              []string{scope.endpointID(row.FromID, row.FromKind)},
+		ToIds:                []string{scope.endpointID(row.ToID, row.ToKind)},
 		StartPickupTime:      timeOfDayOrNil(row.StartPickupTime),
 		EndPickupTime:        timeOfDayOrNil(row.EndPickupTime),
 		EndDropOffTime:       timeOfDayOrNil(row.EndDropOffTime),

@@ -450,6 +450,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getTripsForRouteInActiveServiceIDsStmt, err = db.PrepareContext(ctx, getTripsForRouteInActiveServiceIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTripsForRouteInActiveServiceIDs: %w", err)
 	}
+	if q.getWhereAgencyIDsForStopsStmt, err = db.PrepareContext(ctx, getWhereAgencyIDsForStops); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWhereAgencyIDsForStops: %w", err)
+	}
 	if q.listAgenciesStmt, err = db.PrepareContext(ctx, listAgencies); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAgencies: %w", err)
 	}
@@ -1216,6 +1219,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getTripsForRouteInActiveServiceIDsStmt: %w", cerr)
 		}
 	}
+	if q.getWhereAgencyIDsForStopsStmt != nil {
+		if cerr := q.getWhereAgencyIDsForStopsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWhereAgencyIDsForStopsStmt: %w", cerr)
+		}
+	}
 	if q.listAgenciesStmt != nil {
 		if cerr := q.listAgenciesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listAgenciesStmt: %w", cerr)
@@ -1482,6 +1490,7 @@ type Queries struct {
 	getTripsByIDsStmt                         *sql.Stmt
 	getTripsByServiceIDStmt                   *sql.Stmt
 	getTripsForRouteInActiveServiceIDsStmt    *sql.Stmt
+	getWhereAgencyIDsForStopsStmt             *sql.Stmt
 	listAgenciesStmt                          *sql.Stmt
 	listAgencyIdsStmt                         *sql.Stmt
 	listLocationsStmt                         *sql.Stmt
@@ -1647,6 +1656,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsByIDsStmt:                         q.getTripsByIDsStmt,
 		getTripsByServiceIDStmt:                   q.getTripsByServiceIDStmt,
 		getTripsForRouteInActiveServiceIDsStmt:    q.getTripsForRouteInActiveServiceIDsStmt,
+		getWhereAgencyIDsForStopsStmt:             q.getWhereAgencyIDsForStopsStmt,
 		listAgenciesStmt:                          q.listAgenciesStmt,
 		listAgencyIdsStmt:                         q.listAgencyIdsStmt,
 		listLocationsStmt:                         q.listLocationsStmt,
