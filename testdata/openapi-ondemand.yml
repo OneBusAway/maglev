@@ -1,0 +1,517 @@
+# Locally maintained OpenAPI document for the /api/ondemand namespace.
+# testdata/openapi.yml is synced from OneBusAway/sdk-config and must not be edited;
+# this file is the contract for the on-demand endpoints until they are proposed upstream.
+openapi: 3.0.0
+info:
+  title: OneBusAway On-Demand
+  description: The /api/ondemand namespace serving GTFS-Flex demand-responsive services.
+  version: 0.0.1
+servers:
+  - url: https://api.example.onebusaway.org
+
+security:
+  - ApiKeyAuth: []
+paths:
+  /api/ondemand/service/{serviceID}.json:
+    get:
+      summary: Retrieve one on-demand service with its availability rules and references.
+      parameters:
+        - name: serviceID
+          in: path
+          required: true
+          description: Combined agency_service id; for GTFS-Flex it equals the route's combined id.
+          schema:
+            type: string
+        - $ref: '#/components/parameters/GeometryDetail'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OnDemandEntryResponse'
+                    required:
+                      - data
+
+  /api/ondemand/services-for-agency/{agencyID}.json:
+    get:
+      summary: List every on-demand service of an agency.
+      parameters:
+        - name: agencyID
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/GeometryDetail'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OnDemandListResponse'
+                    required:
+                      - data
+
+  /api/ondemand/services-for-location.json:
+    get:
+      summary: Find on-demand services covering a point (with radius) or a viewport.
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: lon
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: radius
+          in: query
+          required: false
+          description: Point-mode search radius in metres (default 600, maximum 20000).
+          schema:
+            type: number
+        - name: latSpan
+          in: query
+          required: false
+          description: With lonSpan and no radius, selects viewport mode.
+          schema:
+            type: number
+        - name: lonSpan
+          in: query
+          required: false
+          schema:
+            type: number
+        - $ref: '#/components/parameters/GeometryDetail'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OnDemandLocationListResponse'
+                    required:
+                      - data
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: key
+
+  parameters:
+    GeometryDetail:
+      name: geometryDetail
+      in: query
+      required: false
+      description: none omits geometry, simplified embeds display geometry, full embeds the feed geometry.
+      schema:
+        type: string
+        enum: [none, simplified, full]
+
+  schemas:
+    ResponseWrapper:
+      type: object
+      properties:
+        code:
+          type: integer
+        currentTime:
+          type: integer
+        text:
+          type: string
+        version:
+          type: integer
+      required: [code, currentTime, text, version]
+
+    OnDemandEntryResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/OnDemandService'
+        references:
+          $ref: '#/components/schemas/OnDemandReference'
+      required: [entry, references]
+
+    OnDemandListResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/OnDemandService'
+        references:
+          $ref: '#/components/schemas/OnDemandReference'
+      required: [limitExceeded, list, references]
+
+    OnDemandLocationListResponse:
+      type: object
+      properties:
+        limitExceeded:
+          type: boolean
+        outOfRange:
+          type: boolean
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/OnDemandService'
+        references:
+          $ref: '#/components/schemas/OnDemandReference'
+      required: [limitExceeded, outOfRange, list, references]
+
+    OnDemandService:
+      type: object
+      properties:
+        id:
+          type: string
+        agencyId:
+          type: string
+        routeId:
+          type: string
+          nullable: true
+        name:
+          type: string
+        serviceKind:
+          type: string
+          enum: [zone, zoneToZone, stopGroup, deviatedRoute, unknown]
+        description:
+          type: string
+          nullable: true
+        url:
+          type: string
+          nullable: true
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailabilityRule'
+        matchReason:
+          type: string
+          enum: [areaContainsPoint, stopWithinRadius, areaNearby, areaIntersectsViewport, stopWithinViewport]
+      required: [id, agencyId, routeId, name, serviceKind, description, url, rules]
+
+    AvailabilityRule:
+      type: object
+      properties:
+        fromIds:
+          type: array
+          items:
+            type: string
+        toIds:
+          type: array
+          items:
+            type: string
+        startPickupTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        endPickupTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        endDropOffTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        calendarIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        pickupType:
+          type: integer
+          enum: [0, 2, 3]
+        dropOffType:
+          type: integer
+          enum: [0, 2, 3]
+        pickupBookingRuleId:
+          type: string
+          nullable: true
+        dropOffBookingRuleId:
+          type: string
+          nullable: true
+        safeDurationFactor:
+          type: number
+          nullable: true
+        safeDurationOffset:
+          type: number
+          nullable: true
+      required: [fromIds, toIds, startPickupTime, endPickupTime, endDropOffTime, calendarIds, pickupType, dropOffType, pickupBookingRuleId, dropOffBookingRuleId, safeDurationFactor, safeDurationOffset]
+
+    TimeOfDay:
+      type: string
+      nullable: true
+      pattern: '^[0-9]{2,}:[0-5][0-9]:[0-5][0-9]$'
+
+    IsoDate:
+      type: string
+      pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+
+    OnDemandReference:
+      type: object
+      properties:
+        agencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agency'
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        situations:
+          type: array
+          items:
+            type: object
+        stopTimes:
+          type: array
+          items:
+            type: object
+        stops:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stop'
+        trips:
+          type: array
+          items:
+            type: object
+        serviceAreas:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceArea'
+        locationGroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocationGroup'
+        bookingRules:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookingRule'
+        calendars:
+          type: array
+          items:
+            $ref: '#/components/schemas/OnDemandCalendar'
+      required: [agencies, routes, situations, stopTimes, stops, trips, serviceAreas, locationGroups, bookingRules, calendars]
+
+    ServiceArea:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+        geometry:
+          type: object
+          description: GeoJSON Polygon or MultiPolygon; absent at geometryDetail=none.
+          properties:
+            type:
+              type: string
+              enum: [Polygon, MultiPolygon]
+            coordinates:
+              type: array
+              items: {}
+          required: [type, coordinates]
+        distanceToArea:
+          type: number
+          nullable: true
+        nearestPointOnBoundary:
+          type: array
+          nullable: true
+          minItems: 2
+          maxItems: 2
+          items:
+            type: number
+      required: [id, name, description, bbox, distanceToArea, nearestPointOnBoundary]
+
+    LocationGroup:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          nullable: true
+        stopIds:
+          type: array
+          items:
+            type: string
+      required: [id, name, stopIds]
+
+    BookingRule:
+      type: object
+      properties:
+        id:
+          type: string
+        bookingType:
+          type: integer
+          enum: [0, 1, 2]
+        priorNoticeDurationMin:
+          type: integer
+          nullable: true
+        priorNoticeDurationMax:
+          type: integer
+          nullable: true
+        priorNoticeLastDay:
+          type: integer
+          nullable: true
+        priorNoticeLastTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        priorNoticeStartDay:
+          type: integer
+          nullable: true
+        priorNoticeStartTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        priorNoticeCalendarId:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        pickupMessage:
+          type: string
+          nullable: true
+        dropOffMessage:
+          type: string
+          nullable: true
+        phoneNumber:
+          type: string
+          nullable: true
+        infoUrl:
+          type: string
+          nullable: true
+        bookingUrl:
+          type: string
+          nullable: true
+      required: [id, bookingType, priorNoticeDurationMin, priorNoticeDurationMax, priorNoticeLastDay, priorNoticeLastTime, priorNoticeStartDay, priorNoticeStartTime, priorNoticeCalendarId, message, pickupMessage, dropOffMessage, phoneNumber, infoUrl, bookingUrl]
+
+    OnDemandCalendar:
+      type: object
+      properties:
+        id:
+          type: string
+        days:
+          type: array
+          items:
+            type: string
+            enum: [mon, tue, wed, thu, fri, sat, sun]
+        startDate:
+          $ref: '#/components/schemas/IsoDate'
+        endDate:
+          $ref: '#/components/schemas/IsoDate'
+        exceptedDates:
+          type: array
+          items:
+            $ref: '#/components/schemas/IsoDate'
+      required: [id, days, startDate, endDate, exceptedDates]
+
+    Agency:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+        timezone:
+          type: string
+        lang:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        fareUrl:
+          type: string
+        disclaimer:
+          type: string
+        privateService:
+          type: boolean
+      required: [id, name, url, timezone]
+
+    Route:
+      type: object
+      properties:
+        agencyId:
+          type: string
+        color:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        longName:
+          type: string
+        nullSafeShortName:
+          type: string
+        shortName:
+          type: string
+        textColor:
+          type: string
+        type:
+          type: integer
+        url:
+          type: string
+        onDemandServiceIds:
+          type: array
+          description: Present only when non-empty.
+          items:
+            type: string
+      required: [id, type, agencyId]
+
+    Stop:
+      type: object
+      properties:
+        code:
+          type: string
+        direction:
+          type: string
+        id:
+          type: string
+        lat:
+          type: number
+        locationType:
+          type: integer
+        lon:
+          type: number
+        name:
+          type: string
+        parent:
+          type: string
+        routeIds:
+          type: array
+          items:
+            type: string
+        staticRouteIds:
+          type: array
+          items:
+            type: string
+        wheelchairBoarding:
+          type: string
+        onDemandServiceIds:
+          type: array
+          description: Present only when non-empty.
+          items:
+            type: string
+      required: [id, lat, lon, name, parent, routeIds, staticRouteIds, locationType]
