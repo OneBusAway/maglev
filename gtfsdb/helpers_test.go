@@ -136,20 +136,38 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 type queryMetricCall struct {
 	queryName string
 	op        string
+	hadErr    bool
+}
+
+type queryDurationCall struct {
+	queryName string
+	op        string
 	duration  time.Duration
 	hadErr    bool
 }
 
 type testQueryMetricsRecorder struct {
-	calls []queryMetricCall
+	calls         []queryMetricCall
+	durationCalls []queryDurationCall
 }
 
 func (r *testQueryMetricsRecorder) RecordDBQuery(
 	queryName, op string,
-	duration time.Duration,
 	err error,
 ) {
 	r.calls = append(r.calls, queryMetricCall{
+		queryName: queryName,
+		op:        op,
+		hadErr:    err != nil,
+	})
+}
+
+func (r *testQueryMetricsRecorder) RecordDBQueryDuration(
+	queryName, op string,
+	duration time.Duration,
+	err error,
+) {
+	r.durationCalls = append(r.durationCalls, queryDurationCall{
 		queryName: queryName,
 		op:        op,
 		duration:  duration,
@@ -171,6 +189,11 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	_, err = wrapper.QueryContext(ctx, "-- name: ListAgencies :many\nSELECT 1")
 	require.NoError(t, err)
 
+	start := time.Now()
+	_, err = wrapper.ExecContext(ctx, "-- name: SlowExec :exec\nWITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x<1000000) SELECT sum(x) FROM cnt;")
+	wallDuration := time.Since(start)
+	require.NoError(t, err)
+
 	_, err = wrapper.ExecContext(ctx, "-- name: BrokenExec :exec\nTHIS IS INVALID SQL")
 	require.Error(t, err)
 
@@ -179,22 +202,36 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	require.NoError(t, row.Scan(&n))
 	assert.Equal(t, 1, n)
 
-	require.Len(t, recorder.calls, 3)
+	// We made 4 calls to RecordDBQuery
+	require.Len(t, recorder.calls, 4)
 
 	assert.Equal(t, "ListAgencies", recorder.calls[0].queryName)
 	assert.Equal(t, "query", recorder.calls[0].op)
-	assert.GreaterOrEqual(t, recorder.calls[0].duration, time.Duration(0))
 	assert.False(t, recorder.calls[0].hadErr)
 
-	assert.Equal(t, "BrokenExec", recorder.calls[1].queryName)
+	assert.Equal(t, "SlowExec", recorder.calls[1].queryName)
 	assert.Equal(t, "exec", recorder.calls[1].op)
-	assert.GreaterOrEqual(t, recorder.calls[1].duration, time.Duration(0))
-	assert.True(t, recorder.calls[1].hadErr)
+	assert.False(t, recorder.calls[1].hadErr)
 
-	assert.Equal(t, "unknown", recorder.calls[2].queryName)
-	assert.Equal(t, "query_row", recorder.calls[2].op)
-	assert.GreaterOrEqual(t, recorder.calls[2].duration, time.Duration(0))
-	assert.False(t, recorder.calls[2].hadErr)
+	assert.Equal(t, "BrokenExec", recorder.calls[2].queryName)
+	assert.Equal(t, "exec", recorder.calls[2].op)
+	assert.True(t, recorder.calls[2].hadErr)
+
+	assert.Equal(t, "unknown", recorder.calls[3].queryName)
+	assert.Equal(t, "query_row", recorder.calls[3].op)
+	assert.False(t, recorder.calls[3].hadErr)
+
+	// We made 2 calls to RecordDBQueryDuration (only for ExecContext)
+	require.Len(t, recorder.durationCalls, 2)
+	assert.Equal(t, "SlowExec", recorder.durationCalls[0].queryName)
+	assert.Equal(t, "exec", recorder.durationCalls[0].op)
+	assert.Greater(t, recorder.durationCalls[0].duration, time.Duration(0), "duration should be > 0")
+	assert.LessOrEqual(t, recorder.durationCalls[0].duration, wallDuration, "duration should be bounded by wall duration")
+	assert.False(t, recorder.durationCalls[0].hadErr)
+
+	assert.Equal(t, "BrokenExec", recorder.durationCalls[1].queryName)
+	assert.Equal(t, "exec", recorder.durationCalls[1].op)
+	assert.True(t, recorder.durationCalls[1].hadErr)
 }
 
 func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
@@ -252,8 +289,10 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
 
 	assert.Equal(t, "ListAgencies", recorder.calls[0].queryName)
 	assert.Equal(t, "query", recorder.calls[0].op)
-	assert.GreaterOrEqual(t, recorder.calls[0].duration, time.Duration(0))
 	assert.False(t, recorder.calls[0].hadErr)
+
+	// ListAgencies is a Query, so it should not record duration
+	require.Empty(t, recorder.durationCalls)
 }
 
 func TestExtractQueryName(t *testing.T) {

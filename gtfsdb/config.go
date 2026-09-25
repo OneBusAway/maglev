@@ -25,7 +25,14 @@ type Config struct {
 // DBQueryMetricsRecorder is a minimal abstraction used to emit per-query metrics
 // without coupling gtfsdb to a specific metrics implementation.
 type DBQueryMetricsRecorder interface {
-	RecordDBQuery(queryName, op string, duration time.Duration, err error)
+	RecordDBQuery(queryName, op string, err error)
+}
+
+// DBQueryDurationRecorder is an optional abstraction for recording query execution duration.
+// Accurate read-latency requires driver-level instrumentation, so this is currently
+// only intended for ExecContext operations.
+type DBQueryDurationRecorder interface {
+	RecordDBQueryDuration(queryName, op string, duration time.Duration, err error)
 }
 
 func NewConfig(dbPath string, env appconf.Environment) Config {

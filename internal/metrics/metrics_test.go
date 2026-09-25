@@ -210,9 +210,9 @@ func TestHTTPMetrics_RecordRequest(t *testing.T) {
 func TestRecordDBQuery(t *testing.T) {
 	m := New()
 
-	m.RecordDBQuery("GetTrip", "query", 10*time.Millisecond, nil)
-	m.RecordDBQuery("GetTrip", "query", 20*time.Millisecond, assert.AnError)
-	m.RecordDBQuery("", "", 5*time.Millisecond, nil)
+	m.RecordDBQuery("GetTrip", "query", nil)
+	m.RecordDBQuery("GetTrip", "query", assert.AnError)
+	m.RecordDBQuery("", "", nil)
 
 	okTotal := testutil.ToFloat64(m.DBQueryTotal.WithLabelValues("GetTrip", "query", "ok"))
 	errTotal := testutil.ToFloat64(m.DBQueryTotal.WithLabelValues("GetTrip", "query", "error"))
@@ -221,6 +221,14 @@ func TestRecordDBQuery(t *testing.T) {
 	assert.Equal(t, float64(1), okTotal)
 	assert.Equal(t, float64(1), errTotal)
 	assert.Equal(t, float64(1), unknownTotal)
+}
+
+func TestRecordDBQueryDuration(t *testing.T) {
+	m := New()
+
+	m.RecordDBQueryDuration("SlowExec", "exec", 10*time.Millisecond, nil)
+	m.RecordDBQueryDuration("SlowExec", "exec", 20*time.Millisecond, assert.AnError)
+	m.RecordDBQueryDuration("", "", 5*time.Millisecond, nil)
 
 	families, err := m.Registry.Gather()
 	require.NoError(t, err)
@@ -240,22 +248,22 @@ func TestRecordDBQuery(t *testing.T) {
 			}
 
 			switch {
-			case labels["query_name"] == "GetTrip" &&
-				labels["op"] == "query" &&
+			case labels["query_name"] == "SlowExec" &&
+				labels["op"] == "exec" &&
 				labels["status"] == "ok":
 
-				seen["GetTrip/query/ok"] = true
+				seen["SlowExec/exec/ok"] = true
 
 				histogram := metric.GetHistogram()
 				require.NotNil(t, histogram)
 				assert.Equal(t, uint64(1), histogram.GetSampleCount())
 				assert.InDelta(t, 0.01, histogram.GetSampleSum(), 0.001)
 
-			case labels["query_name"] == "GetTrip" &&
-				labels["op"] == "query" &&
+			case labels["query_name"] == "SlowExec" &&
+				labels["op"] == "exec" &&
 				labels["status"] == "error":
 
-				seen["GetTrip/query/error"] = true
+				seen["SlowExec/exec/error"] = true
 
 				histogram := metric.GetHistogram()
 				require.NotNil(t, histogram)
@@ -276,14 +284,19 @@ func TestRecordDBQuery(t *testing.T) {
 		}
 	}
 
-	assert.True(t, seen["GetTrip/query/ok"])
-	assert.True(t, seen["GetTrip/query/error"])
+	assert.True(t, seen["SlowExec/exec/ok"])
+	assert.True(t, seen["SlowExec/exec/error"])
 	assert.True(t, seen["unknown/unknown/ok"])
 }
 
 func TestRecordDBQuery_NilReceiverNoPanic(t *testing.T) {
 	var m *Metrics
-	m.RecordDBQuery("GetTrip", "query", 10*time.Millisecond, nil)
+	m.RecordDBQuery("GetTrip", "query", nil)
+}
+
+func TestRecordDBQueryDuration_NilReceiverNoPanic(t *testing.T) {
+	var m *Metrics
+	m.RecordDBQueryDuration("SlowExec", "exec", 10*time.Millisecond, nil)
 }
 
 func TestRecordDBQuery_PartialInitNoPanic(t *testing.T) {
@@ -299,7 +312,8 @@ func TestRecordDBQuery_PartialInitNoPanic(t *testing.T) {
 	}
 
 	assert.NotPanics(t, func() {
-		m.RecordDBQuery("GetTrip", "query", 10*time.Millisecond, nil)
+		m.RecordDBQuery("GetTrip", "query", nil)
+		m.RecordDBQueryDuration("SlowExec", "exec", 10*time.Millisecond, nil)
 	})
 
 	assert.Equal(

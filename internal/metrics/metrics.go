@@ -107,7 +107,7 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 	dbQueryDuration := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "maglev_db_query_duration_seconds",
-			Help:    "Database query call-return latency (does not include row iteration or scan time) by query name, op, and status",
+			Help:    "Database execution duration for write queries (ExecContext). Read query latency is not recorded here.",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"query_name", "op", "status"},
@@ -182,10 +182,9 @@ func NewWithLogger(logger *slog.Logger) *Metrics {
 	}
 }
 
-// RecordDBQuery records per-query DB counters and latency.
+// RecordDBQuery records per-query DB counters.
 func (m *Metrics) RecordDBQuery(
 	queryName, op string,
-	duration time.Duration,
 	err error,
 ) {
 	if m == nil {
@@ -206,6 +205,29 @@ func (m *Metrics) RecordDBQuery(
 
 	if m.DBQueryTotal != nil {
 		m.DBQueryTotal.WithLabelValues(queryName, op, status).Inc()
+	}
+}
+
+// RecordDBQueryDuration records execution latency for operations like ExecContext.
+func (m *Metrics) RecordDBQueryDuration(
+	queryName, op string,
+	duration time.Duration,
+	err error,
+) {
+	if m == nil {
+		return
+	}
+
+	if queryName == "" {
+		queryName = "unknown"
+	}
+	if op == "" {
+		op = "unknown"
+	}
+
+	status := "ok"
+	if err != nil {
+		status = "error"
 	}
 
 	if m.DBQueryDuration != nil {
