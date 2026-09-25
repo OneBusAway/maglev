@@ -185,3 +185,22 @@ func TestFlexIndex_WarnsOnceForRuleCalendarsWithNoService(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(logs.String(), warning), logs.String())
 	assert.NotContains(t, logs.String(), "gtfs_service_id=mon-tues-wed-thurs-fri")
 }
+
+func TestFlexIndex_WarnsOnceForPriorNoticeServiceWithNoBaseCalendar(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	for _, statement := range []string{
+		"UPDATE booking_rules SET prior_notice_service_id = 'ghost' WHERE id = (SELECT MIN(id) FROM booking_rules)",
+		"UPDATE booking_rules SET prior_notice_service_id = 'sat' WHERE id = (SELECT MAX(id) FROM booking_rules)",
+	} {
+		_, err := manager.GtfsDB.DB.ExecContext(ctx, statement)
+		require.NoError(t, err, statement)
+	}
+	var logs bytes.Buffer
+
+	_, err := buildFlexIndex(ctx, manager.GtfsDB, slog.New(slog.NewTextHandler(&logs, nil)))
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, strings.Count(logs.String(), "prior_notice_service_id=ghost"), logs.String())
+	assert.NotContains(t, logs.String(), "prior_notice_service_id=sat", "a service with a base calendar resolves")
+}
