@@ -98,6 +98,10 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 		ArrivalTime: 9 * 3600 * int64(time.Second), DepartureTime: 9 * 3600 * int64(time.Second),
 	})
 	require.NoError(t, err)
+
+	// The importer caches each trip's time bounds; do the same so the trips
+	// count as timed rather than flex-only.
+	require.NoError(t, queries.BulkUpdateTripTimeBounds(ctx))
 }
 
 // serveAndGet starts the API server and GETs the endpoint, returning the decoded response.
