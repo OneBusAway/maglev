@@ -12,18 +12,24 @@ import (
 // testdata/openapi.yml stays synced with upstream and does not describe it.
 var onDemandSpecPath = filepath.Join("../../testdata", "openapi-ondemand.yml")
 
+// onDemandConformanceCase is one request/spec-path pair to validate against
+// onDemandSpecPath.
+type onDemandConformanceCase struct {
+	name, endpoint, specPath string
+}
+
 func TestOpenAPIConformance_OnDemandEndpoints(t *testing.T) {
 	doc := loadOpenAPISpecFrom(t, onDemandSpecPath)
 
 	fixtures := []struct {
 		name      string
 		fixture   string
-		endpoints []struct{ name, endpoint, specPath string }
+		endpoints []onDemandConformanceCase
 	}{
 		{
 			name:    "alexandria",
 			fixture: "alexandria-flex.zip",
-			endpoints: []struct{ name, endpoint, specPath string }{
+			endpoints: []onDemandConformanceCase{
 				{"service full", "/api/ondemand/service/5088_77652.json?key=TEST", "/api/ondemand/service/{serviceID}.json"},
 				{"service none", "/api/ondemand/service/5088_77652.json?key=TEST&geometryDetail=none", "/api/ondemand/service/{serviceID}.json"},
 				{"services-for-agency", "/api/ondemand/services-for-agency/5088.json?key=TEST", "/api/ondemand/services-for-agency/{agencyID}.json"},
@@ -36,7 +42,7 @@ func TestOpenAPIConformance_OnDemandEndpoints(t *testing.T) {
 		{
 			name:    "charlevoix",
 			fixture: "charlevoix-flex.zip",
-			endpoints: []struct{ name, endpoint, specPath string }{
+			endpoints: []onDemandConformanceCase{
 				{"service with group and stops", "/api/ondemand/service/CC_CC3.json?key=TEST", "/api/ondemand/service/{serviceID}.json"},
 				{"services-for-agency", "/api/ondemand/services-for-agency/CC.json?key=TEST", "/api/ondemand/services-for-agency/{agencyID}.json"},
 				{"services-for-location stop match", "/api/ondemand/services-for-location.json?key=TEST&lat=45.2562297&lon=-85.1852475", "/api/ondemand/services-for-location.json"},

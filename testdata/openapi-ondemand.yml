@@ -273,11 +273,11 @@ components:
         situations:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/Situation'
         stopTimes:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/StopTime'
         stops:
           type: array
           items:
@@ -285,7 +285,7 @@ components:
         trips:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/Trip'
         serviceAreas:
           type: array
           items:
@@ -515,3 +515,187 @@ components:
           items:
             type: string
       required: [id, lat, lon, name, parent, routeIds, staticRouteIds, locationType]
+
+    # The next four schemas (Situation, TimeWindow, StopTime, Trip) are copied
+    # property-for-property from testdata/openapi.yml's Situation, TimeWindow,
+    # StopTime and Trip schemas: the wiki's "shapes unchanged from /where" for
+    # the six standard reference keys. Do not edit testdata/openapi.yml to add
+    # a $ref here instead — that file stays synced verbatim with upstream.
+    Situation:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the situation.
+        creationTime:
+          type: integer
+          format: int64
+          description: Unix timestamp of when this situation was created.
+        reason:
+          type: string
+          description: Reason for the service alert, taken from TPEG codes.
+        summary:
+          type: object
+          properties:
+            lang:
+              type: string
+              description: Language of the summary.
+            value:
+              type: string
+              description: Short summary of the situation.
+        description:
+          type: object
+          properties:
+            lang:
+              type: string
+              description: Language of the description.
+            value:
+              type: string
+              description: Longer description of the situation.
+        url:
+          type: object
+          properties:
+            lang:
+              type: string
+              description: Language of the URL.
+            value:
+              type: string
+              description: URL for more information about the situation.
+        activeWindows:
+          type: array
+          items:
+            type: object
+            properties:
+              from:
+                type: integer
+                format: int64
+                description: Start time of the active window as a Unix timestamp.
+              to:
+                type: integer
+                format: int64
+                description: End time of the active window as a Unix timestamp.
+        allAffects:
+          type: array
+          items:
+            type: object
+            properties:
+              agencyId:
+                type: string
+                description: Identifier for the agency.
+              applicationId:
+                type: string
+                description: Identifier for the application.
+              directionId:
+                type: string
+                description: Identifier for the direction.
+              routeId:
+                type: string
+                description: Identifier for the route.
+              stopId:
+                type: string
+                description: Identifier for the stop.
+              tripId:
+                type: string
+                description: Identifier for the trip.
+        consequences:
+          type: array
+          items:
+            type: object
+            properties:
+              condition:
+                type: string
+                description: Condition of the consequence.
+              conditionDetails:
+                type: object
+                properties:
+                  diversionPath:
+                    type: object
+                    properties:
+                      length:
+                        type: integer
+                        description: Length of the diversion path.
+                      levels:
+                        type: string
+                        description: Levels of the diversion path.
+                      points:
+                        type: string
+                        description: Points of the diversion path.
+                  diversionStopIds:
+                    type: array
+                    items:
+                      type: string
+                      description: List of stop IDs affected by the diversion.
+        publicationWindows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeWindow'
+        severity:
+          type: string
+          description: Severity of the situation.
+        consequenceMessage:
+          type: string
+          description: Message regarding the consequence of the situation.
+      required:
+        - id
+        - creationTime
+
+    TimeWindow:
+      type: object
+      properties:
+        from:
+          type: integer
+          format: int64
+          description: Start time of the time window as a Unix timestamp.
+        to:
+          type: integer
+          format: int64
+          description: End time of the time window as a Unix timestamp.
+      required:
+        - from
+        - to
+
+    StopTime:
+      type: object
+      properties:
+        arrivalTime:
+          type: integer
+        departureTime:
+          type: integer
+        distanceAlongTrip:
+          type: number
+        historicalOccupancy:
+          type: string
+        stopHeadsign:
+          type: string
+        stopId:
+          type: string
+
+    Trip:
+      type: object
+      properties:
+        blockId:
+          type: string
+        directionId:
+          type: string
+        id:
+          type: string
+        peakOffpeak:
+          type: integer
+        routeId:
+          type: string
+        routeShortName:
+          type: string
+        serviceId:
+          type: string
+        shapeId:
+          type: string
+        timeZone:
+          type: string
+        tripHeadsign:
+          type: string
+        tripShortName:
+          type: string
+      required:
+        - id
+        - routeId
+        - serviceId
