@@ -2,13 +2,18 @@ package gtfsdb
 
 import (
 	"context"
+	"database/sql"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/flexfixtures"
+	"maglev.onebusaway.org/internal/geo"
 )
 
 // newTestClientWithZip imports a GTFS zip from disk into a fresh in-memory client.
@@ -81,4 +86,180 @@ func TestStoreGtfsData_DeviatedFeedIndexesTimedRecordsOnly(t *testing.T) {
 	require.NoError(t, client.DB.QueryRow(
 		"SELECT COUNT(*) FROM block_trip_entry WHERE trip_id IN ('ruf-trip','win-trip')").Scan(&indexed))
 	assert.Equal(t, 0, indexed, "trips with no timed records are skipped by the block index")
+}
+
+func TestStoreGtfsData_FlexTablesPopulated(t *testing.T) {
+	tests := []struct {
+		name   string
+		zip    string
+		counts map[string]int
+	}{
+		{
+			name: "alexandria",
+			zip:  "../testdata/alexandria-flex.zip",
+			counts: map[string]int{
+				"booking_rules": 1, "locations": 1, "location_groups": 0, "location_group_stops": 0,
+				"flex_stop_times": 4, "stop_times": 0, "stops": 1,
+			},
+		},
+		{
+			name: "manistee",
+			zip:  "../testdata/manistee-flex.zip",
+			counts: map[string]int{
+				"booking_rules": 8, "locations": 7, "location_groups": 0, "location_group_stops": 0,
+				"flex_stop_times": 40, "stop_times": 24, "stops": 4, "trips": 26,
+			},
+		},
+		{
+			name: "charlevoix",
+			zip:  "../testdata/charlevoix-flex.zip",
+			counts: map[string]int{
+				"booking_rules": 5, "locations": 4, "location_groups": 1, "location_group_stops": 2,
+				"flex_stop_times": 26, "stop_times": 0, "stops": 2, "trips": 13,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newTestClientWithZip(t, tt.zip)
+			for table, want := range tt.counts {
+				assert.Equal(t, want, countRows(t, client, table), table)
+			}
+		})
+	}
+}
+
+func TestStoreGtfsData_AlexandriaLocationRow(t *testing.T) {
+	client := newTestClientWithZip(t, "../testdata/alexandria-flex.zip")
+	ctx := context.Background()
+
+	locations, err := client.Queries.GetLocationsByIDs(ctx, []string{"area_1449"})
+	require.NoError(t, err)
+	require.Len(t, locations, 1)
+	loc := locations[0]
+
+	assert.InDelta(t, -77.5372039, loc.MinLon, 1e-9)
+	assert.InDelta(t, 38.617508, loc.MinLat, 1e-9)
+	assert.InDelta(t, -76.9092198, loc.MaxLon, 1e-9)
+	assert.InDelta(t, 39.057831, loc.MaxLat, 1e-9)
+	assert.False(t, loc.Name.Valid, "the feed publishes no stop_name for the zone")
+
+	_, full, err := geo.ParseGeoJSONPolygons([]byte(loc.Geometry))
+	require.NoError(t, err)
+	assert.Len(t, full[0][0], 4239, "geometry is stored verbatim")
+
+	require.True(t, loc.GeometrySimplified.Valid, "a 4,239-point ring must be simplified")
+	_, simplified, err := geo.ParseGeoJSONPolygons([]byte(loc.GeometrySimplified.String))
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(simplified[0][0]), geo.SimplifyMaxRingPoints)
+
+	rule, err := client.Queries.GetBookingRulesByIDs(ctx, []string{"booking_route_77652"})
+	require.NoError(t, err)
+	require.Len(t, rule, 1)
+	assert.Equal(t, int64(2), rule[0].BookingType)
+	assert.Equal(t, int64(1), rule[0].PriorNoticeLastDay.Int64)
+	assert.Equal(t, int64(17*time.Hour), rule[0].PriorNoticeLastTime.Int64)
+	assert.Equal(t, int64(14), rule[0].PriorNoticeStartDay.Int64)
+	assert.Equal(t, int64(0), rule[0].PriorNoticeStartTime.Int64)
+	assert.True(t, rule[0].PriorNoticeStartTime.Valid, "00:00:00 is a real value, not NULL")
+	assert.False(t, rule[0].PriorNoticeDurationMin.Valid)
+	assert.False(t, rule[0].PriorNoticeServiceID.Valid, "empty strings are stored as NULL")
+	assert.True(t, strings.HasPrefix(rule[0].Message.String, "DOT is the City of Alexandria"))
+	assert.Equal(t, "703-746-5222", rule[0].PhoneNumber.String)
+
+	var factor, offset sql.NullFloat64
+	require.NoError(t, client.DB.QueryRowContext(ctx,
+		"SELECT safe_duration_factor, safe_duration_offset FROM flex_stop_times WHERE trip_id = 't_6124961_b_85952_tn_0' AND stop_sequence = 1").
+		Scan(&factor, &offset))
+	assert.Equal(t, sql.NullFloat64{Float64: 1, Valid: true}, factor)
+	assert.Equal(t, sql.NullFloat64{Float64: 0, Valid: true}, offset, "0.0 is a real value, not NULL")
+}
+
+func TestStoreGtfsData_CharlevoixSmallZonesAreNotSimplified(t *testing.T) {
+	client := newTestClientWithZip(t, "../testdata/charlevoix-flex.zip")
+	locations, err := client.Queries.GetLocationsByIDs(context.Background(), []string{"gaylord", "petoskey", "charlevoix_county"})
+	require.NoError(t, err)
+	require.Len(t, locations, 3)
+	byID := map[string]Location{}
+	for _, loc := range locations {
+		byID[loc.ID] = loc
+	}
+	assert.False(t, byID["gaylord"].GeometrySimplified.Valid, "a 5-point ring already meets the target")
+	assert.False(t, byID["petoskey"].GeometrySimplified.Valid)
+	assert.True(t, byID["charlevoix_county"].GeometrySimplified.Valid)
+
+	groupStops, err := client.Queries.GetLocationGroupStopsForGroups(context.Background(), []string{"CC_ironton_ferry_stops"})
+	require.NoError(t, err)
+	require.Len(t, groupStops, 2)
+	assert.Equal(t, "CC_Ironton_Ferry_East", groupStops[0].StopID)
+	assert.Equal(t, "CC_Ironton_Ferry_West", groupStops[1].StopID)
+
+	var kind int64
+	require.NoError(t, client.DB.QueryRow(
+		"SELECT pickup_type FROM flex_stop_times WHERE trip_id = 'CC3_mon-tues-wed-thurs-fri-sat-sun' AND stop_sequence = 1").Scan(&kind))
+	assert.Equal(t, int64(2), kind)
+}
+
+func squareLocation(id, name string) gtfs.Location {
+	ring := [][2]float64{{-122.0, 47.0}, {-121.9, 47.0}, {-121.9, 47.1}, {-122.0, 47.1}, {-122.0, 47.0}}
+	return gtfs.Location{
+		Id:   id,
+		Name: name,
+		Geometry: gtfs.LocationGeometry{
+			Type:     geo.GeoJSONPolygon,
+			Polygons: [][][][2]float64{{ring}},
+			Raw:      []byte(`{"type":"Polygon","coordinates":[[[-122,47],[-121.9,47],[-121.9,47.1],[-122,47.1],[-122,47]]]}`),
+		},
+	}
+}
+
+func TestStoreFlexEntities_DuplicatesAndUnusableRecords(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	_, err = client.Queries.CreateStop(ctx, CreateStopParams{ID: "member", Lat: 47.05, Lon: -121.95})
+	require.NoError(t, err)
+	member := &gtfs.Stop{Id: "member"}
+	uninserted := &gtfs.Stop{Id: "no-coordinates"}
+
+	staticData := &gtfs.Static{
+		BookingRules: []gtfs.BookingRule{
+			{Id: "rule", PhoneNumber: "first"},
+			{Id: "rule", PhoneNumber: "last"},
+		},
+		Locations: []gtfs.Location{
+			squareLocation("zone", "first"),
+			squareLocation("zone", "last"),
+			{Id: "empty", Geometry: gtfs.LocationGeometry{Type: geo.GeoJSONPolygon}},
+		},
+		LocationGroups: []gtfs.LocationGroup{
+			{Id: "group", Name: "first"},
+			{Id: "group", Name: "last", Stops: []*gtfs.Stop{member, member, uninserted}},
+		},
+	}
+	insertedStopIDs := map[string]struct{}{"member": {}}
+
+	require.NoError(t, client.storeFlexEntities(ctx, staticData, insertedStopIDs, client.Queries))
+
+	rules, err := client.Queries.GetBookingRulesByIDs(ctx, []string{"rule"})
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	assert.Equal(t, "last", rules[0].PhoneNumber.String, "the last duplicate wins, as go-gtfs resolves references")
+
+	locations, err := client.Queries.GetLocationsByIDs(ctx, []string{"zone", "empty"})
+	require.NoError(t, err)
+	require.Len(t, locations, 1, "a location with no polygons is skipped, not fatal")
+	assert.Equal(t, "last", locations[0].Name.String)
+
+	groups, err := client.Queries.GetLocationGroupsByIDs(ctx, []string{"group"})
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, "last", groups[0].Name.String)
+
+	groupStops, err := client.Queries.GetLocationGroupStopsForGroups(ctx, []string{"group"})
+	require.NoError(t, err)
+	require.Len(t, groupStops, 1, "duplicate and uninserted members are dropped")
+	assert.Equal(t, "member", groupStops[0].StopID)
 }
