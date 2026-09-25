@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/geo"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -143,12 +144,12 @@ func TestBuildOnDemandServices_GeometryDetail(t *testing.T) {
 func TestBuildOnDemandServices_QueryPointDistances(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "alexandria-flex.zip"))
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, QueryPoint: &geoPoint{Lat: 38.836368, Lon: -77.049221}})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 38.836368, Lon: -77.049221})})
 	require.NotNil(t, refs.ServiceAreas[0].DistanceToArea)
 	assert.Equal(t, 0.0, *refs.ServiceAreas[0].DistanceToArea, "inside the zone")
 	assert.Nil(t, refs.ServiceAreas[0].NearestPointOnBoundary)
 
-	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, QueryPoint: &geoPoint{Lat: 38.60, Lon: -77.20}})
+	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 38.60, Lon: -77.20})})
 	require.NotNil(t, refs.ServiceAreas[0].DistanceToArea)
 	assert.InDelta(t, 1956, *refs.ServiceAreas[0].DistanceToArea, 25, "south of the zone's southern tip")
 	require.NotNil(t, refs.ServiceAreas[0].NearestPointOnBoundary)
@@ -289,6 +290,21 @@ func TestBuildOnDemandServices_DanglingReferencesAreOmitted(t *testing.T) {
 	assert.NotContains(t, ids(refs.Routes, func(r models.Route) string { return r.ID }), "CC_ghost_route")
 }
 
+func TestBuildOnDemandServices_MeasuresAgainstTheGivenSnapshot(t *testing.T) {
+	api := alexandriaAPI(t)
+	point := geoPoint{Lat: 38.60, Lon: -77.20} // ~2 km outside the real zone
+	snapshot := gtfs.NewEmptyFlexIndex()
+	snapshot.Areas["area_1449"] = &gtfs.FlexArea{ID: "area_1449", Polygons: [][][][2]float64{{{
+		{-77.21, 38.59}, {-77.19, 38.59}, {-77.19, 38.61}, {-77.21, 38.61}, {-77.21, 38.59},
+	}}}}
+
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(snapshot, point)})
+
+	require.Len(t, refs.ServiceAreas, 1)
+	require.NotNil(t, refs.ServiceAreas[0].DistanceToArea)
+	assert.Equal(t, 0.0, *refs.ServiceAreas[0].DistanceToArea, "the builder reuses the caller's snapshot rather than re-reading the index")
+}
+
 func TestBuildOnDemandServices_UnindexedAreaHasNoDistance(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
 	ctx := context.Background()
@@ -297,7 +313,7 @@ func TestBuildOnDemandServices_UnindexedAreaHasNoDistance(t *testing.T) {
 	_, err = api.GtfsManager.ReloadStatic(ctx)
 	require.NoError(t, err)
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, QueryPoint: &geoPoint{Lat: 45.3, Lon: -85.2}})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 45.3, Lon: -85.2})})
 
 	for _, area := range refs.ServiceAreas {
 		if area.ID == "CC_gaylord" {
