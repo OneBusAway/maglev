@@ -162,3 +162,15 @@ func TestSortModelStopsByID(t *testing.T) {
 	assert.Equal(t, "999_parent_stat_1", stops[1].ID)
 	assert.Equal(t, "parent_stat_3", stops[2].ID)
 }
+
+func TestSortedUnique(t *testing.T) {
+	assert.Equal(t, []string{"a", "b", "c"}, utils.SortedUnique([]string{"c", "a", "b", "a"}))
+	assert.Equal(t, []string{}, utils.SortedUnique(nil))
+}
+
+func TestSortByKey(t *testing.T) {
+	type item struct{ ID string }
+	items := []item{{"b"}, {"a"}, {"c"}}
+	utils.SortByKey(items, func(i item) string { return i.ID })
+	assert.Equal(t, []item{{"a"}, {"b"}, {"c"}}, items)
+}
