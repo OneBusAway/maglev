@@ -282,10 +282,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 	}
 
-	singleAgencyID := ""
-	if len(data.Static.Agencies) == 1 {
-		singleAgencyID = data.Static.Agencies[0].Id
-	}
+	singleAgencyID := soleAgencyID(data.Static.Agencies)
 
 	for _, r := range data.Static.Routes {
 		route := CreateRouteParams{
@@ -447,6 +444,16 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	if err := c.storeFlexStopTimes(ctx, data.Static, qtx); err != nil {
 		return false, fmt.Errorf("unable to create flex stop times: %w", err)
 	}
+
+	logging.LogOperation(logger, "compiling_on_demand_services")
+	compiled := CompileOnDemand(data.Static)
+	if err := c.storeOnDemand(ctx, compiled, qtx); err != nil {
+		return false, fmt.Errorf("unable to store on-demand services: %w", err)
+	}
+	logging.LogOperation(logger, "on_demand_services_compiled",
+		slog.Int("services", len(compiled.Services)),
+		slog.Int("rules", len(compiled.Rules)),
+		slog.Int("pointer_stops", len(compiled.StopServices)))
 
 	// Collect frequency entries from all trips
 	var allFrequencyParams []CreateFrequencyParams
@@ -749,6 +756,15 @@ func gtfsDirectionIDToDB(d gtfs.DirectionID) sql.NullInt64 {
 	default:
 		return sql.NullInt64{}
 	}
+}
+
+// soleAgencyID is the feed's only agency id, the fallback for routes that
+// omit agency_id; empty when the feed has several agencies.
+func soleAgencyID(agencies []gtfs.Agency) string {
+	if len(agencies) == 1 {
+		return agencies[0].Id
+	}
+	return ""
 }
 
 func pickFirstAvailable(a, b string) string {
