@@ -235,10 +235,11 @@ func (api *RestAPI) buildOnDemandServices(ctx context.Context, services []gtfsdb
 	if err != nil {
 		return nil, nil, err
 	}
+	calendarIDsByAgency := groupCalendarIDsByAgency(calendarIDs)
 	serviceModels := make([]models.OnDemandService, 0, len(services))
 	for _, service := range services {
 		scope := serviceIDScope{agencyID: service.AgencyID, stopAgencies: stopAgencies}
-		rules := buildAvailabilityRules(rulesByService[service.ID], scope, calendarIDsForAgency(calendarIDs, service.AgencyID))
+		rules := buildAvailabilityRules(rulesByService[service.ID], scope, calendarIDsByAgency[service.AgencyID])
 		serviceModels = append(serviceModels, onDemandServiceModel(service, routes[service.RouteID], rules))
 	}
 	utils.SortByKey(serviceModels, func(s models.OnDemandService) string { return s.ID })
@@ -413,16 +414,17 @@ func dropDanglingPriorNoticeCalendars(bookingRules []models.BookingRule, calenda
 	}
 }
 
-// calendarIDsForAgency narrows the scoped calendar map to one agency, keyed by
-// bare gtfs service id as buildAvailabilityRules expects.
-func calendarIDsForAgency(calendarIDs map[agencyScopedID][]string, agencyID string) map[string][]string {
-	byService := make(map[string][]string)
+// groupCalendarIDsByAgency splits the scoped calendar map by agency, each
+// keyed by bare gtfs service id as buildAvailabilityRules expects.
+func groupCalendarIDsByAgency(calendarIDs map[agencyScopedID][]string) map[string]map[string][]string {
+	byAgency := make(map[string]map[string][]string)
 	for scoped, ids := range calendarIDs {
-		if scoped.AgencyID == agencyID {
-			byService[scoped.ID] = ids
+		if byAgency[scoped.AgencyID] == nil {
+			byAgency[scoped.AgencyID] = make(map[string][]string)
 		}
+		byAgency[scoped.AgencyID][scoped.ID] = ids
 	}
-	return byService
+	return byAgency
 }
 
 // fillOnDemandReferences resolves areas, rule-referenced and group-member
